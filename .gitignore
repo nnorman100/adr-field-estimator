@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Firebase
+.firebase/
+.firebaserc.bak
+firebase-debug.log*
+
+# Environment & Secrets
+.env
+.env.*
+*.key
+*.pem
+service-account*.json
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

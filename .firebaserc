@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "mitigation-project"
+  },
+  "targets": {
+    "mitigation-project": {
+      "hosting": {
+        "alert-disaster": [
+          "alert-disaster-live"
+        ]
+      }
+    }
+  }
+}
