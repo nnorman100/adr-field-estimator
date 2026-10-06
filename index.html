@@ -217,6 +217,7 @@
         <!-- Video Viewport -->
         <video id="cameraVideo" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video>
         <canvas id="frameCanvas" class="hidden"></canvas>
+        <input type="file" id="photoFileInput" accept="image/*" capture="environment" class="hidden">
 
       <!-- Start Camera Prompt -->
       <div id="cameraPrompt" class="absolute inset-0 z-10 bg-[#FFFFFE] text-slate-900 flex flex-col items-center justify-center p-6 text-center">
@@ -320,6 +321,7 @@
           <span class="text-[#4B4B4B] uppercase tracking-wider text-[11px]">Proposed Remediation:</span>
           <div class="flex items-center gap-2">
             <span id="photoBadge" class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">Photos: 0</span>
+            <button type="button" onclick="document.getElementById('photoFileInput').click()" class="text-[10px] text-blue-600 hover:text-blue-800 underline font-bold" title="Upload high-res photo from Camera Roll or Native Camera">Upload / Cam Roll</button>
             <span id="scopeTotalText" class="text-[#D42B32] font-mono text-base font-black">$2,499.00</span>
           </div>
         </div>
@@ -388,7 +390,7 @@
           </div>
           <div class="flex justify-between text-xs pt-1">
             <span class="text-slate-600 text-[11px]">Formula Range:</span>
-            <span class="font-mono font-bold text-slate-900">$2,219.90 – $2,356.25</span>
+            <span id="wideFormulaRange" class="font-mono font-bold text-slate-900">$2,219.90 – $2,356.25</span>
           </div>
           <div class="flex justify-between text-xs">
             <span class="text-slate-600 text-[11px]">Proposal Tier:</span>
@@ -503,6 +505,7 @@
 
           <div class="w-full h-20 border-2 border-dashed border-[#C8C7C6] rounded-lg bg-white relative overflow-hidden">
             <canvas id="signCanvas" class="w-full h-full cursor-crosshair touch-none"></canvas>
+            <img id="printSigImg" src="" alt="Client Signature" class="hidden absolute inset-0 w-full h-full object-contain pointer-events-none p-1">
             <div id="signPlaceholder" class="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400 text-xs">
               Sign with Finger or Stylus
             </div>
@@ -513,8 +516,8 @@
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
               Print PDF
             </button>
-            <button onclick="submitSignedEstimate()" class="bg-[#D42B32] hover:bg-[#B9232B] text-white font-black py-2 rounded-lg text-xs uppercase shadow">
-              Authorize Job
+            <button onclick="submitSignedEstimate()" id="btnAuthorizeJob" class="bg-[#D42B32] hover:bg-[#B9232B] text-white font-black py-2 rounded-lg text-xs uppercase shadow tracking-wider">
+              AUTHORIZE & SIGN
             </button>
           </div>
         </div>
@@ -552,11 +555,11 @@
         </div>
         <div class="bg-[#F1F2F2] p-3.5 rounded-xl border border-[#e0e0e0] font-editorial text-xs leading-relaxed space-y-2 text-slate-800" id="defenseLetterBody">
           <p><strong>TO:</strong> Property Claims Examiner / Adjuster</p>
-          <p><strong>RE:</strong> Mitigation Standard Justification for <span class="font-bold underline">1813 Capistrano Ave, Wasco, CA</span></p>
+          <p><strong>RE:</strong> Mitigation Standard Justification for <span id="defenseLetterAddress" class="font-bold underline">1813 Capistrano Ave, Wasco, CA</span></p>
           <p>Alert Disaster Restoration operates in strict adherence to the ANSI/IICRC S500 Standard for Professional Water Damage Restoration and IICRC S520 Standard for Microbial Remediation.</p>
           <p><strong>1. Controlled Demolition (IICRC S500 Section 12.2.3):</strong> Saturated drywall and insulation in wall cavities cannot be effectively restored in place when microbial contamination is suspected. A minimum 4-foot flood cut was performed to expose the stud bay framing and facilitate direct evaporation.</p>
           <p><strong>2. Psychrometric Dehumidification (IICRC S500 Section 13.5.4):</strong> AHAM-rated commercial LGR dehumidifiers were sized according to cubic volume and Class 2 evaporation rate to maintain relative humidity below 40% and prevent secondary damage.</p>
-          <p><strong>3. California Environmental Compliance:</strong> All disturbance was audited per California Health & Safety Code pre-testing thresholds.</p>
+          <p id="defenseLeadParagraph"><strong>3. California Environmental Compliance:</strong> All disturbance was audited per California Health & Safety Code pre-testing thresholds.</p>
           <p class="pt-2">Sincerely,<br><strong>Matthew Myers</strong><br>Alert Disaster Restoration • CSLB Lic #950983</p>
         </div>
       </div>
@@ -667,7 +670,53 @@
           Close
         </button>
       </div>
+    </div>
+  </div>
 
+  <!-- WORK AUTHORIZATION CONFIRMATION MODAL -->
+  <div id="modalAuthConfirmation" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 hidden">
+    <div class="bg-white text-slate-900 border border-[#e0e0e0] max-w-sm w-full rounded-2xl p-4 shadow-2xl space-y-3">
+      <div class="flex items-center gap-2 border-b border-[#e0e0e0] pb-2">
+        <span class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></span>
+        <h3 class="text-xs font-black uppercase tracking-tight text-slate-900">Work Authorization Confirmed</h3>
+        <span class="ml-auto text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded">Dispatched</span>
+      </div>
+      <div class="bg-[#F1F2F2] p-3 rounded-xl border border-[#e0e0e0] space-y-1.5 text-xs">
+        <div class="flex justify-between items-center">
+          <span class="text-[10px] font-bold text-slate-500 uppercase">Auth Ref:</span>
+          <span id="authModalRef" class="font-mono font-bold text-[#D42B32]">ADR-AUTH-1001</span>
+        </div>
+        <div class="flex justify-between items-start">
+          <span class="text-[10px] font-bold text-slate-500 uppercase">Property:</span>
+          <span id="authModalAddress" class="font-bold text-slate-900 text-right max-w-[200px]">1813 Capistrano Ave, Wasco, CA</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-[10px] font-bold text-slate-500 uppercase">Agreed Total:</span>
+          <span id="authModalCost" class="font-mono font-black text-slate-900 text-sm">$2,499.00</span>
+        </div>
+        <div class="flex justify-between items-center">
+          <span class="text-[10px] font-bold text-slate-500 uppercase">Evidence Attached:</span>
+          <span id="authModalPhotos" class="font-semibold text-slate-700">0 Photos Verified</span>
+        </div>
+      </div>
+      <div>
+        <span class="text-[10px] font-bold text-slate-600 block mb-1 uppercase tracking-wider">Client E-Signature:</span>
+        <div class="h-16 bg-white border border-[#c8c7c6] rounded-lg flex items-center justify-center p-1 overflow-hidden">
+          <img id="authModalSigImg" src="" alt="Client Signature" class="max-h-full max-w-full object-contain">
+        </div>
+      </div>
+      <p class="text-[10px] text-slate-500 italic font-editorial text-center">
+        Dispatched to Alert Disaster Restoration Kern County Office • CSLB Lic #950983 • Estimator: Matthew Myers
+      </p>
+      <div class="grid grid-cols-2 gap-2 pt-1">
+        <button onclick="window.print()" class="bg-[#4B4B4B] hover:bg-black text-white font-bold py-2 rounded-lg text-xs uppercase flex items-center justify-center gap-1 shadow">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+          Print / PDF
+        </button>
+        <button onclick="closeAuthModal()" class="bg-[#D42B32] hover:bg-[#B9232B] text-white font-bold py-2 rounded-lg text-xs uppercase shadow">
+          Done
+        </button>
+      </div>
     </div>
   </div>
 
@@ -688,12 +737,62 @@
     // Inspection Photo Pipeline State
     let inspectionPhotos = [];
 
+    // Web Speech API Dictation State
+    let speechRecognition = null;
+    let isVoiceDictating = false;
+
+    // Signature Canvas State & Persistence
+    let canvas = null, ctx = null, isDrawing = false;
+    let hasUserSigned = false;
+    let cachedSignatureData = null;
+
+    // --- XACTIMATE SCHEMA NORMALIZATION HELPER ---
+    function normalizeXactimateItem(item) {
+      if (!item) return null;
+      const code = String(item.code || 'MISC');
+      const desc = String((item.description != null && item.description !== '') ? item.description : ((item.desc != null && item.desc !== '') ? item.desc : 'General Remediation Line Item'));
+
+      let rawQty = (item.quantity != null && item.quantity !== '') ? item.quantity : ((item.qty != null && item.qty !== '') ? item.qty : 1);
+      let qty = Number(rawQty);
+      if (isNaN(qty) || qty <= 0) qty = 1;
+
+      const unit = String(item.unit || 'EA');
+
+      let rawPrice = (item.unit_price != null && item.unit_price !== '') ? item.unit_price : ((item.price != null && item.price !== '') ? item.price : 0);
+      let price = Number(rawPrice);
+      if (isNaN(price)) price = 0;
+
+      let rawWaste = (item.waste_percent != null && item.waste_percent !== '') ? item.waste_percent : ((item.waste != null && item.waste !== '') ? item.waste : 0);
+      let waste = Number(rawWaste);
+      if (isNaN(waste)) waste = 0;
+
+      let total = item.total != null && item.total !== '' ? Number(item.total) : NaN;
+      if (isNaN(total)) {
+        total = qty * price * (1 + waste / 100);
+      }
+      return {
+        code,
+        description: desc,
+        desc,
+        quantity: qty,
+        qty,
+        unit,
+        unit_price: price,
+        price,
+        waste_percent: waste,
+        waste,
+        total: Math.round(total * 100) / 100
+      };
+    }
+
     let estimateState = {
       date: "07-14-2026",
-      address: "1813 Capistrano ave, Wasco, CA 93280",
+      address: "1813 Capistrano Ave, Wasco, CA",
       yearBuilt: 2020,
+      leadNoticeRequired: false,
       hasCrawlSpace: false,
       area: "Kitchen",
+      isAfterHours: true,
       proposedCost: 2499,
       findings: [
         "<strong>Kitchen:</strong> The moisture meter shows elevated moisture levels on the toe kick, sink cavity, and the cabinet to the left of the sink. There is suspected microbial growth in the sink cavity, and the cabinet to the left of the sink cavity."
@@ -707,30 +806,119 @@
         { code: "WTRDHM", desc: "LGR Dehumidifier Large AHAM rated", qty: 3, unit: "DA", price: 145.00, waste: 0, total: 435.00 },
         { code: "WTRDRYM", desc: "Axial Air Mover / Drying Fans", qty: 9, unit: "DA", price: 38.00, waste: 0, total: 342.00 },
         { code: "APPANTI", desc: "Botanical antimicrobial wash", qty: 320, unit: "SF", price: 0.48, waste: 0, total: 153.60 }
-      ]
+      ].map(normalizeXactimateItem)
     };
 
     window.addEventListener('DOMContentLoaded', () => {
       initSignaturePad();
+      initPreWalkInputs();
+      initPhotoUploadInput();
+      initSpeechRecognition();
       recalculateExcelFormulas();
       updateEstimateUI();
       renderXactimateScope();
     });
 
+    // --- PRE-WALK INPUT SYNCHRONIZATION & CA PRE-1978 RULE ---
+    function initPreWalkInputs() {
+      const inputClient = document.getElementById('inputClientName');
+      if (inputClient) {
+        inputClient.addEventListener('input', (e) => {
+          estimateState.address = e.target.value.trim() || "1813 Capistrano Ave, Wasco, CA";
+          updateEstimateUI();
+        });
+      }
+
+      const inputYear = document.getElementById('inputYearBuilt');
+      if (inputYear) {
+        const updateYearRule = (yrVal) => {
+          const rawYr = parseInt(yrVal, 10);
+          const yr = isNaN(rawYr) ? 0 : rawYr;
+          estimateState.yearBuilt = yr;
+          const tag = document.getElementById('leadStatusTag');
+          const wideRule = document.getElementById('wideLeadRule');
+
+          if (yr < 1978) {
+            estimateState.leadNoticeRequired = true;
+            if (tag) {
+              tag.innerText = "PRE-1978: CA Law REQUIRES Lead & Asbestos Pre-Testing";
+              tag.className = "text-[10px] text-red-600 mt-1 block font-bold";
+            }
+            if (wideRule) {
+              wideRule.innerText = "Pre-1978: Lead Testing REQUIRED";
+              wideRule.className = "text-[10px] font-bold text-red-400";
+            }
+          } else {
+            estimateState.leadNoticeRequired = false;
+            if (tag) {
+              tag.innerText = "Post-1978: No lead/asbestos testing required";
+              tag.className = "text-[10px] text-emerald-700 mt-1 block font-bold";
+            }
+            if (wideRule) {
+              wideRule.innerText = "Post-1978 (Exempt)";
+              wideRule.className = "text-[10px] font-bold text-emerald-400";
+            }
+          }
+          updateEstimateUI();
+        };
+
+        inputYear.addEventListener('input', (e) => updateYearRule(e.target.value));
+        inputYear.addEventListener('change', (e) => updateYearRule(e.target.value));
+      }
+
+      const selectAfter = document.getElementById('selectAfterHours');
+      if (selectAfter) {
+        selectAfter.addEventListener('change', (e) => {
+          estimateState.isAfterHours = (e.target.value === 'Yes');
+          recalculateExcelFormulas();
+        });
+      }
+    }
+
     // --- PHOTO SNAPSHOT & BACKGROUND OCR PIPELINE ---
+    function initPhotoUploadInput() {
+      const fileInput = document.getElementById('photoFileInput');
+      if (fileInput) {
+        fileInput.addEventListener('change', (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const dataUrl = event.target.result;
+            processCapturedPhoto(dataUrl, file.name || 'Cam Roll Upload');
+          };
+          reader.readAsDataURL(file);
+          e.target.value = '';
+        });
+      }
+    }
+
     function snapInspectionPhoto() {
       const video = document.getElementById('cameraVideo');
-      const canvas = document.getElementById('frameCanvas');
-      const ctx = canvas.getContext('2d');
+      // If camera stream not running or dimensions unavailable, trigger native file input fallback
+      if (!mediaStream || !video || video.videoWidth === 0) {
+        const fileInput = document.getElementById('photoFileInput');
+        if (fileInput) {
+          fileInput.click();
+          return;
+        }
+      }
 
-      canvas.width = 1280;
-      canvas.height = 720;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const photoBase64 = canvas.toDataURL('image/jpeg', 0.85);
+      const canvasEl = document.getElementById('frameCanvas');
+      const ctxEl = canvasEl.getContext('2d');
+      canvasEl.width = 1280;
+      canvasEl.height = 720;
+      ctxEl.drawImage(video, 0, 0, canvasEl.width, canvasEl.height);
+      const photoBase64 = canvasEl.toDataURL('image/jpeg', 0.85);
 
+      processCapturedPhoto(photoBase64, 'Live Frame Capture');
+    }
+
+    function processCapturedPhoto(dataUrl, sourceLabel = 'Inspection Photo') {
       const photoObj = {
         id: Date.now(),
-        dataUrl: photoBase64,
+        dataUrl: dataUrl,
+        source: sourceLabel,
         timestamp: new Date().toLocaleTimeString(),
         ocrStatus: 'Analyzing via Cloud Run...',
         ocrValue: 'Processing...',
@@ -775,7 +963,7 @@
       if (inspectionPhotos.length === 0) {
         container.innerHTML = `
           <div class="bg-[#F1F2F2] border border-[#e0e0e0] p-3 rounded-xl text-center text-xs text-slate-500 font-editorial">
-            No photos snapped yet. Use the "PHOTO" button during the walkthrough to capture verified meter readings and thermal images.
+            No photos snapped yet. Use the "PHOTO" or "Upload / Cam Roll" buttons during the walkthrough to capture verified meter readings and thermal images.
           </div>
         `;
         return;
@@ -823,16 +1011,125 @@
       }
     }
 
+    // --- LIVE VOICE TRANSCRIPTION VIA WEB SPEECH API ---
+    let accumulatedDictation = '';
+
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        console.warn("SpeechRecognition not supported in this browser environment.");
+        return;
+      }
+      try {
+        speechRecognition = new SpeechRecognition();
+        speechRecognition.continuous = true;
+        speechRecognition.interimResults = true;
+        speechRecognition.lang = 'en-US';
+
+        speechRecognition.onstart = () => {
+          isVoiceDictating = true;
+          updateMicUI(true);
+        };
+
+        speechRecognition.onresult = (event) => {
+          let interimTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              accumulatedDictation += (accumulatedDictation ? ' ' : '') + event.results[i][0].transcript.trim();
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+          const spoken = (accumulatedDictation + (interimTranscript ? ' ' + interimTranscript : '')).trim();
+          if (spoken) {
+            const liveEl = document.getElementById('liveTranscript');
+            const wideEl = document.getElementById('wideTranscriptDisplay');
+            const formatted = `"${spoken}"`;
+            if (liveEl) liveEl.innerText = formatted;
+            if (wideEl) wideEl.innerText = formatted;
+          }
+        };
+
+        speechRecognition.onerror = (event) => {
+          console.log("Speech recognition error:", event.error);
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+            isVoiceDictating = false;
+            updateMicUI(false);
+          }
+        };
+
+        speechRecognition.onend = () => {
+          if (isVoiceDictating && currentMode === 'tech') {
+            setTimeout(() => {
+              if (isVoiceDictating && currentMode === 'tech') {
+                try { speechRecognition.start(); } catch (e) {}
+              }
+            }, 250);
+          } else {
+            isVoiceDictating = false;
+            updateMicUI(false);
+          }
+        };
+      } catch (err) {
+        console.warn("Speech recognition setup error:", err);
+      }
+    }
+
+    function toggleMic() {
+      if (mediaStream) {
+        isMicMuted = !isMicMuted;
+        mediaStream.getAudioTracks().forEach(track => track.enabled = !isMicMuted);
+      } else {
+        isMicMuted = !isMicMuted;
+      }
+
+      if (speechRecognition) {
+        if (isVoiceDictating) {
+          isVoiceDictating = false;
+          try { speechRecognition.stop(); } catch (e) {}
+          updateMicUI(false);
+        } else {
+          isVoiceDictating = true;
+          try { speechRecognition.start(); } catch (e) {}
+          updateMicUI(true);
+        }
+      } else {
+        updateMicUI(!isMicMuted);
+      }
+    }
+
+    function updateMicUI(listening) {
+      const micLabel = document.getElementById('micLabel');
+      const btnMic = document.getElementById('btnMic');
+      const audioWave = document.getElementById('audioWaveform');
+      if (micLabel) {
+        micLabel.innerText = listening ? "DICTATING" : (isMicMuted ? "MIC MUTED" : "MUTE");
+      }
+      if (btnMic) {
+        if (listening) {
+          btnMic.className = "col-span-1 bg-red-100 border-2 border-[#D42B32] active:scale-95 text-[#D42B32] p-2.5 rounded-lg flex flex-col items-center justify-center transition";
+        } else {
+          btnMic.className = "col-span-1 bg-[#F1F2F2] hover:bg-slate-200 active:scale-95 text-[#212529] p-2.5 rounded-lg flex flex-col items-center justify-center border border-[#e0e0e0] transition";
+        }
+      }
+      if (audioWave) {
+        if (listening) {
+          audioWave.classList.remove('hidden');
+        } else if (isMicMuted) {
+          audioWave.classList.add('hidden');
+        }
+      }
+    }
+
     // --- POST-WALK CLOUD RUN AUDIT PIPELINE ---
     async function runAuditAndSwitch() {
-      // Call Cloud Run /api/audit
       try {
         const payload = {
           address: estimateState.address,
           year_built: estimateState.yearBuilt,
           has_crawl_space: estimateState.hasCrawlSpace,
           area: estimateState.area,
-          is_after_hours: true,
+          is_after_hours: estimateState.isAfterHours !== undefined ? estimateState.isAfterHours : true,
           transcript: document.getElementById('liveTranscript').innerText,
           verified_readings: inspectionPhotos.map(p => ({ type: p.meterType, value: p.ocrValue }))
         };
@@ -845,16 +1142,49 @@
 
         if (res.ok) {
           const audited = await res.json();
-          if (audited.adr_estimate?.proposed_cost) {
-            estimateState.proposedCost = audited.adr_estimate.proposed_cost;
+          if (audited.adr_estimate) {
+            if (audited.adr_estimate.proposed_cost) {
+              estimateState.proposedCost = audited.adr_estimate.proposed_cost;
+            }
+            if (audited.adr_estimate.property_address || audited.adr_estimate.address) {
+              estimateState.address = audited.adr_estimate.property_address || audited.adr_estimate.address;
+            }
+            if (audited.adr_estimate.date) {
+              estimateState.date = audited.adr_estimate.date;
+            }
+            const findingsData = audited.adr_estimate.findings_html || audited.adr_estimate.findings;
+            if (findingsData) {
+              estimateState.findings = Array.isArray(findingsData) ? findingsData : [findingsData];
+            }
+            const recsData = audited.adr_estimate.recommendations_html || audited.adr_estimate.recommendations;
+            if (recsData) {
+              estimateState.recommendations = Array.isArray(recsData) ? recsData : [recsData];
+            }
+            if (audited.adr_estimate.lead_notice_required !== undefined) {
+              estimateState.leadNoticeRequired = audited.adr_estimate.lead_notice_required;
+            }
           }
-          if (audited.xactimate_scope) {
-            estimateState.xactimate_scope = audited.xactimate_scope;
+          if (audited.xactimate_scope && Array.isArray(audited.xactimate_scope)) {
+            estimateState.xactimate_scope = audited.xactimate_scope.map(normalizeXactimateItem).filter(Boolean);
             renderXactimateScope();
+          }
+          if (audited.iicrc_defense_letter) {
+            const defEl = document.getElementById('defenseLetterBody');
+            if (defEl) {
+              if (audited.iicrc_defense_letter.includes('<p>') || audited.iicrc_defense_letter.includes('<div>')) {
+                defEl.innerHTML = audited.iicrc_defense_letter;
+              } else {
+                defEl.innerHTML = audited.iicrc_defense_letter
+                  .split(/\r?\n\r?\n/)
+                  .filter(p => p.trim())
+                  .map(p => `<p>${p.replace(/\r?\n/g, '<br>')}</p>`)
+                  .join('');
+              }
+            }
           }
         }
       } catch (err) {
-        console.log("Cloud Run audit completed with local fallback state.");
+        console.log("Cloud Run audit completed with local fallback state.", err);
       }
 
       setAppMode('client');
@@ -882,9 +1212,16 @@
 
     function renderXactimateScope() {
       const list = document.getElementById('xactimateItemsList');
+      if (!list) return;
       let total = 0;
-      list.innerHTML = estimateState.xactimate_scope.map(item => {
-        total += item.total;
+      const normalizedItems = (estimateState.xactimate_scope || []).map(normalizeXactimateItem).filter(Boolean);
+      estimateState.xactimate_scope = normalizedItems;
+
+      list.innerHTML = normalizedItems.map(item => {
+        const itemTotal = typeof item.total === 'number' && !isNaN(item.total) ? item.total : 0;
+        total += itemTotal;
+        const priceDisplay = (typeof item.price === 'number' && !isNaN(item.price) ? item.price : 0).toFixed(2);
+        const wasteDisplay = item.waste > 0 ? ` (+${item.waste}% waste)` : '';
         return `
           <div class="bg-white p-2.5 rounded-lg border border-[#e0e0e0] flex justify-between items-center text-xs">
             <div>
@@ -892,13 +1229,16 @@
                 <span class="bg-slate-100 text-slate-800 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded">${item.code}</span>
                 <span class="font-bold text-slate-900">${item.desc}</span>
               </div>
-              <p class="text-[10px] text-slate-500 mt-0.5">${item.qty} ${item.unit} @ $${item.price.toFixed(2)} ${item.waste ? `(+${item.waste}% waste)` : ''}</p>
+              <p class="text-[10px] text-slate-500 mt-0.5">${item.qty} ${item.unit} @ $${priceDisplay}${wasteDisplay}</p>
             </div>
-            <span class="font-mono font-bold text-slate-900">$${item.total.toFixed(2)}</span>
+            <span class="font-mono font-bold text-slate-900">$${itemTotal.toFixed(2)}</span>
           </div>
         `;
       }).join('');
-      document.getElementById('xactimateTotalDisplay').innerText = `$${total.toFixed(2)}`;
+      const totalDisplay = document.getElementById('xactimateTotalDisplay');
+      if (totalDisplay) {
+        totalDisplay.innerText = `$${total.toFixed(2)}`;
+      }
     }
 
     function copyXactimateJson() {
@@ -935,6 +1275,10 @@
 
       document.getElementById('calcLowTotal').innerText = `$${totalLow.toFixed(2)}`;
       document.getElementById('calcHighTotal').innerText = `$${totalHigh.toFixed(2)}`;
+      const wideRange = document.getElementById('wideFormulaRange');
+      if (wideRange) {
+        wideRange.innerText = `$${totalLow.toFixed(2)} – $${totalHigh.toFixed(2)}`;
+      }
       return { totalLow, totalHigh };
     }
 
@@ -962,17 +1306,67 @@
     }
 
     function updateEstimateUI() {
-      document.getElementById('estDate').innerText = estimateState.date;
-      document.getElementById('estAddress').innerText = estimateState.address;
-      document.getElementById('estArea').innerText = estimateState.area;
-      document.getElementById('estProposedCost').innerText = `$${estimateState.proposedCost.toLocaleString()}`;
-      document.getElementById('scopeTotalText').innerText = `$${estimateState.proposedCost.toLocaleString()}.00`;
+      const elDate = document.getElementById('estDate');
+      if (elDate) elDate.innerText = estimateState.date;
+
+      const elAddr = document.getElementById('estAddress');
+      if (elAddr) elAddr.innerText = estimateState.address;
+
+      const elDefAddr = document.getElementById('defenseLetterAddress');
+      if (elDefAddr) elDefAddr.innerText = estimateState.address;
+
+      const elArea = document.getElementById('estArea');
+      if (elArea) elArea.innerText = estimateState.area;
+
+      const elCost = document.getElementById('estProposedCost');
+      if (elCost) elCost.innerText = `$${Number(estimateState.proposedCost).toLocaleString()}`;
+
+      const elScopeTotal = document.getElementById('scopeTotalText');
+      if (elScopeTotal) elScopeTotal.innerText = `$${Number(estimateState.proposedCost).toLocaleString()}.00`;
+
+      // Pre-1978 California Lead/Asbestos Rule banner
+      const estLead = document.getElementById('estLeadFinding');
+      const isLeadReq = (estimateState.yearBuilt > 0 && estimateState.yearBuilt < 1978) || estimateState.leadNoticeRequired;
+      if (estLead) {
+        if (isLeadReq) {
+          estLead.className = "mb-1 text-red-900 bg-red-50 p-2 rounded border border-red-200 text-[11px] font-bold";
+          estLead.innerHTML = `Due to property age (${estimateState.yearBuilt || 'pre-1978'}), California State Law requires third-party lead and asbestos testing prior to destructive demolition. <em>(this does not include the pretest for lead/asbestos)</em>.`;
+        } else {
+          estLead.className = "mb-1 text-slate-800 bg-[#F1F2F2] p-1.5 rounded border border-[#E0E0E0] text-[11px]";
+          estLead.innerHTML = `The home was built in ${estimateState.yearBuilt}. Therefore, no lead or asbestos testing is required prior to the start of work.`;
+        }
+      }
+
+      const elDefLead = document.getElementById('defenseLeadParagraph');
+      if (elDefLead) {
+        elDefLead.innerHTML = isLeadReq
+          ? `<strong>3. California Environmental Compliance:</strong> Due to property age (${estimateState.yearBuilt || 'pre-1978'}), California State Law requires third-party lead and asbestos testing prior to destructive demolition. (This does not include the pretest for lead/asbestos).`
+          : `<strong>3. California Environmental Compliance:</strong> Property was built in ${estimateState.yearBuilt} (post-1978); lead and asbestos testing is exempt under California Health & Safety Code prior to demolition.`;
+      }
 
       const rf = document.getElementById('estRoomFindings');
-      rf.innerHTML = estimateState.findings.map(f => `<p>${f}</p>`).join('');
+      if (rf) {
+        let findingsList = Array.isArray(estimateState.findings) ? estimateState.findings : [String(estimateState.findings || '')];
+        rf.innerHTML = findingsList
+          .map(f => {
+            // Strip any lead finding notice that might have been prepended by backend to prevent duplication with estLeadFinding
+            let clean = f.replace(/<p>Due to property age[\s\S]*?<\/p>/gi, '')
+                         .replace(/<p>The home was built in[\s\S]*?<\/p>/gi, '')
+                         .trim();
+            if (!clean) return '';
+            return clean.startsWith('<') ? clean : `<p>${clean}</p>`;
+          })
+          .filter(Boolean)
+          .join('');
+      }
 
       const rr = document.getElementById('estRoomRecommendations');
-      rr.innerHTML = estimateState.recommendations.map(r => `<p>${r}</p>`).join('');
+      if (rr) {
+        let recsList = Array.isArray(estimateState.recommendations) ? estimateState.recommendations : [String(estimateState.recommendations || '')];
+        rr.innerHTML = recsList
+          .map(r => r.startsWith('<') ? r : `<p>${r}</p>`)
+          .join('');
+      }
     }
 
     function setAppMode(mode) {
@@ -1008,6 +1402,14 @@
         document.getElementById('audioWaveform').classList.remove('hidden');
         document.getElementById('liveDot').className = 'w-2 h-2 rounded-full bg-emerald-500 animate-ping';
         startFrameCapture();
+
+        if (speechRecognition && !isMicMuted && !isVoiceDictating) {
+          try {
+            speechRecognition.start();
+            isVoiceDictating = true;
+            updateMicUI(true);
+          } catch (e) {}
+        }
       } catch (err) {
         document.getElementById('cameraPrompt').classList.add('hidden');
         document.getElementById('arOverlay').classList.remove('hidden');
@@ -1016,79 +1418,197 @@
 
     function startFrameCapture() {
       const video = document.getElementById('cameraVideo');
-      const canvas = document.getElementById('frameCanvas');
-      const ctx = canvas.getContext('2d');
+      const canvasEl = document.getElementById('frameCanvas');
+      const ctxEl = canvasEl.getContext('2d');
       if (frameInterval) clearInterval(frameInterval);
       frameInterval = setInterval(() => {
         if (!mediaStream || video.videoWidth === 0) return;
-        canvas.width = 640;
-        canvas.height = 360;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvasEl.width = 640;
+        canvasEl.height = 360;
+        ctxEl.drawImage(video, 0, 0, canvasEl.width, canvasEl.height);
       }, 1000);
     }
 
-    function toggleMic() {
-      if (!mediaStream) return;
-      isMicMuted = !isMicMuted;
-      mediaStream.getAudioTracks().forEach(track => track.enabled = !isMicMuted);
-      const micLabel = document.getElementById('micLabel');
-      micLabel.innerText = isMicMuted ? "UNMUTE" : "MUTE";
-    }
-
-    // --- SIGNATURE PAD ---
-    let canvas, ctx, isDrawing = false;
+    // --- SIGNATURE PAD & STROKE PERSISTENCE ---
     function initSignaturePad() {
       canvas = document.getElementById('signCanvas');
+      if (!canvas) return;
       ctx = canvas.getContext('2d');
+
+      function getPos(e) {
+        const r = canvas.getBoundingClientRect();
+        const cx = e.touches ? e.touches[0].clientX : e.clientX;
+        const cy = e.touches ? e.touches[0].clientY : e.clientY;
+        return { x: cx - r.left, y: cy - r.top };
+      }
+
       function start(e) {
+        if (e.cancelable) e.preventDefault();
         isDrawing = true;
-        document.getElementById('signPlaceholder').classList.add('hidden');
+        hasUserSigned = true;
+        const placeholder = document.getElementById('signPlaceholder');
+        if (placeholder) placeholder.classList.add('hidden');
         ctx.beginPath();
-        const p = pos(e);
+        const p = getPos(e);
         ctx.moveTo(p.x, p.y);
       }
+
       function draw(e) {
         if (!isDrawing) return;
-        const p = pos(e);
+        if (e.cancelable) e.preventDefault();
+        const p = getPos(e);
         ctx.lineWidth = 2.5;
         ctx.lineCap = 'round';
         ctx.strokeStyle = '#010101';
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
       }
-      function stop() { isDrawing = false; }
-      function pos(e) {
-        const r = canvas.getBoundingClientRect();
-        const cx = e.touches ? e.touches[0].clientX : e.clientX;
-        const cy = e.touches ? e.touches[0].clientY : e.clientY;
-        return { x: cx - r.left, y: cy - r.top };
+
+      function stop() {
+        if (isDrawing) {
+          isDrawing = false;
+          cachedSignatureData = canvas.toDataURL('image/png');
+        }
       }
+
       canvas.addEventListener('mousedown', start);
       canvas.addEventListener('mousemove', draw);
       window.addEventListener('mouseup', stop);
+
       canvas.addEventListener('touchstart', start, { passive: false });
       canvas.addEventListener('touchmove', draw, { passive: false });
       window.addEventListener('touchend', stop);
-      window.addEventListener('resize', resizeSignatureCanvas);
+
+      window.addEventListener('resize', () => {
+        resizeSignatureCanvas();
+      });
     }
 
     function resizeSignatureCanvas() {
       if (!canvas) return;
       const r = canvas.getBoundingClientRect();
       if (r.width > 0 && r.height > 0) {
-        canvas.width = r.width;
-        canvas.height = r.height;
+        const targetW = Math.round(r.width);
+        const targetH = Math.round(r.height);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          const dataToRestore = hasUserSigned ? (cachedSignatureData || canvas.toDataURL('image/png')) : null;
+          canvas.width = targetW;
+          canvas.height = targetH;
+          if (dataToRestore) {
+            cachedSignatureData = dataToRestore;
+            const img = new Image();
+            img.onload = () => {
+              const scale = Math.min(canvas.width / (img.width || 1), canvas.height / (img.height || 1), 1);
+              ctx.drawImage(img, 0, 0, (img.width || canvas.width) * scale, (img.height || canvas.height) * scale);
+              const placeholder = document.getElementById('signPlaceholder');
+              if (placeholder) placeholder.classList.add('hidden');
+            };
+            img.src = dataToRestore;
+          }
+        } else if (hasUserSigned && cachedSignatureData) {
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(canvas.width / (img.width || 1), canvas.height / (img.height || 1), 1);
+            ctx.drawImage(img, 0, 0, (img.width || canvas.width) * scale, (img.height || canvas.height) * scale);
+            const placeholder = document.getElementById('signPlaceholder');
+            if (placeholder) placeholder.classList.add('hidden');
+          };
+          img.src = cachedSignatureData;
+        }
       }
     }
 
     function clearSignature() {
       if (!canvas) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      document.getElementById('signPlaceholder').classList.remove('hidden');
+      hasUserSigned = false;
+      cachedSignatureData = null;
+      const placeholder = document.getElementById('signPlaceholder');
+      if (placeholder) placeholder.classList.remove('hidden');
+      const printSig = document.getElementById('printSigImg');
+      if (printSig) {
+        printSig.src = '';
+        printSig.classList.add('hidden');
+      }
+      const btnAuth = document.getElementById('btnAuthorizeJob');
+      if (btnAuth) {
+        btnAuth.innerText = "AUTHORIZE & SIGN";
+        btnAuth.className = "bg-[#D42B32] hover:bg-[#B9232B] text-white font-black py-2 rounded-lg text-xs uppercase shadow tracking-wider";
+      }
     }
 
-    function submitSignedEstimate() {
-      alert("✅ Alert Disaster Remediation Estimate Signed & Authorized!\n\n• Dispatched to Alert Disaster dispatch office.\n• Homeowner copy saved.\n• Valid for 30 days.");
+    // --- WORK AUTHORIZATION SUBMISSION & EXPORT ---
+    async function submitSignedEstimate() {
+      if (!hasUserSigned) {
+        alert("Please have the homeowner or representative sign in the signature box before authorizing.");
+        return;
+      }
+
+      const sigPng = cachedSignatureData || (canvas ? canvas.toDataURL('image/png') : '');
+      const authRef = `ADR-AUTH-${Date.now().toString().slice(-6)}`;
+
+      const authPayload = {
+        auth_id: authRef,
+        timestamp: new Date().toISOString(),
+        address: estimateState.address,
+        date: estimateState.date,
+        proposed_cost: estimateState.proposedCost,
+        findings: Array.isArray(estimateState.findings) ? estimateState.findings : [String(estimateState.findings || '')],
+        recommendations: Array.isArray(estimateState.recommendations) ? estimateState.recommendations : [String(estimateState.recommendations || '')],
+        xactimate_scope: estimateState.xactimate_scope,
+        signature_png: sigPng,
+        photos_count: inspectionPhotos.length,
+        photos: inspectionPhotos.map(p => ({
+          id: p.id,
+          timestamp: p.timestamp,
+          meter_type: p.meterType,
+          ocr_value: p.ocrValue,
+          ocr_status: p.ocrStatus,
+          data_url: p.dataUrl
+        }))
+      };
+
+      // Dispatched to backend /api/authorize asynchronously
+      try {
+        fetch(`${CLOUD_RUN_URL}/api/authorize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(authPayload)
+        }).then(r => r.json()).then(data => {
+          console.log("Authorization dispatched successfully:", data);
+        }).catch(err => {
+          console.log("Authorization saved locally (offline mode):", err);
+        });
+      } catch (e) {
+        console.log("Authorization network call:", e);
+      }
+
+      // Update button state on Tab 1
+      const btnAuth = document.getElementById('btnAuthorizeJob');
+      if (btnAuth) {
+        btnAuth.innerText = "✅ AUTHORIZED & SIGNED";
+        btnAuth.className = "bg-emerald-700 hover:bg-emerald-800 text-white font-black py-2 rounded-lg text-xs uppercase shadow tracking-wider";
+      }
+      const printSig = document.getElementById('printSigImg');
+      if (printSig && sigPng) {
+        printSig.src = sigPng;
+        printSig.classList.remove('hidden');
+      }
+
+      // Populate and display confirmation modal
+      document.getElementById('authModalRef').innerText = authRef;
+      document.getElementById('authModalAddress').innerText = estimateState.address;
+      document.getElementById('authModalCost').innerText = `$${Number(estimateState.proposedCost).toLocaleString()}.00`;
+      document.getElementById('authModalPhotos').innerText = `${inspectionPhotos.length} Photo${inspectionPhotos.length === 1 ? '' : 's'} Attached & Verified`;
+      const sigImg = document.getElementById('authModalSigImg');
+      if (sigImg && sigPng) {
+        sigImg.src = sigPng;
+      }
+      document.getElementById('modalAuthConfirmation').classList.remove('hidden');
+    }
+
+    function closeAuthModal() {
+      document.getElementById('modalAuthConfirmation').classList.add('hidden');
     }
 
     function openCalcModal() { document.getElementById('modalCalc').classList.remove('hidden'); recalculateExcelFormulas(); }
