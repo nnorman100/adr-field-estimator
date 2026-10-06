@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ADR Estimator">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#D42B32">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <title>Alert Disaster Restoration - Dual Engine Field Estimator</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,6 +36,24 @@
         box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.6), 0 0 0 10px #212529, 0 0 0 12px #32323B;
         position: relative;
         overflow: hidden;
+        transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .app-container.wide-mode {
+        width: 95vw;
+        max-width: 1200px;
+        height: 870px;
+        border-radius: 24px;
+        box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 0 4px #212529;
+      }
+      .desktop-shelf.wide-mode {
+        max-width: 1200px;
+      }
+      .app-container.wide-mode #viewTech {
+        display: grid;
+        grid-template-columns: 1fr 380px;
+      }
+      .app-container.wide-mode .desktop-sidebar-pane {
+        display: flex !important;
       }
     }
     @media (max-width: 639px) {
@@ -132,6 +156,12 @@
       <a href="tel:6614262151" class="bg-[#D42B32] hover:bg-[#B9232B] text-white text-xs font-bold uppercase px-3 py-2 rounded shadow tracking-wider transition">
         (661) 426-2151
       </a>
+      <button onclick="toggleDeviceLayout()" id="btnLayoutToggle" title="Toggle between Phone Simulation and Responsive Widescreen" class="bg-slate-800 hover:bg-black text-white text-xs font-bold uppercase px-3 py-2 rounded shadow transition flex items-center gap-1.5">
+        <span id="layoutIcon">🖥️</span> <span id="layoutLabel">Widescreen</span>
+      </button>
+      <button id="pwaInstallBtn" onclick="installPwa()" class="hidden bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold uppercase px-3 py-2 rounded shadow transition">
+        Install App
+      </button>
       <button onclick="toggleAppMode()" class="bg-[#010101] text-white text-xs font-bold uppercase px-3 py-2 rounded shadow">
         Switch View
       </button>
@@ -180,11 +210,13 @@
     <!-- ================================================= -->
     <!-- VIEW 1: AR WALKTHROUGH & CAMERA ASSESSMENT        -->
     <!-- ================================================= -->
-    <main id="viewTech" class="h-full w-full flex flex-col relative overflow-hidden bg-black pt-14">
+    <main id="viewTech" class="h-full w-full relative overflow-hidden bg-black pt-14">
       
-      <!-- Video Viewport -->
-      <video id="cameraVideo" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video>
-      <canvas id="frameCanvas" class="hidden"></canvas>
+      <!-- Primary Camera & AR Viewport Container -->
+      <div class="h-full w-full relative overflow-hidden flex flex-col flex-1">
+        <!-- Video Viewport -->
+        <video id="cameraVideo" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video>
+        <canvas id="frameCanvas" class="hidden"></canvas>
 
       <!-- Start Camera Prompt -->
       <div id="cameraPrompt" class="absolute inset-0 z-10 bg-[#FFFFFE] text-slate-900 flex flex-col items-center justify-center p-6 text-center">
@@ -312,6 +344,69 @@
           </button>
         </div>
       </footer>
+      </div>
+
+      <!-- Desktop Widescreen Sidebar Pane (visible in wide-mode on PC/Tablets) -->
+      <aside class="desktop-sidebar-pane hidden w-[380px] h-full bg-[#FFFFFE] border-l border-[#e0e0e0] flex-col overflow-y-auto p-4 text-slate-900 z-30">
+        <div class="flex items-center justify-between pb-2 border-b border-[#e0e0e0] mb-3">
+          <span class="text-xs font-black uppercase tracking-wider text-[#D42B32]">Live Telemetry Console</span>
+          <span class="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Gemini Live Active</span>
+        </div>
+
+        <!-- Live Voice Coaching Stream -->
+        <div class="bg-[#F1F2F2] p-3 rounded-xl border border-[#e0e0e0] mb-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2 h-2 rounded-full bg-[#D42B32]"></span>
+            <span class="text-[11px] font-black uppercase text-slate-900">Gemini Live Coach</span>
+          </div>
+          <p id="wideTranscriptDisplay" class="text-xs text-slate-700 leading-relaxed font-editorial italic">
+            "Home built in 2020: No lead/asbestos testing required. Extech meter confirms 99.9% saturation in sink cavity and toe kick. Lower cabinets must be removed from dishwasher to left wall."
+          </p>
+        </div>
+
+        <!-- Verified Moisture Readout Card -->
+        <div class="bg-[#010101] text-white p-3 rounded-xl border border-slate-800 mb-3 space-y-1.5">
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-slate-400 font-bold uppercase text-[9px]">Active Extech Meter:</span>
+            <span id="wideMeterVal" class="text-xs font-mono font-black text-red-400">99.9% SAT</span>
+          </div>
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-slate-400 font-bold uppercase text-[9px]">FLIR Thermal Delta:</span>
+            <span class="text-xs font-mono font-black text-amber-300">-8.4°F Delta T</span>
+          </div>
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-slate-400 font-bold uppercase text-[9px]">Pre-1978 Lead Law:</span>
+            <span id="wideLeadRule" class="text-[10px] font-bold text-emerald-400">Post-1978 (Exempt)</span>
+          </div>
+        </div>
+
+        <!-- Quick Excel Sizing Summary -->
+        <div class="bg-[#F1F2F2] p-3 rounded-xl border border-[#e0e0e0] mb-3 space-y-1">
+          <div class="flex justify-between items-center">
+            <span class="text-[10px] font-black uppercase text-[#4B4B4B]">S500 Pricing Book</span>
+            <button onclick="openCalcModal()" class="text-[9px] font-bold text-[#D42B32] underline uppercase">Edit Values</button>
+          </div>
+          <div class="flex justify-between text-xs pt-1">
+            <span class="text-slate-600 text-[11px]">Formula Range:</span>
+            <span class="font-mono font-bold text-slate-900">$2,219.90 – $2,356.25</span>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-slate-600 text-[11px]">Proposal Tier:</span>
+            <span class="font-mono font-black text-[#D42B32]">$2,499.00</span>
+          </div>
+        </div>
+
+        <!-- Live Photo Reel in Sidebar -->
+        <div class="flex-1 overflow-y-auto">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-[11px] font-bold text-slate-900 uppercase">Field Evidence (OCR Feed)</span>
+            <span id="widePhotoCount" class="text-[9px] bg-slate-200 text-slate-800 font-bold px-1.5 py-0.5 rounded">0 Photos</span>
+          </div>
+          <div id="widePhotoList" class="space-y-2 text-xs text-slate-500 font-editorial">
+            <p class="italic text-[11px]">Photos snapped during the walk will appear here with instant OCR meter readings.</p>
+          </div>
+        </div>
+      </aside>
 
     </main>
 
@@ -699,6 +794,33 @@
           </div>
         </div>
       `).join('');
+      updateWideSidebar();
+    }
+
+    function updateWideSidebar() {
+      const widePhotoList = document.getElementById('widePhotoList');
+      const widePhotoCount = document.getElementById('widePhotoCount');
+      if (widePhotoCount) widePhotoCount.innerText = `${inspectionPhotos.length} Photos`;
+      if (widePhotoList) {
+        if (inspectionPhotos.length === 0) {
+          widePhotoList.innerHTML = `<p class="italic text-[11px] text-slate-500">Photos snapped during the walk will appear here with instant OCR meter readings.</p>`;
+        } else {
+          widePhotoList.innerHTML = inspectionPhotos.slice(-4).reverse().map((p, idx) => `
+            <div class="flex items-center gap-2 bg-[#F1F2F2] p-1.5 rounded-lg border border-[#e0e0e0]">
+              <img src="${p.dataUrl}" class="w-12 h-10 object-cover rounded border border-[#e0e0e0]">
+              <div class="flex-1 text-[10px] leading-tight">
+                <span class="font-bold text-slate-900">${p.meterType}</span>
+                <span class="text-[#D42B32] font-mono font-bold block">${p.ocrValue}</span>
+                <span class="text-emerald-700 text-[9px] font-semibold">${p.ocrStatus}</span>
+              </div>
+            </div>
+          `).join('');
+        }
+      }
+      const wideMeterVal = document.getElementById('wideMeterVal');
+      if (wideMeterVal && inspectionPhotos.length > 0) {
+        wideMeterVal.innerText = inspectionPhotos[inspectionPhotos.length - 1].ocrValue;
+      }
     }
 
     // --- POST-WALK CLOUD RUN AUDIT PIPELINE ---
@@ -971,6 +1093,57 @@
 
     function openCalcModal() { document.getElementById('modalCalc').classList.remove('hidden'); recalculateExcelFormulas(); }
     function closeCalcModal() { document.getElementById('modalCalc').classList.add('hidden'); }
+
+    // --- RESPONSIVE DEVICE LAYOUT TOGGLE (PC & TABLETS) ---
+    function toggleDeviceLayout() {
+      const container = document.querySelector('.app-container');
+      const shelf = document.querySelector('.desktop-shelf');
+      const isWide = container.classList.toggle('wide-mode');
+      if (shelf) shelf.classList.toggle('wide-mode', isWide);
+      
+      const icon = document.getElementById('layoutIcon');
+      const label = document.getElementById('layoutLabel');
+      if (icon && label) {
+        icon.innerText = isWide ? '📱' : '🖥️';
+        label.innerText = isWide ? 'Phone View' : 'Widescreen';
+      }
+      if (currentMode === 'client') {
+        resizeSignatureCanvas();
+      }
+    }
+
+    // --- PWA LIFECYCLE & INSTALLATION ---
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      const pwaBtn = document.getElementById('pwaInstallBtn');
+      if (pwaBtn) pwaBtn.classList.remove('hidden');
+    });
+
+    function installPwa() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choice) => {
+          if (choice.outcome === 'accepted') {
+            console.log('User installed ADR Estimator PWA');
+          }
+          deferredPrompt = null;
+          const pwaBtn = document.getElementById('pwaInstallBtn');
+          if (pwaBtn) pwaBtn.classList.add('hidden');
+        });
+      } else {
+        alert("To install as an app on your device:\n\n• On iPhone / iPad: Tap the Safari Share button, then scroll and tap 'Add to Home Screen'.\n• On Android: Tap Chrome menu (3 dots), then 'Install app'.\n• On Windows / Mac: Click the Install icon in the browser address bar.");
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => console.log('ADR PWA ServiceWorker active:', reg.scope))
+          .catch(err => console.log('SW registration note:', err));
+      });
+    }
   </script>
 </body>
 </html>

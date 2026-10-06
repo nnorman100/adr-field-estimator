@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#010101"/>
+  <circle cx="256" cy="256" r="210" fill="#141414" stroke="#D42B32" stroke-width="12"/>
+  <!-- Disaster Flame / Water Droplet Icon -->
+  <path d="M256 90 C256 90 350 200 350 286 C350 340 308 384 256 384 C204 384 162 340 162 286 C162 200 256 90 256 90 Z" fill="#D42B32"/>
+  <path d="M256 160 C256 160 310 230 310 286 C310 316 286 340 256 340 C226 340 202 316 202 286 C202 230 256 160 256 160 Z" fill="#FF4D4D" opacity="0.8"/>
+  <circle cx="256" cy="300" r="26" fill="#FFFFFF"/>
+  <text x="256" y="445" font-family="-apple-system, system-ui, sans-serif" font-weight="900" font-size="44" fill="#FFFFFF" text-anchor="middle" letter-spacing="4">ALERT</text>
+  <text x="256" y="480" font-family="-apple-system, system-ui, sans-serif" font-weight="700" font-size="20" fill="#D42B32" text-anchor="middle" letter-spacing="6">RESTORATION</text>
+</svg>
