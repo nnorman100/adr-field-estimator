@@ -65,7 +65,8 @@ async function api(path,options={}){
   const timer=setTimeout(()=>controller.abort(),115000);
   try{
     const response=await fetch(path,{...options,cache:'no-store',signal:controller.signal,headers:{...options.headers,Authorization:'Bearer '+token,...(state.session.workspaces_enabled?{'X-ADR-Workspace-Protocol':'1'}:{})}});
-    if(!response.ok){const payload=await response.json().catch(()=>({}));const e=Error(typeof payload.detail==='string'?payload.detail:'The request could not be completed. Retry.');e.status=response.status;e.retryAfter=Number(response.headers.get('Retry-After')||0);if((e.status===403||e.status===404)&&window.WorkspaceUI?.enabled())queueMicrotask(()=>WorkspaceUI.refresh().catch(()=>{}));throw e;}
+    if(!response.ok){const payload=await response.json().catch(()=>({})),invalid=Array.isArray(payload.detail)&&typeof payload.detail[0]?.msg==='string'?payload.detail[0].msg.replace(/^Value error, /,''):'';
+      const e=Error(typeof payload.detail==='string'?payload.detail:invalid||'The request could not be completed. Retry.');e.status=response.status;e.retryAfter=Number(response.headers.get('Retry-After')||0);if((e.status===403||e.status===404)&&window.WorkspaceUI?.enabled())queueMicrotask(()=>WorkspaceUI.refresh().catch(()=>{}));throw e;}
     return response;
   }finally{clearTimeout(timer);}
 }

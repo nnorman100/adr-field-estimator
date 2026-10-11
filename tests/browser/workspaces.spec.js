@@ -162,3 +162,9 @@ test('email sign-in errors share one message and do not reveal accounts',async({
   await signIn(email,'correct-password');await expect(page.locator('#workspaceDashboard')).toBeVisible();await expect(page.locator('#authPanel')).toBeHidden();
   await expect(page.locator('#dashboardTeam')).toBeVisible();
 });
+
+test('server validation errors show the field message instead of a generic retry',async({page})=>{
+  await start(page,'owner');await page.locator('#dashboardProfile').click();
+  await page.locator('input[name=name]').fill('Visit www.evil.example');await page.getByRole('button',{name:'Save company details'}).click();
+  await expect(page.locator('#message')).toHaveText("Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.");
+});
