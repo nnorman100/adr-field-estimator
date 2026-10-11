@@ -1,8 +1,12 @@
 """Credential handling and boundaries for the normal-sign-in release verifier."""
 import argparse
 import io
+import subprocess
+import sys
 import pytest
 from scripts import verify_live_release as verifier
+from scripts import verify_repairs as repairs
+from scripts import verify_review_fixes as review_fixes
 
 
 def test_existing_browser_token_is_authenticated_not_decoded(monkeypatch, capsys):
@@ -26,7 +30,7 @@ def test_missing_or_unbounded_token_never_reaches_backend(monkeypatch, token):
 
 def test_token_from_other_project_is_rejected(monkeypatch):
     monkeypatch.setattr(verifier, 'check', lambda *args: dict(project='other', uid='staff', live_protocol_version=2))
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeError):
         verifier.staff_session(io.StringIO('memory-token\n'))
 
 
@@ -53,7 +57,7 @@ def test_synthetic_cleanup_checks_owner_before_deleting(monkeypatch):
         status_code=404
     monkeypatch.setattr(verifier.requests, 'get', lambda path, **kwargs: Missing() if '/_memberships/' in path or '/_workspace_' in path else Other())
     monkeypatch.setattr(verifier.requests, 'delete', lambda *args, **kwargs: pytest.fail('Wrong owner deleted'))
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeError):
         verifier.cleanup_synthetic('staff', ['ADR-INS-' + 'a' * 32], [])
 
 
@@ -101,11 +105,12 @@ def test_synthetic_cleanup_accepts_app_uuid_without_broadening_paths(collection,
 
 def test_invalid_cleanup_target_is_rejected_before_admin_calls(monkeypatch):
     monkeypatch.setattr(verifier, 'access_token', lambda: pytest.fail('Invalid path reached admin lookup'))
-    with pytest.raises(AssertionError, match='Unexpected synthetic identifier'):
+    with pytest.raises(RuntimeError, match='Unexpected synthetic identifier'):
         verifier.cleanup_synthetic('staff', [], ['ADR-AUTH-../../other'])
 
 
 def test_only_read_only_scope_extraction_retries_one_server_timeout(monkeypatch):
+    monkeypatch.setattr(verifier, 'SERVICE', verifier.STAGED)
     calls = []
     waits = []
     class Response:
@@ -123,6 +128,7 @@ def test_only_read_only_scope_extraction_retries_one_server_timeout(monkeypatch)
 
 
 def test_write_timeout_is_not_automatically_replayed(monkeypatch):
+    monkeypatch.setattr(verifier, 'SERVICE', verifier.STAGED)
     calls = []
     class Response:
         status_code = 504
@@ -143,4 +149,48 @@ def test_company_sidecar_cleanup_rejects_foreign_tenant_before_deletion(monkeypa
         return Response({'company_id':{'stringValue':'adr'}}) if '/_memberships/' in path else Response({'company_id':{'stringValue':'another-company'},'creator_uid':{'stringValue':'staff'}})
     monkeypatch.setattr(verifier.requests,'get',get)
     monkeypatch.setattr(verifier.requests,'delete',lambda *args,**kwargs:pytest.fail('Foreign tenant deleted'))
-    with pytest.raises(AssertionError):verifier.synthetic_sidecars({},'staff',['ADR-INS-'+'a'*32],[])
+    with pytest.raises(RuntimeError):verifier.synthetic_sidecars({},'staff',['ADR-INS-'+'a'*32],[])
+
+
+@pytest.mark.parametrize('module,argv,entry', [
+    (verifier, ['--public'], 'public'),
+    (verifier, ['--token-stdin'], 'main'),
+    (repairs, [], 'main'),
+    (review_fixes, [], 'main'),
+])
+def test_verifiers_refuse_to_run_without_an_explicit_target(monkeypatch, module, argv, entry):
+    monkeypatch.setattr(module, entry, lambda *args: pytest.fail('Ran against a default target'))
+    monkeypatch.setattr(sys, 'argv', ['verifier'] + argv)
+    with pytest.raises(SystemExit) as exited:
+        module.cli()
+    assert exited.value.code != 0
+
+
+def test_repair_verifiers_send_synthetic_tokens_only_to_the_dedicated_service():
+    assert repairs.service_url(verifier.PRODUCTION) == verifier.PRODUCTION
+    assert repairs.service_url(verifier.STAGED) == verifier.STAGED
+    for untrusted in ('https://untrusted.example', verifier.PRODUCTION + '.evil.example', 'http://alert-disaster-field-estimator-545776254070.us-west2.run.app'):
+        with pytest.raises(argparse.ArgumentTypeError):
+            repairs.service_url(untrusted)
+
+
+def test_owner_guard_survives_optimized_python():
+    # python -O strips assert statements, so a deletion guard must be an explicit raise.
+    code = """
+import sys
+from scripts import verify_live_release as v
+class Other:
+    status_code = 200
+    def json(self): return {'fields': {'owner_uid': {'stringValue': 'someone-else'}}, 'updateTime': 't'}
+class Missing:
+    status_code = 404
+v.access_token = lambda: 'admin-in-memory'
+v.requests.get = lambda path, **kw: Missing() if '/_memberships/' in path or '/_workspace_' in path else Other()
+def deleted(*args, **kw): sys.exit(3)
+v.requests.delete = deleted
+try: v.cleanup_synthetic('staff', ['ADR-INS-' + 'a' * 32], [])
+except RuntimeError: sys.exit(0)
+sys.exit(4)
+"""
+    result = subprocess.run([sys.executable, '-O', '-c', code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

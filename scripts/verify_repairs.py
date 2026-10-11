@@ -1,15 +1,58 @@
 """Paid synthetic acceptance checks on the dedicated project; no credentials are logged."""
-import asyncio, base64, io, json, sys, time
+import argparse, asyncio, base64, io, json, re, subprocess, sys, time
 from pathlib import Path
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
 import requests
 from PIL import Image, ImageDraw
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
-from scripts.verify_migration import admin, session, PROJECT, URL
 
-SERVICE='https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
+PROJECT='alert-disaster-field-2026'
+SERVICE_ACCOUNT=f'adr-runtime@{PROJECT}.iam.gserviceaccount.com'
+SDK=Path.home()/'AppData/Local/Google/Cloud SDK/google-cloud-sdk/bin/gcloud.cmd'
+URL=f'https://{PROJECT}.web.app'
+STAFF_EMAIL='nathanaelcnorman@gmail.com'
+SERVICE=None
 PREFIX='adr-repair-smoke-'
+
+def service_url(value):
+    # Synthetic tokens go to the target, so only the dedicated service or its tagged revisions qualify.
+    if not re.fullmatch(r'https://([a-z0-9-]+---)?alert-disaster-field-estimator-(545776254070\.us-west2|ecyxym3iqa-wl\.a)\.run\.app',value):
+        raise argparse.ArgumentTypeError('Use only the dedicated production or tagged backend URL.')
+    return value
+
+def target(description):
+    parser=argparse.ArgumentParser(description=description)
+    parser.add_argument('service',type=service_url,help='Dedicated backend URL; there is no default.')
+    return parser.parse_args().service
+
+def access_token():
+    return subprocess.check_output([str(SDK),'auth','print-access-token',f'--project={PROJECT}',f'--billing-project={PROJECT}'],text=True,stderr=subprocess.DEVNULL).strip()
+
+def admin(method,url,body=None):
+    response=requests.request(method,url,json=body,headers={'Authorization':f'Bearer {access_token()}','x-goog-user-project':PROJECT},timeout=90)
+    if not response.ok:
+        # Never print auth payloads or tokens on an exception.
+        raise RuntimeError(f'Admin request failed: {response.status_code} {response.json().get("error",{}).get("message","")}')
+    return response.json() if response.content else {}
+
+def session(uid,api_key,approved=True):
+    now=int(time.time())
+    payload={'iss':SERVICE_ACCOUNT,'sub':SERVICE_ACCOUNT,
+             'aud':'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+             'iat':now,'exp':now+600,'uid':uid,
+             'claims':{'email':STAFF_EMAIL if approved else 'unapproved@example.invalid','email_verified':True}}
+    for attempt in range(36):
+        try:
+            signed=admin('POST',f'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{SERVICE_ACCOUNT}:signJwt',{'payload':json.dumps(payload)})['signedJwt']
+            break
+        except RuntimeError as error:
+            if '403' not in str(error) or attempt==35: raise
+            if attempt%6==5: print('Waiting for the temporary synthetic-token permission to propagate...',flush=True)
+            time.sleep(5)
+    result=requests.post(f'https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key={api_key}',json={'token':signed,'returnSecureToken':True},timeout=45)
+    if not result.ok: raise RuntimeError(f'Synthetic session failed: {result.status_code}')
+    return result.json()['idToken']
 
 def image(signature=False):
     im=Image.new('RGB',(300,600) if not signature else (400,180),'white')
@@ -113,13 +156,18 @@ def main():
     finally:
         for collection,ids in [('authorizations',auths),('inspections',records),('_limits',created),('_live_sessions',created)]:
             for identifier in ids:
-                response=requests.delete(f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/{collection}/{identifier}',headers={'Authorization':'Bearer '+__import__('scripts.verify_migration',fromlist=['access_token']).access_token(),'x-goog-user-project':PROJECT},timeout=30)
+                response=requests.delete(f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/{collection}/{identifier}',headers={'Authorization':'Bearer '+access_token(),'x-goog-user-project':PROJECT},timeout=30)
                 assert response.status_code in (200,404),f'Cleanup {collection} failed'
         from urllib.parse import quote
         for uid in created:
-            assert uid.startswith(PREFIX)
+            if not uid.startswith(PREFIX): raise RuntimeError('Unsafe synthetic cleanup target')
             for item in admin('GET',f'https://storage.googleapis.com/storage/v1/b/{PROJECT}-evidence/o?prefix=users/{uid}/').get('items',[]):admin('DELETE',f'https://storage.googleapis.com/storage/v1/b/{PROJECT}-evidence/o/{quote(item["name"],safe="")}')
             admin('POST',f'https://identitytoolkit.googleapis.com/v1/projects/{PROJECT}/accounts:delete',{'localId':uid})
         print('Synthetic repair records, accounts, quotas, leases and evidence removed',flush=True)
 
-if __name__=='__main__':main()
+def cli():
+    global SERVICE
+    SERVICE=target(__doc__)
+    main()
+
+if __name__=='__main__':cli()
