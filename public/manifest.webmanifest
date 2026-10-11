@@ -4,7 +4,7 @@
   "description": "Multimodal AI Field Walkthrough & Insurance Claims Estimator for Alert Disaster Restoration",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#010101",
+  "background_color": "#FFFFFE",
   "theme_color": "#D42B32",
   "orientation": "any",
   "categories": ["business", "productivity", "utilities"],
