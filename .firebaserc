@@ -1,12 +1,12 @@
 {
   "projects": {
-    "default": "mitigation-project"
+    "default": "alert-disaster-field-2026"
   },
   "targets": {
-    "mitigation-project": {
+    "alert-disaster-field-2026": {
       "hosting": {
         "alert-disaster": [
-          "alert-disaster-live"
+          "alert-disaster-field-2026"
         ]
       }
     }

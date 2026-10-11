@@ -1,0 +1,11 @@
+{
+  "project": "alert-disaster-field-2026",
+  "backend_revision": "alert-disaster-field-estimator-00006-yer",
+  "backend_image": "us-west2-docker.pkg.dev/alert-disaster-field-2026/cloud-run-source-deploy/alert-disaster-field-estimator@sha256:4686bf61ec94783151ac2c6a0cc434720f76ba2ca18ede4a3ab42bbf810f8b33",
+  "frontend_build": "live-reliable-20261007-1",
+  "hosting_version": "0350de7b1566a1b5",
+  "hosting_release": "1791398669068000",
+  "source_baseline": "baseline/",
+  "migration_manifest": "migration-applied.json",
+  "note": "Drain workspace writes before reverting authorization mode and matched assets. Retain ignored access sidecars; reconcile new company/staff jobs before reactivation."
+}

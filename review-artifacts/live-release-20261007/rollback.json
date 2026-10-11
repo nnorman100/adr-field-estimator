@@ -1,0 +1,24 @@
+{
+  "checked_at_utc": "2026-10-07T18:06:06Z",
+  "project": "alert-disaster-field-2026",
+  "backend": {
+    "service": "alert-disaster-field-estimator",
+    "region": "us-west2",
+    "revision": "alert-disaster-field-estimator-00005-htr",
+    "traffic_percent": 100
+  },
+  "hosting": {
+    "site": "alert-disaster-field-2026",
+    "target": "alert-disaster",
+    "version": "60724bb918512475",
+    "release": "1791378004044000",
+    "frontend_release": "ui-20261006-6"
+  },
+  "staged": {
+    "backend_revision": "alert-disaster-field-estimator-00006-yer",
+    "traffic_percent": 0,
+    "tag_url": "https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app",
+    "frontend_release": "live-reliable-20261007-1"
+  },
+  "note": "Retain this matched backend/Hosting pair. Authenticated staged verification is pending; no production cutover was performed."
+}

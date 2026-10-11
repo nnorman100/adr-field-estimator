@@ -1,0 +1,146 @@
+﻿[
+  {
+    "density": "SPARSE_ALL",
+    "fields": [
+      {
+        "fieldPath": "company_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "kind",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "updated_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "name": "projects/alert-disaster-field-2026/databases/(default)/collectionGroups/_workspace_jobs/indexes/CICAgJim14AK",
+    "queryScope": "COLLECTION",
+    "state": "READY"
+  },
+  {
+    "density": "SPARSE_ALL",
+    "fields": [
+      {
+        "fieldPath": "owner_uid",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "updated_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "name": "projects/alert-disaster-field-2026/databases/(default)/collectionGroups/inspections/indexes/CICAgOjXh4EK",
+    "queryScope": "COLLECTION",
+    "state": "READY"
+  },
+  {
+    "density": "SPARSE_ALL",
+    "fields": [
+      {
+        "fieldPath": "company_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "auth_exists",
+        "order": "ASCENDING"
+      },
+      {
+        "arrayConfig": "CONTAINS",
+        "fieldPath": "accessible_estimator_uids"
+      },
+      {
+        "fieldPath": "signed_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "name": "projects/alert-disaster-field-2026/databases/(default)/collectionGroups/_workspace_jobs/indexes/CICAgJjF9oIK",
+    "queryScope": "COLLECTION",
+    "state": "READY"
+  },
+  {
+    "density": "SPARSE_ALL",
+    "fields": [
+      {
+        "fieldPath": "owner_uid",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "created_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "name": "projects/alert-disaster-field-2026/databases/(default)/collectionGroups/authorizations/indexes/CICAgJiUpoMK",
+    "queryScope": "COLLECTION",
+    "state": "READY"
+  },
+  {
+    "density": "SPARSE_ALL",
+    "fields": [
+      {
+        "fieldPath": "company_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "auth_exists",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "signed_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "name": "projects/alert-disaster-field-2026/databases/(default)/collectionGroups/_workspace_jobs/indexes/CICAgOi3kJAK",
+    "queryScope": "COLLECTION",
+    "state": "READY"
+  },
+  {
+    "density": "SPARSE_ALL",
+    "fields": [
+      {
+        "fieldPath": "company_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "kind",
+        "order": "ASCENDING"
+      },
+      {
+        "arrayConfig": "CONTAINS",
+        "fieldPath": "accessible_estimator_uids"
+      },
+      {
+        "fieldPath": "updated_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "name": "projects/alert-disaster-field-2026/databases/(default)/collectionGroups/_workspace_jobs/indexes/CICAgJjmiJEK",
+    "queryScope": "COLLECTION",
+    "state": "READY"
+  }
+]

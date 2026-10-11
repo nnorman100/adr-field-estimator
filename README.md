@@ -1,129 +1,83 @@
-# Alert Disaster Restoration - Field Estimator & AI Claims Assistant
+﻿# Alert Disaster Restoration field estimator
 
-[![Hosting](https://img.shields.io/badge/Firebase_Hosting-alert--disaster--live-orange?logo=firebase)](https://alert-disaster-live.web.app)
-[![Cloud Run](https://img.shields.io/badge/Google_Cloud_Run-alert--disaster--field--estimator-blue?logo=googlecloud)](https://alert-disaster-field-estimator-219826144890.us-west2.run.app)
-[![GCP Project](https://img.shields.io/badge/GCP_Project-mitigation--project-green?logo=google)](https://console.firebase.google.com/project/mitigation-project)
-[![Branding](https://img.shields.io/badge/Alert_Disaster-CSLB_%23950983-red)](https://alertdisaster.com/)
+An owner-private mobile inspection app for ADR technicians in Bakersfield and Kern County. Open [the dedicated app](https://alert-disaster-field-2026.web.app) and sign in with the approved Google account, initially `nathanaelcnorman@gmail.com`.
 
-A multimodal, dual-engine mobile web application and cloud microservice engineered for field technicians and sales estimators at **Alert Disaster Restoration** in Bakersfield, CA.
+Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical app redirects here. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md).
 
----
+## Company dashboards — staged release
 
-## 🚀 Live Environments
+The new build adds isolated company workspaces with superadmin, owner, estimator and office roles. Owners manage their company and team; estimators see jobs they create or are assigned; office staff coordinate jobs and view documents. Google sign-in uses private server-checked memberships. Invitations require explicit acceptance by the matching Google account. The initial ADR owner also has a separate superadmin role.
 
-| Component | Target URL | Description |
-| :--- | :--- | :--- |
-| **Frontend Web App** | [https://alert-disaster-live.web.app](https://alert-disaster-live.web.app) | iPhone-optimized edge-to-edge web app with live camera, audio coaching, and document sign-on-glass. |
-| **Backend Microservice** | [https://alert-disaster-field-estimator-219826144890.us-west2.run.app](https://alert-disaster-field-estimator-219826144890.us-west2.run.app) | FastAPI / Cloud Run backend running Gemini 3.8 / 2.5 Pro for high-res Extech meter OCR and claim synthesis. |
-| **Health Check** | [https://alert-disaster-field-estimator-219826144890.us-west2.run.app/health](https://alert-disaster-field-estimator-219826144890.us-west2.run.app/health) | Microservice status, project attribution, and region validation. |
+Production remains on the existing Live release while the workspace backend is staged. Real Resend delivery and authenticated role workflows must pass before activation. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
 
----
+## Inspection workflow
 
-## 🏗️ Dual-Engine Architecture
+Use the persistent **Property / Walkthrough / Evidence / Review** navigation to move between tasks. **Jobs** opens drafts and signed agreements; **Account** contains sign-out and company contact details. Draft saving and **Finish & review** remain available at the bottom of the screen. Scope confirmation is required before document generation.
 
-```mermaid
-flowchart TD
-    subgraph STAGE 1 ["Stage 1: Real-Time Field Walkthrough (Gemini Live)"]
-        Cam["1 FPS Video Stream"] --> Live["Gemini Live (WSS)"]
-        Mic["16kHz PCM Audio Stream"] --> Live
-        Live --> Ear["Voice Guidance (Bluetooth Earpiece)"]
-        Tech["Tap PHOTO Button"] --> Still["High-Res 12MP/48MP Still"]
-    end
+1. Enter the address, confirmed year built, rooms, measured demolition areas, water categories, waste, cabinetry, equipment, drying days and additional labor. Add applicable Matterport, dump-truck, decontamination, power-distribution and wood-floor drying charges from the sheet. Select crawl-space, granite and water-heater flags where applicable. Work is described as proposed unless the technician explicitly records completion.
+2. Open **Walkthrough**, choose the current photo room and start the camera/microphone for real Gemini Live coaching. The Cloud Run relay authenticates the Firebase user and checks inspection ownership before connecting with server ADC. It sends 16 kHz mono PCM and aspect-preserving JPEG at 1 FPS; responses play at 24 kHz. Technician and assistant transcripts remain separate. Active sessions reveal Stop/Mute controls; optional color emulation is under Camera options, is explicitly labeled and does not produce thermal evidence.
+3. Capture a supported native still or use Camera / upload. Originals, dimensions, room and capture time are retained privately. Pending, failed and non-meter OCR remain unverified. Recognition can be retried.
+4. Confirm every pricing input and select **Finish & review**. Capture stops. The server reads the saved revision and evidence, validates AI output, applies deterministic pricing and mandatory ADR wording, and produces four documents. Provider failures show a retry error and cannot create a signable fallback.
+5. Review the proposal's low–high estimate range, itemized claim, scope defense letter and photo log. Unpriced work or pending recognition blocks signing. Edits invalidate the audit and signature. Draw a signature and confirm document review; success is shown only after a durable server receipt.
+6. Open **Jobs → Drafts & signed jobs** to recover a draft or restore the immutable signed agreement, all four documents, signature and evidence. Recent records appear first; use **Load older drafts** or **Load older signed jobs** for additional pages. A confirmed agreement stays saved if evidence display fails; **Retry loading saved evidence** reloads its display without signing again. **Export** contains JSON copy/download and printing. Mobile claims use readable line-item cards; desktop and printed claims retain the table. Export uses ADR internal codes without ESX compatibility claims. Saving does not dispatch technicians or send email.
 
-    subgraph CLOUD_RUN ["Cloud Run Microservice (us-west2)"]
-        Still --> OcrApi["POST /api/ocr-meter"]
-        OcrApi --> VisionPro["Gemini Pro Vision OCR"]
-        VisionPro --> HudBadge["Instant HUD Reading Confirmation"]
-    end
+## Pricing and evidence
 
-    subgraph STAGE 2 ["Stage 2: Post-Walk Claims & Pricing Engine (Gemini 3.8 Pro)"]
-        FinishBtn["Tap FINISH & AUDIT"] --> AuditApi["POST /api/audit"]
-        PricingRules["Alert Disaster Pricing Book & Formulas"] --> AuditApi
-        AuditApi --> Doc1["1. Official ADR Proposal (Sign-on-Glass)"]
-        AuditApi --> Doc2["2. Xactimate Line Items (JSON / ESX)"]
-        AuditApi --> Doc3["3. IICRC S500/S520 Defense Letter"]
-        AuditApi --> Doc4["4. Verified Photo Moisture Audit Log"]
-    end
+`backend/claims.py` calculates money with Decimal and cent rounding. The populated default job charges total $1,180.20 and appear exactly once. Rates and the estimate-range formulas are traced to the user-supplied workbook in [pricing source notes](docs/pricing-source.md). Three fans and one dehumidifier for three days cost $567.00. Waste increases applicable demolition item totals. Added labor uses the workbook's $47.46/hr formula even for an after-hours loss, as confirmed by the user; after-hours estimates add $200 in job charges and apply the sheet's labor/material factor.
+
+The customer proposal shows the sheet-derived low–high estimate, with itemized base-rate charges shown separately as its calculation detail. ADR package tiers are not in the supplied sheet and are no longer accepted for new audits. Models cannot supply prices, override totals or remove conditional clauses. AI summaries and suggestions are labeled for technician review; suggestions do not become observed evidence or authorized work.
+
+## Private drafts and updates
+
+Changes autosave to a user-specific IndexedDB queue and synchronize to Firestore when online. Photos upload individually. Reopening a draft merges evidence added on other devices and stores downloaded originals privately on this device for offline recovery and conflict copies. If an original cannot be fetched, retry online before copying that draft. Offline drafts can be edited; AI and signing require connectivity. Conflicts return 409 and preserve local work until the user restores the saved revision or creates a separate inspection. Logout stops resources and clears local drafts; retained cloud drafts and agreements are not automatically deleted.
+
+The worker caches versioned app assets and public Firebase initialization configuration. Authenticated APIs and evidence are excluded. Navigation is network-first, and the app shell is served with `Cache-Control: no-store` so a browser refresh can pick up a release. The app checks for updates when brought to the foreground and prompts before activation, preserving drafts. The **Account** menu shows the installed app version. If an older screen persists, save the draft, open [the current field app with a fresh URL](https://alert-disaster-field-2026.web.app/?v=ui-20261006-6), and use **Save & update** if prompted. `alertdisaster.com` is the separate public company website and is not this field app. Physical iPhone offline launch, Bluetooth routing, interruption and conversational latency remain acceptance checks until the guided device test passes.
+
+## ADR branding
+
+The field app follows [ADR's official website](https://alertdisaster.com/): the official logo, red `#D42B32`, white and gray surfaces, Lato interface typography, and serif document text. EB Garamond supplies the document face as an openly licensed alternative to the site's commercial Garamond Premier Pro. Logo and fonts are hosted locally and included in the offline asset cache; font licenses are in `public/fonts/`. The live site supplied the primary phone `(661) 426-2151`, Bakersfield office address and service locations, verified October 6, 2026.
+
+## Code and verification
+
+| Location | Responsibility |
+| --- | --- |
+| `public/app.js`, `core.js`, `audio-worklet.js` | Lifecycle, safe DOM, offline recovery, camera and audio |
+| `public/app.css`, `sw.js` | Responsive/print layout and app updates |
+| `index.html`, `public/index.html` | Identical root and hosting HTML |
+| `backend/contracts.py`, `claims.py` | Typed contracts, rates and four documents |
+| `backend/inspection_store.py`, `job_store.py` | Revision transactions, owner checks, private evidence, retries and quotas |
+| `backend/main.py` | Authenticated REST and Live relay |
+| `tests/` | Synthetic behavioral tests; browser harness never ships |
+| `scripts/verify_repairs.py` | Real dedicated infrastructure acceptance with scoped synthetic cleanup |
+
+```powershell
+python -m pip install -r backend/requirements.txt pytest httpx
+python -m pytest tests -q -p no:cacheprovider
+npm ci
+npm test
+npx playwright install chromium webkit
+npm run test:browser
 ```
 
-### 1. Stage 1: Real-Time Multimodal Walkthrough (`gemini-live`)
-- **Protocol**: Bidirectional WebSocket (`WSS`) streaming 16kHz PCM audio and 1 FPS camera video frames.
-- **HUD Diagnostics**:
-  - Live Extech MO290 moisture meter overlay (`99.9% SAT`, `Elevated`, `Dry Standard`).
-  - FLIR thermal camera emulation mode (high-contrast gradient filter highlighting evaporative cooling differentials).
-  - High-res photo capture pipeline with asynchronous background OCR.
+The browser suite serves production code with fake cloud adapters over temporary local TLS. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
 
-### 2. Stage 2: Post-Walk Deep Audit & Document Generation (`gemini-3.8-pro`)
-- **Protocol**: Cloud Run REST API (`/api/audit`) with structured JSON schema output.
-- **Alert Disaster Pricing Book Engine**:
-  - **Square Foot Demolition Rates**: Cat 1 Unfinished ($1.21/SF), Cat 1 Finished ($2.78/SF), Cat 2 Unfinished ($1.52/SF), Cat 2 Finished ($2.89/SF), Cat 3/Mold Unfinished ($2.48/SF), Cat 3/Mold Finished ($8.39/SF).
-  - **Fixed Job Baseline Charges**: $1,180.20 total (Emergency Call $133.95, Monitoring 13.25 hrs $628.85, Haul Debris $159.53, Air Scrubber $74.75, HEPA Filter $183.12).
-  - **Equipment Rates**: Air Movers ($29.25/day), Commercial LGR Dehumidifiers ($101.25/day) = $567.00 for standard S500 3-day drying run.
-  - **Labor Rates**: Regular ($47.46/hr) vs. After-Hours ($83.45/hr).
-- **Four Dedicated Post-Walk Tabs**:
-  1. **Official ADR Remediation Proposal**: Alert letterhead, Matthew Myers authorization, California pre-1978 lead/asbestos notices, and e-signature pad.
-  2. **Xactimate Scope**: Code list (`WTRDRY`, `WTRRMV`, `WTRDHM`, `WTRDRYM`, `APPANTI`), unit pricing, waste factor adjustments, and clipboard export.
-  3. **IICRC Claim Defense Letter**: Formal adjuster report citing IICRC S500 §12.2.3, §13.5.4, and S520 §14.4.
-  4. **Photo Moisture Audit Log**: Timestamped photo gallery with OCR-verified moisture readings.
+Use [the operating guide](docs/firebase-isolation.md) for production deployment and rollback. Never run a blanket Firebase deploy. Deploy the compatible backend first, then only `hosting:alert-disaster` in the dedicated project.
 
----
+## Voice-driven scope entry and Live reliability — deployed, acceptance pending
 
-## 📁 Repository Structure
+The current source adds **Fill scope from walkthrough** in Walkthrough and Property & scope. Describe explicit room names, water categories, measured demolition areas in square feet, and job-total equipment counts/days. Requesting fill stops capture, saves the draft, and uses the configured audit model to extract suggested values from technician transcript/notes. Assistant guidance is excluded. This is a review action after speaking, rather than automatic form mutation on each Live turn.
 
-```
-charming-volta/
-├── AGENTS.md                  # Autonomous agent guidelines & domain rules
-├── README.md                  # System documentation & deployment guide
-├── firebase.json              # Firebase Hosting configuration (target: alert-disaster)
-├── .firebaserc                # Firebase project targets mapping (mitigation-project)
-├── index.html                 # Root mirror of frontend application
-├── public/                    # Production static build directory
-│   ├── index.html             # Main single-page web app with dual-engine UI
-│   └── ar_preview.jpg         # AR inspection preview fallback asset
-└── backend/                   # Cloud Run microservice
-    ├── Dockerfile             # Container definition for Cloud Run
-    ├── main.py                # FastAPI endpoints (/api/ocr-meter, /api/audit)
-    └── requirements.txt       # Python dependencies (fastapi, uvicorn, google-genai)
-```
+Each proposed change displays its previous value, new value and supporting technician quote. Select the changes to apply or dismiss them; new-room changes are selected together. Unstated fields keep their existing form defaults and need technician review. Address, year, flags, equipment, labor and sheet-charge quantities are supported; prices, signatures, readings and work-completion status are not model-editable. Unknown/conflicting inputs require clarification. Accepted edits invalidate documents/signatures and reset scope confirmation. Save and confirm the scope before Finish & review.
 
----
+The endpoint is authenticated, owner/revision checked, bounded by the existing REST deadline and limited to six extraction requests per minute per user. It proposes values without writing the saved inspection. Deploy the compatible backend before the frontend through the dedicated project instructions. Authenticated staged extraction, Live recovery and reviewed form filling passed with synthetic statements. The feature is published, and authenticated production API/Live/browser checks passed, including signing, reopening and tracked synthetic cleanup. One earlier scope request reached the 55-second deadline; the complete retry passed. Physical iPhone dictation and Bluetooth acceptance remain open.
 
-## 🛠️ Local Development & Deployment
 
-### 1. Run Backend Locally
-```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8080
-```
+The Live reliability release uses protocol 2, named Charon voice, 64k/32k context compression,
+private owner/job-bound checkpoints and explicit Resume after offline interruptions. Microphone pause
+signals stream end; Finish stops media immediately and allows a bounded transcript drain. Recognized
+text retains segment identities and incomplete/gap/edit metadata; form changes still require review.
 
-### 2. Deploy Backend to Google Cloud Run
-```bash
-gcloud run deploy alert-disaster-field-estimator \
-  --source ./backend \
-  --region us-west2 \
-  --project mitigation-project \
-  --allow-unauthenticated
-```
-
-### 3. Deploy Frontend to Firebase Hosting
-```bash
-# Copy latest frontend code into public/ if modified
-Copy-Item "public/index.html" -Destination "index.html" -Force
-
-# Deploy only the alert-disaster target to avoid overwriting peer sites
-firebase deploy --only hosting:alert-disaster --project mitigation-project
-```
-
----
-
-## 🎨 Branding & Visual Tokens
-Extracted from [Alert Disaster Restoration](https://alertdisaster.com/):
-- **Primary Red**: `#D42B32` (Emergency Call to Action)
-- **Charcoal / Primary Dark**: `#010101` (Headings and text)
-- **Neutral Background**: `#FFFFFE` / Off-white `#F1F2F2`
-- **Border Gray**: `#E0E0E0`
-- **Typography**: `Lato` (Sans-serif UI) & `EB Garamond` (Editorial prose)
-- **Credentials**: California License `#950983`, EPA Lead-Safe Certified, IICRC Certified Firm.
+Production now uses backend alert-disaster-field-estimator-00006-yer at 100% traffic and frontend
+live-reliable-20261007-1, Hosting version 0350de7b1566a1b5. Exact deployed assets and mobile routing
+checks passed. The previous matched backend 00005-htr / Hosting version 60724bb918512475 is retained
+for rollback. See docs/review-repairs.md for evidence and remaining acceptance gates.

@@ -2,6 +2,10 @@
 node_modules/
 venv/
 .venv/
+.venv-repair/
+.test-deps/
+test-results/
+playwright-report/
 __pycache__/
 *.pyc
 
@@ -22,3 +26,10 @@ service-account*.json
 Thumbs.db
 .vscode/
 .idea/
+
+# Workspace-local voice-scope verification
+.voice-test-deps/
+.voice-test-cache/
+
+# Private PDF review intermediates
+tmp/pdfs/

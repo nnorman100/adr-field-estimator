@@ -1,0 +1,4 @@
+Python: 56 passed, one dependency deprecation warning.
+Node frontend and lifecycle tests: passed.
+Broad browser run: 39 passed, 5 Windows WebKit platform skips, 2 WebKit timeouts (Jobs menu after reload; durable signing evidence recovery). Exit 1.
+Focused unchanged WebKit retry: 2 passed in 48.6s; exit 0. Broad-run intermittent failures remain recorded separately.

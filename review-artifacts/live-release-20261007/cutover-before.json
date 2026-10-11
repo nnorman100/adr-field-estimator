@@ -1,0 +1,23 @@
+{
+  "checked_at_utc": "2026-10-07T18:38:48.306759+00:00",
+  "project": "alert-disaster-field-2026",
+  "backend": {
+    "latestReadyRevisionName": "alert-disaster-field-estimator-00006-yer",
+    "traffic": [
+      {
+        "percent": 100,
+        "revisionName": "alert-disaster-field-estimator-00005-htr"
+      },
+      {
+        "revisionName": "alert-disaster-field-estimator-00006-yer",
+        "tag": "live-reliable",
+        "url": "https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app"
+      }
+    ]
+  },
+  "hosting": {
+    "release": "sites/alert-disaster-field-2026/channels/live/releases/1791378004044000",
+    "version": "sites/alert-disaster-field-2026/versions/60724bb918512475",
+    "released_at": "2026-10-07T13:00:04.044Z"
+  }
+}

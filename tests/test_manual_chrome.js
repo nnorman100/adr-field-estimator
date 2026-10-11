@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {launchArgs,removeOwnedProfile}=require('../scripts/manual_chrome');
+const args=launchArgs('C:\\temporary\\adr-manual-chrome-example',9337,'https://alert-disaster-field-2026.web.app');
+assert(args.includes('--incognito'));
+assert(args.includes('--remote-debugging-address=127.0.0.1'));
+assert(args.includes('--remote-debugging-port=9337'));
+assert(!args.some(arg=>arg.includes('--enable-automation')||arg.includes('--headless')||arg.includes('--remote-debugging-port=0')));
+assert.throws(()=>removeOwnedProfile('C:\\Users\\nnorm\\Documents'),/unexpected profile/);
+const source=fs.readFileSync('scripts/verify_live_browser.js','utf8');
+assert(source.indexOf("line.trim()==='signed-in'")<source.indexOf('chromium.connectOverCDP(manual.endpoint)'));
+assert(!source.includes('ignoreDefaultArgs'));
+console.log('PASS: normal private Chrome handoff precedes automation; cleanup rejects unrelated profiles.');

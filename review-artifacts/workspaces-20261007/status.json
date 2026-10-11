@@ -1,0 +1,58 @@
+{
+  "updated_at": "2026-10-07T20:28:17.240Z",
+  "state": "backend staged; production activation pending",
+  "project": "alert-disaster-field-2026",
+  "frontend_build": "company-workspaces-20261007-1",
+  "staged_backend": "alert-disaster-field-estimator-00008-jom",
+  "staged_url": "https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app",
+  "production_backend": "alert-disaster-field-estimator-00006-yer",
+  "production_frontend": "live-reliable-20261007-1",
+  "hosting_deployed": false,
+  "initial_account": "nathanaelcnorman@gmail.com",
+  "initial_account_roles": [
+    "platform superadmin",
+    "ADR owner"
+  ],
+  "migration": {
+    "created": 7,
+    "reconciliation_created": 0,
+    "unmapped_records": 0,
+    "source_records_preserved": true
+  },
+  "indexes": "four workspace indexes READY; existing indexes and TTL retained",
+  "mock_tests": {
+    "python_passed": 110,
+    "frontend_lifecycle": "passed",
+    "html_copies": "identical",
+    "full_browser_passed": 59,
+    "full_browser_existing_windows_webkit_skips": 7,
+    "final_workspace_browser": {
+      "verified_scenarios_in_both_engines": 20,
+      "latest_suite_passed": 19,
+      "corrected_failed_test_recheck_passed": 2,
+      "correction": "Test waits for staff-save confirmation; its early assertion matched another member before completion."
+    }
+  },
+  "real_checks": {
+    "standalone_uvicorn": "started and healthy with workspaces enabled",
+    "staged_health": "healthy; anonymous session 401",
+    "firebase_sdk_initialization": "passed; no sign-in/job creation",
+    "database_storage": {
+      "synthetic_policy_identities": true,
+      "companies": 2,
+      "checks_passed": 12,
+      "synthetic_records_cleaned": 38,
+      "evidence_cleaned": true
+    },
+    "migration_reconciliation": "source hashes preserved"
+  },
+  "open_gates": [
+    "verified Resend sender and runtime-only API secret",
+    "real invitation receipt and explicit acceptance",
+    "authenticated staged workflows using two companies and all four roles",
+    "backend promotion then isolated Hosting deployment and production repeat",
+    "physical iPhone/Bluetooth acceptance"
+  ],
+  "rollback": "rollback.json",
+  "source_fingerprints": "source-hashes.json"
+}

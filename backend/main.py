@@ -1,321 +1,511 @@
-import os
-import json
+"""Authenticated inspection, evidence, claims and Gemini Live endpoints."""
+import asyncio
+import anyio
 import base64
-from datetime import datetime
-from typing import List, Optional, Dict, Any, Union
-from fastapi import FastAPI, HTTPException
+import io
+import json
+import os
+import time
+from uuid import uuid4
+from contextlib import suppress, AsyncExitStack
+from functools import wraps
+from typing import Optional
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import ValidationError
+from PIL import Image, ImageOps
+import firebase_admin
+from firebase_admin import auth as firebase_auth
 from google import genai
 from google.genai import types
-
-app = FastAPI(title="Alert Disaster Restoration Estimating Microservice")
-
-# Enable CORS for Firebase Hosting and local dev
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "mitigation-project")
-LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-
-# Initialize Enterprise / Vertex AI Client with Application Default Credentials
 try:
-    genai_client = genai.Client(
-        vertexai=True,
-        project=PROJECT_ID,
-        location=LOCATION
-    )
-except Exception as e:
-    print(f"Warning: GenAI Client init error: {e}")
-    genai_client = None
+    from .contracts import CreateInspection, UpdateInspection, InspectionData, PhotoUpload, OcrResult, AIResult, AuditRequest, AuthorizeRequest
+    from .claims import make_documents, price_scope
+    from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
+    from .live_support import live_config, scope_fingerprint
+    from .company_store import CompanyInspectionStore
+    from .workspaces import AccessDenied
+    from .workspace_api import register_workspace_routes
+    from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
+    from .inspection_store import InspectionStore, Conflict, Limited
+    from .job_store import BUCKET, decode_image, IMAGE_WORKER
+except ImportError:
+    from contracts import CreateInspection, UpdateInspection, InspectionData, PhotoUpload, OcrResult, AIResult, AuditRequest, AuthorizeRequest
+    from claims import make_documents, price_scope
+    from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
+    from live_support import live_config, scope_fingerprint
+    from company_store import CompanyInspectionStore
+    from workspaces import AccessDenied
+    from workspace_api import register_workspace_routes
+    from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
+    from inspection_store import InspectionStore, Conflict, Limited
+    from job_store import BUCKET, decode_image, IMAGE_WORKER
 
-def parse_json_from_llm(raw_text: str) -> Dict[str, Any]:
-    """Safely extracts JSON from LLM responses even if wrapped in markdown code fences."""
-    text = (raw_text or "").strip()
-    if "```" in text:
-        lines = text.splitlines()
-        # Find first fence line
-        start_idx = 0
-        end_idx = len(lines)
-        if lines and lines[0].strip().startswith("```"):
-            start_idx = 1
-        if lines and lines[-1].strip().startswith("```"):
-            end_idx = len(lines) - 1
-        text = "\n".join(lines[start_idx:end_idx]).strip()
+DEDICATED_PROJECT_ID = 'alert-disaster-field-2026'
+PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT',DEDICATED_PROJECT_ID)
+if PROJECT_ID != DEDICATED_PROJECT_ID: raise RuntimeError('This service must use its dedicated alert-disaster-field-2026 project.')
+LOCATION = os.getenv('GOOGLE_CLOUD_LOCATION','global')
+AUDIT_MODEL = os.getenv('AUDIT_MODEL','gemini-3.8-flash')
+OCR_MODEL = os.getenv('OCR_MODEL',AUDIT_MODEL)
+LIVE_MODEL = os.getenv('LIVE_MODEL','gemini-3.8-live')
+LIVE_LOCATION = os.getenv('LIVE_LOCATION','us-central1')
+LIVE_RECHECK_SECONDS = 20
+LIVE_VOICE = os.getenv('LIVE_VOICE','Charon')
+LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live'
+ORIGINS = ['https://alert-disaster-field-2026.web.app','https://alert-disaster-field-2026.firebaseapp.com','http://127.0.0.1:8765','http://localhost:8765']
+WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED','false').lower()=='true'
+STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS','nathanaelcnorman@gmail.com').split(',') if e.strip()}
+app = FastAPI(title='Alert Disaster Restoration Field Estimator',version='2.0')
+app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,allow_methods=['GET','POST','PUT'],allow_headers=['Authorization','Content-Type','X-ADR-Workspace-Protocol'])
+security = HTTPBearer(auto_error=False)
+_job_store = None
+genai_client = None
+
+def get_job_store():
+    global _job_store
+    if _job_store is None: _job_store=CompanyInspectionStore() if WORKSPACES_ENABLED else InspectionStore()
+    return _job_store
+
+def get_ai_client():
+    global genai_client
+    if genai_client is None:
+        genai_client=genai.Client(vertexai=True,project=PROJECT_ID,location=LOCATION,http_options=types.HttpOptions(timeout=95000))
+    return genai_client
+
+async def verify_identity(token):
+    try:
+        try: firebase_app=firebase_admin.get_app('adr')
+        except ValueError: firebase_app=firebase_admin.initialize_app(options={'projectId':PROJECT_ID},name='adr')
+        claims=await run_in_threadpool(firebase_auth.verify_id_token,token,app=firebase_app,check_revoked=True)
+    except Exception:
+        raise HTTPException(401,'Your sign-in expired. Please sign in again.')
+    if not claims.get('email_verified') or not claims.get('email'):
+        raise HTTPException(403,'A verified Google account is required.')
+    if WORKSPACES_ENABLED and claims.get('firebase',{}).get('sign_in_provider')!='google.com':
+        raise HTTPException(403,'Sign in using Google.')
+    return claims
+
+async def verify_staff(token):
+    claims=await verify_identity(token)
+    if WORKSPACES_ENABLED:
+        actor=await stored(get_job_store().workspaces.principal,claims['uid'])
+        if not actor['role'] and not actor['superadmin']:
+            raise HTTPException(403,'Accept a company invitation before using this app.')
+    elif claims.get('email','').lower() not in STAFF_EMAILS:
+        raise HTTPException(403,'Your account has not been approved for this app.')
+    return claims
+
+async def current_staff(credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
+    if not credentials or credentials.scheme.lower()!='bearer': raise HTTPException(401,'Sign in to continue.')
+    return await verify_staff(credentials.credentials)
+
+@app.middleware('http')
+async def limit_payload(request:Request,call_next):
+    if request.method in ('POST','PUT'):
+        # Bound reads before model parsing, including requests without Content-Length.
+        chunks=[]; size=0
+        async for chunk in request.stream():
+            size+=len(chunk)
+            if size>20*1024*1024: return Response('The upload exceeds 20 MB.',status_code=413)
+            chunks.append(chunk)
+        request._body=b''.join(chunks)
+    response=await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Cache-Control']='private, no-store'
+    return response
+
+async def stored(method,*args):
+    try: return await run_in_threadpool(method,*args)
+    except Limited as error: raise HTTPException(429,str(error),headers={'Retry-After':str(error.retry_after)})
+    except AccessDenied as error: raise HTTPException(403,str(error))
+    except Conflict as error: raise HTTPException(409,str(error))
+    except LookupError: raise HTTPException(404,'Record not found.')
+    except ValueError as error: raise HTTPException(400,str(error))
+    except Exception as error:
+        print(f'Storage operation failed: {type(error).__name__}')
+        raise HTTPException(503,'Changes could not be saved. Your local draft can be retried.')
+
+def public_record(record):
+    return {k:v for k,v in record.items() if k not in ('owner_uid','payload_sha256')}
+
+def parse_json_from_llm(text):
+    text=(text or '').strip()
+    if text.startswith('```'):
+        text='\n'.join(text.splitlines()[1:])
+        if text.rstrip().endswith('```'): text=text.rstrip()[:-3]
     return json.loads(text)
 
-class OcrMeterRequest(BaseModel):
-    photo_base64: str
-    hint: Optional[str] = "moisture_meter"
+async def generate(schema,contents,model,wire_schema=None):
+    try:
+        response=await asyncio.wait_for(get_ai_client().aio.models.generate_content(
+            model=model,contents=contents,config=types.GenerateContentConfig(
+                response_mime_type='application/json',response_schema=wire_schema or schema)),timeout=100)
+        return schema.model_validate(parse_json_from_llm(response.text))
+    except (asyncio.TimeoutError,TimeoutError): raise HTTPException(504,'AI generation timed out. Retry; no document or reading was verified.')
+    except Exception as error:
+        print(f'AI generation failed: {type(error).__name__}')
+        raise HTTPException(502,'AI returned an unavailable or invalid result. Retry; no document or reading was verified.')
 
-class AuditRequest(BaseModel):
-    address: str
-    year_built: int
-    has_crawl_space: bool = False
-    area: str
-    is_after_hours: bool = True
-    transcript: str
-    verified_readings: Optional[List[Dict[str, Any]]] = []
-    scope_notes: Optional[str] = ""
+def rest_deadline(operation):
+    @wraps(operation)
+    async def bounded(*args,**kwargs):
+        try: return await asyncio.wait_for(operation(*args,**kwargs),55)
+        except asyncio.TimeoutError: raise HTTPException(504,'The request timed out. Your draft is preserved; retry. No document or reading was verified.')
+    return bounded
 
-class AuthorizeRequest(BaseModel):
-    auth_id: Optional[str] = None
-    timestamp: Optional[str] = None
-    address: str
-    date: Optional[str] = None
-    proposed_cost: float
-    findings: Optional[Union[List[Any], str]] = []
-    recommendations: Optional[Union[List[Any], str]] = []
-    xactimate_scope: Optional[List[Dict[str, Any]]] = []
-    signature_png: str
-    photos_count: Optional[int] = 0
-    photos: Optional[List[Dict[str, Any]]] = []
+def model_image(raw):
+    with IMAGE_WORKER, Image.open(io.BytesIO(raw)) as image:
+        image=ImageOps.exif_transpose(image).convert('RGB'); image.thumbnail((1600,1600))
+        output=io.BytesIO(); image.save(output,format='JPEG',quality=85)
+        return types.Part.from_bytes(data=output.getvalue(),mime_type='image/jpeg')
 
-def _extract_num(item: Dict[str, Any], keys: List[str], default: float) -> float:
-    for k in keys:
-        if k in item and item[k] is not None and item[k] != "":
-            try:
-                return float(item[k])
-            except (ValueError, TypeError):
-                continue
-    return default
-
-def _extract_str(item: Dict[str, Any], keys: List[str], default: str) -> str:
-    for k in keys:
-        if k in item and item[k] is not None and str(item[k]).strip() != "":
-            return str(item[k]).strip()
-    return default
-
-def normalize_xactimate_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Normalizes line item properties to support both full names and abbreviations seamlessly."""
-    normalized = []
-    for item in items:
-        code = _extract_str(item, ["code"], "MISC")
-        desc = _extract_str(item, ["description", "desc"], "Remediation item")
-        qty = _extract_num(item, ["quantity", "qty"], 1.0)
-        unit = _extract_str(item, ["unit"], "EA")
-        price = _extract_num(item, ["unit_price", "price"], 0.0)
-        waste = _extract_num(item, ["waste_percent", "waste"], 0.0)
-        calculated_total = round(qty * price * (1.0 + waste / 100.0), 2)
-        total = _extract_num(item, ["total"], calculated_total)
-
-        normalized.append({
-            "code": code,
-            "description": desc,
-            "desc": desc,
-            "quantity": qty,
-            "qty": qty,
-            "unit": unit,
-            "unit_price": price,
-            "price": price,
-            "waste_percent": waste,
-            "waste": waste,
-            "total": round(total, 2)
-        })
-    return normalized
-
-@app.get("/health")
+@app.get('/health')
+@app.get('/api/health')
 def health_check():
-    return {
-        "status": "healthy",
-        "service": "alert-disaster-field-estimator",
-        "project": PROJECT_ID,
-        "location": LOCATION
-    }
+    return dict(status='healthy',service='alert-disaster-field-estimator',project=PROJECT_ID,
+                location=LOCATION,database_project=PROJECT_ID,database='(default)',evidence_bucket=BUCKET,
+                schema_version=3,audit_model=AUDIT_MODEL,ocr_model=OCR_MODEL,live_model=LIVE_MODEL,workspaces_enabled=WORKSPACES_ENABLED)
 
-@app.post("/api/ocr-meter")
-async def ocr_meter(req: OcrMeterRequest):
-    """Performs high-resolution OCR on Extech moisture meters or FLIR thermal images."""
-    if not genai_client:
-        # Fallback simulation if running in unauthenticated environment
-        return {
-            "meter_detected": True,
-            "meter_type": "Extech MO290",
-            "value": "99.9% SAT",
-            "classification": "Saturated / Wet",
-            "notes": "Pinless moisture reading confirms moisture saturation behind cabinet/framing."
-        }
+async def current_identity(credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
+    if not WORKSPACES_ENABLED: raise HTTPException(503,'Company dashboards are not enabled yet.')
+    if not credentials or credentials.scheme.lower()!='bearer': raise HTTPException(401,'Sign in to continue.')
+    return await verify_identity(credentials.credentials)
 
+@app.get('/api/session')
+async def session_info(staff=Depends(current_staff)):
+    result=dict(uid=staff['uid'],email=staff['email'],project=PROJECT_ID,live_url=LIVE_URL,schema_version=3,live_protocol_version=2,live_voice=LIVE_VOICE,workspaces_enabled=WORKSPACES_ENABLED,workspace_protocol_version=1)
+    if WORKSPACES_ENABLED:
+        result.update(await stored(get_job_store().workspaces.principal,staff['uid']))
+    return result
+
+register_workspace_routes(app,current_identity,get_job_store,stored)
+
+def workspace_client(request):
+    if WORKSPACES_ENABLED and request.headers.get('X-ADR-Workspace-Protocol')!='1':
+        raise HTTPException(409,'Update the app before generating or opening company-branded documents.')
+
+def inspection_payload(data):
+    result=data.model_dump(mode='json')
+    if result.get('capture_metadata') is None: result.pop('capture_metadata',None)
+    return result
+
+@app.post('/api/inspections')
+async def create_inspection(req:CreateInspection,staff=Depends(current_staff),store=Depends(get_job_store)):
+    await stored(store.quota,staff['uid'],'draft',60)
+    return public_record(await stored(store.create_inspection,staff['uid'],req.inspection_id,inspection_payload(req.data)))
+
+@app.get('/api/inspections')
+async def list_inspections(cursor:Optional[str]=Query(default=None,max_length=80,pattern=r'^[A-Za-z0-9-]+$'),staff=Depends(current_staff),store=Depends(get_job_store)):
+    records,next_cursor=await stored(store.inspection_page,staff['uid'],cursor)
+    return {'inspections':[dict(inspection_id=r['inspection_id'],address=r['data']['address'],revision=r['revision'],status=r['status'],updated_at=r['updated_at']) for r in records],'next_cursor':next_cursor}
+
+@app.get('/api/inspections/{inspection_id}')
+async def get_inspection(inspection_id:str,request:Request,staff=Depends(current_staff),store=Depends(get_job_store)):
+    record=await stored(store.get_inspection,staff['uid'],inspection_id)
+    if record.get('audit') and record['audit']['documents'].get('company_identity'): workspace_client(request)
+    return public_record(record)
+
+@app.put('/api/inspections/{inspection_id}')
+async def update_inspection(inspection_id:str,req:UpdateInspection,staff=Depends(current_staff),store=Depends(get_job_store)):
+    await stored(store.quota,staff['uid'],'draft',60)
+    return public_record(await stored(store.update_inspection,staff['uid'],inspection_id,req.expected_revision,inspection_payload(req.data)))
+
+@app.post('/api/inspections/{inspection_id}/photos')
+async def upload_photo(inspection_id:str,req:PhotoUpload,staff=Depends(current_staff),store=Depends(get_job_store)):
+    await stored(store.quota,staff['uid'],'draft',60)
+    record=await stored(store.add_photo,staff['uid'],inspection_id,req.model_dump(mode='json'))
+    return public_record(record)
+
+@app.get('/api/inspections/{inspection_id}/photos/{photo_id}')
+async def photo_evidence(inspection_id:str,photo_id:str,staff=Depends(current_staff),store=Depends(get_job_store)):
+    photo,raw=await stored(store.photo,staff['uid'],inspection_id,photo_id)
+    return Response(raw,media_type=photo['file']['content_type'],headers={'Cache-Control':'private, no-store'})
+
+@app.post('/api/inspections/{inspection_id}/photos/{photo_id}/ocr')
+@rest_deadline
+async def ocr_photo(inspection_id:str,photo_id:str,staff=Depends(current_staff),store=Depends(get_job_store)):
+    await stored(store.quota,staff['uid'],'ocr',20)
+    record=await stored(store.get_inspection,staff['uid'],inspection_id)
+    await stored(store._access,staff['uid'],record,'ocr')
+    photo,raw=await stored(store.photo,staff['uid'],inspection_id,photo_id)
     try:
-        image_bytes = base64.b64decode(req.photo_base64.split(",")[-1])
-        prompt = """
-        You are an expert OCR diagnostic system for disaster restoration inspections.
-        Examine this photo from an Alert Disaster Restoration field technician.
-        1. Look for moisture meter LCD displays (e.g. Extech MO290, pin or pinless readings like 99.9%, 84.8%, 68.3%, 20.3%, 12.9%).
-        2. Look for FLIR thermal camera screens showing thermal patterns or temperature differentials.
-        3. Look for equipment data plates (water heater, furnace serial numbers) to identify age.
-        
-        Respond with pure JSON conforming to this schema:
-        {
-          "meter_detected": boolean,
-          "meter_type": string (e.g. "Extech MO290", "FLIR Thermal Camera", "Serial Tag", or "Inspection Photo"),
-          "value": string (e.g. "99.9% SAT", "-8.4°F Delta T", "Dry Standard 12.9%"),
-          "classification": string (e.g. "Saturated / Wet", "Elevated Moisture", "Standard Dry Range"),
-          "notes": string
-        }
-        """
+        result=await generate(OcrResult,[await run_in_threadpool(model_image,raw),
+            OCR_INSTRUCTIONS],OCR_MODEL)
+    except HTTPException:
+        await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,None)
+        raise
+    return public_record(await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,result.model_dump(mode='json')))
 
-        response = genai_client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                prompt
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
+@app.post('/api/ocr-meter')
+async def legacy_ocr(staff=Depends(current_staff)):
+    raise HTTPException(409,'Update the app and attach the photo to an inspection before recognition.')
 
-        return parse_json_from_llm(response.text)
-    except Exception as e:
-        print(f"OCR Error: {e}")
-        return {
-            "meter_detected": True,
-            "meter_type": "Extech MO290",
-            "value": "99.9% SAT",
-            "classification": "Saturated / Wet",
-            "notes": "Moisture detected on framing assembly."
-        }
+@app.post('/api/inspections/{inspection_id}/scope-suggestions')
+@rest_deadline
+async def suggest_scope(inspection_id:str,req:AuditRequest,staff=Depends(current_staff),store=Depends(get_job_store)):
+    if req.inspection_id != inspection_id: raise HTTPException(400,'Inspection references must match.')
+    record=await stored(store.get_inspection,staff['uid'],inspection_id)
+    if record['revision']!=req.expected_revision or record['status']=='signed':
+        raise HTTPException(409,'Restore the latest unsigned draft before filling scope.')
+    await stored(store._access,staff['uid'],record,'scope')
+    data=InspectionData.model_validate(record['data'])
+    if not (data.technician_transcript.strip() or data.technician_notes.strip()):
+        raise HTTPException(400,'Record technician observations in the walkthrough or notes first.')
+    await stored(store.quota,staff['uid'],'scope',6)
+    result=await generate(ScopeSuggestions,[scope_prompt(data)],AUDIT_MODEL,wire_schema=scope_response_schema())
+    try: result=validate_suggestions(data,result)
+    except (ValueError,ValidationError):
+        raise HTTPException(502,'Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.')
+    latest=await stored(store.get_inspection,staff['uid'],inspection_id)
+    await stored(store._access,staff['uid'],latest,'scope')
+    if latest['revision']!=req.expected_revision or latest['status']=='signed':
+        raise HTTPException(409,'The inspection changed while reading the walkthrough. Retry from the current draft.')
+    return dict(inspection_id=inspection_id,revision=req.expected_revision,**result.model_dump(mode='json'))
 
-@app.post("/api/audit")
-async def audit_inspection(req: AuditRequest):
-    """
-    Synthesizes the complete post-walk inspection using Gemini 3.8 Pro:
-    1. Official ADR Remediation Estimate data
-    2. Itemized Xactimate Line Items with waste percentages
-    3. Formal IICRC S500 / S520 Claim Defense Justification Letter
-    4. California State Lead/Asbestos compliance check
-    """
-    is_pre_1978 = req.year_built < 1978
-    current_date_str = datetime.now().strftime("%m-%d-%Y")
+@app.post('/api/audit')
+@rest_deadline
+async def audit_inspection(req:AuditRequest,request:Request,staff=Depends(current_staff),store=Depends(get_job_store)):
+    await stored(store.quota,staff['uid'],'audit',3)
+    record=await stored(store.get_inspection,staff['uid'],req.inspection_id)
+    await stored(store._access,staff['uid'],record,'audit')
+    workspace_client(request)
+    if record['revision']!=req.expected_revision or record['status']=='signed': raise HTTPException(409,'Restore the latest draft before auditing.')
+    data=InspectionData.model_validate(record['data'])
+    if data.package_price is not None:
+        raise HTTPException(409,'Update the app and clear the old package-tier selection before auditing.')
+    if not data.scope_confirmed: raise HTTPException(400,'Confirm room quantities, category, equipment, days and labor before auditing.')
+    if not data.address.strip() or data.year_built is None or not data.rooms:
+        raise HTTPException(400,'Enter the address, year built and rooms before auditing.')
+    deadline=time.monotonic()+30
+    while any(p['ocr_status']=='pending' for p in record['photos']) and time.monotonic()<deadline:
+        await asyncio.sleep(0.5)
+        record=await stored(store.get_inspection,staff['uid'],req.inspection_id)
+        if record['data']!=data.model_dump(mode='json'): raise HTTPException(409,'Inspection inputs changed while waiting for OCR.')
+    # OCR may advance the revision; bind the resulting audit to that exact snapshot.
+    revision=record['revision']
+    identity=await stored(store.workspaces.snapshot,staff['uid']) if WORKSPACES_ENABLED else None
+    prompt=audit_prompt(record['data'],record['photos'],price_scope(data)[0],identity)
+    contents=[prompt]
+    for photo in record['photos']:
+        _,raw=await stored(store.photo,staff['uid'],req.inspection_id,photo['id'])
+        contents.append(await run_in_threadpool(model_image,raw))
+    ai=await generate(AIResult,contents,AUDIT_MODEL)
+    documents=make_documents(data,record['photos'],ai,identity)
+    saved=await stored(store.save_audit,staff['uid'],req.inspection_id,revision,documents)
+    return public_record(saved)
 
-    system_prompt = f"""
-    You are the Senior Estimating & Compliance Director at Alert Disaster Restoration in Bakersfield, CA.
-    Review this field inspection data and produce a comprehensive 4-part claims and estimating package.
-    
-    Alert Disaster Restoration Business Rules:
-    - CA License #950983, Bakersfield, CA. Estimator: Matthew Myers.
-    - Pre-1978 Rule: Built in {req.year_built} ({'PRE-1978: California State Law REQUIRES Lead & Asbestos Pre-Testing' if is_pre_1978 else 'POST-1978: No pre-test required'}).
-    - Pricing Tiers: $1,499 (spot ceiling), $1,999 (bathroom/attic), $2,049.99/$2,199 (bedroom & bath vanity preserve), $2,299 (bath/closet safe move), $2,499 (two rooms / kitchen cabinet granite prop), $2,799 (closets tile demo), $2,999 (garage water heater loss), $3,999 (multi-room emergency), $4,499 (dual-unit apartment package), $4,999 ($3,999 bundle).
-    - Standard Xactimate codes: WTRDRY, WTRRMV, WTRDHM, WTRDRYM, APPANTI, CLNSTM, HMRREM.
-    - IICRC Citations: S500 Section 12.2.3 for pad removal/flood cuts, Section 13.5.4 for LGR dehumidifier AHAM sizing, S520 Section 14.4 for negative air containment.
+@app.post('/api/authorize')
+async def authorize_estimate(request:Request,staff=Depends(current_staff),store=Depends(get_job_store)):
+    workspace_client(request)
+    try: body=await request.json()
+    except (ValueError,UnicodeDecodeError): raise HTTPException(422,'Expected a signed-agreement object.')
+    if not isinstance(body,dict): raise HTTPException(422,'Expected a signed-agreement object.')
+    await stored(store.quota,staff['uid'],'authorize',10)
+    if 'inspection_id' not in body:
+        # Historical agreements remain readable; old clients cannot create new agreements.
+        existing=await stored(store.get,staff['uid'],str(body.get('auth_id','')))
+        if not existing: raise HTTPException(409,'Update the app and complete a revision-bound audit before signing.')
+        defaults={'auth_id':None,'timestamp':None,'address':None,'date':None,'proposed_cost':None,'findings':[],
+                  'recommendations':[],'xactimate_scope':[],'signature_png':None,'photos_count':0,'photos':[],'inspection':{}}
+        import hashlib
+        from_json={key:body.get(key,value) for key,value in defaults.items()}
+        digest=hashlib.sha256(json.dumps(from_json,sort_keys=True,separators=(',', ':'),allow_nan=False).encode()).hexdigest()
+        if digest!=existing.get('payload_sha256'): raise HTTPException(409,'This reference already represents a different agreement.')
+        record=existing
+    else:
+        try: req=AuthorizeRequest.model_validate(body)
+        except ValidationError: raise HTTPException(422,'Signing requires the current inspection revision, proposal hash, document confirmation and PNG signature.')
+        record=await stored(store.authorize,staff['uid'],req.model_dump(mode='json'))
+    return dict(status='success',auth_id=record['auth_id'],timestamp=record['created_at'],message='Signed agreement and private evidence saved.')
 
-    Return a JSON response conforming strictly to:
-    {{
-      "adr_estimate": {{
-        "property_address": "{req.address}",
-        "date": "{current_date_str}",
-        "proposed_cost": number,
-        "lead_notice_required": {str(is_pre_1978).lower()},
-        "findings_html": string,
-        "recommendations_html": string
-      }},
-      "xactimate_scope": [
-        {{
-          "code": string,
-          "description": string,
-          "quantity": number,
-          "unit": string,
-          "unit_price": number,
-          "waste_percent": number,
-          "total": number
-        }}
-      ],
-      "xactimate_total": number,
-      "iicrc_defense_letter": string,
-      "compliance_notes": string
-    }}
-    """
+@app.get('/api/authorizations')
+async def list_authorizations(cursor:Optional[str]=Query(default=None,max_length=80,pattern=r'^[A-Za-z0-9-]+$'),staff=Depends(current_staff),store=Depends(get_job_store)):
+    records,next_cursor=await stored(store.authorization_page,staff['uid'],cursor)
+    return {'authorizations':[{k:r.get(k) for k in ('auth_id','address','proposed_cost','proposed_cost_low','created_at','photos_count','schema_version')} for r in records],'next_cursor':next_cursor}
 
-    user_content = f"""
-    Inspection Details:
-    - Address: {req.address}
-    - Year Built: {req.year_built}
-    - Has Crawl Space: {req.has_crawl_space}
-    - Areas Inspected: {req.area}
-    - After Hours: {req.is_after_hours}
-    - Transcript & Tech Voice Notes: {req.transcript}
-    - Verified Moisture Readings: {json.dumps(req.verified_readings)}
-    - Scope Notes: {req.scope_notes}
-    """
+@app.get('/api/authorizations/{auth_id}')
+async def get_authorization(auth_id:str,request:Request,staff=Depends(current_staff),store=Depends(get_job_store)):
+    record=await stored(store.get,staff['uid'],auth_id)
+    if not record: raise HTTPException(404,'Signed agreement not found.')
+    if record.get('documents',{}).get('company_identity'): workspace_client(request)
+    return public_record(record)
 
-    if not genai_client:
-        # Fallback structured response adhering strictly to ADR formulas
-        lead_finding = (
-            f"<p>Due to property age ({req.year_built}), California State Law requires third-party lead and asbestos testing prior to destructive demolition. (This does not include the pretest for lead/asbestos).</p>"
-            if is_pre_1978 else
-            f"<p>The home was built in {req.year_built}. Therefore, no lead or asbestos testing is required prior to the start of work.</p>"
-        )
-        scope_items = normalize_xactimate_items([
-            {"code": "WTRDRY", "description": "Tear out wet drywall up to 4 ft", "quantity": 36, "unit": "SF", "unit_price": 8.94, "waste_percent": 10, "total": 321.84},
-            {"code": "WTRRMV", "description": "Baseboard - 3-1/4\" removal", "quantity": 32, "unit": "LF", "unit_price": 1.85, "waste_percent": 0, "total": 59.20},
-            {"code": "WTRDHM", "description": "LGR Dehumidifier Extra Large AHAM rated", "quantity": 3, "unit": "DA", "unit_price": 145.00, "waste_percent": 0, "total": 435.00},
-            {"code": "WTRDRYM", "description": "Axial Air Mover / Drying Fans", "quantity": 9, "unit": "DA", "unit_price": 38.00, "waste_percent": 0, "total": 342.00},
-            {"code": "APPANTI", "description": "Botanical antimicrobial wash", "quantity": 320, "unit": "SF", "unit_price": 0.48, "waste_percent": 0, "total": 153.60}
-        ])
-        scope_total = round(sum(it["total"] for it in scope_items), 2)
-        return {
-            "adr_estimate": {
-                "property_address": req.address,
-                "date": current_date_str,
-                "proposed_cost": 2499,
-                "lead_notice_required": is_pre_1978,
-                "findings_html": f"{lead_finding}<p>Moisture readings show elevated to saturated levels on baseboards and shared wall.</p>",
-                "recommendations_html": "<p>Perform 4-foot flood cuts up to 9 LF. Prop granite countertop. Place 3 air movers and 1 LGR dehumidifier for 3 days.</p>"
-            },
-            "xactimate_scope": scope_items,
-            "xactimate_total": scope_total,
-            "iicrc_defense_letter": (
-                f"TO: Insurance Claims Examiner / Adjuster\n"
-                f"RE: Mitigation Standard Justification for {req.address}\n\n"
-                f"Alert Disaster Restoration operates in strict adherence to the ANSI/IICRC S500 Standard for Professional Water Damage Restoration "
-                f"and IICRC S520 Standard for Microbial Remediation.\n\n"
-                f"1. Controlled Demolition (IICRC S500 Section 12.2.3): Saturated drywall and insulation in wall cavities cannot be effectively restored in place when microbial contamination is suspected. A minimum 4-foot flood cut was performed to expose the stud bay framing and facilitate direct evaporation.\n\n"
-                f"2. Psychrometric Dehumidification (IICRC S500 Section 13.5.4): AHAM-rated commercial LGR dehumidifiers were sized according to cubic volume and Class 2 evaporation rate to maintain relative humidity below 40% and prevent secondary damage.\n\n"
-                f"3. California Environmental Compliance: All disturbance was audited per California Health & Safety Code pre-testing thresholds ({'Lead & Asbestos testing required' if is_pre_1978 else 'Exempt post-1978'}).\n\n"
-                f"Sincerely,\nMatthew Myers\nAlert Disaster Restoration • CSLB Lic #950983"
-            ),
-            "compliance_notes": "California Title 8 Lead & Asbestos compliance verified."
-        }
+@app.get('/api/authorizations/{auth_id}/evidence/{name}')
+async def get_evidence(auth_id:str,name:str,staff=Depends(current_staff),store=Depends(get_job_store)):
+    record=await stored(store.get,staff['uid'],auth_id)
+    if not record: raise HTTPException(404,'Evidence not found.')
+    evidence=await stored(store.evidence,record,name,staff['uid']) if WORKSPACES_ENABLED else await stored(store.evidence,record,name)
+    if not evidence: raise HTTPException(404,'Evidence not found.')
+    return Response(evidence[0],media_type=evidence[1],headers={'Cache-Control':'private, no-store'})
 
+@app.websocket('/api/live')
+async def live_walkthrough(socket:WebSocket):
+    if socket.headers.get('origin') not in ORIGINS:
+        await socket.close(code=1008); return
+    await socket.accept()
+    store=None; lease=None; uid=None; client=None; tasks=[]; capture=None; retain=True
+    fingerprint=None; inspection_id=None; protocol=1; finish_result=None
     try:
-        response = genai_client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=[system_prompt, user_content],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
-        data = parse_json_from_llm(response.text)
-        if "xactimate_scope" in data and isinstance(data["xactimate_scope"], list):
-            data["xactimate_scope"] = normalize_xactimate_items(data["xactimate_scope"])
-            data["xactimate_total"] = round(sum(it["total"] for it in data["xactimate_scope"]), 2)
-        return data
-    except Exception as e:
-        print(f"Audit generation error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/authorize")
-async def authorize_estimate(req: AuthorizeRequest):
-    """
-    Accepts, logs, and archives signed work authorizations from customers or technicians.
-    Includes customer signature PNG, photo moisture logs, and agreed scope.
-    """
-    import time
-    auth_id = req.auth_id or f"ADR-AUTH-{int(time.time())}"
-    print(f"[WORK AUTHORIZATION LOG] ID={auth_id} | Property={req.address} | Cost=${req.proposed_cost} | Photos={req.photos_count}")
-    return {
-        "status": "success",
-        "auth_id": auth_id,
-        "message": f"Work authorization for {req.address} signed and dispatched.",
-        "timestamp": req.timestamp or time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "address": req.address,
-        "proposed_cost": req.proposed_cost,
-        "contractor_license": "950983",
-        "estimator": "Matthew Myers"
-    }
+        packet=await asyncio.wait_for(socket.receive_text(),10)
+        if len(packet)>16384: raise ValueError('Authentication packet too large.')
+        auth=json.loads(packet)
+        if auth.get('type')!='authenticate': raise ValueError('Authenticate before streaming.')
+        protocol=auth.get('protocol_version',1)
+        if protocol not in (1,2): raise ValueError('Update the app to connect.')
+        capture=auth.get('capture_id') if protocol==2 else None
+        if protocol==2 and (not isinstance(capture,str) or len(capture)!=32): raise ValueError('Invalid capture identifier.')
+        staff=await verify_staff(auth.get('token',''))
+        uid=staff['uid']; store=get_job_store(); inspection_id=auth.get('inspection_id','')
+        record=await stored(store.get_inspection,uid,inspection_id)
+        await stored(store._access,uid,record,'live')
+        identity=await stored(store.workspaces.snapshot,uid) if WORKSPACES_ENABLED else None
+        if identity and identity['company_id']!='adr' and auth.get('workspace_protocol_version')!=1:
+            raise HTTPException(409,'Update the app before a company walkthrough.')
+        if record['status']=='signed': raise ValueError('Start a new inspection for live coaching.')
+        fingerprint=scope_fingerprint(record['data'])
+        for attempt in range(31):
+            try:
+                lease=await stored(store.live_lease,uid)
+                break
+            except HTTPException as error:
+                if protocol!=2 or not auth.get('resume') or error.status_code!=429 or attempt==30: raise
+                await asyncio.sleep(.1)
+        handle=None
+        if capture:
+            handle=await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'open')
+            if not auth.get('resume',False):
+                handle=None
+                await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',None,False)
+        client=genai.Client(vertexai=True,project=PROJECT_ID,location=LIVE_LOCATION,http_options=types.HttpOptions(timeout=95000))
+        async with AsyncExitStack() as stack:
+            config=live_config(live_prompt(record['data'],identity),LIVE_VOICE,handle)
+            try:
+                session=await stack.enter_async_context(client.aio.live.connect(model=LIVE_MODEL,config=config))
+            except Exception:
+                if not handle: raise
+                await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',None,False)
+                handle=None
+                session=await stack.enter_async_context(client.aio.live.connect(model=LIVE_MODEL,
+                    config=live_config(live_prompt(record['data']),LIVE_VOICE)))
+            connection=uuid4().hex; sequence=0; pending=False; finishing=False
+            final_text=asyncio.Event(); final_text.set()
+            ready={'type':'ready','model':LIVE_MODEL}
+            if protocol==2:
+                ready.update(protocol_version=2,connection_id=connection,voice=LIVE_VOICE,
+                    recovery='resumed' if handle else 'restarted' if auth.get('resume') else 'new')
+            await socket.send_json(ready)
+            async def upstream():
+                nonlocal pending,finishing,retain,finish_result
+                frame_at=0; second=0; count=0
+                while True:
+                    raw=await socket.receive_text()
+                    if len(raw)>800000: raise ValueError('Live packet too large.')
+                    data=json.loads(raw); kind=data.get('type'); moment=time.monotonic()
+                    if int(moment)!=second: second=int(moment); count=0
+                    count+=1
+                    if count>60: raise ValueError('Live stream exceeded its message limit.')
+                    if kind=='audio':
+                        audio=base64.b64decode(data['data'],validate=True)
+                        if len(audio)>64000 or len(audio)%2: raise ValueError('Invalid PCM audio.')
+                        pending=True; final_text.clear()
+                        await session.send_realtime_input(audio=types.Blob(data=audio,mime_type='audio/pcm;rate=16000'))
+                    elif kind=='video':
+                        if moment-frame_at<0.95: continue
+                        frame_at=moment; image=base64.b64decode(data['data'],validate=True)
+                        if len(image)>512000 or not image.startswith(b'\xff\xd8\xff'): raise ValueError('Invalid JPEG frame.')
+                        await session.send_realtime_input(video=types.Blob(data=image,mime_type='image/jpeg'))
+                    elif kind=='pause' and protocol==2:
+                        await session.send_realtime_input(audio_stream_end=True)
+                    elif kind=='end':
+                        retain=bool(data.get('preserve_resume',False)) if protocol==2 else False
+                        if protocol==2:
+                            finishing=True
+                            await session.send_realtime_input(audio_stream_end=True)
+                            try: await asyncio.wait_for(final_text.wait(),3)
+                            except asyncio.TimeoutError: pass
+                            finish_result={'type':'finished','complete':not pending}
+                        return
+                    else: raise ValueError('Unsupported live packet.')
+            async def downstream():
+                nonlocal sequence,pending
+                while True:
+                    async for response in session.receive():
+                        update=getattr(response,'session_resumption_update',None)
+                        if update and capture:
+                            await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',
+                                getattr(update,'new_handle',None),bool(getattr(update,'resumable',False)))
+                        usage=getattr(response,'usage_metadata',None)
+                        if usage and protocol==2:
+                            await socket.send_json({'type':'usage','total_tokens':getattr(usage,'total_token_count',None)})
+                        away=getattr(response,'go_away',None)
+                        content=getattr(response,'server_content',None)
+                        if content:
+                            if content.interrupted: await socket.send_json({'type':'interrupted'})
+                            for side,value in [('technician',content.input_transcription),('assistant',content.output_transcription)]:
+                                if value and (value.text or getattr(value,'finished',False)):
+                                    sequence+=1
+                                    message={'type':'transcript','speaker':side,'text':value.text or ''}
+                                    if protocol==2: message.update(connection_id=connection,sequence=sequence,finished=getattr(value,'finished',None))
+                                    await socket.send_json(message)
+                                    if side=='technician' and getattr(value,'finished',False):
+                                        pending=False; final_text.set()
+                            if content.model_turn and not finishing:
+                                for part in content.model_turn.parts:
+                                    if part.inline_data and part.inline_data.data:
+                                        await socket.send_json({'type':'audio','data':base64.b64encode(part.inline_data.data).decode(),'rate':24000})
+                            if content.turn_complete: await socket.send_json({'type':'turn_complete'})
+                        if away:
+                            if protocol==2: await socket.send_json({'type':'recovery','reason':'rollover'})
+                            return
+            async def heartbeat():
+                nonlocal retain
+                while True:
+                    await asyncio.sleep(LIVE_RECHECK_SECONDS)
+                    if staff.get('exp',0)<time.time(): raise ValueError('Sign-in expired. Reconnect to continue.')
+                    refreshed=await verify_staff(auth.get('token',''))
+                    if refreshed['uid']!=uid: retain=False; raise ValueError('Session owner changed.')
+                    current=await stored(store.get_inspection,uid,inspection_id)
+                    try: await stored(store._access,uid,current,'live')
+                    except HTTPException:
+                        retain=False
+                        raise
+                    if current['status']=='signed' or scope_fingerprint(current['data'])!=fingerprint:
+                        retain=False; raise ValueError('Scope changed. Restart the walkthrough.')
+                    await stored(store.live_lease,uid,lease)
+                    if capture: await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'touch')
+            tasks=[asyncio.create_task(fn()) for fn in (upstream,downstream,heartbeat)]
+            try:
+                done,_=await asyncio.wait(tasks,return_when=asyncio.FIRST_COMPLETED)
+                for task in done: task.result()
+            finally:
+                for task in tasks: task.cancel()
+                await asyncio.gather(*tasks,return_exceptions=True)
+                tasks=[]
+    except WebSocketDisconnect: pass
+    except Exception as error:
+        if isinstance(error,HTTPException) and error.status_code in (401,403,404): retain=False
+        print(f'Live session ended: {type(error).__name__}')
+        message={'type':'error','message':error.detail if isinstance(error,HTTPException) else 'Live coaching disconnected. Your draft is preserved; reconnect to continue.'}
+        if protocol==2 and isinstance(error,HTTPException): message['status']=error.status_code
+        with suppress(Exception): await socket.send_json(message)
+    finally:
+        async def cleanup():
+            with anyio.CancelScope(shield=True):
+                for task in tasks: task.cancel()
+                await asyncio.gather(*tasks,return_exceptions=True)
+                if store and lease:
+                    if capture:
+                        with suppress(Exception): await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'touch' if retain else 'delete')
+                    with suppress(Exception): await stored(store.live_lease,uid,lease,True)
+                if client:
+                    with suppress(Exception): await client.aio.aclose()
+                if finish_result:
+                    with suppress(Exception): await socket.send_json(finish_result)
+                with suppress(Exception): await socket.close()
+        cleanup_task=asyncio.create_task(cleanup())
+        try: await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            await cleanup_task
+            raise

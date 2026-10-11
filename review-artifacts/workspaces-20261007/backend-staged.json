@@ -1,0 +1,170 @@
+﻿{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": {
+    "annotations": {
+      "run.googleapis.com/build-enable-automatic-updates": "false",
+      "run.googleapis.com/build-id": "731e8d0a-74ea-4da4-987b-281299d60118",
+      "run.googleapis.com/build-image-uri": "us-west2-docker.pkg.dev/alert-disaster-field-2026/cloud-run-source-deploy/alert-disaster-field-estimator",
+      "run.googleapis.com/build-name": "projects/545776254070/locations/us-west2/builds/731e8d0a-74ea-4da4-987b-281299d60118",
+      "run.googleapis.com/build-service-account": "projects/alert-disaster-field-2026/serviceAccounts/adr-builder@alert-disaster-field-2026.iam.gserviceaccount.com",
+      "run.googleapis.com/build-source-location": "gs://run-sources-alert-disaster-field-2026-us-west2/services/alert-disaster-field-estimator/1791403734.475499-6838f093ed304fcc9e173087176290a1.zip#1791403735289886",
+      "run.googleapis.com/client-name": "gcloud",
+      "run.googleapis.com/client-version": "584.0.0",
+      "run.googleapis.com/ingress": "all",
+      "run.googleapis.com/ingress-status": "all",
+      "run.googleapis.com/maxScale": "20",
+      "run.googleapis.com/operation-id": "ae24999a-4895-4048-8e3c-08ebd6844e41",
+      "run.googleapis.com/urls": "[\"https://alert-disaster-field-estimator-545776254070.us-west2.run.app\",\"https://alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app\"]",
+      "serving.knative.dev/creator": "nathanaelcnorman@gmail.com",
+      "serving.knative.dev/lastModifier": "nathanaelcnorman@gmail.com"
+    },
+    "creationTimestamp": "2026-10-06T19:27:50.385780Z",
+    "generation": 8,
+    "labels": {
+      "cloud.googleapis.com/location": "us-west2"
+    },
+    "name": "alert-disaster-field-estimator",
+    "namespace": "545776254070",
+    "resourceVersion": "AAZdRbOklRY",
+    "selfLink": "/apis/serving.knative.dev/v1/namespaces/545776254070/services/alert-disaster-field-estimator",
+    "uid": "d7aad92f-39c2-4c3e-8f39-487427e72347"
+  },
+  "spec": {
+    "template": {
+      "metadata": {
+        "annotations": {
+          "autoscaling.knative.dev/maxScale": "2",
+          "run.googleapis.com/client-name": "gcloud",
+          "run.googleapis.com/client-version": "584.0.0",
+          "run.googleapis.com/startup-cpu-boost": "true"
+        },
+        "labels": {
+          "run.googleapis.com/startupProbeType": "Default"
+        },
+        "name": "alert-disaster-field-estimator-00008-jom"
+      },
+      "spec": {
+        "containerConcurrency": 20,
+        "containers": [
+          {
+            "env": [
+              {
+                "name": "GOOGLE_CLOUD_PROJECT",
+                "value": "alert-disaster-field-2026"
+              },
+              {
+                "name": "GOOGLE_CLOUD_LOCATION",
+                "value": "global"
+              },
+              {
+                "name": "EVIDENCE_BUCKET",
+                "value": "alert-disaster-field-2026-evidence"
+              },
+              {
+                "name": "STAFF_EMAILS",
+                "value": "nathanaelcnorman@gmail.com"
+              },
+              {
+                "name": "AUDIT_MODEL",
+                "value": "gemini-3.8-flash"
+              },
+              {
+                "name": "OCR_MODEL",
+                "value": "gemini-3.8-flash"
+              },
+              {
+                "name": "LIVE_MODEL",
+                "value": "gemini-3.8-live"
+              },
+              {
+                "name": "LIVE_LOCATION",
+                "value": "us-central1"
+              },
+              {
+                "name": "WORKSPACES_ENABLED",
+                "value": "true"
+              }
+            ],
+            "image": "us-west2-docker.pkg.dev/alert-disaster-field-2026/cloud-run-source-deploy/alert-disaster-field-estimator@sha256:fdfcf99b2e5b37f3fbf3c065ecde19178133a959715fe47a98d172046a4eeba6",
+            "ports": [
+              {
+                "containerPort": 8080,
+                "name": "http1"
+              }
+            ],
+            "resources": {
+              "limits": {
+                "cpu": "1",
+                "memory": "1Gi"
+              }
+            },
+            "startupProbe": {
+              "failureThreshold": 1,
+              "periodSeconds": 240,
+              "tcpSocket": {
+                "port": 8080
+              },
+              "timeoutSeconds": 240
+            }
+          }
+        ],
+        "serviceAccountName": "adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com",
+        "timeoutSeconds": 3600
+      }
+    },
+    "traffic": [
+      {
+        "percent": 100,
+        "revisionName": "alert-disaster-field-estimator-00006-yer"
+      },
+      {
+        "revisionName": "alert-disaster-field-estimator-00006-yer",
+        "tag": "live-reliable"
+      },
+      {
+        "revisionName": "alert-disaster-field-estimator-00008-jom",
+        "tag": "workspaces"
+      }
+    ]
+  },
+  "status": {
+    "address": {
+      "url": "https://alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app"
+    },
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-10-07T20:10:08.298262Z",
+        "status": "True",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-10-07T20:09:57.602009Z",
+        "status": "True",
+        "type": "ConfigurationsReady"
+      },
+      {
+        "lastTransitionTime": "2026-10-07T20:10:08.259090Z",
+        "status": "True",
+        "type": "RoutesReady"
+      }
+    ],
+    "latestCreatedRevisionName": "alert-disaster-field-estimator-00008-jom",
+    "latestReadyRevisionName": "alert-disaster-field-estimator-00008-jom",
+    "observedGeneration": 8,
+    "traffic": [
+      {
+        "percent": 100,
+        "revisionName": "alert-disaster-field-estimator-00006-yer",
+        "tag": "live-reliable",
+        "url": "https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app"
+      },
+      {
+        "revisionName": "alert-disaster-field-estimator-00008-jom",
+        "tag": "workspaces",
+        "url": "https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app"
+      }
+    ],
+    "url": "https://alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app"
+  }
+}
