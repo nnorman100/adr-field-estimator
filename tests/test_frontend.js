@@ -41,3 +41,15 @@ console.log('PASS: selective scope application preserves manual values and sheet
   assert.equal(data.technician_transcript.length,60000);assert.equal(data.capture_metadata.segments.length,2);
   console.log('PASS: UTF-8 capture budget preserves earlier text and leaves room for saved evidence/audit metadata');
 }
+
+{
+  const password=emailVerified=>({emailVerified,providerData:[{providerId:'password'}]});
+  assert.equal(core.authStage(null),'signedOut');assert.equal(core.authStage(password(false)),'unverified');assert.equal(core.authStage(password(true)),'ready');
+  assert.equal(core.authStage({emailVerified:true,providerData:[{providerId:'google.com'}]}),'ready');
+  const message=code=>core.authMessage({code});
+  assert.equal(new Set(['auth/wrong-password','auth/user-not-found','auth/invalid-credential','auth/invalid-login-credentials'].map(message)).size,1);
+  for(const code of ['auth/email-already-in-use','auth/weak-password','auth/too-many-requests','auth/network-request-failed','auth/account-exists-with-different-credential'])assert.notEqual(message(code),message('auth/wrong-password'));
+  assert.equal(message('auth/account-exists-with-different-credential'),'This email already uses a different sign-in method. Use that method.');
+  assert.equal(core.authMessage(Error('raw provider detail')),'Sign-in could not be completed. Try again.');
+  console.log('PASS: auth stage derivation and non-enumerating sign-in error messages');
+}

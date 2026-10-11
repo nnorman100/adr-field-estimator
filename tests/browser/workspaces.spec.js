@@ -125,3 +125,40 @@ test('account switch clears customer fields and documents before another company
   await expect(page.locator('#proposalBody')).toHaveText('');await expect(page.locator('#rooms')).toBeEmpty();await expect(page.locator('#savedSignature')).toBeHidden();
   await page.locator('#dashboardJobs').click();await expect(page.locator('#dashboardContent')).not.toContainText('Assigned bathroom');
 });
+
+
+test('email sign-up stays unverified without authenticated calls, then accepts its invitation',async({page})=>{
+  const email=uid('pending')+'@example.invalid';
+  const invitation=await(await call(page,'/api/companies/adr/invitations','POST',{email,role:'office'})).json();
+  const authenticated=[];page.on('request',request=>{if(request.headers().authorization)authenticated.push(request.url());});
+  await page.addInitScript(()=>{if(!sessionStorage.getItem('synthetic-accounts'))sessionStorage.setItem('synthetic-signed-out','1');});
+  await page.goto('/?invite='+invitation.invitation_id);await expect(page.locator('#emailAuthForm')).toBeVisible();await expect(page.locator('#signInButton')).toBeVisible();
+  await page.locator('#authEmail').fill(email);await page.locator('#authPassword').fill('synthetic-password');
+  await page.getByRole('button',{name:'Create account',exact:true}).click();
+  await expect(page.locator('#verifyEmail')).toBeVisible();await expect(page.locator('#verifyAddress')).toHaveText(email);await expect(page.locator('#emailAuthForm')).toBeHidden();
+  await expect(page.locator('#authStatus')).toHaveText('Verification email sent to '+email+'.');
+  await page.getByRole('button',{name:'Resend verification email'}).click();await expect(page.locator('#authStatus')).toHaveText('Verification email sent to '+email+'.');
+  expect(await page.evaluate(()=>window.__testEmails)).toEqual([{type:'verify',email},{type:'verify',email}]);
+  await page.getByRole('button',{name:"I've verified"}).click();await expect(page.locator('#authStatus')).toContainText('not verified yet');
+  await page.reload();await expect(page.locator('#verifyEmail')).toBeVisible();
+  await expect(page.locator('#workspaceDashboard')).toBeHidden();await expect(page.locator('#address')).toBeDisabled();expect(authenticated).toEqual([]);
+  await page.evaluate(value=>window.__testVerify(value),email);await page.getByRole('button',{name:"I've verified"}).click();
+  await expect(page.locator('#authPanel')).toBeHidden();await page.getByRole('button',{name:'Accept invitation'}).click();
+  await expect(page.locator('#dashboardJobs')).toBeVisible();await expect(page.locator('#dashboardHeading')).toHaveText('Company jobs');
+  expect(authenticated.length).toBeGreaterThan(0);
+});
+
+test('email sign-in errors share one message and do not reveal accounts',async({page})=>{
+  const email=uid('owner')+'@example.invalid';
+  await page.addInitScript(value=>{if(!sessionStorage.getItem('synthetic-accounts')){sessionStorage.setItem('synthetic-accounts',JSON.stringify({[value]:{password:'correct-password',verified:true}}));sessionStorage.setItem('synthetic-signed-out','1');}},email);
+  await page.goto('/');await expect(page.locator('#emailAuthForm')).toBeVisible();
+  const signIn=async(address,password)=>{await page.locator('#authEmail').fill(address);await page.locator('#authPassword').fill(password);await page.getByRole('button',{name:'Sign in',exact:true}).click();};
+  await signIn(email,'wrong-password');await expect(page.locator('#authStatus')).toHaveText('Email or password is incorrect.');
+  await signIn('nobody@example.invalid','wrong-password');await expect(page.locator('#authStatus')).toHaveText('Email or password is incorrect.');
+  await page.getByRole('button',{name:'Forgot password'}).click();await expect(page.locator('#authStatus')).toHaveText('If an account uses nobody@example.invalid, a password reset email is on its way.');
+  await page.locator('#authEmail').fill(email);await page.getByRole('button',{name:'Create account',exact:true}).click();
+  await expect(page.locator('#authStatus')).toHaveText('An account already uses this email. Sign in or reset the password.');
+  await expect(page.locator('#workspaceDashboard')).toBeHidden();
+  await signIn(email,'correct-password');await expect(page.locator('#workspaceDashboard')).toBeVisible();await expect(page.locator('#authPanel')).toBeHidden();
+  await expect(page.locator('#dashboardTeam')).toBeVisible();
+});
