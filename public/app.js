@@ -1,7 +1,7 @@
 /* ADR inspection lifecycle: safe DOM, private drafts and revision-bound signing. */
 'use strict';
 const $=id=>document.getElementById(id);
-const {emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript}=ADRCore;
+const {emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage}=ADRCore;
 const estimateLabel=proposal=>proposal.proposed_cost_low==null?money(proposal.proposed_cost):money(proposal.proposed_cost_low)+'–'+money(proposal.proposed_cost);
 const state={user:null,session:null,draft:null,record:null,ack:null,documents:null,signed:null,signature:null,pendingAuthorization:null,localVersion:0,conflict:false,syncing:false,ocr:new Map(),photoUrls:new Map(),media:null,socket:null,audio:null,node:null,frameTimer:null,playing:new Set(),audioTime:0,liveReady:false,stopping:false,muted:false,retries:0,lastSpeech:0,firstAudio:true};
 let syncChain=Promise.resolve(),saveTimer=null,dbPromise=null,auth=null,waitingWorker=null;
@@ -39,6 +39,7 @@ function selectDocument(name){
   if(name==='proposal')requestAnimationFrame(resizeSignature);
 }
 function say(text,type=''){const el=$('message');el.textContent=text;el.className='message '+type;el.hidden=!text;}
+function authSay(text,type=''){const el=$('authStatus');el.textContent=text;el.className='message '+type;el.hidden=!text;}
 function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(className)el.className=className;return el;}
 function button(text,fn){const el=node('button',text);el.type='button';el.addEventListener('click',()=>Promise.resolve(fn()).catch(e=>say(e.message,'error')));return el;}
 function database(){
@@ -59,7 +60,7 @@ async function persist(){
 async function clearLocal(){await dbAction('readwrite',store=>store.clear());}
 async function api(path,options={}){
   if(!navigator.onLine)throw Error('You are offline. Your draft is saved locally; reconnect to continue.');
-  if(!state.user || !state.session)throw Error('Sign in with an approved Google account to continue.');
+  if(!state.user || !state.session)throw Error('Sign in with an approved, verified account to continue.');
   const token=await state.user.getIdToken(),controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),115000);
   try{
@@ -561,7 +562,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=company-workspaces-20261007-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=email-auth-20261010-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -629,14 +630,38 @@ async function initialize(){
   document.addEventListener('click',event=>{document.querySelectorAll('.menu[open]').forEach(menu=>{if(!menu.contains(event.target))menu.open=false;});});
   document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenus();});
   const click=(id,fn)=>$(id).addEventListener('click',()=>Promise.resolve(fn()).catch(e=>say(e.message,'error')));
-  click('signInButton',async()=>{const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});await auth.signInWithPopup(provider);});
-  click('signOutButton',async()=>{
+  const authClick=(id,fn)=>$(id).addEventListener('click',async()=>{
+    const controls=$('authPanel').querySelectorAll('button');authSay('');controls.forEach(control=>control.disabled=true);
+    try{await fn();}catch(e){authSay(authMessage(e),'error');}finally{controls.forEach(control=>control.disabled=false);}
+  });
+  const credentials=()=>$('emailAuthForm').reportValidity()?{email:$('authEmail').value.trim(),password:$('authPassword').value}:null;
+  authClick('signInButton',async()=>{const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});await auth.signInWithPopup(provider);});
+  $('emailAuthForm').addEventListener('submit',e=>e.preventDefault());
+  authClick('emailSignIn',async()=>{const entered=credentials();if(entered)await auth.signInWithEmailAndPassword(entered.email,entered.password);});
+  authClick('emailCreate',async()=>{
+    const entered=credentials();if(!entered)return;
+    const {user}=await auth.createUserWithEmailAndPassword(entered.email,entered.password);await user.sendEmailVerification();
+    authSay('Verification email sent to '+entered.email+'.','success');
+  });
+  authClick('emailReset',async()=>{
+    if(!$('authEmail').reportValidity())return;const email=$('authEmail').value.trim();
+    try{await auth.sendPasswordResetEmail(email);}catch(e){if(e.code!=='auth/user-not-found')throw e;}
+    authSay('If an account uses '+email+', a password reset email is on its way.','success');
+  });
+  authClick('resendVerification',async()=>{await auth.currentUser.sendEmailVerification();authSay('Verification email sent to '+auth.currentUser.email+'.','success');});
+  authClick('confirmVerified',async()=>{
+    const user=auth.currentUser;await user.reload();await user.getIdToken(true);
+    if(authStage(auth.currentUser)==='unverified'){authSay('This email is not verified yet. Open the link in the verification email, then try again.','error');return;}
+    await applyUser(auth.currentUser);
+  });
+  const signOut=async()=>{
     state.queuePaused=true;await stopWalk();clearTimeout(state.queueRetry);clearTimeout(saveTimer);
     await syncDraft().catch(()=>{});await persist();await auth.signOut();
     // pagehide must not recreate the draft after local storage is cleared.
     state.user=null;state.session=null;state.draft=null;state.record=null;state.signed=null;invalidate();
     await clearLocal();location.reload();
-  });
+  };
+  click('signOutButton',signOut);click('verifySignOut',signOut);
   click('newInspection',()=>openNew());click('openJobs',()=>window.WorkspaceUI?.enabled()?WorkspaceUI.jobs():showJobs());click('closeJobs',()=>$('jobsDialog').close());
   click('addRoom',()=>{if(state.draft.data.rooms.length>=30)throw Error('At most 30 rooms are supported.');state.draft.data.rooms.push({name:'Room '+(state.draft.data.rooms.length+1),category:1,unfinished_sf:0,finished_sf:0,custom_cabinetry:false,waste_percent:0});changed();renderRooms();});
   $('inspectionForm').addEventListener('submit',e=>e.preventDefault());$('inspectionForm').addEventListener('input',e=>{if(e.target.dataset.roomKey)return;collect();changed(e.target.id!=='scopeConfirmed');});
@@ -660,34 +685,38 @@ async function initialize(){
   const config=await(await fetch('/__/firebase/init.json',{cache:'no-store'})).json();
   if(config.projectId!=='alert-disaster-field-2026')throw Error('Incorrect Firebase project.');
   firebase.initializeApp(config);auth=firebase.auth();await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-  auth.onAuthStateChanged(async user=>{
-    if(state.user && state.user.uid!==user?.uid){
-      state.queuePaused=true;
-      await stopWalk();clearTimeout(state.queueRetry);await syncChain.catch(()=>{});await persist();
-      confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
-      state.draft=null;state.record=null;state.ack=null;state.signed=null;state.documents=null;state.ocr.clear();invalidate();
-      for(const url of state.photoUrls.values())URL.revokeObjectURL(url);state.photoUrls.clear();
-      clearDisplayedInspection();
-      if(!user)await clearLocal();
-    }
-    state.user=user;state.session=null;state.workspaceInitializing=true;
-    document.body.classList.remove('dashboard-open','office-view');$('workspaceNav').hidden=true;$('workspaceDashboard').hidden=true;$('jobCoordination').hidden=true;$('dashboardContent').replaceChildren();$('signInButton').hidden=!!user;$('signOutButton').hidden=!user;$('inspectionFields').disabled=true;$('accountStatus').textContent=user?user.email:'Sign in to start an inspection';
-    renderControls();
-    if(!user){state.workspaceInitializing=false;showTask('property',false);return;}
-    try{
-      let local=(await localDrafts()).sort((a,b)=>b.updated_at.localeCompare(a.updated_at));
-      if(navigator.onLine){const token=await user.getIdToken();let response=await fetch('/api/session',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(response.status===403)response=await fetch('/api/access',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(!response.ok)throw Error('Your account has not been approved, or the connection is unavailable.');state.session=await response.json();}
-      else{state.session=local[0]?.session;if(!state.session)throw Error('Sign in online before using private offline draft recovery.');}
-      if(state.session.uid!==user.uid||state.session.project!=='alert-disaster-field-2026')throw Error('Incorrect session configuration.');
-      state.queuePaused=false;
-      if(state.session.workspaces_enabled){
-        await WorkspaceUI.ready();
-        if(!state.session.role){state.queuePaused=true;await WorkspaceUI.home();return;}
-        await WorkspaceUI.landing();
-      }else if(local.length)await restoreDraft(local[0].draft.inspection_id);else await openNew();
-      connectivity();
-      drainQueue();
-    }catch(e){say(e.message,'error');}finally{state.workspaceInitializing=false;for(const control of $('workspaceNav').querySelectorAll('button'))control.disabled=false;}
-  });
+  auth.onAuthStateChanged(applyUser);
+}
+async function applyUser(user){
+  if(state.user && state.user.uid!==user?.uid){
+    state.queuePaused=true;
+    await stopWalk();clearTimeout(state.queueRetry);await syncChain.catch(()=>{});await persist();
+    confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
+    state.draft=null;state.record=null;state.ack=null;state.signed=null;state.documents=null;state.ocr.clear();invalidate();
+    for(const url of state.photoUrls.values())URL.revokeObjectURL(url);state.photoUrls.clear();
+    clearDisplayedInspection();
+    if(!user)await clearLocal();
+  }
+  const stage=authStage(user);
+  state.user=user;state.session=null;state.workspaceInitializing=true;
+  document.body.classList.remove('dashboard-open','office-view');$('workspaceNav').hidden=true;$('workspaceDashboard').hidden=true;$('jobCoordination').hidden=true;$('dashboardContent').replaceChildren();$('signInButton').hidden=!!user;$('signOutButton').hidden=!user;$('inspectionFields').disabled=true;$('accountStatus').textContent=user?user.email:'Sign in to start an inspection';
+  $('authPanel').hidden=stage==='ready';$('emailAuthForm').hidden=stage!=='signedOut';$('verifyEmail').hidden=stage!=='unverified';$('verifyAddress').textContent=user?.email||'';
+  renderControls();
+  // Unverified accounts stay on the verification step: no drafts, sessions or authenticated API calls.
+  if(stage!=='ready'){state.workspaceInitializing=false;showTask('property',false);return;}
+  try{
+    let local=(await localDrafts()).sort((a,b)=>b.updated_at.localeCompare(a.updated_at));
+    if(navigator.onLine){const token=await user.getIdToken();let response=await fetch('/api/session',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(response.status===403)response=await fetch('/api/access',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(!response.ok)throw Error('Your account has not been approved, or the connection is unavailable.');state.session=await response.json();}
+    else{state.session=local[0]?.session;if(!state.session)throw Error('Sign in online before using private offline draft recovery.');}
+    if(state.session.uid!==user.uid||state.session.project!=='alert-disaster-field-2026')throw Error('Incorrect session configuration.');
+    state.queuePaused=false;
+    if(state.session.workspaces_enabled){
+      await WorkspaceUI.ready();
+      if(!state.session.role){state.queuePaused=true;await WorkspaceUI.home();return;}
+      await WorkspaceUI.landing();
+    }else if(local.length)await restoreDraft(local[0].draft.inspection_id);else await openNew();
+    connectivity();
+    drainQueue();
+  }catch(e){say(e.message,'error');}finally{state.workspaceInitializing=false;for(const control of $('workspaceNav').querySelectorAll('button'))control.disabled=false;}
 }
 document.addEventListener('DOMContentLoaded',()=>initialize().catch(e=>say('App initialization failed: '+e.message,'error')));

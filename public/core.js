@@ -43,6 +43,15 @@
     if(new TextEncoder().encode(JSON.stringify(data)).length>550000){capture.segments.pop();data[key]=before;capture.status='truncated';return {changed:true,limit:true};}
     return {changed:true,preview:message.finished!==true};
   }
-  const api={emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript};
+  const authStage=user=>!user?'signedOut':!user.emailVerified&&(user.providerData||[]).some(info=>info?.providerId==='password')?'unverified':'ready';
+  // One message for unknown email and wrong password so sign-in does not reveal which accounts exist.
+  const credentialMessage='Email or password is incorrect.';
+  const authMessages={'auth/wrong-password':credentialMessage,'auth/user-not-found':credentialMessage,'auth/invalid-credential':credentialMessage,'auth/invalid-login-credentials':credentialMessage,
+    'auth/invalid-email':'Enter a valid email address.','auth/email-already-in-use':'An account already uses this email. Sign in or reset the password.',
+    'auth/weak-password':'Choose a stronger password of at least 6 characters.','auth/too-many-requests':'Too many attempts. Wait a few minutes, then try again.',
+    'auth/network-request-failed':'Network error. Check your connection and try again.','auth/account-exists-with-different-credential':'This email already uses a different sign-in method. Use that method.',
+    'auth/popup-closed-by-user':'Google sign-in was closed before it finished.'};
+  const authMessage=error=>authMessages[error?.code]||'Sign-in could not be completed. Try again.';
+  const api={emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage};
   if(typeof module!=='undefined')module.exports=api;else root.ADRCore=api;
 })(typeof window==='undefined'?globalThis:window);

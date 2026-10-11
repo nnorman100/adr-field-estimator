@@ -115,7 +115,7 @@ window.WorkspaceUI=(()=>{
         grid.append(card);
       }catch(e){if(epoch===viewEpoch)say(e.message,'error');}
     }
-    if(!state.session.role&&!state.session.superadmin&&!invitations.length)content.append(node('p','Ask your company owner to invite this Google account.'));
+    if(!state.session.role&&!state.session.superadmin&&!invitations.length)content.append(node('p','Ask your company owner to invite this account’s email address.'));
   }
   async function landing(){
     if(['estimator','office'].includes(state.session?.role))await jobs();else await home();
@@ -148,7 +148,7 @@ window.WorkspaceUI=(()=>{
   }
   function inviteForm(container,companyId,owner=false){
     const form=node('form',undefined,'dashboard-form');form.append(node('h2',owner?'Invite / replace owner':'Invite staff'));
-    const email=formField(form,'Google account email','email','','email');email.required=true;
+    const email=formField(form,'Staff email','email','','email');email.required=true;
     const select=selectField(form,'Role','role',owner?[['owner','Owner']]:[['estimator','Estimator'],['office','Office staff']],owner?'owner':'estimator');
     if(owner)form.append(node('p','The current owner keeps access until the replacement accepts. Acceptance disables the former owner’s company membership.'));
     submit(form,'Send invitation',async values=>{const invite=await jsonApi('/api/companies/'+companyId+'/invitations','POST',{email:values.get('email'),role:values.get('role')});say(invite.delivery_status==='sent'?'Invitation email sent.':invite.delivery_error||'Invitation delivery is pending.',invite.delivery_status==='failed'?'error':'success');await(owner?companyAdmin(companyId):team());});container.append(form);
@@ -182,7 +182,7 @@ window.WorkspaceUI=(()=>{
     const epoch=show('Companies','Manage isolated company workspaces and their owners.');
     const result=await jsonApi('/api/admin/companies');if(epoch!==viewEpoch)return;
     const content=$('dashboardContent'),form=node('form',undefined,'dashboard-form');form.append(node('h2','Create a company'));
-    formField(form,'Company name','name').required=true;formField(form,'Owner’s Google email','owner_email','','email').required=true;
+    formField(form,'Company name','name').required=true;formField(form,'Owner’s email','owner_email','','email').required=true;
     submit(form,'Create & invite owner',async values=>{const result=await jsonApi('/api/admin/companies','POST',{name:values.get('name'),owner_email:values.get('owner_email')});await companyAdmin(result.company.company_id);say(result.invitation.delivery_status==='sent'?'Company created and owner invitation sent.':result.invitation.delivery_error||'Company created; email pending.',result.invitation.delivery_status==='failed'?'error':'success');});content.append(form);
     const grid=node('div',undefined,'dashboard-grid');content.append(grid);
     for(const company of result.companies){const card=node('section',undefined,'dashboard-card');card.append(node('h2',company.profile.name),node('p',company.status+' · '+(company.owner_uid?'Owner assigned':'Owner invitation pending')),button('Manage company',()=>companyAdmin(company.company_id)));grid.append(card);}
