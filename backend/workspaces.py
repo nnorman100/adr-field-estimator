@@ -1,4 +1,4 @@
-"""Private company membership and job-access policy. No Firebase account writes."""
+"""Private company membership and job-access policy. Invitation delivery provisions the invitee's Firebase account."""
 import base64
 import hashlib
 import html
@@ -10,6 +10,8 @@ import time
 import urllib.request
 import urllib.error
 from uuid import uuid4
+import firebase_admin
+from firebase_admin import auth as firebase_auth
 from PIL import Image, ImageOps
 from google.cloud import firestore
 from pydantic import AfterValidator, Field, field_validator
@@ -35,6 +37,7 @@ ADR_PROFILE = dict(name='Alert Disaster Restoration', address='3300 Patton Way Â
                    logo_data_url='', water_heater_notice=HEATER)
 
 INVITATION_DAILY_LIMIT = 50
+APP_URL = 'https://alert-disaster-field-2026.web.app/'
 
 class AccessDenied(PermissionError): pass
 
@@ -406,14 +409,33 @@ class WorkspaceStore:
             return job
         return self._run(update)
 
+def password_setup_link(email):
+    """Create the invitee's account if needed so nobody else can pre-register the address. None means a Google account."""
+    try: app=firebase_admin.get_app('adr')
+    except ValueError: app=firebase_admin.initialize_app(options={'projectId':os.getenv('GOOGLE_CLOUD_PROJECT','alert-disaster-field-2026')},name='adr')
+    try: user=firebase_auth.get_user_by_email(email,app=app)
+    except firebase_auth.UserNotFoundError:
+        try: user=firebase_auth.create_user(email=email,email_verified=False,app=app)
+        except firebase_auth.EmailAlreadyExistsError: user=firebase_auth.get_user_by_email(email,app=app)
+    if any(info.provider_id=='google.com' for info in user.provider_data): return None
+    # The link is a credential: it goes only into the outgoing email, never Firestore or logs.
+    return firebase_auth.generate_password_reset_link(email,firebase_auth.ActionCodeSettings(url=APP_URL,handle_code_in_app=False),app=app)
+
 def send_invitation(invite,company):
     key=os.getenv('RESEND_API_KEY',''); sender=os.getenv('INVITATION_FROM','')
     if not key or not sender: raise RuntimeError('Invitation email is not configured.')
-    link='https://alert-disaster-field-2026.web.app/?invite='+invite['invitation_id']
-    name=company['profile']['name']; role={'office':'office staff'}.get(invite['role'],invite['role'])
-    payload={'from':sender,'to':[invite['email']],'subject':'Invitation to join a company on the ADR field app',
-             'text':f'You have been invited to {name} as {role}. Sign in with {invite["email"]} and accept the invitation: {link}\nThis invitation expires in seven days.',
-             'html':f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p><p>Sign in with {html.escape(invite["email"])}.</p><p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>'}
+    link=APP_URL+'?invite='+invite['invitation_id']
+    setup=password_setup_link(invite['email'])
+    name=company['profile']['name']; role={'office':'office staff'}.get(invite['role'],invite['role']); email=invite['email']
+    if setup:
+        steps=f'Set your password for the ADR field app: {setup}\nIf that link has expired, use Forgot password on the sign-in page.\nThen sign in with {email} and that password.'
+        steps_html=(f'<p>Set your password for the ADR field app: <a href="{html.escape(setup)}">{html.escape(setup)}</a></p>'
+                    f'<p>If that link has expired, use Forgot password on the sign-in page.</p><p>Then sign in with {html.escape(email)} and that password.</p>')
+    else:
+        steps=f'Sign in with Google using this email ({email}).'; steps_html=f'<p>Sign in with Google using this email ({html.escape(email)}).</p>'
+    payload={'from':sender,'to':[email],'subject':'Invitation to join a company on the ADR field app',
+             'text':f'You have been invited to {name} as {role}.\n{steps}\nAccept the invitation: {link}\nThis invitation expires in seven days.',
+             'html':f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p>{steps_html}<p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>'}
     request=urllib.request.Request('https://api.resend.com/emails',data=json.dumps(payload).encode(),method='POST',
         headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','Idempotency-Key':invite['invitation_id']+'/'+invite['send_attempt']})
     for attempt in range(3):

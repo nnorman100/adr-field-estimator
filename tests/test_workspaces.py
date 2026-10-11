@@ -1,5 +1,6 @@
 """Company policy is tested through real API handlers and transactional storage."""
 import asyncio
+import html
 import json
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
@@ -472,14 +473,8 @@ def test_company_names_reject_links_markup_and_long_text(api,name):
     assert store.db.records['_companies/adr']['profile']['name']=='Alert Disaster Restoration'
 
 
-def test_invitation_subject_excludes_owner_text(monkeypatch):
-    sent=[]
-    class Response:
-        def __enter__(self):return self
-        def __exit__(self,*args):return False
-        def read(self,size):return b'{"id":"message"}'
-    monkeypatch.setenv('RESEND_API_KEY','test-key');monkeypatch.setenv('INVITATION_FROM','ADR <invite@example.invalid>')
-    monkeypatch.setattr(workspaces.urllib.request,'urlopen',lambda request,timeout:sent.append(json.loads(request.data)) or Response())
+def test_invitation_subject_excludes_owner_text(mail):
+    sent=mail[4]
     invite=dict(invitation_id='a'*32,send_attempt='b'*32,email='new@example.invalid',role='office')
     workspaces.send_invitation(invite,{'profile':{'name':'Owner Chosen Name'}})
     assert sent[0]['subject']=='Invitation to join a company on the ADR field app'
@@ -500,3 +495,82 @@ def test_invitation_sends_and_resends_have_a_daily_company_cap(api,monkeypatch):
     response=client.post('/api/companies/adr/invitations',json={'email':'four@example.invalid','role':'office'})
     assert response.status_code==429 and int(response.headers['Retry-After'])>86000
     assert not [r for r in store.db.records.values() if r.get('email') in ('three@example.invalid','four@example.invalid') and r.get('company_id')=='adr']
+
+
+@pytest.fixture
+def mail(api,monkeypatch):
+    """Real send_invitation against fake Resend and fake Firebase Admin; records every Firestore write."""
+    from tests import fakes
+    sent=[];writes=[];accounts=fakes.FakeAuth()
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def read(self,size):return b'{"id":"message"}'
+    monkeypatch.setenv('RESEND_API_KEY','test-key');monkeypatch.setenv('INVITATION_FROM','ADR <invite@example.invalid>')
+    monkeypatch.setattr(workspaces.urllib.request,'urlopen',lambda request,timeout:sent.append(json.loads(request.data)) or Response())
+    monkeypatch.setattr(workspaces,'firebase_auth',accounts)
+    monkeypatch.setattr(workspaces.firebase_admin,'get_app',lambda name:object())
+    for cls,name in ((fakes.Tx,'set'),(fakes.Ref,'create')):
+        def logged(self,*args,_original=getattr(cls,name),**kwargs):writes.append(json.dumps(args,default=str));return _original(self,*args,**kwargs)
+        monkeypatch.setattr(cls,name,logged)
+    client,current,store=api
+    return client,current,store,accounts,sent,writes
+
+
+def test_invitation_provisions_a_password_account_and_mails_only_its_set_password_link(mail):
+    client,current,store,accounts,sent,writes=mail
+    invited=client.post('/api/companies/adr/invitations',json={'email':'New@Example.invalid','role':'office'}).json()
+    assert invited['delivery_status']=='sent'
+    assert accounts.created==[{'email':'new@example.invalid','email_verified':False}]
+    assert [(l['email'],l['url'],l['in_app']) for l in accounts.links]==[('new@example.invalid','https://alert-disaster-field-2026.web.app/',False)]
+    link=accounts.links[0]['link']
+    assert 'Set your password for the ADR field app: '+link in sent[0]['text']
+    assert html.escape(link) in sent[0]['html'] and link not in sent[0]['html']
+    assert '?invite='+invited['invitation_id'] in sent[0]['text']
+    assert writes and not any('secret-oob' in w for w in writes)
+    assert 'secret-oob' not in json.dumps(store.db.records,default=str) and 'secret-oob' not in json.dumps(invited)
+
+
+def test_owner_invitation_for_a_new_company_provisions_the_owner_account(mail):
+    client,current,store,accounts,sent,writes=mail;current['uid']='admin'
+    result=client.post('/api/admin/companies',json={'name':'New California Restoration','owner_email':'boss@example.invalid'}).json()
+    assert result['invitation']['delivery_status']=='sent'
+    assert accounts.created==[{'email':'boss@example.invalid','email_verified':False}]
+    assert accounts.links[0]['link'] in sent[0]['text'] and not any('secret-oob' in w for w in writes)
+
+
+def test_google_invitee_gets_sign_in_instructions_without_link_or_new_account(mail):
+    client,current,store,accounts,sent,writes=mail;accounts.add('google@example.invalid','google.com')
+    assert client.post('/api/companies/adr/invitations',json={'email':'google@example.invalid','role':'office'}).json()['delivery_status']=='sent'
+    assert not accounts.created and not accounts.links
+    assert 'Sign in with Google using this email' in sent[0]['text'] and 'Set your password' not in sent[0]['text']+sent[0]['html']
+
+
+def test_resend_reuses_the_existing_password_account_with_a_fresh_link(mail):
+    client,current,store,accounts,sent,writes=mail;accounts.add('staff@example.invalid','password')
+    invited=client.post('/api/companies/adr/invitations',json={'email':'staff@example.invalid','role':'office'}).json()
+    resent=client.post('/api/companies/adr/invitations/'+invited['invitation_id']+'/resend',json={}).json()
+    assert resent['delivery_status']=='sent' and not accounts.created
+    assert [l['email'] for l in accounts.links]==['staff@example.invalid']*2
+    assert [accounts.links[i]['link'] in sent[i]['text'] for i in (0,1)]==[True,True]
+    assert not any('secret-oob' in w for w in writes)
+
+
+def test_concurrent_account_creation_falls_back_to_the_existing_account(mail,monkeypatch):
+    client,current,store,accounts,sent,writes=mail
+    def created_elsewhere(email,email_verified,app=None):
+        accounts.add(email,'password');raise accounts.EmailAlreadyExistsError('exists',None,None)
+    monkeypatch.setattr(accounts,'create_user',created_elsewhere)
+    assert client.post('/api/companies/adr/invitations',json={'email':'race@example.invalid','role':'office'}).json()['delivery_status']=='sent'
+    assert accounts.links[0]['email']=='race@example.invalid' and accounts.links[0]['link'] in sent[0]['text']
+
+
+def test_denied_or_rate_limited_invitations_create_no_account_and_send_nothing(mail,monkeypatch):
+    client,current,store,accounts,sent,writes=mail
+    monkeypatch.setattr(workspaces,'INVITATION_DAILY_LIMIT',1)
+    assert client.post('/api/companies/adr/invitations',json={'email':'one@example.invalid','role':'office'}).status_code==200
+    accounts.created.clear();accounts.links.clear();sent.clear()
+    assert client.post('/api/companies/adr/invitations',json={'email':'two@example.invalid','role':'office'}).status_code==429
+    current['uid']='office'
+    assert client.post('/api/companies/adr/invitations',json={'email':'three@example.invalid','role':'office'}).status_code==403
+    assert not accounts.created and not accounts.links and not sent and set(accounts.users)=={'one@example.invalid'}
