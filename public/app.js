@@ -1,10 +1,10 @@
 /* ADR inspection lifecycle: safe DOM, private drafts and revision-bound signing. */
 'use strict';
 const $=id=>document.getElementById(id);
-const {emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage}=ADRCore;
+const {emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage,splitPhotos}=ADRCore;
 const estimateLabel=proposal=>proposal.proposed_cost_low==null?money(proposal.proposed_cost):money(proposal.proposed_cost_low)+'–'+money(proposal.proposed_cost);
 const state={user:null,session:null,draft:null,record:null,ack:null,documents:null,signed:null,signature:null,pendingAuthorization:null,localVersion:0,conflict:false,syncing:false,ocr:new Map(),photoUrls:new Map(),media:null,socket:null,audio:null,node:null,frameTimer:null,playing:new Set(),audioTime:0,liveReady:false,stopping:false,muted:false,retries:0,lastSpeech:0,firstAudio:true};
-let syncChain=Promise.resolve(),saveTimer=null,dbPromise=null,auth=null,waitingWorker=null;
+let syncChain=Promise.resolve(),saveTimer=null,persistTimer=null,dbPromise=null,auth=null,waitingWorker=null;
 let confirmedAuthorization=null;
 const newId=()=>crypto.randomUUID().replaceAll('-','');
 const ui={task:'property',starting:false,auditing:false,fillingScope:false,documentSource:null,viewed:new Set()};
@@ -43,21 +43,42 @@ function authSay(text,type=''){const el=$('authStatus');el.textContent=text;el.c
 function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(className)el.className=className;return el;}
 function button(text,fn){const el=node('button',text);el.type='button';el.addEventListener('click',()=>Promise.resolve(fn()).catch(e=>say(e.message,'error')));return el;}
 function database(){
-  if(!dbPromise)dbPromise=new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onupgradeneeded=()=>request.result.createObjectStore('drafts',{keyPath:'key'});request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(Error('This browser cannot store a recoverable local draft.'));});
+  if(!dbPromise)dbPromise=new Promise((resolve,reject)=>{
+    const request=indexedDB.open('adr-private-drafts-v2',2);
+    request.onupgradeneeded=event=>{
+      const db=request.result,photos=db.createObjectStore('photos',{keyPath:['draft_key','id']});
+      if(event.oldVersion<1){db.createObjectStore('drafts',{keyPath:'key'});return;}
+      // Moving version 1's embedded bytes inside the upgrade transaction means a failure leaves every version 1 row untouched.
+      request.transaction.objectStore('drafts').openCursor().onsuccess=e=>{const cursor=e.target.result;if(!cursor)return;const {draft,bytes}=splitPhotos(cursor.value.draft);for(const photo of bytes)photos.put({draft_key:cursor.value.key,...photo});cursor.update({...cursor.value,draft});cursor.continue();};
+    };
+    request.onblocked=()=>say('Close other open copies of this app to finish updating private local storage.','error');
+    request.onsuccess=()=>{const db=request.result;db.onversionchange=()=>{db.close();dbPromise=null;};resolve(db);};
+    request.onerror=()=>reject(Error('This browser cannot store a recoverable local draft.'));
+  });
   return dbPromise;
 }
-async function dbAction(mode,fn){const db=await database();return new Promise((resolve,reject)=>{const tx=db.transaction('drafts',mode);const request=fn(tx.objectStore('drafts'));let result;request.onsuccess=()=>{result=request.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(Error('Local draft could not be saved. Keep this page open and retry.'));});}
+async function dbAction(mode,fn){const db=await database();return new Promise((resolve,reject)=>{const tx=db.transaction(['drafts','photos'],mode);const request=fn(tx.objectStore('drafts'),tx.objectStore('photos'));tx.oncomplete=()=>resolve(request?.result);tx.onerror=()=>reject(Error('Local draft could not be saved. Keep this page open and retry.'));});}
+const photoRange=key=>IDBKeyRange.bound([key],[key,[]]);
+async function photoBytes(key){return new Map((await dbAction('readonly',(drafts,photos)=>photos.getAll(photoRange(key)))).map(photo=>[photo.id,photo.data_url]));}
+function deleteDraft(key){return dbAction('readwrite',(drafts,photos)=>{photos.delete(photoRange(key));return drafts.delete(key);});}
 function draftKey(id){return state.user.uid+':'+(state.session?.workspaces_enabled?state.session.company_id+':':'')+id;}
 async function localDrafts(){
   const rows=await dbAction('readonly',store=>store.getAll());
   return rows.filter(r=>r.uid===state.user?.uid&&(!state.session?.workspaces_enabled||r.company_id===state.session.company_id||(!r.company_id&&state.session.company_id==='adr'&&!!state.session.role&&navigator.onLine)));
 }
 async function persist(){
+  clearTimeout(persistTimer);
   if(!state.user || !state.draft || state.signed || (state.session?.workspaces_enabled&&!state.session.role))return;
-  const row={key:draftKey(state.draft.inspection_id),uid:state.user.uid,company_id:state.session?.company_id||null,draft:structuredClone(state.draft),record:structuredClone(state.record),ack:state.ack,session:state.session,updated_at:new Date().toISOString()};
-  await dbAction('readwrite',store=>store.put(row));
+  const key=draftKey(state.draft.inspection_id),{draft,bytes}=splitPhotos(state.draft);
+  const row={key,uid:state.user.uid,company_id:state.session?.company_id||null,draft:structuredClone(draft),record:structuredClone(state.record),ack:state.ack,session:state.session,updated_at:new Date().toISOString()};
+  await dbAction('readwrite',(drafts,photos)=>{
+    const stored=photos.getAllKeys(photoRange(key));
+    stored.onsuccess=()=>{const have=new Set(stored.result.map(k=>k[1])),keep=new Set(draft.photos.map(p=>p.id));for(const photo of bytes)if(!have.has(photo.id))photos.put({draft_key:key,...photo});for(const k of stored.result)if(!keep.has(k[1]))photos.delete(k);};
+    return drafts.put(row);
+  });
 }
-async function clearLocal(){await dbAction('readwrite',store=>store.clear());}
+function schedulePersist(){clearTimeout(persistTimer);persistTimer=setTimeout(()=>persist().catch(e=>say(e.message,'error')),400);}
+async function clearLocal(){await dbAction('readwrite',(drafts,photos)=>{photos.clear();return drafts.clear();});}
 async function api(path,options={}){
   if(!navigator.onLine)throw Error('You are offline. Your draft is saved locally; reconnect to continue.');
   if(!state.user || !state.session)throw Error('Sign in with an approved, verified account to continue.');
@@ -93,8 +114,7 @@ function changed(resetConfirmation=true){
   if(!state.draft || state.signed || confirmedAuthorization)return;
   state.localVersion++;
   if(resetConfirmation){state.draft.data.scope_confirmed=false;$('scopeConfirmed').checked=false;}
-  invalidate();renderSaveStatus();
-  persist().catch(e=>say(e.message,'error'));
+  invalidate();renderSaveStatus();schedulePersist();
   clearTimeout(saveTimer);saveTimer=setTimeout(()=>syncDraft().catch(e=>say(e.message,'error')),1500);
 }
 function renderSaveStatus(){
@@ -156,13 +176,14 @@ async function drainQueue(){
       const id=row.draft.inspection_id,path='/api/inspections/'+id;
       let record;
       try{record=await request(path);}catch(e){if(e.status!==404)throw e;record=await request('/api/inspections','POST',{inspection_id:id,data:row.draft.data});row.ack=stable(row.draft.data);}
-      if(record.status==='signed'){await dbAction('readwrite',store=>store.delete(row.key));continue;}
+      if(record.status==='signed'){await deleteDraft(row.key);continue;}
       if(stable(row.draft.data)!==row.ack){
         if(stable(record.data)!==row.ack&&stable(record.data)!==stable(row.draft.data)){row.conflict=true;await saveRow(row);continue;}
         record=await request(path,'PUT',{expected_revision:record.revision,data:row.draft.data});row.ack=stable(row.draft.data);
       }else{row.draft.data=record.data;row.ack=stable(record.data);}
+      let bytes;
       for(const photo of row.draft.photos){
-        if(!record.photos.some(p=>p.id===photo.id))record=await request(path+'/photos','POST',{photo_id:photo.id,expected_revision:record.revision,room:photo.room,captured_at:photo.captured_at,data_url:photo.data_url});
+        if(!record.photos.some(p=>p.id===photo.id)){bytes??=await photoBytes(row.key);record=await request(path+'/photos','POST',{photo_id:photo.id,expected_revision:record.revision,room:photo.room,captured_at:photo.captured_at,data_url:bytes.get(photo.id)});}
         Object.assign(photo,record.photos.find(p=>p.id===photo.id),{uploaded:true});
         row.record=record;await saveRow(row);
         if(photo.ocr_status==='pending'){
@@ -331,6 +352,7 @@ async function openNew(data=emptyData(),photos=[]){
 async function restoreDraft(id){
   await stopWalk();await syncChain.catch(()=>{});await persist();
   const local=(await localDrafts()).find(r=>r.draft.inspection_id===id);
+  if(local){const bytes=await photoBytes(local.key);for(const photo of local.draft.photos)if(bytes.has(photo.id))photo.data_url=bytes.get(photo.id);}
   let remote=null;
   if(navigator.onLine){try{remote=await jsonApi('/api/inspections/'+id);}catch(e){if(e.status!==404||!local)throw e;}}
   confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
@@ -402,7 +424,7 @@ async function restoreSigned(id){
   await stopWalk();await persist();
   const record=await jsonApi('/api/authorizations/'+encodeURIComponent(id));
   if(state.user?.uid!==uid)return;
-  if(record.inspection_id)await dbAction('readwrite',store=>store.delete(draftKey(record.inspection_id)));
+  if(record.inspection_id)await deleteDraft(draftKey(record.inspection_id));
   if(state.user?.uid!==uid)return;
   state.signed=record;state.record=null;state.ack=null;state.signature=null;state.pendingAuthorization=null;
   confirmedAuthorization=id;

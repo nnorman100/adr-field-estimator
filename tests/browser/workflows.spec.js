@@ -125,11 +125,11 @@ test('worker update prompts, preserves the draft and keeps protected data out of
 });
 test('logout clears user-specific local drafts',async({page})=>{
   await scope(page);await page.locator('#technicianNotes').fill('Synthetic private logout draft');await menu(page,'accountMenu');await Promise.all([page.waitForEvent('domcontentloaded'),page.locator('#signOutButton').click()]);await expect(page.locator('#technicianNotes')).toHaveValue('');
-  const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));expect(rows.every(row=>row.draft.data.technician_notes!=='Synthetic private logout draft')).toBe(true);
+  const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));expect(rows.every(row=>row.draft.data.technician_notes!=='Synthetic private logout draft')).toBe(true);
 });
 test('sign out keeps an unsynced offline draft until the user discards it',async({page,context,browserName})=>{
   test.skip(browserName==='webkit','Windows Playwright WebKit offline navigation limitation; physical iPhone acceptance remains open.');
-  const rows=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));
+  const rows=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));
   await scope(page);await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
   await context.setOffline(true);await page.locator('#technicianNotes').fill('Unsynced offline observations');await expect(page.locator('#saveStatus')).toContainText('offline');
   await menu(page,'accountMenu');await page.locator('#signOutButton').click();
@@ -159,7 +159,7 @@ async function photoDraft(page){
 async function restoreCloudOnly(page,id){
   await menu(page,'jobMenu');await page.locator('#newInspection').click();
   await expect(page.locator('#jobMenu')).not.toHaveAttribute('open');
-  await page.evaluate(id=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const tx=request.result.transaction('drafts','readwrite');tx.objectStore('drafts').delete(sessionStorage.getItem('synthetic-uid')+':'+id);tx.oncomplete=resolve;tx.onerror=reject;};}),id);
+  await page.evaluate(id=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const tx=request.result.transaction('drafts','readwrite');tx.objectStore('drafts').delete(sessionStorage.getItem('synthetic-uid')+':'+id);tx.oncomplete=resolve;tx.onerror=reject;};}),id);
   await menu(page,'jobMenu');await page.locator('#openJobs').click();await page.locator('.job-link').filter({hasText:'Synthetic browser property'}).click();
   await task(page,'evidence');await expect(page.locator('#photoGallery img')).toHaveCount(1);
   await expect.poll(()=>page.locator('#photoGallery img').evaluate(el=>el.naturalWidth)).toBe(300);
