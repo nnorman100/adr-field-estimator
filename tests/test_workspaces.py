@@ -358,11 +358,47 @@ def test_memberships_override_static_allowlist_and_token_role_claims(store,monke
     assert error.value.status_code==403
 
 
-@pytest.mark.parametrize('changes',[{'email_verified':False},{'firebase':{'sign_in_provider':'password'}},{'firebase':{}}])
-def test_workspace_identity_requires_verified_google_provider(store,monkeypatch,changes):
-    from fastapi import HTTPException
-    monkeypatch.setattr(bm,'WORKSPACES_ENABLED',True)
+def verify_with(monkeypatch,enabled,changes):
+    monkeypatch.setattr(bm,'WORKSPACES_ENABLED',enabled)
     monkeypatch.setattr(bm.firebase_admin,'get_app',lambda name:object())
     monkeypatch.setattr(bm.firebase_auth,'verify_id_token',lambda *args,**kwargs:{**identity('owner'),**changes})
-    with pytest.raises(HTTPException) as error:asyncio.run(bm.verify_identity('normal-client-token'))
+    return asyncio.run(bm.verify_identity('normal-client-token'))
+
+
+@pytest.mark.parametrize('provider',['google.com','password'])
+def test_workspace_identity_accepts_verified_google_and_password(monkeypatch,provider):
+    assert verify_with(monkeypatch,True,{'firebase':{'sign_in_provider':provider}})['uid']=='owner'
+
+
+@pytest.mark.parametrize('changes',[{'email_verified':False},{'email_verified':False,'firebase':{'sign_in_provider':'password'}},
+                                    {'firebase':{'sign_in_provider':'anonymous'}},{'firebase':{'sign_in_provider':'custom'}},{'firebase':{}},{'email':''}])
+def test_workspace_identity_rejects_unverified_or_unknown_provider(monkeypatch,changes):
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:verify_with(monkeypatch,True,changes)
     assert error.value.status_code==403
+
+
+@pytest.mark.parametrize('provider',['google.com','password','anonymous',None])
+def test_legacy_identity_ignores_provider_and_requires_verified_allowlisted_email(monkeypatch,provider):
+    from fastapi import HTTPException
+    firebase={'sign_in_provider':provider} if provider else {}
+    assert verify_with(monkeypatch,False,{'firebase':firebase})['uid']=='owner'
+    with pytest.raises(HTTPException) as error:verify_with(monkeypatch,False,{'firebase':firebase,'email_verified':False})
+    assert error.value.status_code==403
+    monkeypatch.setattr(bm,'STAFF_EMAILS',{'staff@example.invalid'})
+    with pytest.raises(HTTPException) as error:asyncio.run(bm.verify_staff('normal-client-token'))
+    assert error.value.status_code==403
+    bm.firebase_auth.verify_id_token=lambda *args,**kwargs:{**identity('staff'),'firebase':firebase}
+    assert asyncio.run(bm.verify_staff('normal-client-token'))['email']=='staff@example.invalid'
+
+
+def test_password_identity_accepts_only_its_exact_email_invitation(store):
+    w=store.workspaces
+    password=lambda uid:{**identity(uid),'firebase':{'sign_in_provider':'password'}}
+    mine=w.invite('owner','adr','new@example.invalid','estimator')
+    theirs=w.invite('owner','adr','someone@example.invalid','office')
+    with pytest.raises(LookupError):w.accept(password('new'),theirs['invitation_id'])
+    with pytest.raises(AccessDenied):w.accept({**password('new'),'email_verified':False},mine['invitation_id'])
+    assert not w.principal('new')['role']
+    assert w.accept(password('new'),mine['invitation_id'])['role']=='estimator'
+    assert store.db.records['_invitations/'+theirs['invitation_id']]['status']=='pending'

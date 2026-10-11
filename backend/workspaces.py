@@ -79,7 +79,7 @@ class CoordinationUpdate(StrictModel):
 def email_address(value):
     value=value.strip().lower()
     if len(value)>254 or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+',value):
-        raise ValueError('Enter a valid Google account email.')
+        raise ValueError('Enter a valid email address.')
     return value
 
 def safe_id(value):
@@ -236,22 +236,22 @@ class WorkspaceStore:
                 if s.to_dict()['status']=='pending' and s.to_dict()['expires_at']>time.time()]
     def invitation(self,claims,identifier):
         invite=self.read('_invitations',identifier)
-        if not invite or invite['email']!=email_address(claims['email']): raise LookupError('Invitation not found for this Google account.')
+        if not invite or invite['email']!=email_address(claims['email']): raise LookupError('Invitation not found for this account.')
         company=self.read('_companies',invite['company_id'])
         return {**invite,'company_name':company['profile']['name'] if company else ''}
     def accept(self,claims,identifier):
         uid=claims['uid']; email=email_address(claims['email'])
-        if not claims.get('email_verified'): raise AccessDenied('A verified Google account is required.')
+        if not claims.get('email_verified'): raise AccessDenied('A verified email address is required.')
         def accept(tx):
             invite=self.read('_invitations',identifier,tx)
-            if not invite or invite['email']!=email: raise LookupError('Invitation not found for this Google account.')
+            if not invite or invite['email']!=email: raise LookupError('Invitation not found for this account.')
             member=self.read('_memberships',uid,tx)
             company=self.read('_companies',invite['company_id'],tx)
             if not company or company['status']!='active': raise AccessDenied('Company access is unavailable.')
             if invite['status']=='accepted' and invite.get('accepted_by')==uid:
                 return self.principal(uid,tx)
             if invite['status']!='pending' or invite['expires_at']<=time.time(): raise Conflict('This invitation is expired or cancelled. Request a new invitation.')
-            if member and member['company_id']!=invite['company_id']: raise Conflict('This Google account already belongs to another company.')
+            if member and member['company_id']!=invite['company_id']: raise Conflict('This account already belongs to another company.')
             # Revalidate the inviter so a demoted/disabled owner cannot leave usable invitations behind.
             self.invite_actor(invite['created_by'],invite['company_id'],invite['role'],tx)
             old_owner=company.get('owner_uid')

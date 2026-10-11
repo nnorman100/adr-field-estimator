@@ -57,6 +57,7 @@ LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/a
 ORIGINS = ['https://alert-disaster-field-2026.web.app','https://alert-disaster-field-2026.firebaseapp.com','http://127.0.0.1:8765','http://localhost:8765']
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED','false').lower()=='true'
 STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS','nathanaelcnorman@gmail.com').split(',') if e.strip()}
+WORKSPACE_SIGN_IN_PROVIDERS = frozenset({'google.com','password'})
 app = FastAPI(title='Alert Disaster Restoration Field Estimator',version='2.0')
 app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,allow_methods=['GET','POST','PUT'],allow_headers=['Authorization','Content-Type','X-ADR-Workspace-Protocol'])
 security = HTTPBearer(auto_error=False)
@@ -82,9 +83,9 @@ async def verify_identity(token):
     except Exception:
         raise HTTPException(401,'Your sign-in expired. Please sign in again.')
     if not claims.get('email_verified') or not claims.get('email'):
-        raise HTTPException(403,'A verified Google account is required.')
-    if WORKSPACES_ENABLED and claims.get('firebase',{}).get('sign_in_provider')!='google.com':
-        raise HTTPException(403,'Sign in using Google.')
+        raise HTTPException(403,'A verified email address is required. Verify your email, then sign in again.')
+    if WORKSPACES_ENABLED and claims.get('firebase',{}).get('sign_in_provider') not in WORKSPACE_SIGN_IN_PROVIDERS:
+        raise HTTPException(403,'Sign in with Google or a verified email and password.')
     return claims
 
 async def verify_staff(token):
