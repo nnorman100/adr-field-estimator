@@ -127,18 +127,19 @@ test('account switch clears customer fields and documents before another company
 });
 
 
-test('email sign-up stays unverified without authenticated calls, then accepts its invitation',async({page})=>{
+test('invited password account stays unverified without authenticated calls, then accepts its invitation',async({page})=>{
   const email=uid('pending')+'@example.invalid';
   const invitation=await(await call(page,'/api/companies/adr/invitations','POST',{email,role:'office'})).json();
   const authenticated=[];page.on('request',request=>{if(request.headers().authorization)authenticated.push(request.url());});
-  await page.addInitScript(()=>{if(!sessionStorage.getItem('synthetic-accounts'))sessionStorage.setItem('synthetic-signed-out','1');});
+  // The invitation provisioned this account and its set-password link was used; the address is not verified yet.
+  await page.addInitScript(value=>{if(!sessionStorage.getItem('synthetic-accounts')){sessionStorage.setItem('synthetic-accounts',JSON.stringify({[value]:{password:'synthetic-password',verified:false}}));sessionStorage.setItem('synthetic-signed-out','1');}},email);
   await page.goto('/?invite='+invitation.invitation_id);await expect(page.locator('#emailAuthForm')).toBeVisible();await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#emailAuthForm')).toContainText('link in your invitation email');
   await page.locator('#authEmail').fill(email);await page.locator('#authPassword').fill('synthetic-password');
-  await page.getByRole('button',{name:'Create account',exact:true}).click();
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await expect(page.locator('#verifyEmail')).toBeVisible();await expect(page.locator('#verifyAddress')).toHaveText(email);await expect(page.locator('#emailAuthForm')).toBeHidden();
-  await expect(page.locator('#authStatus')).toHaveText('Verification email sent to '+email+'.');
   await page.getByRole('button',{name:'Resend verification email'}).click();await expect(page.locator('#authStatus')).toHaveText('Verification email sent to '+email+'.');
-  expect(await page.evaluate(()=>window.__testEmails)).toEqual([{type:'verify',email},{type:'verify',email}]);
+  expect(await page.evaluate(()=>window.__testEmails)).toEqual([{type:'verify',email}]);
   await page.getByRole('button',{name:"I've verified"}).click();await expect(page.locator('#authStatus')).toContainText('not verified yet');
   await page.reload();await expect(page.locator('#verifyEmail')).toBeVisible();
   await expect(page.locator('#workspaceDashboard')).toBeHidden();await expect(page.locator('#address')).toBeDisabled();expect(authenticated).toEqual([]);
@@ -156,8 +157,7 @@ test('email sign-in errors share one message and do not reveal accounts',async({
   await signIn(email,'wrong-password');await expect(page.locator('#authStatus')).toHaveText('Email or password is incorrect.');
   await signIn('nobody@example.invalid','wrong-password');await expect(page.locator('#authStatus')).toHaveText('Email or password is incorrect.');
   await page.getByRole('button',{name:'Forgot password'}).click();await expect(page.locator('#authStatus')).toHaveText('If an account uses nobody@example.invalid, a password reset email is on its way.');
-  await page.locator('#authEmail').fill(email);await page.getByRole('button',{name:'Create account',exact:true}).click();
-  await expect(page.locator('#authStatus')).toHaveText('An account already uses this email. Sign in or reset the password.');
+  await expect(page.getByRole('button',{name:'Create account'})).toHaveCount(0);await expect(page.locator('#emailCreate')).toHaveCount(0);
   await expect(page.locator('#workspaceDashboard')).toBeHidden();
   await signIn(email,'correct-password');await expect(page.locator('#workspaceDashboard')).toBeVisible();await expect(page.locator('#authPanel')).toBeHidden();
   await expect(page.locator('#dashboardTeam')).toBeVisible();

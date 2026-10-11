@@ -30,11 +30,6 @@
       if(!account)throw fail('auth/user-not-found');if(account.password!==password)throw fail('auth/wrong-password');
       return change(passwordUser(email));
     },
-    createUserWithEmailAndPassword:async(email,password)=>{
-      const accounts=read('synthetic-accounts',{});
-      if(accounts[email])throw fail('auth/email-already-in-use');if(password.length<6)throw fail('auth/weak-password');
-      accounts[email]={password,verified:false};write('synthetic-accounts',accounts);return change(passwordUser(email));
-    },
     sendPasswordResetEmail:async email=>{window.__testEmails.push({type:'reset',email});}};
   const factory=()=>auth;factory.Auth={Persistence:{LOCAL:'local'}};
   window.firebase={initializeApp:()=>{},auth:factory};

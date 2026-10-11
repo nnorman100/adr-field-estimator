@@ -562,7 +562,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=batch1-fixes-20261010-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=invite-onboarding-20261010-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -638,11 +638,6 @@ async function initialize(){
   authClick('signInButton',async()=>{const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});await auth.signInWithPopup(provider);});
   $('emailAuthForm').addEventListener('submit',e=>e.preventDefault());
   authClick('emailSignIn',async()=>{const entered=credentials();if(entered)await auth.signInWithEmailAndPassword(entered.email,entered.password);});
-  authClick('emailCreate',async()=>{
-    const entered=credentials();if(!entered)return;
-    const {user}=await auth.createUserWithEmailAndPassword(entered.email,entered.password);await user.sendEmailVerification();
-    authSay('Verification email sent to '+entered.email+'.','success');
-  });
   authClick('emailReset',async()=>{
     if(!$('authEmail').reportValidity())return;const email=$('authEmail').value.trim();
     try{await auth.sendPasswordResetEmail(email);}catch(e){if(e.code!=='auth/user-not-found')throw e;}

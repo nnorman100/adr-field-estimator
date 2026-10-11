@@ -47,8 +47,7 @@
   // One message for unknown email and wrong password so sign-in does not reveal which accounts exist.
   const credentialMessage='Email or password is incorrect.';
   const authMessages={'auth/wrong-password':credentialMessage,'auth/user-not-found':credentialMessage,'auth/invalid-credential':credentialMessage,'auth/invalid-login-credentials':credentialMessage,
-    'auth/invalid-email':'Enter a valid email address.','auth/email-already-in-use':'An account already uses this email. Sign in or reset the password.',
-    'auth/weak-password':'Choose a stronger password of at least 6 characters.','auth/too-many-requests':'Too many attempts. Wait a few minutes, then try again.',
+    'auth/invalid-email':'Enter a valid email address.','auth/admin-restricted-operation':'Ask your company owner for an invitation.','auth/too-many-requests':'Too many attempts. Wait a few minutes, then try again.',
     'auth/network-request-failed':'Network error. Check your connection and try again.','auth/account-exists-with-different-credential':'This email already uses a different sign-in method. Use that method.',
     'auth/popup-closed-by-user':'Google sign-in was closed before it finished.'};
   const authMessage=error=>authMessages[error?.code]||'Sign-in could not be completed. Try again.';

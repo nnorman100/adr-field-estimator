@@ -48,8 +48,9 @@ console.log('PASS: selective scope application preserves manual values and sheet
   assert.equal(core.authStage({emailVerified:true,providerData:[{providerId:'google.com'}]}),'ready');
   const message=code=>core.authMessage({code});
   assert.equal(new Set(['auth/wrong-password','auth/user-not-found','auth/invalid-credential','auth/invalid-login-credentials'].map(message)).size,1);
-  for(const code of ['auth/email-already-in-use','auth/weak-password','auth/too-many-requests','auth/network-request-failed','auth/account-exists-with-different-credential'])assert.notEqual(message(code),message('auth/wrong-password'));
+  for(const code of ['auth/admin-restricted-operation','auth/too-many-requests','auth/network-request-failed','auth/account-exists-with-different-credential'])assert.notEqual(message(code),message('auth/wrong-password'));
   assert.equal(message('auth/account-exists-with-different-credential'),'This email already uses a different sign-in method. Use that method.');
+  assert.equal(message('auth/admin-restricted-operation'),'Ask your company owner for an invitation.');
   assert.equal(core.authMessage(Error('raw provider detail')),'Sign-in could not be completed. Try again.');
   console.log('PASS: auth stage derivation and non-enumerating sign-in error messages');
 }
