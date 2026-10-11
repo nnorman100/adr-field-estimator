@@ -5,15 +5,15 @@
   <meta name="theme-color" content="#D42B32"><meta name="description" content="Alert Disaster Restoration field inspections, verified evidence and signed proposals.">
   <title>Alert Disaster Restoration · Field Estimator</title>
   <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg">
-  <link rel="stylesheet" href="/app.css?v=email-auth-20261010-1">
+  <link rel="stylesheet" href="/app.css?v=batch1-fixes-20261010-1">
   <script defer src="/vendor/firebase-app-compat.js"></script><script defer src="/vendor/firebase-auth-compat.js"></script>
-  <script defer src="/core.js?v=email-auth-20261010-1"></script><script defer src="/app.js?v=email-auth-20261010-1"></script>
-  <script defer src="/workspaces.js?v=email-auth-20261010-1"></script>
+  <script defer src="/core.js?v=batch1-fixes-20261010-1"></script><script defer src="/app.js?v=batch1-fixes-20261010-1"></script>
+  <script defer src="/workspaces.js?v=batch1-fixes-20261010-1"></script>
 </head>
 <body>
   <header class="masthead">
     <a class="brand" href="/" aria-label="Alert Disaster Restoration home"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><strong>Field Estimator</strong></a>
-    <div class="header-tools"><button id="signInButton" class="primary" aria-label="Sign in with Google">Sign in</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><strong>Alert Disaster Restoration</strong><p>CSLB #950983<br>3300 Patton Way<br>Bakersfield, CA 93308</p><a href="tel:+16614262151">(661) 426-2151</a><a href="https://alertdisaster.com/" target="_blank" rel="noopener noreferrer">Company website</a><small>App version 2026.10.10.1</small></div></details></div>
+    <div class="header-tools"><button id="signInButton" class="primary" aria-label="Sign in with Google">Sign in</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><strong>Alert Disaster Restoration</strong><p>CSLB #950983<br>3300 Patton Way<br>Bakersfield, CA 93308</p><a href="tel:+16614262151">(661) 426-2151</a><a href="https://alertdisaster.com/" target="_blank" rel="noopener noreferrer">Company website</a><small>App version 2026.10.10.2</small></div></details></div>
   </header>
   <div id="updateBanner" class="notice" hidden>Update ready. <button id="applyUpdate">Save &amp; update</button></div>
   <div id="offlineBanner" class="notice" hidden>You are offline. Changes stay on this device until synced. AI and signing need a connection.</div>
@@ -36,6 +36,7 @@
     <nav class="task-nav" aria-label="Inspection tasks"><button data-task="property" aria-current="step"><span>01</span>Property</button><button data-task="walkthrough"><span>02</span>Walkthrough</button><button data-task="evidence"><span>03</span>Evidence</button><button data-task="review"><span>04</span>Review</button></nav>
   </div>
   <p id="message" class="message" role="status" aria-live="polite" hidden></p>
+  <div id="unsyncedActions" class="notice" hidden><span id="unsyncedCount" role="status"></span> <button id="discardSignOut">Discard unsynced work and sign out</button></div>
   <div id="conflictActions" class="notice" hidden>Another saved revision differs from your local work. <button id="restoreRemote">Restore saved draft</button><button id="forkLocal">Save local work as new inspection</button></div>
   <main class="workspace">
     <section id="panel-property" data-panel="property" class="inspector" aria-labelledby="inspectionHeading">

@@ -562,7 +562,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=email-auth-20261010-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=batch1-fixes-20261010-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -654,14 +654,21 @@ async function initialize(){
     if(authStage(auth.currentUser)==='unverified'){authSay('This email is not verified yet. Open the link in the verification email, then try again.','error');return;}
     await applyUser(auth.currentUser);
   });
-  const signOut=async()=>{
-    state.queuePaused=true;await stopWalk();clearTimeout(state.queueRetry);clearTimeout(saveTimer);
-    await syncDraft().catch(()=>{});await persist();await auth.signOut();
+  const unsynced=row=>row.conflict||stable(row.draft.data)!==row.ack||row.draft.photos.some(p=>!p.uploaded);
+  const discardAndSignOut=async()=>{
+    state.queuePaused=true;await stopWalk();clearTimeout(state.queueRetry);clearTimeout(saveTimer);await auth.signOut();
     // pagehide must not recreate the draft after local storage is cleared.
     state.user=null;state.session=null;state.draft=null;state.record=null;state.signed=null;invalidate();
     await clearLocal();location.reload();
   };
-  click('signOutButton',signOut);click('verifySignOut',signOut);
+  const signOut=async()=>{
+    const paused=state.queuePaused;state.queuePaused=true;await stopWalk();clearTimeout(state.queueRetry);clearTimeout(saveTimer);
+    await syncDraft().catch(()=>{});await persist();
+    const pending=(await localDrafts()).filter(unsynced).length;
+    if(pending){state.queuePaused=paused;$('unsyncedCount').textContent=pending+(pending===1?' draft has not synced. Connect to the internet and wait for sync, or discard it and sign out.':' drafts have not synced. Connect to the internet and wait for sync, or discard them and sign out.');$('unsyncedActions').hidden=false;return;}
+    await discardAndSignOut();
+  };
+  click('signOutButton',signOut);click('verifySignOut',signOut);click('discardSignOut',discardAndSignOut);
   click('newInspection',()=>openNew());click('openJobs',()=>window.WorkspaceUI?.enabled()?WorkspaceUI.jobs():showJobs());click('closeJobs',()=>$('jobsDialog').close());
   click('addRoom',()=>{if(state.draft.data.rooms.length>=30)throw Error('At most 30 rooms are supported.');state.draft.data.rooms.push({name:'Room '+(state.draft.data.rooms.length+1),category:1,unfinished_sf:0,finished_sf:0,custom_cabinetry:false,waste_percent:0});changed();renderRooms();});
   $('inspectionForm').addEventListener('submit',e=>e.preventDefault());$('inspectionForm').addEventListener('input',e=>{if(e.target.dataset.roomKey)return;collect();changed(e.target.id!=='scopeConfirmed');});
