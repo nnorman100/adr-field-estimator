@@ -51,6 +51,8 @@
     'auth/network-request-failed':'Network error. Check your connection and try again.','auth/account-exists-with-different-credential':'This email already uses a different sign-in method. Use that method.',
     'auth/popup-closed-by-user':'Google sign-in was closed before it finished.'};
   const authMessage=error=>authMessages[error?.code]||'Sign-in could not be completed. Try again.';
-  const api={emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage};
+  // Draft rows are rewritten on every save; photo bytes are stored once beside them.
+  const splitPhotos=draft=>({draft:{...draft,photos:draft.photos.map(({data_url,...photo})=>photo)},bytes:draft.photos.filter(photo=>photo.data_url).map(photo=>({id:photo.id,data_url:photo.data_url}))});
+  const api={emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage,splitPhotos};
   if(typeof module!=='undefined')module.exports=api;else root.ADRCore=api;
 })(typeof window==='undefined'?globalThis:window);

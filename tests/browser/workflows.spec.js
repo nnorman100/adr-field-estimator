@@ -125,11 +125,11 @@ test('worker update prompts, preserves the draft and keeps protected data out of
 });
 test('logout clears user-specific local drafts',async({page})=>{
   await scope(page);await page.locator('#technicianNotes').fill('Synthetic private logout draft');await menu(page,'accountMenu');await Promise.all([page.waitForEvent('domcontentloaded'),page.locator('#signOutButton').click()]);await expect(page.locator('#technicianNotes')).toHaveValue('');
-  const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));expect(rows.every(row=>row.draft.data.technician_notes!=='Synthetic private logout draft')).toBe(true);
+  const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));expect(rows.every(row=>row.draft.data.technician_notes!=='Synthetic private logout draft')).toBe(true);
 });
 test('sign out keeps an unsynced offline draft until the user discards it',async({page,context,browserName})=>{
   test.skip(browserName==='webkit','Windows Playwright WebKit offline navigation limitation; physical iPhone acceptance remains open.');
-  const rows=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));
+  const rows=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));
   await scope(page);await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
   await context.setOffline(true);await page.locator('#technicianNotes').fill('Unsynced offline observations');await expect(page.locator('#saveStatus')).toContainText('offline');
   await menu(page,'accountMenu');await page.locator('#signOutButton').click();
@@ -146,6 +146,28 @@ test('reconnection synchronizes an older queued inspection as well as the open d
   await context.setOffline(true);await page.locator('#technicianNotes').fill('Older queued observations');await menu(page,'jobMenu');await page.locator('#newInspection').click();await expect(page.locator('#address')).toHaveValue('');await page.locator('#address').fill('Second local draft');await page.locator('#saveDraft').click();await context.setOffline(false);
   await expect.poll(()=>page.evaluate(async id=>(await(await fetch('/api/inspections/'+id,{headers:{Authorization:'Bearer '+sessionStorage.getItem('synthetic-uid')}})).json()).data.technician_notes,original)).toBe('Older queued observations');
 });
+test('reconnection reports a queued draft that changed on another device',async({page,context,request,browserName})=>{
+  test.skip(browserName==='webkit','Real offline navigation is covered on Chromium; Windows WebKit device acceptance remains open.');
+  await scope(page);const uid=await page.evaluate(()=>sessionStorage.getItem('synthetic-uid')),headers={Authorization:'Bearer '+uid};
+  const original=(await(await request.get('/api/inspections',{headers})).json()).inspections[0].inspection_id;
+  await context.setOffline(true);await page.locator('#technicianNotes').fill('Queued observations on this device');await menu(page,'jobMenu');await page.locator('#newInspection').click();await expect(page.locator('#address')).toHaveValue('');
+  const record=await(await request.get('/api/inspections/'+original,{headers})).json();record.data.technician_notes='Edited on another device';
+  expect((await request.put('/api/inspections/'+original,{headers,data:{expected_revision:record.revision,data:record.data}})).ok()).toBe(true);
+  await context.setOffline(false);
+  await expect(page.locator('#message')).toHaveText('1 queued draft changed on another device. Open it from Jobs to choose which version to keep.');
+  expect((await(await request.get('/api/inspections/'+original,{headers})).json()).data.technician_notes).toBe('Edited on another device');
+});
+test('reopening a draft after a signed job releases the signed photo object URLs',async({page})=>{
+  await page.locator('#address').fill('Draft to reopen');await page.locator('#saveDraft').click();await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await menu(page,'jobMenu');await page.locator('#newInspection').click();await expect(page.locator('#address')).toHaveValue('');
+  const image=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=300;c.height=600;return c.toDataURL('image/png');});
+  await page.locator('#photoFileInput').setInputFiles({name:'signed.png',mimeType:'image/png',buffer:Buffer.from(image.split(',')[1],'base64')});await expect(page.locator('#photoGallery')).toContainText('no meter');
+  await audit(page);await page.locator('#documentsConfirmed').check();await draw(page);await page.locator('#authorizeJob').click();await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+  await expect.poll(()=>page.evaluate(()=>state.photoUrls.size)).toBe(1);
+  const urls=await page.evaluate(()=>{window.revokedUrls=[];const revoke=URL.revokeObjectURL;URL.revokeObjectURL=url=>{window.revokedUrls.push(url);revoke(url);};return [...state.photoUrls.values()];});
+  await menu(page,'jobMenu');await page.locator('#openJobs').click();await page.locator('.job-link').filter({hasText:'Draft to reopen'}).click();await expect(page.locator('#address')).toHaveValue('Draft to reopen');
+  expect(await page.evaluate(()=>[state.photoUrls.size,window.revokedUrls])).toEqual([0,expect.arrayContaining(urls)]);
+});
 
 async function photoDraft(page){
   await scope(page);
@@ -159,7 +181,7 @@ async function photoDraft(page){
 async function restoreCloudOnly(page,id){
   await menu(page,'jobMenu');await page.locator('#newInspection').click();
   await expect(page.locator('#jobMenu')).not.toHaveAttribute('open');
-  await page.evaluate(id=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const tx=request.result.transaction('drafts','readwrite');tx.objectStore('drafts').delete(sessionStorage.getItem('synthetic-uid')+':'+id);tx.oncomplete=resolve;tx.onerror=reject;};}),id);
+  await page.evaluate(id=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const tx=request.result.transaction('drafts','readwrite');tx.objectStore('drafts').delete(sessionStorage.getItem('synthetic-uid')+':'+id);tx.oncomplete=resolve;tx.onerror=reject;};}),id);
   await menu(page,'jobMenu');await page.locator('#openJobs').click();await page.locator('.job-link').filter({hasText:'Synthetic browser property'}).click();
   await task(page,'evidence');await expect(page.locator('#photoGallery img')).toHaveCount(1);
   await expect.poll(()=>page.locator('#photoGallery img').evaluate(el=>el.naturalWidth)).toBe(300);

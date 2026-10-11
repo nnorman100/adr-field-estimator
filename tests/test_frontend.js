@@ -54,3 +54,11 @@ console.log('PASS: selective scope application preserves manual values and sheet
   assert.equal(core.authMessage(Error('raw provider detail')),'Sign-in could not be completed. Try again.');
   console.log('PASS: auth stage derivation and non-enumerating sign-in error messages');
 }
+
+{
+  const draft={inspection_id:'x',data:core.emptyData(),photos:[{id:'a',room:'Room 1',data_url:'data:image/png;base64,AAAA',uploaded:false},{id:'b',room:'Room 1',uploaded:true}]};
+  const {draft:row,bytes}=core.splitPhotos(draft);
+  assert.deepEqual(row.photos,[{id:'a',room:'Room 1',uploaded:false},{id:'b',room:'Room 1',uploaded:true}]);assert.equal(row.data,draft.data);
+  assert.deepEqual(bytes,[{id:'a',data_url:'data:image/png;base64,AAAA'}]);assert.equal(draft.photos[0].data_url,'data:image/png;base64,AAAA');
+  console.log('PASS: draft rows keep photo metadata while photo bytes split out without mutating the open draft');
+}
