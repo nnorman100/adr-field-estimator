@@ -1,0 +1,2 @@
+const {defineConfig}=require('@playwright/test');
+module.exports=defineConfig({testDir:'tests/browser',fullyParallel:false,workers:1,timeout:45000,use:{baseURL:'https://localhost:8765',ignoreHTTPSErrors:true,viewport:{width:1280,height:900},trace:'retain-on-failure'},projects:[{name:'chromium',use:{browserName:'chromium',launchOptions:{args:['--ignore-certificate-errors']}}},{name:'webkit',use:{browserName:'webkit'}}],webServer:{command:'python tests/browser_server.py',url:'https://localhost:8765/api/health',ignoreHTTPSErrors:true,reuseExistingServer:false,timeout:30000}});

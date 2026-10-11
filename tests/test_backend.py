@@ -1,134 +1,128 @@
+import asyncio, json, time
+from types import SimpleNamespace
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import backend.main as bm
+from backend.contracts import InspectionData
+from tests.fakes import FakeStore,png
 
-bm.genai_client = None  # Test in clean offline/deterministic fallback mode
-client = TestClient(bm.app)
+ID='ADR-INS-'+'a'*32
 
-def test_health():
-    res = client.get("/health")
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "healthy"
-    assert data["service"] == "alert-disaster-field-estimator"
+def data(**changes):
+    return InspectionData(address='Synthetic test property',year_built=1960,
+        rooms=[{'name':'Bathroom','category':1,'finished_sf':10}],air_movers=3,dehumidifiers=1,
+        scope_confirmed=True,technician_notes='Localized clean water damage. Proposed drying and drywall removal.',**changes).model_dump(mode='json')
 
-def test_audit_post_1978():
-    payload = {
-        "address": "1813 Capistrano Ave, Wasco, CA",
-        "year_built": 2020,
-        "has_crawl_space": False,
-        "area": "Kitchen",
-        "is_after_hours": True,
-        "transcript": "Extech meter 99.9% SAT in toe kick"
-    }
-    res = client.post("/api/audit", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert data["adr_estimate"]["property_address"] == "1813 Capistrano Ave, Wasco, CA"
-    assert data["adr_estimate"]["lead_notice_required"] is False
-    assert "no lead or asbestos testing is required" in data["adr_estimate"]["findings_html"]
-    assert "recommendations_html" in data["adr_estimate"]
-    assert data["adr_estimate"]["proposed_cost"] == 2499
+@pytest.fixture
+def context(monkeypatch):
+    store=FakeStore()
+    bm.app.dependency_overrides[bm.current_staff]=lambda:{'uid':'owner','email':'owner@example.invalid'}
+    bm.app.dependency_overrides[bm.get_job_store]=lambda:store
+    async def generate(**kwargs):
+        schema=kwargs['config'].response_schema
+        value={'summary':'The technician confirmed a localized bathroom scope.','suggestions':['Confirm drying progress.'],'unpriced_work':[]} if schema is bm.AIResult else {'meter_detected':False,'meter_type':'Inspection Photo','value':'','classification':'No readable meter','notes':'No physical display visible.'}
+        return SimpleNamespace(text=json.dumps(value))
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))))
+    yield TestClient(bm.app),store
+    bm.app.dependency_overrides.clear()
 
-    # Verify line items have both full and short property names
-    for item in data["xactimate_scope"]:
-        assert item["code"]
-        assert "description" in item and "desc" in item
-        assert item["description"] == item["desc"]
-        assert "quantity" in item and "qty" in item
-        assert item["quantity"] == item["qty"]
-        assert "unit_price" in item and "price" in item
-        assert item["unit_price"] == item["price"]
-        assert "waste_percent" in item and "waste" in item
-        assert item["waste_percent"] == item["waste"]
-        assert isinstance(item["total"], (int, float))
+def inspect(client):
+    r=client.post('/api/inspections',json={'inspection_id':ID,'data':data()});assert r.status_code==200,r.text
+    return r.json()
+def audit(client,record):
+    r=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']});assert r.status_code==200,r.text
+    return r.json()
+def sign_payload(record):
+    return dict(inspection_id=ID,expected_revision=record['revision'],auth_id='ADR-AUTH-test123456',proposal_hash=record['audit']['proposal_hash'],signature_png=png(),documents_confirmed=True)
 
-    assert "iicrc_defense_letter" in data
-    assert "Matthew Myers" in data["iicrc_defense_letter"]
-    assert "950983" in data["iicrc_defense_letter"]
+def test_authenticated_durable_flow_and_immutable_retry(context):
+    client,store=context
+    record=audit(client,inspect(client));docs=record['audit']['documents']
+    assert docs['xactimate_total']==1775
+    assert docs['adr_estimate']['proposed_cost_low']==1775
+    assert docs['adr_estimate']['proposed_cost']==1788.9
+    assert docs['schema_version']==3
+    assert docs['adr_estimate']['lead_notice_required'] and docs['signable']
+    payload=sign_payload(record)
+    saved=client.post('/api/authorize',json=payload);assert saved.status_code==200,saved.text
+    assert client.post('/api/authorize',json=payload).json()==saved.json()
+    loaded=client.get('/api/authorizations/'+payload['auth_id']).json()
+    assert loaded['documents']==docs and 'owner_uid' not in loaded
+    assert client.get('/api/authorizations/'+payload['auth_id']+'/evidence/signature').status_code==200
+    assert client.put('/api/inspections/'+ID,json={'expected_revision':record['revision'],'data':data()}).status_code==409
+    assert len(store.bucket.objects)==1
 
-def test_audit_pre_1978():
-    payload = {
-        "address": "404 18th St, Bakersfield, CA",
-        "year_built": 1968,
-        "has_crawl_space": True,
-        "area": "Bathroom",
-        "is_after_hours": False,
-        "transcript": "Subfloor wet under clawfoot tub"
-    }
-    res = client.post("/api/audit", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert data["adr_estimate"]["lead_notice_required"] is True
-    assert "California State Law requires third-party lead and asbestos testing" in data["adr_estimate"]["findings_html"]
-    assert "(This does not include the pretest for lead/asbestos)" in data["adr_estimate"]["findings_html"]
+def test_stale_revision_changed_scope_and_forged_prices(context):
+    client,_=context
+    record=audit(client,inspect(client));payload=sign_payload(record)
+    revised=data();revised['address']='Different address'
+    assert client.put('/api/inspections/'+ID,json={'expected_revision':record['revision'],'data':revised}).status_code==200
+    assert client.post('/api/authorize',json=payload).status_code==409
+    payload['proposed_cost']=1
+    assert client.post('/api/authorize',json=payload).status_code==422
+    assert client.post('/api/authorize',json={'auth_id':'ADR-AUTH-never-saved','signature_png':png(),'proposed_cost':-1}).status_code==409
 
-def test_authorize_endpoint():
-    payload = {
-        "address": "1813 Capistrano Ave, Wasco, CA",
-        "proposed_cost": 2499.0,
-        "signature_png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-        "photos_count": 3,
-        "photos": [{"id": 1, "meter_type": "Extech MO290", "ocr_value": "99.9% SAT"}]
-    }
-    res = client.post("/api/authorize", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "success"
-    assert "ADR-AUTH-" in data["auth_id"]
-    assert data["contractor_license"] == "950983"
-    assert data["estimator"] == "Matthew Myers"
-    assert data["proposed_cost"] == 2499.0
+def test_old_package_selection_requires_app_update(context):
+    client,_=context
+    record=client.post('/api/inspections',json={'inspection_id':ID,'data':data(package_price='2049.99')}).json()
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
+    assert response.status_code==409
+    assert 'Update the app' in response.json()['detail']
 
-def test_ocr_meter_fallback():
-    res = client.post("/api/ocr-meter", json={"photo_base64": "data:image/jpeg;base64,fake"})
-    assert res.status_code == 200
-    data = res.json()
-    assert data["meter_detected"] is True
-    assert data["meter_type"] == "Extech MO290"
-    assert "99.9% SAT" in data["value"]
+def test_model_output_missing_and_provider_error_never_produces_documents(context,monkeypatch):
+    client,store=context;record=inspect(client)
+    async def malformed(**kwargs):return SimpleNamespace(text='{"proposed_cost":-999}')
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=malformed))))
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
+    assert response.status_code==502 and store.get_inspection('owner',ID)['audit'] is None
 
-def test_authorize_with_string_findings_and_recs():
-    payload = {
-        "address": "500 Oak St, Bakersfield, CA",
-        "proposed_cost": 1999.0,
-        "signature_png": "data:image/png;base64,sample",
-        "findings": "<p>Saturated subfloor under kitchen island</p>",
-        "recommendations": "4-ft flood cuts on north wall"
-    }
-    res = client.post("/api/authorize", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "success"
-    assert data["proposed_cost"] == 1999.0
+def test_non_meter_and_failed_ocr_remain_unverified(context,monkeypatch):
+    client,store=context;record=inspect(client)
+    r=client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=record['revision'],photo_id='b'*32,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()))
+    assert r.status_code==200,r.text
+    result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
+    assert result.status_code==200 and result.json()['photos'][0]['ocr_status']=='no_meter'
+    async def unavailable(**kwargs):raise RuntimeError('provider unavailable')
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))))
+    result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
+    assert result.status_code==502 and store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='failed'
 
-def test_normalize_xactimate_robustness():
-    items = [
-        {"code": "WTRDRY", "description": None, "desc": "Drywall demo", "quantity": "", "qty": 4, "unit_price": None, "price": 10.0, "waste": 5},
-        {"code": None, "desc": None, "qty": "3", "price": "145.50"}
-    ]
-    normalized = bm.normalize_xactimate_items(items)
-    assert len(normalized) == 2
-    assert normalized[0]["description"] == "Drywall demo"
-    assert normalized[0]["quantity"] == 4.0
-    assert normalized[0]["unit_price"] == 10.0
-    assert normalized[0]["waste_percent"] == 5.0
-    assert normalized[0]["total"] == 42.0
+def test_auth_ownership_limits_and_invalid_inputs(context):
+    client,_=context;inspect(client)
+    bm.app.dependency_overrides[bm.current_staff]=lambda:{'uid':'other'}
+    assert client.get('/api/inspections/'+ID).status_code==404
+    assert client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=1,photo_id='b'*32,room='Room',captured_at='2026-10-06T19:00:00Z',data_url=png())).status_code==404
+    bm.app.dependency_overrides.pop(bm.current_staff)
+    for path in ['/api/inspections','/api/authorizations','/api/authorizations/ADR-AUTH-test123456']:
+        assert client.get(path).status_code==401
+    assert client.get('/api/health').status_code==200
+    bm.app.dependency_overrides[bm.current_staff]=lambda:{'uid':'owner'}
+    invalid=data();invalid['labor_hours']=-1
+    assert client.put('/api/inspections/'+ID,json={'expected_revision':1,'data':invalid}).status_code==422
+    # The transaction-backed per-user limit applies to API calls.
+    for _ in range(3):client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1})
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1})
+    assert response.status_code==429 and response.headers['Retry-After']
 
-    assert normalized[1]["code"] == "MISC"
-    assert normalized[1]["description"] == "Remediation item"
-    assert normalized[1]["quantity"] == 3.0
-    assert normalized[1]["unit_price"] == 145.50
+def test_live_rejects_origins_and_unauthorized_before_vertex(context,monkeypatch):
+    client,_=context
+    with pytest.raises(Exception):
+        with client.websocket_connect('/api/live',headers={'origin':'https://attacker.invalid'}):pass
+    async def reject(token):raise HTTPException(401,'Sign in again.')
+    monkeypatch.setattr(bm,'verify_staff',reject)
+    with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+        socket.send_json({'type':'authenticate','token':'invalid','inspection_id':ID})
+        assert socket.receive_json()['type']=='error'
 
-def test_parse_json_from_llm():
-    raw_markdown = """```json
-    {
-      "meter_detected": true,
-      "meter_type": "FLIR Thermal Camera",
-      "value": "-8.4°F Delta T"
-    }
-    ```"""
-    parsed = bm.parse_json_from_llm(raw_markdown)
-    assert parsed["meter_detected"] is True
-    assert parsed["meter_type"] == "FLIR Thermal Camera"
-
+def test_staff_verification_checks_revoked_and_disabled_sessions(monkeypatch):
+    monkeypatch.setattr(bm.firebase_admin,'get_app',lambda name:object())
+    calls=[]
+    def verify(token,**kwargs):
+        calls.append(kwargs)
+        if token=='revoked':raise ValueError('Revoked or disabled')
+        return {'uid':'owner','email':next(iter(bm.STAFF_EMAILS)),'email_verified':True}
+    monkeypatch.setattr(bm.firebase_auth,'verify_id_token',verify)
+    assert asyncio.run(bm.verify_staff('approved'))['uid']=='owner'
+    with pytest.raises(HTTPException) as error:asyncio.run(bm.verify_staff('revoked'))
+    assert error.value.status_code==401 and all(c['check_revoked'] is True for c in calls)

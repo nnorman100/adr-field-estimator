@@ -1,0 +1,42 @@
+const {test,expect}=require('@playwright/test');
+test.beforeEach(async({page})=>{await page.goto('/');await expect(page.locator('#address')).toBeEnabled({timeout:15000});await expect(page.locator('#saveStatus')).toContainText('Saved privately');});
+async function setup(page){
+  test.skip(!await page.evaluate(()=>!!(window.AudioContext||window.webkitAudioContext)),'Windows WebKit lacks Web Audio; physical iPhone remains open.');
+  await page.evaluate(()=>{
+    window.livePackets=[];window.liveSockets=[];window.liveTracks=[];window.syntheticContexts=[];
+    Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{
+      const canvas=document.createElement('canvas');canvas.width=640;canvas.height=480;canvas.getContext('2d').fillRect(0,0,640,480);
+      const audio=new(window.AudioContext||window.webkitAudioContext)();window.syntheticContexts.push(audio);
+      const tracks=[...canvas.captureStream(1).getVideoTracks(),...audio.createMediaStreamDestination().stream.getAudioTracks()];window.liveTracks.push(...tracks);return new MediaStream(tracks);
+    }}});
+    window.WebSocket=class{
+      static OPEN=1;readyState=0;bufferedAmount=0;
+      constructor(){window.liveSockets.push(this);setTimeout(()=>{this.readyState=1;this.onopen?.();},0);}
+      emit(packet){this.onmessage?.({data:JSON.stringify(packet)});}
+      send(raw){const packet=JSON.parse(raw);window.livePackets.push(packet);
+        if(packet.type==='authenticate')setTimeout(()=>this.emit({type:'ready',protocol_version:2,connection_id:'synthetic-'+window.liveSockets.length,recovery:packet.resume?'resumed':'new'}),0);
+        if(packet.type==='end')setTimeout(()=>{this.emit({type:'transcript',speaker:'technician',connection_id:'synthetic-'+window.liveSockets.length,sequence:9,text:'80 SF',finished:true});this.emit({type:'finished',complete:true});},30);
+      }
+      close(){this.readyState=3;this.onclose?.();}
+    };
+  });
+  await page.locator('.task-nav [data-task="walkthrough"]').click();await page.locator('#startWalk').click();await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
+}
+async function cleanup(page){await page.evaluate(()=>Promise.all(window.syntheticContexts.map(context=>context.close())));}
+test('protocol 2 preserves fragments, deduplicates delivery and flushes before form review',async({page})=>{
+  await page.locator('#technicianNotes').fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');await setup(page);
+  await page.evaluate(()=>{const socket=window.liveSockets[0],chunk=(sequence,text,finished)=>({type:'transcript',speaker:'technician',connection_id:'synthetic-1',sequence,text,finished});socket.emit(chunk(1,'Bath',false));socket.emit(chunk(2,'room',true));socket.emit(chunk(2,'room',true));});
+  await expect(page.locator('#technicianTranscript')).toHaveValue('Bathroom');await page.locator('#muteMic').click();
+  expect(await page.evaluate(()=>window.livePackets.some(packet=>packet.type==='pause'))).toBe(true);
+  await page.locator('#fillScope').click();await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();await expect(page.locator('#technicianTranscript')).toHaveValue('Bathroom\n80 SF');
+  expect(await page.evaluate(()=>window.liveTracks.every(track=>track.readyState==='ended'))).toBe(true);
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('0');await cleanup(page);
+});
+test('offline requires explicit Resume and stale callbacks cannot edit a new inspection',async({page})=>{
+  await setup(page);await page.evaluate(()=>{window.syntheticOnline=false;Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>window.syntheticOnline});window.dispatchEvent(new Event('offline'));});
+  await expect(page.locator('#startWalk')).toHaveText('Resume walkthrough');expect(await page.evaluate(()=>window.liveTracks.every(track=>track.readyState==='ended'))).toBe(true);
+  await page.evaluate(()=>{window.syntheticOnline=true;window.dispatchEvent(new Event('online'));});await expect(page.locator('#startWalk')).toBeEnabled();expect(await page.evaluate(()=>window.liveSockets.length)).toBe(1);
+  await page.locator('#startWalk').click();await expect(page.locator('#liveStatus')).toHaveText('Live conversation resumed');expect(await page.evaluate(()=>window.livePackets.filter(packet=>packet.type==='authenticate').at(-1).resume)).toBe(true);
+  await page.locator('#jobMenu summary').click();await page.locator('#newInspection').click();await expect(page.locator('#technicianTranscript')).toHaveValue('');
+  await page.evaluate(()=>window.liveSockets[1].emit({type:'transcript',speaker:'technician',connection_id:'synthetic-2',sequence:100,text:'LATE OLD JOB',finished:true}));await expect(page.locator('#technicianTranscript')).toHaveValue('');await cleanup(page);
+});
