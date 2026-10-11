@@ -89,3 +89,11 @@ def test_scope_extraction_has_its_own_quota(context,monkeypatch):
     client,_=context;prepared(client);provider(monkeypatch,[])
     for _ in range(6):assert suggest(client).status_code==200
     response=suggest(client);assert response.status_code==429 and response.headers['Retry-After']
+
+def test_scope_extraction_daily_cap_returns_retry_after(context,monkeypatch):
+    import backend.inspection_store as module
+    client,_=context;prepared(client);provider(monkeypatch,[])
+    monkeypatch.setitem(module.DAILY_LIMITS,'scope',1)
+    assert suggest(client).status_code==200
+    response=suggest(client)
+    assert response.status_code==429 and int(response.headers['Retry-After'])>3600

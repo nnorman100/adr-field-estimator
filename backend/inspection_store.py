@@ -14,6 +14,9 @@ try:
 except ImportError:
     from job_store import JobStore, decode_image, IMAGE_WORKER
 
+# Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
+DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40}
+
 class Conflict(ValueError): pass
 class Limited(ValueError):
     def __init__(self, seconds=60):
@@ -250,11 +253,14 @@ class InspectionStore(JobStore):
         if not audit or not audit['documents']['signable'] or record['revision'] != payload['expected_revision'] or audit['revision'] != record['revision'] or audit['proposal_hash'] != payload['proposal_hash']:
             raise Conflict('The scope changed or requires review. Complete a new audit before signing.')
 
-    def quota(self, uid, action, maximum):
+    def quota(self, uid, action, maximum=None):
         ref = self.db.collection('_limits').document(uid)
         def reserve(tx):
             snapshot=ref.get(transaction=tx)
-            tx.set(ref,reserve_slot(snapshot.to_dict() if snapshot.exists else {},action,maximum))
+            data=snapshot.to_dict() if snapshot.exists else {}
+            if action in DAILY_LIMITS: data=reserve_slot(data,action+'_day',DAILY_LIMITS[action],86400)
+            if maximum: data=reserve_slot(data,action,maximum)
+            tx.set(ref,data)
         self._atomic(reserve)
 
     def live_lease(self, uid, lease_id=None, release=False):

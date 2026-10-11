@@ -156,3 +156,23 @@ def test_finished_is_acknowledged_before_cleanup_writes(monkeypatch):
         acknowledged.set()
         with pytest.raises(WebSocketDisconnect):socket.receive_json()
     assert releases==[True] and '_live_sessions/owner' not in store.db.records
+
+
+def test_daily_live_start_cap_rejects_before_vertex(monkeypatch):
+    import backend.inspection_store as module
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    finishing_relay(monkeypatch,store);monkeypatch.setitem(module.DAILY_LIMITS,'live',1)
+    opened=[];relay=bm.genai.Client
+    monkeypatch.setattr(bm.genai,'Client',lambda **kw:opened.append(True) or relay(**kw))
+    auth=dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP)
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth);assert socket.receive_json()['type']=='ready'
+            socket.send_json({'type':'end'});assert socket.receive_json()['type']=='finished'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        assert '_live_sessions/owner' not in store.db.records
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth)
+            assert socket.receive_json()=={'type':'error','message':'Too many requests. Please wait and retry.','status':429}
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    assert opened==[True] and '_live_sessions/owner' not in store.db.records

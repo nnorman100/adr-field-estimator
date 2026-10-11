@@ -376,6 +376,7 @@ async def live_walkthrough(socket:WebSocket):
             except HTTPException as error:
                 if protocol!=2 or not auth.get('resume') or error.status_code!=429 or attempt==30: raise
                 await asyncio.sleep(.1)
+        if not auth.get('resume'): await stored(store.quota,uid,'live')
         handle=None
         if capture:
             handle=await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'open')
