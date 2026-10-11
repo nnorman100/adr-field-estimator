@@ -589,7 +589,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=invite-onboarding-20261010-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=batch3-frontend-20261010-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
