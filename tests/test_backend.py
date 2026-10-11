@@ -93,6 +93,15 @@ def test_model_output_missing_and_provider_error_never_produces_documents(contex
     response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
     assert response.status_code==502 and store.get_inspection('owner',ID)['audit'] is None
 
+def test_zero_work_audit_is_rejected_before_the_model_runs(context,monkeypatch):
+    client,_=context;calls=[]
+    async def generate(**kwargs):calls.append(kwargs);return SimpleNamespace(text=json.dumps({'summary':'Nothing priced.','suggestions':[],'unpriced_work':[]}))
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))))
+    empty=data(emergency_calls=0,monitoring_hours=0,haul_loads=0,air_scrubbers=0,hepa_filters=0);empty.update(air_movers=0,dehumidifiers=0);empty['rooms'][0]['finished_sf']=0
+    record=client.post('/api/inspections',json={'inspection_id':ID,'data':empty}).json()
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
+    assert response.status_code==400 and 'Add measured work' in response.json()['detail'] and calls==[]
+
 def test_non_meter_and_failed_ocr_remain_unverified(context,monkeypatch):
     client,store=context;record=photo(client,inspect(client))
     result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
