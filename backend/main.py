@@ -24,7 +24,7 @@ try:
     from .contracts import CreateInspection, UpdateInspection, InspectionData, PhotoUpload, OcrResult, AIResult, AuditRequest, AuthorizeRequest
     from .claims import make_documents, price_scope
     from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
-    from .live_support import live_config, scope_fingerprint
+    from .live_support import live_config, scope_fingerprint, is_speech
     from .company_store import CompanyInspectionStore
     from .workspaces import AccessDenied
     from .workspace_api import register_workspace_routes
@@ -35,7 +35,7 @@ except ImportError:
     from contracts import CreateInspection, UpdateInspection, InspectionData, PhotoUpload, OcrResult, AIResult, AuditRequest, AuthorizeRequest
     from claims import make_documents, price_scope
     from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
-    from live_support import live_config, scope_fingerprint
+    from live_support import live_config, scope_fingerprint, is_speech
     from company_store import CompanyInspectionStore
     from workspaces import AccessDenied
     from workspace_api import register_workspace_routes
@@ -350,7 +350,7 @@ async def live_walkthrough(socket:WebSocket):
         await socket.close(code=1008); return
     await socket.accept()
     store=None; lease=None; uid=None; client=None; tasks=[]; capture=None; retain=True
-    fingerprint=None; inspection_id=None; protocol=1; finish_result=None
+    fingerprint=None; inspection_id=None; protocol=1
     try:
         packet=await asyncio.wait_for(socket.receive_text(),10)
         if len(packet)>16384: raise ValueError('Authentication packet too large.')
@@ -401,7 +401,7 @@ async def live_walkthrough(socket:WebSocket):
                     recovery='resumed' if handle else 'restarted' if auth.get('resume') else 'new')
             await socket.send_json(ready)
             async def upstream():
-                nonlocal pending,finishing,retain,finish_result
+                nonlocal pending,finishing,retain
                 frame_at=0; second=0; count=0
                 while True:
                     raw=await socket.receive_text()
@@ -413,7 +413,8 @@ async def live_walkthrough(socket:WebSocket):
                     if kind=='audio':
                         audio=base64.b64decode(data['data'],validate=True)
                         if len(audio)>64000 or len(audio)%2: raise ValueError('Invalid PCM audio.')
-                        pending=True; final_text.clear()
+                        # The client streams the open microphone, so only speech can still be awaiting a transcript.
+                        if is_speech(audio): pending=True; final_text.clear()
                         await session.send_realtime_input(audio=types.Blob(data=audio,mime_type='audio/pcm;rate=16000'))
                     elif kind=='video':
                         if moment-frame_at<0.95: continue
@@ -429,7 +430,8 @@ async def live_walkthrough(socket:WebSocket):
                             await session.send_realtime_input(audio_stream_end=True)
                             try: await asyncio.wait_for(final_text.wait(),3)
                             except asyncio.TimeoutError: pass
-                            finish_result={'type':'finished','complete':not pending}
+                            # The client stops waiting 3.5 s after End, so acknowledge before cleanup.
+                            await socket.send_json({'type':'finished','complete':not pending})
                         return
                     else: raise ValueError('Unsupported live packet.')
             async def downstream():
@@ -505,8 +507,6 @@ async def live_walkthrough(socket:WebSocket):
                     with suppress(Exception): await stored(store.live_lease,uid,lease,True)
                 if client:
                     with suppress(Exception): await client.aio.aclose()
-                if finish_result:
-                    with suppress(Exception): await socket.send_json(finish_result)
                 with suppress(Exception): await socket.close()
         cleanup_task=asyncio.create_task(cleanup())
         try: await asyncio.shield(cleanup_task)

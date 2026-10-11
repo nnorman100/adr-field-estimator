@@ -95,8 +95,12 @@ def no_existing_capture(uid):
 
 
 def assert_capture_released(uid):
-    assert private_document('_live_resume', uid) is None, 'Finish left a private checkpoint'
-    assert private_document('_live_sessions', uid) is None, 'Finish left an active lease'
+    # The finished acknowledgement precedes cleanup, so allow the relay a moment to release.
+    until = time.monotonic() + 15
+    while private_document('_live_resume', uid) is not None or private_document('_live_sessions', uid) is not None:
+        if time.monotonic() > until:
+            raise RuntimeError('Finish left a private checkpoint or an active lease')
+        time.sleep(1)
 
 
 async def finished(socket):

@@ -80,7 +80,7 @@ inspection, capture ID, lease and scope fingerprint (excluding transcript/captur
 confirmation-state updates). Application expiry is 600 seconds after disconnection; provider
 retention/resumption guarantees are separate. expire_at is a Firestore TTL field for this collection
 only. Expiry rejects use immediately; physical TTL deletion is asynchronous. Stop/Finish deletes
-its matching checkpoint. Lease/checkpoint cleanup precedes the protocol-2 finished acknowledgement.
+its matching checkpoint. The protocol-2 finished acknowledgement follows the final-transcript drain (at most 3 seconds) and precedes lease/checkpoint cleanup, because the client stops waiting 3.5 seconds after End. Only audio above a speech-level RMS threshold arms that drain; open-microphone silence does not.
 
 The first-message handshake adds protocol_version=2, capture_id and resume. Older clients retain
 protocol-1 responses. The authenticated /api/session advertises live_protocol_version=2.
