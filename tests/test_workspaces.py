@@ -1,15 +1,18 @@
 """Company policy is tested through real API handlers and transactional storage."""
 import asyncio
+import json
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 import time
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 import backend.main as bm
+import backend.workspaces as workspaces
 from backend.claims import make_documents
 from backend.contracts import InspectionData, AIResult
-from backend.workspaces import ADR_PROFILE, AccessDenied, MemberUpdate, ProfileUpdate, CompanyProfile, StatusUpdate, CoordinationUpdate
-from backend.inspection_store import Conflict
+from backend.workspaces import ADR_PROFILE, AccessDenied, CompanyCreate, MemberUpdate, ProfileUpdate, CompanyProfile, StatusUpdate, CoordinationUpdate
+from backend.inspection_store import Conflict, Limited
 from backend.workspace_migration import migrate
 from tests.fakes import FakeCompanyStore, FakeStore, png
 
@@ -452,3 +455,48 @@ def test_password_identity_accepts_only_its_exact_email_invitation(store):
     assert not w.principal('new')['role']
     assert w.accept(password('new'),mine['invitation_id'])['role']=='estimator'
     assert store.db.records['_invitations/'+theirs['invitation_id']]['status']=='pending'
+
+
+@pytest.mark.parametrize('name', ['Alert Disaster Restoration','Other Company',"O'Brien & Sons (Kern) Co., Inc.",'Restauración Núñez 2','A'*80])
+def test_company_names_accept_business_text(name):
+    assert CompanyProfile(name=name).name==name and CompanyCreate(name=name,owner_email='x@example.invalid').name==name
+
+
+@pytest.mark.parametrize('name', ['Visit https://evil.example','Go to WWW.evil.example','Line\nBreak','A'*81,'Win $500 now!','<b>Owner</b>','Pay@once'])
+def test_company_names_reject_links_markup_and_long_text(api,name):
+    with pytest.raises(ValidationError):CompanyProfile(name=name)
+    with pytest.raises(ValidationError):CompanyCreate(name=name,owner_email='x@example.invalid')
+    client,current,store=api
+    response=client.put('/api/companies/adr',json={'expected_version':1,'profile':{**ADR_PROFILE,'name':name}})
+    assert response.status_code==422 and 'Company name' in response.text
+    assert store.db.records['_companies/adr']['profile']['name']=='Alert Disaster Restoration'
+
+
+def test_invitation_subject_excludes_owner_text(monkeypatch):
+    sent=[]
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def read(self,size):return b'{"id":"message"}'
+    monkeypatch.setenv('RESEND_API_KEY','test-key');monkeypatch.setenv('INVITATION_FROM','ADR <invite@example.invalid>')
+    monkeypatch.setattr(workspaces.urllib.request,'urlopen',lambda request,timeout:sent.append(json.loads(request.data)) or Response())
+    invite=dict(invitation_id='a'*32,send_attempt='b'*32,email='new@example.invalid',role='office')
+    workspaces.send_invitation(invite,{'profile':{'name':'Owner Chosen Name'}})
+    assert sent[0]['subject']=='Invitation to join a company on the ADR field app'
+    assert 'Owner Chosen Name' in sent[0]['text']
+
+
+def test_invitation_sends_and_resends_have_a_daily_company_cap(api,monkeypatch):
+    client,current,store=api;w=store.workspaces
+    monkeypatch.setattr(workspaces,'INVITATION_DAILY_LIMIT',3)
+    first=w.invite('owner','adr','one@example.invalid','office')
+    assert w.invite('owner','adr','one@example.invalid','office')==first
+    w.invite('owner','adr','two@example.invalid','office')
+    w.invitation_action('owner','adr',first['invitation_id'],'resend')
+    with pytest.raises(Limited) as limited:w.invite('owner','adr','three@example.invalid','office')
+    assert 86000<limited.value.retry_after<=86400
+    with pytest.raises(Limited):w.invitation_action('owner','adr',first['invitation_id'],'resend')
+    w.invite('other-owner','other','three@example.invalid','office')
+    response=client.post('/api/companies/adr/invitations',json={'email':'four@example.invalid','role':'office'})
+    assert response.status_code==429 and int(response.headers['Retry-After'])>86000
+    assert not [r for r in store.db.records.values() if r.get('email') in ('three@example.invalid','four@example.invalid') and r.get('company_id')=='adr']

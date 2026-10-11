@@ -12,15 +12,15 @@ import urllib.error
 from uuid import uuid4
 from PIL import Image, ImageOps
 from google.cloud import firestore
-from pydantic import Field, field_validator
-from typing import Literal
+from pydantic import AfterValidator, Field, field_validator
+from typing import Annotated, Literal
 try:
     from .contracts import StrictModel
-    from .inspection_store import Conflict, now
+    from .inspection_store import Conflict, now, reserve_slot
     from .claims import HEATER
 except ImportError:
     from contracts import StrictModel
-    from inspection_store import Conflict, now
+    from inspection_store import Conflict, now, reserve_slot
     from claims import HEATER
 
 ADR_ID = 'adr'
@@ -34,10 +34,20 @@ ADR_PROFILE = dict(name='Alert Disaster Restoration', address='3300 Patton Way Â
                    phone='(661) 426-2151', email='', license='950983', signoff='Matthew Myers',
                    logo_data_url='', water_heater_notice=HEATER)
 
+INVITATION_DAILY_LIMIT = 50
+
 class AccessDenied(PermissionError): pass
 
+def company_name(value):
+    # Owner text reaches invitation emails; keep it to plain business-name characters.
+    if len(value)>80 or not re.fullmatch(r"(?:[^\W_]|[ .,&'()-])+",value) or 'www.' in value.lower():
+        raise ValueError("Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.")
+    return value
+
+CompanyName = Annotated[str, Field(min_length=1), AfterValidator(company_name)]
+
 class CompanyProfile(StrictModel):
-    name: str = Field(min_length=1,max_length=150)
+    name: CompanyName
     address: str = Field(default='',max_length=500)
     phone: str = Field(default='',max_length=80)
     email: str = Field(default='',max_length=254)
@@ -47,7 +57,7 @@ class CompanyProfile(StrictModel):
     water_heater_notice: str = Field(default='',max_length=1500)
 
 class CompanyCreate(StrictModel):
-    name: str = Field(min_length=1,max_length=150)
+    name: CompanyName
     owner_email: str = Field(max_length=254)
 
 class ProfileUpdate(StrictModel):
@@ -214,6 +224,8 @@ class WorkspaceStore:
         else: self.company_actor(uid,company_id,True,tx)
         company=self.read('_companies',company_id,tx)
         if not company or company['status']!='active': raise AccessDenied('The company must be active to invite staff.')
+    def invitation_quota(self,company_id,tx):
+        return reserve_slot(self.read('_company_limits',company_id,tx) or {},'invitations',INVITATION_DAILY_LIMIT,86400)
     def invite(self,uid,company_id,email,role):
         email=email_address(email)
         # Serialize invitations for this company/email using a deterministic private key.
@@ -226,10 +238,12 @@ class WorkspaceStore:
             if previous and previous['status']=='pending' and previous['expires_at']>time.time():
                 if previous['role']!=role: raise Conflict('Cancel the existing invitation before changing its role.')
                 return previous
+            limits=self.invitation_quota(company_id,tx)
             invitation=self.new_invite(company_id,email,role,uid)
             if role=='owner': invitation['expected_owner_uid']=company.get('owner_uid')
             tx.create(self.ref('_invitations',invitation['invitation_id']),invitation)
             tx.set(self.ref('_invite_keys',key),{'invitation_id':invitation['invitation_id']})
+            tx.set(self.ref('_company_limits',company_id),limits)
             self.event(tx,uid,'invitation_created',company_id,{'invitation_id':invitation['invitation_id'],'role':role})
             return invitation
         return self._run(create)
@@ -289,7 +303,9 @@ class WorkspaceStore:
             self.invite_actor(uid,company_id,invitation['role'],tx)
             if invitation['status']!='pending': raise Conflict('This invitation is no longer pending.')
             if action=='cancel': invitation['status']='cancelled'
-            elif action=='resend': invitation.update(delivery_status='pending',send_attempt=uuid4().hex,send_started=0,expires_at=time.time()+7*86400)
+            elif action=='resend':
+                tx.set(self.ref('_company_limits',company_id),self.invitation_quota(company_id,tx))
+                invitation.update(delivery_status='pending',send_attempt=uuid4().hex,send_started=0,expires_at=time.time()+7*86400)
             else: raise ValueError('Unsupported invitation action.')
             tx.set(self.ref('_invitations',identifier),invitation)
             self.event(tx,uid,'invitation_'+action,company_id,{'invitation_id':identifier})
@@ -395,7 +411,7 @@ def send_invitation(invite,company):
     if not key or not sender: raise RuntimeError('Invitation email is not configured.')
     link='https://alert-disaster-field-2026.web.app/?invite='+invite['invitation_id']
     name=company['profile']['name']; role={'office':'office staff'}.get(invite['role'],invite['role'])
-    payload={'from':sender,'to':[invite['email']],'subject':f'Invitation to {name}',
+    payload={'from':sender,'to':[invite['email']],'subject':'Invitation to join a company on the ADR field app',
              'text':f'You have been invited to {name} as {role}. Sign in with {invite["email"]} and accept the invitation: {link}\nThis invitation expires in seven days.',
              'html':f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p><p>Sign in with {html.escape(invite["email"])}.</p><p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>'}
     request=urllib.request.Request('https://api.resend.com/emails',data=json.dumps(payload).encode(),method='POST',

@@ -21,7 +21,7 @@ Verified Firebase ID tokens from Google or email/password sign-in establish iden
 
 One active owner and one company membership per user are supported. Office-created jobs have no rooms or measured scope; the estimator supplies them. Signed property/document contents are immutable; office contact notes and assignment sidecars can still change. Owners cannot replace or disable the active owner; superadmin replacement takes effect atomically on acceptance and disables the prior membership. A disabled former owner can later be given a staff role.
 
-Private collections are _companies, _memberships, _platform_admins, _invitations, _invite_keys, _admin_events, _workspace_jobs and _workspace_authorizations. Job sidecars contain company, creator, assignee, coordination version and query summaries. Signed source records, payload hashes and stored evidence paths are retained. The migration manifest records source fingerprints around each run to detect concurrent source changes before cutover. Every write rechecks permission within its transaction; long AI results recheck before commit and evidence downloads before return. Live rechecks every 20 seconds and removes checkpoints after permission loss. Existing per-user quotas/leases remain.
+Private collections are _companies, _memberships, _platform_admins, _invitations, _invite_keys, _admin_events, _company_limits, _workspace_jobs and _workspace_authorizations. Job sidecars contain company, creator, assignee, coordination version and query summaries. Signed source records, payload hashes and stored evidence paths are retained. The migration manifest records source fingerprints around each run to detect concurrent source changes before cutover. Every write rechecks permission within its transaction; long AI results recheck before commit and evidence downloads before return. Live rechecks every 20 seconds and removes checkpoints after permission loss. Existing per-user quotas/leases remain. Each company may create or resend at most 50 invitations per day; more return 429 with Retry-After.
 
 ## Sign-in methods
 
@@ -41,7 +41,7 @@ The additive interfaces are /api/access; /api/admin/companies and company status
 
 ## Company documents and offline drafts
 
-Company profiles provide name, address/contact, CSLB license, sign-off and optional validated PNG/JPEG logo. This release is California-only and uses the shared existing residential workbook rates/formulas/internal scope codes. Pricing is server-owned. ADR notices remain exact; non-ADR water-heater jobs require the owner's own coordination notice. Missing company identity or coordination setup blocks signing and is shown in review.
+Company profiles provide name (up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address, because invitation emails include it), address/contact, CSLB license, sign-off and optional validated PNG/JPEG logo. This release is California-only and uses the shared existing residential workbook rates/formulas/internal scope codes. Pricing is server-owned. ADR notices remain exact; non-ADR water-heater jobs require the owner's own coordination notice. Missing company identity or coordination setup blocks signing and is shown in review.
 
 New audits store company_identity and its profile version. Profile changes invalidate unsigned signability until regeneration. Signed documents retain the saved identity; old signed records use historical ADR fallback. Company-supplied labels are untrusted JSON data in model context and text nodes in the browser.
 
