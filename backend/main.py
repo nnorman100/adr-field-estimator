@@ -4,7 +4,9 @@ import anyio
 import base64
 import io
 import json
+import logging
 import os
+import sys
 import time
 from uuid import uuid4
 from contextlib import suppress, AsyncExitStack
@@ -63,6 +65,21 @@ app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,
 security = HTTPBearer(auto_error=False)
 _job_store = None
 genai_client = None
+# An allowlist, so prompts, transcripts, images, tokens, emails, links and signatures cannot reach the log.
+LOG_FIELDS = frozenset({'model','operation','elapsed_ms','duration_ms','outcome','provider_status','provider_code','status','total_tokens','inspection_id'})
+
+class CloudLoggingJson(logging.Handler):
+    """One JSON object per stdout line, which Cloud Logging parses into severity, message and fields."""
+    def emit(self,record):
+        entry={'severity':record.levelname,'message':record.getMessage(),**getattr(record,'fields',{})}
+        print(json.dumps(entry,default=str),file=sys.stdout,flush=True)
+
+log=logging.getLogger('adr')
+log.setLevel(logging.INFO); log.propagate=False
+if not log.handlers: log.addHandler(CloudLoggingJson())
+
+def event(message,severity=logging.INFO,**fields):
+    log.log(severity,message,extra={'fields':{k:v for k,v in fields.items() if k in LOG_FIELDS and v is not None}})
 
 def get_job_store():
     global _job_store
@@ -125,7 +142,7 @@ async def stored(method,*args):
     except LookupError: raise HTTPException(404,'Record not found.')
     except ValueError as error: raise HTTPException(400,str(error))
     except Exception as error:
-        print(f'Storage operation failed: {type(error).__name__}')
+        event('Storage operation failed',logging.ERROR,operation=getattr(method,'__name__',None),outcome=type(error).__name__)
         raise HTTPException(503,'Changes could not be saved. Your local draft can be retried.')
 
 def public_record(record):
@@ -138,16 +155,25 @@ def parse_json_from_llm(text):
         if text.rstrip().endswith('```'): text=text.rstrip()[:-3]
     return json.loads(text)
 
-async def generate(schema,contents,model,wire_schema=None):
+async def generate(schema,contents,model,operation,inspection_id,wire_schema=None):
+    started=time.monotonic(); outcome='cancelled'; error_fields={}
     try:
         response=await asyncio.wait_for(get_ai_client().aio.models.generate_content(
             model=model,contents=contents,config=types.GenerateContentConfig(
                 response_mime_type='application/json',response_schema=wire_schema or schema)),timeout=100)
-        return schema.model_validate(parse_json_from_llm(response.text))
-    except (asyncio.TimeoutError,TimeoutError): raise HTTPException(504,'AI generation timed out. Retry; no document or reading was verified.')
+        result=schema.model_validate(parse_json_from_llm(response.text))
+        outcome='ok'
+        return result
+    except (asyncio.TimeoutError,TimeoutError):
+        outcome='timeout'
+        raise HTTPException(504,'AI generation timed out. Retry; no document or reading was verified.')
     except Exception as error:
-        print(f'AI generation failed: {type(error).__name__}')
+        # Provider messages can echo the prompt; record only the class and status.
+        outcome=type(error).__name__; error_fields=dict(provider_status=getattr(error,'status',None),provider_code=getattr(error,'code',None))
         raise HTTPException(502,'AI returned an unavailable or invalid result. Retry; no document or reading was verified.')
+    finally:
+        event('Vertex AI call',logging.INFO if outcome=='ok' else logging.ERROR,model=model,operation=operation,
+              elapsed_ms=round((time.monotonic()-started)*1000),outcome=outcome,inspection_id=inspection_id,**error_fields)
 
 def rest_deadline(operation):
     @wraps(operation)
@@ -233,7 +259,7 @@ async def ocr_photo(inspection_id:str,photo_id:str,staff=Depends(current_staff),
     photo,raw=await stored(store.photo,staff['uid'],inspection_id,photo_id)
     try:
         result=await generate(OcrResult,[await run_in_threadpool(model_image,raw),
-            OCR_INSTRUCTIONS],OCR_MODEL)
+            OCR_INSTRUCTIONS],OCR_MODEL,'ocr',inspection_id)
     except (HTTPException,asyncio.CancelledError):
         await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,None)
         raise
@@ -255,7 +281,7 @@ async def suggest_scope(inspection_id:str,req:AuditRequest,staff=Depends(current
     if not (data.technician_transcript.strip() or data.technician_notes.strip()):
         raise HTTPException(400,'Record technician observations in the walkthrough or notes first.')
     await stored(store.quota,staff['uid'],'scope',6)
-    result=await generate(ScopeSuggestions,[scope_prompt(data)],AUDIT_MODEL,wire_schema=scope_response_schema())
+    result=await generate(ScopeSuggestions,[scope_prompt(data)],AUDIT_MODEL,'scope',inspection_id,wire_schema=scope_response_schema())
     try: result=validate_suggestions(data,result)
     except (ValueError,ValidationError):
         raise HTTPException(502,'Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.')
@@ -294,7 +320,7 @@ async def audit_inspection(req:AuditRequest,request:Request,staff=Depends(curren
     for photo in record['photos']:
         _,raw=await stored(store.photo,staff['uid'],req.inspection_id,photo['id'])
         contents.append(await run_in_threadpool(model_image,raw))
-    ai=await generate(AIResult,contents,AUDIT_MODEL)
+    ai=await generate(AIResult,contents,AUDIT_MODEL,'audit',req.inspection_id)
     try: documents=make_documents(data,record['photos'],ai,identity)
     except (ValueError,ValidationError): raise HTTPException(400,'The scope could not be priced. Review the inspection inputs and retry.')
     saved=await stored(store.save_audit,staff['uid'],req.inspection_id,revision,documents)
@@ -351,6 +377,7 @@ async def live_walkthrough(socket:WebSocket):
     await socket.accept()
     store=None; lease=None; uid=None; client=None; tasks=[]; capture=None; retain=True
     fingerprint=None; inspection_id=None; protocol=1
+    started=time.monotonic(); outcome='closed'; status=None; total_tokens=None
     try:
         packet=await asyncio.wait_for(socket.receive_text(),10)
         if len(packet)>16384: raise ValueError('Authentication packet too large.')
@@ -402,7 +429,7 @@ async def live_walkthrough(socket:WebSocket):
                     recovery='resumed' if handle else 'restarted' if auth.get('resume') else 'new')
             await socket.send_json(ready)
             async def upstream():
-                nonlocal pending,finishing,retain
+                nonlocal pending,finishing,retain,outcome
                 frame_at=0; second=0; count=0
                 while True:
                     raw=await socket.receive_text()
@@ -425,6 +452,7 @@ async def live_walkthrough(socket:WebSocket):
                     elif kind=='pause' and protocol==2:
                         await session.send_realtime_input(audio_stream_end=True)
                     elif kind=='end':
+                        outcome='finished'
                         retain=bool(data.get('preserve_resume',False)) if protocol==2 else False
                         if protocol==2:
                             finishing=True
@@ -436,7 +464,7 @@ async def live_walkthrough(socket:WebSocket):
                         return
                     else: raise ValueError('Unsupported live packet.')
             async def downstream():
-                nonlocal sequence,pending
+                nonlocal sequence,pending,outcome,total_tokens
                 while True:
                     async for response in session.receive():
                         update=getattr(response,'session_resumption_update',None)
@@ -444,6 +472,7 @@ async def live_walkthrough(socket:WebSocket):
                             await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',
                                 getattr(update,'new_handle',None),bool(getattr(update,'resumable',False)))
                         usage=getattr(response,'usage_metadata',None)
+                        if usage: total_tokens=getattr(usage,'total_token_count',None) or total_tokens
                         if usage and protocol==2:
                             await socket.send_json({'type':'usage','total_tokens':getattr(usage,'total_token_count',None)})
                         away=getattr(response,'go_away',None)
@@ -464,6 +493,7 @@ async def live_walkthrough(socket:WebSocket):
                                         await socket.send_json({'type':'audio','data':base64.b64encode(part.inline_data.data).decode(),'rate':24000})
                             if content.turn_complete: await socket.send_json({'type':'turn_complete'})
                         if away:
+                            outcome='rollover'
                             if protocol==2: await socket.send_json({'type':'recovery','reason':'rollover'})
                             return
             async def heartbeat():
@@ -490,10 +520,10 @@ async def live_walkthrough(socket:WebSocket):
                 for task in tasks: task.cancel()
                 await asyncio.gather(*tasks,return_exceptions=True)
                 tasks=[]
-    except WebSocketDisconnect: pass
+    except WebSocketDisconnect: outcome='disconnected'
     except Exception as error:
         if isinstance(error,HTTPException) and error.status_code in (401,403,404): retain=False
-        print(f'Live session ended: {type(error).__name__}')
+        outcome=type(error).__name__; status=getattr(error,'status_code',None)
         message={'type':'error','message':error.detail if isinstance(error,HTTPException) else 'Live coaching disconnected. Your draft is preserved; reconnect to continue.'}
         if protocol==2 and isinstance(error,HTTPException): message['status']=error.status_code
         with suppress(Exception): await socket.send_json(message)
@@ -508,6 +538,9 @@ async def live_walkthrough(socket:WebSocket):
                     with suppress(Exception): await stored(store.live_lease,uid,lease,True)
                 if client:
                     with suppress(Exception): await client.aio.aclose()
+                event('Live session ended',logging.INFO if outcome in ('finished','rollover','disconnected','closed') else logging.WARNING,
+                      model=LIVE_MODEL,operation='live',inspection_id=inspection_id or None,duration_ms=round((time.monotonic()-started)*1000),
+                      outcome=outcome,status=status,total_tokens=total_tokens)
                 with suppress(Exception): await socket.close()
         cleanup_task=asyncio.create_task(cleanup())
         try: await asyncio.shield(cleanup_task)
