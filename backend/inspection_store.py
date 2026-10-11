@@ -154,6 +154,7 @@ class InspectionStore(JobStore):
             photo = next((p for p in record['photos'] if p['id'] == photo_id),None)
             if not photo: raise LookupError('Photo not found.')
             status = 'verified' if result and result['meter_detected'] and result['value'].strip() else ('no_meter' if result else 'failed')
+            if status == 'failed' and photo['ocr_status'] not in ('pending','failed'): return record
             if photo.get('ocr') != result or photo['ocr_status'] != status:
                 photo.update(ocr=result,ocr_status=status)
                 record.update(revision=record['revision']+1,audit=None,status='draft',updated_at=now())

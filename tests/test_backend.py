@@ -94,15 +94,38 @@ def test_model_output_missing_and_provider_error_never_produces_documents(contex
     assert response.status_code==502 and store.get_inspection('owner',ID)['audit'] is None
 
 def test_non_meter_and_failed_ocr_remain_unverified(context,monkeypatch):
-    client,store=context;record=inspect(client)
-    r=client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=record['revision'],photo_id='b'*32,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()))
-    assert r.status_code==200,r.text
+    client,store=context;record=photo(client,inspect(client))
     result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
     assert result.status_code==200 and result.json()['photos'][0]['ocr_status']=='no_meter'
+    photo(client,result.json(),'c'*32)
     async def unavailable(**kwargs):raise RuntimeError('provider unavailable')
     monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))))
-    result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
-    assert result.status_code==502 and store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='failed'
+    result=client.post('/api/inspections/'+ID+'/photos/'+'c'*32+'/ocr',json={})
+    assert result.status_code==502 and store.get_inspection('owner',ID)['photos'][1]['ocr_status']=='failed'
+    assert client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={}).status_code==502
+    assert store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='no_meter'
+
+VERIFIED={'meter_detected':True,'meter_type':'Pin moisture meter','value':'18.5','classification':'Wet','notes':'Readable display.'}
+
+def test_failed_ocr_retry_keeps_verified_reading_revision_and_audit(context,monkeypatch):
+    client,store=context;photo(client,inspect(client))
+    store.set_ocr('owner',ID,'b'*32,VERIFIED)
+    audited=audit(client,client.get('/api/inspections/'+ID).json())
+    async def unavailable(**kwargs):raise RuntimeError('provider unavailable')
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))))
+    assert client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={}).status_code==502
+    current=store.get_inspection('owner',ID)
+    assert current['photos'][0]['ocr']==VERIFIED and current['photos'][0]['ocr_status']=='verified'
+    assert current['revision']==audited['revision'] and current['audit']==audited['audit']
+
+def test_cancelled_ocr_request_does_not_leave_the_photo_pending(context,monkeypatch):
+    client,store=context;photo(client,inspect(client))
+    async def hang(*args,**kwargs):await asyncio.Event().wait()
+    monkeypatch.setattr(bm,'generate',hang)
+    async def deadline():
+        with pytest.raises(asyncio.TimeoutError):await asyncio.wait_for(bm.ocr_photo.__wrapped__(ID,'b'*32,{'uid':'owner'},store),0.2)
+    asyncio.run(deadline())
+    assert store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='failed'
 
 def test_auth_ownership_limits_and_invalid_inputs(context):
     client,_=context;inspect(client)

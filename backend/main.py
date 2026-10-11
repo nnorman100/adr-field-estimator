@@ -234,7 +234,7 @@ async def ocr_photo(inspection_id:str,photo_id:str,staff=Depends(current_staff),
     try:
         result=await generate(OcrResult,[await run_in_threadpool(model_image,raw),
             OCR_INSTRUCTIONS],OCR_MODEL)
-    except HTTPException:
+    except (HTTPException,asyncio.CancelledError):
         await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,None)
         raise
     return public_record(await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,result.model_dump(mode='json')))
