@@ -198,6 +198,15 @@ class WorkspaceStore:
         actor=self.principal(uid)
         if not actor['superadmin']: self.company_actor(uid,company_id)
         return [s.to_dict() for s in self.db.collection('_memberships').where(filter=firestore.FieldFilter('company_id','==',company_id)).limit(500).stream()]
+    def cancel_invitations(self,tx,company_id,email):
+        # A pending invitation would otherwise let a disabled member reactivate themselves.
+        # Reads precede writes here, so call this before the transaction's first write.
+        stale=[s.to_dict() for s in self.db.collection('_invitations').where(filter=firestore.FieldFilter('company_id','==',company_id))
+               .where(filter=firestore.FieldFilter('email','==',email)).stream(transaction=tx)]
+        for invitation in stale:
+            if invitation['status']=='pending':
+                invitation['status']='cancelled'
+                tx.set(self.ref('_invitations',invitation['invitation_id']),invitation)
     def update_member(self,uid,company_id,member_uid,req):
         def update(tx):
             self.company_actor(uid,company_id,True,tx)
@@ -205,13 +214,7 @@ class WorkspaceStore:
             if not member or member['company_id']!=company_id: raise LookupError('Staff member not found.')
             if member['role']=='owner' and member['status']=='active': raise AccessDenied('Only superadmin can replace the owner.')
             if member['version']!=req.expected_version: raise Conflict('Staff access changed. Reload the team.')
-            # A pending invitation would otherwise let a disabled member reactivate themselves.
-            stale=[s.to_dict() for s in self.db.collection('_invitations').where(filter=firestore.FieldFilter('company_id','==',company_id))
-                   .where(filter=firestore.FieldFilter('email','==',member['email'])).stream(transaction=tx)] if req.status=='disabled' else []
-            for invitation in stale:
-                if invitation['status']=='pending':
-                    invitation['status']='cancelled'
-                    tx.set(self.ref('_invitations',invitation['invitation_id']),invitation)
+            if req.status=='disabled': self.cancel_invitations(tx,company_id,member['email'])
             member.update(role=req.role,status=req.status,version=member['version']+1,updated_at=now())
             tx.set(self.ref('_memberships',member_uid),member)
             self.event(tx,uid,'member_access',company_id,{'uid':member_uid,'role':req.role,'status':req.status})
@@ -288,6 +291,7 @@ class WorkspaceStore:
             membership=dict(uid=uid,email=email,company_id=invite['company_id'],role=invite['role'],status='active',
                             version=(member or {}).get('version',0)+1,updated_at=now())
             if old_member:
+                self.cancel_invitations(tx,invite['company_id'],old_member['email'])
                 old_member.update(status='disabled',version=old_member['version']+1,updated_at=now())
                 tx.set(self.ref('_memberships',old_owner),old_member)
             if invite['role']=='owner':

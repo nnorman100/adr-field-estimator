@@ -170,6 +170,16 @@ def test_disabling_member_cancels_their_pending_invitation(store):
     w.accept(identity('estimator'),fresh['invitation_id'])
     assert w.principal('estimator')['role']=='estimator'
 
+def test_owner_replacement_cancels_the_former_owners_pending_invitations(store):
+    w=store.workspaces
+    former=w.invite('admin','adr','owner@example.invalid','owner')
+    staff=w.invite('owner','adr','new@example.invalid','office')
+    replacement=w.invite('admin','adr','a@example.invalid','owner')
+    w.accept(identity('a'),replacement['invitation_id'])
+    assert store.db.records['_memberships/owner']['status']=='disabled'
+    assert store.db.records['_invitations/'+former['invitation_id']]['status']=='cancelled'
+    assert store.db.records['_invitations/'+staff['invitation_id']]['status']=='pending'
+
 def test_disable_company_and_membership_rechecked_inside_write(store):
     store.create_inspection('estimator',ID,data())
     store.workspaces.update_member('owner','adr','estimator',MemberUpdate(expected_version=1,role='office',status='active'))
@@ -333,7 +343,7 @@ def test_permission_change_during_ai_prevents_commit(api,monkeypatch):
 
 
 def test_firestore_transactions_finish_all_reads_before_writes(monkeypatch):
-    from tests.fakes import Ref,Tx
+    from tests.fakes import Collection,Ref,Tx
     original_get=Ref.get
     def get(ref,transaction=None):
         assert not transaction or not getattr(transaction,'written',False),'Firestore forbids reads after transaction writes'
@@ -356,6 +366,15 @@ def test_firestore_transactions_finish_all_reads_before_writes(monkeypatch):
     docs=make_documents(InspectionData.model_validate(record['data']),[],AIResult(summary='Test',suggestions=[],unpriced_work=[]),w.snapshot('estimator'))
     record=store.save_audit('estimator',ID,record['revision'],docs)
     store.authorize('estimator',dict(inspection_id=ID,expected_revision=record['revision'],auth_id='ADR-AUTH-strict123',proposal_hash=record['audit']['proposal_hash'],signature_png=png()))
+    original_stream=Collection.stream
+    def stream(collection,transaction=None):
+        assert not transaction or not getattr(transaction,'written',False),'Firestore forbids reads after transaction writes'
+        return original_stream(collection,transaction)
+    monkeypatch.setattr(Collection,'stream',stream)
+    w.invite('admin','adr','owner@example.invalid','owner');w.invite('owner','adr','new@example.invalid','office')
+    w.update_member('owner','adr','new',MemberUpdate(expected_version=1,role='office',status='disabled'))
+    w.accept(identity('a'),w.invite('admin','adr','a@example.invalid','owner')['invitation_id'])
+    assert store.db.records['_memberships/owner']['status']=='disabled'
 
 
 def test_competing_invitation_acceptance_has_one_owner(store):
