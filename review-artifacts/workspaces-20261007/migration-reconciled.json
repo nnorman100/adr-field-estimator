@@ -1,0 +1,15 @@
+{
+  "migration_id": "adr-company-v1",
+  "apply": true,
+  "create": 0,
+  "already_present": 7,
+  "unmapped_source_records": 0,
+  "created_paths": [],
+  "source_records_preserved": true,
+  "source_record_hashes": {
+    "inspections/ADR-INS-62f2e198bf544d5381597ae9a39ace73": "1353a28bc6cc552a968a9d915b63c878412549507cfaac8be017b28cb3c3d347",
+    "inspections/ADR-INS-84b8e0c4cf964377ae9e0fd3528edc0b": "a02d486fb4fd802a4bbeb4f2538ddbf58f963b6c595ac0a11a0681bb021c444c",
+    "inspections/ADR-INS-c3dde6359cce4e5c8259f2f7c08c2aa6": "742424d23016020eca95b4cdee09e4a844caa1232d2166e9f9784eee91093d51",
+    "inspections/ADR-INS-d8916ede0e9543d4937264285535a9cf": "c8d24a160b471ffe32b96e80e547780be3647d990f57f15142d1c16f9432c169"
+  }
+}

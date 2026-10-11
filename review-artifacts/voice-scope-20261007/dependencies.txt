@@ -1,0 +1,7 @@
+Using CPython 3.11.15 interpreter at: C:\Users\nnorm\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe
+error: Request failed after 3 retries in 4.7s
+  Caused by: Failed to fetch: `https://pypi.org/simple/python-multipart/`
+  Caused by: error sending request for url (https://pypi.org/simple/python-multipart/)
+  Caused by: client error (Connect)
+  Caused by: tcp connect error
+  Caused by: An attempt was made to access a socket in a way forbidden by its access permissions. (os error 10013)

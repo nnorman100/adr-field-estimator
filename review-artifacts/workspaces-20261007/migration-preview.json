@@ -1,0 +1,8 @@
+{
+  "migration_id": "adr-company-v1",
+  "apply": false,
+  "create": 7,
+  "already_present": 0,
+  "unmapped_source_records": 0,
+  "created_paths": []
+}

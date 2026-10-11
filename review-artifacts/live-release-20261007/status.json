@@ -1,0 +1,36 @@
+{
+  "checked_at_utc": "2026-10-07T19:10:22.758Z",
+  "project": "alert-disaster-field-2026",
+  "backend_revision": "alert-disaster-field-estimator-00006-yer",
+  "backend_traffic_percent": 100,
+  "frontend_release": "live-reliable-20261007-1",
+  "hosting_version": "0350de7b1566a1b5",
+  "hosting_release": "1791398669068000",
+  "verification": {
+    "staged_api_and_live": "passed",
+    "staged_ui_and_tracked_cleanup": "passed",
+    "production_assets_and_mobile_routing": "passed",
+    "production_workflow": "passed_api_live_and_ui_with_tracked_cleanup",
+    "python_tests_passed": 78,
+    "frontend_checks": "passed",
+    "prior_full_browser_tests_passed": 43,
+    "explicit_windows_webkit_skips": 7,
+    "physical_iphone_bluetooth": "not_observed",
+    "normal_staff_sign_in": "passed_memory_only_verifier"
+  },
+  "rollback": {
+    "backend_revision": "alert-disaster-field-estimator-00005-htr",
+    "hosting_version": "60724bb918512475",
+    "hosting_release": "1791378004044000",
+    "availability_verified": {
+      "backend_ready": true,
+      "backend_container_healthy": true,
+      "hosting_version_status": "FINALIZED"
+    }
+  },
+  "cleanup": "Tracked staged and production synthetic records/evidence removed; four earlier closed sign-in profiles removed; retained Firebase credential cleared. Earlier untracked blank sign-in drafts preserved.",
+  "observed_limitations": [
+    "One earlier production scope request reached the 55-second AI deadline; complete production retry passed.",
+    "Physical iPhone/Bluetooth acceptance and measured device latency remain unobserved."
+  ]
+}

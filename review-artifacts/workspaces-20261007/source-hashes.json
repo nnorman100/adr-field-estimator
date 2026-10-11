@@ -1,0 +1,18 @@
+{
+  "index.html": "d372e3be043808aad392742762b98db829f92552b3603b77b7ce70943b57a572",
+  "public/index.html": "d372e3be043808aad392742762b98db829f92552b3603b77b7ce70943b57a572",
+  "public/app.js": "d21c174bd3687e9d0af2c38473fbf6b6554a0f8a5bc7bb3f031190efe337f801",
+  "public/workspaces.js": "e91a78572f92afaa40c0f4dadc342d771c12ca1a0b2e42aba5a1aab176aa21fd",
+  "public/app.css": "e8bbd9dcc5ae5e9135a85aaa8f47d9d8edfd7272e6e0998dafdf59df1d89fc90",
+  "public/sw.js": "def36b09e4c58c8a2c94ff62267bd4242f27f73da1d47e959f43108fd29dafeb",
+  "backend/main.py": "d2c8f3a9cbdfd7a2508a5847f74b8c4dd758c1d4f6ac22446ed329a098beee1e",
+  "backend/workspaces.py": "c7eb64d9b56ccc946da46bdc049aecaa0b2de7da36246ef5c171e6ff16f9d334",
+  "backend/company_store.py": "cb40837a2b25177d9017552a0e3383acae8d1a489bf22904ea60d9a038077fe7",
+  "backend/workspace_api.py": "eed286edb056eb0d835b5358602ba029ce3cc77c5c2b140d988481ff354ba7f2",
+  "backend/contracts.py": "68b1dce613ec98d5193fe80fe54cd8096c65852af6fb29e81ed9decbd5047c4b",
+  "backend/claims.py": "1b8a63afa16573e3384ddf95856f66ccd95b9db4c58f34bd43f6e3398f2be6a8",
+  "backend/prompts.py": "261d469c99021cc198a12152b9291f97ab9b8f0213b5c4b62d7a5c158be7fca3",
+  "backend/inspection_store.py": "65b2362fcba6dd6bb363af72182cbcbf1aa081df8388e27ffb4fd647d191e83c",
+  "backend/workspace_migration.py": "9b0826122857a31a543383c1a111972d64816c9973617cbf17aa223178d00e5b",
+  "firestore.indexes.json": "0b045733a52073ba0b21bc57cd7e96617747111cad5f6339e2d68bcc85b7db68"
+}
