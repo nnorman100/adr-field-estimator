@@ -38,13 +38,19 @@ Other sites and databases in `mitigation-project` are unchanged. The old backend
 
 ## Deployment
 
-Never use a blanket `firebase deploy`. Keep both `index.html` copies identical. The update command below preserves existing environment variables, including the staff list and model settings. Deploy indexes separately and verify they are READY before enabling paginated queries.
+Never use a blanket `firebase deploy`. Keep both `index.html` copies identical. Deploy indexes separately and verify they are READY before enabling paginated queries.
+
+Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED=true`. The script requires `--workspaces on|off`, always sets that flag, keeps the other existing variables (staff list, model settings), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
 
 ```powershell
 firebase.cmd deploy --only firestore:indexes --project alert-disaster-field-2026
 # Confirm the required indexes are READY before deploying the backend.
 gcloud firestore indexes composite list --project=alert-disaster-field-2026
-gcloud run deploy alert-disaster-field-estimator --source=./backend --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026 --service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com --build-service-account=projects/alert-disaster-field-2026/serviceAccounts/adr-builder@alert-disaster-field-2026.iam.gserviceaccount.com --max-instances=2 --concurrency=20 --cpu=1 --memory=1Gi --timeout=3600 --allow-unauthenticated
+python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --dry-run
+python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --yes
+# Before promotion, the tagged URL printed by the deploy must report the chosen flag ("workspaces_enabled":false for --workspaces off).
+curl.exe -s <tagged-revision-url>/api/health
+gcloud run services update-traffic alert-disaster-field-estimator --to-tags=workspaces-off-YYYYMMDD=100 --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
 firebase.cmd deploy --only firestore:rules --project alert-disaster-field-2026
 firebase.cmd deploy --only auth --project alert-disaster-field-2026
 firebase.cmd deploy --only hosting:alert-disaster --project alert-disaster-field-2026
