@@ -10,13 +10,13 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.verify_live_release import access_token, migration, PROJECT
+from scripts.verify_live_release import access_token, PROJECT, SDK
 
 SERVICE = 'alert-disaster-field-estimator'
 environment = dict(os.environ)
 environment.pop('PYTHONPATH', None)
 result = subprocess.run(
-    [str(migration.SDK), 'run', 'services', 'describe', SERVICE,
+    [str(SDK), 'run', 'services', 'describe', SERVICE,
      '--project=' + PROJECT, '--region=us-west2',
      '--format=json(status.traffic,status.latestReadyRevisionName)'],
     env=environment, capture_output=True, text=True)

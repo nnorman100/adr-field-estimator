@@ -95,6 +95,84 @@ def test_protocol2_control_events_resume_fallback_pause_and_final_drain(monkeypa
             while True:
                 result=socket.receive_json()
                 if result['type']=='finished':assert result['complete'];break
-            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+            # Provider events already in flight may follow the acknowledgement; the client closes on it.
+            with pytest.raises(WebSocketDisconnect):
+                while True:assert socket.receive_json()['type']!='finished'
     assert rejected and len(configs)==3 and any(item.get('audio_stream_end') for item in sent)
     assert '_live_resume/owner' not in store.db.records and '_live_sessions/owner' not in store.db.records
+
+
+def pcm(amplitude,samples=1600):
+    # A 16 kHz PCM16 square wave; its RMS equals the amplitude.
+    return base64.b64encode(b''.join(int(amplitude*(1 if i%40<20 else -1)).to_bytes(2,'little',signed=True) for i in range(samples))).decode()
+
+
+def finishing_relay(monkeypatch,store):
+    class Session:
+        def __init__(self):self.queue=asyncio.Queue();self.spoken=False
+        async def send_realtime_input(self,**kw):
+            if 'audio' in kw and not self.spoken:
+                self.spoken=True
+                await self.queue.put(NS(server_content=NS(interrupted=False,input_transcription=NS(text='moisture at the wall',finished=True),output_transcription=None,model_turn=None,turn_complete=False)))
+        async def receive(self):yield await self.queue.get()
+    @asynccontextmanager
+    async def connect(**kw):yield Session()
+    async def close():pass
+    async def identity(token):return {'uid':'owner','exp':time.time()+600}
+    monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
+    monkeypatch.setattr(bm.genai,'Client',lambda **kw:NS(aio=NS(live=NS(connect=connect),aclose=close)))
+
+
+def test_trailing_silence_after_final_transcript_still_finishes_complete(monkeypatch):
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    finishing_relay(monkeypatch,store)
+    with TestClient(bm.app) as client, client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+        socket.send_json(dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP))
+        assert socket.receive_json()['type']=='ready'
+        # Conversational speech after browser AGC sits near -20 dBFS (RMS ~3300).
+        socket.send_json({'type':'audio','data':pcm(3300)})
+        assert socket.receive_json()['finished'] is True
+        # The open microphone keeps streaming: digital silence and a suppressed noise floor near -50 dBFS (RMS ~100).
+        for amplitude in (0,100,0,100):socket.send_json({'type':'audio','data':pcm(amplitude)})
+        started=time.monotonic();socket.send_json({'type':'end'})
+        assert socket.receive_json()=={'type':'finished','complete':True}
+        assert time.monotonic()-started<1
+
+
+def test_finished_is_acknowledged_before_cleanup_writes(monkeypatch):
+    import threading
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    finishing_relay(monkeypatch,store)
+    acknowledged=threading.Event();releases=[];original=store.live_lease
+    def lease(uid,lease_id=None,release=False):
+        if release:releases.append(acknowledged.wait(5))
+        return original(uid,lease_id,release)
+    monkeypatch.setattr(store,'live_lease',lease)
+    with TestClient(bm.app) as client, client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+        socket.send_json(dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP))
+        assert socket.receive_json()['type']=='ready'
+        socket.send_json({'type':'end'})
+        assert socket.receive_json()['type']=='finished'
+        acknowledged.set()
+        with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    assert releases==[True] and '_live_sessions/owner' not in store.db.records
+
+
+def test_daily_live_start_cap_rejects_before_vertex(monkeypatch):
+    import backend.inspection_store as module
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    finishing_relay(monkeypatch,store);monkeypatch.setitem(module.DAILY_LIMITS,'live',1)
+    opened=[];relay=bm.genai.Client
+    monkeypatch.setattr(bm.genai,'Client',lambda **kw:opened.append(True) or relay(**kw))
+    auth=dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP)
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth);assert socket.receive_json()['type']=='ready'
+            socket.send_json({'type':'end'});assert socket.receive_json()['type']=='finished'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        assert '_live_sessions/owner' not in store.db.records
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth)
+            assert socket.receive_json()=={'type':'error','message':'Too many requests. Please wait and retry.','status':429}
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    assert opened==[True] and '_live_sessions/owner' not in store.db.records

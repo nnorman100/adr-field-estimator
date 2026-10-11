@@ -60,6 +60,23 @@ def test_limits_and_live_lease_apply_across_instances():
     first.live_lease('owner',lease,True)
     assert second.live_lease('owner')!=lease
 
+@pytest.mark.parametrize('action,per_minute,per_day',[('ocr',20,400),('audit',3,60),('scope',6,120),('live',None,40)])
+def test_daily_ai_caps_outlast_the_minute_window(monkeypatch,action,per_minute,per_day):
+    import backend.inspection_store as module
+    from types import SimpleNamespace
+    clock=[1_000_000.0];monkeypatch.setattr(module,'time',SimpleNamespace(time=lambda:clock[0]))
+    store=FakeStore()
+    for call in range(per_day):
+        if per_minute and call and call%per_minute==0:clock[0]+=61
+        store.quota('owner',action,per_minute)
+    clock[0]+=61
+    with pytest.raises(Limited) as limited:store.quota('owner',action,per_minute)
+    assert limited.value.retry_after>3600
+    store.quota('owner','draft',60)
+    store.quota('other',action,per_minute)
+    clock[0]+=86400
+    store.quota('owner',action,per_minute)
+
 def test_newest_first_pages_include_every_record_and_reject_other_owner_cursor():
     store=FakeStore()
     for i in range(205):

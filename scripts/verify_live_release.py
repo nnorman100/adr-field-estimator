@@ -16,28 +16,27 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import scripts.verify_migration as migration
-from scripts.verify_migration import admin, PROJECT, URL
-from scripts.verify_repairs import image
+import scripts.verify_repairs as repairs
+from scripts.verify_repairs import admin, image, PROJECT, SDK, URL
 
 PRODUCTION = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
 STAGED = 'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 WORKSPACE_STAGE = 'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
-SERVICE = PRODUCTION
+SERVICE = None
 
 
 def access_token():
     environment = dict(os.environ)
     environment.pop('PYTHONPATH', None)
     result = subprocess.run(
-        [str(migration.SDK), 'auth', 'print-access-token', '--project=' + PROJECT,
+        [str(SDK), 'auth', 'print-access-token', '--project=' + PROJECT,
          '--billing-project=' + PROJECT], env=environment, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError('Cloud CLI token lookup failed; no credential was logged.')
     return result.stdout.strip()
 
 
-migration.access_token = access_token
+repairs.access_token = access_token
 
 
 def service_url(value):
@@ -69,7 +68,8 @@ def staff_session(stream=None):
     if not token or len(token) > 16384 or any(c.isspace() for c in token):
         raise RuntimeError('Supply a Firebase ID token through the private stdin pipe.')
     session = check('GET', '/api/session', token)
-    assert session['project'] == PROJECT and session['uid'] and session['live_protocol_version'] == 2
+    if session['project'] != PROJECT or not session['uid'] or session['live_protocol_version'] != 2:
+        raise RuntimeError('The token does not belong to a dedicated-project staff session.')
     return token, session['uid']
 
 
@@ -95,8 +95,12 @@ def no_existing_capture(uid):
 
 
 def assert_capture_released(uid):
-    assert private_document('_live_resume', uid) is None, 'Finish left a private checkpoint'
-    assert private_document('_live_sessions', uid) is None, 'Finish left an active lease'
+    # The finished acknowledgement precedes cleanup, so allow the relay a moment to release.
+    until = time.monotonic() + 15
+    while private_document('_live_resume', uid) is not None or private_document('_live_sessions', uid) is not None:
+        if time.monotonic() > until:
+            raise RuntimeError('Finish left a private checkpoint or an active lease')
+        time.sleep(1)
 
 
 async def finished(socket):
@@ -165,9 +169,10 @@ def cleanup_test_checkpoint(uid, inspections):
     headers = {'Authorization': 'Bearer ' + access_token(), 'x-goog-user-project': PROJECT}
     path = f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/_live_resume/{uid}'
     response = requests.get(path, headers=headers, timeout=30)
-    assert response.status_code in (200, 404)
     if response.status_code == 404:
         return
+    if response.status_code != 200:
+        raise RuntimeError('Checkpoint lookup failed: ' + str(response.status_code))
     document = response.json()
     fields = document['fields']
     if fields.get('owner_uid', {}).get('stringValue') != uid or fields.get('inspection_id', {}).get('stringValue') not in inspections:
@@ -175,7 +180,8 @@ def cleanup_test_checkpoint(uid, inspections):
     # A successor checkpoint must survive cleanup of an earlier failed test.
     removed = requests.delete(path, headers=headers,
                               params={'currentDocument.updateTime': document['updateTime']}, timeout=30)
-    assert removed.status_code in (200, 404, 412)
+    if removed.status_code not in (200, 404, 412):
+        raise RuntimeError('Checkpoint cleanup failed: ' + str(removed.status_code))
 
 
 def valid_synthetic_identifier(collection, identifier):
@@ -196,19 +202,19 @@ def valid_synthetic_identifier(collection, identifier):
 def synthetic_sidecars(headers, uid, inspections, agreements):
     base=f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/'
     membership=requests.get(base+'_memberships/'+uid,headers=headers,timeout=30)
-    assert membership.status_code in (200,404)
+    if membership.status_code not in (200,404):raise RuntimeError('Membership lookup failed: '+str(membership.status_code))
     company=membership.json()['fields']['company_id']['stringValue'] if membership.status_code==200 else None
     pending=[]
     for collection,identifiers in (('_workspace_jobs',inspections),('_workspace_authorizations',agreements)):
         for identifier in identifiers:
             path=base+collection+'/'+identifier
             response=requests.get(path,headers=headers,timeout=30)
-            assert response.status_code in (200,404)
             if response.status_code==404:continue
+            if response.status_code!=200:raise RuntimeError('Sidecar lookup failed: '+str(response.status_code))
             snapshot=response.json();fields=snapshot['fields']
-            assert company and fields['company_id']['stringValue']==company
-            if collection=='_workspace_jobs':assert fields['creator_uid']['stringValue']==uid
-            else:assert fields['job_id']['stringValue'] in inspections
+            if not company or fields['company_id']['stringValue']!=company:raise RuntimeError('Sidecar belongs to another company; retained for review.')
+            if collection=='_workspace_jobs' and fields['creator_uid']['stringValue']!=uid:raise RuntimeError('Sidecar belongs to another creator; retained for review.')
+            if collection!='_workspace_jobs' and fields['job_id']['stringValue'] not in inspections:raise RuntimeError('Sidecar references an untracked job; retained for review.')
             pending.append((path,snapshot['updateTime']))
     return pending
 
@@ -216,7 +222,8 @@ def synthetic_sidecars(headers, uid, inspections, agreements):
 def cleanup_synthetic(uid, inspections, agreements):
     """Deletes only IDs tracked by this run and objects under those exact prefixes."""
     for collection, identifiers in (('authorizations', agreements), ('inspections', inspections)):
-        assert all(valid_synthetic_identifier(collection, identifier) for identifier in identifiers), 'Unexpected synthetic identifier'
+        if not all(valid_synthetic_identifier(collection, identifier) for identifier in identifiers):
+            raise RuntimeError('Unexpected synthetic identifier')
     headers = {'Authorization': 'Bearer ' + access_token(), 'x-goog-user-project': PROJECT}
     sidecars=synthetic_sidecars(headers,uid,inspections,agreements)
     prefixes = []
@@ -224,20 +231,24 @@ def cleanup_synthetic(uid, inspections, agreements):
         for identifier in identifiers:
             path = f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/{collection}/{identifier}'
             existing = requests.get(path, headers=headers, timeout=30)
-            assert existing.status_code in (200, 404)
+            if existing.status_code not in (200, 404):
+                raise RuntimeError(f'Synthetic {collection} lookup failed: {existing.status_code}')
             if existing.status_code == 200:
-                assert existing.json()['fields']['owner_uid']['stringValue'] == uid
+                if existing.json()['fields']['owner_uid']['stringValue'] != uid:
+                    raise RuntimeError(f'Synthetic {collection} record belongs to another owner; retained for review.')
                 response = requests.delete(path, headers=headers, params={'currentDocument.updateTime':existing.json()['updateTime']}, timeout=30)
-                assert response.status_code in (200, 404)
+                if response.status_code not in (200, 404):
+                    raise RuntimeError(f'Synthetic {collection} cleanup failed: {response.status_code}')
             prefixes.append(f'users/{uid}/{collection}/{identifier}/')
     for prefix in prefixes:
         response = admin('GET', f'https://storage.googleapis.com/storage/v1/b/{PROJECT}-evidence/o?prefix={quote(prefix, safe="")}')
         for item in response.get('items', []):
-            assert item['name'].startswith(prefix)
+            if not item['name'].startswith(prefix):
+                raise RuntimeError('Evidence listing escaped its synthetic prefix; retained for review.')
             admin('DELETE', f'https://storage.googleapis.com/storage/v1/b/{PROJECT}-evidence/o/{quote(item["name"], safe="")}')
     for path,version in sidecars:
         response=requests.delete(path,headers=headers,params={'currentDocument.updateTime':version},timeout=30)
-        assert response.status_code in (200,404), 'Synthetic sidecar changed; retained for review.'
+        if response.status_code not in (200,404):raise RuntimeError('Synthetic sidecar changed; retained for review.')
     cleanup_test_checkpoint(uid, inspections)
     print('Only tracked synthetic records and their exact evidence prefixes were removed; staff identity and other jobs unchanged.', flush=True)
 
@@ -346,7 +357,7 @@ def cleanup_from_stdin():
 def cli():
     global SERVICE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('service', nargs='?', type=service_url, default=PRODUCTION)
+    parser.add_argument('service', type=service_url, help='Dedicated backend URL; there is no default.')
     parser.add_argument('--public', action='store_true')
     parser.add_argument('--cleanup-stdin', action='store_true')
     parser.add_argument('--token-stdin', action='store_true',

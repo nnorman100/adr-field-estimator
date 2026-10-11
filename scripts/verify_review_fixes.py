@@ -11,8 +11,8 @@ import requests
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from scripts.verify_migration import PROJECT, URL, access_token, session
-from scripts.verify_repairs import SERVICE, check, image
+import scripts.verify_repairs as repairs
+from scripts.verify_repairs import PROJECT, URL, access_token, session, check, image, target
 
 BASE=f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)'
 DOCS=f'projects/{PROJECT}/databases/(default)/documents/'
@@ -65,7 +65,7 @@ def main():
         record=check('POST','/api/inspections',token,{'inspection_id':iid,'data':data}).json()
         headers={'Authorization':'Bearer '+token}
         def upload(_):
-            return requests.post(SERVICE+'/api/inspections/'+iid+'/photos',headers=headers,json=dict(expected_revision=record['revision'],photo_id=uuid4().hex,room='Bathroom',captured_at='2026-10-07T12:00:00Z',data_url=image()),timeout=60)
+            return requests.post(repairs.SERVICE+'/api/inspections/'+iid+'/photos',headers=headers,json=dict(expected_revision=record['revision'],photo_id=uuid4().hex,room='Bathroom',captured_at='2026-10-07T12:00:00Z',data_url=image()),timeout=60)
         with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(upload,range(2)))
         assert sorted(r.status_code for r in results)==[200,409]
         record=check('GET','/api/inspections/'+iid,token).json()
@@ -88,7 +88,7 @@ def main():
         check('POST','/api/inspections',token,{'inspection_id':live_id,'data':data})
         async def disable_live():
             from websockets.asyncio.client import connect
-            async with connect(SERVICE.replace('https:','wss:')+'/api/live',origin=URL) as ws:
+            async with connect(repairs.SERVICE.replace('https:','wss:')+'/api/live',origin=URL) as ws:
                 await ws.send(json.dumps({'type':'authenticate','token':token,'inspection_id':live_id}))
                 assert json.loads(await asyncio.wait_for(ws.recv(),30))['type']=='ready'
                 await asyncio.to_thread(admin,'POST',f'https://identitytoolkit.googleapis.com/v1/projects/{PROJECT}/accounts:update',{'localId':uids[0],'disableUser':True})
@@ -104,9 +104,13 @@ def main():
             paths.extend(['_limits/'+uid,'_live_sessions/'+uid])
         if paths:admin('POST',BASE+'/documents:commit',{'writes':[{'delete':DOCS+p} for p in paths]})
         for uid in created:
-            assert uid.startswith(PREFIX)
+            if not uid.startswith(PREFIX): raise RuntimeError('Unsafe synthetic cleanup target')
             for item in objects(uid):admin('DELETE',f'https://storage.googleapis.com/storage/v1/b/{PROJECT}-evidence/o/'+quote(item['name'],safe=''))
             admin('POST',f'https://identitytoolkit.googleapis.com/v1/projects/{PROJECT}/accounts:delete',{'localId':uid})
         print('Synthetic review accounts, records, leases, quotas and evidence removed',flush=True)
 
-if __name__=='__main__':main()
+def cli():
+    repairs.SERVICE=target(__doc__)
+    main()
+
+if __name__=='__main__':cli()
