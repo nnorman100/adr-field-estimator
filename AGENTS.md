@@ -125,7 +125,7 @@ Agents must preserve these exact legal disclaimers:
 
 ### D. Private Database
 - Firestore `(default)` belongs only to `alert-disaster-field-2026`, in `us-west2`.
-- Direct client reads/writes are denied by `firestore.rules`. Signed jobs use server-side access checks and private bucket `alert-disaster-field-2026-evidence`; business APIs require verified Firebase Google sign-in. With company workspaces enabled, private membership and job-access records authorize each operation; the legacy staff allowlist applies only to the disabled-workspace rollback mode.
+- Direct client reads/writes are denied by `firestore.rules`. Signed jobs use server-side access checks and private bucket `alert-disaster-field-2026-evidence`; business APIs require a verified Firebase email. With company workspaces enabled, Google or verified email/password sign-in is accepted and private membership and job-access records authorize each operation; the legacy staff allowlist applies only to the disabled-workspace rollback mode.
 - Deploy database rules separately: `firebase deploy --only firestore:rules --project alert-disaster-field-2026`.
 - Read `docs/firebase-isolation.md` before cloud changes. Never enable demo fallbacks in production.
 
