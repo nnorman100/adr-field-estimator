@@ -27,7 +27,7 @@ class Collection:
     def limit(self,maximum):self.maximum=maximum;return self
     def order_by(self,field,direction):self.order=field;return self
     def start_after(self,snapshot):self.cursor=snapshot.to_dict();return self
-    def stream(self):
+    def stream(self,transaction=None):
         rows=[v for k,v in self.db.records.items() if k.startswith(self.name+'/') and all((f.value in v.get(f.field_path,[]) if f.op_string=='array_contains' else v.get(f.field_path)==f.value) for f in self.filters)]
         if self.order:rows.sort(key=lambda r:(r[self.order],r.get('job_id',r.get('inspection_id',r.get('auth_id','')))),reverse=True)
         if self.cursor:
@@ -62,3 +62,23 @@ class FakeCompanyStore(CompanyInspectionStore):
     def __init__(self,db=None,bucket=None):super().__init__(db or DB(),bucket or Bucket())
     def _atomic(self,callback):
         with self.db.lock:return callback(Tx())
+
+from types import SimpleNamespace
+from firebase_admin import auth as firebase_auth
+class FakeAuth:
+    """Firebase Admin auth keyed by email. Reset links carry a recognizable secret so tests can trace where they go."""
+    UserNotFoundError=firebase_auth.UserNotFoundError;EmailAlreadyExistsError=firebase_auth.EmailAlreadyExistsError;ActionCodeSettings=firebase_auth.ActionCodeSettings
+    def __init__(self):self.users={};self.created=[];self.links=[]
+    def add(self,email,*providers):self.users[email]=SimpleNamespace(email=email,email_verified=True,provider_data=[SimpleNamespace(provider_id=p) for p in providers])
+    def get_user_by_email(self,email,app=None):
+        if email not in self.users:raise self.UserNotFoundError('No user record found.')
+        return self.users[email]
+    def create_user(self,email,email_verified,app=None):
+        if email in self.users:raise self.EmailAlreadyExistsError('The user with the provided email already exists.',None,None)
+        self.created.append(dict(email=email,email_verified=email_verified))
+        self.users[email]=SimpleNamespace(email=email,email_verified=email_verified,provider_data=[])
+        return self.users[email]
+    def generate_password_reset_link(self,email,action_code_settings,app=None):
+        link='https://alert-disaster-field-2026.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=secret-oob-'+str(len(self.links))
+        self.links.append(dict(email=email,url=action_code_settings.url,in_app=action_code_settings.handle_code_in_app,link=link))
+        return link

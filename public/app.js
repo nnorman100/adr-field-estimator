@@ -65,7 +65,8 @@ async function api(path,options={}){
   const timer=setTimeout(()=>controller.abort(),115000);
   try{
     const response=await fetch(path,{...options,cache:'no-store',signal:controller.signal,headers:{...options.headers,Authorization:'Bearer '+token,...(state.session.workspaces_enabled?{'X-ADR-Workspace-Protocol':'1'}:{})}});
-    if(!response.ok){const payload=await response.json().catch(()=>({}));const e=Error(typeof payload.detail==='string'?payload.detail:'The request could not be completed. Retry.');e.status=response.status;e.retryAfter=Number(response.headers.get('Retry-After')||0);if((e.status===403||e.status===404)&&window.WorkspaceUI?.enabled())queueMicrotask(()=>WorkspaceUI.refresh().catch(()=>{}));throw e;}
+    if(!response.ok){const payload=await response.json().catch(()=>({})),invalid=Array.isArray(payload.detail)&&typeof payload.detail[0]?.msg==='string'?payload.detail[0].msg.replace(/^Value error, /,''):'';
+      const e=Error(typeof payload.detail==='string'?payload.detail:invalid||'The request could not be completed. Retry.');e.status=response.status;e.retryAfter=Number(response.headers.get('Retry-After')||0);if((e.status===403||e.status===404)&&window.WorkspaceUI?.enabled())queueMicrotask(()=>WorkspaceUI.refresh().catch(()=>{}));throw e;}
     return response;
   }finally{clearTimeout(timer);}
 }
@@ -562,7 +563,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=batch1-fixes-20261010-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=invite-onboarding-20261010-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -638,11 +639,6 @@ async function initialize(){
   authClick('signInButton',async()=>{const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});await auth.signInWithPopup(provider);});
   $('emailAuthForm').addEventListener('submit',e=>e.preventDefault());
   authClick('emailSignIn',async()=>{const entered=credentials();if(entered)await auth.signInWithEmailAndPassword(entered.email,entered.password);});
-  authClick('emailCreate',async()=>{
-    const entered=credentials();if(!entered)return;
-    const {user}=await auth.createUserWithEmailAndPassword(entered.email,entered.password);await user.sendEmailVerification();
-    authSay('Verification email sent to '+entered.email+'.','success');
-  });
   authClick('emailReset',async()=>{
     if(!$('authEmail').reportValidity())return;const email=$('authEmail').value.trim();
     try{await auth.sendPasswordResetEmail(email);}catch(e){if(e.code!=='auth/user-not-found')throw e;}

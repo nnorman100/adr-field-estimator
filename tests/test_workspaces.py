@@ -1,15 +1,19 @@
 """Company policy is tested through real API handlers and transactional storage."""
 import asyncio
+import html
+import json
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 import time
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 import backend.main as bm
+import backend.workspaces as workspaces
 from backend.claims import make_documents
 from backend.contracts import InspectionData, AIResult
-from backend.workspaces import ADR_PROFILE, AccessDenied, MemberUpdate, ProfileUpdate, CompanyProfile, StatusUpdate, CoordinationUpdate
-from backend.inspection_store import Conflict
+from backend.workspaces import ADR_PROFILE, AccessDenied, CompanyCreate, MemberUpdate, ProfileUpdate, CompanyProfile, StatusUpdate, CoordinationUpdate
+from backend.inspection_store import Conflict, Limited
 from backend.workspace_migration import migrate
 from tests.fakes import FakeCompanyStore, FakeStore, png
 
@@ -152,6 +156,29 @@ def test_disabled_inviter_and_concurrent_owner_replacement(store):
     assert w.principal('a')['role']=='owner'
     with pytest.raises(Conflict):w.accept(identity('b'),b['invitation_id'])
 
+
+def test_disabling_member_cancels_their_pending_invitation(store):
+    w=store.workspaces
+    stale=w.invite('owner','adr','estimator@example.invalid','estimator')
+    other=w.invite('owner','adr','new@example.invalid','office')
+    w.update_member('owner','adr','estimator',MemberUpdate(expected_version=1,role='estimator',status='disabled'))
+    with pytest.raises(Conflict):w.accept(identity('estimator'),stale['invitation_id'])
+    assert store.db.records['_memberships/estimator']['status']=='disabled'
+    assert store.db.records['_invitations/'+other['invitation_id']]['status']=='pending'
+    fresh=w.invite('owner','adr','estimator@example.invalid','estimator')
+    assert fresh['invitation_id']!=stale['invitation_id']
+    w.accept(identity('estimator'),fresh['invitation_id'])
+    assert w.principal('estimator')['role']=='estimator'
+
+def test_owner_replacement_cancels_the_former_owners_pending_invitations(store):
+    w=store.workspaces
+    former=w.invite('admin','adr','owner@example.invalid','owner')
+    staff=w.invite('owner','adr','new@example.invalid','office')
+    replacement=w.invite('admin','adr','a@example.invalid','owner')
+    w.accept(identity('a'),replacement['invitation_id'])
+    assert store.db.records['_memberships/owner']['status']=='disabled'
+    assert store.db.records['_invitations/'+former['invitation_id']]['status']=='cancelled'
+    assert store.db.records['_invitations/'+staff['invitation_id']]['status']=='pending'
 
 def test_disable_company_and_membership_rechecked_inside_write(store):
     store.create_inspection('estimator',ID,data())
@@ -316,7 +343,7 @@ def test_permission_change_during_ai_prevents_commit(api,monkeypatch):
 
 
 def test_firestore_transactions_finish_all_reads_before_writes(monkeypatch):
-    from tests.fakes import Ref,Tx
+    from tests.fakes import Collection,Ref,Tx
     original_get=Ref.get
     def get(ref,transaction=None):
         assert not transaction or not getattr(transaction,'written',False),'Firestore forbids reads after transaction writes'
@@ -339,6 +366,15 @@ def test_firestore_transactions_finish_all_reads_before_writes(monkeypatch):
     docs=make_documents(InspectionData.model_validate(record['data']),[],AIResult(summary='Test',suggestions=[],unpriced_work=[]),w.snapshot('estimator'))
     record=store.save_audit('estimator',ID,record['revision'],docs)
     store.authorize('estimator',dict(inspection_id=ID,expected_revision=record['revision'],auth_id='ADR-AUTH-strict123',proposal_hash=record['audit']['proposal_hash'],signature_png=png()))
+    original_stream=Collection.stream
+    def stream(collection,transaction=None):
+        assert not transaction or not getattr(transaction,'written',False),'Firestore forbids reads after transaction writes'
+        return original_stream(collection,transaction)
+    monkeypatch.setattr(Collection,'stream',stream)
+    w.invite('admin','adr','owner@example.invalid','owner');w.invite('owner','adr','new@example.invalid','office')
+    w.update_member('owner','adr','new',MemberUpdate(expected_version=1,role='office',status='disabled'))
+    w.accept(identity('a'),w.invite('admin','adr','a@example.invalid','owner')['invitation_id'])
+    assert store.db.records['_memberships/owner']['status']=='disabled'
 
 
 def test_competing_invitation_acceptance_has_one_owner(store):
@@ -439,3 +475,121 @@ def test_password_identity_accepts_only_its_exact_email_invitation(store):
     assert not w.principal('new')['role']
     assert w.accept(password('new'),mine['invitation_id'])['role']=='estimator'
     assert store.db.records['_invitations/'+theirs['invitation_id']]['status']=='pending'
+
+
+@pytest.mark.parametrize('name', ['Alert Disaster Restoration','Other Company',"O'Brien & Sons (Kern) Co., Inc.",'Restauración Núñez 2','A'*80])
+def test_company_names_accept_business_text(name):
+    assert CompanyProfile(name=name).name==name and CompanyCreate(name=name,owner_email='x@example.invalid').name==name
+
+
+@pytest.mark.parametrize('name', ['Visit https://evil.example','Go to WWW.evil.example','Line\nBreak','A'*81,'Win $500 now!','<b>Owner</b>','Pay@once'])
+def test_company_names_reject_links_markup_and_long_text(api,name):
+    with pytest.raises(ValidationError):CompanyProfile(name=name)
+    with pytest.raises(ValidationError):CompanyCreate(name=name,owner_email='x@example.invalid')
+    client,current,store=api
+    response=client.put('/api/companies/adr',json={'expected_version':1,'profile':{**ADR_PROFILE,'name':name}})
+    assert response.status_code==422 and 'Company name' in response.text
+    assert store.db.records['_companies/adr']['profile']['name']=='Alert Disaster Restoration'
+
+
+def test_invitation_subject_excludes_owner_text(mail):
+    sent=mail[4]
+    invite=dict(invitation_id='a'*32,send_attempt='b'*32,email='new@example.invalid',role='office')
+    workspaces.send_invitation(invite,{'profile':{'name':'Owner Chosen Name'}})
+    assert sent[0]['subject']=='Invitation to join a company on the ADR field app'
+    assert 'Owner Chosen Name' in sent[0]['text']
+
+
+def test_invitation_sends_and_resends_have_a_daily_company_cap(api,monkeypatch):
+    client,current,store=api;w=store.workspaces
+    monkeypatch.setattr(workspaces,'INVITATION_DAILY_LIMIT',3)
+    first=w.invite('owner','adr','one@example.invalid','office')
+    assert w.invite('owner','adr','one@example.invalid','office')==first
+    w.invite('owner','adr','two@example.invalid','office')
+    w.invitation_action('owner','adr',first['invitation_id'],'resend')
+    with pytest.raises(Limited) as limited:w.invite('owner','adr','three@example.invalid','office')
+    assert 86000<limited.value.retry_after<=86400
+    with pytest.raises(Limited):w.invitation_action('owner','adr',first['invitation_id'],'resend')
+    w.invite('other-owner','other','three@example.invalid','office')
+    response=client.post('/api/companies/adr/invitations',json={'email':'four@example.invalid','role':'office'})
+    assert response.status_code==429 and int(response.headers['Retry-After'])>86000
+    assert not [r for r in store.db.records.values() if r.get('email') in ('three@example.invalid','four@example.invalid') and r.get('company_id')=='adr']
+
+
+@pytest.fixture
+def mail(api,monkeypatch):
+    """Real send_invitation against fake Resend and fake Firebase Admin; records every Firestore write."""
+    from tests import fakes
+    sent=[];writes=[];accounts=fakes.FakeAuth()
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def read(self,size):return b'{"id":"message"}'
+    monkeypatch.setenv('RESEND_API_KEY','test-key');monkeypatch.setenv('INVITATION_FROM','ADR <invite@example.invalid>')
+    monkeypatch.setattr(workspaces.urllib.request,'urlopen',lambda request,timeout:sent.append(json.loads(request.data)) or Response())
+    monkeypatch.setattr(workspaces,'firebase_auth',accounts)
+    monkeypatch.setattr(workspaces.firebase_admin,'get_app',lambda name:object())
+    for cls,name in ((fakes.Tx,'set'),(fakes.Ref,'create')):
+        def logged(self,*args,_original=getattr(cls,name),**kwargs):writes.append(json.dumps(args,default=str));return _original(self,*args,**kwargs)
+        monkeypatch.setattr(cls,name,logged)
+    client,current,store=api
+    return client,current,store,accounts,sent,writes
+
+
+def test_invitation_provisions_a_password_account_and_mails_only_its_set_password_link(mail):
+    client,current,store,accounts,sent,writes=mail
+    invited=client.post('/api/companies/adr/invitations',json={'email':'New@Example.invalid','role':'office'}).json()
+    assert invited['delivery_status']=='sent'
+    assert accounts.created==[{'email':'new@example.invalid','email_verified':False}]
+    assert [(l['email'],l['url'],l['in_app']) for l in accounts.links]==[('new@example.invalid','https://alert-disaster-field-2026.web.app/',False)]
+    link=accounts.links[0]['link']
+    assert 'Set your password for the ADR field app: '+link in sent[0]['text']
+    assert html.escape(link) in sent[0]['html'] and link not in sent[0]['html']
+    assert '?invite='+invited['invitation_id'] in sent[0]['text']
+    assert writes and not any('secret-oob' in w for w in writes)
+    assert 'secret-oob' not in json.dumps(store.db.records,default=str) and 'secret-oob' not in json.dumps(invited)
+
+
+def test_owner_invitation_for_a_new_company_provisions_the_owner_account(mail):
+    client,current,store,accounts,sent,writes=mail;current['uid']='admin'
+    result=client.post('/api/admin/companies',json={'name':'New California Restoration','owner_email':'boss@example.invalid'}).json()
+    assert result['invitation']['delivery_status']=='sent'
+    assert accounts.created==[{'email':'boss@example.invalid','email_verified':False}]
+    assert accounts.links[0]['link'] in sent[0]['text'] and not any('secret-oob' in w for w in writes)
+
+
+def test_google_invitee_gets_sign_in_instructions_without_link_or_new_account(mail):
+    client,current,store,accounts,sent,writes=mail;accounts.add('google@example.invalid','google.com')
+    assert client.post('/api/companies/adr/invitations',json={'email':'google@example.invalid','role':'office'}).json()['delivery_status']=='sent'
+    assert not accounts.created and not accounts.links
+    assert 'Sign in with Google using this email' in sent[0]['text'] and 'Set your password' not in sent[0]['text']+sent[0]['html']
+
+
+def test_resend_reuses_the_existing_password_account_with_a_fresh_link(mail):
+    client,current,store,accounts,sent,writes=mail;accounts.add('staff@example.invalid','password')
+    invited=client.post('/api/companies/adr/invitations',json={'email':'staff@example.invalid','role':'office'}).json()
+    resent=client.post('/api/companies/adr/invitations/'+invited['invitation_id']+'/resend',json={}).json()
+    assert resent['delivery_status']=='sent' and not accounts.created
+    assert [l['email'] for l in accounts.links]==['staff@example.invalid']*2
+    assert [accounts.links[i]['link'] in sent[i]['text'] for i in (0,1)]==[True,True]
+    assert not any('secret-oob' in w for w in writes)
+
+
+def test_concurrent_account_creation_falls_back_to_the_existing_account(mail,monkeypatch):
+    client,current,store,accounts,sent,writes=mail
+    def created_elsewhere(email,email_verified,app=None):
+        accounts.add(email,'password');raise accounts.EmailAlreadyExistsError('exists',None,None)
+    monkeypatch.setattr(accounts,'create_user',created_elsewhere)
+    assert client.post('/api/companies/adr/invitations',json={'email':'race@example.invalid','role':'office'}).json()['delivery_status']=='sent'
+    assert accounts.links[0]['email']=='race@example.invalid' and accounts.links[0]['link'] in sent[0]['text']
+
+
+def test_denied_or_rate_limited_invitations_create_no_account_and_send_nothing(mail,monkeypatch):
+    client,current,store,accounts,sent,writes=mail
+    monkeypatch.setattr(workspaces,'INVITATION_DAILY_LIMIT',1)
+    assert client.post('/api/companies/adr/invitations',json={'email':'one@example.invalid','role':'office'}).status_code==200
+    accounts.created.clear();accounts.links.clear();sent.clear()
+    assert client.post('/api/companies/adr/invitations',json={'email':'two@example.invalid','role':'office'}).status_code==429
+    current['uid']='office'
+    assert client.post('/api/companies/adr/invitations',json={'email':'three@example.invalid','role':'office'}).status_code==403
+    assert not accounts.created and not accounts.links and not sent and set(accounts.users)=={'one@example.invalid'}

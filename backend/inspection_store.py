@@ -20,6 +20,15 @@ class Limited(ValueError):
         self.retry_after = seconds
         super().__init__('Too many requests. Please wait and retry.')
 
+def reserve_slot(data, action, maximum, window=60):
+    moment=time.time()
+    counter=data.get(action,{'start':moment,'count':0})
+    if moment-counter['start'] >= window: counter={'start':moment,'count':0}
+    if counter['count'] >= maximum: raise Limited(max(1,int(window-(moment-counter['start']))))
+    counter['count']+=1
+    data[action]=counter
+    return data
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
 
@@ -245,14 +254,7 @@ class InspectionStore(JobStore):
         ref = self.db.collection('_limits').document(uid)
         def reserve(tx):
             snapshot=ref.get(transaction=tx)
-            data=snapshot.to_dict() if snapshot.exists else {}
-            moment=time.time()
-            counter=data.get(action,{'start':moment,'count':0})
-            if moment-counter['start'] >= 60: counter={'start':moment,'count':0}
-            if counter['count'] >= maximum: raise Limited(max(1,int(60-(moment-counter['start']))))
-            counter['count']+=1
-            data[action]=counter
-            tx.set(ref,data)
+            tx.set(ref,reserve_slot(snapshot.to_dict() if snapshot.exists else {},action,maximum))
         self._atomic(reserve)
 
     def live_lease(self, uid, lease_id=None, release=False):

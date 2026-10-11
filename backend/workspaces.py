@@ -1,4 +1,4 @@
-"""Private company membership and job-access policy. No Firebase account writes."""
+"""Private company membership and job-access policy. Invitation delivery provisions the invitee's Firebase account."""
 import base64
 import hashlib
 import html
@@ -10,17 +10,19 @@ import time
 import urllib.request
 import urllib.error
 from uuid import uuid4
+import firebase_admin
+from firebase_admin import auth as firebase_auth
 from PIL import Image, ImageOps
 from google.cloud import firestore
-from pydantic import Field, field_validator
-from typing import Literal
+from pydantic import AfterValidator, Field, field_validator
+from typing import Annotated, Literal
 try:
     from .contracts import StrictModel
-    from .inspection_store import Conflict, now
+    from .inspection_store import Conflict, now, reserve_slot
     from .claims import HEATER
 except ImportError:
     from contracts import StrictModel
-    from inspection_store import Conflict, now
+    from inspection_store import Conflict, now, reserve_slot
     from claims import HEATER
 
 ADR_ID = 'adr'
@@ -34,10 +36,21 @@ ADR_PROFILE = dict(name='Alert Disaster Restoration', address='3300 Patton Way Â
                    phone='(661) 426-2151', email='', license='950983', signoff='Matthew Myers',
                    logo_data_url='', water_heater_notice=HEATER)
 
+INVITATION_DAILY_LIMIT = 50
+APP_URL = 'https://alert-disaster-field-2026.web.app/'
+
 class AccessDenied(PermissionError): pass
 
+def company_name(value):
+    # Owner text reaches invitation emails; keep it to plain business-name characters.
+    if len(value)>80 or not re.fullmatch(r"(?:[^\W_]|[ .,&'()-])+",value) or 'www.' in value.lower():
+        raise ValueError("Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.")
+    return value
+
+CompanyName = Annotated[str, Field(min_length=1), AfterValidator(company_name)]
+
 class CompanyProfile(StrictModel):
-    name: str = Field(min_length=1,max_length=150)
+    name: CompanyName
     address: str = Field(default='',max_length=500)
     phone: str = Field(default='',max_length=80)
     email: str = Field(default='',max_length=254)
@@ -47,7 +60,7 @@ class CompanyProfile(StrictModel):
     water_heater_notice: str = Field(default='',max_length=1500)
 
 class CompanyCreate(StrictModel):
-    name: str = Field(min_length=1,max_length=150)
+    name: CompanyName
     owner_email: str = Field(max_length=254)
 
 class ProfileUpdate(StrictModel):
@@ -185,6 +198,15 @@ class WorkspaceStore:
         actor=self.principal(uid)
         if not actor['superadmin']: self.company_actor(uid,company_id)
         return [s.to_dict() for s in self.db.collection('_memberships').where(filter=firestore.FieldFilter('company_id','==',company_id)).limit(500).stream()]
+    def cancel_invitations(self,tx,company_id,email):
+        # A pending invitation would otherwise let a disabled member reactivate themselves.
+        # Reads precede writes here, so call this before the transaction's first write.
+        stale=[s.to_dict() for s in self.db.collection('_invitations').where(filter=firestore.FieldFilter('company_id','==',company_id))
+               .where(filter=firestore.FieldFilter('email','==',email)).stream(transaction=tx)]
+        for invitation in stale:
+            if invitation['status']=='pending':
+                invitation['status']='cancelled'
+                tx.set(self.ref('_invitations',invitation['invitation_id']),invitation)
     def update_member(self,uid,company_id,member_uid,req):
         def update(tx):
             self.company_actor(uid,company_id,True,tx)
@@ -192,6 +214,7 @@ class WorkspaceStore:
             if not member or member['company_id']!=company_id: raise LookupError('Staff member not found.')
             if member['role']=='owner' and member['status']=='active': raise AccessDenied('Only superadmin can replace the owner.')
             if member['version']!=req.expected_version: raise Conflict('Staff access changed. Reload the team.')
+            if req.status=='disabled': self.cancel_invitations(tx,company_id,member['email'])
             member.update(role=req.role,status=req.status,version=member['version']+1,updated_at=now())
             tx.set(self.ref('_memberships',member_uid),member)
             self.event(tx,uid,'member_access',company_id,{'uid':member_uid,'role':req.role,'status':req.status})
@@ -207,6 +230,8 @@ class WorkspaceStore:
         else: self.company_actor(uid,company_id,True,tx)
         company=self.read('_companies',company_id,tx)
         if not company or company['status']!='active': raise AccessDenied('The company must be active to invite staff.')
+    def invitation_quota(self,company_id,tx):
+        return reserve_slot(self.read('_company_limits',company_id,tx) or {},'invitations',INVITATION_DAILY_LIMIT,86400)
     def invite(self,uid,company_id,email,role):
         email=email_address(email)
         # Serialize invitations for this company/email using a deterministic private key.
@@ -219,10 +244,12 @@ class WorkspaceStore:
             if previous and previous['status']=='pending' and previous['expires_at']>time.time():
                 if previous['role']!=role: raise Conflict('Cancel the existing invitation before changing its role.')
                 return previous
+            limits=self.invitation_quota(company_id,tx)
             invitation=self.new_invite(company_id,email,role,uid)
             if role=='owner': invitation['expected_owner_uid']=company.get('owner_uid')
             tx.create(self.ref('_invitations',invitation['invitation_id']),invitation)
             tx.set(self.ref('_invite_keys',key),{'invitation_id':invitation['invitation_id']})
+            tx.set(self.ref('_company_limits',company_id),limits)
             self.event(tx,uid,'invitation_created',company_id,{'invitation_id':invitation['invitation_id'],'role':role})
             return invitation
         return self._run(create)
@@ -264,6 +291,7 @@ class WorkspaceStore:
             membership=dict(uid=uid,email=email,company_id=invite['company_id'],role=invite['role'],status='active',
                             version=(member or {}).get('version',0)+1,updated_at=now())
             if old_member:
+                self.cancel_invitations(tx,invite['company_id'],old_member['email'])
                 old_member.update(status='disabled',version=old_member['version']+1,updated_at=now())
                 tx.set(self.ref('_memberships',old_owner),old_member)
             if invite['role']=='owner':
@@ -282,7 +310,9 @@ class WorkspaceStore:
             self.invite_actor(uid,company_id,invitation['role'],tx)
             if invitation['status']!='pending': raise Conflict('This invitation is no longer pending.')
             if action=='cancel': invitation['status']='cancelled'
-            elif action=='resend': invitation.update(delivery_status='pending',send_attempt=uuid4().hex,send_started=0,expires_at=time.time()+7*86400)
+            elif action=='resend':
+                tx.set(self.ref('_company_limits',company_id),self.invitation_quota(company_id,tx))
+                invitation.update(delivery_status='pending',send_attempt=uuid4().hex,send_started=0,expires_at=time.time()+7*86400)
             else: raise ValueError('Unsupported invitation action.')
             tx.set(self.ref('_invitations',identifier),invitation)
             self.event(tx,uid,'invitation_'+action,company_id,{'invitation_id':identifier})
@@ -383,14 +413,33 @@ class WorkspaceStore:
             return job
         return self._run(update)
 
+def password_setup_link(email):
+    """Create the invitee's account if needed so nobody else can pre-register the address. None means a Google account."""
+    try: app=firebase_admin.get_app('adr')
+    except ValueError: app=firebase_admin.initialize_app(options={'projectId':os.getenv('GOOGLE_CLOUD_PROJECT','alert-disaster-field-2026')},name='adr')
+    try: user=firebase_auth.get_user_by_email(email,app=app)
+    except firebase_auth.UserNotFoundError:
+        try: user=firebase_auth.create_user(email=email,email_verified=False,app=app)
+        except firebase_auth.EmailAlreadyExistsError: user=firebase_auth.get_user_by_email(email,app=app)
+    if any(info.provider_id=='google.com' for info in user.provider_data): return None
+    # The link is a credential: it goes only into the outgoing email, never Firestore or logs.
+    return firebase_auth.generate_password_reset_link(email,firebase_auth.ActionCodeSettings(url=APP_URL,handle_code_in_app=False),app=app)
+
 def send_invitation(invite,company):
     key=os.getenv('RESEND_API_KEY',''); sender=os.getenv('INVITATION_FROM','')
     if not key or not sender: raise RuntimeError('Invitation email is not configured.')
-    link='https://alert-disaster-field-2026.web.app/?invite='+invite['invitation_id']
-    name=company['profile']['name']; role={'office':'office staff'}.get(invite['role'],invite['role'])
-    payload={'from':sender,'to':[invite['email']],'subject':f'Invitation to {name}',
-             'text':f'You have been invited to {name} as {role}. Sign in with {invite["email"]} and accept the invitation: {link}\nThis invitation expires in seven days.',
-             'html':f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p><p>Sign in with {html.escape(invite["email"])}.</p><p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>'}
+    link=APP_URL+'?invite='+invite['invitation_id']
+    setup=password_setup_link(invite['email'])
+    name=company['profile']['name']; role={'office':'office staff'}.get(invite['role'],invite['role']); email=invite['email']
+    if setup:
+        steps=f'Set your password for the ADR field app: {setup}\nIf that link has expired, use Forgot password on the sign-in page.\nThen sign in with {email} and that password.'
+        steps_html=(f'<p>Set your password for the ADR field app: <a href="{html.escape(setup)}">{html.escape(setup)}</a></p>'
+                    f'<p>If that link has expired, use Forgot password on the sign-in page.</p><p>Then sign in with {html.escape(email)} and that password.</p>')
+    else:
+        steps=f'Sign in with Google using this email ({email}).'; steps_html=f'<p>Sign in with Google using this email ({html.escape(email)}).</p>'
+    payload={'from':sender,'to':[email],'subject':'Invitation to join a company on the ADR field app',
+             'text':f'You have been invited to {name} as {role}.\n{steps}\nAccept the invitation: {link}\nThis invitation expires in seven days.',
+             'html':f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p>{steps_html}<p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>'}
     request=urllib.request.Request('https://api.resend.com/emails',data=json.dumps(payload).encode(),method='POST',
         headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','Idempotency-Key':invite['invitation_id']+'/'+invite['send_attempt']})
     for attempt in range(3):
