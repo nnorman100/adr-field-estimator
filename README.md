@@ -6,7 +6,7 @@ Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage
 
 ## Company dashboards — staged release
 
-The new build adds isolated company workspaces with superadmin, owner, estimator and office roles. Owners manage their company and team; estimators see jobs they create or are assigned; office staff coordinate jobs and view documents. Google or verified email/password sign-in uses private server-checked memberships. Invitations require explicit acceptance by a verified account with the matching email. The initial ADR owner also has a separate superadmin role.
+The new build adds isolated company workspaces with superadmin, owner, estimator and office roles. Owners manage their company and team; estimators see jobs they create or are assigned; office staff coordinate jobs and view documents. Google or verified email/password sign-in uses private server-checked memberships. Password accounts are created only by invitation: the invitation email carries a link to set the password. Public sign-up must be disabled in the Firebase project before activation. Invitations require explicit acceptance by a verified account with the matching email. The initial ADR owner also has a separate superadmin role.
 
 Production remains on the existing Live release while the workspace backend is staged. Real Resend delivery and authenticated role workflows must pass before activation. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
 
