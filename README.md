@@ -77,7 +77,7 @@ private owner/job-bound checkpoints and explicit Resume after offline interrupti
 signals stream end; Finish stops media immediately and allows a bounded transcript drain. Recognized
 text retains segment identities and incomplete/gap/edit metadata; form changes still require review.
 
-Production now uses backend alert-disaster-field-estimator-00006-yer at 100% traffic and frontend
-live-reliable-20261007-1, Hosting version 0350de7b1566a1b5. Exact deployed assets and mobile routing
-checks passed. The previous matched backend 00005-htr / Hosting version 60724bb918512475 is retained
-for rollback. See docs/review-repairs.md for evidence and remaining acceptance gates.
+Production now uses backend alert-disaster-field-estimator-00009-ved (tag legacy-fixes, workspaces
+off) at 100% traffic and frontend live-reliable-20261007-1, Hosting version 0350de7b1566a1b5. 00009-ved
+adds the batch 1 backend fixes (OCR wait, failed OCR retries, zero-work audits) and keeps the legacy API
+that frontend uses. Roll back by moving traffic to tag live-reliable (00006-yer). See docs/review-repairs.md for evidence and remaining acceptance gates.
