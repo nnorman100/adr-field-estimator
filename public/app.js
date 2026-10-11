@@ -168,6 +168,7 @@ async function drainQueue(){
   const guard=()=>{if(state.user?.uid!==uid||state.queuePaused||!navigator.onLine||queueContext!==window.WorkspaceUI?.context())throw Error('Queue paused.');};
   const request=(...args)=>{guard();return jsonApi(...args);};
   const saveRow=row=>{guard();return dbAction('readwrite',store=>{guard();return store.put(row);});};
+  let conflicts=0;
   try{
     await syncChain.catch(()=>{});
     for(const row of await localDrafts()){
@@ -178,7 +179,7 @@ async function drainQueue(){
       try{record=await request(path);}catch(e){if(e.status!==404)throw e;record=await request('/api/inspections','POST',{inspection_id:id,data:row.draft.data});row.ack=stable(row.draft.data);}
       if(record.status==='signed'){await deleteDraft(row.key);continue;}
       if(stable(row.draft.data)!==row.ack){
-        if(stable(record.data)!==row.ack&&stable(record.data)!==stable(row.draft.data)){row.conflict=true;await saveRow(row);continue;}
+        if(stable(record.data)!==row.ack&&stable(record.data)!==stable(row.draft.data)){row.conflict=true;conflicts++;await saveRow(row);continue;}
         record=await request(path,'PUT',{expected_revision:record.revision,data:row.draft.data});row.ack=stable(row.draft.data);
       }else{row.draft.data=record.data;row.ack=stable(record.data);}
       let bytes;
@@ -194,6 +195,7 @@ async function drainQueue(){
       for(const photo of record.photos)if(!row.draft.photos.some(p=>p.id===photo.id))row.draft.photos.push({...photo,uploaded:true});
       row.record=record;await saveRow(row);
     }
+    if(conflicts)say(conflicts===1?'1 queued draft changed on another device. Open it from Jobs to choose which version to keep.':conflicts+' queued drafts changed on another device. Open them from Jobs to choose which version to keep.','error');
   }catch(e){
     if(e.status===429&&state.user?.uid===uid){clearTimeout(state.queueRetry);state.queueRetry=setTimeout(()=>drainQueue(),Math.max(1,e.retryAfter)*1000);}
     else if(state.user?.uid===uid&&navigator.onLine)say('Some queued drafts still need synchronization. They remain on this device; reopen them to review or retry.','error');
@@ -356,6 +358,7 @@ async function restoreDraft(id){
   let remote=null;
   if(navigator.onLine){try{remote=await jsonApi('/api/inspections/'+id);}catch(e){if(e.status!==404||!local)throw e;}}
   if(epoch!==authEpoch)return;
+  for(const url of state.photoUrls.values())URL.revokeObjectURL(url);state.photoUrls.clear();
   confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
   state.signed=null;state.signature=null;state.pendingAuthorization=null;state.conflict=false;state.documents=null;
   state.draft=local?local.draft:{inspection_id:id,data:remote.data,photos:remote.photos.map(p=>({...p,uploaded:true}))};
