@@ -283,7 +283,7 @@ async def audit_inspection(req:AuditRequest,request:Request,staff=Depends(curren
     while any(p['ocr_status']=='pending' for p in record['photos']) and time.monotonic()<deadline:
         await asyncio.sleep(0.5)
         record=await stored(store.get_inspection,staff['uid'],req.inspection_id)
-        if record['data']!=data.model_dump(mode='json'): raise HTTPException(409,'Inspection inputs changed while waiting for OCR.')
+        if record['data']!=inspection_payload(data): raise HTTPException(409,'Inspection inputs changed while waiting for OCR.')
     # OCR may advance the revision; bind the resulting audit to that exact snapshot.
     revision=record['revision']
     identity=await stored(store.workspaces.snapshot,staff['uid']) if WORKSPACES_ENABLED else None

@@ -1,4 +1,5 @@
 import asyncio, json, time
+from threading import Timer
 from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
@@ -35,6 +36,21 @@ def audit(client,record):
     return r.json()
 def sign_payload(record):
     return dict(inspection_id=ID,expected_revision=record['revision'],auth_id='ADR-AUTH-test123456',proposal_hash=record['audit']['proposal_hash'],signature_png=png(),documents_confirmed=True)
+def photo(client,record,photo_id='b'*32):
+    r=client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=record['revision'],photo_id=photo_id,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()));assert r.status_code==200,r.text
+    return r.json()
+NO_METER={'meter_detected':False,'meter_type':'Inspection Photo','value':'','classification':'No readable meter','notes':'No physical display visible.'}
+
+def test_audit_waits_for_pending_ocr_and_rejects_real_input_changes(context):
+    client,store=context;record=photo(client,inspect(client))
+    Timer(0.2,store.set_ocr,('owner',ID,'b'*32,NO_METER)).start()
+    saved=audit(client,record)
+    assert saved['photos'][0]['ocr_status']=='no_meter' and saved['audit']['revision']==saved['revision']==record['revision']+1
+    record=photo(client,saved,'c'*32)
+    changed=data();changed['address']='Changed while waiting'
+    Timer(0.2,store.update_inspection,('owner',ID,record['revision'],changed)).start()
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
+    assert response.status_code==409 and 'changed while waiting' in response.json()['detail']
 
 def test_authenticated_durable_flow_and_immutable_retry(context):
     client,store=context
