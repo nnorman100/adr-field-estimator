@@ -235,6 +235,43 @@ def test_live_denial_precedes_vertex(store,monkeypatch,role):
             with pytest.raises(WebSocketDisconnect):socket.receive_json()
     assert not any(k.startswith('_live_sessions/') for k in store.db.records)
 
+def test_live_resume_fallback_keeps_company_identity(store,monkeypatch):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace as NS
+    from starlette.websockets import WebSocketDisconnect
+    store.create_inspection('other-owner',OTHER,data())
+    configs=[]
+    class Session:
+        async def receive(self):
+            yield NS(server_content=None,session_resumption_update=NS(new_handle='synthetic-private',resumable=True))
+            yield NS(server_content=None,go_away=NS(time_left=1))
+    @asynccontextmanager
+    async def connect(**kwargs):
+        configs.append(kwargs['config'])
+        if kwargs['config'].session_resumption.handle:raise RuntimeError('Synthetic expired provider handle')
+        yield Session()
+    async def close():pass
+    async def verified(token):return {**identity('other-owner'),'exp':time.time()+600}
+    monkeypatch.setattr(bm,'WORKSPACES_ENABLED',True)
+    monkeypatch.setattr(bm,'verify_staff',verified)
+    monkeypatch.setattr(bm,'get_job_store',lambda:store)
+    monkeypatch.setattr(bm.genai,'Client',lambda **kwargs:NS(aio=NS(live=NS(connect=connect),aclose=close)))
+    def auth(resume):return {'type':'authenticate','token':'synthetic','inspection_id':OTHER,'protocol_version':2,'workspace_protocol_version':1,'capture_id':'f'*32,'resume':resume}
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth(False));assert socket.receive_json()['recovery']=='new'
+            assert socket.receive_json()['type']=='recovery'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        assert store.db.records['_live_resume/other-owner']['handle']=='synthetic-private'
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth(True));response=socket.receive_json();assert response.get('recovery')=='restarted',response
+            assert socket.receive_json()['type']=='recovery'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    assert len(configs)==3 and configs[1].session_resumption.handle=='synthetic-private'
+    for config in configs:
+        prompt=str(config.system_instruction)
+        assert 'Other Company' in prompt and 'Alert Disaster Restoration' not in prompt
+
 @pytest.mark.parametrize('change', ['role','company','assignment'])
 def test_live_rechecks_workspace_permission_and_deletes_checkpoint(store,monkeypatch,change):
     from contextlib import asynccontextmanager

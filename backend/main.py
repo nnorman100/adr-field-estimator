@@ -392,7 +392,7 @@ async def live_walkthrough(socket:WebSocket):
                 await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',None,False)
                 handle=None
                 session=await stack.enter_async_context(client.aio.live.connect(model=LIVE_MODEL,
-                    config=live_config(live_prompt(record['data']),LIVE_VOICE)))
+                    config=live_config(live_prompt(record['data'],identity),LIVE_VOICE)))
             connection=uuid4().hex; sequence=0; pending=False; finishing=False
             final_text=asyncio.Event(); final_text.set()
             ready={'type':'ready','model':LIVE_MODEL}
