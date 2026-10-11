@@ -27,7 +27,7 @@ class Collection:
     def limit(self,maximum):self.maximum=maximum;return self
     def order_by(self,field,direction):self.order=field;return self
     def start_after(self,snapshot):self.cursor=snapshot.to_dict();return self
-    def stream(self):
+    def stream(self,transaction=None):
         rows=[v for k,v in self.db.records.items() if k.startswith(self.name+'/') and all((f.value in v.get(f.field_path,[]) if f.op_string=='array_contains' else v.get(f.field_path)==f.value) for f in self.filters)]
         if self.order:rows.sort(key=lambda r:(r[self.order],r.get('job_id',r.get('inspection_id',r.get('auth_id','')))),reverse=True)
         if self.cursor:

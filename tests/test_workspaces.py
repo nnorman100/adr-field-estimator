@@ -153,6 +153,19 @@ def test_disabled_inviter_and_concurrent_owner_replacement(store):
     with pytest.raises(Conflict):w.accept(identity('b'),b['invitation_id'])
 
 
+def test_disabling_member_cancels_their_pending_invitation(store):
+    w=store.workspaces
+    stale=w.invite('owner','adr','estimator@example.invalid','estimator')
+    other=w.invite('owner','adr','new@example.invalid','office')
+    w.update_member('owner','adr','estimator',MemberUpdate(expected_version=1,role='estimator',status='disabled'))
+    with pytest.raises(Conflict):w.accept(identity('estimator'),stale['invitation_id'])
+    assert store.db.records['_memberships/estimator']['status']=='disabled'
+    assert store.db.records['_invitations/'+other['invitation_id']]['status']=='pending'
+    fresh=w.invite('owner','adr','estimator@example.invalid','estimator')
+    assert fresh['invitation_id']!=stale['invitation_id']
+    w.accept(identity('estimator'),fresh['invitation_id'])
+    assert w.principal('estimator')['role']=='estimator'
+
 def test_disable_company_and_membership_rechecked_inside_write(store):
     store.create_inspection('estimator',ID,data())
     store.workspaces.update_member('owner','adr','estimator',MemberUpdate(expected_version=1,role='office',status='active'))

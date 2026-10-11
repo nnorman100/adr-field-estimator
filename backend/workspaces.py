@@ -192,6 +192,13 @@ class WorkspaceStore:
             if not member or member['company_id']!=company_id: raise LookupError('Staff member not found.')
             if member['role']=='owner' and member['status']=='active': raise AccessDenied('Only superadmin can replace the owner.')
             if member['version']!=req.expected_version: raise Conflict('Staff access changed. Reload the team.')
+            # A pending invitation would otherwise let a disabled member reactivate themselves.
+            stale=[s.to_dict() for s in self.db.collection('_invitations').where(filter=firestore.FieldFilter('company_id','==',company_id))
+                   .where(filter=firestore.FieldFilter('email','==',member['email'])).stream(transaction=tx)] if req.status=='disabled' else []
+            for invitation in stale:
+                if invitation['status']=='pending':
+                    invitation['status']='cancelled'
+                    tx.set(self.ref('_invitations',invitation['invitation_id']),invitation)
             member.update(role=req.role,status=req.status,version=member['version']+1,updated_at=now())
             tx.set(self.ref('_memberships',member_uid),member)
             self.event(tx,uid,'member_access',company_id,{'uid':member_uid,'role':req.role,'status':req.status})
