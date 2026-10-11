@@ -1,4 +1,5 @@
 import asyncio, json, time
+from threading import Timer
 from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
@@ -35,6 +36,21 @@ def audit(client,record):
     return r.json()
 def sign_payload(record):
     return dict(inspection_id=ID,expected_revision=record['revision'],auth_id='ADR-AUTH-test123456',proposal_hash=record['audit']['proposal_hash'],signature_png=png(),documents_confirmed=True)
+def photo(client,record,photo_id='b'*32):
+    r=client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=record['revision'],photo_id=photo_id,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()));assert r.status_code==200,r.text
+    return r.json()
+NO_METER={'meter_detected':False,'meter_type':'Inspection Photo','value':'','classification':'No readable meter','notes':'No physical display visible.'}
+
+def test_audit_waits_for_pending_ocr_and_rejects_real_input_changes(context):
+    client,store=context;record=photo(client,inspect(client))
+    Timer(0.2,store.set_ocr,('owner',ID,'b'*32,NO_METER)).start()
+    saved=audit(client,record)
+    assert saved['photos'][0]['ocr_status']=='no_meter' and saved['audit']['revision']==saved['revision']==record['revision']+1
+    record=photo(client,saved,'c'*32)
+    changed=data();changed['address']='Changed while waiting'
+    Timer(0.2,store.update_inspection,('owner',ID,record['revision'],changed)).start()
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
+    assert response.status_code==409 and 'changed while waiting' in response.json()['detail']
 
 def test_authenticated_durable_flow_and_immutable_retry(context):
     client,store=context
@@ -77,16 +93,48 @@ def test_model_output_missing_and_provider_error_never_produces_documents(contex
     response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
     assert response.status_code==502 and store.get_inspection('owner',ID)['audit'] is None
 
+def test_zero_work_audit_is_rejected_before_the_model_runs(context,monkeypatch):
+    client,_=context;calls=[]
+    async def generate(**kwargs):calls.append(kwargs);return SimpleNamespace(text=json.dumps({'summary':'Nothing priced.','suggestions':[],'unpriced_work':[]}))
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))))
+    empty=data(emergency_calls=0,monitoring_hours=0,haul_loads=0,air_scrubbers=0,hepa_filters=0);empty.update(air_movers=0,dehumidifiers=0);empty['rooms'][0]['finished_sf']=0
+    record=client.post('/api/inspections',json={'inspection_id':ID,'data':empty}).json()
+    response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']})
+    assert response.status_code==400 and 'Add measured work' in response.json()['detail'] and calls==[]
+
 def test_non_meter_and_failed_ocr_remain_unverified(context,monkeypatch):
-    client,store=context;record=inspect(client)
-    r=client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=record['revision'],photo_id='b'*32,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()))
-    assert r.status_code==200,r.text
+    client,store=context;record=photo(client,inspect(client))
     result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
     assert result.status_code==200 and result.json()['photos'][0]['ocr_status']=='no_meter'
+    photo(client,result.json(),'c'*32)
     async def unavailable(**kwargs):raise RuntimeError('provider unavailable')
     monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))))
-    result=client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={})
-    assert result.status_code==502 and store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='failed'
+    result=client.post('/api/inspections/'+ID+'/photos/'+'c'*32+'/ocr',json={})
+    assert result.status_code==502 and store.get_inspection('owner',ID)['photos'][1]['ocr_status']=='failed'
+    assert client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={}).status_code==502
+    assert store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='no_meter'
+
+VERIFIED={'meter_detected':True,'meter_type':'Pin moisture meter','value':'18.5','classification':'Wet','notes':'Readable display.'}
+
+def test_failed_ocr_retry_keeps_verified_reading_revision_and_audit(context,monkeypatch):
+    client,store=context;photo(client,inspect(client))
+    store.set_ocr('owner',ID,'b'*32,VERIFIED)
+    audited=audit(client,client.get('/api/inspections/'+ID).json())
+    async def unavailable(**kwargs):raise RuntimeError('provider unavailable')
+    monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))))
+    assert client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr',json={}).status_code==502
+    current=store.get_inspection('owner',ID)
+    assert current['photos'][0]['ocr']==VERIFIED and current['photos'][0]['ocr_status']=='verified'
+    assert current['revision']==audited['revision'] and current['audit']==audited['audit']
+
+def test_cancelled_ocr_request_does_not_leave_the_photo_pending(context,monkeypatch):
+    client,store=context;photo(client,inspect(client))
+    async def hang(*args,**kwargs):await asyncio.Event().wait()
+    monkeypatch.setattr(bm,'generate',hang)
+    async def deadline():
+        with pytest.raises(asyncio.TimeoutError):await asyncio.wait_for(bm.ocr_photo.__wrapped__(ID,'b'*32,{'uid':'owner'},store),0.2)
+    asyncio.run(deadline())
+    assert store.get_inspection('owner',ID)['photos'][0]['ocr_status']=='failed'
 
 def test_auth_ownership_limits_and_invalid_inputs(context):
     client,_=context;inspect(client)

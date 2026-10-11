@@ -127,6 +127,19 @@ test('logout clears user-specific local drafts',async({page})=>{
   await scope(page);await page.locator('#technicianNotes').fill('Synthetic private logout draft');await menu(page,'accountMenu');await Promise.all([page.waitForEvent('domcontentloaded'),page.locator('#signOutButton').click()]);await expect(page.locator('#technicianNotes')).toHaveValue('');
   const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));expect(rows.every(row=>row.draft.data.technician_notes!=='Synthetic private logout draft')).toBe(true);
 });
+test('sign out keeps an unsynced offline draft until the user discards it',async({page,context,browserName})=>{
+  test.skip(browserName==='webkit','Windows Playwright WebKit offline navigation limitation; physical iPhone acceptance remains open.');
+  const rows=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2',1);request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));
+  await scope(page);await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
+  await context.setOffline(true);await page.locator('#technicianNotes').fill('Unsynced offline observations');await expect(page.locator('#saveStatus')).toContainText('offline');
+  await menu(page,'accountMenu');await page.locator('#signOutButton').click();
+  await expect(page.locator('#unsyncedActions')).toBeVisible();await expect(page.locator('#unsyncedCount')).toHaveText('1 draft has not synced. Connect to the internet and wait for sync, or discard it and sign out.');
+  await expect(page.locator('#signInButton')).toBeHidden();await expect(page.locator('#technicianNotes')).toHaveValue('Unsynced offline observations');
+  expect((await rows()).some(row=>row.draft.data.technician_notes==='Unsynced offline observations')).toBe(true);
+  await Promise.all([page.waitForEvent('domcontentloaded'),page.locator('#discardSignOut').click()]);
+  await expect(page.locator('#signInButton')).toBeVisible();expect((await rows()).length).toBe(0);
+  await context.setOffline(false);
+});
 test('reconnection synchronizes an older queued inspection as well as the open draft',async({page,context,browserName})=>{
   test.skip(browserName==='webkit','Real offline navigation is covered on Chromium; Windows WebKit device acceptance remains open.');
   await scope(page);const original=await page.evaluate(async()=>{const r=await(await fetch('/api/inspections',{headers:{Authorization:'Bearer '+sessionStorage.getItem('synthetic-uid')}})).json();return r.inspections[0].inspection_id;});

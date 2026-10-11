@@ -234,7 +234,7 @@ async def ocr_photo(inspection_id:str,photo_id:str,staff=Depends(current_staff),
     try:
         result=await generate(OcrResult,[await run_in_threadpool(model_image,raw),
             OCR_INSTRUCTIONS],OCR_MODEL)
-    except HTTPException:
+    except (HTTPException,asyncio.CancelledError):
         await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,None)
         raise
     return public_record(await stored(store.set_ocr,staff['uid'],inspection_id,photo_id,result.model_dump(mode='json')))
@@ -279,21 +279,24 @@ async def audit_inspection(req:AuditRequest,request:Request,staff=Depends(curren
     if not data.scope_confirmed: raise HTTPException(400,'Confirm room quantities, category, equipment, days and labor before auditing.')
     if not data.address.strip() or data.year_built is None or not data.rooms:
         raise HTTPException(400,'Enter the address, year built and rooms before auditing.')
+    items,total=price_scope(data)
+    if total<=0: raise HTTPException(400,'Add measured work, equipment or charges before auditing.')
     deadline=time.monotonic()+30
     while any(p['ocr_status']=='pending' for p in record['photos']) and time.monotonic()<deadline:
         await asyncio.sleep(0.5)
         record=await stored(store.get_inspection,staff['uid'],req.inspection_id)
-        if record['data']!=data.model_dump(mode='json'): raise HTTPException(409,'Inspection inputs changed while waiting for OCR.')
+        if record['data']!=inspection_payload(data): raise HTTPException(409,'Inspection inputs changed while waiting for OCR.')
     # OCR may advance the revision; bind the resulting audit to that exact snapshot.
     revision=record['revision']
     identity=await stored(store.workspaces.snapshot,staff['uid']) if WORKSPACES_ENABLED else None
-    prompt=audit_prompt(record['data'],record['photos'],price_scope(data)[0],identity)
+    prompt=audit_prompt(record['data'],record['photos'],items,identity)
     contents=[prompt]
     for photo in record['photos']:
         _,raw=await stored(store.photo,staff['uid'],req.inspection_id,photo['id'])
         contents.append(await run_in_threadpool(model_image,raw))
     ai=await generate(AIResult,contents,AUDIT_MODEL)
-    documents=make_documents(data,record['photos'],ai,identity)
+    try: documents=make_documents(data,record['photos'],ai,identity)
+    except (ValueError,ValidationError): raise HTTPException(400,'The scope could not be priced. Review the inspection inputs and retry.')
     saved=await stored(store.save_audit,staff['uid'],req.inspection_id,revision,documents)
     return public_record(saved)
 
@@ -389,7 +392,7 @@ async def live_walkthrough(socket:WebSocket):
                 await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',None,False)
                 handle=None
                 session=await stack.enter_async_context(client.aio.live.connect(model=LIVE_MODEL,
-                    config=live_config(live_prompt(record['data']),LIVE_VOICE)))
+                    config=live_config(live_prompt(record['data'],identity),LIVE_VOICE)))
             connection=uuid4().hex; sequence=0; pending=False; finishing=False
             final_text=asyncio.Event(); final_text.set()
             ready={'type':'ready','model':LIVE_MODEL}
