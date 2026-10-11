@@ -31,7 +31,7 @@
   "auth": {
     "providers": {
       "anonymous": false,
-      "emailPassword": false,
+      "emailPassword": true,
       "googleSignIn": {
         "oAuthBrandDisplayName": "Alert Disaster Restoration",
         "supportEmail": "nathanaelcnorman@gmail.com"
