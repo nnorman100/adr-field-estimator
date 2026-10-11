@@ -1,0 +1,13 @@
+{
+  "hosting": {
+    "target": "alert-disaster",
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "redirects": [
+      {"source":"/","destination":"https://alert-disaster-field-2026.web.app","type":301},
+      {"source":"/index.html","destination":"https://alert-disaster-field-2026.web.app","type":301}
+    ],
+    "headers": [{"source":"/sw.js","headers":[{"key":"Cache-Control","value":"no-store"}]}],
+    "rewrites": [{"source":"**","destination":"/index.html"}]
+  }
+}
