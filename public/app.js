@@ -5,7 +5,7 @@ const {emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,r
 const estimateLabel=proposal=>proposal.proposed_cost_low==null?money(proposal.proposed_cost):money(proposal.proposed_cost_low)+'–'+money(proposal.proposed_cost);
 const state={user:null,session:null,draft:null,record:null,ack:null,documents:null,signed:null,signature:null,pendingAuthorization:null,localVersion:0,conflict:false,syncing:false,ocr:new Map(),photoUrls:new Map(),media:null,socket:null,audio:null,node:null,frameTimer:null,playing:new Set(),audioTime:0,liveReady:false,stopping:false,muted:false,retries:0,lastSpeech:0,firstAudio:true};
 let syncChain=Promise.resolve(),saveTimer=null,persistTimer=null,dbPromise=null,auth=null,waitingWorker=null;
-let confirmedAuthorization=null;
+let confirmedAuthorization=null,authEpoch=0;
 const newId=()=>crypto.randomUUID().replaceAll('-','');
 const ui={task:'property',starting:false,auditing:false,fillingScope:false,documentSource:null,viewed:new Set()};
 function closeMenus(){document.querySelectorAll('.menu[open]').forEach(menu=>menu.open=false);}
@@ -341,7 +341,7 @@ async function captureStill(){
 async function openNew(data=emptyData(),photos=[]){
   if(!state.session||!window.WorkspaceUI?.can('jobs_create'))throw Error('Company access is required before starting an inspection.');
   if(state.session?.workspaces_enabled&&state.session.role==='office'){data={...emptyData(),address:data.address,rooms:[]};photos=[];}
-  await stopWalk();await syncChain.catch(()=>{});await persist();
+  const epoch=authEpoch;await stopWalk();await syncChain.catch(()=>{});await persist();if(epoch!==authEpoch)return;
   for(const url of state.photoUrls.values())URL.revokeObjectURL(url);state.photoUrls.clear();
   state.draft={inspection_id:'ADR-INS-'+newId(),data:structuredClone(data),photos:structuredClone(photos)};
   confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
@@ -350,11 +350,12 @@ async function openNew(data=emptyData(),photos=[]){
   showTask('property',false);await window.WorkspaceUI?.editor();
 }
 async function restoreDraft(id){
-  await stopWalk();await syncChain.catch(()=>{});await persist();
+  const epoch=authEpoch;await stopWalk();await syncChain.catch(()=>{});await persist();
   const local=(await localDrafts()).find(r=>r.draft.inspection_id===id);
   if(local){const bytes=await photoBytes(local.key);for(const photo of local.draft.photos)if(bytes.has(photo.id))photo.data_url=bytes.get(photo.id);}
   let remote=null;
   if(navigator.onLine){try{remote=await jsonApi('/api/inspections/'+id);}catch(e){if(e.status!==404||!local)throw e;}}
+  if(epoch!==authEpoch)return;
   confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
   state.signed=null;state.signature=null;state.pendingAuthorization=null;state.conflict=false;state.documents=null;
   state.draft=local?local.draft:{inspection_id:id,data:remote.data,photos:remote.photos.map(p=>({...p,uploaded:true}))};
@@ -713,6 +714,8 @@ async function initialize(){
   auth.onAuthStateChanged(applyUser);
 }
 async function applyUser(user){
+  // Auth callbacks overlap; only the newest one may write state after an await.
+  const epoch=++authEpoch,stale=()=>epoch!==authEpoch;
   if(state.user && state.user.uid!==user?.uid){
     state.queuePaused=true;
     await stopWalk();clearTimeout(state.queueRetry);await syncChain.catch(()=>{});await persist();
@@ -721,6 +724,7 @@ async function applyUser(user){
     for(const url of state.photoUrls.values())URL.revokeObjectURL(url);state.photoUrls.clear();
     clearDisplayedInspection();
     if(!user)await clearLocal();
+    if(stale())return;
   }
   const stage=authStage(user);
   state.user=user;state.session=null;state.workspaceInitializing=true;
@@ -730,18 +734,19 @@ async function applyUser(user){
   // Unverified accounts stay on the verification step: no drafts, sessions or authenticated API calls.
   if(stage!=='ready'){state.workspaceInitializing=false;showTask('property',false);return;}
   try{
-    let local=(await localDrafts()).sort((a,b)=>b.updated_at.localeCompare(a.updated_at));
-    if(navigator.onLine){const token=await user.getIdToken();let response=await fetch('/api/session',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(response.status===403)response=await fetch('/api/access',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(!response.ok)throw Error('Your account has not been approved, or the connection is unavailable.');state.session=await response.json();}
-    else{state.session=local[0]?.session;if(!state.session)throw Error('Sign in online before using private offline draft recovery.');}
-    if(state.session.uid!==user.uid||state.session.project!=='alert-disaster-field-2026')throw Error('Incorrect session configuration.');
-    state.queuePaused=false;
+    let local=(await localDrafts()).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)),session;if(stale())return;
+    if(navigator.onLine){const token=await user.getIdToken();if(stale())return;let response=await fetch('/api/session',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(stale())return;if(response.status===403){response=await fetch('/api/access',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(stale())return;}if(!response.ok)throw Error('Your account has not been approved, or the connection is unavailable.');session=await response.json();if(stale())return;}
+    else{session=local[0]?.session;if(!session)throw Error('Sign in online before using private offline draft recovery.');}
+    if(session.uid!==state.user?.uid||session.project!=='alert-disaster-field-2026')throw Error('Incorrect session configuration.');
+    state.session=session;state.queuePaused=false;
     if(state.session.workspaces_enabled){
-      await WorkspaceUI.ready();
+      await WorkspaceUI.ready();if(stale())return;
       if(!state.session.role){state.queuePaused=true;await WorkspaceUI.home();return;}
       await WorkspaceUI.landing();
     }else if(local.length)await restoreDraft(local[0].draft.inspection_id);else await openNew();
+    if(stale())return;
     connectivity();
     drainQueue();
-  }catch(e){say(e.message,'error');}finally{state.workspaceInitializing=false;for(const control of $('workspaceNav').querySelectorAll('button'))control.disabled=false;}
+  }catch(e){if(!stale())say(e.message,'error');}finally{if(!stale()){state.workspaceInitializing=false;for(const control of $('workspaceNav').querySelectorAll('button'))control.disabled=false;}}
 }
 document.addEventListener('DOMContentLoaded',()=>initialize().catch(e=>say('App initialization failed: '+e.message,'error')));
