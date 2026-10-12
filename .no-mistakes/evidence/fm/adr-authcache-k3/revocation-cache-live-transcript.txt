@@ -1,0 +1,167 @@
+== Scenario 1-2: autosave + photo fetch reuse a passed revocation lookup ==
+  POST /api/inspections (create, first use)    -> HTTP 200 lookups+1  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","schema_version":3,"revision":'
+  PUT /api/inspections/{id} autosave #1        -> HTTP 200 lookups+0  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","revision":2,"audit":null,"pho'
+  PUT /api/inspections/{id} autosave #2        -> HTTP 200 lookups+0  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","revision":3,"audit":null,"pho'
+  PUT /api/inspections/{id} autosave #3        -> HTTP 200 lookups+0  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","revision":4,"audit":null,"pho'
+  PUT /api/inspections/{id} autosave #4        -> HTTP 200 lookups+0  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","revision":5,"audit":null,"pho'
+  PUT /api/inspections/{id} autosave #5        -> HTTP 200 lookups+0  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","revision":6,"audit":null,"pho'
+  GET photo fetch (missing photo id)           -> HTTP 404 lookups+0  '{"detail":"Record not found."}'
+  GET /api/session                             -> HTTP 200 lookups+0  '{"uid":"wBRxIuQpeiTRcJLCBijwTsBWVd7N","email":"tech@example.com","project":"alert-disaster'
+== Scenario 3-5: signing, evidence download, walkthrough start always check live ==
+  POST /api/authorize (signing)                -> HTTP 409 lookups+1  '{"detail":"Update the app and complete a revision-bound audit before signing."}'
+  GET evidence download                        -> HTTP 404 lookups+1  '{"detail":"Evidence not found."}'
+  WS /api/live walkthrough start               -> msgs=['{"type":"error","message":"Record not found."}'] close=1000 (OK) lookups+1
+  POST /api/authorize (signing)                -> HTTP 409 lookups+1  '{"detail":"Update the app and complete a revision-bound audit before signing."}'
+  GET evidence download                        -> HTTP 404 lookups+1  '{"detail":"Evidence not found."}'
+  WS /api/live walkthrough start               -> msgs=['{"type":"error","message":"Record not found."}'] close=1000 (OK) lookups+1
+== Scenario 6: revoke the sign-in; sensitive routes reject at once, cached routes within the TTL only ==
+  revoked refresh tokens for wBRxIuQpeiTRcJLCBijwTsBWVd7N at 1791836875
+  PUT autosave right after revoke (cached)     -> HTTP 200 lookups+0  '{"inspection_id":"ADR-INS-4ab6d68d922143e58047f9502c9cc7a9","revision":7,"audit":null,"pho'
+  POST /api/authorize after revoke             -> HTTP 401 lookups+1  '{"detail":"Your sign-in expired. Please sign in again."}'
+  GET evidence after revoke                    -> HTTP 401 lookups+1  '{"detail":"Your sign-in expired. Please sign in again."}'
+  WS /api/live walkthrough start               -> msgs=['{"type":"error","message":"Your sign-in expired. Please sign in again."}'] close=1000 (OK) lookups+1
+  PUT autosave after a live route saw the revocation -> HTTP 401 lookups+1  '{"detail":"Your sign-in expired. Please sign in again."}'
+== Scenario 7: revoked token on cached-only traffic expires within 45 s ==
+  GET /api/session (prime cache)               -> HTTP 200 lookups+1  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+ 0.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+ 5.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+10.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+15.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+20.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+25.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+30.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+35.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+40.0s                     -> HTTP 200 lookups+0  '{"uid":"qzg55Hn5q1ZvxuJhT7e8YV5lyLTG","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session t+45.0s                     -> HTTP 401 lookups+1  '{"detail":"Your sign-in expired. Please sign in again."}'
+== Scenario 8: disabled account blocked live at walkthrough start ==
+  GET /api/session (prime cache)               -> HTTP 200 lookups+1  '{"uid":"XhHdStTmfFbgGDb0xrrfZJps3k5v","email":"tech@example.com","project":"alert-disaster'
+  GET /api/session after disable (cached)      -> HTTP 200 lookups+0  '{"uid":"XhHdStTmfFbgGDb0xrrfZJps3k5v","email":"tech@example.com","project":"alert-disaster'
+  POST /api/authorize after disable            -> HTTP 401 lookups+1  '{"detail":"Your sign-in expired. Please sign in again."}'
+  WS /api/live walkthrough start               -> msgs=['{"type":"error","message":"Your sign-in expired. Please sign in again."}'] close=1000 (OK) lookups+1
+== RESULTS ==
+{
+ "cached": {
+  "first_lookups": 1,
+  "autosaves_ok": true,
+  "cached_lookups": 0,
+  "photo_status": 404
+ },
+ "live": {
+  "authorize": [
+   [
+    409,
+    1
+   ],
+   [
+    409,
+    1
+   ]
+  ],
+  "evidence": [
+   [
+    404,
+    1
+   ],
+   [
+    404,
+    1
+   ]
+  ],
+  "ws": [
+   1,
+   1
+  ]
+ },
+ "revoked": {
+  "autosave_within_ttl": [
+   200,
+   0
+  ],
+  "authorize": [
+   401,
+   1
+  ],
+  "evidence": [
+   401,
+   1
+  ],
+  "ws": [
+   [
+    "{\"type\":\"error\",\"message\":\"Your sign-in expired. Please sign in again.\"}"
+   ],
+   1
+  ],
+  "autosave_after_live_fail": [
+   401,
+   1
+  ]
+ },
+ "ttl": [
+  [
+   0.0,
+   200,
+   0
+  ],
+  [
+   5.0,
+   200,
+   0
+  ],
+  [
+   10.0,
+   200,
+   0
+  ],
+  [
+   15.0,
+   200,
+   0
+  ],
+  [
+   20.0,
+   200,
+   0
+  ],
+  [
+   25.0,
+   200,
+   0
+  ],
+  [
+   30.0,
+   200,
+   0
+  ],
+  [
+   35.0,
+   200,
+   0
+  ],
+  [
+   40.0,
+   200,
+   0
+  ],
+  [
+   45.0,
+   401,
+   1
+  ]
+ ],
+ "disabled": {
+  "session": [
+   200,
+   0
+  ],
+  "authorize": [
+   401,
+   1
+  ],
+  "ws": [
+   [
+    "{\"type\":\"error\",\"message\":\"Your sign-in expired. Please sign in again.\"}"
+   ],
+   1
+  ]
+ }
+}
