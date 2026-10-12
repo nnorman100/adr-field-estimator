@@ -77,9 +77,10 @@ private owner/job-bound checkpoints and explicit Resume after offline interrupti
 signals stream end; Finish stops media immediately and allows a bounded transcript drain. Recognized
 text retains segment identities and incomplete/gap/edit metadata; form changes still require review.
 
-The latest recorded production state (read-only check, October 11) is backend
-alert-disaster-field-estimator-00013-hup (tag harden-fixes, workspaces off) at 100% traffic and frontend
-hardening-20261011-1 (Hosting version 05af952eff367594). Master also carries the mobile usability repairs
-(asset marker mobile-repairs-20261012-1), which are merged but not deployed. Recheck the live pair before
+The latest recorded production state (read-only check, October 12) is backend
+alert-disaster-field-estimator-00015-kem (tag body-limits, workspaces off) at 100% traffic and frontend
+hardening-20261011-1. Backend 00017-kap (tag backend-20261012) is staged from master 9b714e2 with no
+traffic. Master also carries the mobile usability repairs (asset marker mobile-repairs-20261012-2), which
+are merged but not deployed. Recheck the live pair before
 any release and keep it as the rollback baseline. See docs/review-repairs.md for the current status and
 release gates, and docs/mobile-usability-repairs.md for the repair evidence.
