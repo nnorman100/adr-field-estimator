@@ -99,7 +99,7 @@ Agents must preserve these exact legal disclaimers:
 ### A. Dedicated Firebase Project
 - This app uses the dedicated GCP/Firebase project `alert-disaster-field-2026`.
 - Hosting target `alert-disaster` maps to site `alert-disaster-field-2026`.
-- The historical `mitigation-project` deployment contains other apps. Only `alert-disaster-live` has a migration redirect; keep peer sites and shared databases untouched.
+- The historical `mitigation-project` deployment contains other apps. The old `alert-disaster-live` site was retired as of 2026-10-12 and has no redirect; keep peer sites and shared databases untouched.
 - **NEVER** run a blanket `firebase deploy`.
 - **ALWAYS** deploy with target isolation:
   ```bash
