@@ -69,6 +69,8 @@ uv pip compile requirements-dev.in --universal --python-version 3.11 --generate-
 
 Dependabot opens weekly grouped update pull requests for these locks, npm, GitHub Actions and the Docker base image.
 
+CI runs the Python jobs on the version in the `backend/Dockerfile` base image (`scripts/ci_python_version.py`), so a Dependabot base-image bump is tested on that version. The `audit` job runs `pip-audit` against both hash-locked files and `npm audit --audit-level=high`, and fails on known vulnerabilities. For a false positive or an advisory with no fix, add `--ignore-vuln <ID>` to the `pip-audit` step in `.github/workflows/ci.yml` (for npm, pin a patched version through `overrides` in `package.json`, or lower the failing level in the workflow only as a last resort) with a comment giving the reason and date, and remove it once a fix ships. `tests/test_ci_config.py` fails if `firestore.rules` stops denying all client access. Enable Dependabot security alerts in the GitHub repository settings (Settings > Advanced Security) so advisories also open pull requests between scans.
+
 The browser suite serves production code with fake cloud adapters over temporary local TLS. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
 
 Use [the operating guide](docs/firebase-isolation.md) for production deployment and rollback. Never run a blanket Firebase deploy. Deploy the compatible backend first, then only `hosting:alert-disaster` in the dedicated project.
