@@ -1,4 +1,4 @@
-const VERSION='mobile-repairs-20261011-2';
+const VERSION='mobile-repairs-20261012-1';
 const CACHE='alert-disaster-'+VERSION;
 const ASSETS=['/','/index.html','/app.css?v='+VERSION,'/core.js?v='+VERSION,'/app.js?v='+VERSION,'/workspaces.js?v='+VERSION,'/audio-worklet.js?v='+VERSION,'/vendor/firebase-app-compat.js','/vendor/firebase-auth-compat.js','/__/firebase/init.json','/manifest.webmanifest','/icon.svg','/icon-192.png','/icon-512.png','/brand/adr-logo.jpg','/fonts/lato-400-latin.woff2','/fonts/lato-700-latin.woff2','/fonts/lato-900-latin.woff2','/fonts/ebgaramond-400-latin.woff2'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
