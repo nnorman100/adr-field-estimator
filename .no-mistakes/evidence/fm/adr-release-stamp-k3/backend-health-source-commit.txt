@@ -1,0 +1,24 @@
+### case=none SOURCE_COMMIT=<absent>
+$ curl localhost:18731/api/health
+{"status":"healthy","schema_version":3,"source_commit":"unknown"}
+$ curl localhost:18731/health
+{"status":"healthy","schema_version":3,"source_commit":"unknown"}
+anonymous /api/health/details -> HTTP 401
+### case=valid SOURCE_COMMIT=dca0f23788e902d51dc7928c7320790d383ae224
+$ curl localhost:18731/api/health
+{"status":"healthy","schema_version":3,"source_commit":"dca0f23788e902d51dc7928c7320790d383ae224"}
+$ curl localhost:18731/health
+{"status":"healthy","schema_version":3,"source_commit":"dca0f23788e902d51dc7928c7320790d383ae224"}
+anonymous /api/health/details -> HTTP 401
+### case=dirty SOURCE_COMMIT=dca0f23788e902d51dc7928c7320790d383ae224-dirty
+$ curl localhost:18731/api/health
+{"status":"healthy","schema_version":3,"source_commit":"dca0f23788e902d51dc7928c7320790d383ae224-dirty"}
+$ curl localhost:18731/health
+{"status":"healthy","schema_version":3,"source_commit":"dca0f23788e902d51dc7928c7320790d383ae224-dirty"}
+anonymous /api/health/details -> HTTP 401
+### case=malformed SOURCE_COMMIT=abc123; rm -rf /
+$ curl localhost:18731/api/health
+{"status":"healthy","schema_version":3,"source_commit":"unknown"}
+$ curl localhost:18731/health
+{"status":"healthy","schema_version":3,"source_commit":"unknown"}
+anonymous /api/health/details -> HTTP 401

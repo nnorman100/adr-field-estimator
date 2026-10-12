@@ -1,0 +1,5 @@
+## backend/.gcloudignore applied (as gitignore) to the build context:
+.gitignore:3:__pycache__/	__pycache__/x.pyc
+SOURCE_COMMIT ignored by .gcloudignore? no
+## backend/.dockerignore:
+SOURCE_COMMIT ignored by .dockerignore? no

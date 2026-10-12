@@ -1,0 +1,85 @@
+HEAD=dca0f23788e902d51dc7928c7320790d383ae224
+
+## H1. Adversarial: unstamped committed shell is blocked by the predeploy hook
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+The Hosting shell is not stamped (marker 'unstamped'). Run python scripts/stamp_hosting.py first.
+[exit 1]
+
+## H2. Stamp at clean HEAD, predeploy passes
+$ /tmp/nm-adr-venv/bin/python scripts/stamp_hosting.py
+Hosting shell stamped with dca0f23788e902d51dc7928c7320790d383ae224. Deploy with:
+  firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026
+then run python scripts/stamp_hosting.py --reset and append to RELEASES.md, replacing VERSION with the Hosting version:
+| 2026-10-12 | — | `dca0f23788e902d51dc7928c7320790d383ae224` (Hosting version `VERSION`) | `dca0f23788e902d51dc7928c7320790d383ae224` | live |  |
+[exit 0]
+const VERSION='dca0f23788e902d51dc7928c7320790d383ae224'
+App version dca0f23788e9
+      1 .css?v=dca0f23788e902d51dc7928c7320790d383ae224
+      3 .js?v=dca0f23788e902d51dc7928c7320790d383ae224
+index.html == public/index.html
+ M index.html
+ M public/app.js
+ M public/index.html
+ M public/sw.js
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+Hosting shell stamped with dca0f23788e902d51dc7928c7320790d383ae224
+[exit 0]
+
+## H3. Adversarial: hot-fix public/app.js after stamping
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+Hosting files changed after stamping dca0f23788e902d51dc7928c7320790d383ae224; commit them and restamp the shell.
+[exit 1]
+Hosting shell reset to the unstamped placeholder.
+
+## H3b. Adversarial: same edit to both index.html copies after stamping
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+Hosting files changed after stamping dca0f23788e902d51dc7928c7320790d383ae224; commit them and restamp the shell.
+[exit 1]
+
+## H4. Adversarial: edit an unstamped Hosting file (public/app.css) after stamping
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+Hosting files changed after stamping dca0f23788e902d51dc7928c7320790d383ae224; commit them and restamp the shell.
+[exit 1]
+
+## H5. Adversarial: HEAD moves after stamping (new commit touching docs only)
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+The shell is stamped dca0f23788e902d51dc7928c7320790d383ae224 but HEAD is afb40961dabf8692009e121298526149fdeb0cb5; restamp the shell.
+[exit 1]
+
+## H6. Adversarial: index.html copies stamped differently
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+index.html carries a marker other than dca0f23788e902d51dc7928c7320790d383ae224; restamp the shell.
+[exit 1]
+
+## H7. --reset restores the committed placeholder
+$ /tmp/nm-adr-venv/bin/python scripts/stamp_hosting.py --reset
+Hosting shell reset to the unstamped placeholder.
+[exit 0]
+git status: ''
+const VERSION='unstamped'
+App version unstamped
+      1 .css?v=unstamped
+      3 .js?v=unstamped
+index.html == public/index.html
+
+## H8. Dirty Hosting tree: refused, then --allow-dirty stamps <HEAD>-dirty and predeploy accepts it
+$ /tmp/nm-adr-venv/bin/python scripts/stamp_hosting.py
+Refusing to stamp Hosting: uncommitted changes under public, firebase.json, .firebaserc, index.html are not in dca0f23788e9:
+ M public/app.css
+Commit first (or --reset an earlier stamp), or pass --allow-dirty to mark the release dirty.
+[exit 2]
+$ /tmp/nm-adr-venv/bin/python scripts/stamp_hosting.py --allow-dirty
+Hosting shell stamped with dca0f23788e902d51dc7928c7320790d383ae224-dirty. Deploy with:
+  firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026
+then run python scripts/stamp_hosting.py --reset and append to RELEASES.md, replacing VERSION with the Hosting version:
+| 2026-10-12 | — | `dca0f23788e902d51dc7928c7320790d383ae224-dirty` (Hosting version `VERSION`) | `dca0f23788e902d51dc7928c7320790d383ae224-dirty` | live |  |
+[exit 0]
+const VERSION='dca0f23788e902d51dc7928c7320790d383ae224-dirty'
+App version dca0f23788e9-dirty
+      1 .css?v=dca0f23788e902d51dc7928c7320790d383ae224-dirty
+      3 .js?v=dca0f23788e902d51dc7928c7320790d383ae224-dirty
+index.html == public/index.html
+$ [firebase.json predeploy] python scripts/stamp_hosting.py --check
+Hosting shell stamped with dca0f23788e902d51dc7928c7320790d383ae224-dirty
+[exit 0]
+git status: ''

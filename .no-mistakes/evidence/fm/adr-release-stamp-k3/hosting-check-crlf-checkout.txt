@@ -1,0 +1,11 @@
+core.autocrlf=true; public/sw.js line endings: ASCII text, with very long lines (465), with CRLF line terminators
+git status: ''
+$ python scripts/stamp_hosting.py
+Hosting shell stamped with dca0f23788e902d51dc7928c7320790d383ae224. Deploy with:
+sw.js still CRLF after stamping: ASCII text, with very long lines (465), with CRLF line terminators
+$ python scripts/stamp_hosting.py --check
+Hosting shell stamped with dca0f23788e902d51dc7928c7320790d383ae224
+[exit 0]
+$ (after editing public/app.js) python scripts/stamp_hosting.py --check
+Hosting files changed after stamping dca0f23788e902d51dc7928c7320790d383ae224; commit them and restamp the shell.
+[exit 1]

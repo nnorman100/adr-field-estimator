@@ -1,0 +1,4 @@
+$ python scripts/verify_live_release.py --production --public --expect-commit 9b714e2
+                              [service]
+verify_live_release.py: error: argument --expect-commit: Use a full 40-character commit hash, optionally ending in -dirty.
+[exit 2]

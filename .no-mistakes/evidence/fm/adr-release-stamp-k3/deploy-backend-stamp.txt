@@ -1,0 +1,53 @@
+HEAD=dca0f23788e902d51dc7928c7320790d383ae224
+## 1. Clean tree: dry run shows the source-commit label
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces off --tag stamp-test --dry-run
+gcloud run deploy alert-disaster-field-estimator --source=./backend --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026 --service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com --build-service-account=projects/alert-disaster-field-2026/serviceAccounts/adr-builder@alert-disaster-field-2026.iam.gserviceaccount.com --max-instances=2 --concurrency=20 --cpu=1 --memory=1Gi --timeout=3600 --allow-unauthenticated --update-env-vars=WORKSPACES_ENABLED=false --update-labels=source-commit=dca0f23788e902d51dc7928c7320790d383ae224 --no-traffic --tag=stamp-test
+[exit 0]
+## 2. Clean tree: real deploy (fake gcloud) writes SOURCE_COMMIT during upload, removes it afterwards, prints RELEASES.md row
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces on --tag stamp-test --yes
+Deploying... Done. Revision [alert-disaster-field-estimator-00099-tst] has been deployed and is serving 0 percent of traffic.
+Append to RELEASES.md, replacing REVISION with the revision suffix printed above (for example 00017-kap):
+| 2026-10-12 | `REVISION` (tag `stamp-test`) | — | `dca0f23788e902d51dc7928c7320790d383ae224` | 0% (staged) | workspaces on |
+[exit 0]
+fake-gcloud argv: run deploy alert-disaster-field-estimator --source=./backend --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026 --service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com --build-service-account=projects/alert-disaster-field-2026/serviceAccounts/adr-builder@alert-disaster-field-2026.iam.gserviceaccount.com --max-instances=2 --concurrency=20 --cpu=1 --memory=1Gi --timeout=3600 --allow-unauthenticated --update-env-vars=WORKSPACES_ENABLED=true --update-labels=source-commit=dca0f23788e902d51dc7928c7320790d383ae224 --no-traffic --tag=stamp-test
+fake-gcloud sees backend/SOURCE_COMMIT: dca0f23788e902d51dc7928c7320790d383ae224
+backend/SOURCE_COMMIT after deploy: <absent>
+git status after deploy: ''
+image snapshot SOURCE_COMMIT: dca0f23788e902d51dc7928c7320790d383ae224
+gcloud upload filter (.gcloudignore) for SOURCE_COMMIT: .gitignore:38:backend/SOURCE_COMMIT	SOURCE_COMMIT
+## 3. Adversarial: uncommitted backend change is refused
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces off --tag stamp-test --dry-run
+Refusing to stamp the backend: uncommitted changes under backend are not in dca0f23788e9:
+ M backend/scope.py
+Commit first, or pass --allow-dirty to mark the release dirty.
+[exit 2]
+## 4. Adversarial: untracked backend file is refused
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces off --tag stamp-test --yes
+Refusing to stamp the backend: uncommitted changes under backend are not in dca0f23788e9:
+?? backend/new_module.py
+Commit first, or pass --allow-dirty to mark the release dirty.
+[exit 2]
+SOURCE_COMMIT left behind: <absent>
+## 5. --allow-dirty stamps <HEAD>-dirty
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces off --tag stamp-test --allow-dirty --dry-run
+gcloud run deploy alert-disaster-field-estimator --source=./backend --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026 --service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com --build-service-account=projects/alert-disaster-field-2026/serviceAccounts/adr-builder@alert-disaster-field-2026.iam.gserviceaccount.com --max-instances=2 --concurrency=20 --cpu=1 --memory=1Gi --timeout=3600 --allow-unauthenticated --update-env-vars=WORKSPACES_ENABLED=false --update-labels=source-commit=dca0f23788e902d51dc7928c7320790d383ae224-dirty --no-traffic --tag=stamp-test
+[exit 0]
+## 6. Change outside backend/ does not dirty the backend stamp
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces off --tag stamp-test --dry-run
+gcloud run deploy alert-disaster-field-estimator --source=./backend --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026 --service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com --build-service-account=projects/alert-disaster-field-2026/serviceAccounts/adr-builder@alert-disaster-field-2026.iam.gserviceaccount.com --max-instances=2 --concurrency=20 --cpu=1 --memory=1Gi --timeout=3600 --allow-unauthenticated --update-env-vars=WORKSPACES_ENABLED=false --update-labels=source-commit=dca0f23788e902d51dc7928c7320790d383ae224 --no-traffic --tag=stamp-test
+[exit 0]
+## 7. gcloud failure still removes SOURCE_COMMIT and prints no release row
+
+$ /tmp/nm-adr-venv/bin/python scripts/deploy_backend.py --workspaces off --tag stamp-test --yes
+Deploying... Done. Revision [alert-disaster-field-estimator-00099-tst] has been deployed and is serving 0 percent of traffic.
+[exit 1]
+backend/SOURCE_COMMIT after failed deploy: <absent>
+## Build context snapshot captured by the deploy (step 2), served with uvicorn:
+$ curl localhost:18732/api/health
+{"status":"healthy","schema_version":3,"source_commit":"dca0f23788e902d51dc7928c7320790d383ae224"}
