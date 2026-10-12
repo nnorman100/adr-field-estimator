@@ -1,4 +1,5 @@
 const {test,expect}=require('@playwright/test');
+const {randomUUID}=require('node:crypto');
 const core=require('../../public/core.js');
 const auth=uid=>({Authorization:'Bearer '+uid});
 async function ready(page){await expect(page.locator('#address')).toBeEnabled({timeout:15000});await expect(page.locator('#saveStatus')).toContainText('Saved privately');}
@@ -32,6 +33,9 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
   await page.goto('/');await ready(page);
   for(const [width,height] of [[300,600],[200,100]])await addImage(page,width,height);
   await expect(page.locator('#photoCount')).toContainText('2 photos');await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await page.evaluate(async()=>{await syncChain;await Promise.all([...state.ocr.values()]);});
+  await page.locator('#saveDraft').click();
+  await page.evaluate(()=>syncChain);
   await page.evaluate(()=>{window.__storePuts=[];});
   await page.locator('#technicianNotes').pressSequentially('Moisture readings along the north wall.',{delay:10});
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');await page.waitForTimeout(600);
@@ -40,8 +44,46 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
   await page.reload();await expect(page.locator('#technicianNotes')).toHaveValue('Moisture readings along the north wall.');
 });
 
+test('an immediate save consumes the pending autosave without losing later edits',async({page})=>{
+  await page.goto('/');await ready(page);await page.evaluate(()=>syncChain);
+  await page.evaluate(()=>{window.__syncCalls=0;const original=doSync;doSync=async()=>{window.__syncCalls++;return original();};});
+  await page.locator('#technicianNotes').fill('Saved now');
+  await page.locator('#saveDraft').click();await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await page.evaluate(()=>syncChain);
+  // Observe beyond the application's 1500 ms autosave deadline, not a network readiness delay.
+  await page.waitForTimeout(1700);
+  expect(await page.evaluate(()=>window.__syncCalls)).toBe(1);
+  await page.locator('#technicianNotes').fill('A later edit still autosaves');
+  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await page.evaluate(()=>syncChain);
+  expect(await page.evaluate(()=>window.__syncCalls)).toBe(2);
+  await page.reload();await expect(page.locator('#technicianNotes')).toHaveValue('A later edit still autosaves');
+});
+
+test('finishing the initial save does not close a Jobs menu opened during startup',async({page})=>{
+  // Gate at fetch entry so service-worker ownership cannot bypass Playwright routing.
+  await page.addInitScript(()=>{
+    const fetch=window.fetch,gate=new Promise(resolve=>{window.__releaseInitialSave=resolve;});
+    window.fetch=async function(input,options){
+      if(input==='/api/inspections'&&options?.method==='POST'){window.__initialSaveStarted=true;await gate;}
+      return fetch.call(this,input,options);
+    };
+  });
+  try{
+    await page.goto('/');await page.waitForFunction(()=>window.__initialSaveStarted);
+    await expect(page.locator('#address')).toBeEnabled();
+    await page.locator('#jobMenu summary').click();
+    await expect(page.locator('#openJobs')).toBeVisible();
+    await page.evaluate(()=>window.__releaseInitialSave());
+    await page.waitForFunction(()=>state.session&&!state.workspaceInitializing&&!state.syncing);
+    await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+    await expect(page.locator('#openJobs')).toBeVisible();
+    await page.locator('#openJobs').click();await expect(page.locator('#jobsDialog')).toBeVisible();
+  }finally{await page.evaluate(()=>window.__releaseInitialSave?.()).catch(()=>{});}
+});
+
 test('version 1 draft rows with embedded photos migrate on upgrade and still sync, including a queued draft',async({page})=>{
-  const uid='test-owner-migrate-'+Date.now(),open='ADR-INS-'+'e'.repeat(32),queued='ADR-INS-'+'f'.repeat(32);
+  const uid='test-owner-migrate-'+randomUUID(),open='ADR-INS-'+randomUUID().replaceAll('-',''),queued='ADR-INS-'+randomUUID().replaceAll('-','');
   await page.goto('/manifest.webmanifest');
   const images=await page.evaluate(async({uid,open,queued,data})=>{
     sessionStorage.setItem('synthetic-uid',uid);
@@ -57,6 +99,7 @@ test('version 1 draft rows with embedded photos migrate on upgrade and still syn
   await page.locator('.task-nav [data-task="evidence"]').click();await expect.poll(()=>widths(page)).toEqual([200,300]);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   const remote=async id=>(await(await page.request.get('/api/inspections/'+id,{headers:auth(uid)})).json()).photos?.map(p=>p.width)||[];
+  await expect.poll(()=>remote(open)).toEqual([300,200]);
   await expect.poll(()=>remote(queued)).toEqual([120]);
   const {version,drafts,photos}=await storage(page);
   expect(version).toBe(2);expect(drafts.map(r=>r.draft.data.address).sort()).toEqual(['Migrated open property','Migrated queued property']);

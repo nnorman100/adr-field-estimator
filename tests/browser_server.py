@@ -1,13 +1,18 @@
 """Local-only production-code harness with fake cloud adapters and synthetic identity."""
-import sys,json
+import sys,json,os,re
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+port_value=os.environ.get('ADR_BROWSER_PORT','8765')
+if not re.fullmatch(r'[0-9]+',port_value) or len(port_value)>5 or not 1<=int(port_value)<=65535:
+    raise ValueError('ADR_BROWSER_PORT must be an integer from 1 to 65535.')
+BROWSER_PORT=int(port_value)
 sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'.test-deps'))
 from types import SimpleNamespace
 import uvicorn
 from fastapi import Request,HTTPException,Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
+bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}',f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import FakeStore, FakeCompanyStore
 from backend.workspaces import ADR_PROFILE
 import backend.workspaces as wm
@@ -116,4 +121,4 @@ if __name__=='__main__':
         key_path=Path(directory)/'key.pem';cert_path=Path(directory)/'cert.pem'
         key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
         cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        uvicorn.run(bm.app,host='127.0.0.1',port=8765,log_level='warning',ssl_keyfile=str(key_path),ssl_certfile=str(cert_path))
+        uvicorn.run(bm.app,host='127.0.0.1',port=BROWSER_PORT,log_level='warning',ssl_keyfile=str(key_path),ssl_certfile=str(cert_path))

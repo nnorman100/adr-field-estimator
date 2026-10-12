@@ -5,7 +5,11 @@
 :root{--adr:#D42B32;--ink:#212529;--paper:#FFFFFE;--wash:#F1F2F2;--line:#DADDDD;--muted:#4B4B4B;--green:#176B46;font:16px Lato,Arial,sans-serif;color:var(--ink);background:var(--wash);color-scheme:light}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;padding-bottom:96px}
+html{scroll-padding-top:calc(var(--overlay-top,0px) + 12px);scroll-padding-bottom:calc(var(--overlay-bottom,96px) + 12px)}
+body{margin:0;padding-bottom:calc(var(--overlay-bottom,96px) + 24px)}
+.field-error{color:#A51D23;font-family:Lato,Arial,sans-serif;font-size:.9375rem;line-height:1.5;margin:.5rem 0 1rem}
+#validationFeedback{grid-column:1 / -1}
+#removeRoomDialog .actions{display:flex;flex-wrap:wrap;gap:.75rem}
 button,input,select,textarea{font:inherit}
 button{cursor:pointer;background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:.75rem 1rem;font-weight:700;min-height:48px}
 button:hover{border-color:var(--adr)}
@@ -35,6 +39,7 @@ fieldset:disabled{opacity:.6}
 .menu-content p{margin:0}
 .menu-content hr{width:100%;border:0;border-top:1px solid var(--line)}
 .inspection-shell{position:sticky;top:0;z-index:10;background:var(--wash);border-bottom:1px solid var(--line)}
+.constrained-viewport .inspection-shell{position:relative;top:auto}
 .jobbar{max-width:1120px;margin:auto;display:flex;justify-content:space-between;align-items:center;padding:1.1rem 1.5rem 1rem;gap:1rem}
 .job-heading{min-width:0;flex:1}
 .jobbar h1{font-size:1.5rem;line-height:1.25;margin:.25rem 0 .35rem;overflow-wrap:anywhere}
@@ -135,7 +140,7 @@ footer{text-align:center;color:var(--muted);font-size:.875rem;padding:1rem}
 .empty-review{max-width:720px;margin:auto;padding:2.5rem;line-height:1.6}
 .empty-review h2{font-size:1.6rem;margin:.75rem 0}
 @media(max-width:700px){
- body{padding-bottom:90px}
+ body{padding-bottom:calc(var(--overlay-bottom,90px) + 24px)}
  .masthead{padding:.5rem 1rem;gap:.5rem}
  .brand img{width:96px}.brand strong{display:none}
  .header-tools{gap:.4rem}.header-tools button,.menu summary{padding:.6rem .75rem;font-size:.875rem}
