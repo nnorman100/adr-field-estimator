@@ -1,5 +1,5 @@
 {
   "name":"alert-disaster-field-estimator","private":true,
   "scripts":{"test":"node tests/test_frontend.js && node tests/test_lifecycle.js && node tests/test_app_check.js && node --test tests/test_live_browser_targets.js","test:browser":"playwright test"},
-  "devDependencies":{"@playwright/test":"1.63.0"}
+  "devDependencies":{"@playwright/test":"1.64.0"}
 }
