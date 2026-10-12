@@ -452,7 +452,7 @@ Backend `alert-disaster-field-estimator-00015-kem` (master `9b714e2`) was deploy
 **Release gates for this frontend** (from [mobile-usability-repairs.md](mobile-usability-repairs.md)):
 
 1. Confirm the serving backend, then deploy only `hosting:alert-disaster` in `alert-disaster-field-2026`.
-2. Authenticated acceptance with normal approved-staff sign-in: `node scripts/verify_live_browser.js --backend-tag harden-fixes --hold`.
+2. Authenticated acceptance with normal approved-staff sign-in: `node scripts/verify_live_browser.js --backend-tag body-limits --hold`.
 3. The guided iPhone acceptance above, now including the camera preview appearing and Live connecting promptly.
 4. ADR approval to release repairs 1–3 with the keyboard signature method (repair 4) deferred.
 
