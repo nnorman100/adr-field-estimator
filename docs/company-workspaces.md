@@ -19,7 +19,7 @@ Verified Firebase ID tokens from Google or email/password sign-in establish iden
 | Superadmin | Create/suspend/reactivate companies, invite or replace owners, inspect account/invitation metadata. No customer-job access through this role. |
 | Owner | Company profile/team/invitations; all company jobs, coordination, assignments and the full field workflow. |
 | Estimator | Jobs created by them or currently assigned to them; Live, scope, photos/OCR, audits and customer-signature capture. Reassignment retains creator access. |
-| Office | Company jobs and documents/evidence/export; empty-scope job creation; coordination and assignments. Scope, capture, OCR, audits and signature submission are denied. |
+| Office | Company jobs and documents/evidence/export; empty-scope job creation; coordination and assignments. The team endpoint returns office staff only active estimators' uid/email for assignment; estimators cannot read the team. Scope, capture, OCR, audits and signature submission are denied. |
 
 One active owner and one company membership per user are supported. Office-created jobs have no rooms or measured scope; the estimator supplies them. Signed property/document contents are immutable; office contact notes and assignment sidecars can still change. Owners cannot replace or disable the active owner; superadmin replacement takes effect atomically on acceptance and disables the prior membership. A disabled former owner can later be given a staff role.
 
