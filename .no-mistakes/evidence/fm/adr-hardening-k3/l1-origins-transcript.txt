@@ -1,0 +1,14 @@
+=== L1: CORS preflight OPTIONS /api/session ===
+http://localhost:8765                              -> HTTP 400, ACAO=
+http://127.0.0.1:8765                              -> HTTP 400, ACAO=
+https://alert-disaster-field-2026.web.app          -> HTTP 200, ACAO=https://alert-disaster-field-2026.web.app
+https://alert-disaster-field-2026.firebaseapp.com  -> HTTP 200, ACAO=https://alert-disaster-field-2026.firebaseapp.com
+=== L1: simple GET /api/health with Origin ===
+http://localhost:8765                              -> ACAO=
+https://alert-disaster-field-2026.web.app          -> ACAO=https://alert-disaster-field-2026.web.app
+=== L1: WebSocket /api/live origin check ===
+http://localhost:8765                              -> REJECTED at handshake HTTP 403
+http://127.0.0.1:8765                              -> REJECTED at handshake HTTP 403
+https://attacker.invalid                           -> REJECTED at handshake HTTP 403
+https://alert-disaster-field-2026.web.app          -> ACCEPTED (server replied {"type":"error","message":"Live coaching disconnected. Your draft is preserved; )
+https://alert-disaster-field-2026.firebaseapp.com  -> ACCEPTED (server replied {"type":"error","message":"Live coaching disconnected. Your draft is preserved; )

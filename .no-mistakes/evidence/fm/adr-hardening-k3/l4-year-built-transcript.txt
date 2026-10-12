@@ -1,0 +1,11 @@
+=== L4: year_built bound on one warm server process (uvicorn pid 279260) ===
+Server clock year: 2026
+POST /api/inspections year_built=2026 -> created revision=1 year_built=2026 [HTTP 200]
+POST /api/inspections year_built=2027 -> Value error, Year built cannot be in the future. [HTTP 422]
+POST /api/inspections year_built=1799 -> Input should be greater than or equal to 1800 [HTTP 422]
+POST /api/inspections year_built=1977 -> created revision=1 year_built=1977 [HTTP 200]
+--- sending SIGUSR1 to pid 279260: advance process clock to 2027-01-01 without restarting ---
+POST /api/inspections year_built=2027 -> created revision=1 year_built=2027 [HTTP 200]
+POST /api/inspections year_built=2028 -> Value error, Year built cannot be in the future. [HTTP 422]
+POST /api/inspections year_built=1799 -> Input should be greater than or equal to 1800 [HTTP 422]
+Same pid still serving:  279260       00:55

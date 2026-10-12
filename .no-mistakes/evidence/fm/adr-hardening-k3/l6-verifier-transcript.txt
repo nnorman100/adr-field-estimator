@@ -1,0 +1,39 @@
+=== L6: token-minting verifiers removed; release verifier runs on neutral helpers ===
+$ ls scripts/
+artifact-paths.js
+deploy_backend.py
+manual_chrome.js
+migrate_workspaces.py
+record_live_release.py
+verify_common.py
+verify_estimate_batch3.py
+verify_estimate_prompts.py
+verify_hosting.js
+verify_live_browser.js
+verify_live_release.py
+verify_live_reliability.py
+verify_scope_extraction.py
+verify_workspace_database.py
+$ python -c 'import scripts.verify_repairs'
+ModuleNotFoundError: No module named 'scripts.verify_repairs'
+$ python scripts/verify_live_release.py --help | head -3
+usage: verify_live_release.py [-h] [--backend-tag BACKEND_TAG] [--production]
+                              (--public | --cleanup-stdin | --token-stdin)
+                              [service]
+$ verifier helpers come from scripts.verify_common
+admin from scripts.verify_common | image from scripts.verify_common | PROJECT alert-disaster-field-2026
+image() -> data:image/png;base64,iVBORw0KGgoAAAANSU... | signature -> data:image/png;base64,iVBORw0K...
+access_token rebound to verifier: True
+$ verify_live_release.py public() against the local running backend (SERVICE=http://127.0.0.1:8799; harness maps http:->ws: for the Live probe because the verifier only rewrites https:; all outbound requests recorded)
+PASS: dedicated backend health and anonymous/invalid Live denials; no data or IAM changes.
+outbound requests:
+   get http://127.0.0.1:8799/api/health
+   get http://127.0.0.1:8799/api/health/details
+   get http://127.0.0.1:8799/api/session
+   get http://127.0.0.1:8799/api/inspections
+   get http://127.0.0.1:8799/api/authorizations
+   WS origin=https://invalid.example.invalid ws://127.0.0.1:8799/api/live
+   WS origin=https://alert-disaster-field-2026.web.app ws://127.0.0.1:8799/api/live
+IAM signJwt / identitytoolkit custom-token requests: none
+$ verify_live_release.py --public with a non-dedicated URL (guard)
+verify_live_release.py: error: argument service: Use only the exact dedicated production URL or a safe tagged backend URL, without URL components.

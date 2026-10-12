@@ -1,0 +1,14 @@
+=== L2: anonymous health endpoints ===
+$ curl /health
+{"status":"healthy","schema_version":3}  [HTTP 200]
+$ curl /api/health
+{"status":"healthy","schema_version":3}  [HTTP 200]
+=== L2: /api/health/details access control ===
+$ anonymous
+{"detail":"Sign in to continue."}  [HTTP 401]
+$ invalid token
+{"detail":"Your sign-in expired. Please sign in again."}  [HTTP 401]
+$ verified but non-staff email
+{"detail":"Your account has not been approved for this app."}  [HTTP 403]
+$ staff
+{"status":"healthy","service":"alert-disaster-field-estimator","project":"alert-disaster-field-2026","location":"global","database_project":"alert-disaster-field-2026","database":"(default)","evidence_bucket":"alert-disaster-field-2026-evidence","schema_version":3,"audit_model":"gemini-3.8-flash","ocr_model":"gemini-3.8-flash","live_model":"gemini-3.8-live","workspaces_enabled":false}  [HTTP 200]
