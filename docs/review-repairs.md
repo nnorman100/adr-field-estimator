@@ -438,3 +438,18 @@ Identity Platform public sign-up is disabled (`client.permissions.disabledUserSi
 ## Batch 3 backend release — October 11, 2026
 
 Backend `alert-disaster-field-estimator-00011-geb` (master `e7f70e7`) was deployed with `scripts/deploy_backend.py --workspaces off --tag ops-fixes` at zero traffic, then promoted to 100%. It is the first build of the non-root Dockerfile. Its environment, resources and concurrency match `00009-ved`. CI passed on GitHub for Python 3.11 with pinned requirements and for Node. After promotion, `/api/health` through Hosting and the direct service URL reported healthy with workspaces disabled, anonymous `/api/session` returned 401, and no error logs appeared. No structured AI or Live log entries existed yet because no AI feature had been used since the switch; confirm their shape after first use. The frontend remains `live-reliable-20261007-1`. Rollback: `gcloud run services update-traffic alert-disaster-field-estimator --region=us-west2 --project=alert-disaster-field-2026 --to-tags=legacy-fixes=100`.
+
+## Current status — October 12, 2026
+
+**Production (recorded, not rechecked here).** The read-only check recorded in [mobile-usability-repairs.md](mobile-usability-repairs.md) on October 11 found backend `alert-disaster-field-estimator-00013-hup` (tag `harden-fixes`) at 100% traffic with workspaces disabled, and Hosting version `05af952eff367594` / release `1791758723456000` serving frontend `hardening-20261011-1`. This supersedes the `00011-geb` / `live-reliable-20261007-1` pair in the section above as the latest recorded production state. This document does not record the `00012`/`00013` backend or `hardening-20261011-1` Hosting releases themselves; recheck the pair before the next cutover and keep it as the rollback baseline.
+
+**Merged, not deployed.** `master` `5bf0e53` (nnorman100/adr-field-estimator#10) adds the mobile usability repairs 1–3, the WebKit first-install reload fix, Live start that no longer waits on camera preview playback (nnorman100/adr-field-estimator#9), and a CI browser job that runs the Playwright suite in Chromium and Linux WebKit. Asset marker: `mobile-repairs-20261012-1`. CI passed on the merged source (`f1d0f90`/`04067f1`), including WebKit. That job's first Linux WebKit run had exposed four Live failures; their cause and fix are in [mobile-usability-repairs.md](mobile-usability-repairs.md).
+
+**Release gates for this frontend** (from [mobile-usability-repairs.md](mobile-usability-repairs.md)):
+
+1. Confirm the serving backend, then deploy only `hosting:alert-disaster` in `alert-disaster-field-2026`.
+2. Authenticated acceptance with normal approved-staff sign-in: `node scripts/verify_live_browser.js --backend-tag harden-fixes --hold`.
+3. The guided iPhone acceptance above, now including the camera preview appearing and Live connecting promptly.
+4. ADR approval to release repairs 1–3 with the keyboard signature method (repair 4) deferred.
+
+**Still open.** Physical iPhone/Bluetooth acceptance, installed-app/offline behavior and measured sub-second latency (device results not yet provided). Company workspaces remain disabled pending the invitation sender/secret and authenticated role acceptance. Cleaning-only pricing, unit/job linking and a richer task/narrative model remain separate work.
