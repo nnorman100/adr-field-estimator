@@ -17,7 +17,7 @@ jobs:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - run: pip install -r backend/requirements.txt pytest httpx
+      - run: pip install -r backend/requirements.txt pytest httpx2
       - run: python -m pytest tests -q -p no:cacheprovider
 
   node:
@@ -48,7 +48,7 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-      - run: pip install -r backend/requirements.txt pytest httpx
+      - run: pip install -r backend/requirements.txt pytest httpx2
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:browser -- --config=playwright.isolated.config.js
