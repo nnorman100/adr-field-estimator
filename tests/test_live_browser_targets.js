@@ -64,3 +64,24 @@ test('artifacts use unique external directories and preserve existing evidence',
     assert.throws(()=>createArtifactDirectory(path.join(link,'review-artifacts','new-run')));
   }finally{fs.rmSync(parent,{recursive:true,force:true});}
 });
+
+test('shared artifact-path helpers resolve symlinks and compare containment',()=>{
+  const {canonicalPath,isWithin}=require('../scripts/artifact-paths');
+  const root=path.resolve(os.tmpdir(),'adr-root');
+  assert.equal(isWithin(root,root),true);
+  assert.equal(isWithin(root,path.join(root,'child')),true);
+  assert.equal(isWithin(root,path.resolve(root,'..','adr-root-sibling')),false);
+  assert.equal(isWithin(root,path.resolve(root,'..')),false);
+  assert.throws(()=>canonicalPath('relative'),/absolute/);
+  assert.throws(()=>canonicalPath(''),/absolute/);
+  const parent=fs.mkdtempSync(path.join(os.tmpdir(),'adr-paths-test-'));
+  try{
+    const file=path.join(parent,'file.txt');fs.writeFileSync(file,'x');
+    assert.throws(()=>canonicalPath(path.join(file,'below')),/not a directory/);
+    const repository=fs.realpathSync(path.resolve(__dirname,'..')),link=path.join(parent,'repository-link');
+    fs.symlinkSync(repository,link,process.platform==='win32'?'junction':'dir');
+    const resolved=canonicalPath(path.join(link,'not-yet','created'));
+    assert.equal(resolved,path.join(repository,'not-yet','created'));
+    assert.equal(isWithin(repository,resolved),true);
+  }finally{fs.rmSync(parent,{recursive:true,force:true});}
+});
