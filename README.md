@@ -51,13 +51,22 @@ The field app follows [ADR's official website](https://alertdisaster.com/): the 
 | `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 
 ```powershell
-python -m pip install -r backend/requirements.txt pytest httpx2
+python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
 python -m pytest tests -q -p no:cacheprovider
 npm ci
 npm test
 npx playwright install chromium webkit
 npm run test:browser
 ```
+
+Direct Python dependencies live in `backend/requirements.in` (runtime) and `backend/requirements-dev.in` (tests). The hash-locked `requirements.txt` and `requirements-dev.txt` beside them are generated for Python 3.11 and used by Docker, CI and local installs. After editing an `.in` file, regenerate both locks from `backend/` with [uv](https://docs.astral.sh/uv/):
+
+```powershell
+uv pip compile requirements.in --universal --python-version 3.11 --generate-hashes --output-file requirements.txt
+uv pip compile requirements-dev.in --universal --python-version 3.11 --generate-hashes --output-file requirements-dev.txt
+```
+
+Dependabot opens weekly grouped update pull requests for these locks, npm, GitHub Actions and the Docker base image.
 
 The browser suite serves production code with fake cloud adapters over temporary local TLS. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
 

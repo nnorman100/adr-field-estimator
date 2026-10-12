@@ -76,7 +76,7 @@ A server dispatcher would need call-ID matching, schema validation, bounded exec
 - The Developer capabilities page still shows explicit affective/proactivity flags. Current Vertex 3.8 guidance says these features are enabled by default and the old flags must be omitted. Follow the current model-specific Vertex contract. [Developer capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities), [Vertex migration](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api/migrate-from-gemini-2-5-to-gemini-3-8-live).
 - Baseline `gemini-3.8-live` does not accept thinking-level configuration. Extended Thinking requires a different model, asynchronous tool handling and `interaction_status` rather than treating every `turn_complete` as idle. It is unnecessary for the first continuity repair. [Thinking](https://ai.google.dev/gemini-api/docs/live-api/thinking).
 - If seeding explicit conversational history after a fresh connection, Vertex 3.8 requires `HistoryConfig(initial_history_in_client_content=True)` and waiting for setup completion. Do not replay the entire editable transcript as authoritative model/user history. [Vertex 3.8 developer guide](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-3-8-live).
-- `backend/requirements.txt` currently permits any `google-genai>=0.1.0`. Record and constrain a tested SDK version before relying on new event/configuration fields.
+- `backend/requirements.in` pins the tested `google-genai` version. Re-verify Live behavior before raising that pin to rely on new event/configuration fields.
 
 ## Implementation stages and acceptance
 
