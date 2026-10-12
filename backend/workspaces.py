@@ -196,8 +196,12 @@ class WorkspaceStore:
         return self._run(update)
     def team(self,uid,company_id):
         actor=self.principal(uid)
-        if not actor['superadmin']: self.company_actor(uid,company_id)
-        return [s.to_dict() for s in self.db.collection('_memberships').where(filter=firestore.FieldFilter('company_id','==',company_id)).limit(500).stream()]
+        if not actor['superadmin']: actor=self.company_actor(uid,company_id)
+        members=[s.to_dict() for s in self.db.collection('_memberships').where(filter=firestore.FieldFilter('company_id','==',company_id)).limit(500).stream()]
+        if actor['superadmin'] or 'team_manage' in actor['capabilities']: return members
+        if 'assignment' not in actor['capabilities']: raise AccessDenied('Only the company owner can view the team.')
+        # Office staff only need the assignable estimators for the job-assignment dropdown.
+        return [{k:m[k] for k in ('uid','email','role','status')} for m in members if m['role']=='estimator' and m['status']=='active']
     def cancel_invitations(self,tx,company_id,email):
         # A pending invitation would otherwise let a disabled member reactivate themselves.
         # Reads precede writes here, so call this before the transaction's first write.

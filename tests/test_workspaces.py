@@ -94,6 +94,24 @@ def test_office_creation_and_assignment(api):
     assert client.get('/api/companies/other/team').status_code==403
 
 
+def test_team_roster_requires_owner_or_assignment_directory(api):
+    client,current,store=api
+    store.db.records['_memberships/gone']=dict(uid='gone',email='gone@example.invalid',company_id='adr',role='estimator',status='disabled',version=2,updated_at='2026')
+    current['uid']='estimator'
+    assert client.get('/api/companies/adr/team').status_code==403
+    current['uid']='office'
+    directory=client.get('/api/companies/adr/team').json()['members']
+    assert sorted(m['uid'] for m in directory)==['estimator','estimator2']
+    assert all(set(m)=={'uid','email','role','status'} and m['role']=='estimator' and m['status']=='active' for m in directory)
+    assert client.get('/api/companies/other/team').status_code==403
+    current['uid']='other-owner'
+    roster=client.get('/api/companies/other/team').json()['members']
+    assert [m['uid'] for m in roster]==['other-owner'] and roster[0]['version']==1
+    assert client.get('/api/companies/adr/team').status_code==403
+    current['uid']='admin'
+    assert {m['uid'] for m in client.get('/api/companies/adr/team').json()['members']}=={'owner','estimator','estimator2','office','gone'}
+
+
 def test_assignment_retains_creator_and_revokes_previous_assignee(store):
     store.create_inspection('estimator',ID,data())
     first=CoordinationUpdate(expected_version=1,assigned_estimator_uid='estimator2')
