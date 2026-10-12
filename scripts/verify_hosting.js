@@ -28,7 +28,7 @@ const unstamp=text=>text.replace(/^(const VERSION=')[^']*(';)/m,'$1unstamped$2')
   const config=await(await fetch(base+'/__/firebase/init.json')).json();assert.equal(config.projectId,'alert-disaster-field-2026');
   const browser=await chromium.launch();const page=await browser.newPage({viewport:{width:390,height:844}});const errors=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/Content Security Policy|Refused to/.test(m.text()))errors.push(m.text());});
-  await page.goto(base);await page.waitForFunction(()=>window.firebase&&document.getElementById('signInButton').hidden===false);
+  await page.goto(base);await page.waitForFunction(()=>typeof auth!=='undefined'&&auth!==null&&document.getElementById('signInButton').hidden===false);
   await page.waitForTimeout(1500);assert(!(await page.locator('#message').textContent()).includes('initialization failed'));
   await page.evaluate(()=>document.fonts.ready);
   for(const width of [320,390]){
