@@ -21,7 +21,7 @@ def test_authenticated_relay_pcm_frames_interruption_and_release(monkeypatch):
     @asynccontextmanager
     async def connect(**kwargs):yield Session()
     async def close():closed.append(True)
-    async def identity(token):
+    async def identity(token,**_):
         assert token=='synthetic';return {'uid':'owner','exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     monkeypatch.setattr(bm.genai,'Client',lambda **kwargs:NS(aio=NS(live=NS(connect=connect),aclose=close)))
@@ -43,7 +43,7 @@ def test_authenticated_relay_pcm_frames_interruption_and_release(monkeypatch):
 
 def test_live_owner_check_precedes_model_connection(monkeypatch):
     store=FakeStore();store.create_inspection('other',ID,InspectionData().model_dump(mode='json'))
-    async def identity(token):return {'uid':'owner','exp':time.time()+600}
+    async def identity(token,**_):return {'uid':'owner','exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     def forbidden(**kwargs):pytest.fail('Vertex must not connect for another owner')
     monkeypatch.setattr(bm.genai,'Client',forbidden)
@@ -55,8 +55,8 @@ def test_live_owner_check_precedes_model_connection(monkeypatch):
 def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
     store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump(mode='json'))
     calls=[];closed=[]
-    async def identity(token):
-        calls.append(token)
+    async def identity(token,**kwargs):
+        calls.append((token,kwargs))
         if len(calls)>1:raise bm.HTTPException(401,'Session revoked')
         return {'uid':'owner','exp':time.time()+600}
     class Session:
@@ -78,4 +78,5 @@ def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
             assert socket.receive_json()=={'type':'error','message':'Session revoked'}
             # The error reports revocation; server close acknowledges resource cleanup.
             with pytest.raises(WebSocketDisconnect):socket.receive_json()
-    assert calls==['synthetic','synthetic'] and closed and '_live_sessions/owner' not in store.db.records
+    # The start always checks live; heartbeats may reuse only a check that outlasts the next heartbeat.
+    assert calls==[('synthetic',{'live':True}),('synthetic',{'horizon':.01})] and closed and '_live_sessions/owner' not in store.db.records

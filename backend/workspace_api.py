@@ -1,12 +1,14 @@
 """Authenticated workspace administration. Invitations do not require membership."""
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Security
 try:
     from .workspaces import CompanyCreate, ProfileUpdate, StatusUpdate, InviteCreate, MemberUpdate, CoordinationUpdate
 except ImportError:
     from workspaces import CompanyCreate, ProfileUpdate, StatusUpdate, InviteCreate, MemberUpdate, CoordinationUpdate
 
-def register_workspace_routes(app,identity,get_store,stored):
+def register_workspace_routes(app,identity,get_store,stored,live):
     def workspace(store): return store.workspaces
+    # Administration and access changes always repeat the revoked/disabled-user lookup.
+    live_identity=Security(identity,scopes=live)
 
     @app.get('/api/access')
     async def access(claims=Depends(identity),store=Depends(get_store)):
@@ -16,51 +18,51 @@ def register_workspace_routes(app,identity,get_store,stored):
                     invitations=[{'invitation_id':i['invitation_id'],'role':i['role'],'company_id':i['company_id']} for i in invitations])
 
     @app.get('/api/admin/companies')
-    async def companies(claims=Depends(identity),store=Depends(get_store)):
+    async def companies(claims=live_identity,store=Depends(get_store)):
         return {'companies':await stored(workspace(store).companies,claims['uid'])}
 
     @app.post('/api/admin/companies')
-    async def create_company(req:CompanyCreate,claims=Depends(identity),store=Depends(get_store)):
+    async def create_company(req:CompanyCreate,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'admin',10)
         company,invitation=await stored(workspace(store).create_company,claims['uid'],req.name,req.owner_email)
         invitation=await stored(workspace(store).deliver,claims['uid'],invitation['invitation_id'])
         return {'company':company,'invitation':invitation}
 
     @app.get('/api/companies/{company_id}')
-    async def company(company_id:str,claims=Depends(identity),store=Depends(get_store)):
+    async def company(company_id:str,claims=live_identity,store=Depends(get_store)):
         return await stored(workspace(store).company,claims['uid'],company_id)
 
     @app.put('/api/companies/{company_id}')
-    async def profile(company_id:str,req:ProfileUpdate,claims=Depends(identity),store=Depends(get_store)):
+    async def profile(company_id:str,req:ProfileUpdate,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'team',20)
         return await stored(workspace(store).update_company,claims['uid'],company_id,req)
 
     @app.put('/api/admin/companies/{company_id}/status')
-    async def status(company_id:str,req:StatusUpdate,claims=Depends(identity),store=Depends(get_store)):
+    async def status(company_id:str,req:StatusUpdate,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'admin',10)
         return await stored(workspace(store).update_company,claims['uid'],company_id,req)
 
     @app.get('/api/companies/{company_id}/team')
-    async def team(company_id:str,claims=Depends(identity),store=Depends(get_store)):
+    async def team(company_id:str,claims=live_identity,store=Depends(get_store)):
         return {'members':await stored(workspace(store).team,claims['uid'],company_id)}
 
     @app.put('/api/companies/{company_id}/team/{member_uid}')
-    async def member(company_id:str,member_uid:str,req:MemberUpdate,claims=Depends(identity),store=Depends(get_store)):
+    async def member(company_id:str,member_uid:str,req:MemberUpdate,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'team',20)
         return await stored(workspace(store).update_member,claims['uid'],company_id,member_uid,req)
 
     @app.get('/api/companies/{company_id}/invitations')
-    async def invitations(company_id:str,claims=Depends(identity),store=Depends(get_store)):
+    async def invitations(company_id:str,claims=live_identity,store=Depends(get_store)):
         return {'invitations':await stored(workspace(store).invitations,claims['uid'],company_id)}
 
     @app.post('/api/companies/{company_id}/invitations')
-    async def invite(company_id:str,req:InviteCreate,claims=Depends(identity),store=Depends(get_store)):
+    async def invite(company_id:str,req:InviteCreate,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'team',20)
         invitation=await stored(workspace(store).invite,claims['uid'],company_id,req.email,req.role)
         return await stored(workspace(store).deliver,claims['uid'],invitation['invitation_id'])
 
     @app.post('/api/companies/{company_id}/invitations/{invitation_id}/{action}')
-    async def invitation_action(company_id:str,invitation_id:str,action:str,claims=Depends(identity),store=Depends(get_store)):
+    async def invitation_action(company_id:str,invitation_id:str,action:str,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'team',20)
         invitation=await stored(workspace(store).invitation_action,claims['uid'],company_id,invitation_id,action)
         if action=='resend': invitation=await stored(workspace(store).deliver,claims['uid'],invitation_id)
@@ -71,7 +73,7 @@ def register_workspace_routes(app,identity,get_store,stored):
         return await stored(workspace(store).invitation,claims,invitation_id)
 
     @app.post('/api/invitations/{invitation_id}/accept')
-    async def accept(invitation_id:str,claims=Depends(identity),store=Depends(get_store)):
+    async def accept(invitation_id:str,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'team',20)
         return await stored(workspace(store).accept,claims,invitation_id)
 
@@ -82,6 +84,6 @@ def register_workspace_routes(app,identity,get_store,stored):
         return job
 
     @app.put('/api/jobs/{inspection_id}/coordination')
-    async def coordination(inspection_id:str,req:CoordinationUpdate,claims=Depends(identity),store=Depends(get_store)):
+    async def coordination(inspection_id:str,req:CoordinationUpdate,claims=live_identity,store=Depends(get_store)):
         await stored(store.quota,claims['uid'],'draft',60)
         return await stored(workspace(store).coordination,claims['uid'],inspection_id,req)
