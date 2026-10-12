@@ -1,0 +1,23 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+ERROR:root:Upload cleanup could not be confirmed; retained private object users/uid-7f3a/inspections/ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/42bf10aa157448598d9cb9a9b8d4b8dd-9214e51210a27018419d74ad3a436b3691fa9d90b132914e5a2369198fccfb75.png
+Traceback (most recent call last):
+  File "/tmp/adr-base-k3/backend/inspection_store.py", line 156, in add_photo
+    return self._change(uid, inspection_id, upload['expected_revision'], append)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/adr-k3-harness/server.py", line 20, in lost
+    def lost(*a,**k): raise RuntimeError('Commit response lost.')
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Commit response lost.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/tmp/adr-base-k3/backend/inspection_store.py", line 54, in _discard_unreferenced
+    blob.delete(if_generation_match=blob.generation)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/adr-k3-harness/server.py", line 21, in refused
+    def refused(blob,**k): raise PermissionError(f'403 DELETE gs://alert-disaster-field-2026-evidence/{blob.name}')
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: 403 DELETE gs://alert-disaster-field-2026-evidence/users/uid-7f3a/inspections/ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/42bf10aa157448598d9cb9a9b8d4b8dd-9214e51210a27018419d74ad3a436b3691fa9d90b132914e5a2369198fccfb75.png
+{"severity": "ERROR", "message": "Storage operation failed", "operation": "add_photo", "outcome": "RuntimeError"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/photos", "status": 503}

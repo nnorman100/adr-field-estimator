@@ -1,0 +1,57 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/photos", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 413}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 413}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 401}
+WARNING:  Invalid HTTP request received.
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 408}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST"}
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/uvicorn/protocols/http/h11_impl.py", line 411, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.scope, self.receive, self.send
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/uvicorn/middleware/proxy_headers.py", line 63, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/fastapi/applications.py", line 1216, in __call__
+    await super().__call__(scope, receive, send)
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/starlette/applications.py", line 96, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/fastapi/telemetry/_asgi.py", line 151, in __call__
+    await self.app(scope, receive, send)
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/starlette/middleware/base.py", line 197, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RVAQT1WWATKEMKFCNXTDY8/backend/main.py", line 216, in monitor_app_check
+    response=await call_next(request); status=response.status_code
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/starlette/middleware/base.py", line 173, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "/tmp/adr-venv-k3/lib/python3.14/site-packages/starlette/middleware/base.py", line 149, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RVAQT1WWATKEMKFCNXTDY8/backend/main.py", line 195, in __call__
+    try: body=await asyncio.wait_for(read(),BODY_READ_SECONDS)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RVAQT1WWATKEMKFCNXTDY8/backend/main.py", line 189, in read
+    if message['type']=='http.disconnect': raise ClientDisconnect()
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^
+starlette.requests.ClientDisconnect
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections", "status": 200}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "duration_ms": 1, "outcome": "ValueError"}

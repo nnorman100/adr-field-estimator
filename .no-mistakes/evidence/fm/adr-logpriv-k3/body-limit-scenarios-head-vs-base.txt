@@ -1,0 +1,30 @@
+# Raw-HTTP body-limit scenarios against the real FastAPI app under uvicorn (BODY_READ_SECONDS=2 for the deadline case)
+## HEAD 1d2dd56
+[create_chunked_many_pieces] 940 bytes in 64-byte chunks -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspection_id":"ADR-INS-00000000000000000000000000000001","schema_version":3,"revision":1,"data":{"address":"Synthetic test property","yea
+[large_photo_upload_above_default_cap] 5243773 byte photo POST -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspection_id":"ADR-INS-00000000000000000000000000000002","schema_version":3,"revision":2,"data":{"address":"Synthetic test property","yea
+    GET afterwards -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspection_id":"ADR-INS-00000000000000000000000000000002","schema_version":3,"revision":2,"data":{"address":"Synthetic test property","yea
+[declared_oversize_rejected] HTTP/1.1 413 Content Too Large |  | body=The upload is too large.
+[undeclared_chunked_oversize_rejected] 1.5 MB chunked, no Content-Length -> HTTP/1.1 413 Content Too Large |  | body=The upload is too large.
+[unauthenticated_post_rejected_before_body] 500 KB declared, body never sent -> HTTP/1.1 401 Unauthorized |  | body={"detail":"Sign in to continue."}
+[invalid_content_length] HTTP/1.1 400 Bad Request |  | body=Invalid HTTP request received.
+[slow_body_deadline] 1 byte/100ms trickle -> HTTP/1.1 408 Request Timeout |  | body=The upload took too long. after 2.1s
+[disconnect_mid_body_then_healthy] after mid-body disconnect, GET /api/inspections -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspections":[{"inspection_id":"ADR-INS-00000000000000000000000000000002","address":"Synthetic test 
+[cache_control_headers] /api/health -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"status":"healthy","schema_version":3,"source_commit":"unknown"}
+    /health -> HTTP/1.1 200 OK |  | body={"status":"healthy","schema_version":3,"source_commit":"unknown"}
+    GET /api/inspections -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspections":[{"inspection_id":"ADR-INS-00000000000000000000
+[get_unaffected_by_body_cap] HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspections":[{"inspection_id":"ADR-INS-00000000000000000000000000000002","address":"Synthetic test 
+
+## BASE 201acdf
+[create_chunked_many_pieces] 940 bytes in 64-byte chunks -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspection_id":"ADR-INS-00000000000000000000000000000001","schema_version":3,"revision":1,"data":{"address":"Synthetic test property","yea
+[large_photo_upload_above_default_cap] 5243773 byte photo POST -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspection_id":"ADR-INS-00000000000000000000000000000002","schema_version":3,"revision":2,"data":{"address":"Synthetic test property","yea
+    GET afterwards -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspection_id":"ADR-INS-00000000000000000000000000000002","schema_version":3,"revision":2,"data":{"address":"Synthetic test property","yea
+[declared_oversize_rejected] HTTP/1.1 413 Content Too Large |  | body=The upload is too large.
+[undeclared_chunked_oversize_rejected] 1.5 MB chunked, no Content-Length -> HTTP/1.1 413 Content Too Large |  | body=The upload is too large.
+[unauthenticated_post_rejected_before_body] 500 KB declared, body never sent -> HTTP/1.1 401 Unauthorized |  | body={"detail":"Sign in to continue."}
+[invalid_content_length] HTTP/1.1 400 Bad Request |  | body=Invalid HTTP request received.
+[slow_body_deadline] 1 byte/100ms trickle -> HTTP/1.1 408 Request Timeout |  | body=The upload took too long. after 2.1s
+[disconnect_mid_body_then_healthy] after mid-body disconnect, GET /api/inspections -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspections":[{"inspection_id":"ADR-INS-00000000000000000000000000000002","address":"Synthetic test 
+[cache_control_headers] /api/health -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"status":"healthy","schema_version":3,"source_commit":"unknown"}
+    /health -> HTTP/1.1 200 OK |  | body={"status":"healthy","schema_version":3,"source_commit":"unknown"}
+    GET /api/inspections -> HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspections":[{"inspection_id":"ADR-INS-00000000000000000000
+[get_unaffected_by_body_cap] HTTP/1.1 200 OK | cache-control: private, no-store | body={"inspections":[{"inspection_id":"ADR-INS-00000000000000000000000000000002","address":"Synthetic test 

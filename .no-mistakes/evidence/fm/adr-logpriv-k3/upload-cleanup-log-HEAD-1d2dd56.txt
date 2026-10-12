@@ -1,0 +1,4 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "ERROR", "message": "Upload cleanup could not be confirmed; private object retained", "operation": "upload_cleanup", "outcome": "PermissionError"}
+{"severity": "ERROR", "message": "Storage operation failed", "operation": "add_photo", "outcome": "RuntimeError"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/photos", "status": 503}
