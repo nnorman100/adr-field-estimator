@@ -40,3 +40,14 @@ test('offline requires explicit Resume and stale callbacks cannot edit a new ins
   await page.locator('#jobMenu summary').click();await page.locator('#newInspection').click();await expect(page.locator('#technicianTranscript')).toHaveValue('');
   await page.evaluate(()=>window.liveSockets[1].emit({type:'transcript',speaker:'technician',connection_id:'synthetic-2',sequence:100,text:'LATE OLD JOB',finished:true}));await expect(page.locator('#technicianTranscript')).toHaveValue('');await cleanup(page);
 });
+test('Live connects when camera preview playback never settles or is rejected',async({page})=>{
+  // play() stays pending first; setup() requires Live AI connected, so a blocking await would fail here.
+  await page.evaluate(()=>{window.previewMode='pending';const original=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(){if(this.id!=='cameraVideo')return original.call(this);return window.previewMode==='pending'?new Promise(()=>{}):Promise.reject(new DOMException('synthetic preview failure','NotAllowedError'));};});
+  await setup(page);
+  await expect(page.locator('#cameraEmpty')).toBeVisible();await expect(page.locator('#message')).toBeHidden();
+  await page.locator('#stopWalk').click();await expect(page.locator('#liveStatus')).toHaveText('Not connected');
+  await page.evaluate(()=>{window.previewMode='reject';});await page.locator('#startWalk').click();
+  await expect(page.locator('#liveStatus')).toHaveText(/Live (AI connected|conversation resumed)/);
+  await expect(page.locator('#message')).toContainText('Camera preview could not start: synthetic preview failure');await expect(page.locator('#message')).toContainText('Live voice guidance continues');
+  await expect(page.locator('#cameraEmpty')).toBeVisible();await cleanup(page);
+});
