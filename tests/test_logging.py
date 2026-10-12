@@ -8,8 +8,8 @@ from starlette.websockets import WebSocketDisconnect
 from google.genai import errors
 import backend.main as bm
 from backend.contracts import InspectionData
-from tests.fakes import FakeStore
-from tests.test_backend import context, inspect, audit, ID
+from tests.fakes import FakeStore, Blob, png
+from tests.test_backend import context, inspect, audit, data, ID
 from tests.test_scope import prepared, suggest, WORDS
 
 EMAIL='owner@example.invalid'
@@ -67,3 +67,16 @@ def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch,capsys):
     assert entry['message']=='Live session ended' and entry['outcome']=='finished' and entry['total_tokens']==321
     assert entry['model']==bm.LIVE_MODEL and entry['inspection_id']==ID and isinstance(entry['duration_ms'],int)
     for secret in ('secret-id-token','private observation',EMAIL):assert secret not in output
+
+def test_failed_upload_cleanup_logs_operation_and_error_class_without_uid_or_path(monkeypatch,capsys,caplog):
+    store=FakeStore();store.create_inspection('uid-7f3a',ID,data())
+    def lost(*args):raise RuntimeError('Commit response lost.')
+    def refused(blob,**kwargs):raise PermissionError(f'403 DELETE gs://evidence/{blob.name}')
+    monkeypatch.setattr(store,'_change',lost);monkeypatch.setattr(Blob,'delete',refused)
+    capsys.readouterr()
+    with pytest.raises(RuntimeError):
+        store.add_photo('uid-7f3a',ID,dict(expected_revision=1,photo_id='b'*32,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()))
+    captured=capsys.readouterr();output=captured.out+captured.err+caplog.text
+    [entry]=[json.loads(line) for line in captured.out.splitlines() if line.startswith('{')]
+    assert entry=={'severity':'ERROR','message':'Upload cleanup could not be confirmed; private object retained','operation':'upload_cleanup','outcome':'PermissionError'}
+    for secret in ('uid-7f3a','users/','gs://'):assert secret not in output

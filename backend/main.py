@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import sys
 import time
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +19,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.requests import ClientDisconnect
 from PIL import Image, ImageOps
 import firebase_admin
 from firebase_admin import app_check, auth as firebase_auth
@@ -36,6 +37,7 @@ try:
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
+    from .cloud_log import event
 except ImportError:
     from contracts import CreateInspection, UpdateInspection, InspectionData, PhotoUpload, OcrResult, AIResult, AuditRequest, AuthorizeRequest
     from claims import make_documents, price_scope
@@ -47,6 +49,7 @@ except ImportError:
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited
     from job_store import BUCKET, decode_image, IMAGE_WORKER
+    from cloud_log import event
 
 DEDICATED_PROJECT_ID = 'alert-disaster-field-2026'
 PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT',DEDICATED_PROJECT_ID)
@@ -84,22 +87,6 @@ app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,
 security = HTTPBearer(auto_error=False)
 _job_store = None
 genai_client = None
-# An allowlist, so prompts, transcripts, images, tokens, emails, links and signatures cannot reach the log.
-LOG_FIELDS = frozenset({'model','operation','elapsed_ms','duration_ms','outcome','provider_status','provider_code','status','total_tokens','inspection_id','method','route'})
-
-class CloudLoggingJson(logging.Handler):
-    """One JSON object per stdout line, which Cloud Logging parses into severity, message and fields."""
-    def emit(self,record):
-        entry={'severity':record.levelname,'message':record.getMessage(),**getattr(record,'fields',{})}
-        print(json.dumps(entry,default=str),file=sys.stdout,flush=True)
-
-log=logging.getLogger('adr')
-log.setLevel(logging.INFO); log.propagate=False
-if not log.handlers: log.addHandler(CloudLoggingJson())
-
-def event(message,severity=logging.INFO,**fields):
-    log.log(severity,message,extra={'fields':{k:v for k,v in fields.items() if k in LOG_FIELDS and v is not None}})
-
 def get_job_store():
     global _job_store
     if _job_store is None: _job_store=CompanyInspectionStore() if WORKSPACES_ENABLED else InspectionStore()
@@ -164,41 +151,64 @@ BODY_READ_SECONDS=50  # Below Firebase Hosting's 60-second request timeout.
 def body_limit(method,path):
     return next((limit for m,pattern,limit in BODY_LIMITS if m==method and pattern.fullmatch(path)),MB)
 
-def has_bearer(request):
-    scheme,_,token=request.headers.get('authorization','').partition(' ')
+def has_bearer(headers):
+    scheme,_,token=headers.get('authorization','').partition(' ')
     return scheme.lower()=='bearer' and bool(token.strip())
 
-@app.middleware('http')
-async def limit_payload(request:Request,call_next):
-    if request.method in ('POST','PUT'):
-        # Reject before reading the body; current_staff still verifies the token.
-        if request.url.path.startswith('/api/') and not has_bearer(request):
-            return JSONResponse({'detail':'Sign in to continue.'},status_code=401)
-        limit=body_limit(request.method,request.url.path)
-        declared=request.headers.get('content-length')
-        if declared is not None:
-            if not re.fullmatch(r'[0-9]+',declared): return Response('Invalid Content-Length.',status_code=400)
-            if int(declared)>limit: return Response('The upload is too large.',status_code=413)
-        # Bound reads before model parsing, including requests without Content-Length.
-        async def read():
-            chunks=[]; size=0
-            async for chunk in request.stream():
-                size+=len(chunk)
-                if size>limit: return None
-                chunks.append(chunk)
-            return b''.join(chunks)
-        try: body=await asyncio.wait_for(read(),BODY_READ_SECONDS)
-        except asyncio.TimeoutError: return Response('The upload took too long.',status_code=408)
-        if body is None: return Response('The upload is too large.',status_code=413)
-        request._body=body
-    response=await call_next(request)
-    if request.url.path.startswith('/api/'):
-        response.headers['Cache-Control']='private, no-store'
-    return response
+def replay(body,receive):
+    """Delivers a pre-read body as one ASGI message, then defers to the server, which reports disconnects."""
+    pending=True
+    async def replayed():
+        nonlocal pending
+        if not pending: return await receive()
+        pending=False
+        return {'type':'http.request','body':body,'more_body':False}
+    return replayed
+
+class LimitPayload:
+    """Caps and times each POST/PUT body read before the app runs, using only the ASGI receive channel."""
+    def __init__(self,app): self.app=app
+    async def __call__(self,scope,receive,send):
+        if scope['type']!='http': return await self.app(scope,receive,send)
+        method,path=scope['method'],scope['path']
+        if method in ('POST','PUT'):
+            headers=Headers(scope=scope)
+            # Reject before reading the body; current_staff still verifies the token.
+            if path.startswith('/api/') and not has_bearer(headers):
+                return await JSONResponse({'detail':'Sign in to continue.'},status_code=401)(scope,receive,send)
+            limit=body_limit(method,path)
+            declared=headers.get('content-length')
+            if declared is not None:
+                if not re.fullmatch(r'[0-9]+',declared): return await Response('Invalid Content-Length.',status_code=400)(scope,receive,send)
+                if int(declared)>limit: return await Response('The upload is too large.',status_code=413)(scope,receive,send)
+            # Bound reads before model parsing, including requests without Content-Length.
+            async def read():
+                chunks=[]; size=0
+                while True:
+                    message=await receive()
+                    if message['type']=='http.disconnect': raise ClientDisconnect()
+                    chunk=message.get('body',b'')
+                    size+=len(chunk)
+                    if size>limit: return None
+                    chunks.append(chunk)
+                    if not message.get('more_body',False): return b''.join(chunks)
+            try: body=await asyncio.wait_for(read(),BODY_READ_SECONDS)
+            except asyncio.TimeoutError: return await Response('The upload took too long.',status_code=408)(scope,receive,send)
+            if body is None: return await Response('The upload is too large.',status_code=413)(scope,receive,send)
+            receive=replay(body,receive)
+        if path.startswith('/api/'):
+            downstream=send
+            async def no_store(message):
+                if message['type']=='http.response.start': MutableHeaders(scope=message)['Cache-Control']='private, no-store'
+                await downstream(message)
+            send=no_store
+        await self.app(scope,receive,send)
+
+app.add_middleware(LimitPayload)
 
 @app.middleware('http')
 async def monitor_app_check(request:Request,call_next):
-    # Registered after limit_payload, so it also records requests that middleware rejects.
+    # Registered after LimitPayload, so it also records requests that middleware rejects.
     if APPCHECK_MODE=='off' or not request.url.path.startswith('/api/'): return await call_next(request)
     verification=asyncio.create_task(app_check_outcome(request.headers.get('x-firebase-appcheck')))
     status=None

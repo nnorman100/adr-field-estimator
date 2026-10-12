@@ -11,8 +11,10 @@ from PIL import Image
 from google.cloud import firestore
 try:
     from .job_store import JobStore, decode_image, IMAGE_WORKER
+    from .cloud_log import event
 except ImportError:
     from job_store import JobStore, decode_image, IMAGE_WORKER
+    from cloud_log import event
 
 # Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
 DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40}
@@ -52,8 +54,9 @@ class InspectionStore(JobStore):
             paths.add(record.get('signature',{}).get('path'))
             if blob.name not in paths:
                 blob.delete(if_generation_match=blob.generation)
-        except Exception:
-            logging.exception('Upload cleanup could not be confirmed; retained private object %s',blob.name)
+        except Exception as error:
+            # The object path and the error text name the user; record only the error class.
+            event('Upload cleanup could not be confirmed; private object retained',logging.ERROR,operation='upload_cleanup',outcome=type(error).__name__)
 
     def _ref(self, inspection_id):
         if not re.fullmatch(r'ADR-INS-[a-f0-9]{32}', inspection_id): raise LookupError('Inspection not found.')

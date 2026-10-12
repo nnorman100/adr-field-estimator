@@ -188,13 +188,13 @@ def test_year_built_bound_follows_the_clock_on_a_warm_instance(monkeypatch):
     assert InspectionData(year_built=year+1).year_built==year+1
     with pytest.raises(ValueError):InspectionData(year_built=1799)
 
-def send_raw(method,path,headers,receive):
+def send_raw(method,path,headers,receive,app=None):
     """Drive the ASGI app directly so the test controls, and observes, every body read."""
     sent=[]
     async def send(message):sent.append(message)
     scope={'type':'http','asgi':{'version':'3.0'},'http_version':'1.1','method':method,'scheme':'http','path':path,'raw_path':path.encode(),
            'query_string':b'','root_path':'','headers':[(k.lower().encode(),v.encode()) for k,v in headers.items()],'client':('test',1),'server':('test',80)}
-    asyncio.run(bm.app(scope,receive,send))
+    asyncio.run((app or bm.app)(scope,receive,send))
     return next(m['status'] for m in sent if m['type']=='http.response.start')
 
 def test_unauthenticated_upload_is_rejected_before_the_body_is_read(context):
@@ -223,6 +223,17 @@ def test_slow_body_hits_the_read_deadline(context,monkeypatch):
     monkeypatch.setattr(bm,'BODY_READ_SECONDS',0.2)
     async def trickle():await asyncio.sleep(0.1);return {'type':'http.request','body':b'x','more_body':True}
     assert send_raw('POST','/api/inspections',{'authorization':'Bearer synthetic'},trickle)==408
+
+def test_capped_body_reaches_a_plain_asgi_app_through_receive():
+    # A bare ASGI app has no Starlette request to carry a cached body; it sees only receive().
+    seen=[]
+    async def downstream(scope,receive,send):
+        seen.extend([await receive(),await receive()])
+        await send({'type':'http.response.start','status':204,'headers':[]});await send({'type':'http.response.body','body':b''})
+    messages=iter([{'type':'http.request','body':b'{"a":','more_body':True},{'type':'http.request','body':b'1}','more_body':False},{'type':'http.disconnect'}])
+    async def receive():return next(messages)
+    assert send_raw('POST','/api/audit',{'authorization':'Bearer synthetic'},receive,bm.LimitPayload(downstream))==204
+    assert seen==[{'type':'http.request','body':b'{"a":1}','more_body':False},{'type':'http.disconnect'}]
 
 def test_authenticated_full_size_photo_upload_still_works(context):
     client,_=context;record=inspect(client)
