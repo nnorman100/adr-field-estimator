@@ -32,7 +32,7 @@ The Live relay checks origin, first-message Firebase authentication and inspecti
 
 ## Cutover and historical data
 
-The old `alert-disaster-live` site redirects to the dedicated app. A retirement service worker removes this app's old cache and moves existing clients to the new origin. Its isolated deployment files are in `deployment/legacy-redirect`.
+The old `alert-disaster-live` site (in `mitigation-project`) was retired as of 2026-10-12: it no longer redirects and its addresses return HTTP 404. Use the dedicated app's address instead. The redirect configuration that was kept in `deployment/legacy-redirect` has been deleted; `review-artifacts/migration-redirect-deploy.log` remains as historical evidence of the earlier redirect deploy.
 
 Other sites and databases in `mitigation-project` are unchanged. The old backend is retained for rollback and receives no calls from the migrated app. The reviewed old authorization endpoint only logged metadata and did not persist agreements, signatures or photos; there were no application records to copy. No unrelated records were copied.
 

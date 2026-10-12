@@ -2,7 +2,7 @@
 
 An owner-private mobile inspection app for ADR technicians in Bakersfield and Kern County. Open [the dedicated app](https://alert-disaster-field-2026.web.app) and sign in with the approved Google account, initially `nathanaelcnorman@gmail.com`.
 
-Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical app redirects here. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md).
+Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical `alert-disaster-live` site was retired as of 2026-10-12; use this app's address. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md).
 
 ## Company dashboards — staged release
 
