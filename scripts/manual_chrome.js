@@ -1,11 +1,26 @@
 /* Launch normal private Chrome. Attach automation only after the human finishes Google sign-in. */
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),net=require('node:net'),{spawn,execFileSync}=require('node:child_process');
-function chromePath(){
-  for(const base of [process.env.PROGRAMFILES,process.env['PROGRAMFILES(X86)'],process.env.LOCALAPPDATA].filter(Boolean)){
-    const candidate=path.join(base,'Google','Chrome','Application','chrome.exe');
-    if(fs.existsSync(candidate))return candidate;
+// Resolve Chrome from ADR_CHROME_PATH, then the platform's install locations, then PATH.
+function chromePath(env=process.env,platform=process.platform){
+  const explicit=env.ADR_CHROME_PATH;
+  if(explicit){
+    if(!fs.existsSync(explicit))throw Error('ADR_CHROME_PATH does not exist: '+explicit);
+    return explicit;
   }
-  throw Error('Installed Chrome was not found.');
+  const candidates=[];
+  if(platform==='win32'){
+    for(const base of [env.PROGRAMFILES,env['PROGRAMFILES(X86)'],env.LOCALAPPDATA].filter(Boolean))
+      candidates.push(path.join(base,'Google','Chrome','Application','chrome.exe'));
+  }else if(platform==='darwin'){
+    candidates.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    if(env.HOME)candidates.push(path.join(env.HOME,'Applications','Google Chrome.app','Contents','MacOS','Google Chrome'));
+  }
+  const names=platform==='win32'?['chrome.exe']:['google-chrome','google-chrome-stable','chrome','chromium','chromium-browser'];
+  for(const directory of (env.PATH||'').split(path.delimiter).filter(Boolean))
+    for(const name of names)candidates.push(path.join(directory,name));
+  const found=candidates.find(candidate=>fs.existsSync(candidate));
+  if(found)return found;
+  throw Error('Chrome was not found. Install Google Chrome or set ADR_CHROME_PATH to its executable.');
 }
 function launchArgs(profile,port,base){
   return ['--user-data-dir='+profile,'--incognito','--remote-debugging-address=127.0.0.1',
@@ -66,4 +81,4 @@ async function sameContextPage(browser,original){
   await original.evaluate(()=>{window.open('about:blank','_blank');});
   return opened;
 }
-module.exports={launchArgs,launchManual,removeOwnedProfile,closeManual,sameContextPage};
+module.exports={chromePath,launchArgs,launchManual,removeOwnedProfile,closeManual,sameContextPage};

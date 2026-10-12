@@ -37,3 +37,6 @@ tmp/pdfs/
 
 # Release stamp written by scripts/deploy_backend.py during a deploy
 backend/SOURCE_COMMIT
+
+# Local review evidence (screenshots, traces, logs); attach to a GitHub Release instead of committing
+review-artifacts/

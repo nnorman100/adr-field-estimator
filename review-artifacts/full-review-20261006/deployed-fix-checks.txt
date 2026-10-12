@@ -1,6 +1,0 @@
-Waiting for the temporary synthetic-token permission to propagate...
-PASS: real Firestore newest-first pagination across 105 drafts and 105 signed-job fixtures, and cross-owner cursor denial
-PASS: real concurrent photo conflict and signature retries retain only committed objects; four-document/evidence restoration
-PASS: real active Gemini Live session stops after account disable (19.7s); target recheck is 20 seconds
-PASS: disabled Firebase account rejected on protected REST route
-Synthetic review accounts, records, leases, quotas and evidence removed

@@ -50,6 +50,20 @@ The field app follows [ADR's official website](https://alertdisaster.com/): the 
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
 | `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 | `scripts/deploy_backend.py`, `stamp_hosting.py`, `RELEASES.md` | Source-commit stamping of each release and the release log |
+| `tests/fixtures/` | Small synthetic inputs shared by tests and release verifiers (for example the 16 kHz Live prompt) |
+
+### Release-helper environment
+
+The scripts under `scripts/` run on Linux, macOS and Windows and resolve tools from the environment instead of fixed paths:
+
+| Variable | Used by | Resolution when unset |
+| --- | --- | --- |
+| `ADR_GCLOUD` | `verify_live_release.py`, `record_live_release.py` | `gcloud` on `PATH` (including `gcloud.cmd` on Windows) |
+| `ADR_TEST_PYTHON` | `verify_live_browser.js` | `.venv` in the repository, then `python3` (`python` on Windows) |
+| `ADR_CHROME_PATH` | `manual_chrome.js` (used by `verify_live_browser.js`) | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
+| `ADR_EVIDENCE_DIR` | `record_live_release.py`, `verify_workspace_database.py`, `verify_hosting.js` | `review-artifacts/`, which is gitignored |
+
+Each helper stops with a message naming the variable when its tool is missing. Review evidence (screenshots, traces, logs) is local only: keep it in `review-artifacts/` or `ADR_EVIDENCE_DIR`, and attach archives to a GitHub Release rather than committing them.
 
 ```powershell
 python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt

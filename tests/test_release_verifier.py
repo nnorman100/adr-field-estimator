@@ -219,3 +219,18 @@ sys.exit(4)
 """
     result = subprocess.run([sys.executable, '-O', '-c', code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_gcloud_resolves_from_environment_or_path(monkeypatch, tmp_path):
+    from scripts import verify_common
+    monkeypatch.setenv('ADR_GCLOUD', '/opt/gcloud')
+    assert verify_common.gcloud() == '/opt/gcloud'
+    monkeypatch.delenv('ADR_GCLOUD')
+    monkeypatch.setenv('PATH', str(tmp_path))
+    with pytest.raises(RuntimeError, match='ADR_GCLOUD'):
+        verify_common.gcloud()
+
+
+def test_live_prompt_fixture_ships_with_tests():
+    from scripts import verify_common
+    assert (verify_common.FIXTURES / 'live-prompt.wav').is_file()

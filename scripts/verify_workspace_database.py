@@ -9,6 +9,7 @@ from uuid import uuid4
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from google.cloud import firestore
 from PIL import Image, ImageDraw
+from scripts.verify_common import EVIDENCE
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import InspectionData, AIResult
 from backend.claims import make_documents
@@ -21,7 +22,7 @@ def main():
     run=uuid4().hex; prefix='ADR-TEST-WS-'+run+'-'
     users={role:prefix+role for role in ('admin','owner','other','estimator','estimator2','office')}
     companies=[]; inspections=[]; agreements=[]; owner_invitations={}; paths=set(); checks=[]; completed=False
-    artifact=Path('review-artifacts/workspaces-20261007/real-database-check.json')
+    artifact=EVIDENCE/'workspaces-20261007/real-database-check.json'
     def claims(role):return dict(uid=users[role],email=users[role].lower()+'@example.invalid',email_verified=True)
     def check(label,callback):callback();checks.append(label);print('PASS:',label,flush=True)
     def denied(callback):

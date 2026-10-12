@@ -1,6 +1,0 @@
-PASS: conditional cabinets and equipment do not set form values
-PASS: flood-cut dimensions are not priced square feet
-PASS: measured ceiling removal is extracted
-PASS: mixed completed/proposed work, suspected growth and unpriced toilet task; cabinet possibility remains conditional
-Project: alert-disaster-field-2026 model: gemini-3.8-flash
-Synthetic prompt behavior only. No customer documents sent; no inspections, evidence, signatures or IAM changes.

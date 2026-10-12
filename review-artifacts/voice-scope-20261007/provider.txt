@@ -1,3 +1,0 @@
-PASS: synthetic Vertex extraction produced the explicit room/category/area and job equipment totals, with technician quotes.
-Project: alert-disaster-field-2026 model: gemini-3.8-flash
-No inspections, evidence, signatures or IAM permissions were created or changed.

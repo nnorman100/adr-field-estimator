@@ -12,7 +12,7 @@ async def main(duration):
     client=genai.Client(enterprise=True,project='alert-disaster-field-2026',location='us-central1',http_options=types.HttpOptions(timeout=95000))
     image=Image.new('RGB',(640,480),'white');ImageDraw.Draw(image).text((20,40),'SYNTHETIC LIVE TEST - NO CUSTOMER DATA',fill='black')
     buffer=io.BytesIO();image.save(buffer,format='JPEG');frame=buffer.getvalue()
-    wav=ROOT/'review-artifacts/live-prompt.wav'
+    wav=ROOT/'tests/fixtures/live-prompt.wav'
     with wave.open(str(wav),'rb') as recording:
         assert recording.getframerate()==16000 and recording.getnchannels()==1 and recording.getsampwidth()==2
         pcm=recording.readframes(recording.getnframes())

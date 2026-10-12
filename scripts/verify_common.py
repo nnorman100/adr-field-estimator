@@ -1,15 +1,25 @@
 """Shared constants and synthetic fixtures for the dedicated-project release verifiers; no credentials are logged."""
-import base64, io, subprocess
+import base64, io, os, shutil, subprocess
 from pathlib import Path
 import requests
 from PIL import Image, ImageDraw
 
 PROJECT='alert-disaster-field-2026'
-SDK=Path.home()/'AppData/Local/Google/Cloud SDK/google-cloud-sdk/bin/gcloud.cmd'
+ROOT=Path(__file__).resolve().parents[1]
+FIXTURES=ROOT/'tests/fixtures'
+# Local evidence stays out of git; point ADR_EVIDENCE_DIR elsewhere to keep it off the checkout.
+EVIDENCE=Path(os.environ.get('ADR_EVIDENCE_DIR') or ROOT/'review-artifacts')
 URL=f'https://{PROJECT}.web.app'
 
+def gcloud():
+    """Resolve the gcloud CLI from ADR_GCLOUD or PATH (shutil.which honours .cmd on Windows)."""
+    found=os.environ.get('ADR_GCLOUD') or shutil.which('gcloud')
+    if not found:
+        raise RuntimeError('gcloud was not found: install the Google Cloud CLI or set ADR_GCLOUD to its full path.')
+    return found
+
 def access_token():
-    return subprocess.check_output([str(SDK),'auth','print-access-token',f'--project={PROJECT}',f'--billing-project={PROJECT}'],text=True,stderr=subprocess.DEVNULL).strip()
+    return subprocess.check_output([gcloud(),'auth','print-access-token',f'--project={PROJECT}',f'--billing-project={PROJECT}'],text=True,stderr=subprocess.DEVNULL).strip()
 
 def admin(method,url,body=None):
     response=requests.request(method,url,json=body,headers={'Authorization':f'Bearer {access_token()}','x-goog-user-project':PROJECT},timeout=90)

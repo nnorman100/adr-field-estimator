@@ -1,7 +1,0 @@
-
-> test
-> node tests/test_frontend.js && node tests/test_lifecycle.js
-
-PASS: currency, empty state, portrait aspect, PCM playback, continuous 16 kHz resampling and HTML mirror
-PASS: selective scope application preserves manual values and sheet defaults; resets confirmation and requires complete new-room measurements
-PASS: idempotent teardown stops tracks, timers, socket, audio processing and queued playback
