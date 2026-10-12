@@ -1,0 +1,3 @@
+$ REVOCATION_CACHE_SECONDS=61 uvicorn main:app
+    if not 0<=REVOCATION_CACHE_SECONDS<=60: raise RuntimeError('REVOCATION_CACHE_SECONDS must be between 0 and 60.')
+RuntimeError: REVOCATION_CACHE_SECONDS must be between 0 and 60.

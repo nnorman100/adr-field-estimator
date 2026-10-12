@@ -1,0 +1,21 @@
+== S1 autosave / reads reuse a passed revocation lookup ==
+POST /api/inspections (first request with this token)          -> 200                          revocation lookups +1  (4333 ms)
+PUT  /api/inspections/{id} autosave #1                         -> 200                          revocation lookups +0  (83 ms)
+PUT  /api/inspections/{id} autosave #2                         -> 200                          revocation lookups +0  (52 ms)
+PUT  /api/inspections/{id} autosave #3                         -> 200                          revocation lookups +0  (48 ms)
+GET  /api/inspections/{id}                                     -> 200                          revocation lookups +0  (12 ms)
+GET  /api/inspections (list)                                   -> 200                          revocation lookups +0  (150 ms)
+== S2 signing and evidence downloads always look up live ==
+POST /api/authorize #1                                         -> 409                          revocation lookups +1  (53 ms)
+POST /api/authorize #2                                         -> 409                          revocation lookups +1  (39 ms)
+GET  /api/authorizations/missing/evidence/signature #1         -> 404                          revocation lookups +1  (13 ms)
+GET  /api/authorizations/missing/evidence/signature #2         -> 404                          revocation lookups +1  (15 ms)
+== S3 Live walkthrough start always looks up live ==
+WS   /api/live authenticate (cached token, active user)        -> error TimeoutError           revocation lookups +1  (12062 ms)
+== S4 disabled user: live routes refuse at once; cached routes within the bound ==
+   [admin] user disabled in Auth emulator
+PUT  /api/inspections/{id} autosave right after disabling      -> 200                          revocation lookups +0  (327 ms)
+WS   /api/live authenticate after disabling                    -> message error:Your sign-in expired. Please sign in aga revocation lookups +1  (52 ms)
+POST /api/authorize after disabling                            -> 401                          revocation lookups +1  (27 ms)
+GET  evidence after disabling                                  -> 401                          revocation lookups +1  (21 ms)
+PUT  autosave after a live route refused the token             -> 401                          revocation lookups +1  (15 ms)

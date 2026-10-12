@@ -1,0 +1,3 @@
+GET  /api/inspections #1 with REVOCATION_CACHE_SECONDS=0       -> 200                          revocation lookups +1  (686 ms)
+GET  /api/inspections #2 with REVOCATION_CACHE_SECONDS=0       -> 200                          revocation lookups +1  (48 ms)
+GET  /api/inspections #3 with REVOCATION_CACHE_SECONDS=0       -> 200                          revocation lookups +1  (41 ms)

@@ -1,0 +1,6 @@
+[default 45 s TTL] GET  /api/inspections (first request, lookup recorded)         -> 200                          revocation lookups +1  (111 ms)
+[default 45 s TTL]    [admin] refresh tokens revoked (validSince=now) at t+0
+[default 45 s TTL] GET  /api/inspections right after revocation (cached)          -> 200                          revocation lookups +0  (10 ms)
+[default 45 s TTL] GET  /api/inspections at t+40s (still inside 45 s TTL)         -> 200                          revocation lookups +0  (27 ms)
+[default 45 s TTL] GET  /api/inspections at t+47s (TTL lapsed)                    -> 401                          revocation lookups +1  (15 ms)
+[default 45 s TTL] GET  /api/inspections again                                    -> 401                          revocation lookups +1  (8 ms)

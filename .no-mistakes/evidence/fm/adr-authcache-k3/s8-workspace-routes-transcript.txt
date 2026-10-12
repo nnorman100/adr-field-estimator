@@ -1,0 +1,6 @@
+[WORKSPACES_ENABLED=true] GET  /api/access #1                                            -> 200                          revocation lookups +1  (492 ms)
+[WORKSPACES_ENABLED=true] GET  /api/access #2                                            -> 200                          revocation lookups +0  (44 ms)
+[WORKSPACES_ENABLED=true] GET  /api/admin/companies #1                                   -> 403                          revocation lookups +1  (54 ms)
+[WORKSPACES_ENABLED=true] GET  /api/admin/companies #2                                   -> 403                          revocation lookups +1  (54 ms)
+[WORKSPACES_ENABLED=true] POST /api/invitations/x/accept #1                              -> 404                          revocation lookups +1  (158 ms)
+[WORKSPACES_ENABLED=true] POST /api/invitations/x/accept #2                              -> 404                          revocation lookups +1  (84 ms)
