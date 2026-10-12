@@ -620,9 +620,9 @@ async function connectLive(){
   $('liveStatus').textContent='Connecting to live guidance…';$('liveStatus').className='status';
   const url=new URL(state.session.live_url);
   if(url.protocol!=='wss:'||url.hostname!=='alert-disaster-field-estimator-545776254070.us-west2.run.app')throw Error('Unexpected Live endpoint.');
-  const draft=state.draft,uid=state.user.uid,capture=draft.data.capture_metadata;
+  const draft=state.draft,user=state.user,uid=user.uid,capture=draft.data.capture_metadata;
   // A cached token can be seconds from expiry; the relay then holds a fresh one for the full hour.
-  const token=await state.user.getIdToken(true);
+  const token=await user.getIdToken(true).catch(()=>user.getIdToken());
   if(state.stopping||!state.media||state.draft!==draft||state.user?.uid!==uid)return;
   const socket=new WebSocket(url);state.socket=socket;state.draining=false;
   socket.onopen=()=>socket.send(JSON.stringify({type:'authenticate',token,workspace_protocol_version:1,inspection_id:draft.inspection_id,
