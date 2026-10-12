@@ -1,0 +1,20 @@
+## Run under xvfb-run (virtual X display; host has no DISPLAY)
+## S-chrome-1: Chrome found on PATH (Linux, no ADR_CHROME_PATH) and launched with remote debugging
+platform= linux ADR_CHROME_PATH= (unset) PATH= /tmp/adr-k3/chromebin:/home/nnorm/.hermes/node/bin:/usr/bin:/bin
+chromePath() -> /tmp/adr-k3/chromebin/chromium
+DevTools Browser: Chrome/153.0.8010.12 | page targets: http://127.0.0.1:39841/
+profile dir exists before close: true true
+profile dir removed after close: true
+
+## S-chrome-2: ADR_CHROME_PATH override used even when nothing is on PATH
+platform= linux ADR_CHROME_PATH= /home/nnorm/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome PATH= /home/nnorm/.hermes/node/bin:/usr/bin:/bin
+chromePath() -> /home/nnorm/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
+DevTools Browser: Chrome/153.0.8010.12 | page targets: http://127.0.0.1:43027/
+profile dir exists before close: true true
+profile dir removed after close: true
+
+## S-chrome-3 (adversarial): ADR_CHROME_PATH points at a missing file
+ERROR: ADR_CHROME_PATH does not exist: /nonexistent/chrome
+
+## S-chrome-4 (adversarial): no Chrome anywhere on Linux
+ERROR: Chrome was not found. Install Google Chrome or set ADR_CHROME_PATH to its executable.

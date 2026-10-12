@@ -1,0 +1,21 @@
+$ uname -s
+Linux
+
+## S-gcloud-1: gcloud on PATH (no ADR_GCLOUD) -> access_token() via verify_common
+gcloud()= /tmp/adr-k3/bin/gcloud
+token= fake-token-123
+
+## S-gcloud-2: ADR_GCLOUD override wins over PATH
+token= fake-token-123
+
+## S-gcloud-3 (adversarial): no gcloud anywhere -> actionable error
+RuntimeError: gcloud was not found: install the Google Cloud CLI or set ADR_GCLOUD to its full path.
+
+## S-record: record_live_release.py on Linux resolves gcloud from PATH; outbound Hosting call blocked by dead local proxy
+requests.exceptions.ProxyError: HTTPSConnectionPool(host='firebasehosting.googleapis.com', port=443): Max retries exceeded with url: /v1beta1/sites/alert-disaster-field-2026/channels/live/releases?pageSize=1 (Caused by ProxyError('Unable to connect to proxy', NewConnectionError("HTTPSConnection(host='127.0.0.1', port=9): Failed to establish a new connection: [Errno 111] Connection refused")))
+
+--- fake gcloud invocations recorded:
+/tmp/adr-k3/bin/gcloud auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+/tmp/adr-k3/alt/my-gcloud auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+/tmp/adr-k3/bin/gcloud run services describe alert-disaster-field-estimator --project=alert-disaster-field-2026 --region=us-west2 --format=json(status.traffic,status.latestReadyRevisionName)
+/tmp/adr-k3/bin/gcloud auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026

@@ -1,0 +1,18 @@
+## S-python: verify_live_browser.pythonCommand() on Linux, each result actually spawned
+default (no env, repo has no .venv)          -> python3 | 3.14.4
+repo-local .venv present                     -> /tmp/adr-k3/fakeroot/.venv/bin/python | 3.13.13
+ADR_TEST_PYTHON override                     -> /tmp/adr-k3/venv/bin/python | 3.13.13
+
+## S-fixture: live-prompt.wav now ships under tests/fixtures and matches the Live audio contract (16 kHz mono PCM16)
+path= /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RV43TAMATGXDEBH8RN0BP6/tests/fixtures/live-prompt.wav rate= 16000 channels= 1 sampwidth= 2 seconds= 7.2
+default EVIDENCE= /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RV43TAMATGXDEBH8RN0BP6/review-artifacts
+ADR_EVIDENCE_DIR EVIDENCE= /tmp/adr-k3/evid
+
+## S-gitignore: generated evidence under review-artifacts/ is ignored by git; nothing under it is tracked
+.gitignore:42:review-artifacts/	review-artifacts/redesigned-live-mobile.png
+.gitignore:42:review-artifacts/	review-artifacts/workspaces-20261007/real-database-check.json
+tracked files under review-artifacts/: 0
+tracked public/ar_preview.jpg: 0
+references to ar_preview in tracked files: 0
+tracked files containing the owner email outside firebase.json/docs: README.md backend/main.py docs/firebase-isolation.md scripts/migrate_workspaces.py tests/test_workspaces.py 
+repo tracked size of public/: 570202	total

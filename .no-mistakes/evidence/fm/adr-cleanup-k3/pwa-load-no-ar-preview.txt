@@ -1,0 +1,19 @@
+page title: Alert Disaster Restoration · Field Estimator
+requests touching ar_preview: 0
+HTTP failures during load: none
+service worker precache entries: 20 | includes ar_preview: false | includes /brand/adr-logo.jpg: true
+GET /ar_preview.jpg content-type (SPA rewrite to index.html, no 763 KB JPEG served): text/html;charset=utf-8
+--- all responses:
+200 /
+200 /app.css
+200 /brand/adr-logo.jpg
+200 /vendor/firebase/13.0.0/firebase-app.js
+200 /workspaces.js
+200 /core.js
+200 /vendor/firebase/13.0.0/firebase-auth.js
+200 /app.js
+200 /fonts/lato-700-latin.woff2
+200 /fonts/lato-900-latin.woff2
+200 /fonts/lato-400-latin.woff2
+200 /icon.svg
+200 /__/firebase/init.json
