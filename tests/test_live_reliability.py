@@ -176,3 +176,53 @@ def test_daily_live_start_cap_rejects_before_vertex(monkeypatch):
             assert socket.receive_json()=={'type':'error','message':'Too many requests. Please wait and retry.','status':429}
             with pytest.raises(WebSocketDisconnect):socket.receive_json()
     assert opened==[True] and '_live_sessions/owner' not in store.db.records
+
+
+@pytest.mark.parametrize('protocol',[1,2])
+def test_resume_flag_without_checkpoint_is_charged_as_a_new_start(monkeypatch,protocol):
+    import backend.inspection_store as module
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    finishing_relay(monkeypatch,store);monkeypatch.setitem(module.DAILY_LIMITS,'live',1)
+    opened=[];relay=bm.genai.Client
+    monkeypatch.setattr(bm.genai,'Client',lambda **kw:opened.append(True) or relay(**kw))
+    auth=dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=protocol,resume=True)
+    if protocol==2:auth['capture_id']=CAP
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth);assert socket.receive_json()['type']=='ready'
+            socket.send_json({'type':'end'})
+            if protocol==2:assert socket.receive_json()['type']=='finished'
+            # The server closes only after releasing the lease, so the next 429 is the daily cap.
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        assert '_live_sessions/owner' not in store.db.records
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth)
+            error=socket.receive_json();assert error['message']=='Too many requests. Please wait and retry.'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    assert opened==[True] and '_live_sessions/owner' not in store.db.records
+
+
+def test_genuine_resume_with_saved_checkpoint_is_not_charged_again(monkeypatch):
+    import backend.inspection_store as module
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    finishing_relay(monkeypatch,store);monkeypatch.setitem(module.DAILY_LIMITS,'live',1)
+    fingerprint=scope_fingerprint(store.get_inspection('owner',ID)['data'])
+    def auth(resume):return dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP,resume=resume)
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth(False));assert socket.receive_json()['recovery']=='new'
+            socket.send_json({'type':'end'});assert socket.receive_json()['type']=='finished'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        # The provider handed out a resumption handle before the connection dropped.
+        lease=store.live_lease('owner')
+        store.live_resume('owner',CAP,ID,fingerprint,lease,'open')
+        store.live_resume('owner',CAP,ID,fingerprint,lease,'save','synthetic-private',True)
+        store.live_lease('owner',lease,True)
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth(True));assert socket.receive_json()['recovery']=='resumed'
+            socket.send_json({'type':'end'});assert socket.receive_json()['type']=='finished'
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth(False))
+            error=socket.receive_json();assert error['type']=='error' and error['status']==429
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()

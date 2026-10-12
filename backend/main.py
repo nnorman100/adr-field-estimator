@@ -403,13 +403,14 @@ async def live_walkthrough(socket:WebSocket):
             except HTTPException as error:
                 if protocol!=2 or not auth.get('resume') or error.status_code!=429 or attempt==30: raise
                 await asyncio.sleep(.1)
-        if not auth.get('resume'): await stored(store.quota,uid,'live')
         handle=None
         if capture:
             handle=await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'open')
             if not auth.get('resume',False):
                 handle=None
                 await stored(store.live_resume,uid,capture,inspection_id,fingerprint,lease,'save',None,False)
+        # Only a saved checkpoint for this user, capture and scope makes a start free.
+        if not handle: await stored(store.quota,uid,'live')
         client=genai.Client(vertexai=True,project=PROJECT_ID,location=LIVE_LOCATION,http_options=types.HttpOptions(timeout=95000))
         async with AsyncExitStack() as stack:
             config=live_config(live_prompt(record['data'],identity),LIVE_VOICE,handle)
