@@ -207,7 +207,7 @@ async function doSync(){
     await loadPhotoUrls('/api/inspections/'+id+'/photos/');
   }finally{state.syncing=false;renderSaveStatus();}
 }
-function syncDraft(){syncChain=syncChain.catch(()=>{}).then(doSync);return syncChain;}
+function syncDraft(){clearTimeout(saveTimer);syncChain=syncChain.catch(()=>{}).then(doSync);return syncChain;}
 let drainingQueue=false;
 async function drainQueue(){
   if(drainingQueue||state.queuePaused||!navigator.onLine||!state.session||(window.WorkspaceUI?.enabled()&&!WorkspaceUI.can('scope')))return;
@@ -414,8 +414,8 @@ async function openNew(data=emptyData(),photos=[]){
   state.draft={inspection_id:'ADR-INS-'+newId(),data:structuredClone(data),photos:structuredClone(photos)};
   confirmedAuthorization=null;$('retrySavedEvidence').hidden=true;$('signedEvidenceStatus').textContent='';
   state.record=null;state.ack=null;state.signed=null;state.documents=null;state.conflict=false;state.ocr.clear();state.localVersion++;
-  $('conflictActions').hidden=true;$('savedSignature').hidden=true;$('signingArea').hidden=false;invalidate();fillForm();await persist();await syncDraft();
-  showTask('property',false);await window.WorkspaceUI?.editor();
+  $('conflictActions').hidden=true;$('savedSignature').hidden=true;$('signingArea').hidden=false;invalidate();fillForm();showTask('property',false);await persist();await syncDraft();
+  await window.WorkspaceUI?.editor();
 }
 async function restoreDraft(id){
   const epoch=authEpoch;await stopWalk();await syncChain.catch(()=>{});await persist();
@@ -671,7 +671,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=mobile-repairs-20261011-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=mobile-repairs-20261011-2');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -799,7 +799,7 @@ async function initialize(){
   window.addEventListener('pagehide',()=>{persist();stopWalk();});
   window.addEventListener('beforeunload',e=>{if(state.draft&&!state.signed&&(state.conflict||stable(state.draft.data)!==state.ack||state.draft.photos.some(p=>!p.uploaded))){e.preventDefault();e.returnValue='';}});
   click('applyUpdate',async()=>{await persist();await syncDraft().catch(()=>{});await stopWalk();waitingWorker?.postMessage({type:'SKIP_WAITING'});});
-  if('serviceWorker'in navigator)try{const registration=await navigator.serviceWorker.register('/sw.js');const prompt=worker=>{waitingWorker=worker;$('updateBanner').hidden=false;};if(registration.waiting)prompt(registration.waiting);registration.addEventListener('updatefound',()=>{const worker=registration.installing;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&navigator.serviceWorker.controller)prompt(worker);});});let refreshing=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(waitingWorker&&!refreshing){refreshing=true;location.reload();}});const checkUpdate=()=>{if(!document.hidden&&navigator.onLine)registration.update().catch(()=>{});};document.addEventListener('visibilitychange',checkUpdate);window.addEventListener('focus',checkUpdate);setInterval(checkUpdate,300000);}catch{say('Offline launch is unavailable in this browser. Online private drafts remain available.','error');}
+  if('serviceWorker'in navigator)try{const registration=await navigator.serviceWorker.register('/sw.js');const prompt=worker=>{waitingWorker=worker;$('updateBanner').hidden=false;};if(registration.waiting)prompt(registration.waiting);registration.addEventListener('updatefound',()=>{const worker=registration.installing,controller=navigator.serviceWorker.controller;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&controller&&controller!==worker)prompt(worker);});});let refreshing=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(waitingWorker&&!refreshing){refreshing=true;location.reload();}});const checkUpdate=()=>{if(!document.hidden&&navigator.onLine)registration.update().catch(()=>{});};document.addEventListener('visibilitychange',checkUpdate);window.addEventListener('focus',checkUpdate);setInterval(checkUpdate,300000);}catch{say('Offline launch is unavailable in this browser. Online private drafts remain available.','error');}
   $('yearBuilt').max=new Date().getFullYear();
   const config=await(await fetch('/__/firebase/init.json',{cache:'no-store'})).json();
   if(config.projectId!=='alert-disaster-field-2026')throw Error('Incorrect Firebase project.');

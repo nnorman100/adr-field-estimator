@@ -1,18 +1,58 @@
 /* Normal Google staff sign-in and synthetic release verification. No auth state is exported. */
-const {chromium,expect}=require('@playwright/test');
-const {launchManual,closeManual,sameContextPage}=require('./manual_chrome');
-const fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process'),readline=require('node:readline');
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process'),readline=require('node:readline');
+const {parseArgs}=require('node:util');
 const ROOT=path.resolve(__dirname,'..'),BASE='https://alert-disaster-field-2026.web.app';
 const PRODUCTION='https://alert-disaster-field-estimator-545776254070.us-west2.run.app';
-const STAGED=process.argv.includes('--workspaces')?'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app':'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app';
+const SERVICE_HOST='alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app';
 const PYTHON=process.env.ADR_TEST_PYTHON||'C:/Users/nnorm/AppData/Roaming/uv/python/cpython-3.11.15-windows-x86_64-none/python.exe';
-const mode=process.argv.includes('--production')?'production':'staged';
-const HOLD=process.argv.includes('--hold'),HEADLESS=process.argv.includes('--headless');
-let service=mode==='production'?PRODUCTION:STAGED,local=mode==='staged';
-const inspections=new Set(),agreements=new Set();
-const logDir=path.join(ROOT,'review-artifacts',process.argv.includes('--workspaces')?'workspaces-20261007':'live-release-20261007');
-fs.mkdirSync(logDir,{recursive:true});
+function backendUrl(tag){
+  // This service leaves 16 characters for the tag in its 63-character DNS label.
+  if(typeof tag!=='string'||tag.length>16||!/^[a-z](?:[a-z0-9-]*[a-z0-9])?$/.test(tag)||/[^a-z0-9-]/.test(tag))throw Error('Backend tag must be 1-16 lowercase letters/digits/hyphens, starting with a letter and ending with a letter or digit.');
+  return 'https://'+tag+'---'+SERVICE_HOST;
+}
+function parseOptions(args){
+  const {values,tokens}=parseArgs({args,strict:true,allowPositionals:false,tokens:true,options:{
+    'backend-tag':{type:'string'},production:{type:'boolean'},workspaces:{type:'boolean'},
+    'artifact-dir':{type:'string'},'auth-smoke':{type:'boolean'},headless:{type:'boolean'},
+    hold:{type:'boolean'},'slow-init':{type:'boolean'}
+  }});
+  const names=tokens.map(token=>token.name);
+  if(new Set(names).size!==names.length)throw Error('Options must not be repeated.');
+  const selectors=Number(values.production===true)+Number(values.workspaces===true)+Number(values['backend-tag']!==undefined);
+  if(selectors>1)throw Error('Choose only one of --backend-tag, --workspaces (alias for tag workspaces), or --production.');
+  if(!selectors&&!values['auth-smoke'])throw Error('Select --backend-tag TAG for staged verification, --workspaces (tag workspaces), or --production.');
+  const tag=values.workspaces?'workspaces':values['backend-tag'];
+  const service=tag!==undefined?backendUrl(tag):PRODUCTION;
+  const artifactDir=values['artifact-dir'];
+  if(artifactDir!==undefined&&(!artifactDir||!path.isAbsolute(artifactDir)))throw Error('--artifact-dir must be an absolute directory outside the repository.');
+  return {service,mode:values.production?'production':'staged',local:!values.production,
+    artifactDir,smoke:!!values['auth-smoke'],headless:!!values.headless,hold:!!values.hold,slowInit:!!values['slow-init']};
+}
+function createArtifactDirectory(parent=os.tmpdir()){
+  if(!path.isAbsolute(parent))throw Error('Artifact directory must be absolute.');
+  let existing=path.resolve(parent);
+  const missing=[];
+  while(!fs.existsSync(existing)){
+    const ancestor=path.dirname(existing);
+    if(ancestor===existing)throw Error('Artifact directory has no accessible filesystem root.');
+    missing.unshift(path.basename(existing));existing=ancestor;
+  }
+  const canonical=path.join(fs.realpathSync(existing),...missing);
+  const relative=path.relative(fs.realpathSync(ROOT),canonical);
+  if(relative===''||(!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep)))throw Error('Artifact directory must be outside the repository, including symlink targets.');
+  fs.mkdirSync(canonical,{recursive:true});
+  return fs.mkdtempSync(path.join(canonical,'adr-live-release-'));
+}
 function safe(text){return String(text).replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,'[token omitted]');}
+async function main(args=process.argv.slice(2)){
+const options=parseOptions(args);
+const logDir=createArtifactDirectory(options.artifactDir);
+const {chromium,expect}=require('@playwright/test');
+const {launchManual,closeManual,sameContextPage}=require('./manual_chrome');
+const {mode,smoke,hold:HOLD,headless:HEADLESS}=options;
+let {service,local}=options;
+const inspections=new Set(),agreements=new Set();
+console.log('TARGET: '+service+'; UI: '+(local?'local':'production')+'; ARTIFACTS: '+logDir);
 function python(args,input,label){
   return new Promise((resolve,reject)=>{
     const environment={...process.env,PYTHONPATH:path.join(ROOT,'.voice-test-deps'),PYTHONUNBUFFERED:'1'};
@@ -27,10 +67,8 @@ function python(args,input,label){
     child.stdin.end(input+'\n');
   });
 }
-(async()=>{
   let manual=null,browser,context,page,signedPage=null;
   let userUid=null,cachedToken=null;
-  const smoke=process.argv.includes('--auth-smoke');
   try{
   if(!smoke){
     if(HEADLESS)throw Error('Google sign-in requires normal private Chrome; headless is only for --auth-smoke.');
@@ -67,7 +105,7 @@ function python(args,input,label){
   try{
     await page.route(BASE+'/**',async route=>{
       const request=route.request(),url=new URL(request.url());
-      if(smoke&&process.argv.includes('--slow-init')&&url.pathname==='/__/firebase/init.json')await new Promise(resolve=>setTimeout(resolve,1500));
+      if(smoke&&options.slowInit&&url.pathname==='/__/firebase/init.json')await new Promise(resolve=>setTimeout(resolve,1500));
       if(url.pathname.startsWith('/api/')){
         const authorization=request.headers().authorization;
         if(authorization?.startsWith('Bearer '))cachedToken=authorization.slice(7);
@@ -77,7 +115,8 @@ function python(args,input,label){
         if(request.method()==='POST'&&url.pathname==='/api/authorize'){
           const value=request.postDataJSON();agreements.add(value.auth_id);
         }
-        const response=await route.fetch({url:service+url.pathname+url.search,timeout:115000});
+        const response=await route.fetch({url:service+url.pathname+url.search,timeout:115000,maxRedirects:0});
+        if(response.status()>=300&&response.status()<400)return route.abort('blockedbyclient');
         if(url.pathname==='/api/session'&&response.ok())userUid=(await response.json()).uid;
         return route.fulfill({response});
       }
@@ -95,7 +134,7 @@ function python(args,input,label){
     await page.goto(BASE,{waitUntil:'domcontentloaded'});
     if(smoke)await expect(page.locator('#signInButton')).toBeVisible({timeout:30000});
     await page.waitForFunction(()=>window.firebase?.apps?.length>0&&window.firebase.auth()._delegate.persistenceManager?.persistence.type==='NONE',{},{timeout:30000});
-    if(process.argv.includes('--auth-smoke')){console.log('PASS: actual Firebase SDK initializes with memory-only authentication and the dedicated sign-in UI. No jobs or IAM changes.');return;}
+    if(smoke){console.log('PASS: actual Firebase SDK initializes with memory-only authentication and the dedicated sign-in UI. No jobs or IAM changes.');return;}
     console.log('VERIFYING_MANUAL_SESSION: Google sign-in was completed before automation attached.');
     await page.waitForFunction(()=>window.firebase?.apps?.length>0&&window.firebase.auth().currentUser&&document.getElementById('address').disabled===false,{},{timeout:30000});
     userUid=await page.evaluate(()=>firebase.auth().currentUser.uid);
@@ -195,4 +234,6 @@ function python(args,input,label){
     await closeManual(browser,manual);
     process.stdin.pause();
   }
-})().catch(error=>{console.error('FAIL: '+safe(error.message));process.exitCode=1;});
+}
+module.exports={backendUrl,parseOptions,createArtifactDirectory};
+if(require.main===module)main().catch(error=>{console.error('FAIL: '+safe(error.message));process.exitCode=1;});

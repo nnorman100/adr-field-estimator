@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -20,6 +21,10 @@ import scripts.verify_repairs as repairs
 from scripts.verify_repairs import admin, image, PROJECT, SDK, URL
 
 PRODUCTION = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
+SERVICE_HOST = 'alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
+# The service label plus '---' leaves 16 characters in a 63-character DNS label.
+TAG_PATTERN = r'[a-z](?:[a-z0-9-]{0,14}[a-z0-9])?'
+# Legacy explicit URLs remain accepted, but neither is a default target.
 STAGED = 'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 WORKSPACE_STAGE = 'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 SERVICE = None
@@ -39,9 +44,18 @@ def access_token():
 repairs.access_token = access_token
 
 
+def backend_url(tag):
+    if not re.fullmatch(TAG_PATTERN, tag):
+        raise argparse.ArgumentTypeError(
+            'Backend tag must be 1-16 lowercase letters/digits/hyphens, '
+            'starting with a letter and ending with a letter or digit.')
+    return 'https://' + tag + '---' + SERVICE_HOST
+
+
 def service_url(value):
-    if value not in (PRODUCTION, STAGED, WORKSPACE_STAGE):
-        raise argparse.ArgumentTypeError('Use only the dedicated production or staged backend.')
+    if value != PRODUCTION and not re.fullmatch(
+            r'https://(?:' + TAG_PATTERN + r'---)?' + re.escape(SERVICE_HOST), value):
+        raise argparse.ArgumentTypeError('Use only the exact dedicated production URL or a safe tagged backend URL, without URL components.')
     return value
 
 
@@ -50,7 +64,8 @@ def check(method, path, token, body=None, expected=200):
     for attempt in range(2 if read_only_suggestions else 1):
         result = requests.request(
             method, SERVICE + path, json=body,
-            headers={'Authorization': 'Bearer ' + token, 'X-ADR-Workspace-Protocol':'1'} if token else {}, timeout=115)
+            headers={'Authorization': 'Bearer ' + token, 'X-ADR-Workspace-Protocol':'1'} if token else {}, timeout=115,
+            allow_redirects=False)
         if result.status_code == 504 and read_only_suggestions and attempt == 0:
             print('RETRY: read-only scope extraction reached the server deadline; retrying once after 2 seconds.', flush=True)
             time.sleep(2)
@@ -114,11 +129,20 @@ async def finished(socket):
     raise RuntimeError('Live Finish did not acknowledge cleanup')
 
 
-async def live(token, iid, uid):
+def live_connection(target):
     from websockets.asyncio.client import connect
+
+    class NoRedirectConnect(connect):
+        def process_redirect(self, exc):
+            return exc
+
+    return NoRedirectConnect(target, origin=URL)
+
+
+async def live(token, iid, uid):
     capture = uuid4().hex
     target = SERVICE.replace('https:', 'wss:') + '/api/live'
-    async with connect(target, origin=URL) as socket:
+    async with live_connection(target) as socket:
         await socket.send(json.dumps(dict(
             type='authenticate', token=token, inspection_id=iid,
             protocol_version=2, capture_id=capture)))
@@ -153,7 +177,7 @@ async def live(token, iid, uid):
         assert checkpoint.get('handle', {}).get('stringValue'), 'No usable checkpoint was saved'
         await socket.send(json.dumps({'type': 'end', 'preserve_resume': True}))
         await finished(socket)
-    async with connect(target, origin=URL) as socket:
+    async with live_connection(target) as socket:
         await socket.send(json.dumps(dict(
             type='authenticate', token=token, inspection_id=iid,
             protocol_version=2, capture_id=capture, resume=True)))
@@ -312,7 +336,7 @@ def main():
         for name in ('signature', 'photo-0'):
             evidence = requests.get(
                 SERVICE + f'/api/authorizations/{aid}/evidence/{name}',
-                headers={'Authorization': 'Bearer ' + token}, timeout=30)
+                headers={'Authorization': 'Bearer ' + token}, timeout=30, allow_redirects=False)
             assert evidence.status_code == 200 and evidence.headers.get('Cache-Control') == 'private, no-store'
         check('PUT', f'/api/inspections/{iid}', token,
               {'expected_revision': record['revision'], 'data': confirmed}, expected=409)
@@ -356,14 +380,21 @@ def cleanup_from_stdin():
 
 def cli():
     global SERVICE
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('service', type=service_url, help='Dedicated backend URL; there is no default.')
-    parser.add_argument('--public', action='store_true')
-    parser.add_argument('--cleanup-stdin', action='store_true')
-    parser.add_argument('--token-stdin', action='store_true',
-                        help='Read a Firebase ID token from a private stdin pipe.')
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument('service', nargs='?', type=service_url, help='Explicit dedicated backend URL (legacy syntax).')
+    parser.add_argument('--backend-tag', type=backend_url, action='append',
+                        help='Explicit Cloud Run candidate tag on the dedicated service.')
+    parser.add_argument('--production', action='store_true', help='Select the dedicated production backend.')
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--public', action='store_true')
+    modes.add_argument('--cleanup-stdin', action='store_true')
+    modes.add_argument('--token-stdin', action='store_true',
+                       help='Read a Firebase ID token from a private stdin pipe.')
     args = parser.parse_args()
-    SERVICE = args.service
+    targets = ([args.service] if args.service else []) + (args.backend_tag or []) + ([PRODUCTION] if args.production else [])
+    if len(targets) != 1:
+        parser.error('Select exactly one explicit service URL, --backend-tag TAG, or --production.')
+    SERVICE = targets[0]
     if args.public:
         public()
     elif args.cleanup_stdin:

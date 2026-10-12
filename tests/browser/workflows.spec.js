@@ -4,7 +4,7 @@ test.beforeEach(async({page})=>{
   await page.goto('/');await expect(page.locator('#address')).toBeEnabled({timeout:15000});await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 });
 async function task(page,name){await page.locator('.task-nav [data-task="'+name+'"]').click();}
-async function menu(page,id){const m=page.locator('#'+id);if(!await m.evaluate(el=>el.open))await m.locator('summary').click();}
+async function menu(page,id){await page.waitForFunction(()=>state.session&&!state.workspaceInitializing);const m=page.locator('#'+id);if(!await m.evaluate(el=>el.open))await m.locator('summary').click();}
 async function scope(page){await task(page,'property');await page.locator('#address').fill('Synthetic browser property');await page.locator('#yearBuilt').fill('1960');await page.locator('[data-room-key="finished_sf"]').fill('10');await page.locator('#scopeConfirmed').check();await page.locator('#saveDraft').click();await expect(page.locator('#saveStatus')).toContainText('Saved privately');}
 async function audit(page){await scope(page);await page.locator('#finishAudit').click();await expect(page.locator('#documents')).toBeVisible();}
 async function draw(page){const canvas=page.locator('#signCanvas');await canvas.scrollIntoViewIfNeeded();await canvas.click({position:{x:10,y:10}});const rect=await canvas.boundingBox();await page.mouse.move(rect.x+30,rect.y+40);await page.mouse.down();await page.mouse.move(rect.x+110,rect.y+100,{steps:8});await page.mouse.move(rect.x+220,rect.y+30,{steps:8});await page.mouse.up();}

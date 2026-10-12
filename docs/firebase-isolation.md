@@ -94,8 +94,15 @@ The current release helper does not mint synthetic user tokens or change IAM. St
 the repository root:
 
 ```powershell
-node scripts/verify_live_browser.js --hold
+node scripts/verify_live_browser.js --backend-tag harden-fixes --hold
 ```
+
+Select the exact candidate tag after checking its revision in the dedicated project; `harden-fixes`
+was production revision `00013-hup` at the October 11 readiness review, not a permanent staging
+alias. There is no implicit historical staged target. `--workspaces` explicitly selects the older
+workspace staging tag and is not appropriate for a repairs-only release. `--production` verifies
+deployed assets rather than the local candidate. Output defaults to a unique temporary directory;
+`--artifact-dir` accepts an absolute external parent and creates a new run directory under it.
 
 The helper opens normal private Chrome without automation attached. Complete Google sign-in
 with the approved staff account; do not enter a customer job. Send `signed-in` to the helper
