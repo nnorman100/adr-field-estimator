@@ -154,6 +154,31 @@ def test_auth_ownership_limits_and_invalid_inputs(context):
     response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1})
     assert response.status_code==429 and response.headers['Retry-After']
 
+def test_production_origins_exclude_local_development():
+    # The browser harness appends its own origins at runtime.
+    assert bm.ORIGINS==['https://alert-disaster-field-2026.web.app','https://alert-disaster-field-2026.firebaseapp.com']
+    preflight=TestClient(bm.app).options('/api/session',headers={'Origin':'http://localhost:8765','Access-Control-Request-Method':'GET'})
+    assert 'access-control-allow-origin' not in preflight.headers
+
+def test_health_discloses_configuration_only_to_staff(context):
+    client,_=context
+    assert client.get('/api/health').json()=={'status':'healthy','schema_version':3}
+    details=client.get('/api/health/details').json()
+    assert details['project']==bm.PROJECT_ID and details['evidence_bucket']==bm.BUCKET and details['live_model']==bm.LIVE_MODEL
+    bm.app.dependency_overrides.pop(bm.current_staff)
+    assert client.get('/api/health/details',headers={'Authorization':''}).status_code==401
+
+def test_year_built_bound_follows_the_clock_on_a_warm_instance(monkeypatch):
+    import backend.contracts as contracts
+    year=contracts.datetime.now().year
+    with pytest.raises(ValueError):InspectionData(year_built=year+1)
+    class NewYear(contracts.datetime):
+        @classmethod
+        def now(cls,tz=None):return contracts.datetime(year+1,1,1)
+    monkeypatch.setattr(contracts,'datetime',NewYear)
+    assert InspectionData(year_built=year+1).year_built==year+1
+    with pytest.raises(ValueError):InspectionData(year_built=1799)
+
 def send_raw(method,path,headers,receive):
     """Drive the ASGI app directly so the test controls, and observes, every body read."""
     sent=[]
@@ -231,8 +256,9 @@ def test_other_user_cannot_sign_read_or_download_a_signed_record(context):
 
 def test_live_rejects_origins_and_unauthorized_before_vertex(context,monkeypatch):
     client,_=context
-    with pytest.raises(Exception):
-        with client.websocket_connect('/api/live',headers={'origin':'https://attacker.invalid'}):pass
+    for origin in ['https://attacker.invalid','http://localhost:8765','http://127.0.0.1:8765']:
+        with pytest.raises(Exception):
+            with client.websocket_connect('/api/live',headers={'origin':origin}):pass
     async def reject(token):raise HTTPException(401,'Sign in again.')
     monkeypatch.setattr(bm,'verify_staff',reject)
     with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:

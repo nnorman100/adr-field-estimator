@@ -17,8 +17,8 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import scripts.verify_repairs as repairs
-from scripts.verify_repairs import admin, image, PROJECT, SDK, URL
+import scripts.verify_common as common
+from scripts.verify_common import admin, image, PROJECT, SDK, URL
 
 PRODUCTION = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
 SERVICE_HOST = 'alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
@@ -41,7 +41,7 @@ def access_token():
     return result.stdout.strip()
 
 
-repairs.access_token = access_token
+common.access_token = access_token
 
 
 def backend_url(tag):
@@ -279,6 +279,9 @@ def cleanup_synthetic(uid, inspections, agreements):
 
 def main():
     token, uid = staff_session()
+    health = check('GET', '/api/health/details', token)
+    assert health['project'] == PROJECT and health['live_model'] == 'gemini-3.8-live'
+    print(f"PASS: staff health details; workspaces_enabled={str(health['workspaces_enabled']).lower()}", flush=True)
     no_existing_capture(uid)
     iid = 'ADR-INS-' + uuid4().hex
     aid = 'ADR-AUTH-' + uuid4().hex
@@ -349,9 +352,8 @@ def main():
 def public():
     result = requests.get(SERVICE + '/api/health', timeout=30)
     assert result.status_code == 200
-    health = result.json()
-    assert health['project'] == PROJECT and health['live_model'] == 'gemini-3.8-live'
-    for path in ('/api/session', '/api/inspections', '/api/authorizations'):
+    assert result.json() == {'status': 'healthy', 'schema_version': 3}
+    for path in ('/api/health/details', '/api/session', '/api/inspections', '/api/authorizations'):
         assert requests.get(SERVICE + path, timeout=30).status_code == 401
 
     async def denied():

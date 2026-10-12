@@ -48,8 +48,10 @@ firebase.cmd deploy --only firestore:indexes --project alert-disaster-field-2026
 gcloud firestore indexes composite list --project=alert-disaster-field-2026
 python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --dry-run
 python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --yes
-# Before promotion, the tagged URL printed by the deploy must report the chosen flag ("workspaces_enabled":false for --workspaces off).
+# Before promotion, the tagged URL printed by the deploy must answer {"status":"healthy","schema_version":3}.
 curl.exe -s <tagged-revision-url>/api/health
+# Configuration, including the chosen flag ("workspaces_enabled":false for --workspaces off), is staff-only at
+# /api/health/details; `node scripts/verify_live_browser.js --backend-tag <tag>` prints it after normal staff sign-in.
 gcloud run services update-traffic alert-disaster-field-estimator --to-tags=workspaces-off-YYYYMMDD=100 --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
 firebase.cmd deploy --only firestore:rules --project alert-disaster-field-2026
 firebase.cmd deploy --only auth --project alert-disaster-field-2026
@@ -60,7 +62,7 @@ The backend rejects a different project ID or evidence bucket. Production never 
 
 ## Verification and review scope
 
-Local tests cover pricing, documents, ownership, retries, authentication, bounded uploads, failures, revision conflicts, Live formats and teardown. Chromium/WebKit tests exercise the real UI with synthetic adapters. `scripts/verify_review_fixes.py` checks dedicated pagination, upload conflicts, signing retries and disabled Live/REST sessions with synthetic data. `scripts/verify_repairs.py` checks live routing, actual OCR/audits/Live relay, durable records, private evidence and owner isolation. It creates/removes only synthetic records and accounts. Those historical helpers use a synthetic-token path that requires a signing grant. Current release verification uses scripts/verify_live_browser.js with normal staff sign-in and makes no IAM changes; do not use the historical token path for this release. Each verifier takes the dedicated backend URL as a required argument and has no default target. The historical `verify_migration.py` probe, which minted owner-email tokens against the old API, was removed; its helpers now live in `scripts/verify_repairs.py`.
+Local tests cover pricing, documents, ownership, retries, authentication, bounded uploads, failures, revision conflicts, Live formats and teardown. Chromium/WebKit tests exercise the real UI with synthetic adapters. Release verification uses scripts/verify_live_browser.js with normal staff sign-in and makes no IAM changes. Each verifier takes the dedicated backend URL as a required argument and has no default target. The historical `verify_migration.py`, `verify_repairs.py` and `verify_review_fixes.py` probes, which minted synthetic custom tokens through a signing grant, were removed; their shared helpers now live in `scripts/verify_common.py`.
 
 The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78fb2dca) remains the baseline. Current repair status and device acceptance are in `docs/review-repairs.md`.
 

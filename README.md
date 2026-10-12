@@ -48,7 +48,7 @@ The field app follows [ADR's official website](https://alertdisaster.com/): the 
 | `backend/inspection_store.py`, `job_store.py` | Revision transactions, owner checks, private evidence, retries and quotas |
 | `backend/main.py` | Authenticated REST and Live relay |
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
-| `scripts/verify_repairs.py` | Real dedicated infrastructure acceptance with scoped synthetic cleanup |
+| `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 
 ```powershell
 python -m pip install -r backend/requirements.txt pytest httpx2
