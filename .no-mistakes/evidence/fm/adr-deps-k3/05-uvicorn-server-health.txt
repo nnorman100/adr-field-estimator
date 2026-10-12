@@ -1,0 +1,43 @@
+$ uvicorn main:app --host 127.0.0.1 --port 18080 --ws-max-size 800000   (Dockerfile CMD, uvicorn 0.54.0 / pydantic 2.14.1)
+$ curl -si http://127.0.0.1:18080/health
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 39
+content-type: application/json
+vary: Origin
+
+{"status":"healthy","schema_version":3}
+
+$ curl -si http://127.0.0.1:18080/api/health
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 39
+content-type: application/json
+vary: Origin
+cache-control: private, no-store
+
+{"status":"healthy","schema_version":3}
+
+$ curl -si http://127.0.0.1:18080/api/health/details
+HTTP/1.1 401 Unauthorized
+server: uvicorn
+content-length: 33
+content-type: application/json
+vary: Origin
+cache-control: private, no-store
+
+{"detail":"Sign in to continue."}
+
+$ POST /api/inspections with invalid body (pydantic validation path, unauthenticated)
+{"detail":"Sign in to continue."}
+HTTP 401
+
+--- server log ---
+INFO:     Started server process [488432]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:18080 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57348 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57358 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57368 - "GET /api/health/details HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:57380 - "POST /api/inspections HTTP/1.1" 401 Unauthorized

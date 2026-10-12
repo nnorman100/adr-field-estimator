@@ -1,0 +1,15 @@
+== Engine 2 REST: bm.get_ai_client() ==
+client.vertexai = True | project = alert-disaster-field-2026 | location = global
+response text = pong from fake vertex
+fake server saw: ('oauth-token', '/token')
+fake server saw: ('rest', '/v1beta1/projects/alert-disaster-field-2026/locations/global/publishers/google/models/gemini-3.8-flash:generateContent', 'Bearer fake-adc-token', 'ping')
+
+== Engine 1 Live: real /api/live relay -> genai.Client(enterprise=True) ==
+relay -> {'type': 'ready', 'model': 'gemini-3.8-live'}
+relay -> {'type': 'transcript', 'speaker': 'assistant', 'text': 'Fake Vertex Live heard you'}
+relay -> {'type': 'turn_complete'}
+fake server saw: ('oauth-token', '/token')
+fake server saw: ('live', '//ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent', 'Bearer fake-adc-token')
+fake server saw: ('live-setup-model', 'projects/alert-disaster-field-2026/locations/us-central1/publishers/google/models/gemini-3.8-live')
+fake server saw: ('live-client-message-keys', ['realtime_input'])
+exit=0

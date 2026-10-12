@@ -1,0 +1,20 @@
+### Tampered uvicorn hash
+    uvicorn==0.54.0 from https://files.pythonhosted.org/packages/38/0c/b54a4fdd7f90a3af8b02ebc9ce6712c2c208b7926a2f7bad95c33ebbe943/uvicorn-0.54.0-py3-none-any.whl (from -r /tmp/adr-tamper/requirements.txt (line 995)):
+        Expected sha256 0000000000000000000000000000000000000000000000000000000000000000
+        Expected     or 0000000000000000000000000000000000000000000000000000000000000000
+             Got        505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf
+
+
+[notice] A new release of pip is available: 24.0 -> 26.2.1
+[notice] To update, run: /tmp/adr-deps-venv2/bin/python -m pip install --upgrade pip
+pip exit=1
+
+### Unhashed requirement under --require-hashes
+    fastapi==0.143.0 --hash=sha256:3e9395fd35276425b61b516a31fdd7c77fe2af83e41b4da22e30696fb1304c5d
+
+[notice] A new release of pip is available: 24.0 -> 26.2.1
+[notice] To update, run: /tmp/adr-deps-venv2/bin/python -m pip install --upgrade pip
+pip exit=1
+
+### uvicorn installed after tamper?
+ModuleNotFoundError: No module named 'uvicorn'
