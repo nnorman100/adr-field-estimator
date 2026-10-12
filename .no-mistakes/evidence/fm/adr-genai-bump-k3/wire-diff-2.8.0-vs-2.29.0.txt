@@ -1,0 +1,6 @@
+Live websocket path + auth header identical (google-genai 2.8.0 vs 2.29.0): True ('/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent', 'Bearer synthetic-token')
+Frames per Live connection  2.8.0: [3, 3]  2.29.0: [3, 3]
+Live frames byte-identical (setup, audio, video | resume setup, audioStreamEnd x2): True
+2.29.0 resumed setup sessionResumption: {'handle': 'wire-handle'}  then: [{'realtime_input': {'audioStreamEnd': True}}, {'realtime_input': {'audioStreamEnd': True}}]
+REST generateContent request (path, auth, JSON body incl. responseSchema) identical: True 1 request /v1beta1/projects/alert-disaster-field-2026/locations/global/publishers/google/models/gemini-3.8-flash:generateContent
+Technician-facing relay transcript identical (connection ids masked): True

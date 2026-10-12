@@ -1,0 +1,3 @@
+== Scenario: AI scope suggestions over REST (gemini flash, JSON schema)
+  -> POST /api/inspections/<id>/scope-suggestions {"inspection_id": "ADR-INS-dddddddddddddddddddddddddddddddd", "expected_revision": 1}
+  <- HTTP 200 {"inspection_id":"ADR-INS-dddddddddddddddddddddddddddddddd","revision":1,"changes":[],"questions":["Which wall in the kitchen is wet?"]}

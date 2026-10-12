@@ -1,0 +1,23 @@
+== Scenario: first walkthrough (new session), speech, model reply, interaction_status, go_away rollover
+  -> authenticate
+  <- {"type": "ready", "model": "gemini-3.8-live", "protocol_version": 2, "connection_id": "8d6a2ecb0fa9400f846d87a695a27141", "voice": "Charon", "token_refresh": true, "recovery": "new"}
+  <- {"type": "usage", "total_tokens": 17}
+  -> audio (16 kHz PCM)
+  <- {"type": "transcript", "speaker": "technician", "text": "moisture at the wall", "connection_id": "8d6a2ecb0fa9400f846d87a695a27141", "sequence": 1, "finished": true}
+  <- {"type": "transcript", "speaker": "assistant", "text": "Noted, reading the wall.", "connection_id": "8d6a2ecb0fa9400f846d87a695a27141", "sequence": 2, "finished": null}
+  <- {"type": "audio", "data": "AQI=...", "rate": 24000}
+  <- {"type": "turn_complete"}
+  <- {"type": "interrupted"}
+  <- {"type": "transcript", "speaker": "assistant", "text": "after idle", "connection_id": "8d6a2ecb0fa9400f846d87a695a27141", "sequence": 3, "finished": null}
+  -> video (JPEG frame)
+  <- {"type": "recovery", "reason": "rollover"}
+  socket closed after rollover: ConnectionClosedOK
+== Scenario: reconnect resumes with stored handle, pause + end flush audio_stream_end
+  -> authenticate resume=true
+  <- {"type": "ready", "model": "gemini-3.8-live", "protocol_version": 2, "connection_id": "b40e8a7e1ba14defaaa3dce558429b5d", "voice": "Charon", "token_refresh": true, "recovery": "resumed"}
+  -> pause
+  -> end
+  <- {"type": "finished", "complete": true}
+== Adversarial: bad token is refused before any Vertex connection
+  -> authenticate token=forged
+  <- {"type": "error", "message": "Sign in to continue.", "status": 401}
