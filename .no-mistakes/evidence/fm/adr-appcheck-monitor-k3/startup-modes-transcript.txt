@@ -1,0 +1,9 @@
+== APPCHECK_MODE=enforce: starting backend
+RuntimeError: APPCHECK_MODE must be off or monitor; App Check enforcement is not available in this release.
+   exit status: 1
+== APPCHECK_MODE=ENFORCE: starting backend
+RuntimeError: APPCHECK_MODE must be off or monitor; App Check enforcement is not available in this release.
+   exit status: 1
+== APPCHECK_MODE=on: starting backend
+RuntimeError: APPCHECK_MODE must be off or monitor; App Check enforcement is not available in this release.
+   exit status: 1

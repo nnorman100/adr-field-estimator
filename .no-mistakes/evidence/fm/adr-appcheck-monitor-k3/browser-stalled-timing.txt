@@ -1,0 +1,4 @@
+{"mode": "stalled", "ready_ms": 237, "scripts": ["/vendor/firebase-app-compat.js", "/vendor/firebase-auth-compat.js", "/vendor/firebase-app-check-compat.js"], "appCheckSdk": {"activated": [{"provider": "ReCaptchaEnterpriseProvider", "siteKey": "synthetic-site-key", "refresh": true}], "calls": 3}, "saveStatus": "Saved privately \u00b7 revision 2"}
+   GET /api/session X-Firebase-AppCheck absent sent +3214ms after navigation
+   POST /api/inspections X-Firebase-AppCheck absent sent +3243ms after navigation
+   PUT /api/inspections/{id} X-Firebase-AppCheck absent sent +3581ms after navigation

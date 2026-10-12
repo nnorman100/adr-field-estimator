@@ -1,0 +1,11 @@
+== APPCHECK_MODE=off
+   GET /api/session [] -> HTTP 200
+   GET /api/session [X-Firebase-AppCheck: eyJhbGciO] -> HTTP 200
+   GET /api/session [X-Firebase-AppCheck: junk] -> HTTP 200
+   App Check log lines in off mode: 0
+   JWKS fetches in off mode: 0
+== APPCHECK_MODE unset, JWKS endpoint takes 4 s (cold signing-key fetch)
+   GET /api/session with token -> HTTP 200 in 2018 ms
+   log: {"severity": "INFO", "message": "App Check", "outcome": "unverified", "method": "GET", "route": "/api/session", "status": 200}
+   after keys cached: GET /api/session -> HTTP 200 in 29 ms
+   log: {"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/session", "status": 200}

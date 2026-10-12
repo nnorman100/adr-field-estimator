@@ -1,0 +1,41 @@
+{
+ "mode": "stalled",
+ "nav_start": 1791831483337,
+ "ready_ms": 237,
+ "scripts": [
+  "/vendor/firebase-app-compat.js",
+  "/vendor/firebase-auth-compat.js",
+  "/vendor/firebase-app-check-compat.js"
+ ],
+ "appCheckSdk": {
+  "activated": [
+   {
+    "provider": "ReCaptchaEnterpriseProvider",
+    "siteKey": "synthetic-site-key",
+    "refresh": true
+   }
+  ],
+  "calls": 3
+ },
+ "saveStatus": "Saved privately · revision 2",
+ "api": [
+  {
+   "t": 1791831486551,
+   "method": "GET",
+   "path": "/api/session",
+   "appcheck": "absent"
+  },
+  {
+   "t": 1791831486580,
+   "method": "POST",
+   "path": "/api/inspections",
+   "appcheck": "absent"
+  },
+  {
+   "t": 1791831486918,
+   "method": "PUT",
+   "path": "/api/inspections/{id}",
+   "appcheck": "absent"
+  }
+ ]
+}

@@ -1,0 +1,30 @@
+{
+ "mode": "default",
+ "ready_ms": 433,
+ "scripts": [
+  "/vendor/firebase-app-compat.js",
+  "/vendor/firebase-auth-compat.js"
+ ],
+ "appCheckSdk": null,
+ "saveStatus": "Saved privately · revision 2",
+ "api": [
+  {
+   "t": 1791831463637,
+   "method": "GET",
+   "path": "/api/session",
+   "appcheck": "absent"
+  },
+  {
+   "t": 1791831463681,
+   "method": "POST",
+   "path": "/api/inspections",
+   "appcheck": "absent"
+  },
+  {
+   "t": 1791831463728,
+   "method": "PUT",
+   "path": "/api/inspections/{id}",
+   "appcheck": "absent"
+  }
+ ]
+}

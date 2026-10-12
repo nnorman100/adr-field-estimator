@@ -1,0 +1,4 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "unverified", "method": "GET", "route": "/api/session", "status": 200}
+JWKS fetch
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/session", "status": 200}

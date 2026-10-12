@@ -1,0 +1,26 @@
+== signed-in POST create inspection, valid token -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "POST", "route": "/api/inspections", "status": 200}
+== signed-in GET, no App Check header -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== signed-in GET, valid token (RS256, local JWKS) -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== signed-in GET, expired token -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== signed-in GET, token for another project -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== signed-in GET, forged signature -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== signed-in GET, garbage token -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== signed-in GET, 5000-char token -> HTTP 200: {"inspection_id":"ADR-INS-2eb93ed6560c59cc5b0ea0f17789e236","schema_version":3,"revision":1,"data":{"address":
+   log: {"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+== anonymous GET with valid token -> HTTP 401: {"detail":"Sign in to continue."}
+   log: {"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/authorizations", "status": 401}
+== anonymous POST, rejected pre-routing by limit_payload -> HTTP 401: {"detail":"Sign in to continue."}
+   log: {"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 401}
+== static asset (not /api) -> HTTP 200: <!doctype html> <html lang="en"> <head>   <meta charset="utf-8"><meta name="viewport" content="width=device-wi
+   log: {"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 401}
+== CORS preflight from production origin allows the header:
+HTTP/1.1 200 OK
+access-control-allow-headers: Accept, Accept-Language, Authorization, Content-Language, Content-Type, X-ADR-Workspace-Protocol, X-Firebase-AppCheck
+== App Check log lines containing a token, inspection ID or uid: 0

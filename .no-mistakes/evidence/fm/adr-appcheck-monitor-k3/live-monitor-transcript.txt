@@ -1,0 +1,6 @@
+== Live authenticate with app_check=none: server replied type=ready
+   log: {"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+== Live authenticate with app_check=valid: server replied type=ready
+   log: {"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "WEBSOCKET", "route": "/api/live"}
+== Live authenticate with app_check=wrong-key: server replied type=ready
+   log: {"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "WEBSOCKET", "route": "/api/live"}

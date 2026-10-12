@@ -1,0 +1,48 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 422}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "status": 404}
+JWKS fetch
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "POST", "status": 401}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/authorizations", "status": 401}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 413}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "OPTIONS", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 422}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/authorizations", "status": 401}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "status": 401}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "OPTIONS", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-85bab17928cad868398b232442a984ba", "duration_ms": 309, "outcome": "disconnected"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-7ad74e39b50063af5af2eaba0563d18a", "duration_ms": 306, "outcome": "disconnected"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "invalid", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-e8531193996919e5e3d84fb956b798e7", "duration_ms": 306, "outcome": "disconnected"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "valid", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
