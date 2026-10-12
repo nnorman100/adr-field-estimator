@@ -1,0 +1,22 @@
+[   0.0s] === S3b: disable mid-session; cached routes keep working only until the TTL lapses, live routes reject at once ===
+[   0.1s] GET  /api/session                                                 -> 200  lookups+1  
+[   0.1s] POST /api/inspections                                             -> 200  lookups+0  
+[   0.1s] user disabled in Auth emulator
+[   0.2s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   1.2s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   2.2s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   3.3s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   4.3s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   5.4s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   6.5s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   7.6s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   8.6s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[   9.7s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 200  lookups+0  
+[  10.8s] PUT  /api/inspections/ADR-INS-91a631e1de1543d6ab51f0b407ed59cf    -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  10.8s] S3b RESULT: autosave rejected 10.6s after disable; cache filled 10.7s ago (TTL 10.0s)
+[  10.8s] GET  /api/session                                                 -> 200  lookups+1  
+[  10.8s] re-enabled, new token cached, disabled again
+[  10.8s] GET  /api/session                                                 -> 200  lookups+0  
+[  10.8s] GET  /api/authorizations/ADR-AUTH-none12345/evidence/signature.pn -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  10.8s] GET  /api/session                                                 -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  10.8s] S3c RESULT: a live-route rejection also drops the cached pass, so the next cached request rejects too

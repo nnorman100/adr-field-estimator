@@ -1,80 +1,106 @@
-"""Drives the running backend (uvicorn on :18765) against the Auth/Firestore emulators.
-Counts Identity Toolkit accounts:lookup calls (the revoked/disabled-user check) via the proxy log."""
-import json, os, sys, time, uuid, asyncio, urllib.request
-os.environ['FIREBASE_AUTH_EMULATOR_HOST']='127.0.0.1:19099'
-import firebase_admin
-from firebase_admin import auth
-import httpx, websockets
-API='http://127.0.0.1:18765'; LOG='/tmp/adr-k3-emu/lookups.log'
-app=firebase_admin.initialize_app(options={'projectId':'alert-disaster-field-2026'},name='driver')
-def lookups(): return sum(1 for l in open(LOG) if 'accounts:lookup' in l) if os.path.exists(LOG) else 0
-def p(*a): print(*a,flush=True)
-def token(email):
-    try: auth.delete_user(auth.get_user_by_email(email,app=app).uid,app=app)
-    except auth.UserNotFoundError: pass
-    auth.create_user(email=email,password='pw-123456',email_verified=True,app=app)
-    r=urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:19099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake',data=json.dumps({'email':email,'password':'pw-123456','returnSecureToken':True}).encode(),headers={'Content-Type':'application/json'}))
-    return json.load(r)['idToken']
+"""Drives the real backend (uvicorn) against Firebase emulators. Counts real accounts:lookup calls via the proxy log."""
+import sys,time,json,asyncio,uuid,httpx,websockets
+API=sys.argv[1]; TTL=float(sys.argv[2]); LOG='/tmp/adr-authcache/lookups.log'
+EMU='http://127.0.0.1:9419/identitytoolkit.googleapis.com/v1'; P='projects/alert-disaster-field-2026'
+ADMIN={'Authorization':'Bearer owner'}; T0=time.time()
+def say(*a): print(f'[{time.time()-T0:6.1f}s]',*a,flush=True)
+def lookups(): 
+    try: return sum(1 for _ in open(LOG))
+    except FileNotFoundError: return 0
+def user(email):
+    r=httpx.post(EMU+'/accounts:signUp?key=fake',json=dict(email=email,password='synthetic-pass',returnSecureToken=True)).json()
+    httpx.post(f'{EMU}/{P}/accounts:update',headers=ADMIN,json=dict(localId=r['localId'],emailVerified=True)).raise_for_status()
+    return r['localId'],signin(email)
+def signin(email): return httpx.post(EMU+'/accounts:signInWithPassword?key=fake',json=dict(email=email,password='synthetic-pass',returnSecureToken=True)).json()['idToken']
+def disable(uid,on=True): httpx.post(f'{EMU}/{P}/accounts:update',headers=ADMIN,json=dict(localId=uid,disableUser=on)).raise_for_status()
 c=httpx.Client(base_url=API,timeout=30)
-def call(label,method,path,tok,**kw):
-    before=lookups(); r=c.request(method,path,headers={'Authorization':f'Bearer {tok}'},**kw)
-    d=lookups()-before; p(f'  {label:<44} -> HTTP {r.status_code:<3} lookups+{d}  {r.text[:90]!r}'); return r.status_code,d
-async def ws_start(tok):
-    before=lookups()
-    async with websockets.connect('ws://127.0.0.1:18765/api/live',origin='https://alert-disaster-field-2026.web.app') as s:
-        await s.send(json.dumps({'type':'authenticate','token':tok,'inspection_id':'ADR-INS-'+'0'*32,'protocol_version':1}))
-        msgs=[]
-        try:
-            while True: msgs.append(await asyncio.wait_for(s.recv(),10))
-        except Exception as e: close=getattr(e,'rcvd',None)
-    d=lookups()-before; p(f'  {"WS /api/live walkthrough start":<44} -> msgs={[m[:90] for m in msgs]} close={close} lookups+{d}'); return msgs,d
-inspection='ADR-INS-'+uuid.uuid4().hex
-results={}
-p('== Scenario 1-2: autosave + photo fetch reuse a passed revocation lookup ==')
-t=token('tech@example.com')
-s,d=call('POST /api/inspections (create, first use)','POST','/api/inspections',t,json={'inspection_id':inspection,'data':{'address':'1 Test St'}}); first=d
-rev=c.get(f'/api/inspections/{inspection}',headers={'Authorization':f'Bearer {t}'}).json()['revision']
-ok=True; total=0
-for i in range(5):
-    s,d=call(f'PUT /api/inspections/{{id}} autosave #{i+1}','PUT',f'/api/inspections/{inspection}',t,json={'expected_revision':rev,'data':{'address':f'1 Test St #{i}'}})
-    ok&=s==200; total+=d
-    if s==200: rev+=1
-    time.sleep(1.5)
-s,d=call('GET photo fetch (missing photo id)','GET',f'/api/inspections/{inspection}/photos/PHOTO-x',t); total+=d; photo_status=s
-s,d=call('GET /api/session','GET','/api/session',t); total+=d
-results['cached']=dict(first_lookups=first,autosaves_ok=ok,cached_lookups=total,photo_status=photo_status)
-p('== Scenario 3-5: signing, evidence download, walkthrough start always check live ==')
-live={}
-for i in range(2):
-    live.setdefault('authorize',[]).append(call('POST /api/authorize (signing)','POST','/api/authorize',t,json={}))
-    live.setdefault('evidence',[]).append(call('GET evidence download','GET','/api/authorizations/ADR-AUTH-missing1/evidence/proposal.pdf',t))
-    live.setdefault('ws',[]).append(asyncio.run(ws_start(t))[1])
-results['live']=live
-p('== Scenario 6: revoke the sign-in; sensitive routes reject at once, cached routes within the TTL only ==')
-time.sleep(1.2); uid=auth.get_user_by_email('tech@example.com',app=app).uid
-auth.revoke_refresh_tokens(uid,app=app); revoked_at=time.time(); p(f'  revoked refresh tokens for {uid} at {revoked_at:.0f}')
-rv={}
-rv['autosave_within_ttl']=call('PUT autosave right after revoke (cached)','PUT',f'/api/inspections/{inspection}',t,json={'expected_revision':rev,'data':{'address':'after revoke'}})
-rv['authorize']=call('POST /api/authorize after revoke','POST','/api/authorize',t,json={})
-rv['evidence']=call('GET evidence after revoke','GET','/api/authorizations/ADR-AUTH-missing1/evidence/proposal.pdf',t)
-msgs,d=asyncio.run(ws_start(t)); rv['ws']=(msgs,d)
-# A live failure drops the cache entry, so the next ordinary request also rejects.
-rv['autosave_after_live_fail']=call('PUT autosave after a live route saw the revocation','PUT',f'/api/inspections/{inspection}',t,json={'expected_revision':rev+1,'data':{'address':'x'}})
-results['revoked']=rv
-p('== Scenario 7: revoked token on cached-only traffic expires within 45 s ==')
-t2=token('tech@example.com')  # recreated user; fresh token
-call('GET /api/session (prime cache)','GET','/api/session',t2)
-time.sleep(1.2); auth.revoke_refresh_tokens(auth.get_user_by_email('tech@example.com',app=app).uid,app=app); t0=time.time()
-seq=[]
-while time.time()-t0<50:
-    s,d=call(f'GET /api/session t+{time.time()-t0:4.1f}s','GET','/api/session',t2); seq.append((round(time.time()-t0,1),s,d))
-    if s==401: break
-    time.sleep(5)
-results['ttl']=seq
-p('== Scenario 8: disabled account blocked live at walkthrough start ==')
-t3=token('tech@example.com'); call('GET /api/session (prime cache)','GET','/api/session',t3)
-auth.update_user(auth.get_user_by_email('tech@example.com',app=app).uid,disabled=True,app=app)
-results['disabled']=dict(session=call('GET /api/session after disable (cached)','GET','/api/session',t3),
-                         authorize=call('POST /api/authorize after disable','POST','/api/authorize',t3,json={}),
-                         ws=asyncio.run(ws_start(t3)))
-p('== RESULTS =='); p(json.dumps(results,indent=1,default=str))
+def call(m,path,tok,**kw):
+    before=lookups(); r=c.request(m,path,headers={'Authorization':'Bearer '+tok},**kw)
+    say(f'{m:4} {path[:60]:60} -> {r.status_code}  lookups+{lookups()-before}  {r.text[:70] if r.status_code>=400 else ""}')
+    return r
+async def ws_start(tok,iid):
+    async with websockets.connect(API.replace('http','ws')+'/api/live',origin='https://alert-disaster-field-2026.web.app') as s:
+        before=lookups(); await s.send(json.dumps(dict(type='authenticate',token=tok,inspection_id=iid)))
+        try: msg=await asyncio.wait_for(s.recv(),15)
+        except Exception as e: msg=f'<closed {e}>'
+        say(f'WS   /api/live authenticate -> {str(msg)[:110]}  lookups+{lookups()-before}'); return msg
+data=dict(address='Synthetic test property',year_built=1960,rooms=[{'name':'Bathroom','category':1,'finished_sf':10}],air_movers=3,dehumidifiers=1,scope_confirmed=True)
+PNG=open('/tmp/adr-authcache/png.txt').read()
+mode=sys.argv[3]
+if mode=='legacy':
+    say('=== S1: cached routes reuse one revocation lookup per token within the TTL ===')
+    uid,tok=user('tech@example.com'); iid='ADR-INS-'+uuid.uuid4().hex; start=lookups()
+    call('GET','/api/session',tok)
+    rec=call('POST','/api/inspections',tok,json=dict(inspection_id=iid,data=data)).json()
+    for i in range(5):  # autosave PUTs as the PWA sends them
+        data['air_movers']=3+i; rec=call('PUT',f'/api/inspections/{iid}',tok,json=dict(expected_revision=rec['revision'],data=data)).json()
+    pid=uuid.uuid4().hex
+    rec=call('POST',f'/api/inspections/{iid}/photos',tok,json=dict(expected_revision=rec['revision'],photo_id=pid,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=PNG)).json()
+    for i in range(3): call('GET',f'/api/inspections/{iid}/photos/{pid}',tok)
+    call('GET','/api/inspections',tok)
+    say(f'S1 RESULT: {lookups()-start} revocation lookup(s) for 12 cached-route requests')
+    say('=== S2: always-live routes repeat the lookup every time, even with a fresh cache entry ===')
+    s=lookups()
+    for i in range(2): call('GET',f'/api/authorizations/ADR-AUTH-none12345/evidence/signature.png',tok)
+    call('POST','/api/authorize',tok,json={})
+    asyncio.run(ws_start(tok,iid))
+    say(f'S2 RESULT: {lookups()-s} lookups for 4 live-route requests')
+    say('=== S3: disable the user; live routes reject at once, cached routes reject once the TTL lapses ===')
+    disable(uid); say('user disabled in Auth emulator'); t=time.time()
+    call('GET','/api/session',tok)
+    call('PUT',f'/api/inspections/{iid}',tok,json=dict(expected_revision=rec['revision'],data=data))
+    call('GET',f'/api/authorizations/ADR-AUTH-none12345/evidence/signature.png',tok)
+    call('POST','/api/authorize',tok,json={})
+    asyncio.run(ws_start(tok,iid))
+    while True:
+        r=call('GET','/api/session',tok)
+        if r.status_code==401: say(f'S3 RESULT: cached route rejected disabled user {time.time()-t:.1f}s after disable (TTL {TTL}s)'); break
+        if time.time()-t>TTL+5: say('S3 RESULT: FAIL cached route still accepted past TTL'); break
+        time.sleep(1)
+    call('GET','/api/inspections',tok)
+    say('=== S4: token revocation (revoke refresh tokens) - live route rejects immediately ===')
+    uid2,tok2=user('owner@example.com'); call('GET','/api/session',tok2); time.sleep(1.5)
+    httpx.post(f'{EMU}/{P}/accounts:update',headers=ADMIN,json=dict(localId=uid2,validSince=str(int(time.time())))).raise_for_status(); say('tokens revoked (validSince=now)')
+    call('GET','/api/session',tok2)
+    call('POST','/api/authorize',tok2,json={})
+    t=time.time()
+    while True:
+        r=call('GET','/api/session',tok2)
+        if r.status_code==401: say(f'S4 RESULT: cached route rejected revoked token {time.time()-t:.1f}s later'); break
+        if time.time()-t>TTL+5: say('S4 RESULT: FAIL'); break
+        time.sleep(1)
+    say('=== S5: a new token is not covered by another token\'s cache entry ===')
+    tok3=signin('owner@example.com'); call('GET','/api/session',tok3); call('GET','/api/session',tok3)
+elif mode=='zero':
+    uid,tok=user(f'tech@example.com') if False else (None,signin('owner@example.com'))
+    s=lookups()
+    for i in range(4): call('GET','/api/session',tok)
+    say(f'S6 RESULT (REVOCATION_CACHE_SECONDS=0): {lookups()-s} lookups for 4 requests')
+elif mode=='workspace':
+    uid,tok=user(f'ws-{uuid.uuid4().hex[:6]}@example.com'); s=lookups()
+    for i in range(3): call('GET','/api/access',tok)
+    say(f'cached /api/access: {lookups()-s} lookups for 3 requests'); s=lookups()
+    for i in range(3): call('GET','/api/admin/companies',tok)
+    say(f'live /api/admin/companies: {lookups()-s} lookups for 3 requests')
+    disable(uid); say('user disabled')
+    call('GET','/api/access',tok); call('GET','/api/admin/companies',tok); call('POST','/api/invitations/none/accept',tok)
+if mode=='stale':
+    say('=== S3b: disable mid-session; cached routes keep working only until the TTL lapses, live routes reject at once ===')
+    uid,tok=user(f'stale-{uuid.uuid4().hex[:6]}@example.com') if False else (None,None)
+    r=httpx.post(EMU+'/accounts:signInWithPassword?key=fake',json=dict(email='tech@example.com',password='synthetic-pass',returnSecureToken=True)).json()
+    uid=r.get('localId') or httpx.post(f'{EMU}/{P}/accounts:lookup',headers=ADMIN,json=dict(email=['tech@example.com'])).json()['users'][0]['localId']
+    disable(uid,False); tok=signin('tech@example.com'); iid='ADR-INS-'+uuid.uuid4().hex
+    call('GET','/api/session',tok); t0=time.time()
+    rec=call('POST','/api/inspections',tok,json=dict(inspection_id=iid,data=data)).json()
+    disable(uid); say('user disabled in Auth emulator'); t=time.time()
+    while True:
+        rec_r=call('PUT',f'/api/inspections/{iid}',tok,json=dict(expected_revision=rec['revision'],data=data))
+        if rec_r.status_code==200: rec=rec_r.json()
+        if rec_r.status_code==401: say(f'S3b RESULT: autosave rejected {time.time()-t:.1f}s after disable; cache filled {time.time()-t0:.1f}s ago (TTL {TTL}s)'); break
+        if time.time()-t0>TTL+3: say('S3b RESULT: FAIL autosave accepted past TTL'); break
+        time.sleep(1)
+    disable(uid,False); tok=signin('tech@example.com'); call('GET','/api/session',tok); disable(uid); say('re-enabled, new token cached, disabled again')
+    call('GET','/api/session',tok)
+    call('GET','/api/authorizations/ADR-AUTH-none12345/evidence/signature.png',tok)
+    call('GET','/api/session',tok)
+    say('S3c RESULT: a live-route rejection also drops the cached pass, so the next cached request rejects too')

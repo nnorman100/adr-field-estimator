@@ -1,0 +1,5 @@
+[   0.1s] GET  /api/session                                                 -> 200  lookups+1  
+[   0.1s] GET  /api/session                                                 -> 200  lookups+1  
+[   0.1s] GET  /api/session                                                 -> 200  lookups+1  
+[   0.1s] GET  /api/session                                                 -> 200  lookups+1  
+[   0.1s] S6 RESULT (REVOCATION_CACHE_SECONDS=0): 4 lookups for 4 requests

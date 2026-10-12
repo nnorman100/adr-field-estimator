@@ -1,0 +1,12 @@
+[   0.1s] GET  /api/access                                                  -> 200  lookups+1  
+[   0.1s] GET  /api/access                                                  -> 200  lookups+0  
+[   0.1s] GET  /api/access                                                  -> 200  lookups+0  
+[   0.1s] cached /api/access: 1 lookups for 3 requests
+[   0.2s] GET  /api/admin/companies                                         -> 403  lookups+1  {"detail":"Superadmin access is required."}
+[   0.2s] GET  /api/admin/companies                                         -> 403  lookups+1  {"detail":"Superadmin access is required."}
+[   0.2s] GET  /api/admin/companies                                         -> 403  lookups+1  {"detail":"Superadmin access is required."}
+[   0.2s] live /api/admin/companies: 3 lookups for 3 requests
+[   0.2s] user disabled
+[   0.2s] GET  /api/access                                                  -> 200  lookups+0  
+[   0.2s] GET  /api/admin/companies                                         -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[   0.2s] POST /api/invitations/none/accept                                 -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}

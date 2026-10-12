@@ -1,0 +1,2 @@
+$ REVOCATION_CACHE_SECONDS=120 uvicorn backend.main:app
+RuntimeError: REVOCATION_CACHE_SECONDS must be between 0 and 60.

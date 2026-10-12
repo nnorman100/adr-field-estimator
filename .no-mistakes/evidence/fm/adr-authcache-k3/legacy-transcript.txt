@@ -1,0 +1,40 @@
+[   0.3s] === S1: cached routes reuse one revocation lookup per token within the TTL ===
+[   0.4s] GET  /api/session                                                 -> 200  lookups+1  
+[   2.0s] POST /api/inspections                                             -> 200  lookups+0  
+[   2.0s] PUT  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942    -> 200  lookups+0  
+[   2.1s] PUT  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942    -> 200  lookups+0  
+[   2.1s] PUT  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942    -> 200  lookups+0  
+[   2.1s] PUT  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942    -> 200  lookups+0  
+[   2.2s] PUT  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942    -> 200  lookups+0  
+[   2.3s] POST /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942/ph -> 200  lookups+0  
+[   2.3s] GET  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942/ph -> 200  lookups+0  
+[   2.3s] GET  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942/ph -> 200  lookups+0  
+[   2.3s] GET  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942/ph -> 200  lookups+0  
+[   2.5s] GET  /api/inspections                                             -> 200  lookups+0  
+[   2.5s] S1 RESULT: 1 revocation lookup(s) for 12 cached-route requests
+[   2.5s] === S2: always-live routes repeat the lookup every time, even with a fresh cache entry ===
+[   2.5s] GET  /api/authorizations/ADR-AUTH-none12345/evidence/signature.pn -> 404  lookups+1  {"detail":"Evidence not found."}
+[   2.5s] GET  /api/authorizations/ADR-AUTH-none12345/evidence/signature.pn -> 404  lookups+1  {"detail":"Evidence not found."}
+[   2.5s] POST /api/authorize                                               -> 409  lookups+1  {"detail":"Update the app and complete a revision-bound audit before s
+[  14.9s] WS   /api/live authenticate -> {"type":"error","message":"Live coaching disconnected. Your draft is preserved; reconnect to continue."}  lookups+1
+[  14.9s] S2 RESULT: 4 lookups for 4 live-route requests
+[  14.9s] === S3: disable the user; live routes reject at once, cached routes reject once the TTL lapses ===
+[  14.9s] user disabled in Auth emulator
+[  14.9s] GET  /api/session                                                 -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  14.9s] PUT  /api/inspections/ADR-INS-fff844de43f3459eb3ff2daee0234942    -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  14.9s] GET  /api/authorizations/ADR-AUTH-none12345/evidence/signature.pn -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  14.9s] POST /api/authorize                                               -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  15.0s] WS   /api/live authenticate -> {"type":"error","message":"Your sign-in expired. Please sign in again."}  lookups+1
+[  15.0s] GET  /api/session                                                 -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  15.0s] S3 RESULT: cached route rejected disabled user 0.1s after disable (TTL 10.0s)
+[  15.0s] GET  /api/inspections                                             -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  15.0s] === S4: token revocation (revoke refresh tokens) - live route rejects immediately ===
+[  15.0s] GET  /api/session                                                 -> 200  lookups+1  
+[  16.5s] tokens revoked (validSince=now)
+[  16.5s] GET  /api/session                                                 -> 200  lookups+0  
+[  16.5s] POST /api/authorize                                               -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  16.5s] GET  /api/session                                                 -> 401  lookups+1  {"detail":"Your sign-in expired. Please sign in again."}
+[  16.5s] S4 RESULT: cached route rejected revoked token 0.0s later
+[  16.5s] === S5: a new token is not covered by another token's cache entry ===
+[  16.5s] GET  /api/session                                                 -> 200  lookups+1  
+[  16.5s] GET  /api/session                                                 -> 200  lookups+0  
