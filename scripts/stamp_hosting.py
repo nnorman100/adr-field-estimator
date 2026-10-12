@@ -83,9 +83,11 @@ def check(root=ROOT, git=subprocess.run):
     current = source_commit([*DEPLOYED, *(':(exclude)' + name for name in TARGETS)], True, git)
     if current.removesuffix('-dirty') != marker:
         raise RuntimeError(f'The shell is stamped {marker} but HEAD is {current.removesuffix("-dirty")}; restamp the shell.')
+    def blob(*argv, **kwargs):
+        return git(['git', *argv], cwd=ROOT, capture_output=True, check=True, **kwargs).stdout.strip()
     changed = [name for name, rules in TARGETS.items()
-               if stamp(texts[name], rules, PLACEHOLDER).encode('utf8')
-               != git(['git', 'show', f'{marker}:{name}'], cwd=ROOT, capture_output=True, check=True).stdout]
+               if blob('hash-object', '--path=' + name, '--stdin', input=stamp(texts[name], rules, PLACEHOLDER).encode('utf8'))
+               != blob('rev-parse', f'{marker}:{name}')]
     if current != marker or changed:
         raise RuntimeError(f'Hosting files changed after stamping {marker}; commit them and restamp the shell.')
     return marker

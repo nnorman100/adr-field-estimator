@@ -1,4 +1,5 @@
 """The Hosting shell is released only with a consistent source-commit stamp."""
+import hashlib
 import json
 import re
 import shutil
@@ -13,11 +14,20 @@ ROOT = Path(__file__).resolve().parents[1]
 HEAD = 'fedcba9876543210fedcba9876543210fedcba98'
 
 
+def blob_id(data):
+    return hashlib.sha1(b'blob %d\0' % len(data) + data).hexdigest().encode() + b'\n'
+
+
 def fake_git(status=''):
+    """Models a repository whose HEAD holds the committed (placeholder) shell."""
     def git(argv, **kwargs):
-        if argv[1] == 'show':
-            return subprocess.CompletedProcess(argv, 0, stdout=(ROOT / argv[2].split(':', 1)[1]).read_bytes())
-        return subprocess.CompletedProcess(argv, 0, stdout={'rev-parse': HEAD + '\n', 'status': status}[argv[1]])
+        if argv[1] == 'hash-object':
+            return subprocess.CompletedProcess(argv, 0, stdout=blob_id(kwargs['input']))
+        if argv[1:] == ['rev-parse', 'HEAD']:
+            return subprocess.CompletedProcess(argv, 0, stdout=HEAD + '\n')
+        if argv[1] == 'rev-parse':
+            return subprocess.CompletedProcess(argv, 0, stdout=blob_id((ROOT / argv[2].split(':', 1)[1]).read_bytes()))
+        return subprocess.CompletedProcess(argv, 0, stdout={'status': status}[argv[1]])
     return git
 
 
@@ -113,6 +123,31 @@ def test_check_binds_the_stamp_to_head_and_uncommitted_hosting_files(tmp_path):
     hosting.write(second, repo)
     for name in ('index.html', 'public/index.html'):
         (repo / name).write_bytes((repo / name).read_bytes().replace(b'</body>', b'<p>edit</p></body>'))
+    with pytest.raises(RuntimeError, match='changed after stamping'):
+        hosting.check(repo, git)
+
+
+def test_check_accepts_a_clean_crlf_checkout_and_refuses_a_later_edit(tmp_path):
+    repo = tmp_path / 'repo'
+    for name in hosting.TARGETS:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_bytes((ROOT / name).read_bytes().replace(b'\r\n', b'\n'))
+    def git(argv, **kwargs):
+        return subprocess.run(argv, **{**kwargs, 'cwd': repo})
+    git(['git', 'init', '-q'], check=True)
+    git(['git', 'add', '-A'], check=True)
+    git(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'lf'], check=True)
+    git(['git', 'config', 'core.autocrlf', 'true'], check=True)
+    for name in hosting.TARGETS:
+        (repo / name).unlink()
+    git(['git', 'checkout', '-q', '--', '.'], check=True)
+    assert b'\r\n' in (repo / 'public/app.js').read_bytes()
+    head = git(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+    assert hosting.source_commit(hosting.DEPLOYED, False, git) == head
+    hosting.write(head, repo)
+    assert hosting.check(repo, git) == head
+    app = repo / 'public/app.js'
+    app.write_bytes(app.read_bytes() + b'// hotfix\r\n')
     with pytest.raises(RuntimeError, match='changed after stamping'):
         hosting.check(repo, git)
 
