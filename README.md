@@ -61,9 +61,8 @@ The scripts under `scripts/` run on Linux, macOS and Windows and resolve tools f
 | `ADR_GCLOUD` | `verify_live_release.py`, `record_live_release.py` | `gcloud` on `PATH` (including `gcloud.cmd` on Windows) |
 | `ADR_TEST_PYTHON` | `verify_live_browser.js` | `.venv` in the repository, then `python3` (`python` on Windows) |
 | `ADR_CHROME_PATH` | `manual_chrome.js` (used by `verify_live_browser.js`) | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
-| `ADR_EVIDENCE_DIR` | `record_live_release.py`, `verify_workspace_database.py`, `verify_hosting.js` | `review-artifacts/`, which is gitignored |
 
-When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. Review evidence (screenshots, traces, logs) is local only: keep it in `review-artifacts/` or `ADR_EVIDENCE_DIR`, and attach archives to a GitHub Release rather than committing them.
+When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. Review evidence (screenshots, traces, logs) is local only: keep it in the gitignored `review-artifacts/` directory, and attach archives to a GitHub Release rather than committing them.
 
 ```powershell
 python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt

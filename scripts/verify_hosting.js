@@ -1,6 +1,6 @@
 const {chromium}=require('playwright'),fs=require('node:fs'),nodePath=require('node:path'),assert=require('node:assert/strict');
-// Screenshots are local evidence (gitignored); ADR_EVIDENCE_DIR moves them off the checkout.
-const EVIDENCE=process.env.ADR_EVIDENCE_DIR||nodePath.join(__dirname,'..','review-artifacts');
+// Screenshots are local evidence (review-artifacts/ is gitignored).
+const EVIDENCE=nodePath.join(__dirname,'..','review-artifacts');
 // Mirrors scripts/stamp_hosting.py: compare deployed and local shells apart from the release stamp.
 const unstamp=text=>text.replace(/^(const VERSION=')[^']*(';)/m,'$1unstamped$2').replace(/(\.(?:css|js)\?v=)[0-9A-Za-z-]+/g,'$1unstamped').replace(/(App version )[^<]+(<\/small>)/,'$1unstamped$2');
 (async()=>{

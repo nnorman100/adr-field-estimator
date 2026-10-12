@@ -7,8 +7,8 @@ from PIL import Image, ImageDraw
 PROJECT='alert-disaster-field-2026'
 ROOT=Path(__file__).resolve().parents[1]
 FIXTURES=ROOT/'tests/fixtures'
-# Local evidence stays out of git; point ADR_EVIDENCE_DIR elsewhere to keep it off the checkout.
-EVIDENCE=Path(os.environ.get('ADR_EVIDENCE_DIR') or ROOT/'review-artifacts')
+# Local evidence stays out of git (review-artifacts/ is gitignored).
+EVIDENCE=ROOT/'review-artifacts'
 URL=f'https://{PROJECT}.web.app'
 
 def gcloud():
