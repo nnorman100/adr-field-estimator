@@ -1,6 +1,7 @@
 /* Normal Google staff sign-in and synthetic release verification. No auth state is exported. */
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawn}=require('node:child_process'),readline=require('node:readline');
 const {parseArgs}=require('node:util');
+const {canonicalPath,isWithin}=require('./artifact-paths');
 const ROOT=path.resolve(__dirname,'..'),BASE='https://alert-disaster-field-2026.web.app';
 const PRODUCTION='https://alert-disaster-field-estimator-545776254070.us-west2.run.app';
 const SERVICE_HOST='alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app';
@@ -29,17 +30,8 @@ function parseOptions(args){
     artifactDir,smoke:!!values['auth-smoke'],headless:!!values.headless,hold:!!values.hold,slowInit:!!values['slow-init']};
 }
 function createArtifactDirectory(parent=os.tmpdir()){
-  if(!path.isAbsolute(parent))throw Error('Artifact directory must be absolute.');
-  let existing=path.resolve(parent);
-  const missing=[];
-  while(!fs.existsSync(existing)){
-    const ancestor=path.dirname(existing);
-    if(ancestor===existing)throw Error('Artifact directory has no accessible filesystem root.');
-    missing.unshift(path.basename(existing));existing=ancestor;
-  }
-  const canonical=path.join(fs.realpathSync(existing),...missing);
-  const relative=path.relative(fs.realpathSync(ROOT),canonical);
-  if(relative===''||(!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep)))throw Error('Artifact directory must be outside the repository, including symlink targets.');
+  const canonical=canonicalPath(parent);
+  if(isWithin(fs.realpathSync(ROOT),canonical))throw Error('Artifact directory must be outside the repository, including symlink targets.');
   fs.mkdirSync(canonical,{recursive:true});
   return fs.mkdtempSync(path.join(canonical,'adr-live-release-'));
 }
