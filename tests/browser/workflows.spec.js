@@ -19,7 +19,7 @@ test('mobile task layout exposes capture immediately with readable idle controls
     await expect(page.locator('#stopWalk')).toBeHidden();await expect(page.locator('#muteMic')).toBeHidden();await expect(page.locator('#takePhoto')).toBeDisabled();await expect(page.locator('#uploadPhoto')).toBeEnabled();
     expect((await page.locator('.viewfinder').boundingBox()).height).toBeLessThan(200);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
-    if(browserName==='chromium')await page.screenshot({path:'review-artifacts/redesigned-walkthrough-'+width+'.png',fullPage:true});
+    if(browserName==='chromium')await page.screenshot({path:test.info().outputPath('redesigned-walkthrough-'+width+'.png'),fullPage:true});
     await task(page,'evidence');await expect(page.locator('#photoGallery')).toBeVisible();await task(page,'review');await expect(page.locator('#reviewEmpty')).toBeVisible();await task(page,'property');await expect(page.locator('#address')).toHaveValue('Synthetic navigation draft');
   }
 });
@@ -36,7 +36,7 @@ test('all four mobile document choices fit and claims use readable cards',async(
   }
   await expect(page.locator('#documentProgress')).toContainText('4 of 4');await page.locator('[data-tab="claim"]').click();
   await expect(page.locator('#claimCards')).toBeVisible();await expect(page.locator('.table-scroll')).toBeHidden();await expect(page.locator('.claim-card')).toHaveCount(6);await expect(page.locator('.claim-card').first()).toContainText('Total: $133.95');
-  if(browserName==='chromium')await page.screenshot({path:'review-artifacts/redesigned-mobile-claim.png',fullPage:true});
+  if(browserName==='chromium')await page.screenshot({path:test.info().outputPath('redesigned-mobile-claim.png'),fullPage:true});
   await page.emulateMedia({media:'print'});await expect(page.locator('.table-scroll')).toBeVisible();await expect(page.locator('#claimCards')).toBeHidden();
 });
 
@@ -110,7 +110,7 @@ test('permission denial, portrait evidence, clipboard denial and print document 
   await task(page,'property');await page.locator('#scopeConfirmed').check();await page.locator('#finishAudit').click();await expect(page.locator('#documents')).toBeVisible();
   await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('denied');}}});});await menu(page,'exportMenu');await page.locator('#copyJson').click();await expect(page.locator('#message')).toContainText('Download scope JSON');
   await page.emulateMedia({media:'print'});for(const id of ['doc-proposal','doc-claim','doc-defense','doc-photos'])await expect(page.locator('#'+id)).toBeVisible();
-  if(browserName==='chromium')await page.pdf({path:'review-artifacts/repaired-documents.pdf',format:'Letter',printBackground:true});
+  if(browserName==='chromium')await page.pdf({path:test.info().outputPath('repaired-documents.pdf'),format:'Letter',printBackground:true});
 });
 
 test('revision conflict preserves local work and explicit recovery restores the server',async({page})=>{
@@ -224,7 +224,7 @@ test('walkthrough form fill requires review, supports selection and invalidates 
   await page.locator('#technicianTranscript').fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
   await page.locator('#fillScope').click();await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('10');await expect(page.locator('#airMovers')).toHaveValue('0');
-  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);await page.screenshot({path:'review-artifacts/voice-scope-20261007/mobile-suggestions.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);await page.screenshot({path:test.info().outputPath('voice-scope-mobile-suggestions.png'),fullPage:true});
   await expect(page.locator('#scopeSuggestionList')).toContainText('10 → 80');await expect(page.locator('#scopeQuestions')).toContainText('Confirm any additional labor.');
   await page.locator('.scope-suggestion').filter({hasText:'Air movers'}).locator('input').uncheck();
   await page.locator('#applyScopeSuggestions').click();

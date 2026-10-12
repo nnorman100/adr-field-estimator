@@ -15,7 +15,7 @@ test('owner dashboard has no automatic blank inspection and fits phones',async({
   expect((await(await page.request.get('/__test/workspaces-stats')).json()).inspection_count).toBe(1);
   await expect(page.locator('#dashboardTeam')).toBeVisible();await expect(page.locator('#dashboardAdmin')).toBeVisible();
   for(const width of [320,390]){await page.setViewportSize({width,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);}
-  if(browserName==='chromium')await page.screenshot({path:'review-artifacts/workspaces-20261007/owner-mobile.png',fullPage:true});
+  if(browserName==='chromium')await page.screenshot({path:test.info().outputPath('workspace-owner-mobile.png'),fullPage:true});
   await page.locator('#dashboardTeam').click();await expect(page.locator('#dashboardHeading')).toHaveText('Team & invitations');
   await page.locator('form').filter({has:page.locator('input[name=email]')}).locator('input[name=email]').fill('new-estimator@example.invalid');
   await page.getByRole('button',{name:'Send invitation',exact:true}).click();await expect(page.locator('#dashboardContent')).toContainText('Email sent');
@@ -95,7 +95,7 @@ test('other company branding and signing snapshots stay isolated from ADR',async
   await page.locator('#finishAudit').click();await expect(page.locator('#documents')).toBeVisible();
   await expect(page.locator('#doc-proposal > h2')).toContainText('Other Restoration');await expect(page.locator('#proposalBody')).toContainText('Other Estimator · CSLB #123456');
   await expect(page.locator('.document-letterhead img')).toBeHidden();await expect(page.locator('#defenseBody')).not.toContainText('Matthew Myers');
-  if(browserName==='chromium')await page.screenshot({path:'review-artifacts/workspaces-20261007/other-company-proposal-mobile.png',fullPage:true});
+  if(browserName==='chromium')await page.screenshot({path:test.info().outputPath('other-company-proposal-mobile.png'),fullPage:true});
   for(const name of ['proposal','claim','defense','photos'])await page.locator('[data-tab='+name+']').click();await page.locator('[data-tab=proposal]').click();await page.locator('#documentsConfirmed').check();
   const canvas=page.locator('#signCanvas');await canvas.scrollIntoViewIfNeeded();const rect=await canvas.boundingBox();
   await page.mouse.move(rect.x+20,rect.y+40);await page.mouse.down();await page.mouse.move(rect.x+110,rect.y+80,{steps:8});await page.mouse.move(rect.x+220,rect.y+30,{steps:8});await page.mouse.up();
