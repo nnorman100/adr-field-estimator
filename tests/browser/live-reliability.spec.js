@@ -14,7 +14,7 @@ async function setup(page){
       constructor(){window.liveSockets.push(this);setTimeout(()=>{this.readyState=1;this.onopen?.();},0);}
       emit(packet){this.onmessage?.({data:JSON.stringify(packet)});}
       send(raw){const packet=JSON.parse(raw);window.livePackets.push(packet);
-        if(packet.type==='authenticate')setTimeout(()=>this.emit({type:'ready',protocol_version:2,connection_id:'synthetic-'+window.liveSockets.length,recovery:packet.resume?'resumed':'new'}),0);
+        if(packet.type==='authenticate')setTimeout(()=>this.emit({type:'ready',protocol_version:2,token_refresh:true,connection_id:'synthetic-'+window.liveSockets.length,recovery:packet.resume?'resumed':'new'}),0);
         if(packet.type==='end')setTimeout(()=>{this.emit({type:'transcript',speaker:'technician',connection_id:'synthetic-'+window.liveSockets.length,sequence:9,text:'80 SF',finished:true});this.emit({type:'finished',complete:true});},30);
       }
       close(){this.readyState=3;this.onclose?.();}
@@ -50,4 +50,27 @@ test('Live connects when camera preview playback never settles or is rejected',a
   await expect(page.locator('#liveStatus')).toHaveText(/Live (AI connected|conversation resumed)/);
   await expect(page.locator('#message')).toContainText('Camera preview could not start: synthetic preview failure');await expect(page.locator('#message')).toContainText('Live voice guidance continues');
   await expect(page.locator('#cameraEmpty')).toBeVisible();await cleanup(page);
+});
+test('Live connects with a forced token and renews it on the open socket without a gap',async({page})=>{
+  await page.clock.install();await setup(page);
+  const uid=await page.evaluate(()=>sessionStorage.getItem('synthetic-uid'));
+  expect(await page.evaluate(()=>window.__testTokenRequests.at(-1))).toBe(true);
+  const refreshes=()=>page.evaluate(()=>window.livePackets.filter(packet=>packet.type==='refresh'));
+  await page.clock.fastForward(599000);expect(await refreshes()).toEqual([]);
+  await page.clock.fastForward(1000);await expect.poll(refreshes).toEqual([{type:'refresh',token:uid}]);
+  expect(await page.evaluate(()=>window.__testTokenRequests.at(-1))).toBe(true);
+  expect(await page.evaluate(()=>window.liveSockets.length)).toBe(1);await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
+  await page.locator('#stopWalk').click();await expect(page.locator('#liveStatus')).toHaveText('Not connected');
+  await page.clock.fastForward(600000);expect(await refreshes()).toHaveLength(1);
+  await cleanup(page);
+});
+test('Live reconnect falls back to the cached token when the forced refresh fails',async({page})=>{
+  await page.clock.install();await setup(page);const uid=await page.evaluate(()=>sessionStorage.getItem('synthetic-uid'));
+  await page.evaluate(()=>{const user=firebase.auth().currentUser,cached=user.getIdToken;window.failedRefreshes=0;user.getIdToken=async force=>{if(force){window.failedRefreshes++;throw Object.assign(Error('auth/network-request-failed'),{code:'auth/network-request-failed'});}return cached(false);};window.liveSockets[0].close();});
+  await expect(page.locator('#liveStatus')).toHaveText('Live AI disconnected');
+  await page.clock.fastForward(2000);await expect(page.locator('#liveStatus')).toHaveText('Live conversation resumed');
+  expect(await page.evaluate(()=>window.liveSockets.length)).toBe(2);expect(await page.evaluate(()=>window.failedRefreshes)).toBe(1);
+  expect(await page.evaluate(()=>window.livePackets.filter(packet=>packet.type==='authenticate').map(packet=>packet.token))).toEqual([uid,uid]);
+  await expect(page.locator('#startWalk')).not.toHaveText('Resume walkthrough');
+  await page.locator('#stopWalk').click();await expect(page.locator('#liveStatus')).toHaveText('Not connected');await cleanup(page);
 });

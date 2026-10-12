@@ -420,7 +420,7 @@ async def live_walkthrough(socket:WebSocket):
         if protocol not in (1,2): raise ValueError('Update the app to connect.')
         capture=auth.get('capture_id') if protocol==2 else None
         if protocol==2 and (not isinstance(capture,str) or len(capture)!=32): raise ValueError('Invalid capture identifier.')
-        staff=await verify_staff(auth.get('token',''))
+        token=auth.get('token','');staff=await verify_staff(token)
         uid=staff['uid']; store=get_job_store(); inspection_id=auth.get('inspection_id','')
         record=await stored(store.get_inspection,uid,inspection_id)
         await stored(store._access,uid,record,'live')
@@ -459,11 +459,11 @@ async def live_walkthrough(socket:WebSocket):
             final_text=asyncio.Event(); final_text.set()
             ready={'type':'ready','model':LIVE_MODEL}
             if protocol==2:
-                ready.update(protocol_version=2,connection_id=connection,voice=LIVE_VOICE,
+                ready.update(protocol_version=2,connection_id=connection,voice=LIVE_VOICE,token_refresh=True,
                     recovery='resumed' if handle else 'restarted' if auth.get('resume') else 'new')
             await socket.send_json(ready)
             async def upstream():
-                nonlocal pending,finishing,retain,outcome
+                nonlocal pending,finishing,retain,outcome,staff,token
                 frame_at=0; second=0; count=0
                 while True:
                     raw=await socket.receive_text()
@@ -485,6 +485,11 @@ async def live_walkthrough(socket:WebSocket):
                         await session.send_realtime_input(video=types.Blob(data=image,mime_type='image/jpeg'))
                     elif kind=='pause' and protocol==2:
                         await session.send_realtime_input(audio_stream_end=True)
+                    elif kind=='refresh':
+                        # A renewed ID token extends the session only for the same verified user.
+                        refreshed=await verify_staff(data.get('token',''))
+                        if refreshed['uid']!=uid: retain=False; raise ValueError('Session owner changed.')
+                        staff=refreshed; token=data['token']
                     elif kind=='end':
                         outcome='finished'
                         retain=bool(data.get('preserve_resume',False)) if protocol==2 else False
@@ -535,7 +540,7 @@ async def live_walkthrough(socket:WebSocket):
                 while True:
                     await asyncio.sleep(LIVE_RECHECK_SECONDS)
                     if staff.get('exp',0)<time.time(): raise ValueError('Sign-in expired. Reconnect to continue.')
-                    refreshed=await verify_staff(auth.get('token',''))
+                    refreshed=await verify_staff(token)
                     if refreshed['uid']!=uid: retain=False; raise ValueError('Session owner changed.')
                     current=await stored(store.get_inspection,uid,inspection_id)
                     try: await stored(store._access,uid,current,'live')

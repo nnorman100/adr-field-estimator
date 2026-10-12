@@ -226,3 +226,50 @@ def test_genuine_resume_with_saved_checkpoint_is_not_charged_again(monkeypatch):
             socket.send_json(auth(False))
             error=socket.receive_json();assert error['type']=='error' and error['status']==429
             with pytest.raises(WebSocketDisconnect):socket.receive_json()
+
+
+def token_relay(monkeypatch,store,claims):
+    finishing_relay(monkeypatch,store);calls=[]
+    async def identity(token):
+        calls.append(token)
+        if token not in claims:raise bm.HTTPException(401,'Your sign-in expired. Please sign in again.')
+        return claims[token]
+    monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'LIVE_RECHECK_SECONDS',.05)
+    return calls
+
+
+@pytest.mark.parametrize('refresh',[True,False])
+def test_refreshed_token_keeps_the_session_open_past_the_original_expiry(monkeypatch,refresh):
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    calls=token_relay(monkeypatch,store,{'initial':{'uid':'owner','exp':time.time()+.5},'renewed':{'uid':'owner','exp':time.time()+3600}})
+    with TestClient(bm.app) as client, client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+        socket.send_json(dict(type='authenticate',token='initial',inspection_id=ID,protocol_version=2,capture_id=CAP))
+        assert socket.receive_json()['token_refresh'] is True
+        if refresh:socket.send_json({'type':'refresh','token':'renewed'})
+        # The heartbeat runs several times after the initial token's exp has passed.
+        time.sleep(1)
+        socket.send_json({'type':'end'})
+        if refresh:assert socket.receive_json()=={'type':'finished','complete':True}
+        else:assert socket.receive_json()['type']=='error'
+        with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    if refresh:
+        # Only the newest token is re-verified once the refresh lands.
+        assert calls[0]=='initial' and calls.count('renewed')>=5 and 'initial' not in calls[calls.index('renewed'):]
+    assert '_live_sessions/owner' not in store.db.records
+
+
+@pytest.mark.parametrize('token,status',[('intruder',None),('forged',401)])
+def test_refresh_for_another_user_or_invalid_token_closes_without_switching_identity(monkeypatch,token,status):
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    calls=token_relay(monkeypatch,store,{'initial':{'uid':'owner','exp':time.time()+3600},'intruder':{'uid':'other','exp':time.time()+3600}})
+    with TestClient(bm.app) as client, client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+        socket.send_json(dict(type='authenticate',token='initial',inspection_id=ID,protocol_version=2,capture_id=CAP))
+        assert socket.receive_json()['type']=='ready'
+        assert '_live_resume/owner' in store.db.records
+        socket.send_json({'type':'refresh','token':token})
+        error=socket.receive_json()
+        assert error['type']=='error' and error.get('status')==status
+        with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    assert calls[0]=='initial' and token in calls
+    # A rejected refresh is treated like revocation: no checkpoint survives to resume from.
+    assert '_live_resume/owner' not in store.db.records and '_live_sessions/owner' not in store.db.records

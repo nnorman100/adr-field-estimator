@@ -609,13 +609,20 @@ function captureGap(message){
   capture.gap_count=Math.min(1000000,capture.gap_count+1);capture.status='incomplete';changed(false);
   $('transcriptStatus').textContent=message;
 }
+const LIVE_TOKEN_REFRESH_MS=600000;
+async function refreshLiveToken(socket,uid){
+  // The relay re-verifies the newest token, so a session outlives the hour-long ID token without reconnecting.
+  // A failed refresh is not fatal: at expiry the relay closes and the normal reconnect path recovers.
+  try{const token=await state.user.getIdToken(true);if(state.socket===socket&&state.user?.uid===uid&&socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'refresh',token}));}catch{}
+}
 async function connectLive(){
   if(state.stopping||!state.media)return;
   $('liveStatus').textContent='Connecting to live guidance…';$('liveStatus').className='status';
   const url=new URL(state.session.live_url);
   if(url.protocol!=='wss:'||url.hostname!=='alert-disaster-field-estimator-545776254070.us-west2.run.app')throw Error('Unexpected Live endpoint.');
-  const draft=state.draft,uid=state.user.uid,capture=draft.data.capture_metadata;
-  const token=await state.user.getIdToken();
+  const draft=state.draft,user=state.user,uid=user.uid,capture=draft.data.capture_metadata;
+  // A cached token can be seconds from expiry; the relay then holds a fresh one for the full hour.
+  const token=await user.getIdToken(true).catch(()=>user.getIdToken());
   if(state.stopping||!state.media||state.draft!==draft||state.user?.uid!==uid)return;
   const socket=new WebSocket(url);state.socket=socket;state.draining=false;
   socket.onopen=()=>socket.send(JSON.stringify({type:'authenticate',token,workspace_protocol_version:1,inspection_id:draft.inspection_id,
@@ -626,6 +633,7 @@ async function connectLive(){
     if(msg.type==='ready'){
       state.liveProtocol=msg.protocol_version||1;state.liveReady=true;state.liveConnection=msg.connection_id||'legacy';
       clearTimeout(state.stableTimer);state.stableTimer=setTimeout(()=>{if(state.socket===socket&&!state.stopping)state.retries=0;},60000);
+      clearInterval(state.tokenTimer);if(msg.token_refresh)state.tokenTimer=setInterval(()=>refreshLiveToken(socket,uid),LIVE_TOKEN_REFRESH_MS);
       $('liveStatus').textContent=msg.recovery==='resumed'?'Live conversation resumed':msg.recovery==='restarted'?'Live restarted using saved inspection':'Live AI connected';$('liveStatus').className='status connected';
       if(state.resumeAvailable){capture.recovery_count=Math.min(10000,capture.recovery_count+1);captureGap('Conversation recovered. Review transcript boundaries and any missing observations.');}
       state.resumeAvailable=true;
@@ -646,7 +654,7 @@ async function connectLive(){
   };
   socket.onerror=()=>say('Live guidance could not connect. Your draft is preserved; check the connection and retry.','error');
   socket.onclose=()=>{
-    if(state.socket!==socket)return;state.socket=null;state.liveReady=false;clearTimeout(state.stableTimer);clearPlayback();
+    if(state.socket!==socket)return;state.socket=null;state.liveReady=false;clearTimeout(state.stableTimer);clearInterval(state.tokenTimer);clearPlayback();
     state.finishResolve?.();$('liveStatus').textContent='Live AI disconnected';$('liveStatus').className='status';
     if(!state.stopping&&state.media&&navigator.onLine){
       captureGap('Connection interrupted. Review the transcript for missing observations.');
@@ -674,7 +682,7 @@ async function startWalk(){
     // The preview must not gate Live: play() can stay pending indefinitely, and frames are skipped until the video has dimensions.
     $('cameraVideo').play().then(()=>{if(state.media===media)$('cameraEmpty').hidden=true;},e=>{if(state.media===media)say('Camera preview could not start: '+e.message+' Live voice guidance continues; use Camera / upload for photos.','error');});
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=mobile-repairs-20261012-2');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=live-token-20261012-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -698,7 +706,7 @@ async function stopWalk(options={}){
   const operation=async()=>{
     const preserve=!!options.preserveResume,socket=state.socket,draft=state.draft,hadCapture=!!(socket||state.media||state.node);
     state.stopping=true;state.draining=true;state.liveReady=false;state.finishComplete=false;
-    clearTimeout(state.reconnectTimer);clearTimeout(state.stableTimer);clearInterval(state.frameTimer);state.frameTimer=null;
+    clearTimeout(state.reconnectTimer);clearTimeout(state.stableTimer);clearInterval(state.tokenTimer);clearInterval(state.frameTimer);state.frameTimer=null;
     clearPlayback();if(state.node){state.node.disconnect();state.node=null;}if(state.media){state.media.getTracks().forEach(track=>track.stop());state.media=null;}
     if(state.audio){await state.audio.close().catch(()=>{});state.audio=null;}
     if(socket){
