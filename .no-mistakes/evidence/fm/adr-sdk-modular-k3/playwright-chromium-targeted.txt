@@ -1,0 +1,10 @@
+Running 8 tests using 1 worker
+  ✓  1 [chromium] › tests/browser/auth-race.spec.js:15:1 › signing out while the session request is delayed ends signed out with no stale session (1.9s)
+  ✓  2 [chromium] › tests/browser/auth-race.spec.js:28:3 › company workspaces › switching accounts while the first session request is delayed opens only the second account (1.3s)
+  ✓  3 [chromium] › tests/browser/firebase-sdk.spec.js:8:1 › the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP (3.5s)
+  ✓  4 [chromium] › tests/browser/live-reliability.spec.js:26:1 › protocol 2 preserves fragments, deduplicates delivery and flushes before form review (969ms)
+  ✓  5 [chromium] › tests/browser/live-reliability.spec.js:35:1 › offline requires explicit Resume and stale callbacks cannot edit a new inspection (941ms)
+  ✓  6 [chromium] › tests/browser/live-reliability.spec.js:43:1 › Live connects when camera preview playback never settles or is rejected (883ms)
+  ✓  7 [chromium] › tests/browser/live-reliability.spec.js:54:1 › Live connects with a forced token and renews it on the open socket without a gap (915ms)
+  ✓  8 [chromium] › tests/browser/live-reliability.spec.js:67:1 › Live reconnect falls back to the cached token when the forced refresh fails (824ms)
+  8 passed (14.0s)
