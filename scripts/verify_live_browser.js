@@ -77,10 +77,10 @@ function python(args,input,label){
     context=browser.contexts().find(c=>c.pages().some(p=>p.url().startsWith(BASE)));
     if(!context)throw Error('The manual sign-in tab is not available.');
     signedPage=context.pages().find(p=>p.url().startsWith(BASE));
-    await signedPage.waitForFunction(()=>window.firebase?.apps?.length>0&&window.firebase.auth().currentUser&&document.getElementById('address').disabled===false,{},{timeout:30000});
-    const existing=await signedPage.evaluate(()=>({signedIn:!!firebase.auth().currentUser,inspection:typeof state!=='undefined'&&state.record?.status==='draft'&&stable(state.draft?.data)===stable(emptyData())&&!state.draft.photos.length?state.draft.inspection_id:null}));
+    await signedPage.waitForFunction(()=>typeof auth!=='undefined'&&auth?.currentUser&&document.getElementById('address').disabled===false,{},{timeout:30000});
+    const existing=await signedPage.evaluate(()=>({signedIn:!!auth.currentUser,inspection:typeof state!=='undefined'&&state.record?.status==='draft'&&stable(state.draft?.data)===stable(emptyData())&&!state.draft.photos.length?state.draft.inspection_id:null}));
     if(!existing.signedIn)throw Error('Normal Chrome is not signed in yet. Finish Google sign-in before sending signed-in.');
-    cachedToken=await signedPage.evaluate(()=>firebase.auth().currentUser.getIdToken());
+    cachedToken=await signedPage.evaluate(()=>auth.currentUser.getIdToken());
     console.log('HANDOFF: staff sign-in confirmed in the original Chrome page.');
     if(existing.inspection)inspections.add(existing.inspection);
     await signedPage.evaluate(async()=>{for(const registration of await navigator.serviceWorker.getRegistrations())await registration.unregister();});
@@ -112,12 +112,13 @@ function python(args,input,label){
         if(url.pathname==='/api/session'&&response.ok())userUid=(await response.json()).uid;
         return route.fulfill({response});
       }
-      if(url.pathname==='/vendor/firebase-auth-compat.js'){
-        const source=fs.readFileSync(path.join(ROOT,'public','vendor','firebase-auth-compat.js'),'utf8');
-        return route.fulfill({contentType:'text/javascript',body:source+'\nconst originalPersistence=firebase.auth.Auth.prototype.setPersistence;firebase.auth.Auth.prototype.setPersistence=function(){return originalPersistence.call(this,firebase.auth.Auth.Persistence.NONE);};'});
+      // Memory-only authentication: the app's auth module becomes a wrapper that re-exports the vendored build with in-memory persistence.
+      if(/^\/vendor\/firebase\/[^/]+\/firebase-auth\.js$/.test(url.pathname)&&url.search!=='?vendored'){
+        return route.fulfill({contentType:'text/javascript',body:"export * from './firebase-auth.js?vendored';import {initializeAuth as initialize,inMemoryPersistence} from './firebase-auth.js?vendored';export const initializeAuth=(app,deps)=>initialize(app,{...deps,persistence:inMemoryPersistence});"});
       }
       const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
-      if(local&&['index.html','app.js','workspaces.js','core.js','app.css','audio-worklet.js','sw.js'].includes(file)){
+      // The local shell names its own SDK release, which Hosting may not serve yet.
+      if(local&&(['index.html','app.js','workspaces.js','core.js','app.css','audio-worklet.js','sw.js'].includes(file)||/^vendor\/firebase\/[^/]+\/firebase-[a-z-]+\.js$/.test(file))){
         const contentType=file.endsWith('.html')?'text/html':file.endsWith('.css')?'text/css':'text/javascript';
         return route.fulfill({contentType,body:fs.readFileSync(path.join(ROOT,'public',file))});
       }
@@ -125,16 +126,16 @@ function python(args,input,label){
     });
     await page.goto(BASE,{waitUntil:'domcontentloaded'});
     if(smoke)await expect(page.locator('#signInButton')).toBeVisible({timeout:30000});
-    await page.waitForFunction(()=>window.firebase?.apps?.length>0&&window.firebase.auth()._delegate.persistenceManager?.persistence.type==='NONE',{},{timeout:30000});
+    await page.waitForFunction(()=>typeof auth!=='undefined'&&auth?.persistenceManager?.persistence.type==='NONE',{},{timeout:30000});
     if(smoke){console.log('PASS: actual Firebase SDK initializes with memory-only authentication and the dedicated sign-in UI. No jobs or IAM changes.');return;}
     console.log('VERIFYING_MANUAL_SESSION: Google sign-in was completed before automation attached.');
-    await page.waitForFunction(()=>window.firebase?.apps?.length>0&&window.firebase.auth().currentUser&&document.getElementById('address').disabled===false,{},{timeout:30000});
-    userUid=await page.evaluate(()=>firebase.auth().currentUser.uid);
-    const memoryOnly=await page.evaluate(()=>firebase.auth()._delegate.persistenceManager.persistence.type);
+    await page.waitForFunction(()=>typeof auth!=='undefined'&&auth?.currentUser&&document.getElementById('address').disabled===false,{},{timeout:30000});
+    userUid=await page.evaluate(()=>auth.currentUser.uid);
+    const memoryOnly=await page.evaluate(()=>auth.persistenceManager.persistence.type);
     if(memoryOnly!=='NONE')throw Error('Auth persistence is not memory-only.');
     console.log('PASS: ordinary Google staff sign-in, memory-only Firebase authentication; no IAM changes.');
     if(signedPage&&!signedPage.isClosed()){await signedPage.close();signedPage=null;}
-    async function token(){try{cachedToken=await page.evaluate(()=>firebase.auth().currentUser.getIdToken(true));}catch(error){if(!cachedToken)throw error;}return cachedToken;}
+    async function token(){try{cachedToken=await page.evaluate(()=>auth.currentUser.getIdToken(true));}catch(error){if(!cachedToken)throw error;}return cachedToken;}
     async function cleanBrowserRecords(label){
       if(!inspections.size&&!agreements.size)return;
       await python([service,'--cleanup-stdin'],JSON.stringify({token:await token(),inspections:[...inspections],agreements:[...agreements]}),label+'-browser-cleanup');
@@ -221,7 +222,7 @@ function python(args,input,label){
       await python([service,'--cleanup-stdin'],JSON.stringify({token:cachedToken,inspections:[...inspections],agreements:[...agreements]}),'failure-browser-cleanup').catch(()=>console.error('Synthetic cleanup needs attention; see its credential-free log.'));
     }
     // Credentials are never exported as browser storage state.
-    await page.evaluate(async()=>{if(window.firebase?.auth().currentUser)await firebase.auth().signOut();}).catch(()=>{});
+    await page.evaluate(async()=>{if(typeof auth!=='undefined'&&auth?.currentUser)await auth.signOut();}).catch(()=>{});
     if(!manual)await context.close().catch(()=>{});
     await closeManual(browser,manual);
     process.stdin.pause();

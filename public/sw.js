@@ -1,6 +1,6 @@
 const VERSION='unstamped';
 const CACHE='alert-disaster-'+VERSION;
-const ASSETS=['/','/index.html','/app.css?v='+VERSION,'/core.js?v='+VERSION,'/app.js?v='+VERSION,'/workspaces.js?v='+VERSION,'/audio-worklet.js?v='+VERSION,'/vendor/firebase-app-compat.js','/vendor/firebase-auth-compat.js','/vendor/firebase-app-check-compat.js','/__/firebase/init.json','/manifest.webmanifest','/icon.svg','/icon-192.png','/icon-512.png','/brand/adr-logo.jpg','/fonts/lato-400-latin.woff2','/fonts/lato-700-latin.woff2','/fonts/lato-900-latin.woff2','/fonts/ebgaramond-400-latin.woff2'];
+const ASSETS=['/','/index.html','/app.css?v='+VERSION,'/core.js?v='+VERSION,'/app.js?v='+VERSION,'/workspaces.js?v='+VERSION,'/audio-worklet.js?v='+VERSION,'/vendor/firebase/13.0.0/firebase-app.js','/vendor/firebase/13.0.0/firebase-auth.js','/vendor/firebase/13.0.0/firebase-app-check.js','/__/firebase/init.json','/manifest.webmanifest','/icon.svg','/icon-192.png','/icon-512.png','/brand/adr-logo.jpg','/fonts/lato-400-latin.woff2','/fonts/lato-700-latin.woff2','/fonts/lato-900-latin.woff2','/fonts/ebgaramond-400-latin.woff2'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('message',event=>{if(event.data?.type==='SKIP_WAITING')self.skipWaiting();});
 self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const name of await caches.keys())if(name.startsWith('alert-disaster-')&&name!==CACHE)await caches.delete(name);await self.clients.claim();})()));
@@ -11,5 +11,6 @@ self.addEventListener('fetch',event=>{
     event.respondWith((async()=>{try{return await fetch(event.request);}catch{return (await caches.match('/index.html'))||Response.error();}})());return;
   }
   if(!ASSETS.includes(url.pathname+url.search))return;
-  event.respondWith((async()=>{const cached=await caches.match(event.request);return cached||fetch(event.request);})());
+  // Module scripts and fonts send Origin, so a server's Vary: Origin must not hide the one precached copy of each asset.
+  event.respondWith((async()=>{const cached=await caches.match(event.request,{ignoreVary:true});return cached||fetch(event.request);})());
 });

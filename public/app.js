@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id);
 const {emptyData,stable,money,pcmToFloat,aspect,scopeJobLabels,scopeRoomLabels,roomKey,applyScopeChanges,ingestTranscript,authStage,authMessage,splitPhotos}=ADRCore;
 const estimateLabel=proposal=>proposal.proposed_cost_low==null?money(proposal.proposed_cost):money(proposal.proposed_cost_low)+'–'+money(proposal.proposed_cost);
 const state={user:null,session:null,draft:null,record:null,ack:null,documents:null,signed:null,signature:null,pendingAuthorization:null,localVersion:0,conflict:false,syncing:false,ocr:new Map(),photoUrls:new Map(),media:null,socket:null,audio:null,node:null,frameTimer:null,playing:new Set(),audioTime:0,liveReady:false,stopping:false,muted:false,retries:0,lastSpeech:0,firstAudio:true};
-let syncChain=Promise.resolve(),saveTimer=null,persistTimer=null,dbPromise=null,auth=null,waitingWorker=null;
+let syncChain=Promise.resolve(),saveTimer=null,persistTimer=null,dbPromise=null,auth=null,authSdk=null,waitingWorker=null;
 let confirmedAuthorization=null,authEpoch=0;
 const newId=()=>crypto.randomUUID().replaceAll('-','');
 const ui={task:'property',starting:false,auditing:false,fillingScope:false,documentSource:null,viewed:new Set()};
@@ -125,20 +125,24 @@ async function persist(){
 }
 function schedulePersist(){clearTimeout(persistTimer);persistTimer=setTimeout(()=>persist().catch(e=>say(e.message,'error')),400);}
 async function clearLocal(){await dbAction('readwrite',(drafts,photos)=>{photos.clear();return drafts.clear();});}
+// Unmodified Firebase JS SDK modular builds except for a same-origin import path (public/vendor/README.md).
+// The SDK version is part of the path, so an upgrade cannot mix cached files from two releases.
+const FIREBASE_SDK='/vendor/firebase/13.0.0/';
 // Public reCAPTCHA Enterprise site key registered for this web app in Firebase App Check (docs/app-check.md).
 // Empty leaves App Check off and the app unchanged.
 const APP_CHECK_SITE_KEY='';
 const APP_CHECK_LOCAL_HOSTS=new Set(['localhost','127.0.0.1']),APP_CHECK_WAIT_MS=3000;
 let appCheck=null,appCheckStalled=false;
 function loadAppCheck(siteKey=APP_CHECK_SITE_KEY){
-  if(!siteKey)return Promise.resolve(false);
-  return new Promise(resolve=>{const script=document.createElement('script');script.src='/vendor/firebase-app-check-compat.js';script.onload=()=>resolve(true);script.onerror=()=>resolve(false);document.head.append(script);});
+  if(!siteKey)return Promise.resolve(null);
+  return import(FIREBASE_SDK+'firebase-app-check.js').catch(()=>null);
 }
-function activateAppCheck(siteKey=APP_CHECK_SITE_KEY){
-  if(!siteKey||!firebase.appCheck)return;
+function activateAppCheck(app,sdk,siteKey=APP_CHECK_SITE_KEY){
+  if(!siteKey||!sdk)return;
   // The SDK reads this flag on activation; a debug token skips reCAPTCHA, so only local development and test origins keep it.
   if(!APP_CHECK_LOCAL_HOSTS.has(location.hostname))try{self.FIREBASE_APPCHECK_DEBUG_TOKEN=undefined;}catch{return;}
-  appCheck=firebase.appCheck();appCheck.activate(new firebase.appCheck.ReCaptchaEnterpriseProvider(siteKey),true);
+  const instance=sdk.initializeAppCheck(app,{provider:new sdk.ReCaptchaEnterpriseProvider(siteKey),isTokenAutoRefreshEnabled:true});
+  appCheck={getToken:()=>sdk.getToken(instance)};
 }
 async function appCheckToken(){
   // Monitor step: the backend only records a missing token, so a slow or failed attestation never holds a request.
@@ -779,15 +783,15 @@ async function initialize(){
     try{await fn();}catch(e){authSay(authMessage(e),'error');}finally{controls.forEach(control=>control.disabled=false);}
   });
   const credentials=()=>$('emailAuthForm').reportValidity()?{email:$('authEmail').value.trim(),password:$('authPassword').value}:null;
-  authClick('signInButton',async()=>{const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});await auth.signInWithPopup(provider);});
+  authClick('signInButton',async()=>{const provider=new authSdk.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});await authSdk.signInWithPopup(auth,provider);});
   $('emailAuthForm').addEventListener('submit',e=>e.preventDefault());
-  authClick('emailSignIn',async()=>{const entered=credentials();if(entered)await auth.signInWithEmailAndPassword(entered.email,entered.password);});
+  authClick('emailSignIn',async()=>{const entered=credentials();if(entered)await authSdk.signInWithEmailAndPassword(auth,entered.email,entered.password);});
   authClick('emailReset',async()=>{
     if(!$('authEmail').reportValidity())return;const email=$('authEmail').value.trim();
-    try{await auth.sendPasswordResetEmail(email);}catch(e){if(e.code!=='auth/user-not-found')throw e;}
+    try{await authSdk.sendPasswordResetEmail(auth,email);}catch(e){if(e.code!=='auth/user-not-found')throw e;}
     authSay('If an account uses '+email+', a password reset email is on its way.','success');
   });
-  authClick('resendVerification',async()=>{await auth.currentUser.sendEmailVerification();authSay('Verification email sent to '+auth.currentUser.email+'.','success');});
+  authClick('resendVerification',async()=>{await authSdk.sendEmailVerification(auth.currentUser);authSay('Verification email sent to '+auth.currentUser.email+'.','success');});
   authClick('confirmVerified',async()=>{
     const user=auth.currentUser;await user.reload();await user.getIdToken(true);
     if(authStage(auth.currentUser)==='unverified'){authSay('This email is not verified yet. Open the link in the verification email, then try again.','error');return;}
@@ -795,7 +799,7 @@ async function initialize(){
   });
   const unsynced=row=>row.conflict||stable(row.draft.data)!==row.ack||row.draft.photos.some(p=>!p.uploaded);
   const discardAndSignOut=async()=>{
-    state.queuePaused=true;await stopWalk();clearTimeout(state.queueRetry);clearTimeout(saveTimer);await auth.signOut();
+    state.queuePaused=true;await stopWalk();clearTimeout(state.queueRetry);clearTimeout(saveTimer);await authSdk.signOut(auth);
     // pagehide must not recreate the draft after local storage is cleared.
     state.user=null;state.session=null;state.draft=null;state.record=null;state.signed=null;invalidate();
     await clearLocal();location.reload();
@@ -836,10 +840,12 @@ async function initialize(){
   click('applyUpdate',async()=>{await persist();await syncDraft().catch(()=>{});await stopWalk();waitingWorker?.postMessage({type:'SKIP_WAITING'});});
   if('serviceWorker'in navigator)try{const registration=await navigator.serviceWorker.register('/sw.js');const prompt=worker=>{waitingWorker=worker;$('updateBanner').hidden=false;};if(registration.waiting)prompt(registration.waiting);registration.addEventListener('updatefound',()=>{const worker=registration.installing,controller=navigator.serviceWorker.controller;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&controller&&controller!==worker)prompt(worker);});});let refreshing=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(waitingWorker&&!refreshing){refreshing=true;location.reload();}});const checkUpdate=()=>{if(!document.hidden&&navigator.onLine)registration.update().catch(()=>{});};document.addEventListener('visibilitychange',checkUpdate);window.addEventListener('focus',checkUpdate);setInterval(checkUpdate,300000);}catch{say('Offline launch is unavailable in this browser. Online private drafts remain available.','error');}
   $('yearBuilt').max=new Date().getFullYear();
-  const [config]=await Promise.all([fetch('/__/firebase/init.json',{cache:'no-store'}).then(response=>response.json()),loadAppCheck()]);
+  const [config,{initializeApp},sdk,appCheckSdk]=await Promise.all([fetch('/__/firebase/init.json',{cache:'no-store'}).then(response=>response.json()),import(FIREBASE_SDK+'firebase-app.js'),import(FIREBASE_SDK+'firebase-auth.js'),loadAppCheck()]);
   if(config.projectId!=='alert-disaster-field-2026')throw Error('Incorrect Firebase project.');
-  firebase.initializeApp(config);activateAppCheck();auth=firebase.auth();await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-  auth.onAuthStateChanged(applyUser);
+  const app=initializeApp(config);activateAppCheck(app,appCheckSdk);authSdk=sdk;
+  // IndexedDB, or localStorage where IndexedDB is unavailable: the persistence the compat SDK's Persistence.LOCAL chose.
+  auth=sdk.initializeAuth(app,{persistence:[sdk.indexedDBLocalPersistence,sdk.browserLocalPersistence],popupRedirectResolver:sdk.browserPopupRedirectResolver});
+  sdk.onAuthStateChanged(auth,applyUser);
 }
 async function applyUser(user){
   // Auth callbacks overlap; only the newest one may write state after an await.

@@ -15,7 +15,7 @@ async function gateFirstSession(page){
 test('signing out while the session request is delayed ends signed out with no stale session',async({page})=>{
   const release=await gateFirstSession(page);
   await page.goto('/');await page.waitForFunction(()=>window.__sessionStarted);
-  await page.evaluate(()=>firebase.auth().signOut());await expect(page.locator('#signInButton')).toBeVisible();
+  await page.evaluate(()=>auth.signOut());await expect(page.locator('#signInButton')).toBeVisible();
   await release();
   expect(await page.evaluate(()=>({user:state.user,session:state.session,draft:state.draft}))).toEqual({user:null,session:null,draft:null});
   await expect(page.locator('#signInButton')).toBeVisible();await expect(page.locator('#authPanel')).toBeVisible();
