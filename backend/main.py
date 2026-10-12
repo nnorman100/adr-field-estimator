@@ -200,14 +200,14 @@ async def limit_payload(request:Request,call_next):
 async def monitor_app_check(request:Request,call_next):
     # Registered after limit_payload, so it also records requests that middleware rejects.
     if APPCHECK_MODE=='off' or not request.url.path.startswith('/api/'): return await call_next(request)
-    outcome=await app_check_outcome(request.headers.get('x-firebase-appcheck'))
+    verification=asyncio.create_task(app_check_outcome(request.headers.get('x-firebase-appcheck')))
     status=None
     try:
         response=await call_next(request); status=response.status_code
         return response
     finally:
         # The route template, never the concrete path, so inspection and photo IDs stay out of this line.
-        record_app_check(outcome,request.method,getattr(request.scope.get('route'),'path',None),status)
+        record_app_check(await verification,request.method,getattr(request.scope.get('route'),'path',None),status)
 
 async def stored(method,*args):
     try: return await run_in_threadpool(method,*args)

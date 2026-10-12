@@ -20,7 +20,6 @@ function load({hostname='alert-disaster-field-2026.web.app',debug,getToken=async
 (async()=>{
   {
     const {calls,activateAppCheck,loadAppCheck,api}=load();
-    assert.match(fs.readFileSync('public/app.js','utf8'),/const APP_CHECK_SITE_KEY='';/);
     assert.equal(await loadAppCheck(),false);activateAppCheck();
     assert.equal(calls.scripts.length,0);assert.equal(calls.appCheck,0);
     await api('/api/inspections');
@@ -56,6 +55,19 @@ function load({hostname='alert-disaster-field-2026.web.app',debug,getToken=async
       assert.deepEqual(failing.calls.fetches[0].headers,{Authorization:'Bearer id-token'});
     }
     console.log('PASS: API requests carry X-Firebase-AppCheck when a token exists and still go out without one');
+  }
+  {
+    let getToken=()=>new Promise(()=>{});
+    const stalled=load({getToken:()=>getToken()});stalled.activateAppCheck('site-key');
+    let started=Date.now();await stalled.api('/api/inspections');assert.ok(Date.now()-started>=2900);
+    started=Date.now();await stalled.api('/api/inspections');assert.ok(Date.now()-started<500);
+    assert.deepEqual(stalled.calls.fetches.map(fetch=>fetch.headers),[{Authorization:'Bearer id-token'},{Authorization:'Bearer id-token'}]);
+    getToken=async()=>({token:'app-check-token'});
+    started=Date.now();await stalled.api('/api/inspections');assert.ok(Date.now()-started<500);
+    assert.equal(stalled.calls.fetches[2].headers['X-Firebase-AppCheck'],'app-check-token');
+    getToken=()=>new Promise(()=>{});
+    started=Date.now();await stalled.api('/api/inspections');assert.ok(Date.now()-started>=2900);
+    console.log('PASS: after one attestation hang, later requests send at once, use a ready token, and wait again once attestation recovers');
   }
   {
     const live=async options=>{

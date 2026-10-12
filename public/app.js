@@ -129,7 +129,7 @@ async function clearLocal(){await dbAction('readwrite',(drafts,photos)=>{photos.
 // Empty leaves App Check off and the app unchanged.
 const APP_CHECK_SITE_KEY='';
 const APP_CHECK_LOCAL_HOSTS=new Set(['localhost','127.0.0.1']),APP_CHECK_WAIT_MS=3000;
-let appCheck=null;
+let appCheck=null,appCheckStalled=false;
 function loadAppCheck(siteKey=APP_CHECK_SITE_KEY){
   if(!siteKey)return Promise.resolve(false);
   return new Promise(resolve=>{const script=document.createElement('script');script.src='/vendor/firebase-app-check-compat.js';script.onload=()=>resolve(true);script.onerror=()=>resolve(false);document.head.append(script);});
@@ -143,8 +143,9 @@ function activateAppCheck(siteKey=APP_CHECK_SITE_KEY){
 async function appCheckToken(){
   // Monitor step: the backend only records a missing token, so a slow or failed attestation never holds a request.
   if(!appCheck)return '';
-  let timer;
-  try{const result=await Promise.race([appCheck.getToken(),new Promise(resolve=>{timer=setTimeout(resolve,APP_CHECK_WAIT_MS);})]);return typeof result?.token==='string'?result.token:'';}
+  // After one attestation outlasts the wait, later requests only take a token that is already available until it settles.
+  let timer;const pending=appCheck.getToken().then(result=>{appCheckStalled=false;return result;});
+  try{const result=await Promise.race([pending,new Promise(resolve=>{timer=setTimeout(()=>{appCheckStalled=true;resolve();},appCheckStalled?0:APP_CHECK_WAIT_MS);})]);return typeof result?.token==='string'?result.token:'';}
   catch{return '';}finally{clearTimeout(timer);}
 }
 async function appCheckHeaders(){const token=await appCheckToken();return token?{'X-Firebase-AppCheck':token}:{};}

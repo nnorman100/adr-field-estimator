@@ -1,5 +1,5 @@
 """App Check monitor step: every outcome is recorded and no request is ever rejected for it."""
-import asyncio, json, runpy, time
+import asyncio, json, runpy, threading, time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -57,6 +57,18 @@ def test_slow_verification_is_bounded_and_recorded_as_unverified(context,verifie
     assert time.monotonic()-started<.45
     [entry]=records(capsys)
     assert entry['outcome']=='unverified' and entry['route']=='/api/health' and entry['status']==200
+
+def test_verification_runs_alongside_the_request(context,verifier,monkeypatch,capsys):
+    client,_=context;inspect(client);calls,_=verifier;handled=threading.Event()
+    def verify_token(token,app=None):
+        calls.append((token,app))
+        if not handled.wait(1):raise ValueError('The request waited for App Check verification.')
+    def staff():
+        handled.set();return {'uid':'owner','email':'owner@example.invalid'}
+    monkeypatch.setattr(bm.app_check,'verify_token',verify_token);bm.app.dependency_overrides[bm.current_staff]=staff;capsys.readouterr()
+    assert client.get('/api/inspections/'+ID,headers={'X-Firebase-AppCheck':TOKEN}).status_code==200
+    [entry]=records(capsys)
+    assert entry['outcome']=='valid' and entry['status']==200 and calls==[(TOKEN,ADMIN_APP)]
 
 def test_oversized_token_is_invalid_without_verification(context,verifier,capsys):
     client,_=context;calls,_=verifier;capsys.readouterr()
