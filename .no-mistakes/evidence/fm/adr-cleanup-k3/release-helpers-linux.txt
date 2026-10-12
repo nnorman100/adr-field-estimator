@@ -1,0 +1,24 @@
+$ (A) verify_common.access_token() with gcloud on PATH (no ADR_GCLOUD, no Windows SDK path)
+gcloud() -> /tmp/adr-k3-gbin/gcloud
+token length 19
+$ (B) verify_live_release.access_token() (the release verifier entry) with ADR_GCLOUD
+token length 19
+gcloud invocations recorded by the shim:
+gcloud-invoked: auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+gcloud-invoked: auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+
+$ (C) adversarial: no gcloud anywhere
+RuntimeError: gcloud was not found: install the Google Cloud CLI or set ADR_GCLOUD to its full path.
+
+$ (D) verify_live_browser.js pythonCommand() on this Linux host
+pythonCommand() -> python3
+spawned ok, version 3.14.4 status 0
+with ADR_TEST_PYTHON -> /tmp/adr-k3-venv/bin/python
+
+$ (E) evidence directory honours ADR_EVIDENCE_DIR, defaults to gitignored review-artifacts/
+default EVIDENCE -> /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RV43TAMATGXDEBH8RN0BP6/review-artifacts
+override EVIDENCE -> /tmp/adr-k3-evid
+.gitignore:41:review-artifacts/	review-artifacts/live-release-20261007/cutover-before.json
+
+$ (F) relocated Live prompt fixture is readable by the verifier
+tests/fixtures/live-prompt.wav rate 16000 channels 1 width 2 frames 115120

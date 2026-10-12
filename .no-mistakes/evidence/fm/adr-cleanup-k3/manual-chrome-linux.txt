@@ -1,0 +1,23 @@
+$ (A) PATH contains google-chrome, no ADR_CHROME_PATH
+platform: linux PROGRAMFILES: (unset) ADR_CHROME_PATH: (unset)
+resolved chromePath(): /tmp/adr-k3-bin/google-chrome
+DevTools /json/version Browser: Chrome/153.0.8010.12
+profile created: /tmp/adr-manual-chrome-EXpQVo true
+profile removed after closeManual: true
+
+$ (B) ADR_CHROME_PATH set explicitly
+platform: linux PROGRAMFILES: (unset) ADR_CHROME_PATH: /home/nnorm/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
+resolved chromePath(): /home/nnorm/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
+DevTools /json/version Browser: Chrome/153.0.8010.12
+profile created: /tmp/adr-manual-chrome-ZDOCGP true
+profile removed after closeManual: true
+
+$ (C) adversarial: ADR_CHROME_PATH points nowhere
+platform: linux PROGRAMFILES: (unset) ADR_CHROME_PATH: /nope/chrome
+FAIL: ADR_CHROME_PATH does not exist: /nope/chrome
+exit=1
+
+$ (D) adversarial: no Chrome on PATH and no ADR_CHROME_PATH
+platform: linux PROGRAMFILES: (unset) ADR_CHROME_PATH: (unset)
+FAIL: Chrome was not found. Install Google Chrome or set ADR_CHROME_PATH to its executable.
+exit=1

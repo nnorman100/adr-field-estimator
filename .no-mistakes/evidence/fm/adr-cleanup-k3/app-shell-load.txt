@@ -1,0 +1,5 @@
+title: Alert Disaster Restoration · Field Estimator
+HTTP errors/failed requests during load: none
+images on shell: [{"src":"/brand/adr-logo.jpg","ok":true},{"src":"/brand/adr-logo.jpg","ok":true},{"src":null,"ok":false}]
+service-worker cache entries: 20 ; includes ar_preview.jpg: false
+GET /ar_preview.jpg -> 404
