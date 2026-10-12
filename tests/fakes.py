@@ -82,3 +82,56 @@ class FakeAuth:
         link='https://alert-disaster-field-2026.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=secret-oob-'+str(len(self.links))
         self.links.append(dict(email=email,url=action_code_settings.url,in_app=action_code_settings.handle_code_in_app,link=link))
         return link
+
+def realtime(message):
+    # The SDK sends the proto-JSON envelope key in snake case; Vertex accepts either spelling.
+    return message.get('realtimeInput',message.get('realtime_input'))
+
+class FakeVertexLive:
+    """A local TLS stand-in for the Vertex AI Live endpoint, driven by the real SDK client."""
+    def __init__(self,tmp_path):
+        import datetime, ipaddress, ssl
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        key=ec.generate_private_key(ec.SECP256R1());name=x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'127.0.0.1')])
+        now=datetime.datetime.now(datetime.timezone.utc)
+        cert=(x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now-datetime.timedelta(minutes=5)).not_valid_after(now+datetime.timedelta(hours=1))
+            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address('127.0.0.1'))]),critical=False).sign(key,hashes.SHA256()))
+        (tmp_path/'cert.pem').write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        (tmp_path/'key.pem').write_bytes(key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
+        self.server_ssl=ssl.create_default_context(ssl.Purpose.CLIENT_AUTH);self.server_ssl.load_cert_chain(tmp_path/'cert.pem',tmp_path/'key.pem')
+        self.client_ssl=ssl.create_default_context(cafile=str(tmp_path/'cert.pem'))
+        self.connections=[];self.replies={};self.drained=[]
+    def __enter__(self):
+        import threading
+        from websockets.sync.server import serve
+        self.server=serve(self.handle,'127.0.0.1',0,ssl=self.server_ssl)
+        self.port=self.server.socket.getsockname()[1]
+        threading.Thread(target=self.server.serve_forever,daemon=True).start()
+        return self
+    def __exit__(self,*exc):
+        self.server.shutdown()
+        # Handlers finish once they have read every frame the closed client sent.
+        for drained in self.drained:drained.wait(5)
+    def client(self,relay):
+        """Wraps genai.Client so it reaches this server with synthetic credentials and otherwise unchanged arguments."""
+        from google.oauth2.credentials import Credentials
+        def connect(**kw):
+            options=kw.pop('http_options').model_copy(update=dict(base_url=f'https://127.0.0.1:{self.port}',async_client_args={'ssl':self.client_ssl}))
+            return relay(credentials=Credentials(token='synthetic-token'),http_options=options,**kw)
+        return connect
+    def handle(self,socket):
+        import json, threading
+        from websockets.exceptions import ConnectionClosed
+        received=[];self.connections.append(dict(path=socket.request.path,authorization=socket.request.headers.get('Authorization'),received=received))
+        drained=threading.Event();self.drained.append(drained)
+        try:
+            while True:
+                message=json.loads(socket.recv());received.append(message)
+                kind='setup' if 'setup' in message else next(iter(realtime(message) or {}),None)
+                for reply in self.replies.pop(kind,[]):socket.send(json.dumps(reply))
+        except ConnectionClosed:pass
+        finally:drained.set()

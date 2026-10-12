@@ -85,7 +85,8 @@ The previous dedicated backend revisions remain available. Restore traffic only 
 
 ## Live protocol 2 checkpoints
 
-Live configuration uses the tested google-genai==2.8.0 baseline, LIVE_VOICE (default Charon),
+Live configuration uses google-genai==2.29.0, whose Live wire messages match the earlier tested 2.8.0
+baseline in mock tests (tests/test_live_reliability.py), LIVE_VOICE (default Charon),
 64,000-token compression trigger and 32,000-token target. No model/region change is introduced.
 Session handles stay in private _live_resume documents keyed by owner UID and bound to the
 inspection, capture ID, lease and scope fingerprint (excluding transcript/capture metadata and

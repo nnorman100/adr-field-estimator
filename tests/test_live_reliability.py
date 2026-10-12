@@ -4,11 +4,10 @@ from types import SimpleNamespace as NS
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
-from google.genai import _live_converters, types
 import backend.main as bm
 from backend.contracts import InspectionData
-from backend.live_support import live_config, scope_fingerprint
-from tests.fakes import FakeStore
+from backend.live_support import scope_fingerprint
+from tests.fakes import FakeStore, FakeVertexLive, realtime
 
 ID='ADR-INS-'+'d'*32
 CAP='e'*32
@@ -17,14 +16,64 @@ def test_vertex_configuration_and_standalone_launch():
     import subprocess,sys
     code="import main; assert main.OCR_INSTRUCTIONS; assert main.LIVE_VOICE=='Charon'"
     subprocess.run([sys.executable,'-c',code],cwd='backend',check=True)
-    parent={}
-    _live_converters._LiveConnectConfig_to_vertex(None,live_config('Synthetic','Charon'),parent)
-    setup=parent['setup']
-    assert setup['generationConfig']['speechConfig']['voiceConfig']['prebuiltVoiceConfig'].voice_name=='Charon'
-    assert setup['contextWindowCompression'].trigger_tokens==64000
-    assert setup['contextWindowCompression'].sliding_window.target_tokens==32000
-    assert 'sessionResumption' in setup
-    assert _live_converters._LiveSendRealtimeInputParameters_to_vertex({'audio_stream_end':True})['audioStreamEnd'] is True
+
+
+def wire_audio(text):
+    return {'serverContent':{'modelTurn':{'parts':[{'inlineData':{'mimeType':'audio/pcm;rate=24000','data':base64.b64encode(b'\x01\x02').decode()}}]},
+        'outputTranscription':{'text':text}}}
+
+
+def test_real_sdk_wire_setup_events_interaction_status_and_resume(monkeypatch,tmp_path):
+    # The real google-genai client talks to a local stand-in for Vertex, so SDK upgrades that change
+    # the setup message, realtime input or server message parsing fail here instead of in the field.
+    store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
+    async def identity(token):return {'uid':'owner','exp':time.time()+600}
+    monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
+    def auth(resume=False):return dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP,resume=resume)
+    with FakeVertexLive(tmp_path) as vertex, TestClient(bm.app) as client:
+        monkeypatch.setattr(bm.genai,'Client',vertex.client(bm.genai.Client))
+        vertex.replies['setup']=[{'setupComplete':{}},{'sessionResumptionUpdate':{'newHandle':'wire-handle','resumable':True}},
+            {'usageMetadata':{'totalTokenCount':17}}]
+        # A completed turn still marked IN_PROGRESS no longer ends one SDK receive() pass; IDLE does.
+        vertex.replies['audio']=[{'serverContent':{'inputTranscription':{'text':'moisture at the wall','finished':True}}},wire_audio('Noted'),
+            {'serverContent':{'turnComplete':True,'interactionStatus':'IN_PROGRESS'}},{'serverContent':{'interrupted':True}},
+            {'serverContent':{'interactionStatus':'IDLE'}},{'serverContent':{'outputTranscription':{'text':'after idle'}}}]
+        vertex.replies['video']=[{'goAway':{'timeLeft':'1s'}}]
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth());assert socket.receive_json()['recovery']=='new'
+            assert socket.receive_json()=={'type':'usage','total_tokens':17}
+            socket.send_json({'type':'audio','data':pcm(3300)})
+            events=[socket.receive_json() for _ in range(6)]
+            assert [(e['type'],e.get('speaker'),e.get('text')) for e in events]==[('transcript','technician','moisture at the wall'),
+                ('transcript','assistant','Noted'),('audio',None,None),('turn_complete',None,None),('interrupted',None,None),('transcript','assistant','after idle')]
+            assert events[2]['data']==base64.b64encode(b'\x01\x02').decode() and events[0]['finished'] is True
+            socket.send_json({'type':'video','data':base64.b64encode(b'\xff\xd8\xffsynthetic').decode()})
+            assert socket.receive_json()=={'type':'recovery','reason':'rollover'}
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+        assert store.db.records['_live_resume/owner']['handle']=='wire-handle'
+        vertex.replies['setup']=[{'setupComplete':{}}]
+        with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth(True));assert socket.receive_json()['recovery']=='resumed'
+            socket.send_json({'type':'pause'})
+            socket.send_json({'type':'end'});assert socket.receive_json()=={'type':'finished','complete':True}
+            with pytest.raises(WebSocketDisconnect):socket.receive_json()
+    first,second=vertex.connections
+    assert all(c['path'].endswith('LlmBidiService/BidiGenerateContent') and c['authorization']=='Bearer synthetic-token' for c in vertex.connections)
+    setup=first['received'][0]['setup']
+    assert setup['model']==f'projects/{bm.PROJECT_ID}/locations/{bm.LIVE_LOCATION}/publishers/google/models/{bm.LIVE_MODEL}'
+    assert setup['generationConfig']['responseModalities']==['AUDIO']
+    # Nested config objects keep their field names on the wire, exactly as google-genai 2.8.0 sent them;
+    # proto JSON accepts either spelling.
+    assert setup['generationConfig']['speechConfig']=={'voiceConfig':{'prebuiltVoiceConfig':{'voice_name':'Charon'}}}
+    assert setup['contextWindowCompression']=={'trigger_tokens':64000,'sliding_window':{'target_tokens':32000}}
+    assert setup['sessionResumption']=={} and setup['inputAudioTranscription']=={} and setup['outputAudioTranscription']=={}
+    assert setup['systemInstruction']['parts'][0]['text']
+    # Bytes travel as URL-safe base64, as they did with 2.8.0.
+    spoken=base64.urlsafe_b64encode(base64.b64decode(pcm(3300))).decode()
+    assert realtime(first['received'][1])=={'audio':{'data':spoken,'mime_type':'audio/pcm;rate=16000'}}
+    assert realtime(first['received'][2])['video']['mime_type']=='image/jpeg'
+    assert second['received'][0]['setup']['sessionResumption']=={'handle':'wire-handle'}
+    assert [realtime(m) for m in second['received'][1:]]==[{'audioStreamEnd':True}]*2
 
 
 def test_checkpoint_owner_capture_expiry_scope_and_stale_cleanup(monkeypatch):
