@@ -74,7 +74,7 @@ window.WorkspaceUI=(()=>{
     if(!enabled()||!state.user||!navigator.onLine||refreshing||state.workspaceInitializing)return;
     refreshing=true;const uid=state.user.uid,previous=context();
     try{
-      const token=await state.user.getIdToken();const response=await fetch('/api/access',{cache:'no-store',headers:{Authorization:'Bearer '+token}});
+      const token=await state.user.getIdToken();const response=await fetch('/api/access',{cache:'no-store',headers:{...await appCheckHeaders(),Authorization:'Bearer '+token}});
       if(!response.ok)throw Error('Could not refresh company access. Reconnect before continuing.');
       const access=await response.json();if(state.user?.uid!==uid)return;
       const next=[uid,access.company_id,access.role,access.membership_version].join(':');
@@ -109,7 +109,7 @@ window.WorkspaceUI=(()=>{
         if(invite.status==='pending'&&invite.expires_at*1000>Date.now())card.append(button('Accept invitation',async()=>{
           await jsonApi('/api/invitations/'+invite.invitation_id+'/accept','POST',{});
           const url=new URL(location.href);url.searchParams.delete('invite');history.replaceState(null,'',url);
-          const token=await state.user.getIdToken();const response=await fetch('/api/session',{cache:'no-store',headers:{Authorization:'Bearer '+token}});
+          const token=await state.user.getIdToken();const response=await fetch('/api/session',{cache:'no-store',headers:{...await appCheckHeaders(),Authorization:'Bearer '+token}});
           if(!response.ok)throw Error('Invitation accepted. Reload to refresh access.');state.session=await response.json();state.queuePaused=false;await ready();await landing();say('Company invitation accepted.','success');
         }));else card.append(node('p','This invitation is '+invite.status+'. Ask for a new invitation if needed.'));
         grid.append(card);

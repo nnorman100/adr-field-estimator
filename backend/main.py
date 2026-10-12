@@ -10,8 +10,9 @@ import re
 import sys
 import time
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress, AsyncExitStack
-from functools import wraps
+from functools import partial, wraps
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -21,7 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from PIL import Image, ImageOps
 import firebase_admin
-from firebase_admin import auth as firebase_auth
+from firebase_admin import app_check, auth as firebase_auth
 from google import genai
 from google.genai import types
 try:
@@ -62,6 +63,13 @@ ORIGINS = ['https://alert-disaster-field-2026.web.app','https://alert-disaster-f
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED','false').lower()=='true'
 STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS','nathanaelcnorman@gmail.com').split(',') if e.strip()}
 WORKSPACE_SIGN_IN_PROVIDERS = frozenset({'google.com','password'})
+# Step one of the App Check rollout only records each request's token; see docs/app-check.md.
+APPCHECK_MODE = os.getenv('APPCHECK_MODE','monitor')
+if APPCHECK_MODE not in ('off','monitor'): raise RuntimeError('APPCHECK_MODE must be off or monitor; App Check enforcement is not available in this release.')
+APPCHECK_SECONDS = 2
+APPCHECK_TOKEN_LIMIT = 4096
+# Its own two threads, so a slow signing-key fetch can never hold the request threadpool.
+APPCHECK_WORKER = ThreadPoolExecutor(max_workers=2,thread_name_prefix='app-check')
 
 def read_source_commit(path=os.path.join(os.path.dirname(os.path.abspath(__file__)),'SOURCE_COMMIT')):
     # scripts/deploy_backend.py writes the deployed commit into the build context; local runs have no stamp.
@@ -72,12 +80,12 @@ def read_source_commit(path=os.path.join(os.path.dirname(os.path.abspath(__file_
 
 SOURCE_COMMIT = read_source_commit()
 app = FastAPI(title='Alert Disaster Restoration Field Estimator',version='2.0')
-app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,allow_methods=['GET','POST','PUT'],allow_headers=['Authorization','Content-Type','X-ADR-Workspace-Protocol'])
+app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,allow_methods=['GET','POST','PUT'],allow_headers=['Authorization','Content-Type','X-ADR-Workspace-Protocol','X-Firebase-AppCheck'])
 security = HTTPBearer(auto_error=False)
 _job_store = None
 genai_client = None
 # An allowlist, so prompts, transcripts, images, tokens, emails, links and signatures cannot reach the log.
-LOG_FIELDS = frozenset({'model','operation','elapsed_ms','duration_ms','outcome','provider_status','provider_code','status','total_tokens','inspection_id'})
+LOG_FIELDS = frozenset({'model','operation','elapsed_ms','duration_ms','outcome','provider_status','provider_code','status','total_tokens','inspection_id','method','route'})
 
 class CloudLoggingJson(logging.Handler):
     """One JSON object per stdout line, which Cloud Logging parses into severity, message and fields."""
@@ -103,11 +111,13 @@ def get_ai_client():
         genai_client=genai.Client(enterprise=True,project=PROJECT_ID,location=LOCATION,http_options=types.HttpOptions(timeout=95000))
     return genai_client
 
+def admin_app():
+    try: return firebase_admin.get_app('adr')
+    except ValueError: return firebase_admin.initialize_app(options={'projectId':PROJECT_ID},name='adr')
+
 async def verify_identity(token):
     try:
-        try: firebase_app=firebase_admin.get_app('adr')
-        except ValueError: firebase_app=firebase_admin.initialize_app(options={'projectId':PROJECT_ID},name='adr')
-        claims=await run_in_threadpool(firebase_auth.verify_id_token,token,app=firebase_app,check_revoked=True)
+        claims=await run_in_threadpool(firebase_auth.verify_id_token,token,app=admin_app(),check_revoked=True)
     except Exception:
         raise HTTPException(401,'Your sign-in expired. Please sign in again.')
     if not claims.get('email_verified') or not claims.get('email'):
@@ -115,6 +125,21 @@ async def verify_identity(token):
     if WORKSPACES_ENABLED and claims.get('firebase',{}).get('sign_in_provider') not in WORKSPACE_SIGN_IN_PROVIDERS:
         raise HTTPException(403,'Sign in with Google or a verified email and password.')
     return claims
+
+async def app_check_outcome(token):
+    """Classifies a request's App Check token; monitor mode records the result and never rejects on it."""
+    if not token: return 'missing'
+    if not isinstance(token,str) or len(token)>APPCHECK_TOKEN_LIMIT: return 'invalid'
+    try:
+        # The Admin SDK verifies locally against signing keys it caches for six hours.
+        verify=partial(app_check.verify_token,token,app=admin_app())
+        await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(APPCHECK_WORKER,verify),APPCHECK_SECONDS)
+        return 'valid'
+    except (asyncio.TimeoutError,TimeoutError): return 'unverified'
+    except Exception: return 'invalid'
+
+def record_app_check(outcome,method,route,status=None):
+    event('App Check',outcome=outcome,method=method,route=route,status=status)
 
 async def verify_staff(token):
     claims=await verify_identity(token)
@@ -170,6 +195,19 @@ async def limit_payload(request:Request,call_next):
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control']='private, no-store'
     return response
+
+@app.middleware('http')
+async def monitor_app_check(request:Request,call_next):
+    # Registered after limit_payload, so it also records requests that middleware rejects.
+    if APPCHECK_MODE=='off' or not request.url.path.startswith('/api/'): return await call_next(request)
+    verification=asyncio.create_task(app_check_outcome(request.headers.get('x-firebase-appcheck')))
+    status=None
+    try:
+        response=await call_next(request); status=response.status_code
+        return response
+    finally:
+        # The route template, never the concrete path, so inspection and photo IDs stay out of this line.
+        record_app_check(await verification,request.method,getattr(request.scope.get('route'),'path',None),status)
 
 async def stored(method,*args):
     try: return await run_in_threadpool(method,*args)
@@ -430,6 +468,7 @@ async def live_walkthrough(socket:WebSocket):
         if protocol not in (1,2): raise ValueError('Update the app to connect.')
         capture=auth.get('capture_id') if protocol==2 else None
         if protocol==2 and (not isinstance(capture,str) or len(capture)!=32): raise ValueError('Invalid capture identifier.')
+        if APPCHECK_MODE=='monitor': record_app_check(await app_check_outcome(auth.get('app_check')),'WEBSOCKET','/api/live')
         token=auth.get('token','');staff=await verify_staff(token)
         uid=staff['uid']; store=get_job_store(); inspection_id=auth.get('inspection_id','')
         record=await stored(store.get_inspection,uid,inspection_id)
