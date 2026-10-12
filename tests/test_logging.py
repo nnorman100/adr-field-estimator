@@ -25,7 +25,7 @@ def test_failing_provider_call_logs_error_class_and_no_sensitive_fields(context,
     capsys.readouterr()
     assert suggest(client).status_code==502
     output=capsys.readouterr().out
-    [entry]=[json.loads(line) for line in output.splitlines() if line.startswith('{')]
+    [entry]=[e for e in map(json.loads,filter(lambda line:line.startswith('{'),output.splitlines())) if e['message']=='Vertex AI call']
     assert entry['severity']=='ERROR' and entry['message']=='Vertex AI call'
     assert entry['operation']=='scope' and entry['model']==bm.AUDIT_MODEL and entry['inspection_id']==ID
     assert entry['outcome']=='ClientError' and entry['provider_status']=='RESOURCE_EXHAUSTED' and entry['provider_code']==429

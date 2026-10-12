@@ -125,13 +125,36 @@ async function persist(){
 }
 function schedulePersist(){clearTimeout(persistTimer);persistTimer=setTimeout(()=>persist().catch(e=>say(e.message,'error')),400);}
 async function clearLocal(){await dbAction('readwrite',(drafts,photos)=>{photos.clear();return drafts.clear();});}
+// Public reCAPTCHA Enterprise site key registered for this web app in Firebase App Check (docs/app-check.md).
+// Empty leaves App Check off and the app unchanged.
+const APP_CHECK_SITE_KEY='';
+const APP_CHECK_LOCAL_HOSTS=new Set(['localhost','127.0.0.1']),APP_CHECK_WAIT_MS=3000;
+let appCheck=null;
+function loadAppCheck(siteKey=APP_CHECK_SITE_KEY){
+  if(!siteKey)return Promise.resolve(false);
+  return new Promise(resolve=>{const script=document.createElement('script');script.src='/vendor/firebase-app-check-compat.js';script.onload=()=>resolve(true);script.onerror=()=>resolve(false);document.head.append(script);});
+}
+function activateAppCheck(siteKey=APP_CHECK_SITE_KEY){
+  if(!siteKey||!firebase.appCheck)return;
+  // The SDK reads this flag on activation; a debug token skips reCAPTCHA, so only local development and test origins keep it.
+  if(!APP_CHECK_LOCAL_HOSTS.has(location.hostname))try{self.FIREBASE_APPCHECK_DEBUG_TOKEN=undefined;}catch{return;}
+  appCheck=firebase.appCheck();appCheck.activate(new firebase.appCheck.ReCaptchaEnterpriseProvider(siteKey),true);
+}
+async function appCheckToken(){
+  // Monitor step: the backend only records a missing token, so a slow or failed attestation never holds a request.
+  if(!appCheck)return '';
+  let timer;
+  try{const result=await Promise.race([appCheck.getToken(),new Promise(resolve=>{timer=setTimeout(resolve,APP_CHECK_WAIT_MS);})]);return typeof result?.token==='string'?result.token:'';}
+  catch{return '';}finally{clearTimeout(timer);}
+}
+async function appCheckHeaders(){const token=await appCheckToken();return token?{'X-Firebase-AppCheck':token}:{};}
 async function api(path,options={}){
   if(!navigator.onLine)throw Error('You are offline. Your draft is saved locally; reconnect to continue.');
   if(!state.user || !state.session)throw Error('Sign in with an approved, verified account to continue.');
-  const token=await state.user.getIdToken(),controller=new AbortController();
+  const [token,appCheckHeader]=await Promise.all([state.user.getIdToken(),appCheckHeaders()]),controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),115000);
   try{
-    const response=await fetch(path,{...options,cache:'no-store',signal:controller.signal,headers:{...options.headers,Authorization:'Bearer '+token,...(state.session.workspaces_enabled?{'X-ADR-Workspace-Protocol':'1'}:{})}});
+    const response=await fetch(path,{...options,cache:'no-store',signal:controller.signal,headers:{...options.headers,...appCheckHeader,Authorization:'Bearer '+token,...(state.session.workspaces_enabled?{'X-ADR-Workspace-Protocol':'1'}:{})}});
     if(!response.ok){const payload=await response.json().catch(()=>({})),invalid=Array.isArray(payload.detail)&&typeof payload.detail[0]?.msg==='string'?payload.detail[0].msg.replace(/^Value error, /,''):'';
       const e=Error(typeof payload.detail==='string'?payload.detail:invalid||'The request could not be completed. Retry.');e.status=response.status;e.retryAfter=Number(response.headers.get('Retry-After')||0);if((e.status===403||e.status===404)&&window.WorkspaceUI?.enabled())queueMicrotask(()=>WorkspaceUI.refresh().catch(()=>{}));throw e;}
     return response;
@@ -622,11 +645,11 @@ async function connectLive(){
   if(url.protocol!=='wss:'||url.hostname!=='alert-disaster-field-estimator-545776254070.us-west2.run.app')throw Error('Unexpected Live endpoint.');
   const draft=state.draft,user=state.user,uid=user.uid,capture=draft.data.capture_metadata;
   // A cached token can be seconds from expiry; the relay then holds a fresh one for the full hour.
-  const token=await user.getIdToken(true).catch(()=>user.getIdToken());
+  const [token,appCheckValue]=await Promise.all([user.getIdToken(true).catch(()=>user.getIdToken()),appCheckToken()]);
   if(state.stopping||!state.media||state.draft!==draft||state.user?.uid!==uid)return;
   const socket=new WebSocket(url);state.socket=socket;state.draining=false;
   socket.onopen=()=>socket.send(JSON.stringify({type:'authenticate',token,workspace_protocol_version:1,inspection_id:draft.inspection_id,
-    protocol_version:2,capture_id:capture.capture_id,resume:!!state.resumeAvailable}));
+    protocol_version:2,capture_id:capture.capture_id,resume:!!state.resumeAvailable,...(appCheckValue?{app_check:appCheckValue}:{})}));
   socket.onmessage=event=>{
     if(state.socket!==socket||state.draft!==draft||state.user?.uid!==uid)return;
     const msg=JSON.parse(event.data);
@@ -812,9 +835,9 @@ async function initialize(){
   click('applyUpdate',async()=>{await persist();await syncDraft().catch(()=>{});await stopWalk();waitingWorker?.postMessage({type:'SKIP_WAITING'});});
   if('serviceWorker'in navigator)try{const registration=await navigator.serviceWorker.register('/sw.js');const prompt=worker=>{waitingWorker=worker;$('updateBanner').hidden=false;};if(registration.waiting)prompt(registration.waiting);registration.addEventListener('updatefound',()=>{const worker=registration.installing,controller=navigator.serviceWorker.controller;worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&controller&&controller!==worker)prompt(worker);});});let refreshing=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(waitingWorker&&!refreshing){refreshing=true;location.reload();}});const checkUpdate=()=>{if(!document.hidden&&navigator.onLine)registration.update().catch(()=>{});};document.addEventListener('visibilitychange',checkUpdate);window.addEventListener('focus',checkUpdate);setInterval(checkUpdate,300000);}catch{say('Offline launch is unavailable in this browser. Online private drafts remain available.','error');}
   $('yearBuilt').max=new Date().getFullYear();
-  const config=await(await fetch('/__/firebase/init.json',{cache:'no-store'})).json();
+  const [config]=await Promise.all([fetch('/__/firebase/init.json',{cache:'no-store'}).then(response=>response.json()),loadAppCheck()]);
   if(config.projectId!=='alert-disaster-field-2026')throw Error('Incorrect Firebase project.');
-  firebase.initializeApp(config);auth=firebase.auth();await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+  firebase.initializeApp(config);activateAppCheck();auth=firebase.auth();await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
   auth.onAuthStateChanged(applyUser);
 }
 async function applyUser(user){
@@ -839,7 +862,7 @@ async function applyUser(user){
   if(stage!=='ready'){state.workspaceInitializing=false;showTask('property',false);return;}
   try{
     let local=(await localDrafts()).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)),session;if(stale())return;
-    if(navigator.onLine){const token=await user.getIdToken();if(stale())return;let response=await fetch('/api/session',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(stale())return;if(response.status===403){response=await fetch('/api/access',{cache:'no-store',headers:{Authorization:'Bearer '+token}});if(stale())return;}if(!response.ok)throw Error('Your account has not been approved, or the connection is unavailable.');session=await response.json();if(stale())return;}
+    if(navigator.onLine){const token=await user.getIdToken();if(stale())return;let response=await fetch('/api/session',{cache:'no-store',headers:{...await appCheckHeaders(),Authorization:'Bearer '+token}});if(stale())return;if(response.status===403){response=await fetch('/api/access',{cache:'no-store',headers:{...await appCheckHeaders(),Authorization:'Bearer '+token}});if(stale())return;}if(!response.ok)throw Error('Your account has not been approved, or the connection is unavailable.');session=await response.json();if(stale())return;}
     else{session=local[0]?.session;if(!session)throw Error('Sign in online before using private offline draft recovery.');}
     if(session.uid!==state.user?.uid||session.project!=='alert-disaster-field-2026')throw Error('Incorrect session configuration.');
     state.session=session;state.queuePaused=false;

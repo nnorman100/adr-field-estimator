@@ -6,14 +6,15 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "vendor/README.md"
     ],
     "headers": [
       {"source":"/","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/index.html","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/manifest.webmanifest","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/sw.js","headers":[{"key":"Cache-Control","value":"no-store"}]},
-      {"source":"**","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},{"key":"Content-Security-Policy","value":"default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com wss://alert-disaster-field-estimator-545776254070.us-west2.run.app; frame-src https://*.firebaseapp.com https://accounts.google.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"}]}
+      {"source":"**","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},{"key":"Content-Security-Policy","value":"default-src 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com https://www.google.com/recaptcha/ wss://alert-disaster-field-estimator-545776254070.us-west2.run.app; frame-src https://*.firebaseapp.com https://accounts.google.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"}]}
     ],
     "rewrites": [
       {
