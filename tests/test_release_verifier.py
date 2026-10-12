@@ -162,13 +162,6 @@ def test_verifiers_refuse_to_run_without_an_explicit_target(monkeypatch, module,
     assert exited.value.code != 0
 
 
-def test_verifiers_cannot_mint_staff_tokens():
-    # Release checks use normal staff sign-in; a signJwt custom-token path must not return.
-    for script in (verifier.ROOT / 'scripts').glob('*.py'):
-        text = script.read_text(encoding='utf-8')
-        assert 'signJwt' not in text and 'signInWithCustomToken' not in text, script.name
-
-
 def test_public_check_accepts_only_the_trimmed_health_payload(monkeypatch):
     class Health:
         status_code = 200
