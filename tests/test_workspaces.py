@@ -53,7 +53,7 @@ def api(store,monkeypatch):
     async def generate(schema,*args,**kwargs):
         return AIResult(summary='Confirmed scope.',suggestions=[],unpriced_work=[])
     monkeypatch.setattr(bm,'generate',generate)
-    with TestClient(bm.app,headers={'X-ADR-Workspace-Protocol':'1'}) as client:yield client,current,store
+    with TestClient(bm.app,headers={'X-ADR-Workspace-Protocol':'1','Authorization':'Bearer synthetic'}) as client:yield client,current,store
     bm.app.dependency_overrides.clear()
 
 def test_roles_and_cross_company_scoped_jobs(store):
