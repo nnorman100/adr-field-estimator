@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import time
 from uuid import uuid4
@@ -16,6 +17,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, W
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from PIL import Image, ImageOps
 import firebase_admin
@@ -119,16 +121,42 @@ async def current_staff(credentials: Optional[HTTPAuthorizationCredentials]=Depe
     if not credentials or credentials.scheme.lower()!='bearer': raise HTTPException(401,'Sign in to continue.')
     return await verify_staff(credentials.credentials)
 
+MB=1024*1024
+# Sized to the contracts: an 8 MB photo as base64, a 3 MB signature PNG, a 1.4 MB company logo.
+BODY_LIMITS=[('POST',re.compile(r'/api/inspections/[^/]+/photos'),13*MB),('POST',re.compile(r'/api/authorize'),int(3.5*MB)),
+             ('PUT',re.compile(r'/api/companies/[^/]+'),2*MB)]
+BODY_READ_SECONDS=50  # Below Firebase Hosting's 60-second request timeout.
+
+def body_limit(method,path):
+    return next((limit for m,pattern,limit in BODY_LIMITS if m==method and pattern.fullmatch(path)),MB)
+
+def has_bearer(request):
+    scheme,_,token=request.headers.get('authorization','').partition(' ')
+    return scheme.lower()=='bearer' and bool(token.strip())
+
 @app.middleware('http')
 async def limit_payload(request:Request,call_next):
     if request.method in ('POST','PUT'):
+        # Reject before reading the body; current_staff still verifies the token.
+        if request.url.path.startswith('/api/') and not has_bearer(request):
+            return JSONResponse({'detail':'Sign in to continue.'},status_code=401)
+        limit=body_limit(request.method,request.url.path)
+        declared=request.headers.get('content-length')
+        if declared is not None:
+            if not re.fullmatch(r'[0-9]+',declared): return Response('Invalid Content-Length.',status_code=400)
+            if int(declared)>limit: return Response('The upload is too large.',status_code=413)
         # Bound reads before model parsing, including requests without Content-Length.
-        chunks=[]; size=0
-        async for chunk in request.stream():
-            size+=len(chunk)
-            if size>20*1024*1024: return Response('The upload exceeds 20 MB.',status_code=413)
-            chunks.append(chunk)
-        request._body=b''.join(chunks)
+        async def read():
+            chunks=[]; size=0
+            async for chunk in request.stream():
+                size+=len(chunk)
+                if size>limit: return None
+                chunks.append(chunk)
+            return b''.join(chunks)
+        try: body=await asyncio.wait_for(read(),BODY_READ_SECONDS)
+        except asyncio.TimeoutError: return Response('The upload took too long.',status_code=408)
+        if body is None: return Response('The upload is too large.',status_code=413)
+        request._body=body
     response=await call_next(request)
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control']='private, no-store'

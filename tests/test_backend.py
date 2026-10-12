@@ -9,6 +9,7 @@ from backend.contracts import InspectionData
 from tests.fakes import FakeStore,png
 
 ID='ADR-INS-'+'a'*32
+MB=bm.MB
 
 def data(**changes):
     return InspectionData(address='Synthetic test property',year_built=1960,
@@ -25,7 +26,7 @@ def context(monkeypatch):
         value={'summary':'The technician confirmed a localized bathroom scope.','suggestions':['Confirm drying progress.'],'unpriced_work':[]} if schema is bm.AIResult else {'meter_detected':False,'meter_type':'Inspection Photo','value':'','classification':'No readable meter','notes':'No physical display visible.'}
         return SimpleNamespace(text=json.dumps(value))
     monkeypatch.setattr(bm,'get_ai_client',lambda:SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))))
-    yield TestClient(bm.app),store
+    yield TestClient(bm.app,headers={'Authorization':'Bearer synthetic'}),store
     bm.app.dependency_overrides.clear()
 
 def inspect(client):
@@ -143,7 +144,7 @@ def test_auth_ownership_limits_and_invalid_inputs(context):
     assert client.post('/api/inspections/'+ID+'/photos',json=dict(expected_revision=1,photo_id='b'*32,room='Room',captured_at='2026-10-06T19:00:00Z',data_url=png())).status_code==404
     bm.app.dependency_overrides.pop(bm.current_staff)
     for path in ['/api/inspections','/api/authorizations','/api/authorizations/ADR-AUTH-test123456']:
-        assert client.get(path).status_code==401
+        assert client.get(path,headers={'Authorization':''}).status_code==401
     assert client.get('/api/health').status_code==200
     bm.app.dependency_overrides[bm.current_staff]=lambda:{'uid':'owner'}
     invalid=data();invalid['labor_hours']=-1
@@ -152,6 +153,51 @@ def test_auth_ownership_limits_and_invalid_inputs(context):
     for _ in range(3):client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1})
     response=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1})
     assert response.status_code==429 and response.headers['Retry-After']
+
+def send_raw(method,path,headers,receive):
+    """Drive the ASGI app directly so the test controls, and observes, every body read."""
+    sent=[]
+    async def send(message):sent.append(message)
+    scope={'type':'http','asgi':{'version':'3.0'},'http_version':'1.1','method':method,'scheme':'http','path':path,'raw_path':path.encode(),
+           'query_string':b'','root_path':'','headers':[(k.lower().encode(),v.encode()) for k,v in headers.items()],'client':('test',1),'server':('test',80)}
+    asyncio.run(bm.app(scope,receive,send))
+    return next(m['status'] for m in sent if m['type']=='http.response.start')
+
+def test_unauthenticated_upload_is_rejected_before_the_body_is_read(context):
+    reads=[]
+    async def receive():reads.append(1);return {'type':'http.request','body':b'x'*MB,'more_body':True}
+    for headers in ({'content-length':str(19*MB)},{'content-length':str(19*MB),'authorization':'Basic abc'},{'authorization':'Bearer '}):
+        assert send_raw('POST','/api/inspections/'+ID+'/photos',headers,receive)==401
+    assert reads==[]
+
+def test_declared_and_streamed_bodies_are_capped_per_route(context):
+    client,_=context
+    async def unread():raise AssertionError('The body must not be read.')
+    auth={'authorization':'Bearer synthetic'}
+    for path,limit in [('/api/inspections/'+ID+'/photos',13*MB),('/api/authorize',int(3.5*MB)),('/api/inspections',MB),('/api/audit',MB)]:
+        assert send_raw('POST',path,{**auth,'content-length':str(limit+1)},unread)==413
+    assert send_raw('PUT','/api/inspections/'+ID,{**auth,'content-length':str(MB+1)},unread)==413
+    assert send_raw('POST','/api/inspections',{**auth,'content-length':'1e9'},unread)==400
+    # Under its own ceiling, a body above the default reaches validation.
+    big=client.post('/api/authorize',json={'auth_id':'ADR-AUTH-never-saved','signature_png':'a'*(2*MB)})
+    assert big.status_code==409
+    # Chunked bodies without Content-Length keep the streaming cap.
+    chunks=iter([b'{"x":"'+b'a'*MB,b'a'*MB])
+    assert client.post('/api/inspections',content=chunks,headers={'content-type':'application/json'}).status_code==413
+
+def test_slow_body_hits_the_read_deadline(context,monkeypatch):
+    monkeypatch.setattr(bm,'BODY_READ_SECONDS',0.2)
+    async def trickle():await asyncio.sleep(0.1);return {'type':'http.request','body':b'x','more_body':True}
+    assert send_raw('POST','/api/inspections',{'authorization':'Bearer synthetic'},trickle)==408
+
+def test_authenticated_full_size_photo_upload_still_works(context):
+    client,_=context;record=inspect(client)
+    # Whitespace pads a valid upload to near the photo ceiling, far above the 1 MB default.
+    padded=json.dumps(dict(expected_revision=record['revision'],photo_id='b'*32,room='Bathroom',captured_at='2026-10-06T19:00:00Z',data_url=png()))
+    padded=padded[:-1]+' '*(12*MB-len(padded))+'}'
+    r=client.post('/api/inspections/'+ID+'/photos',content=padded,headers={'content-type':'application/json'})
+    assert r.status_code==200,r.text
+    assert r.json()['photos'][0]['id']=='b'*32
 
 def test_live_rejects_origins_and_unauthorized_before_vertex(context,monkeypatch):
     client,_=context
