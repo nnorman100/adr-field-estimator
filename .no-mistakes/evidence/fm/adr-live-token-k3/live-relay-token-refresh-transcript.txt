@@ -1,0 +1,37 @@
+[ 0.10s] === A: refresh renews token, session outlives original exp ===
+[ 0.16s] server -> {'type': 'ready', 'token_refresh': True, 'recovery': 'new'}
+[ 0.16s] 'initial' token expires at +3s
+[ 0.16s] client -> refresh token='renewed'
+[ 6.16s] no server message after 6s (past original expiry); session still open
+[ 6.16s] client -> end
+[ 6.17s] server -> {"type":"finished","complete":true}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-dddddddddddddddddddddddddddddddd", "duration_ms": 6053, "outcome": "finished"}
+[ 6.17s] socket closed, code 1000
+[ 6.17s] heartbeat re-verified tokens after auth/refresh: ['renewed'] count 11
+[ 6.17s] resume checkpoint retained: False | lease held: False
+[ 6.17s] === B: no refresh (pre-change behaviour) -> expiry closes ===
+[ 6.17s] server -> {'type': 'ready', 'token_refresh': True, 'recovery': 'new'}
+[ 6.17s] 'initial' token expires at +3s
+[ 9.19s] server -> {"type":"error","message":"Live coaching disconnected. Your draft is preserved; reconnect to continue."}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-dddddddddddddddddddddddddddddddd", "duration_ms": 3019, "outcome": "ValueError"}
+[ 9.19s] socket closed, code 1000
+[ 9.19s] heartbeat re-verified tokens after auth/refresh: ['initial'] count 5
+[ 9.19s] resume checkpoint retained: True | lease held: False
+[ 9.19s] === C: refresh with another user token is rejected ===
+[ 9.19s] server -> {'type': 'ready', 'token_refresh': True, 'recovery': 'new'}
+[ 9.19s] 'initial' token expires at +3s
+[ 9.19s] client -> refresh token='intruder'
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-dddddddddddddddddddddddddddddddd", "duration_ms": 5, "outcome": "ValueError"}
+[ 9.20s] server -> {"type":"error","message":"Live coaching disconnected. Your draft is preserved; reconnect to continue."}
+[ 9.20s] socket closed, code 1000
+[ 9.20s] heartbeat re-verified tokens after auth/refresh: [] count 0
+[ 9.20s] resume checkpoint retained: False | lease held: False
+[ 9.20s] === D: refresh with forged/invalid token is rejected ===
+[ 9.20s] server -> {'type': 'ready', 'token_refresh': True, 'recovery': 'new'}
+[ 9.20s] 'initial' token expires at +3s
+[ 9.20s] client -> refresh token='forged'
+[ 9.20s] server -> {"type":"error","message":"Your sign-in expired. Please sign in again.","status":401}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-dddddddddddddddddddddddddddddddd", "duration_ms": 5, "outcome": "HTTPException", "status": 401}
+[ 9.21s] socket closed, code 1000
+[ 9.21s] heartbeat re-verified tokens after auth/refresh: [] count 0
+[ 9.21s] resume checkpoint retained: False | lease held: False
