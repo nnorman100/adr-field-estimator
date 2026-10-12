@@ -99,7 +99,8 @@ node scripts/verify_live_browser.js --backend-tag body-limits --hold
 
 Select the exact candidate tag after checking its revision in the dedicated project; `body-limits`
 was production revision `00015-kem` after the October 12 backend release (`harden-fixes`, revision
-`00013-hup`, is its rollback), not a permanent staging alias. There is no implicit historical staged target. `--workspaces` explicitly selects the older
+`00013-hup`, is its rollback), not a permanent staging alias. There is no implicit historical staged target.
+`--workspaces` explicitly selects the older
 workspace staging tag and is not appropriate for a repairs-only release. `--production` verifies
 deployed assets rather than the local candidate. Output defaults to a unique temporary directory;
 `--artifact-dir` accepts an absolute external parent and creates a new run directory under it.
