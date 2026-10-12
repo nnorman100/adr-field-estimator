@@ -5,15 +5,15 @@
   <meta name="theme-color" content="#D42B32"><meta name="description" content="Alert Disaster Restoration field inspections, verified evidence and signed proposals.">
   <title>Alert Disaster Restoration · Field Estimator</title>
   <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg">
-  <link rel="stylesheet" href="/app.css?v=batch3-frontend-20261010-1">
+  <link rel="stylesheet" href="/app.css?v=mobile-repairs-20261011-1">
   <script defer src="/vendor/firebase-app-compat.js"></script><script defer src="/vendor/firebase-auth-compat.js"></script>
-  <script defer src="/core.js?v=batch3-frontend-20261010-1"></script><script defer src="/app.js?v=batch3-frontend-20261010-1"></script>
-  <script defer src="/workspaces.js?v=batch3-frontend-20261010-1"></script>
+  <script defer src="/core.js?v=mobile-repairs-20261011-1"></script><script defer src="/app.js?v=mobile-repairs-20261011-1"></script>
+  <script defer src="/workspaces.js?v=mobile-repairs-20261011-1"></script>
 </head>
 <body>
   <header class="masthead">
     <a class="brand" href="/" aria-label="Alert Disaster Restoration home"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><strong>Field Estimator</strong></a>
-    <div class="header-tools"><button id="signInButton" class="primary" aria-label="Sign in with Google">Sign in</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><strong>Alert Disaster Restoration</strong><p>CSLB #950983<br>3300 Patton Way<br>Bakersfield, CA 93308</p><a href="tel:+16614262151">(661) 426-2151</a><a href="https://alertdisaster.com/" target="_blank" rel="noopener noreferrer">Company website</a><small>App version 2026.10.10.4</small></div></details></div>
+    <div class="header-tools"><button id="signInButton" class="primary" aria-label="Sign in with Google">Sign in</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><strong>Alert Disaster Restoration</strong><p>CSLB #950983<br>3300 Patton Way<br>Bakersfield, CA 93308</p><a href="tel:+16614262151">(661) 426-2151</a><a href="https://alertdisaster.com/" target="_blank" rel="noopener noreferrer">Company website</a><small>App version 2026.10.11.1</small></div></details></div>
   </header>
   <div id="updateBanner" class="notice" hidden>Update ready. <button id="applyUpdate">Save &amp; update</button></div>
   <div id="offlineBanner" class="notice" hidden>You are offline. Changes stay on this device until synced. AI and signing need a connection.</div>
@@ -43,6 +43,7 @@
       <div class="section-head"><h2 id="inspectionHeading">Property & scope</h2><button data-task="walkthrough" class="text-action">Go to walkthrough &rarr;</button></div>
       <button id="fillScopeProperty" type="button">Fill scope from walkthrough</button><p class="hint">Stops capture and proposes values from your recorded observations. Review before applying.</p>
       <section id="scopeSuggestionPanel" class="scope-suggestions" aria-labelledby="scopeSuggestionHeading" hidden><h3 id="scopeSuggestionHeading">Proposed form values</h3><p id="scopeSuggestionStatus" role="status"></p><div id="scopeSuggestionList"></div><ul id="scopeQuestions"></ul><div class="actions"><button id="applyScopeSuggestions" type="button" class="primary">Apply selected changes</button><button id="dismissScopeSuggestions" type="button">Dismiss</button></div></section>
+      <p id="validationFeedback" class="field-error" role="alert" hidden></p>
       <form id="inspectionForm"><fieldset id="inspectionFields" disabled>
         <label>Property address<input id="address" name="address" maxlength="500" required autocomplete="street-address" placeholder="Enter the inspection address"></label>
         <div class="form-grid"><label>Year built<input id="yearBuilt" type="number" min="1800" max="2026" required placeholder="Confirm year"></label></div>
@@ -81,7 +82,14 @@
     <p id="documentProgress" class="review-progress" role="status">Open all four documents before signing.</p>
     <div id="auditWarnings" class="notice" hidden></div>
     <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">ADR proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
-    <article id="doc-proposal" class="doc"><div class="document-letterhead"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><p>3300 Patton Way · Bakersfield, CA 93308<br>(661) 426-2151 · CSLB #950983</p></div><h2>Alert Disaster Restoration · Official ADR Proposal</h2><div id="proposalBody"></div><div class="signing" id="signingArea"><label class="confirmation"><input id="documentsConfirmed" type="checkbox"> I reviewed all four documents, the separate totals, and the attached evidence with the homeowner or representative.</label><p>Homeowner / representative signature</p><canvas id="signCanvas" aria-label="Signature pad"></canvas><div class="actions"><button id="clearSignature">Clear signature</button><button id="authorizeJob" class="primary">Authorize & sign</button></div><p id="authorizationStatus" role="status"></p></div><p id="signedEvidenceStatus" role="status"></p><button id="retrySavedEvidence" hidden>Retry loading saved evidence</button><img id="savedSignature" class="signature-image" alt="Saved homeowner or representative signature" hidden></article>
+    <article id="doc-proposal" class="doc"><div class="document-letterhead"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><p>3300 Patton Way · Bakersfield, CA 93308<br>(661) 426-2151 · CSLB #950983</p></div><h2>Alert Disaster Restoration · Official ADR Proposal</h2><div id="proposalBody"></div>
+      <div class="signing" id="signingArea">
+        <label class="confirmation"><input id="documentsConfirmed" type="checkbox" aria-describedby="documentsConfirmedError"> I reviewed all four documents, the separate totals, and the attached evidence with the homeowner or representative.</label>
+        <p id="documentsConfirmedError" class="field-error" role="alert" hidden></p>
+        <p>Homeowner / representative signature</p><canvas id="signCanvas" aria-label="Signature pad" aria-describedby="signatureError"></canvas>
+        <p id="signatureError" class="field-error" role="alert" hidden></p>
+        <div class="actions"><button id="clearSignature" aria-describedby="signatureError">Clear signature</button><button id="authorizeJob" class="primary">Authorize & sign</button></div><p id="authorizationStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+      </div><p id="signedEvidenceStatus" role="status"></p><button id="retrySavedEvidence" hidden>Retry loading saved evidence</button><img id="savedSignature" class="signature-image" alt="Saved homeowner or representative signature" hidden></article>
     <article id="doc-claim" class="doc" hidden><h2>Itemized carrier claim</h2><p class="hint">ADR internal scope codes. JSON export does not guarantee Xactimate import compatibility.</p><div id="claimCards" class="claim-cards"></div><div class="table-scroll"><table><thead><tr><th>Code / description</th><th>Quantity</th><th>Rate</th><th>Waste</th><th>Total</th></tr></thead><tbody id="claimItems"></tbody></table></div><p id="claimTotal" class="money"></p></article>
     <article id="doc-defense" class="doc" hidden><h2>IICRC scope defense letter</h2><div id="defenseBody" class="letter"></div></article>
     <article id="doc-photos" class="doc" hidden><h2>Photo moisture audit log</h2><div id="photoAuditLog"></div></article>
@@ -89,5 +97,6 @@
   </section>
   <div class="draft-actions"><span class="action-hint">Confirm scope before generating documents.</span><button id="saveDraft">Save draft</button><button id="finishAudit" class="primary">Finish &amp; review</button></div>
   <dialog id="jobsDialog"><div class="section-head"><h2>Your drafts & signed jobs</h2><button id="closeJobs">Close</button></div><div id="jobsList"></div></dialog>
+  <dialog id="removeRoomDialog" aria-labelledby="removeRoomTitle" aria-describedby="removeRoomDescription"><h2 id="removeRoomTitle">Remove room?</h2><p id="removeRoomDescription"></p><div class="actions"><button id="cancelRoomRemoval" type="button" autofocus>Cancel</button><button id="confirmRoomRemoval" type="button" class="primary">Remove room</button></div></dialog>
 <footer>Alert Disaster Restoration &middot; Private field inspections</footer>
 </body></html>

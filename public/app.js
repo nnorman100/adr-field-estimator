@@ -8,6 +8,51 @@ let syncChain=Promise.resolve(),saveTimer=null,persistTimer=null,dbPromise=null,
 let confirmedAuthorization=null,authEpoch=0;
 const newId=()=>crypto.randomUUID().replaceAll('-','');
 const ui={task:'property',starting:false,auditing:false,fillingScope:false,documentSource:null,viewed:new Set()};
+let roomRemoval=null,validationControl=null;
+function visibleBounds(){
+  const viewport=window.visualViewport,top=viewport?.offsetTop||0,bottom=top+(viewport?.height||innerHeight);
+  const shell=document.querySelector('.inspection-shell'),header=shell.getBoundingClientRect(),footer=document.querySelector('.draft-actions').getBoundingClientRect();
+  return {top:Math.max(top,getComputedStyle(shell).position==='sticky'&&header.height?header.bottom:top)+12,bottom:Math.min(bottom,footer.height?footer.top:bottom)-12};
+}
+function revealControl(control,feedback){
+  if(!control?.isConnected||!control.getClientRects().length||control.closest('dialog[open]'))return;
+  const bounds=visibleBounds(),rect=control.closest('label')?.getBoundingClientRect()||control.getBoundingClientRect();
+  const error=feedback&&!feedback.hidden?feedback.getBoundingClientRect():null,top=Math.min(rect.top,error?.top??rect.top),bottom=Math.max(rect.bottom,error?.bottom||rect.bottom),height=bottom-top;
+  if(top>=bounds.top&&bottom<=bounds.bottom)return;
+  const target=bounds.top+Math.max(0,(bounds.bottom-bounds.top-height)/2);
+  window.scrollBy({top:top-target,behavior:'instant'});
+}
+function focusAndReveal(control,feedback){
+  control.focus({preventScroll:true});revealControl(control,feedback);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{if(document.activeElement===control)revealControl(control,feedback);}));
+}
+function initFocusVisibility(){
+  const header=document.querySelector('.inspection-shell'),footer=document.querySelector('.draft-actions');
+  const update=()=>{
+    const headerHeight=header.getBoundingClientRect().height,footerHeight=footer.getBoundingClientRect().height;
+    const constrained=(window.visualViewport?.height||innerHeight)-headerHeight-footerHeight<240;
+    document.body.classList.toggle('constrained-viewport',constrained);
+    document.documentElement.style.setProperty('--overlay-top',(constrained?0:headerHeight)+'px');
+    document.documentElement.style.setProperty('--overlay-bottom',footerHeight+'px');
+    const active=document.activeElement;
+    if(active?.matches('#inspectionForm input,#inspectionForm select,#inspectionForm textarea,#signingArea button,#signingArea input')){
+      const feedback=validationControl===active?$('validationFeedback'):active.id==='documentsConfirmed'?$('documentsConfirmedError'):active.id==='clearSignature'?$('signatureError'):active.id==='authorizeJob'?$('authorizationStatus'):null;
+      requestAnimationFrame(()=>revealControl(active,feedback));
+    }
+  };
+  const observer=new ResizeObserver(update);observer.observe(header);observer.observe(footer);
+  window.addEventListener('resize',update);window.visualViewport?.addEventListener('resize',update);window.visualViewport?.addEventListener('scroll',update);update();
+}
+function clearValidationFeedback(){
+  if(validationControl){const ids=(validationControl.getAttribute('aria-describedby')||'').split(' ').filter(id=>id&&id!=='validationFeedback');if(ids.length)validationControl.setAttribute('aria-describedby',ids.join(' '));else validationControl.removeAttribute('aria-describedby');validationControl.removeAttribute('aria-invalid');}
+  validationControl=null;$('validationFeedback').hidden=true;$('validationFeedback').textContent='';
+}
+function showValidationFeedback(control,text=control.validationMessage){
+  clearValidationFeedback();validationControl=control;
+  const feedback=$('validationFeedback');feedback.textContent=text;feedback.hidden=false;
+  (control.closest('label')||control).after(feedback);control.setAttribute('aria-invalid','true');control.setAttribute('aria-describedby',((control.getAttribute('aria-describedby')||'')+' validationFeedback').trim());
+  focusAndReveal(control,feedback);
+}
 function closeMenus(){document.querySelectorAll('.menu[open]').forEach(menu=>menu.open=false);}
 function showTask(task,focus=true){
   ui.task=task;
@@ -100,8 +145,10 @@ function absorb(record){
   for(const remote of record.photos){const photo=state.draft.photos.find(p=>p.id===remote.id);if(photo)Object.assign(photo,remote,{uploaded:true});else state.draft.photos.push({...remote,uploaded:true});}
   renderPhotos();renderSaveStatus();
 }
-function invalidate(){clearScopePreview();state.documents=null;state.signature=null;state.pendingAuthorization=null;ui.documentSource=null;ui.viewed.clear();document.body.classList.remove('has-documents');$('documentsConfirmed').checked=false;$('documents').hidden=true;$('reviewEmpty').hidden=false;clearSignature();}
+function invalidate(){clearScopePreview();state.documents=null;state.signature=null;state.pendingAuthorization=null;ui.documentSource=null;ui.viewed.clear();document.body.classList.remove('has-documents');$('documentsConfirmed').checked=false;$('documents').hidden=true;$('reviewEmpty').hidden=false;clearSignature();clearSigningError('documentsConfirmedError');}
 function clearDisplayedInspection(){
+  roomRemoval=null;$('removeRoomDialog').close();$('removeRoomDescription').textContent='';clearValidationFeedback();clearSigningError('documentsConfirmedError');
+  $('inspectionForm').before($('validationFeedback'));
   $('inspectionForm').reset();$('coordinationForm').reset();$('jobsDialog').close();
   for(const id of ['technicianTranscript','assistantTranscript'])$(id).value='';
   for(const id of ['rooms','photoRoom','proposalBody','claimCards','claimItems','defenseBody','photoAuditLog','scopeSuggestionList','scopeQuestions','jobsList'])$(id).replaceChildren();
@@ -285,10 +332,11 @@ function fillForm(){
   renderRooms();renderPhotos();renderSaveStatus();renderControls();
 }
 function renderRooms(){
+  clearValidationFeedback();$('inspectionForm').before($('validationFeedback'));
   $('rooms').replaceChildren();$('photoRoom').replaceChildren();
   state.draft.data.rooms.forEach((room,i)=>{
     const card=node('div',undefined,'room'),head=node('div',undefined,'section-head');head.append(node('h3','Room '+(i+1)));
-    head.append(button('Remove',()=>{state.draft.data.rooms.splice(i,1);changed();renderRooms();}));card.append(head);
+    const remove=button('Remove',()=>requestRoomRemoval(room,remove));remove.disabled=!!state.signed||!!confirmedAuthorization;head.append(remove);card.append(head);
     const grid=node('div',undefined,'form-grid');
     const definitions=[['Room name','name','text'],['Water category','category','select'],['Unfinished / subfloor SF','unfinished_sf','number'],['Finished / drywall / trim SF','finished_sf','number'],['Waste %','waste_percent','number']];
     for(const [label,key,type]of definitions){
@@ -302,6 +350,24 @@ function renderRooms(){
     }
     card.append(grid);const check=node('label',undefined,'check'),input=node('input');input.type='checkbox';input.checked=room.custom_cabinetry;input.disabled=!!state.signed;input.addEventListener('change',()=>{room.custom_cabinetry=input.checked;changed();});check.append(input,node('span','Custom cabinetry · category 3 finished rate ×2'));card.append(check);$('rooms').append(card);
   });updateRoomPicker();
+}
+function requestRoomRemoval(room,trigger){
+  if(!state.session||!state.draft||state.signed||confirmedAuthorization||!state.draft.data.rooms.includes(room))return;
+  roomRemoval={room,trigger,draft:state.draft,uid:state.user?.uid,version:state.localVersion};
+  $('removeRoomDescription').textContent='Remove "'+(room.name.trim()||'Unnamed room')+'"? Its measurements will be deleted, scope confirmation cleared, and generated documents and any unsigned signature invalidated. This cannot be undone.';
+  $('removeRoomDialog').showModal();$('cancelRoomRemoval').focus();
+}
+function closeRoomRemoval(){
+  const pending=roomRemoval;roomRemoval=null;if(!pending)return;
+  if(pending.trigger.isConnected&&!pending.trigger.disabled)focusAndReveal(pending.trigger);
+}
+function confirmRoomRemoval(){
+  const pending=roomRemoval;
+  if(!pending||state.draft!==pending.draft||state.user?.uid!==pending.uid||state.localVersion!==pending.version||!state.session||state.signed||confirmedAuthorization){$('removeRoomDialog').close();return;}
+  const index=state.draft.data.rooms.indexOf(pending.room);if(index<0){$('removeRoomDialog').close();return;}
+  roomRemoval=null;$('removeRoomDialog').close();clearValidationFeedback();
+  state.draft.data.rooms.splice(index,1);changed();renderRooms();
+  const remaining=$('rooms').querySelector('[data-room-index="'+Math.min(index,state.draft.data.rooms.length-1)+'"][data-room-key="name"]');focusAndReveal(remaining||$('addRoom'));
 }
 function updateRoomPicker(){const value=$('photoRoom').value;$('photoRoom').replaceChildren();for(const room of state.draft.data.rooms){const opt=node('option',room.name);opt.value=room.name;$('photoRoom').append(opt);}if(state.draft.data.rooms.some(r=>r.name===value))$('photoRoom').value=value;}
 function photoUrl(photo){return photo.data_url || state.photoUrls.get(photo.id) || '';}
@@ -449,8 +515,14 @@ async function restoreSigned(id){
 }
 async function finishAudit(){
   if(!state.draft||state.signed||confirmedAuthorization)throw Error('Open an unsigned draft first.');
-  collect();if(!$('inspectionForm').checkValidity()){showTask('property');$('inspectionForm').reportValidity();return;}
-  if(!state.draft.data.scope_confirmed){showTask('property');$('scopeConfirmed').focus();throw Error('Confirm all scope and pricing inputs before auditing.');}
+  collect();clearValidationFeedback();if(!$('inspectionForm').checkValidity()){
+    showTask('property',false);const form=$('inspectionForm'),invalid=form.querySelector(':invalid:not(fieldset)');
+    // Retain native constraints/messages, but replace the WebKit bubble that can cover inline feedback.
+    const inlineOnly=event=>event.preventDefault();form.addEventListener('invalid',inlineOnly,true);
+    try{form.reportValidity();}finally{form.removeEventListener('invalid',inlineOnly,true);}
+    showValidationFeedback(invalid);return;
+  }
+  if(!state.draft.data.scope_confirmed){showTask('property',false);showValidationFeedback($('scopeConfirmed'),'Confirm all scope and pricing inputs before auditing.');return;}
   await stopWalk();ui.auditing=true;renderControls();
   try{
     await syncDraft();if(state.conflict||!state.record||stable(state.draft.data)!==state.ack||state.draft.photos.some(p=>!p.uploaded))throw Error('Finish saving the draft and its photos before auditing.');
@@ -462,7 +534,7 @@ async function finishAudit(){
     const audited=await jsonApi('/api/audit','POST',{inspection_id:state.draft.inspection_id,expected_revision:state.record.revision});
     absorb(audited);
     if(version!==state.localVersion)throw Error('The inspection changed during generation. Audit the latest revision.');
-    state.documents=audited.audit.documents;clearSignature();state.pendingAuthorization=null;await persist();renderDocuments();
+    state.documents=audited.audit.documents;clearSignature();clearSigningError('documentsConfirmedError');state.pendingAuthorization=null;await persist();renderDocuments();
     say(state.documents.signable?'Audit ready. Review all four documents before signing.':'Audit requires correction: unresolved evidence or unpriced work remains.',state.documents.signable?'success':'error');
     showTask('review');
   }catch(e){invalidate();throw e;}finally{ui.auditing=false;renderControls();}
@@ -488,25 +560,35 @@ function renderDocuments(){
   $('signingArea').hidden=!!state.signed||!!confirmedAuthorization;$('authorizeJob').disabled=!!confirmedAuthorization||!docs.signable||!navigator.onLine;resizeSignature();window.WorkspaceUI?.documentBranding();
 }
 function resizeSignature(){const canvas=$('signCanvas'),rect=canvas.getBoundingClientRect();if(!rect.width)return;const saved=state.signature;canvas.width=Math.round(rect.width*devicePixelRatio);canvas.height=Math.round(180*devicePixelRatio);const ctx=canvas.getContext('2d');ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);if(saved){const image=new Image();image.onload=()=>ctx.drawImage(image,0,0,rect.width,180);image.src=saved;}}
-function clearSignature(){const canvas=$('signCanvas');canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);state.signature=null;state.pendingAuthorization=null;$('authorizationStatus').textContent='';if(!state.signed)$('savedSignature').hidden=true;}
+function clearSigningError(id){
+  const error=$(id);error.textContent='';error.hidden=true;
+  $(id==='signatureError'?'signCanvas':'documentsConfirmed').removeAttribute('aria-invalid');
+}
+function signingError(id,text,control){
+  const error=$(id);error.textContent=text;error.hidden=false;
+  $(id==='signatureError'?'signCanvas':'documentsConfirmed').setAttribute('aria-invalid','true');focusAndReveal(control,error);
+}
+function clearSignature(){const canvas=$('signCanvas');canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);state.signature=null;state.pendingAuthorization=null;$('authorizationStatus').textContent='';clearSigningError('signatureError');if(!state.signed)$('savedSignature').hidden=true;}
 function initSignature(){
   const canvas=$('signCanvas');let drawing=false,moved=false;
   const point=e=>{const r=canvas.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top};};
   canvas.addEventListener('pointerdown',e=>{if(state.signed||confirmedAuthorization||!state.documents?.signable)return;canvas.setPointerCapture(e.pointerId);drawing=true;moved=false;const p=point(e),ctx=canvas.getContext('2d');ctx.beginPath();ctx.moveTo(p.x,p.y);state.pendingAuthorization=null;});
   canvas.addEventListener('pointermove',e=>{if(!drawing)return;const p=point(e),ctx=canvas.getContext('2d');ctx.lineWidth=2.5;ctx.lineCap='round';ctx.strokeStyle='#111';ctx.lineTo(p.x,p.y);ctx.stroke();moved=true;});
-  const end=()=>{if(drawing&&moved)state.signature=canvas.toDataURL('image/png');drawing=false;};canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);
+  const end=()=>{if(drawing&&moved){state.signature=canvas.toDataURL('image/png');clearSigningError('signatureError');}drawing=false;};canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);
   new ResizeObserver(()=>resizeSignature()).observe(canvas);
 }
 async function authorize(){
   if(confirmedAuthorization)return restoreSigned(confirmedAuthorization);
   if(!navigator.onLine)throw Error('Signing requires a connection.');
-  if(!state.signature)throw Error('Have the homeowner or representative draw a signature.');
-  if(!$('documentsConfirmed').checked)throw Error('Confirm all four documents were reviewed before signing.');
+  if(!state.signature){signingError('signatureError','Have the homeowner or representative draw a signature in the pad before authorizing.',$('clearSignature'));return;}
+  clearSigningError('signatureError');
+  if(!$('documentsConfirmed').checked){signingError('documentsConfirmedError','Confirm all four documents were reviewed with the homeowner or representative before signing.',$('documentsConfirmed'));return;}
+  clearSigningError('documentsConfirmedError');
   if(!state.documents?.signable||!state.record?.audit)throw Error('Complete a valid current audit before signing.');
   const payload=state.pendingAuthorization||{inspection_id:state.draft.inspection_id,expected_revision:state.record.revision,auth_id:'ADR-AUTH-'+crypto.randomUUID(),proposal_hash:state.record.audit.proposal_hash,signature_png:state.signature,documents_confirmed:true};
   state.pendingAuthorization=payload;$('authorizeJob').disabled=true;$('authorizationStatus').textContent='Saving signed agreement…';
   try{const receipt=await jsonApi('/api/authorize','POST',payload);if(receipt.status!=='success'||receipt.auth_id!==payload.auth_id)throw Error('Save confirmation was incomplete. Retry with the same reference.');confirmedAuthorization=receipt.auth_id;state.pendingAuthorization=null;renderSaveStatus();renderControls();renderDocuments();$('inspectionFields').disabled=true;$('authorizationStatus').textContent='Saved & signed · '+receipt.auth_id;try{await restoreSigned(receipt.auth_id);}catch(e){$('retrySavedEvidence').hidden=false;$('signedEvidenceStatus').textContent='Signed agreement saved · '+receipt.auth_id+'. Retry loading saved evidence.';say('Signed agreement saved. Its display could not be restored; retry loading saved evidence.','error');}}
-  catch(e){$('authorizationStatus').textContent='Save not confirmed. Retry uses the same authorization reference.';throw e;}
+  catch(e){$('authorizationStatus').textContent='Save not confirmed: '+e.message+' Retry uses the same authorization reference.';throw e;}
   finally{$('authorizeJob').disabled=!!confirmedAuthorization||!!state.signed||!state.documents?.signable;window.WorkspaceUI?.policy();}
 }
 function scopeJson(){if(!state.documents)throw Error('Generate or open a saved audit first.');return JSON.stringify(state.documents.xactimate_scope,null,2);}
@@ -589,7 +671,7 @@ async function startWalk(){
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid){media.getTracks().forEach(track=>track.stop());return;}
     state.media=media;$('cameraVideo').srcObject=media;await $('cameraVideo').play();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;$('cameraEmpty').hidden=true;
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=batch3-frontend-20261010-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=mobile-repairs-20261011-1');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -651,7 +733,7 @@ function connectivity(){
   else Promise.resolve(window.WorkspaceUI?.refresh()).then(()=>syncDraft()).then(()=>drainQueue()).catch(e=>say(e.message,'error'));
 }
 async function initialize(){
-  initSignature();
+  initSignature();initFocusVisibility();
   renderControls();
   document.querySelectorAll('[data-task]').forEach(tab=>tab.addEventListener('click',()=>showTask(tab.dataset.task)));
   document.addEventListener('click',event=>{document.querySelectorAll('.menu[open]').forEach(menu=>{if(!menu.contains(event.target))menu.open=false;});});
@@ -692,15 +774,23 @@ async function initialize(){
   };
   click('signOutButton',signOut);click('verifySignOut',signOut);click('discardSignOut',discardAndSignOut);
   click('newInspection',()=>openNew());click('openJobs',()=>window.WorkspaceUI?.enabled()?WorkspaceUI.jobs():showJobs());click('closeJobs',()=>$('jobsDialog').close());
+  click('cancelRoomRemoval',()=>$('removeRoomDialog').close());click('confirmRoomRemoval',confirmRoomRemoval);$('removeRoomDialog').addEventListener('close',closeRoomRemoval);
+  $('removeRoomDialog').addEventListener('keydown',event=>{
+    if(event.key!=='Tab')return;
+    const first=$('cancelRoomRemoval'),last=$('confirmRoomRemoval');
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+  });
   click('addRoom',()=>{if(state.draft.data.rooms.length>=30)throw Error('At most 30 rooms are supported.');state.draft.data.rooms.push({name:'Room '+(state.draft.data.rooms.length+1),category:1,unfinished_sf:0,finished_sf:0,custom_cabinetry:false,waste_percent:0});changed();renderRooms();});
-  $('inspectionForm').addEventListener('submit',e=>e.preventDefault());$('inspectionForm').addEventListener('input',e=>{if(e.target.dataset.roomKey)return;collect();changed(e.target.id!=='scopeConfirmed');});
+  $('inspectionForm').addEventListener('submit',e=>e.preventDefault());$('inspectionForm').addEventListener('input',e=>{if(e.target===validationControl&&e.target.validity.valid)clearValidationFeedback();if(e.target.dataset.roomKey)return;collect();changed(e.target.id!=='scopeConfirmed');});
   $('technicianTranscript').addEventListener('input',()=>{collect();if(state.draft?.data.capture_metadata)state.draft.data.capture_metadata.technician_edited=true;changed();});
   click('saveDraft',async()=>{if(!state.session||!state.draft)throw Error('Sign in and open a draft first.');collect();await syncDraft();if(state.conflict)throw Error('Choose a recovery action before cloud saving.');say(navigator.onLine?'Draft saved privately.':'Draft saved on this device.','success');});click('finishAudit',finishAudit);
   click('fillScope',fillScopeFromWalkthrough);click('fillScopeProperty',fillScopeFromWalkthrough);click('applyScopeSuggestions',applyScopeSuggestions);click('dismissScopeSuggestions',clearScopePreview);
   click('startWalk',startWalk);click('stopWalk',()=>stopWalk());click('muteMic',mute);click('takePhoto',captureStill);click('uploadPhoto',()=>$('photoFileInput').click());
   click('thermalToggle',()=>{const on=$('cameraVideo').classList.toggle('thermal-emulation');$('thermalBadge').hidden=!on;$('thermalToggle').textContent=on?'End color emulation':'Color emulation';});
   $('photoFileInput').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(file)try{await addPhoto(file);}catch(error){say(error.message,'error');}});
-  click('clearSignature',clearSignature);click('authorizeJob',authorize);click('copyJson',copyJson);click('downloadJson',downloadJson);click('printDocuments',()=>{if(!state.documents)throw Error('Open documents first.');window.print();});
+  $('documentsConfirmed').addEventListener('change',()=>{if($('documentsConfirmed').checked)clearSigningError('documentsConfirmedError');});
+  click('clearSignature',clearSignature);click('authorizeJob',async()=>{try{await authorize();}catch(e){if(!$('authorizationStatus').textContent.startsWith('Save not confirmed:'))$('authorizationStatus').textContent=e.message;focusAndReveal($('authorizeJob'),$('authorizationStatus'));throw e;}});click('copyJson',copyJson);click('downloadJson',downloadJson);click('printDocuments',()=>{if(!state.documents)throw Error('Open documents first.');window.print();});
   click('retrySavedEvidence',()=>restoreSigned(confirmedAuthorization));
   document.querySelectorAll('[data-tab]').forEach(tab=>tab.addEventListener('click',()=>selectDocument(tab.dataset.tab)));
   click('restoreRemote',async()=>{const record=await jsonApi('/api/inspections/'+state.draft.inspection_id);state.draft={inspection_id:record.inspection_id,data:record.data,photos:record.photos.map(p=>({...p,uploaded:true}))};state.record=record;state.ack=stable(record.data);state.conflict=false;$('conflictActions').hidden=true;invalidate();fillForm();await persist();await loadPhotoUrls('/api/inspections/'+record.inspection_id+'/photos/');});
