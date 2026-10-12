@@ -16,7 +16,9 @@ never rewrite earlier rows; add a correcting row instead.
 
 The serving backend is the newest row with 100% traffic that has not been rolled back; the serving
 frontend is the newest `live` row. Recheck both read-only before a cutover and keep them as the rollback
-pair. Compare them with `/api/health` (`source_commit`) and `node scripts/verify_hosting.js`.
+pair. Compare them with `/api/health` (`source_commit`) and `node scripts/verify_hosting.js`. The
+service-level `source-commit` label follows the latest staged revision, not traffic; read the label of
+the revision that serves traffic instead.
 
 ## Recording a release
 

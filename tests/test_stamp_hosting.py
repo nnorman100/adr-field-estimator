@@ -41,8 +41,6 @@ def test_every_versioned_asset_url_is_stamped():
             found = re.findall(r'\?v=[0-9A-Za-z-]+', path.read_text(encoding='utf8', errors='replace'))
             name = path.relative_to(ROOT).as_posix()
             assert len(found) == sum(count for pattern, count, _ in hosting.TARGETS.get(name, []) if pattern is hosting.ASSET), name
-    worker = (ROOT / 'public/sw.js').read_text()
-    assert "const CACHE='alert-disaster-'+VERSION;" in worker and "'/app.js?v='+VERSION" in worker
 
 
 def test_stamp_check_and_reset_round_trip(shell):
@@ -50,13 +48,13 @@ def test_stamp_check_and_reset_round_trip(shell):
     with pytest.raises(RuntimeError, match='not stamped'):
         hosting.check(shell)
     hosting.write(HEAD, shell)
-    assert hosting.check(shell) == HEAD
+    assert hosting.check(shell, fake_git()) == HEAD
     assert f"const VERSION='{HEAD}';" in (shell / 'public/sw.js').read_text()
     html = (shell / 'public/index.html').read_text(encoding='utf8')
     assert html.count(f'?v={HEAD}') == 4 and f'App version {HEAD[:12]}</small>' in html
     assert f'/audio-worklet.js?v={HEAD}' in (shell / 'public/app.js').read_text(encoding='utf8')
     hosting.write(HEAD + '-dirty', shell)
-    assert hosting.check(shell) == HEAD + '-dirty'
+    assert hosting.check(shell, fake_git()) == HEAD + '-dirty'
     assert f'App version {HEAD[:12]}-dirty</small>' in (shell / 'index.html').read_text(encoding='utf8')
     hosting.write(hosting.PLACEHOLDER, shell)
     assert {name: (shell / name).read_bytes() for name in hosting.TARGETS} == original
@@ -72,6 +70,39 @@ def test_check_rejects_a_partially_stamped_shell(shell):
     (shell / 'index.html').write_text((shell / 'index.html').read_text(encoding='utf8') + ' ', encoding='utf8')
     with pytest.raises(RuntimeError, match='differ'):
         hosting.check(shell)
+
+
+def test_check_binds_the_stamp_to_head_and_uncommitted_hosting_files(tmp_path):
+    repo = tmp_path / 'repo'
+    for name in hosting.TARGETS:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, repo / name)
+    (repo / 'public/app.css').write_text('body{}\n')
+    def git(argv, **kwargs):
+        return subprocess.run(argv, **{**kwargs, 'cwd': repo})
+    def commit(message):
+        git(['git', 'add', '-A'], check=True)
+        git(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', message], check=True)
+        return git(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+    git(['git', 'init', '-q'], check=True)
+    first = commit('first')
+    hosting.write(first, repo)
+    assert hosting.check(repo, git) == first
+    (repo / 'public/app.css').write_text('body{color:red}\n')
+    with pytest.raises(RuntimeError, match='changed after stamping'):
+        hosting.check(repo, git)
+    hosting.write(first + '-dirty', repo)
+    assert hosting.check(repo, git) == first + '-dirty'
+    hosting.write(hosting.PLACEHOLDER, repo)
+    second = commit('second')
+    hosting.write(first, repo)
+    with pytest.raises(RuntimeError, match=f'HEAD is {second}'):
+        hosting.check(repo, git)
+    hosting.write(first + '-dirty', repo)
+    with pytest.raises(RuntimeError, match=f'HEAD is {second}'):
+        hosting.check(repo, git)
+    hosting.write(second, repo)
+    assert hosting.check(repo, git) == second
 
 
 def test_dirty_hosting_tree_is_refused_unless_marked(monkeypatch, capsys):

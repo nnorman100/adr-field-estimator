@@ -1,4 +1,6 @@
 """The backend deploy command never inherits the staged workspace flag or moves traffic."""
+import fnmatch
+import shutil
 import subprocess
 import pytest
 from scripts import deploy_backend as deploy
@@ -95,10 +97,13 @@ def test_source_commit_requires_a_full_head_hash():
     assert release_stamp.source_commit(['backend'], git=fake_git()) == HEAD
 
 
-def test_stamp_file_reaches_the_image_but_not_git():
-    # gcloud uploads backend/ filtered by .gcloudignore and Docker copies it filtered by .dockerignore.
+def test_stamp_file_reaches_the_image_but_not_git(tmp_path):
+    # gcloud filters the upload with .gcloudignore (gitignore syntax); Docker filters the copy with .dockerignore.
     root = release_stamp.ROOT
-    for ignore in ('backend/.gcloudignore', 'backend/.dockerignore'):
-        assert 'SOURCE_COMMIT' not in (root / ignore).read_text()
-    assert 'COPY --chown=app:app . .' in (root / 'backend/Dockerfile').read_text()
+    shutil.copyfile(root / 'backend/.gcloudignore', tmp_path / '.gitignore')
+    subprocess.run(['git', 'init', '-q'], cwd=tmp_path, check=True)
+    assert subprocess.run(['git', 'check-ignore', '-q', '--no-index', 'SOURCE_COMMIT'], cwd=tmp_path).returncode == 1
+    patterns = [line.strip().rstrip('/') for line in (root / 'backend/.dockerignore').read_text().splitlines()
+                if line.strip() and not line.startswith(('#', '!'))]
+    assert not any(fnmatch.fnmatchcase('SOURCE_COMMIT', pattern) for pattern in patterns)
     assert subprocess.run(['git', 'check-ignore', '-q', 'backend/SOURCE_COMMIT'], cwd=root).returncode == 0

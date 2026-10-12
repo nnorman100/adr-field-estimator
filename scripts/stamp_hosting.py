@@ -4,8 +4,8 @@ The committed shell carries the placeholder marker 'unstamped'. Stamping replace
 VERSION, every versioned asset URL and the Account menu's app version with the commit, so each
 release gets a new worker cache and the deployed site can be compared with the backend's
 source_commit. Restore the placeholder with --reset after deploying. firebase.json runs --check
-before every Hosting deploy so an unstamped shell, which would keep serving stale cached assets, is
-never released.
+before every Hosting deploy so an unstamped shell, which would keep serving stale cached assets, or a
+shell stamped for other code than HEAD and the uncommitted Hosting files is never released.
 """
 import argparse
 import re
@@ -61,8 +61,9 @@ def write(marker, root=ROOT):
             path.write_bytes(updated.encode('utf8'))
 
 
-def check(root=ROOT):
-    """Return the stamped marker, refusing a placeholder or a shell whose files disagree."""
+def check(root=ROOT, git=subprocess.run):
+    """Return the stamped marker, refusing a placeholder, a shell whose files disagree, or a marker
+    that does not describe HEAD and the uncommitted Hosting files besides the stamped ones."""
     found = {}
     for name, rules in TARGETS.items():
         text = (root / name).read_bytes().decode('utf8')
@@ -76,6 +77,12 @@ def check(root=ROOT):
             raise RuntimeError(f'{name} carries a marker other than {marker}; restamp the shell.')
     if (root / 'index.html').read_bytes() != (root / 'public/index.html').read_bytes():
         raise RuntimeError('index.html and public/index.html differ.')
+    unstamped = [*DEPLOYED, *(':(exclude)' + name for name in TARGETS)]
+    current = source_commit(unstamped, True, git)
+    if marker.removesuffix('-dirty') != current.removesuffix('-dirty'):
+        raise RuntimeError(f'The shell is stamped {marker} but HEAD is {current.removesuffix("-dirty")}; restamp the shell.')
+    if current.endswith('-dirty') and not marker.endswith('-dirty'):
+        raise RuntimeError(f'Hosting files changed after stamping {marker}; commit them and restamp the shell.')
     return marker
 
 
@@ -89,7 +96,7 @@ def main(argv=None, git=subprocess.run):
     args = parser.parse_args(argv)
     try:
         if args.check:
-            print('Hosting shell stamped with ' + check())
+            print('Hosting shell stamped with ' + check(git=git))
             return 0
         if args.reset:
             write(PLACEHOLDER)
