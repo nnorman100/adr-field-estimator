@@ -2,7 +2,7 @@ fastapi==0.143.0
 starlette==1.7.0
 uvicorn==0.54.0
 pydantic==2.14.1
-google-genai==2.8.0
+google-genai==2.29.0
 anyio==4.15.1
 firebase-admin>=6.9.0,<8
 google-cloud-firestore>=2.21.0,<3
