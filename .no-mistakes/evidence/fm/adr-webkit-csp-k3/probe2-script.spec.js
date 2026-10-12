@@ -1,0 +1,32 @@
+const {test,expect}=require('@playwright/test');
+const fs=require('node:fs'),path=require('node:path');
+const PUBLIC=path.resolve(__dirname,'../../public');
+const CSP0=require('../../firebase.json').hosting.headers.find(r=>r.source==='**').headers.find(h=>h.key==='Content-Security-Policy').value;
+const CSP=CSP0.replace("style-src 'self'","style-src 'self' 'report-sample'");
+const E=process.env.PROBE_OUT;
+test.use({serviceWorkers:'block'});
+test('probe2: staged',async({page,baseURL,browserName})=>{
+  const origin=new URL(baseURL).origin;
+  await page.addInitScript(()=>{window.__v=[];document.addEventListener('securitypolicyviolation',e=>window.__v.push({d:e.violatedDirective,u:e.blockedURI,s:e.sample,f:e.sourceFile,l:e.lineNumber,c:e.columnNumber,t:e.target.id||e.target.nodeName,stack:new Error().stack}));});
+  await page.route('**/*',async route=>{const r=route.request(),u=new URL(r.url());
+    if(u.origin!==origin)return route.abort();
+    if(u.pathname.startsWith('/vendor/firebase/'))return route.fulfill({contentType:'text/javascript',body:fs.readFileSync(path.join(PUBLIC,u.pathname))});
+    if(r.resourceType()==='document'){const resp=await route.fetch();return route.fulfill({response:resp,headers:{...resp.headers(),'content-security-policy':CSP}});}
+    return route.continue();});
+  const log=[];const snap=async n=>{await page.waitForTimeout(400);log.push([n,await page.evaluate(()=>window.__v.splice(0))]);};
+  await page.goto('/');
+  await expect.poll(()=>page.evaluate(()=>typeof auth!=='undefined'&&auth.app.options.projectId)).toBe('alert-disaster-field-2026');
+  await snap('load');
+  await page.evaluate(()=>{for(const id of ['coordEstimator','photoRoom']){let el=document.getElementById(id);while(el){el.hidden=false;el=el.parentElement;}}});
+  await snap('unhide');
+  await page.evaluate(()=>{for(const id of ['coordEstimator','photoRoom']){const s=document.getElementById(id);if(!s.options.length)s.add(new Option('Kitchen','Kitchen'));}});
+  await snap('addOption');
+  await page.evaluate(()=>{for(const id of ['coordEstimator','photoRoom']){const s=document.getElementById(id);s.selectedIndex=s.options.length-1;}});
+  await snap('selectIndex');
+  await page.evaluate(()=>{for(const id of ['coordEstimator','photoRoom'])document.getElementById(id).dispatchEvent(new Event('change',{bubbles:true}));});
+  await snap('change');
+  await page.locator('#photoRoom').scrollIntoViewIfNeeded();await snap('scroll');
+  await page.screenshot({path:`${E}/probe2-${browserName}.png`});await snap('screenshot');
+  fs.writeFileSync(`${E}/probe2-${browserName}-staged-violations.json`,JSON.stringify(log,null,2));
+  console.log(browserName,JSON.stringify(log.map(([n,v])=>[n,v.map(x=>[x.d,x.t,x.s,x.f,x.l,x.c])])));
+});

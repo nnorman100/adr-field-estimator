@@ -1,0 +1,18 @@
+npm notice run npx
+npm notice run 'playwright' test --config=playwright.isolated.config.js tests/browser/zz-probe.spec.js
+
+Running 2 tests using 1 worker
+
+[1/2] [chromium] › tests/browser/zz-probe.spec.js:7:1 › probe: app under exact Hosting CSP
+[chromium] › tests/browser/zz-probe.spec.js:7:1 › probe: app under exact Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+chromium {"coordEstimator":{"value":"Primary bathroom – very long room name to test text overflow","width":529,"display":"inline-block","textOverflow":"clip","hasStyleAttr":false},"photoRoom":{"value":"Primary bathroom – very long room name to test text overflow","width":420,"display":"inline-block","textOverflow":"clip","hasStyleAttr":false}} []
+
+[2/2] [webkit] › tests/browser/zz-probe.spec.js:7:1 › probe: app under exact Hosting CSP
+[webkit] › tests/browser/zz-probe.spec.js:7:1 › probe: app under exact Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+webkit {"coordEstimator":{"value":"Primary bathroom – very long room name to test text overflow","width":529,"display":"inline-block","textOverflow":"clip","hasStyleAttr":false},"photoRoom":{"value":"Primary bathroom – very long room name to test text overflow","width":420,"display":"inline-block","textOverflow":"clip","hasStyleAttr":false}} [{"d":"style-src-attr","u":"inline","s":"","t":"coordEstimator"},{"d":"style-src-attr","u":"inline","s":"","t":"photoRoom"},{"d":"style-src-elem","u":"inline","s":"","t":"#document"},{"d":"style-src-elem","u":"inline","s":"","t":"#document"}]
+
+  2 passed (6.9s)

@@ -1,0 +1,16 @@
+npm notice run npx
+npm notice run 'playwright' test --config=playwright.isolated.config.js tests/browser/firebase-sdk.spec.js
+
+Running 4 tests using 1 worker
+
+[1/4] [chromium] › tests/browser/firebase-sdk.spec.js:28:1 › the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+[chromium] › tests/browser/firebase-sdk.spec.js:28:1 › the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+[2/4] [chromium] › tests/browser/firebase-sdk.spec.js:49:1 › native select CSP diagnostics keep authored inline styles visible
+[3/4] [webkit] › tests/browser/firebase-sdk.spec.js:28:1 › the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+[webkit] › tests/browser/firebase-sdk.spec.js:28:1 › the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+[4/4] [webkit] › tests/browser/firebase-sdk.spec.js:49:1 › native select CSP diagnostics keep authored inline styles visible
+  4 passed (13.2s)

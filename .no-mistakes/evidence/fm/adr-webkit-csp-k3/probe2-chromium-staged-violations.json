@@ -1,0 +1,30 @@
+[
+  [
+    "load",
+    []
+  ],
+  [
+    "unhide",
+    []
+  ],
+  [
+    "addOption",
+    []
+  ],
+  [
+    "selectIndex",
+    []
+  ],
+  [
+    "change",
+    []
+  ],
+  [
+    "scroll",
+    []
+  ],
+  [
+    "screenshot",
+    []
+  ]
+]

@@ -1,0 +1,49 @@
+npm notice run npx
+npm notice run 'playwright' test --config=playwright.isolated.config.js tests/browser/zz-base-repro.spec.js
+
+Running 2 tests using 1 worker
+
+[1/2] [chromium] › tests/browser/zz-base-repro.spec.js:8:1 › BASE the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+[chromium] › tests/browser/zz-base-repro.spec.js:8:1 › BASE the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+[2/2] [webkit] › tests/browser/zz-base-repro.spec.js:8:1 › BASE the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+[webkit] › tests/browser/zz-base-repro.spec.js:8:1 › BASE the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+  1) [webkit] › tests/browser/zz-base-repro.spec.js:8:1 › BASE the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 4
+
+    - Array []
+    + Array [
+    +   "style-src-attr inline",
+    +   "style-src-attr inline",
+    + ]
+
+      23 |   // App Check joins the same app instance, and a failed attestation still yields no token instead of an error.
+      24 |   expect(await page.evaluate(async()=>{const sdk=await loadAppCheck('synthetic-site-key');activateAppCheck(auth.app,sdk,'synthetic-site-key');return appCheckToken();})).toBe('');
+    > 25 |   expect(await page.evaluate(()=>window.__cspViolations)).toEqual([]);
+         |                                                           ^
+      26 |   expect(external.filter(url=>url.includes('/firebasejs/'))).toEqual([]);
+      27 | });
+      28 |
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RZBSZ2TV0DHCFPKYXPE9WF/tests/browser/zz-base-repro.spec.js:25:59
+
+    Error Context: ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/base-repro-run/test-results/zz-base-repro-BASE-the-ven-adb4f-rigin-under-the-Hosting-CSP-webkit/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/base-repro-run/test-results/zz-base-repro-BASE-the-ven-adb4f-rigin-under-the-Hosting-CSP-webkit/trace.zip
+    Usage:
+
+        npx playwright show-trace ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/base-repro-run/test-results/zz-base-repro-BASE-the-ven-adb4f-rigin-under-the-Hosting-CSP-webkit/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  1 failed
+    [webkit] › tests/browser/zz-base-repro.spec.js:8:1 › BASE the vendored modular Firebase SDK starts the app same-origin under the Hosting CSP 
+  1 passed (11.6s)

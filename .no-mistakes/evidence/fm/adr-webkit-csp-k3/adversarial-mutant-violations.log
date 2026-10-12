@@ -1,0 +1,182 @@
+npm notice run npx
+npm notice run 'playwright' test --config=playwright.isolated.config.js tests/browser/zz-mutant.spec.js
+
+Running 4 tests using 1 worker
+
+[1/4] [chromium] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP
+[chromium] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+  1) [chromium] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 10
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "blockedURI": "inline",
+    +     "directive": "style-src-attr",
+    +     "nativeSelect": false,
+    +     "sample": "text-overflow:inherit",
+    +     "sourceFile": "",
+    +     "target": "coordEstimator",
+    +   },
+    + ]
+
+      44 |   expect(await page.evaluate(async()=>{const sdk=await loadAppCheck('synthetic-site-key');activateAppCheck(auth.app,sdk,'synthetic-site-key');return appCheckToken();})).toBe('');
+      45 |   await page.evaluate(()=>document.querySelector('#coordEstimator').setAttribute('style','text-overflow:inherit'));await page.waitForTimeout(300);
+    > 46 |   expect(await unexpectedCsp(page,browserName,['coordEstimator','photoRoom'])).toEqual([]);
+         |                                                                                ^
+      47 |   expect(external.filter(url=>url.includes('/firebasejs/'))).toEqual([]);
+      48 | });
+      49 |
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RZBSZ2TV0DHCFPKYXPE9WF/tests/browser/zz-mutant.spec.js:46:80
+
+    Error Context: ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-authored--500d3-rigin-under-the-Hosting-CSP-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-authored--500d3-rigin-under-the-Hosting-CSP-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-authored--500d3-rigin-under-the-Hosting-CSP-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[2/4] [chromium] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP
+[chromium] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+  2) [chromium] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 10
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "blockedURI": "inline",
+    +     "directive": "script-src-elem",
+    +     "nativeSelect": false,
+    +     "sample": "",
+    +     "sourceFile": "",
+    +     "target": "",
+    +   },
+    + ]
+
+      69 |   expect(await page.evaluate(async()=>{const sdk=await loadAppCheck('synthetic-site-key');activateAppCheck(auth.app,sdk,'synthetic-site-key');return appCheckToken();})).toBe('');
+      70 |   await page.evaluate(()=>{const s=document.createElement('script');s.textContent='window.__x=1';document.head.append(s);});await page.waitForTimeout(300);
+    > 71 |   expect(await unexpectedCsp(page,browserName,['coordEstimator','photoRoom'])).toEqual([]);
+         |                                                                                ^
+      72 |   expect(external.filter(url=>url.includes('/firebasejs/'))).toEqual([]);
+      73 | });
+      74 |
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RZBSZ2TV0DHCFPKYXPE9WF/tests/browser/zz-mutant.spec.js:71:80
+
+    Error Context: ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-script-ev-f2775-rigin-under-the-Hosting-CSP-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-script-ev-f2775-rigin-under-the-Hosting-CSP-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-script-ev-f2775-rigin-under-the-Hosting-CSP-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[3/4] [webkit] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP
+[webkit] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+  3) [webkit] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 10
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "blockedURI": "inline",
+    +     "directive": "style-src-attr",
+    +     "nativeSelect": false,
+    +     "sample": "text-overflow:inherit",
+    +     "sourceFile": "",
+    +     "target": "coordEstimator",
+    +   },
+    + ]
+
+      44 |   expect(await page.evaluate(async()=>{const sdk=await loadAppCheck('synthetic-site-key');activateAppCheck(auth.app,sdk,'synthetic-site-key');return appCheckToken();})).toBe('');
+      45 |   await page.evaluate(()=>document.querySelector('#coordEstimator').setAttribute('style','text-overflow:inherit'));await page.waitForTimeout(300);
+    > 46 |   expect(await unexpectedCsp(page,browserName,['coordEstimator','photoRoom'])).toEqual([]);
+         |                                                                                ^
+      47 |   expect(external.filter(url=>url.includes('/firebasejs/'))).toEqual([]);
+      48 | });
+      49 |
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RZBSZ2TV0DHCFPKYXPE9WF/tests/browser/zz-mutant.spec.js:46:80
+
+    Error Context: ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-authored--500d3-rigin-under-the-Hosting-CSP-webkit/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-authored--500d3-rigin-under-the-Hosting-CSP-webkit/trace.zip
+    Usage:
+
+        npx playwright show-trace ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-authored--500d3-rigin-under-the-Hosting-CSP-webkit/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[4/4] [webkit] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP
+[webkit] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+
+  4) [webkit] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 10
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "blockedURI": "inline",
+    +     "directive": "script-src-elem",
+    +     "nativeSelect": false,
+    +     "sample": "",
+    +     "sourceFile": "",
+    +     "target": "",
+    +   },
+    + ]
+
+      69 |   expect(await page.evaluate(async()=>{const sdk=await loadAppCheck('synthetic-site-key');activateAppCheck(auth.app,sdk,'synthetic-site-key');return appCheckToken();})).toBe('');
+      70 |   await page.evaluate(()=>{const s=document.createElement('script');s.textContent='window.__x=1';document.head.append(s);});await page.waitForTimeout(300);
+    > 71 |   expect(await unexpectedCsp(page,browserName,['coordEstimator','photoRoom'])).toEqual([]);
+         |                                                                                ^
+      72 |   expect(external.filter(url=>url.includes('/firebasejs/'))).toEqual([]);
+      73 | });
+      74 |
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4RZBSZ2TV0DHCFPKYXPE9WF/tests/browser/zz-mutant.spec.js:71:80
+
+    Error Context: ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-script-ev-f2775-rigin-under-the-Hosting-CSP-webkit/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-script-ev-f2775-rigin-under-the-Hosting-CSP-webkit/trace.zip
+    Usage:
+
+        npx playwright show-trace ../../../evidence/01M4RZBSZ2TV0DHCFPKYXPE9WF/mutant-run/test-results/zz-mutant-MUTANT-script-ev-f2775-rigin-under-the-Hosting-CSP-webkit/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  4 failed
+    [chromium] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP 
+    [chromium] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP 
+    [webkit] › tests/browser/zz-mutant.spec.js:28:1 › MUTANT authored style on app select modular Firebase SDK starts the app same-origin under the Hosting CSP 
+    [webkit] › tests/browser/zz-mutant.spec.js:53:1 › MUTANT script eval modular Firebase SDK starts the app same-origin under the Hosting CSP 

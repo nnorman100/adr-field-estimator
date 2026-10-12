@@ -1,0 +1,62 @@
+[
+  [
+    "load",
+    [
+      {
+        "d": "style-src-attr",
+        "u": "inline",
+        "s": "text-overflow:inherit",
+        "f": "",
+        "l": 33,
+        "c": 1,
+        "t": "coordEstimator",
+        "stack": "@web-inspector://bootstrap.js:586:23"
+      },
+      {
+        "d": "style-src-attr",
+        "u": "inline",
+        "s": "text-overflow:inherit",
+        "f": "",
+        "l": 66,
+        "c": 1,
+        "t": "photoRoom",
+        "stack": "@web-inspector://bootstrap.js:586:23"
+      }
+    ]
+  ],
+  [
+    "unhide",
+    []
+  ],
+  [
+    "addOption",
+    []
+  ],
+  [
+    "selectIndex",
+    []
+  ],
+  [
+    "change",
+    []
+  ],
+  [
+    "scroll",
+    []
+  ],
+  [
+    "screenshot",
+    [
+      {
+        "d": "style-src-elem",
+        "u": "inline",
+        "s": "body {}",
+        "f": "",
+        "l": 5,
+        "c": 30,
+        "t": "#document",
+        "stack": "@web-inspector://bootstrap.js:586:23"
+      }
+    ]
+  ]
+]

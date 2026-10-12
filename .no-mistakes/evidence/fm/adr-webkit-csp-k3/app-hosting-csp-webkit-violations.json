@@ -1,0 +1,46 @@
+{
+  "browserName": "webkit",
+  "csp": "default-src 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com https://www.google.com/recaptcha/ wss://alert-disaster-field-estimator-545776254070.us-west2.run.app; frame-src https://*.firebaseapp.com https://accounts.google.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+  "selects": {
+    "coordEstimator": {
+      "value": "Primary bathroom – very long room name to test text overflow",
+      "width": 529,
+      "display": "inline-block",
+      "textOverflow": "clip",
+      "hasStyleAttr": false
+    },
+    "photoRoom": {
+      "value": "Primary bathroom – very long room name to test text overflow",
+      "width": 420,
+      "display": "inline-block",
+      "textOverflow": "clip",
+      "hasStyleAttr": false
+    }
+  },
+  "violations": [
+    {
+      "d": "style-src-attr",
+      "u": "inline",
+      "s": "",
+      "t": "coordEstimator"
+    },
+    {
+      "d": "style-src-attr",
+      "u": "inline",
+      "s": "",
+      "t": "photoRoom"
+    },
+    {
+      "d": "style-src-elem",
+      "u": "inline",
+      "s": "",
+      "t": "#document"
+    },
+    {
+      "d": "style-src-elem",
+      "u": "inline",
+      "s": "",
+      "t": "#document"
+    }
+  ]
+}
