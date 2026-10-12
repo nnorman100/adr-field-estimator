@@ -12,7 +12,7 @@ const widths=page=>page.locator('#photoGallery img').evaluateAll(images=>images.
 const storage=page=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onerror=reject;request.onsuccess=()=>{try{const db=request.result,tx=db.transaction(['drafts','photos']),drafts=tx.objectStore('drafts').getAll(),photos=tx.objectStore('photos').getAll();tx.oncomplete=()=>{resolve({version:db.version,drafts:drafts.result,photos:photos.result});db.close();};}catch(e){reject(e.message);}};}));
 
 test('offline draft with several photos survives reload with images intact and bytes kept out of the draft row',async({page,context,browserName})=>{
-  test.skip(browserName==='webkit','Windows Playwright WebKit offline navigation limitation; physical iPhone acceptance remains open.');
+  test.skip(browserName==='webkit'&&process.platform==='win32','Windows Playwright WebKit offline navigation limitation; physical iPhone acceptance remains open.');
   await page.goto('/');await ready(page);await controlled(page);
   await context.setOffline(true);
   for(const [width,height] of [[300,600],[200,100],[120,80]]){await addImage(page,width,height);}
