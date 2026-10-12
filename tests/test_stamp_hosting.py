@@ -15,6 +15,8 @@ HEAD = 'fedcba9876543210fedcba9876543210fedcba98'
 
 def fake_git(status=''):
     def git(argv, **kwargs):
+        if argv[1] == 'show':
+            return subprocess.CompletedProcess(argv, 0, stdout=(ROOT / argv[2].split(':', 1)[1]).read_bytes())
         return subprocess.CompletedProcess(argv, 0, stdout={'rev-parse': HEAD + '\n', 'status': status}[argv[1]])
     return git
 
@@ -99,10 +101,20 @@ def test_check_binds_the_stamp_to_head_and_uncommitted_hosting_files(tmp_path):
     with pytest.raises(RuntimeError, match=f'HEAD is {second}'):
         hosting.check(repo, git)
     hosting.write(first + '-dirty', repo)
-    with pytest.raises(RuntimeError, match=f'HEAD is {second}'):
-        hosting.check(repo, git)
+    assert hosting.check(repo, git) == first + '-dirty'
     hosting.write(second, repo)
     assert hosting.check(repo, git) == second
+    app = repo / 'public/app.js'
+    app.write_bytes(app.read_bytes() + b'\n// hotfix\n')
+    with pytest.raises(RuntimeError, match='changed after stamping'):
+        hosting.check(repo, git)
+    hosting.write(hosting.PLACEHOLDER, repo)
+    git(['git', 'checkout', '-q', '--', 'public/app.js'], check=True)
+    hosting.write(second, repo)
+    for name in ('index.html', 'public/index.html'):
+        (repo / name).write_bytes((repo / name).read_bytes().replace(b'</body>', b'<p>edit</p></body>'))
+    with pytest.raises(RuntimeError, match='changed after stamping'):
+        hosting.check(repo, git)
 
 
 def test_dirty_hosting_tree_is_refused_unless_marked(monkeypatch, capsys):

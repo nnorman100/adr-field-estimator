@@ -5,7 +5,8 @@ VERSION, every versioned asset URL and the Account menu's app version with the c
 release gets a new worker cache and the deployed site can be compared with the backend's
 source_commit. Restore the placeholder with --reset after deploying. firebase.json runs --check
 before every Hosting deploy so an unstamped shell, which would keep serving stale cached assets, or a
-shell stamped for other code than HEAD and the uncommitted Hosting files is never released.
+shell stamped with a commit other than HEAD or with Hosting changes not in that commit, is never
+released; a <commit>-dirty stamp declares such changes and is accepted as is.
 """
 import argparse
 import re
@@ -62,13 +63,13 @@ def write(marker, root=ROOT):
 
 
 def check(root=ROOT, git=subprocess.run):
-    """Return the stamped marker, refusing a placeholder, a shell whose files disagree, or a marker
-    that does not describe HEAD and the uncommitted Hosting files besides the stamped ones."""
-    found = {}
+    """Return the stamped marker, refusing a placeholder or a shell whose files disagree. A commit
+    marker must also be HEAD, with the Hosting files equal to HEAD apart from the stamp itself."""
+    texts, found = {}, {}
     for name, rules in TARGETS.items():
-        text = (root / name).read_bytes().decode('utf8')
-        stamp(text, rules, PLACEHOLDER)  # validates the marker counts
-        found[name] = markers(text, rules)
+        texts[name] = (root / name).read_bytes().decode('utf8')
+        stamp(texts[name], rules, PLACEHOLDER)  # validates the marker counts
+        found[name] = markers(texts[name], rules)
     marker = found['public/sw.js'][0]
     if not re.fullmatch(COMMIT_PATTERN, marker):
         raise RuntimeError(f'The Hosting shell is not stamped (marker {marker!r}). Run python scripts/stamp_hosting.py first.')
@@ -77,11 +78,15 @@ def check(root=ROOT, git=subprocess.run):
             raise RuntimeError(f'{name} carries a marker other than {marker}; restamp the shell.')
     if (root / 'index.html').read_bytes() != (root / 'public/index.html').read_bytes():
         raise RuntimeError('index.html and public/index.html differ.')
-    unstamped = [*DEPLOYED, *(':(exclude)' + name for name in TARGETS)]
-    current = source_commit(unstamped, True, git)
-    if marker.removesuffix('-dirty') != current.removesuffix('-dirty'):
+    if marker.endswith('-dirty'):
+        return marker
+    current = source_commit([*DEPLOYED, *(':(exclude)' + name for name in TARGETS)], True, git)
+    if current.removesuffix('-dirty') != marker:
         raise RuntimeError(f'The shell is stamped {marker} but HEAD is {current.removesuffix("-dirty")}; restamp the shell.')
-    if current.endswith('-dirty') and not marker.endswith('-dirty'):
+    changed = [name for name, rules in TARGETS.items()
+               if stamp(texts[name], rules, PLACEHOLDER).encode('utf8')
+               != git(['git', 'show', f'{marker}:{name}'], cwd=ROOT, capture_output=True, check=True).stdout]
+    if current != marker or changed:
         raise RuntimeError(f'Hosting files changed after stamping {marker}; commit them and restamp the shell.')
     return marker
 
