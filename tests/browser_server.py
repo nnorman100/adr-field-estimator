@@ -100,10 +100,10 @@ async def seed_jobs(request:Request):
     return {'count':105}
 @bm.app.get('/__/firebase/init.json')
 def firebase_config():return {'projectId':'alert-disaster-field-2026','apiKey':'synthetic-config-only'}
-@bm.app.get('/vendor/firebase-app-compat.js')
-def app_sdk():return Response('/* Local synthetic browser identity only. */',media_type='text/javascript')
-@bm.app.get('/vendor/firebase-auth-compat.js')
-def auth_sdk():return Response((ROOT/'tests/browser-auth.js').read_text(),media_type='text/javascript')
+@bm.app.get('/vendor/firebase/{version}/firebase-app.js')
+def app_sdk(version:str):return Response('/* Local synthetic browser identity only. */export const initializeApp=options=>({options});',media_type='text/javascript')
+@bm.app.get('/vendor/firebase/{version}/firebase-auth.js')
+def auth_sdk(version:str):return Response((ROOT/'tests/browser-auth.js').read_text(),media_type='text/javascript')
 bm.app.mount('/',StaticFiles(directory=str(ROOT/'public'),html=True),name='frontend')
 if __name__=='__main__':
     # Real secure context for WebKit's media APIs and service worker support.

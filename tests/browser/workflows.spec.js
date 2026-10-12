@@ -1,5 +1,4 @@
 const {test,expect}=require('@playwright/test');
-const fakeAuth=`(()=>{const user={uid:'test-owner',email:'synthetic@example.invalid',getIdToken:async()=> 'test-owner'};const auth={setPersistence:async()=>{},onAuthStateChanged:fn=>fn(user),signInWithPopup:async()=>{},signOut:async()=>{}};const factory=()=>auth;factory.Auth={Persistence:{LOCAL:'local'}};window.firebase={initializeApp:()=>{},auth:factory};window.firebase.auth.GoogleAuthProvider=class{setCustomParameters(){}};})();`;
 test.beforeEach(async({page})=>{
   await page.goto('/');await expect(page.locator('#address')).toBeEnabled({timeout:15000});await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 });

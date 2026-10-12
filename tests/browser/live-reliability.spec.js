@@ -66,7 +66,7 @@ test('Live connects with a forced token and renews it on the open socket without
 });
 test('Live reconnect falls back to the cached token when the forced refresh fails',async({page})=>{
   await page.clock.install();await setup(page);const uid=await page.evaluate(()=>sessionStorage.getItem('synthetic-uid'));
-  await page.evaluate(()=>{const user=firebase.auth().currentUser,cached=user.getIdToken;window.failedRefreshes=0;user.getIdToken=async force=>{if(force){window.failedRefreshes++;throw Object.assign(Error('auth/network-request-failed'),{code:'auth/network-request-failed'});}return cached(false);};window.liveSockets[0].close();});
+  await page.evaluate(()=>{const user=auth.currentUser,cached=user.getIdToken;window.failedRefreshes=0;user.getIdToken=async force=>{if(force){window.failedRefreshes++;throw Object.assign(Error('auth/network-request-failed'),{code:'auth/network-request-failed'});}return cached(false);};window.liveSockets[0].close();});
   await expect(page.locator('#liveStatus')).toHaveText('Live AI disconnected');
   await page.clock.fastForward(2000);await expect(page.locator('#liveStatus')).toHaveText('Live conversation resumed');
   expect(await page.evaluate(()=>window.liveSockets.length)).toBe(2);expect(await page.evaluate(()=>window.failedRefreshes)).toBe(1);
