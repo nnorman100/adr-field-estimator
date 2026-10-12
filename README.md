@@ -76,6 +76,9 @@ The Live reliability release uses protocol 2, named Charon voice, 64k/32k contex
 private owner/job-bound checkpoints and explicit Resume after offline interruptions. Microphone pause
 signals stream end; Finish stops media immediately and allows a bounded transcript drain. Recognized
 text retains segment identities and incomplete/gap/edit metadata; form changes still require review.
+Live connects with a freshly issued Firebase ID token and, when the relay's ready message offers
+token_refresh, sends a new one every 10 minutes. The relay verifies each refresh like the initial token,
+rejects one for a different user and re-checks the newest token, so sessions outlive the one-hour token.
 
 The latest recorded production state (read-only check, October 11) is backend
 alert-disaster-field-estimator-00013-hup (tag harden-fixes, workspaces off) at 100% traffic and frontend

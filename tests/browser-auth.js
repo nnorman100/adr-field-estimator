@@ -2,7 +2,7 @@
   const read=(key,fallback)=>JSON.parse(sessionStorage.getItem(key)||'null')??fallback;
   const write=(key,value)=>sessionStorage.setItem(key,JSON.stringify(value));
   const fail=code=>Object.assign(Error(code),{code});
-  const listeners=[];window.__testEmails=[];
+  const listeners=[];window.__testEmails=[];window.__testTokenRequests=[];
   // Accounts persist in sessionStorage so reloads keep the synthetic password user. Its uid is the email's local part.
   window.__testVerify=email=>{const accounts=read('synthetic-accounts',{});accounts[email].verified=true;write('synthetic-accounts',accounts);};
   const passwordUser=email=>{
@@ -15,7 +15,7 @@
     if(sessionStorage.getItem('synthetic-signed-out'))return null;
     const uid=sessionStorage.getItem('synthetic-uid')||'test-owner-'+crypto.randomUUID();sessionStorage.setItem('synthetic-uid',uid);
     const email=Object.keys(read('synthetic-accounts',{})).find(address=>address.split('@')[0]===uid);
-    return email?passwordUser(email):{uid,email:'synthetic@example.invalid',emailVerified:true,providerData:[{providerId:'google.com'}],getIdToken:async()=>uid};
+    return email?passwordUser(email):{uid,email:'synthetic@example.invalid',emailVerified:true,providerData:[{providerId:'google.com'}],getIdToken:async force=>{window.__testTokenRequests.push(!!force);return uid;}};
   };
   const change=user=>{
     auth.currentUser=user;
