@@ -13,6 +13,7 @@ __pycache__/
 .firebase/
 .firebaserc.bak
 firebase-debug.log*
+firestore-debug.log
 
 # Environment & Secrets
 .env

@@ -23,6 +23,37 @@ jobs:
       - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
       - run: python -m pytest tests -q -p no:cacheprovider
 
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ADR_FIRESTORE_EMULATOR_REQUIRED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # backend/Dockerfile is the single source of the Python version.
+      - id: python
+        run: echo "version=$(python3 scripts/ci_python_version.py)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ steps.python.outputs.version }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      # The Firestore emulator runs on Java 21 or later.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
+      # firebase-tools' emulators:exec starts the emulator, sets FIRESTORE_EMULATOR_HOST for the
+      # tests and stops it afterwards; it stays out of package.json so other jobs do not install it.
+      # The demo- project ID keeps everything offline.
+      - run: >-
+          npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-adr-emulator
+          "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
+
   node:
     runs-on: ubuntu-latest
     steps:

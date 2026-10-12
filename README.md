@@ -71,6 +71,14 @@ Dependabot opens weekly grouped update pull requests for these locks, npm, GitHu
 
 CI runs the Python jobs on the version in the `backend/Dockerfile` base image (`scripts/ci_python_version.py`), so a Dependabot base-image bump is tested on that version. The `audit` job runs `pip-audit` against both hash-locked files and `npm audit --audit-level=high`, and fails on known vulnerabilities. For a false positive or an advisory with no fix, add `--ignore-vuln <ID>` to the `pip-audit` step in `.github/workflows/ci.yml` (for npm, pin a patched version through `overrides` in `package.json`, or lower the failing level in the workflow only as a last resort) with a comment giving the reason and date, and remove it once a fix ships. `tests/test_ci_config.py` fails if `firestore.rules` stops denying all client access. Enable Dependabot security alerts in the GitHub repository settings (Settings > Advanced Security) so advisories also open pull requests between scans.
 
+`tests/test_firestore_emulator.py` runs the quota, Live lease and signing transactions of the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. It is skipped unless `FIRESTORE_EMULATOR_HOST` is set; the `firestore-emulator` CI job runs it. Locally, with Java 21 or later:
+
+```powershell
+npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
+```
+
+The `demo-` project ID keeps the emulator and client offline; never point these tests at a real project.
+
 The browser suite serves production code with fake cloud adapters over temporary local TLS. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
 
 Use [the operating guide](docs/firebase-isolation.md) for production deployment and rollback. Never run a blanket Firebase deploy. Deploy the compatible backend first, then only `hosting:alert-disaster` in the dedicated project.
