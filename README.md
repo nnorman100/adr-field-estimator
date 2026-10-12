@@ -51,7 +51,7 @@ The field app follows [ADR's official website](https://alertdisaster.com/): the 
 | `scripts/verify_repairs.py` | Real dedicated infrastructure acceptance with scoped synthetic cleanup |
 
 ```powershell
-python -m pip install -r backend/requirements.txt pytest httpx
+python -m pip install -r backend/requirements.txt pytest httpx2
 python -m pytest tests -q -p no:cacheprovider
 npm ci
 npm test
