@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import sys
 import time
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +35,7 @@ try:
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
+    from .cloud_log import event
 except ImportError:
     from contracts import CreateInspection, UpdateInspection, InspectionData, PhotoUpload, OcrResult, AIResult, AuditRequest, AuthorizeRequest
     from claims import make_documents, price_scope
@@ -47,6 +47,7 @@ except ImportError:
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited
     from job_store import BUCKET, decode_image, IMAGE_WORKER
+    from cloud_log import event
 
 DEDICATED_PROJECT_ID = 'alert-disaster-field-2026'
 PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT',DEDICATED_PROJECT_ID)
@@ -84,22 +85,6 @@ app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,
 security = HTTPBearer(auto_error=False)
 _job_store = None
 genai_client = None
-# An allowlist, so prompts, transcripts, images, tokens, emails, links and signatures cannot reach the log.
-LOG_FIELDS = frozenset({'model','operation','elapsed_ms','duration_ms','outcome','provider_status','provider_code','status','total_tokens','inspection_id','method','route'})
-
-class CloudLoggingJson(logging.Handler):
-    """One JSON object per stdout line, which Cloud Logging parses into severity, message and fields."""
-    def emit(self,record):
-        entry={'severity':record.levelname,'message':record.getMessage(),**getattr(record,'fields',{})}
-        print(json.dumps(entry,default=str),file=sys.stdout,flush=True)
-
-log=logging.getLogger('adr')
-log.setLevel(logging.INFO); log.propagate=False
-if not log.handlers: log.addHandler(CloudLoggingJson())
-
-def event(message,severity=logging.INFO,**fields):
-    log.log(severity,message,extra={'fields':{k:v for k,v in fields.items() if k in LOG_FIELDS and v is not None}})
-
 def get_job_store():
     global _job_store
     if _job_store is None: _job_store=CompanyInspectionStore() if WORKSPACES_ENABLED else InspectionStore()
