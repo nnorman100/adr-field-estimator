@@ -75,6 +75,8 @@ Candidate asset marker: `mobile-repairs-20261011-2`. This is a repairs-only cand
 
 ### Observed deployed pair and remaining release gates
 
+The observations below are historical; current production is recorded only in [RELEASES.md](../RELEASES.md).
+
 Read-only checks found backend `alert-disaster-field-estimator-00013-hup` at 100% traffic, tagged `harden-fixes`, runtime `adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com`, timeout 3600 seconds. Production health reports the dedicated project/schema 3 and configured models, with workspaces disabled. Hosting and direct backend anonymous session/inspection requests returned 401. These checks establish public routing/configuration only, not successful authenticated API or model execution.
 
 Observed Hosting version: `05af952eff367594`; release: `1791758723456000`; frontend: `hardening-20261011-1`. The same-project `/api/**` rewrite points to the service in `us-west2` without a revision tag. The local candidate is not deployed. Recheck this pair immediately before cutover and retain it as the rollback baseline if unchanged; do not use the older workspace document's historical `00006-yer` pair.

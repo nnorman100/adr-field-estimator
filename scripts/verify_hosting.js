@@ -1,19 +1,29 @@
 const {chromium}=require('playwright'),fs=require('node:fs'),assert=require('node:assert/strict');
+// Mirrors scripts/stamp_hosting.py: compare deployed and local shells apart from the release stamp.
+const unstamp=text=>text.replace(/^(const VERSION=')[^']*(';)/m,'$1unstamped$2').replace(/(\.(?:css|js)\?v=)[0-9A-Za-z-]+/g,'$1unstamped').replace(/(App version )[^<]+(<\/small>)/,'$1unstamped$2');
 (async()=>{
   const base='https://alert-disaster-field-2026.web.app';
-  const response=await fetch(base);assert(response.ok);assert.equal(await response.text(),fs.readFileSync('public/index.html','utf8'));
+  const response=await fetch(base);assert(response.ok);const shell=await response.text();
+  const marker=((await(await fetch(base+'/sw.js?verify=stamp')).text()).match(/^const VERSION='([^']*)';/m)||[])[1]||'';
+  assert.match(marker,/^[0-9a-f]{40}(-dirty)?$/,'The deployed shell is not stamped with a source commit: '+marker);
+  assert.deepEqual([...shell.matchAll(/\.(?:css|js)\?v=([0-9A-Za-z-]+)/g)].map(m=>m[1]),Array(4).fill(marker),'Deployed asset URLs carry another marker');
+  assert(shell.includes('App version '+marker.slice(0,12)+(marker.endsWith('-dirty')?'-dirty':'')+'</small>'),'Displayed app version is not the stamped commit');
+  assert.equal(unstamp(shell),unstamp(fs.readFileSync('public/index.html','utf8')));
   for(const path of ['/', '/index.html', '/?v=ui-20261006-6']){
     const html=await fetch(base+path);
     assert.match(html.headers.get('cache-control')||'',/\bno-store\b/,'The app shell can stay stale in a browser: '+path);
     assert((await html.text()).includes('class="task-nav"'),'Redesigned task navigation is missing: '+path);
   }
-  for(const file of ['app.js','workspaces.js','app.css','core.js','audio-worklet.js','sw.js'])assert.equal(await(await fetch(base+'/'+file+'?verify=repair-20261006')).text(),fs.readFileSync('public/'+file,'utf8'),'Deployed asset differs: '+file);
+  for(const file of ['app.js','workspaces.js','app.css','core.js','audio-worklet.js','sw.js'])assert.equal(unstamp(await(await fetch(base+'/'+file+'?verify=repair-20261006')).text()),unstamp(fs.readFileSync('public/'+file,'utf8')),'Deployed asset differs: '+file);
   for(const file of ['brand/adr-logo.jpg','fonts/lato-400-latin.woff2','fonts/lato-700-latin.woff2','fonts/lato-900-latin.woff2','fonts/ebgaramond-400-latin.woff2']){
     const asset=await fetch(base+'/'+file);assert(asset.ok);
     assert.deepEqual(Buffer.from(await asset.arrayBuffer()),fs.readFileSync('public/'+file),'Deployed branding differs: '+file);
   }
   assert(response.headers.get('content-security-policy').includes("object-src 'none'"));
-  assert.deepEqual(await(await fetch(base+'/api/health')).json(),{status:'healthy',schema_version:3});
+  const health=await(await fetch(base+'/api/health')).json();
+  const {status,schema_version,source_commit='not reported (built before release stamping)',...extra}=health;
+  assert.deepEqual({status,schema_version,extra},{status:'healthy',schema_version:3,extra:{}});
+  console.log('Frontend commit '+marker+'; backend source_commit '+source_commit+(source_commit===marker?' (same commit)':' (different builds; RELEASES.md records each)'));
   assert.equal((await fetch(base+'/api/inspections')).status,401);
   const config=await(await fetch(base+'/__/firebase/init.json')).json();assert.equal(config.projectId,'alert-disaster-field-2026');
   const browser=await chromium.launch();const page=await browser.newPage({viewport:{width:390,height:844}});const errors=[];

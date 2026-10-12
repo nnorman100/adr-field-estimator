@@ -31,7 +31,7 @@ The customer proposal shows the sheet-derived low–high estimate, with itemized
 
 Changes autosave to a user-specific IndexedDB queue and synchronize to Firestore when online. Photos upload individually. Reopening a draft merges evidence added on other devices and stores downloaded originals privately on this device for offline recovery and conflict copies. If an original cannot be fetched, retry online before copying that draft. Offline drafts can be edited; AI and signing require connectivity. Conflicts return 409 and preserve local work until the user restores the saved revision or creates a separate inspection. Logout stops resources and clears local drafts once they have synced. If any draft has not synced, sign-out stops and offers **Discard unsynced work and sign out**. Retained cloud drafts and agreements are not automatically deleted.
 
-The worker caches versioned app assets and public Firebase initialization configuration. Authenticated APIs and evidence are excluded. Navigation is network-first, and the app shell is served with `Cache-Control: no-store` so a browser refresh can pick up a release. The app checks for updates when brought to the foreground and prompts before activation, preserving drafts. The **Account** menu shows the installed app version. If an older screen persists, save the draft, open [the current field app with a fresh URL](https://alert-disaster-field-2026.web.app/?v=ui-20261006-6), and use **Save & update** if prompted. `alertdisaster.com` is the separate public company website and is not this field app. Physical iPhone offline launch, Bluetooth routing, interruption and conversational latency remain acceptance checks until the guided device test passes.
+The worker caches versioned app assets and public Firebase initialization configuration. Authenticated APIs and evidence are excluded. Navigation is network-first, and the app shell is served with `Cache-Control: no-store` so a browser refresh can pick up a release. The app checks for updates when brought to the foreground and prompts before activation, preserving drafts. The **Account** menu shows the installed app version, the start of the source commit stamped at release. If an older screen persists, save the draft, open [the current field app with a fresh URL](https://alert-disaster-field-2026.web.app/?v=ui-20261006-6), and use **Save & update** if prompted. `alertdisaster.com` is the separate public company website and is not this field app. Physical iPhone offline launch, Bluetooth routing, interruption and conversational latency remain acceptance checks until the guided device test passes.
 
 ## ADR branding
 
@@ -49,6 +49,7 @@ The field app follows [ADR's official website](https://alertdisaster.com/): the 
 | `backend/main.py` | Authenticated REST and Live relay |
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
 | `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
+| `scripts/deploy_backend.py`, `stamp_hosting.py`, `RELEASES.md` | Source-commit stamping of each release and the release log |
 
 ```powershell
 python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
@@ -89,9 +90,7 @@ Live connects with a freshly issued Firebase ID token and, when the relay's read
 token_refresh, sends a new one every 10 minutes. The relay verifies each refresh like the initial token,
 rejects one for a different user and re-checks the newest token, so sessions outlive the one-hour token.
 
-The latest recorded production state (read-only check, October 11) is backend
-alert-disaster-field-estimator-00013-hup (tag harden-fixes, workspaces off) at 100% traffic and frontend
-hardening-20261011-1 (Hosting version 05af952eff367594). Master also carries the mobile usability repairs
-(asset marker mobile-repairs-20261012-1), which are merged but not deployed. Recheck the live pair before
-any release and keep it as the rollback baseline. See docs/review-repairs.md for the current status and
-release gates, and docs/mobile-usability-repairs.md for the repair evidence.
+Deployed backend and Hosting releases, their source commits and traffic are recorded only in
+[RELEASES.md](RELEASES.md). Recheck the live pair before any release and keep it as the rollback
+baseline. See docs/review-repairs.md for the release gates and docs/mobile-usability-repairs.md for the
+repair evidence.

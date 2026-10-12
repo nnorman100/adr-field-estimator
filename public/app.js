@@ -682,7 +682,7 @@ async function startWalk(){
     // The preview must not gate Live: play() can stay pending indefinitely, and frames are skipped until the video has dimensions.
     $('cameraVideo').play().then(()=>{if(state.media===media)$('cameraEmpty').hidden=true;},e=>{if(state.media===media)say('Camera preview could not start: '+e.message+' Live voice guidance continues; use Camera / upload for photos.','error');});
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=live-token-20261012-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=unstamped');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{

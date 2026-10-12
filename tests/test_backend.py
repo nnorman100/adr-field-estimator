@@ -162,11 +162,20 @@ def test_production_origins_exclude_local_development():
 
 def test_health_discloses_configuration_only_to_staff(context):
     client,_=context
-    assert client.get('/api/health').json()=={'status':'healthy','schema_version':3}
+    assert client.get('/api/health').json()=={'status':'healthy','schema_version':3,'source_commit':'unknown'}
     details=client.get('/api/health/details').json()
     assert details['project']==bm.PROJECT_ID and details['evidence_bucket']==bm.BUCKET and details['live_model']==bm.LIVE_MODEL
+    assert details['source_commit']=='unknown'
     bm.app.dependency_overrides.pop(bm.current_staff)
     assert client.get('/api/health/details',headers={'Authorization':''}).status_code==401
+
+def test_source_commit_comes_only_from_a_well_formed_deploy_stamp(tmp_path):
+    stamp=tmp_path/'SOURCE_COMMIT'
+    assert bm.read_source_commit(str(stamp))=='unknown'
+    for value in ['a'*40,'a'*40+'-dirty']:
+        stamp.write_text(value+'\n');assert bm.read_source_commit(str(stamp))==value
+    for value in ['','abc123','A'*40,'a'*40+'-other','a'*40+'\n<script>']:
+        stamp.write_text(value);assert bm.read_source_commit(str(stamp))=='unknown'
 
 def test_year_built_bound_follows_the_clock_on_a_warm_instance(monkeypatch):
     import backend.contracts as contracts

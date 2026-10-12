@@ -62,6 +62,15 @@ ORIGINS = ['https://alert-disaster-field-2026.web.app','https://alert-disaster-f
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED','false').lower()=='true'
 STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS','nathanaelcnorman@gmail.com').split(',') if e.strip()}
 WORKSPACE_SIGN_IN_PROVIDERS = frozenset({'google.com','password'})
+
+def read_source_commit(path=os.path.join(os.path.dirname(os.path.abspath(__file__)),'SOURCE_COMMIT')):
+    # scripts/deploy_backend.py writes the deployed commit into the build context; local runs have no stamp.
+    try:
+        with open(path,encoding='utf8') as stamp: value=stamp.read().strip()
+    except OSError: return 'unknown'
+    return value if re.fullmatch(r'[0-9a-f]{40}(?:-dirty)?',value) else 'unknown'
+
+SOURCE_COMMIT = read_source_commit()
 app = FastAPI(title='Alert Disaster Restoration Field Estimator',version='2.0')
 app.add_middleware(CORSMiddleware,allow_origins=ORIGINS,allow_credentials=False,allow_methods=['GET','POST','PUT'],allow_headers=['Authorization','Content-Type','X-ADR-Workspace-Protocol'])
 security = HTTPBearer(auto_error=False)
@@ -219,14 +228,15 @@ def model_image(raw):
 @app.get('/health')
 @app.get('/api/health')
 def health_check():
-    # Anonymous callers learn liveness only; configuration is staff-only below.
-    return dict(status='healthy',schema_version=3)
+    # Anonymous callers learn liveness and the source commit only; configuration is staff-only below.
+    return dict(status='healthy',schema_version=3,source_commit=SOURCE_COMMIT)
 
 @app.get('/api/health/details')
 def health_details(staff=Depends(current_staff)):
     return dict(status='healthy',service='alert-disaster-field-estimator',project=PROJECT_ID,
                 location=LOCATION,database_project=PROJECT_ID,database='(default)',evidence_bucket=BUCKET,
-                schema_version=3,audit_model=AUDIT_MODEL,ocr_model=OCR_MODEL,live_model=LIVE_MODEL,workspaces_enabled=WORKSPACES_ENABLED)
+                schema_version=3,audit_model=AUDIT_MODEL,ocr_model=OCR_MODEL,live_model=LIVE_MODEL,workspaces_enabled=WORKSPACES_ENABLED,
+                source_commit=SOURCE_COMMIT)
 
 async def current_identity(credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
     if not WORKSPACES_ENABLED: raise HTTPException(503,'Company dashboards are not enabled yet.')
