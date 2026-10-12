@@ -291,4 +291,32 @@ for(const width of [320,390])test.describe('mobile repairs at '+width+'×844',()
     await expect(page.locator('#validationFeedback')).toBeHidden();
     expect(pageErrors.get(page)||[],'Validation singleton recovery must not throw').toEqual([]);
   });
+
+  test('validation opens the collapsed sheet-charges section to show an invalid charge',async({page})=>{
+    await scope(page,['Kitchen']);
+    await expect(page.locator('details.sheet-charges')).not.toHaveAttribute('open','');
+    await page.evaluate(()=>{const input=$('monitoringHours');input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));});
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('details.sheet-charges')).toHaveAttribute('open','');
+    await expect(page.locator('#monitoringHours')).toBeFocused();await expect(page.locator('#validationFeedback')).toBeVisible();
+  });
+
+  test('a background draft change does not cancel a confirmed room removal',async({page})=>{
+    await scope(page,['Kitchen','Bathroom']);await idle(page);
+    await removeButton(page,1).click();await expect(page.locator('#removeRoomDialog')).toBeVisible();
+    // A finished Live transcript fragment calls changed() while the dialog is open.
+    await page.evaluate(()=>changed());
+    await page.locator('#confirmRoomRemoval').click();await expect(page.locator('#removeRoomDialog')).toBeHidden();
+    await expect(page.locator('#rooms .room')).toHaveCount(1);await expect(roomName(page,0)).toHaveValue('Kitchen');
+  });
+
+  test('a later signing error replaces an earlier save-not-confirmed status',async({page})=>{
+    await audit(page,['Kitchen']);await page.locator('#documentsConfirmed').check();await draw(page);
+    await fault(page,{authorize:1});await page.locator('#authorizeJob').click();
+    await expect(page.locator('#authorizationStatus')).toContainText('Save not confirmed');
+    await page.evaluate(()=>Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false}));
+    await page.locator('#authorizeJob').click();
+    await expect(page.locator('#authorizationStatus')).toHaveText('Signing requires a connection.');
+    await page.evaluate(()=>delete navigator.onLine);
+  });
 });

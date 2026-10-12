@@ -96,7 +96,7 @@ test('failed audit stays unsigned and failed save keeps retry reference',async({
 });
 async function fault(page,faults){return page.evaluate(async faults=>(await fetch('/__test/fault',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:sessionStorage.getItem('synthetic-uid'),faults})})).json(),faults);}
 test('offline draft reload and reconnection preserve local work',async({page,context,browserName})=>{
-  test.skip(browserName==='webkit','Windows Playwright WebKit returns an internal navigation error with offline service workers; physical iPhone acceptance remains open.');
+  test.skip(browserName==='webkit','Playwright WebKit (Windows and Linux) fails offline service-worker navigation with an internal error; physical iPhone acceptance remains open.');
   await scope(page);await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});await context.setOffline(true);await page.locator('#technicianNotes').fill('Local observations while offline');await expect(page.locator('#saveStatus')).toContainText('offline');
   await page.waitForTimeout(1700);await page.reload();await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');await expect(page.locator('#finishAudit')).toBeDisabled();
   await context.setOffline(false);await page.locator('#saveDraft').click();await expect(page.locator('#saveStatus')).toContainText('Saved privately');await page.reload();await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
@@ -128,7 +128,7 @@ test('logout clears user-specific local drafts',async({page})=>{
   const rows=await page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));expect(rows.every(row=>row.draft.data.technician_notes!=='Synthetic private logout draft')).toBe(true);
 });
 test('sign out keeps an unsynced offline draft until the user discards it',async({page,context,browserName})=>{
-  test.skip(browserName==='webkit','Windows Playwright WebKit offline navigation limitation; physical iPhone acceptance remains open.');
+  test.skip(browserName==='webkit','Playwright WebKit (Windows and Linux) fails offline service-worker navigation with an internal error; physical iPhone acceptance remains open.');
   const rows=()=>page.evaluate(()=>new Promise((resolve,reject)=>{const request=indexedDB.open('adr-private-drafts-v2');request.onsuccess=()=>{const read=request.result.transaction('drafts').objectStore('drafts').getAll();read.onsuccess=()=>resolve(read.result);read.onerror=reject;};}));
   await scope(page);await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
   await context.setOffline(true);await page.locator('#technicianNotes').fill('Unsynced offline observations');await expect(page.locator('#saveStatus')).toContainText('offline');
@@ -141,13 +141,13 @@ test('sign out keeps an unsynced offline draft until the user discards it',async
   await context.setOffline(false);
 });
 test('reconnection synchronizes an older queued inspection as well as the open draft',async({page,context,browserName})=>{
-  test.skip(browserName==='webkit','Real offline navigation is covered on Chromium; Windows WebKit device acceptance remains open.');
+  test.skip(browserName==='webkit'&&process.platform==='win32','Real offline navigation is covered on Chromium; Windows WebKit device acceptance remains open.');
   await scope(page);const original=await page.evaluate(async()=>{const r=await(await fetch('/api/inspections',{headers:{Authorization:'Bearer '+sessionStorage.getItem('synthetic-uid')}})).json();return r.inspections[0].inspection_id;});
   await context.setOffline(true);await page.locator('#technicianNotes').fill('Older queued observations');await menu(page,'jobMenu');await page.locator('#newInspection').click();await expect(page.locator('#address')).toHaveValue('');await page.locator('#address').fill('Second local draft');await page.locator('#saveDraft').click();await context.setOffline(false);
   await expect.poll(()=>page.evaluate(async id=>(await(await fetch('/api/inspections/'+id,{headers:{Authorization:'Bearer '+sessionStorage.getItem('synthetic-uid')}})).json()).data.technician_notes,original)).toBe('Older queued observations');
 });
 test('reconnection reports a queued draft that changed on another device',async({page,context,request,browserName})=>{
-  test.skip(browserName==='webkit','Real offline navigation is covered on Chromium; Windows WebKit device acceptance remains open.');
+  test.skip(browserName==='webkit'&&process.platform==='win32','Real offline navigation is covered on Chromium; Windows WebKit device acceptance remains open.');
   await scope(page);const uid=await page.evaluate(()=>sessionStorage.getItem('synthetic-uid')),headers={Authorization:'Bearer '+uid};
   const original=(await(await request.get('/api/inspections',{headers})).json()).inspections[0].inspection_id;
   await context.setOffline(true);await page.locator('#technicianNotes').fill('Queued observations on this device');await menu(page,'jobMenu');await page.locator('#newInspection').click();await expect(page.locator('#address')).toHaveValue('');
@@ -199,7 +199,7 @@ test('reopened local draft merges photos added by another device',async({page})=
   await page.reload();await task(page,'evidence');await expect(page.locator('#photoGallery img')).toHaveCount(2);await expect.poll(()=>page.locator('#photoGallery img').evaluateAll(images=>images.every(img=>img.naturalWidth===300))).toBe(true);
 });
 test('cloud-restored photos remain visible after offline reload',async({page,context,browserName})=>{
-  test.skip(browserName==='webkit','Windows WebKit offline navigation limitation; physical iPhone acceptance remains open.');
+  test.skip(browserName==='webkit','Playwright WebKit (Windows and Linux) fails offline service-worker navigation with an internal error; physical iPhone acceptance remains open.');
   const {id}=await photoDraft(page);await restoreCloudOnly(page,id);
   await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
   await context.setOffline(true);await page.reload();await task(page,'evidence');await expect.poll(()=>page.locator('#photoGallery img').evaluate(el=>el.naturalWidth)).toBe(300);

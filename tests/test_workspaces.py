@@ -593,3 +593,31 @@ def test_denied_or_rate_limited_invitations_create_no_account_and_send_nothing(m
     current['uid']='office'
     assert client.post('/api/companies/adr/invitations',json={'email':'three@example.invalid','role':'office'}).status_code==403
     assert not accounts.created and not accounts.links and not sent and set(accounts.users)=={'one@example.invalid'}
+
+
+@pytest.mark.parametrize('uid', ['estimator2','admin','other-owner'])
+def test_signed_job_records_evidence_and_coordination_stay_scoped(api,uid):
+    client,current,store=api; current['uid']='estimator'
+    assert client.post('/api/inspections',json={'inspection_id':ID,'data':data()}).status_code==200
+    record=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1}).json()
+    payload=dict(inspection_id=ID,expected_revision=1,auth_id='ADR-AUTH-scoped123456',proposal_hash=record['audit']['proposal_hash'],signature_png=png(),documents_confirmed=True)
+    assert client.post('/api/authorize',json=payload).status_code==200
+    current['uid']=uid
+    responses=[client.get('/api/authorizations/'+payload['auth_id']),
+               client.get('/api/authorizations/'+payload['auth_id']+'/evidence/signature'),
+               client.get('/api/inspections/'+ID),
+               client.get('/api/jobs/'+ID+'/coordination')]
+    assert all(r.status_code in (403,404) for r in responses),[(r.status_code,r.text) for r in responses]
+    assert payload['auth_id'] not in json.dumps(client.get('/api/authorizations').json())
+
+
+def test_signed_job_address_cannot_change_through_coordination(api):
+    client,current,store=api; current['uid']='estimator'
+    assert client.post('/api/inspections',json={'inspection_id':ID,'data':data()}).status_code==200
+    record=client.post('/api/audit',json={'inspection_id':ID,'expected_revision':1}).json()
+    payload=dict(inspection_id=ID,expected_revision=1,auth_id='ADR-AUTH-address123456',proposal_hash=record['audit']['proposal_hash'],signature_png=png(),documents_confirmed=True)
+    assert client.post('/api/authorize',json=payload).status_code==200
+    current['uid']='office';job=client.get('/api/jobs/'+ID+'/coordination').json()
+    request={'expected_version':job['version'],'customer_name':'Test','assigned_estimator_uid':'estimator','address':'Changed after signing'}
+    assert client.put('/api/jobs/'+ID+'/coordination',json=request).status_code==409
+    assert store.db.records['authorizations/'+payload['auth_id']]['documents']==record['audit']['documents']

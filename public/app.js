@@ -49,6 +49,7 @@ function clearValidationFeedback(){
 }
 function showValidationFeedback(control,text=control.validationMessage){
   clearValidationFeedback();validationControl=control;
+  const section=control.closest('details');if(section)section.open=true;
   const feedback=$('validationFeedback');feedback.textContent=text;feedback.hidden=false;
   (control.closest('label')||control).after(feedback);control.setAttribute('aria-invalid','true');control.setAttribute('aria-describedby',((control.getAttribute('aria-describedby')||'')+' validationFeedback').trim());
   focusAndReveal(control,feedback);
@@ -353,7 +354,7 @@ function renderRooms(){
 }
 function requestRoomRemoval(room,trigger){
   if(!state.session||!state.draft||state.signed||confirmedAuthorization||!state.draft.data.rooms.includes(room))return;
-  roomRemoval={room,trigger,draft:state.draft,uid:state.user?.uid,version:state.localVersion};
+  roomRemoval={room,trigger,draft:state.draft,uid:state.user?.uid};
   $('removeRoomDescription').textContent='Remove "'+(room.name.trim()||'Unnamed room')+'"? Its measurements will be deleted, scope confirmation cleared, and generated documents and any unsigned signature invalidated. This cannot be undone.';
   $('removeRoomDialog').showModal();$('cancelRoomRemoval').focus();
 }
@@ -363,7 +364,7 @@ function closeRoomRemoval(){
 }
 function confirmRoomRemoval(){
   const pending=roomRemoval;
-  if(!pending||state.draft!==pending.draft||state.user?.uid!==pending.uid||state.localVersion!==pending.version||!state.session||state.signed||confirmedAuthorization){$('removeRoomDialog').close();return;}
+  if(!pending||state.draft!==pending.draft||state.user?.uid!==pending.uid||!state.session||state.signed||confirmedAuthorization){$('removeRoomDialog').close();return;}
   const index=state.draft.data.rooms.indexOf(pending.room);if(index<0){$('removeRoomDialog').close();return;}
   roomRemoval=null;$('removeRoomDialog').close();clearValidationFeedback();
   state.draft.data.rooms.splice(index,1);changed();renderRooms();
@@ -588,7 +589,7 @@ async function authorize(){
   const payload=state.pendingAuthorization||{inspection_id:state.draft.inspection_id,expected_revision:state.record.revision,auth_id:'ADR-AUTH-'+crypto.randomUUID(),proposal_hash:state.record.audit.proposal_hash,signature_png:state.signature,documents_confirmed:true};
   state.pendingAuthorization=payload;$('authorizeJob').disabled=true;$('authorizationStatus').textContent='Saving signed agreement…';
   try{const receipt=await jsonApi('/api/authorize','POST',payload);if(receipt.status!=='success'||receipt.auth_id!==payload.auth_id)throw Error('Save confirmation was incomplete. Retry with the same reference.');confirmedAuthorization=receipt.auth_id;state.pendingAuthorization=null;renderSaveStatus();renderControls();renderDocuments();$('inspectionFields').disabled=true;$('authorizationStatus').textContent='Saved & signed · '+receipt.auth_id;try{await restoreSigned(receipt.auth_id);}catch(e){$('retrySavedEvidence').hidden=false;$('signedEvidenceStatus').textContent='Signed agreement saved · '+receipt.auth_id+'. Retry loading saved evidence.';say('Signed agreement saved. Its display could not be restored; retry loading saved evidence.','error');}}
-  catch(e){$('authorizationStatus').textContent='Save not confirmed: '+e.message+' Retry uses the same authorization reference.';throw e;}
+  catch(e){$('authorizationStatus').textContent='Save not confirmed: '+e.message+' Retry uses the same authorization reference.';e.saveNotConfirmed=true;throw e;}
   finally{$('authorizeJob').disabled=!!confirmedAuthorization||!!state.signed||!state.documents?.signable;window.WorkspaceUI?.policy();}
 }
 function scopeJson(){if(!state.documents)throw Error('Generate or open a saved audit first.');return JSON.stringify(state.documents.xactimate_scope,null,2);}
@@ -673,7 +674,7 @@ async function startWalk(){
     // The preview must not gate Live: play() can stay pending indefinitely, and frames are skipped until the video has dimensions.
     $('cameraVideo').play().then(()=>{if(state.media===media)$('cameraEmpty').hidden=true;},e=>{if(state.media===media)say('Camera preview could not start: '+e.message+' Live voice guidance continues; use Camera / upload for photos.','error');});
     $('liveStatus').textContent='Connecting live guidance…';renderControls();
-    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=mobile-repairs-20261012-1');
+    state.audio=new(window.AudioContext||window.webkitAudioContext)();await state.audio.resume();if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;await state.audio.audioWorklet.addModule('/audio-worklet.js?v=mobile-repairs-20261012-2');
     if(state.stopping||state.draft!==draft||state.user?.uid!==uid)return;
     const source=state.audio.createMediaStreamSource(media);state.node=new AudioWorkletNode(state.audio,'adr-microphone');source.connect(state.node);state.node.connect(state.audio.destination);
     state.node.port.onmessage=event=>{
@@ -792,7 +793,7 @@ async function initialize(){
   click('thermalToggle',()=>{const on=$('cameraVideo').classList.toggle('thermal-emulation');$('thermalBadge').hidden=!on;$('thermalToggle').textContent=on?'End color emulation':'Color emulation';});
   $('photoFileInput').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(file)try{await addPhoto(file);}catch(error){say(error.message,'error');}});
   $('documentsConfirmed').addEventListener('change',()=>{if($('documentsConfirmed').checked)clearSigningError('documentsConfirmedError');});
-  click('clearSignature',clearSignature);click('authorizeJob',async()=>{try{await authorize();}catch(e){if(!$('authorizationStatus').textContent.startsWith('Save not confirmed:'))$('authorizationStatus').textContent=e.message;focusAndReveal($('authorizeJob'),$('authorizationStatus'));throw e;}});click('copyJson',copyJson);click('downloadJson',downloadJson);click('printDocuments',()=>{if(!state.documents)throw Error('Open documents first.');window.print();});
+  click('clearSignature',clearSignature);click('authorizeJob',async()=>{try{await authorize();}catch(e){if(!e.saveNotConfirmed)$('authorizationStatus').textContent=e.message;focusAndReveal($('authorizeJob'),$('authorizationStatus'));throw e;}});click('copyJson',copyJson);click('downloadJson',downloadJson);click('printDocuments',()=>{if(!state.documents)throw Error('Open documents first.');window.print();});
   click('retrySavedEvidence',()=>restoreSigned(confirmedAuthorization));
   document.querySelectorAll('[data-tab]').forEach(tab=>tab.addEventListener('click',()=>selectDocument(tab.dataset.tab)));
   click('restoreRemote',async()=>{const record=await jsonApi('/api/inspections/'+state.draft.inspection_id);state.draft={inspection_id:record.inspection_id,data:record.data,photos:record.photos.map(p=>({...p,uploaded:true}))};state.record=record;state.ack=stable(record.data);state.conflict=false;$('conflictActions').hidden=true;invalidate();fillForm();await persist();await loadPhotoUrls('/api/inspections/'+record.inspection_id+'/photos/');});

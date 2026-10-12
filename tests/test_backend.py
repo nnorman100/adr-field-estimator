@@ -199,6 +199,36 @@ def test_authenticated_full_size_photo_upload_still_works(context):
     assert r.status_code==200,r.text
     assert r.json()['photos'][0]['id']=='b'*32
 
+def as_user(uid):
+    bm.app.dependency_overrides[bm.current_staff]=lambda:{'uid':uid,'email':uid+'@example.invalid'}
+
+def test_other_user_cannot_reach_any_owned_unsigned_inspection(context):
+    client,_=context
+    record=photo(client,inspect(client))
+    as_user('other')
+    responses=[
+        client.put('/api/inspections/'+ID,json={'expected_revision':record['revision'],'data':{**data(),'technician_notes':'Overwritten by another user.'}}),
+        client.get('/api/inspections/'+ID+'/photos/'+'b'*32),
+        client.post('/api/inspections/'+ID+'/photos/'+'b'*32+'/ocr'),
+        client.post('/api/inspections/'+ID+'/scope-suggestions',json={'inspection_id':ID,'expected_revision':record['revision']}),
+        client.post('/api/audit',json={'inspection_id':ID,'expected_revision':record['revision']}),
+    ]
+    assert [r.status_code for r in responses]==[404]*len(responses),[r.text for r in responses]
+    assert ID not in json.dumps(client.get('/api/inspections').json())
+    as_user('owner');assert client.get('/api/inspections/'+ID).json()['data']['technician_notes']==data()['technician_notes']
+
+def test_other_user_cannot_sign_read_or_download_a_signed_record(context):
+    client,_=context
+    record=audit(client,inspect(client));payload=sign_payload(record)
+    as_user('other')
+    # A refused attempt must not reserve the authorization reference for the owner.
+    assert client.post('/api/authorize',json=payload).status_code==404
+    as_user('owner');assert client.post('/api/authorize',json=payload).status_code==200
+    as_user('other')
+    assert client.get('/api/authorizations/'+payload['auth_id']).status_code==404
+    assert client.get('/api/authorizations/'+payload['auth_id']+'/evidence/signature').status_code==404
+    assert payload['auth_id'] not in json.dumps(client.get('/api/authorizations').json())
+
 def test_live_rejects_origins_and_unauthorized_before_vertex(context,monkeypatch):
     client,_=context
     with pytest.raises(Exception):
