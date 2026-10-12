@@ -1,7 +1,7 @@
 """Validated inspection inputs; money is calculated exclusively by the rate book."""
 from datetime import datetime
 from typing import Literal, Annotated
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -29,9 +29,16 @@ class CaptureMetadata(StrictModel):
     technician_edited: bool = False
     segments: list[TranscriptSegment] = Field(default_factory=list,max_length=2000)
 
+def not_future_year(year):
+    # Evaluated per request; a bound fixed at import rejects the new year on a warm instance.
+    if year > datetime.now().year: raise ValueError('Year built cannot be in the future.')
+    return year
+
+YearBuilt = Annotated[int, Field(ge=1800), AfterValidator(not_future_year)]
+
 class InspectionData(StrictModel):
     address: str = Field(default='', max_length=500)
-    year_built: int | None = Field(default=None, ge=1800, le=datetime.now().year)
+    year_built: YearBuilt | None = None
     has_crawl_space: bool = False
     granite_removal: bool = False
     water_heater_loss: bool = False

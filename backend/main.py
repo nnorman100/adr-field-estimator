@@ -58,7 +58,7 @@ LIVE_LOCATION = os.getenv('LIVE_LOCATION','us-central1')
 LIVE_RECHECK_SECONDS = 20
 LIVE_VOICE = os.getenv('LIVE_VOICE','Charon')
 LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live'
-ORIGINS = ['https://alert-disaster-field-2026.web.app','https://alert-disaster-field-2026.firebaseapp.com','http://127.0.0.1:8765','http://localhost:8765']
+ORIGINS = ['https://alert-disaster-field-2026.web.app','https://alert-disaster-field-2026.firebaseapp.com']
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED','false').lower()=='true'
 STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS','nathanaelcnorman@gmail.com').split(',') if e.strip()}
 WORKSPACE_SIGN_IN_PROVIDERS = frozenset({'google.com','password'})
@@ -219,6 +219,11 @@ def model_image(raw):
 @app.get('/health')
 @app.get('/api/health')
 def health_check():
+    # Anonymous callers learn liveness only; configuration is staff-only below.
+    return dict(status='healthy',schema_version=3)
+
+@app.get('/api/health/details')
+def health_details(staff=Depends(current_staff)):
     return dict(status='healthy',service='alert-disaster-field-estimator',project=PROJECT_ID,
                 location=LOCATION,database_project=PROJECT_ID,database='(default)',evidence_bucket=BUCKET,
                 schema_version=3,audit_model=AUDIT_MODEL,ocr_model=OCR_MODEL,live_model=LIVE_MODEL,workspaces_enabled=WORKSPACES_ENABLED)

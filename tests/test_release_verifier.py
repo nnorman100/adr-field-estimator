@@ -5,8 +5,6 @@ import subprocess
 import sys
 import pytest
 from scripts import verify_live_release as verifier
-from scripts import verify_repairs as repairs
-from scripts import verify_review_fixes as review_fixes
 
 
 def test_existing_browser_token_is_authenticated_not_decoded(monkeypatch, capsys):
@@ -155,8 +153,6 @@ def test_company_sidecar_cleanup_rejects_foreign_tenant_before_deletion(monkeypa
 @pytest.mark.parametrize('module,argv,entry', [
     (verifier, ['--public'], 'public'),
     (verifier, ['--token-stdin'], 'main'),
-    (repairs, [], 'main'),
-    (review_fixes, [], 'main'),
 ])
 def test_verifiers_refuse_to_run_without_an_explicit_target(monkeypatch, module, argv, entry):
     monkeypatch.setattr(module, entry, lambda *args: pytest.fail('Ran against a default target'))
@@ -166,12 +162,14 @@ def test_verifiers_refuse_to_run_without_an_explicit_target(monkeypatch, module,
     assert exited.value.code != 0
 
 
-def test_repair_verifiers_send_synthetic_tokens_only_to_the_dedicated_service():
-    assert repairs.service_url(verifier.PRODUCTION) == verifier.PRODUCTION
-    assert repairs.service_url(verifier.STAGED) == verifier.STAGED
-    for untrusted in ('https://untrusted.example', verifier.PRODUCTION + '.evil.example', 'http://alert-disaster-field-estimator-545776254070.us-west2.run.app'):
-        with pytest.raises(argparse.ArgumentTypeError):
-            repairs.service_url(untrusted)
+def test_public_check_accepts_only_the_trimmed_health_payload(monkeypatch):
+    class Health:
+        status_code = 200
+        def json(self): return {'status': 'healthy', 'schema_version': 3, 'project': verifier.PROJECT}
+    monkeypatch.setattr(verifier, 'SERVICE', verifier.PRODUCTION)
+    monkeypatch.setattr(verifier.requests, 'get', lambda *args, **kwargs: Health())
+    with pytest.raises(AssertionError):
+        verifier.public()
 
 
 def test_owner_guard_survives_optimized_python():

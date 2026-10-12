@@ -13,9 +13,9 @@ const {chromium}=require('playwright'),fs=require('node:fs'),assert=require('nod
     assert.deepEqual(Buffer.from(await asset.arrayBuffer()),fs.readFileSync('public/'+file),'Deployed branding differs: '+file);
   }
   assert(response.headers.get('content-security-policy').includes("object-src 'none'"));
-  const health=await(await fetch(base+'/api/health')).json();assert.equal(health.project,'alert-disaster-field-2026');assert.equal(health.schema_version,3);
+  assert.deepEqual(await(await fetch(base+'/api/health')).json(),{status:'healthy',schema_version:3});
   assert.equal((await fetch(base+'/api/inspections')).status,401);
-  const config=await(await fetch(base+'/__/firebase/init.json')).json();assert.equal(config.projectId,health.project);
+  const config=await(await fetch(base+'/__/firebase/init.json')).json();assert.equal(config.projectId,'alert-disaster-field-2026');
   const browser=await chromium.launch();const page=await browser.newPage({viewport:{width:390,height:844}});const errors=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/Content Security Policy|Refused to/.test(m.text()))errors.push(m.text());});
   await page.goto(base);await page.waitForFunction(()=>window.firebase&&document.getElementById('signInButton').hidden===false);
