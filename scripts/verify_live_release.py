@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import scripts.verify_common as common
 from scripts.verify_common import admin, image, PROJECT, SDK, URL
+from scripts.release_stamp import COMMIT_PATTERN
 
 PRODUCTION = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
 SERVICE_HOST = 'alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
@@ -28,6 +29,7 @@ TAG_PATTERN = r'[a-z](?:[a-z0-9-]{0,14}[a-z0-9])?'
 STAGED = 'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 WORKSPACE_STAGE = 'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 SERVICE = None
+EXPECTED_COMMIT = None
 
 
 def access_token():
@@ -281,7 +283,8 @@ def main():
     token, uid = staff_session()
     health = check('GET', '/api/health/details', token)
     assert health['project'] == PROJECT and health['live_model'] == 'gemini-3.8-live'
-    print(f"PASS: staff health details; workspaces_enabled={str(health['workspaces_enabled']).lower()}", flush=True)
+    source = source_commit(health)
+    print(f"PASS: staff health details; workspaces_enabled={str(health['workspaces_enabled']).lower()}; source_commit={source}", flush=True)
     no_existing_capture(uid)
     iid = 'ADR-INS-' + uuid4().hex
     aid = 'ADR-AUTH-' + uuid4().hex
@@ -349,10 +352,21 @@ def main():
         cleanup_synthetic(uid, [iid], [aid])
 
 
+def source_commit(health):
+    """Report the backend's stamped commit; with --expect-commit, a different build fails."""
+    source = health.get('source_commit', 'not reported (built before release stamping)')
+    if EXPECTED_COMMIT and source != EXPECTED_COMMIT:
+        raise RuntimeError(f'Backend source_commit {source} is not the expected {EXPECTED_COMMIT}.')
+    return source
+
+
 def public():
     result = requests.get(SERVICE + '/api/health', timeout=30)
     assert result.status_code == 200
-    assert result.json() == {'status': 'healthy', 'schema_version': 3}
+    health = result.json()
+    assert set(health) <= {'status', 'schema_version', 'source_commit'}
+    assert health['status'] == 'healthy' and health['schema_version'] == 3
+    print('Backend source_commit: ' + source_commit(health), flush=True)
     for path in ('/api/health/details', '/api/session', '/api/inspections', '/api/authorizations'):
         assert requests.get(SERVICE + path, timeout=30).status_code == 401
 
@@ -380,13 +394,21 @@ def cleanup_from_stdin():
     token, uid = staff_session(io.StringIO(payload['token'] + '\n'))
     cleanup_synthetic(uid, payload['inspections'], payload['agreements'])
 
+def commit_hash(value):
+    if not re.fullmatch(COMMIT_PATTERN, value):
+        raise argparse.ArgumentTypeError('Use a full 40-character commit hash, optionally ending in -dirty.')
+    return value
+
+
 def cli():
-    global SERVICE
+    global SERVICE, EXPECTED_COMMIT
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('service', nargs='?', type=service_url, help='Explicit dedicated backend URL (legacy syntax).')
     parser.add_argument('--backend-tag', type=backend_url, action='append',
                         help='Explicit Cloud Run candidate tag on the dedicated service.')
     parser.add_argument('--production', action='store_true', help='Select the dedicated production backend.')
+    parser.add_argument('--expect-commit', type=commit_hash,
+                        help='Fail unless the backend reports this source_commit (see RELEASES.md).')
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--public', action='store_true')
     modes.add_argument('--cleanup-stdin', action='store_true')
@@ -397,6 +419,7 @@ def cli():
     if len(targets) != 1:
         parser.error('Select exactly one explicit service URL, --backend-tag TAG, or --production.')
     SERVICE = targets[0]
+    EXPECTED_COMMIT = args.expect_commit
     if args.public:
         public()
     elif args.cleanup_stdin:

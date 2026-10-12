@@ -33,3 +33,6 @@ Thumbs.db
 
 # Private PDF review intermediates
 tmp/pdfs/
+
+# Release stamp written by scripts/deploy_backend.py during a deploy
+backend/SOURCE_COMMIT

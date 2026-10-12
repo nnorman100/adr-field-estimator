@@ -172,6 +172,33 @@ def test_public_check_accepts_only_the_trimmed_health_payload(monkeypatch):
         verifier.public()
 
 
+def test_public_check_reports_and_compares_the_source_commit(monkeypatch):
+    commit = '0123456789abcdef0123456789abcdef01234567'
+    class Health:
+        status_code = 200
+        def json(self): return {'status': 'healthy', 'schema_version': 3, 'source_commit': commit}
+    monkeypatch.setattr(verifier, 'SERVICE', verifier.PRODUCTION)
+    monkeypatch.setattr(verifier.requests, 'get', lambda *args, **kwargs: Health())
+    monkeypatch.setattr(verifier, 'EXPECTED_COMMIT', 'f' * 40)
+    with pytest.raises(RuntimeError, match='not the expected'):
+        verifier.public()
+    monkeypatch.setattr(verifier, 'EXPECTED_COMMIT', commit)
+    assert verifier.source_commit({'source_commit': commit}) == commit
+    with pytest.raises(RuntimeError, match='not reported'):
+        verifier.source_commit({})
+    monkeypatch.setattr(verifier, 'EXPECTED_COMMIT', None)
+    assert verifier.source_commit({'source_commit': 'unknown'}) == 'unknown'
+    assert 'not reported' in verifier.source_commit({})
+
+
+@pytest.mark.parametrize('value', ['abc123', 'F' * 40, 'f' * 40 + '-other', 'unknown'])
+def test_expected_commit_must_be_a_full_hash(monkeypatch, value):
+    monkeypatch.setattr(sys, 'argv', ['verifier', '--production', '--public', '--expect-commit', value])
+    monkeypatch.setattr(verifier, 'public', lambda: pytest.fail('Ran with an invalid expected commit'))
+    with pytest.raises(SystemExit):
+        verifier.cli()
+
+
 def test_owner_guard_survives_optimized_python():
     # python -O strips assert statements, so a deletion guard must be an explicit raise.
     code = """

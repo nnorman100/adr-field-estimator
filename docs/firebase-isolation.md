@@ -42,20 +42,28 @@ Never use a blanket `firebase deploy`. Keep both `index.html` copies identical. 
 
 Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED=true`. The script requires `--workspaces on|off`, always sets that flag, keeps the other existing variables (staff list, model settings), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
 
+Every release is stamped with the commit it was built from. `deploy_backend.py` refuses uncommitted or untracked changes under `backend/` (`--allow-dirty` stamps `<commit>-dirty` instead), writes the commit to `backend/SOURCE_COMMIT` in the uploaded build context for the duration of the deploy, and sets the revision label `source-commit`. The image reports it as `source_commit` in `/api/health`; an image built without the script reports `unknown`. Before a Hosting deploy, `python scripts/stamp_hosting.py` stamps the same kind of commit into the service-worker `VERSION`, every versioned asset URL and the Account menu's app version, which also gives each release a new worker cache. The committed shell carries the placeholder `unstamped`; `firebase.json` runs `python scripts/stamp_hosting.py --check` as the Hosting predeploy hook, so an unstamped or inconsistently stamped shell is never deployed. Restore the placeholder with `--reset` afterwards. Both scripts print a row to append to [RELEASES.md](../RELEASES.md), the only record of deployed state.
+
 ```powershell
 firebase.cmd deploy --only firestore:indexes --project alert-disaster-field-2026
 # Confirm the required indexes are READY before deploying the backend.
 gcloud firestore indexes composite list --project=alert-disaster-field-2026
 python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --dry-run
 python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --yes
-# Before promotion, the tagged URL printed by the deploy must answer {"status":"healthy","schema_version":3}.
+# Append the printed row to RELEASES.md. Before promotion, the tagged URL printed by the deploy must answer
+# {"status":"healthy","schema_version":3,"source_commit":"<the stamped commit>"}.
 curl.exe -s <tagged-revision-url>/api/health
 # Configuration, including the chosen flag ("workspaces_enabled":false for --workspaces off), is staff-only at
 # /api/health/details; `node scripts/verify_live_browser.js --backend-tag <tag>` prints it after normal staff sign-in.
 gcloud run services update-traffic alert-disaster-field-estimator --to-tags=workspaces-off-YYYYMMDD=100 --region=us-west2 --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+# Append a "100% (promoted)" row for the backend to RELEASES.md.
 firebase.cmd deploy --only firestore:rules --project alert-disaster-field-2026
 firebase.cmd deploy --only auth --project alert-disaster-field-2026
+python scripts/stamp_hosting.py
 firebase.cmd deploy --only hosting:alert-disaster --project alert-disaster-field-2026
+# Compare the deployed shell and backend commits, append the printed Hosting row to RELEASES.md, then reset.
+node scripts/verify_hosting.js
+python scripts/stamp_hosting.py --reset
 ```
 
 The backend rejects a different project ID or evidence bucket. Production never enables local demo fallbacks.
@@ -99,9 +107,10 @@ the repository root:
 node scripts/verify_live_browser.js --backend-tag body-limits --hold
 ```
 
-Select the exact candidate tag after checking its revision in the dedicated project; `body-limits`
-was production revision `00015-kem` after the October 12 backend release (`harden-fixes`, revision
-`00013-hup`, is its rollback), not a permanent staging alias. There is no implicit historical staged target.
+Select the exact candidate tag after checking its revision in the dedicated project and in
+[RELEASES.md](../RELEASES.md); tags such as `body-limits` name past releases, not a permanent staging
+alias. There is no implicit historical staged target. `--expect-commit <commit>` makes
+`verify_live_release.py` fail unless the backend reports that `source_commit`.
 `--workspaces` explicitly selects the older
 workspace staging tag and is not appropriate for a repairs-only release. `--production` verifies
 deployed assets rather than the local candidate. Output defaults to a unique temporary directory;
