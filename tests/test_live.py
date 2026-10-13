@@ -1,4 +1,4 @@
-import asyncio, base64, time
+import asyncio, base64, json, time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 import pytest
@@ -155,3 +155,13 @@ def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
         and closed
         and '_live_sessions/owner' not in store.db.records
     )
+
+
+def test_live_prompt_does_not_ask_about_crawl_space():
+    from backend.prompts import live_prompt
+
+    data = InspectionData().model_dump(mode='json')
+    identity = {'name': 'Other Restoration Co', 'signoff': 'Pat Lee'}
+    for prompt in (live_prompt(data), live_prompt(data, identity)):
+        instructions, context = prompt.split('\nCurrent inspection context (JSON):\n')
+        assert 'crawl' not in instructions.lower() and json.loads(context) == data
