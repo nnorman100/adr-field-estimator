@@ -1,7 +1,15 @@
 from decimal import Decimal
 import pytest
 from pydantic import ValidationError
-from backend.claims import price_scope, make_documents, GRANITE, HEATER, PRETEST
+from backend.claims import (
+    price_scope,
+    make_documents,
+    ADDITIONAL,
+    PRETEST,
+    REPRICE,
+    TESTING,
+    VALIDITY,
+)
 from backend.contracts import InspectionData, AIResult
 
 
@@ -51,23 +59,59 @@ def test_category_and_cabinet_rates(category, unfinished, finished):
 
 def test_disclaimers_age_planned_work_and_estimate_range():
     ai = AIResult(summary='<img src=x onerror=alert(1)>', suggestions=[], unpriced_work=[])
-    docs = make_documents(
-        scoped(granite_removal=True, water_heater_loss=True, has_crawl_space=True), [], ai
-    )
+    docs = make_documents(scoped(), [], ai)
     assert docs['schema_version'] == 3
     assert docs['adr_estimate']['proposed_cost_low'] == 1208
     assert docs['adr_estimate']['proposed_cost'] == 1221.90
     assert docs['xactimate_total'] == 1208
-    assert all(
-        text in docs['adr_estimate']['disclaimers']
-        for text in [GRANITE, HEATER, PRETEST, 'There is a crawl space']
-    )
+    assert PRETEST in docs['adr_estimate']['disclaimers']
     assert 'completion has not been recorded' in docs['iicrc_defense_letter']
     modern = make_documents(scoped(year_built=2000), [], ai)
     assert (
         not modern['adr_estimate']['lead_notice_required']
         and PRETEST not in modern['adr_estimate']['disclaimers']
     )
+
+
+def test_standard_estimate_clauses_follow_property_age():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    old = make_documents(scoped(), [], ai)
+    proposal = old['adr_estimate']
+    assert proposal['recommendations'] == [
+        TESTING,
+        'Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.',
+        'Bathroom: category 1 finished/drywall/trim demolition',
+        ADDITIONAL,
+    ]
+    assert proposal['disclaimers'] == [
+        PRETEST,
+        'NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.',
+        REPRICE,
+        VALIDITY,
+    ]
+    assert proposal['findings'][0] == (
+        'Due to property age (1960), California State Law requires third-party lead and asbestos testing prior to destructive demolition.'
+    )
+    assert all(text in old['iicrc_defense_letter'] for text in [TESTING, ADDITIONAL, VALIDITY])
+    modern = make_documents(scoped(year_built=1990), [], ai)['adr_estimate']
+    assert modern['findings'][0] == (
+        'The home was built in 1990. Therefore, no lead or asbestos testing is required prior to the start of work.'
+    )
+    assert TESTING not in modern['recommendations'] and PRETEST not in modern['disclaimers']
+    assert modern['disclaimers'][-2:] == [REPRICE, VALIDITY]
+
+
+def test_retired_job_condition_flags_load_but_print_nothing():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    legacy = scoped(
+        has_crawl_space=True, granite_removal=True, water_heater_loss=True, work_performed=True
+    )
+    docs = make_documents(legacy, [], ai)
+    assert docs == make_documents(scoped(), [], ai)
+    text = str(docs)
+    for retired in ['crawl space', 'granite', 'water heater', 'Can Do Crew', 'was performed']:
+        assert retired not in text
+    assert 'This scope describes proposed work; completion has not been recorded.' in text
 
 
 def test_pending_evidence_and_unpriced_work_block_signature():

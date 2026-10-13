@@ -29,7 +29,7 @@ This document specifies the operational protocols, business rules, architectural
 
 ### Engine 2: Post-Walk Claims & Compliance Engine (`gemini-3.8-flash`)
 - **Transport**: Cloud Run REST microservice (`POST /api/audit`).
-- **Input**: Walkthrough transcript, timestamped photos, property address, year built, crawl space flag, and equipment counts.
+- **Input**: Walkthrough transcript, timestamped photos, property address, year built, and equipment counts.
 - **Output**: Structured JSON strictly conforming to the 4-document claims hub schema:
   1. Official ADR Proposal (sheet-derived low–high estimate + e-signature).
   2. Itemized Xactimate Line Items with waste factors.
@@ -87,10 +87,7 @@ Matterport scans are \$250 each, single-axle dump-truck loads \$286.78 each, dry
   - Findings state no pre-testing is required.
 
 ### B. Standard ADR Scoping Disclaimers
-Agents must preserve these exact legal disclaimers:
-- **Granite Countertops**: *"The technician will prop the granite countertop as the cabinets are removed. The granite and backsplash can break during the removal process."*
-- **Water Heater Garage Losses**: *"Alert Disaster will coordinate with Can Do Crew to put the water heater in a temporary state... Homeowner to hire competent professional to reset."*
-- **Crawl Spaces**: Always specify if a crawl space exists (*"There is a crawl space"*).
+Agents must preserve the exact standard estimate clauses in `backend/claims.py`, taken from ADR's real estimates: the pre-1978 testing paragraph, the IICRC/EPA protective-equipment and containment sentence, the additional-materials sentence, the reconstruction/collateral-damage/testing exclusions, insurance repricing and 30-day validity. Clauses that name the company use the issuing company's name. Crawl spaces, countertops and water heaters have no fixed wording or form flag; technicians describe them in notes or the walkthrough. Documents describe the work as proposed.
 
 ---
 

@@ -1048,10 +1048,6 @@ function collect() {
   }
   data.package_price = null;
   for (const [id, key] of Object.entries({
-    crawlSpace: 'has_crawl_space',
-    graniteRemoval: 'granite_removal',
-    waterHeaterLoss: 'water_heater_loss',
-    workPerformed: 'work_performed',
     afterHours: 'is_after_hours',
     scopeConfirmed: 'scope_confirmed',
   }))
@@ -1096,10 +1092,6 @@ function fillForm() {
   }))
     $(id).value = data[key] ?? defaults[key] ?? '';
   for (const [id, key] of Object.entries({
-    crawlSpace: 'has_crawl_space',
-    graniteRemoval: 'granite_removal',
-    waterHeaterLoss: 'water_heater_loss',
-    workPerformed: 'work_performed',
     afterHours: 'is_after_hours',
     scopeConfirmed: 'scope_confirmed',
   }))

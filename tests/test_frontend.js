@@ -41,7 +41,7 @@ original.air_movers = 6;
 const filled = core.applyScopeChanges(original, [
   { field: 'finished_sf', room: 'Room 1', value: 80 },
   { field: 'category', room: 'Room 1', value: 2 },
-  { field: 'has_crawl_space', room: null, value: false },
+  { field: 'is_after_hours', room: null, value: false },
   { field: 'labor_hours', room: null, value: 0 },
 ]);
 assert.equal(filled.scope_confirmed, false);
@@ -56,6 +56,8 @@ assert.throws(() =>
 assert.throws(() =>
   core.applyScopeChanges(original, [{ field: 'unit_price', room: null, value: 1 }]),
 );
+for (const field of ['has_crawl_space', 'granite_removal', 'water_heater_loss', 'work_performed'])
+  assert.throws(() => core.applyScopeChanges(original, [{ field, room: null, value: true }]));
 assert.throws(() =>
   core.applyScopeChanges(original, [{ field: 'finished_sf', room: 'New room', value: 10 }]),
 );

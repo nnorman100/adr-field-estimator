@@ -31,9 +31,14 @@ JOB_CODES = (
     | {code for code, _, _, _ in OPTIONAL_CHARGES}
 )
 SCOPE_EXCLUDED = {code for code, _, _, _, _ in BASELINE} | {'ADR-AFTER'}
-GRANITE = 'The technician will prop the granite countertop as the cabinets are removed. The granite and backsplash can break during the removal process.'
-HEATER = 'Alert Disaster will coordinate with Can Do Crew to put the water heater in a temporary state... Homeowner to hire competent professional to reset.'
 PRETEST = '(this does not include the pretest for lead/asbestos)'
+# Standard estimate wording; {company} is the issuing company's name.
+TESTING = "Testing is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly."
+PROTECTION = 'Per IICRC and EPA protocols, {company} technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.'
+ADDITIONAL = 'If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.'
+EXCLUSIONS = 'NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of {company}. This estimate does not include testing of any kind.'
+REPRICE = 'If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.'
+VALIDITY = 'Estimate is valid for 30 days from date of inspection.'
 
 
 def amount(value):
@@ -162,11 +167,6 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
     company_address = identity['address'] if identity else 'Bakersfield, CA'
     company_license = identity['license'] if identity else '950983'
     signoff = identity['signoff'] if identity else 'Matthew Myers'
-    heater = (
-        HEATER
-        if not identity or identity['company_id'] == 'adr'
-        else identity.get('water_heater_notice', '')
-    )
     setup = []
     if identity:
         setup = [
@@ -179,8 +179,6 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
             ]
             if not identity.get(key, '').strip()
         ]
-        if data.water_heater_loss and not heater.strip():
-            setup.append('Water-heater coordination notice')
 
     if not data.address.strip() or data.year_built is None or not data.rooms:
         raise ValueError('Enter the address, year built and rooms before auditing.')
@@ -192,17 +190,13 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
     age = (
         f'Due to property age ({data.year_built}), California State Law requires third-party lead and asbestos testing prior to destructive demolition.'
         if before
-        else f'The home was built in {data.year_built}. No pre-testing is required under the configured ADR property-age rule.'
+        else f'The home was built in {data.year_built}. Therefore, no lead or asbestos testing is required prior to the start of work.'
     )
-    clauses = (
-        ([PRETEST] if before else [])
-        + ([GRANITE] if data.granite_removal else [])
-        + ([heater] if data.water_heater_loss and heater else [])
-    )
-    if data.has_crawl_space:
-        clauses.append('There is a crawl space')
-    if identity and identity['company_id'] != 'adr':
-        age = age.replace('configured ADR property-age rule', 'configured property-age rule')
+    clauses = ([PRETEST] if before else []) + [
+        EXCLUSIONS.format(company=company_name),
+        REPRICE,
+        VALIDITY,
+    ]
     observations = [age]
     if data.technician_notes.strip():
         observations.append('Technician observations: ' + data.technician_notes.strip())
@@ -213,18 +207,18 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
         f'{p["room"]} — {p["ocr"]["meter_type"]}: {p["ocr"]["value"]} (photo {p["id"]})'
         for p in verified
     )
-    recommendations = [i['description'] for i in items if i['code'] not in SCOPE_EXCLUDED]
-    status = (
-        'Technician reports this work was performed.'
-        if data.work_performed
-        else 'This scope describes proposed work; completion has not been recorded.'
+    recommendations = (
+        ([TESTING] if before else [])
+        + [PROTECTION.format(company=company_name)]
+        + [i['description'] for i in items if i['code'] not in SCOPE_EXCLUDED]
+        + [ADDITIONAL]
     )
     letter = '\n\n'.join(
         [
             'TO: Insurance Claims Examiner / Adjuster',
             f'RE: Remediation scope for {data.address}',
             f'{company_name} • {company_address} • CSLB #{company_license}',
-            status,
+            'This scope describes proposed work; completion has not been recorded.',
             'The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.',
             '\n'.join(observations),
             'Scope:\n' + '\n'.join(recommendations),

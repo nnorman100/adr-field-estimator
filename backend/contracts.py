@@ -48,6 +48,8 @@ YearBuilt = Annotated[int, Field(ge=1800), AfterValidator(not_future_year)]
 class InspectionData(StrictModel):
     address: str = Field(default='', max_length=500)
     year_built: YearBuilt | None = None
+    # Retired job-condition flags, accepted only so older drafts load; documents ignore them.
+    # Technicians describe these conditions in notes or the walkthrough instead.
     has_crawl_space: bool = False
     granite_removal: bool = False
     water_heater_loss: bool = False
@@ -165,6 +167,7 @@ class CompanyIdentity(StrictModel):
     license: str
     signoff: str
     logo_data_url: str = ''
+    # Retired; older company profiles may still carry it.
     water_heater_notice: str = ''
 
 

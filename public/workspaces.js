@@ -554,27 +554,11 @@ window.WorkspaceUI = (() => {
         'license',
         'signoff',
       ].includes(key);
-    if (cid !== 'adr')
-      formField(
-        form,
-        'Water-heater coordination notice',
-        'water_heater_notice',
-        p.water_heater_notice || '',
-        'textarea',
-      );
     const logo = formField(form, 'Optional logo (PNG or JPEG, up to 1 MB)', 'logo', '', 'file');
     logo.accept = 'image/png,image/jpeg';
     submit(form, 'Save company details', async (values) => {
       const updated = { ...p };
-      for (const key of [
-        'name',
-        'address',
-        'phone',
-        'email',
-        'license',
-        'signoff',
-        'water_heater_notice',
-      ])
+      for (const key of ['name', 'address', 'phone', 'email', 'license', 'signoff'])
         if (values.has(key)) updated[key] = values.get(key);
       if (logo.files[0]) {
         if (logo.files[0].size > 1000000) throw Error('Logo exceeds 1 MB.');

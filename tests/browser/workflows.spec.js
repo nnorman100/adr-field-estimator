@@ -125,6 +125,48 @@ test('optional sheet charges appear in the calculated estimate range', async ({ 
   await expect(page.locator('#woodFloorSystems')).toHaveValue('1');
 });
 
+test('older drafts with retired job flags load and documents print the standard clauses', async ({
+  page,
+}) => {
+  await scope(page);
+  await page.evaluate(async () => {
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid'),
+    };
+    const rows = await (await fetch('/api/inspections', { headers })).json();
+    const id = rows.inspections[0].inspection_id;
+    const record = await (await fetch('/api/inspections/' + id, { headers })).json();
+    Object.assign(record.data, {
+      has_crawl_space: true,
+      granite_removal: true,
+      water_heater_loss: true,
+      work_performed: true,
+    });
+    await fetch('/api/inspections/' + id, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expected_revision: record.revision, data: record.data }),
+    });
+  });
+  await page.reload();
+  await page.locator('#restoreRemote').click();
+  for (const id of ['crawlSpace', 'graniteRemoval', 'waterHeaterLoss', 'workPerformed'])
+    await expect(page.locator('#' + id)).toHaveCount(0);
+  await page.locator('#finishAudit').click();
+  const proposal = page.locator('#proposalBody');
+  await expect(proposal).toContainText(
+    'Testing is required under California State Law due to the home',
+  );
+  await expect(proposal).toContainText(
+    'Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment',
+  );
+  await expect(proposal).toContainText('This estimate does not include testing of any kind.');
+  await expect(proposal).toContainText('Estimate is valid for 30 days from date of inspection.');
+  for (const retired of ['crawl space', 'granite', 'water heater'])
+    await expect(proposal).not.toContainText(retired);
+});
+
 test('active capture controls expand and Stop tears down the synthetic stream', async ({
   page,
 }) => {
