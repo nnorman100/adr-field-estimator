@@ -1,0 +1,228 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0
+rootdir: /tmp/adr-k3-test/red
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collected 1 item
+
+tests/test_live_keepalive.py F                                           [100%]
+
+=================================== FAILURES ===================================
+________ test_slow_checkpoint_read_does_not_starve_the_relay_keepalive _________
+
+self = <_SelectorSocketTransport closed fd=21>
+data = b'\x8a\x84\xcf\x17\x81\xb1r\xe4!I'
+
+    def write(self, data):
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise TypeError(f'data argument must be a bytes, bytearray, or memoryview '
+                            f'object, not {type(data).__name__!r}')
+        if self._eof:
+            raise RuntimeError('Cannot call write() after write_eof()')
+        if self._empty_waiter is not None:
+            raise RuntimeError('unable to write; sendfile is in progress')
+        if not data:
+            return
+    
+        if self._conn_lost:
+            if self._conn_lost >= constants.LOG_THRESHOLD_FOR_CONNLOST_WRITES:
+                logger.warning('socket.send() raised exception.')
+            self._conn_lost += 1
+            return
+    
+        if not self._buffer:
+            # Optimization: try to send now.
+            try:
+>               n = self._sock.send(data)
+                    ^^^^^^^^^^^^^^^^^^^^^
+E               BrokenPipeError: [Errno 32] Broken pipe
+
+/usr/lib/python3.14/asyncio/selector_events.py:1071: BrokenPipeError
+
+The above exception was the direct cause of the following exception:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7be4ac98cb00>
+tmp_path = PosixPath('/tmp/pytest-of-nnorm/pytest-90/test_slow_checkpoint_read_does0')
+
+    def test_slow_checkpoint_read_does_not_starve_the_relay_keepalive(monkeypatch, tmp_path):
+        # On WSL2 the Windows gcloud wrapper takes ~30 s per token; the relay closes a socket whose
+        # client cannot answer a ping within ping_interval + ping_timeout.
+        store = FakeStore()
+        store.create_inspection('owner', ID, InspectionData().model_dump())
+    
+        async def identity(token, **_):
+            return {'uid': 'owner', 'exp': time.time() + 600}
+    
+        monkeypatch.setattr(bm, 'verify_staff', identity)
+        monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    
+        with wave.open(str(tmp_path / 'live-prompt.wav'), 'wb') as recording:
+            recording.setnchannels(1)
+            recording.setsampwidth(2)
+            recording.setframerate(16000)
+            recording.writeframes(b'\x10\x00' * 4800)
+    
+        def slow_checkpoint(collection, uid):
+            assert (collection, uid) == ('_live_resume', 'owner')
+            time.sleep(3 * (PING_INTERVAL + PING_TIMEOUT))
+            return {
+                'capture_id': {'stringValue': CAPTURE.hex},
+                'resumable': {'booleanValue': True},
+                'handle': {'stringValue': 'wire-handle'},
+            }
+    
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        # live() maps https: to wss:; a ws: service URL reaches the plain local listener unchanged.
+        monkeypatch.setattr(verifier, 'SERVICE', f'ws://127.0.0.1:{port}')
+        monkeypatch.setattr(verifier, 'URL', bm.ORIGINS[0])
+        monkeypatch.setattr(verifier, 'FIXTURES', tmp_path)
+        monkeypatch.setattr(verifier, 'uuid4', lambda: CAPTURE)
+        monkeypatch.setattr(verifier, 'private_document', slow_checkpoint)
+        monkeypatch.setattr(verifier, 'assert_capture_released', lambda uid: None)
+    
+        server = uvicorn.Server(
+            uvicorn.Config(
+                bm.app,
+                ws_ping_interval=PING_INTERVAL,
+                ws_ping_timeout=PING_TIMEOUT,
+                log_level='warning',
+            )
+        )
+        thread = threading.Thread(target=server.run, kwargs={'sockets': [listener]}, daemon=True)
+        with FakeVertexLive(tmp_path) as vertex:
+            monkeypatch.setattr(bm.genai, 'Client', vertex.client(bm.genai.Client))
+            # The resumed second connection needs its own setup replies.
+            vertex.replies = Replies()
+            vertex.replies['setup'] = [
+                {'setupComplete': {}},
+                {'sessionResumptionUpdate': {'newHandle': 'wire-handle', 'resumable': True}},
+                {'usageMetadata': {'totalTokenCount': 17}},
+            ]
+            vertex.replies['audio'] = [
+                {
+                    'serverContent': {
+                        'inputTranscription': {'text': 'moisture at the wall', 'finished': True}
+                    }
+                },
+                wire_audio('Noted'),
+                {'serverContent': {'turnComplete': True}},
+            ]
+            thread.start()
+            try:
+                until = time.monotonic() + 5
+                while not server.started:
+                    assert thread.is_alive() and time.monotonic() < until, 'uvicorn did not start'
+                    time.sleep(0.02)
+>               asyncio.run(verifier.live('synthetic', ID, 'owner'))
+
+tests/test_live_keepalive.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.14/asyncio/runners.py:204: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+/usr/lib/python3.14/asyncio/runners.py:127: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.14/asyncio/base_events.py:719: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+scripts/verify_live_release.py:263: in live
+    await finished(socket)
+scripts/verify_live_release.py:187: in finished
+    await asyncio.wait_for(socket.recv(), max(0.1, until - time.monotonic()))
+/usr/lib/python3.14/asyncio/tasks.py:488: in wait_for
+    return await fut
+           ^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <websockets.asyncio.client.ClientConnection object at 0x7be4ac87e660>
+decode = None
+
+    async def recv(self, decode: bool | None = None) -> Data:
+        """
+        Receive the next message.
+    
+        When the connection is closed, :meth:`recv` raises
+        :exc:`~websockets.exceptions.ConnectionClosed`. Specifically, it raises
+        :exc:`~websockets.exceptions.ConnectionClosedOK` after a normal closure
+        and :exc:`~websockets.exceptions.ConnectionClosedError` after a protocol
+        error or a network failure. This is how you detect the end of the
+        message stream.
+    
+        Canceling :meth:`recv` is safe. There's no risk of losing data. The next
+        invocation of :meth:`recv` will return the next message.
+    
+        This makes it possible to enforce a timeout by wrapping :meth:`recv` in
+        :func:`~asyncio.timeout` or :func:`~asyncio.wait_for`.
+    
+        When the message is fragmented, :meth:`recv` waits until all fragments
+        are received, reassembles them, and returns the whole message.
+    
+        Args:
+            decode: Set this flag to override the default behavior of returning
+                :class:`str` or :class:`bytes`. See below for details.
+    
+        Returns:
+            A string (:class:`str`) for a Text_ frame or a bytestring
+            (:class:`bytes`) for a Binary_ frame.
+    
+            .. _Text: https://datatracker.ietf.org/doc/html/rfc6455#section-5.6
+            .. _Binary: https://datatracker.ietf.org/doc/html/rfc6455#section-5.6
+    
+            You may override this behavior with the ``decode`` argument:
+    
+            * Set ``decode=False`` to disable UTF-8 decoding of Text_ frames and
+              return a bytestring (:class:`bytes`). This improves performance
+              when decoding isn't needed, for example if the message contains
+              JSON and you're using a JSON library that expects a bytestring.
+            * Set ``decode=True`` to force UTF-8 decoding of Binary_ frames
+              and return a string (:class:`str`). This may be useful for
+              servers that send binary frames instead of text frames.
+    
+        Raises:
+            ConnectionClosed: When the connection is closed.
+            ConcurrencyError: If two coroutines call :meth:`recv` or
+                :meth:`recv_streaming` concurrently.
+    
+        """
+        try:
+            return await self.recv_messages.get(decode)
+        except EOFError:
+            pass
+            # fallthrough
+        except ConcurrencyError:
+            raise ConcurrencyError(
+                "cannot call recv while another coroutine "
+                "is already running recv or recv_streaming"
+            ) from None
+        except UnicodeDecodeError as exc:
+            async with self.send_context():
+                self.protocol.fail(
+                    CloseCode.INVALID_DATA,
+                    f"{exc.reason} at position {exc.start}",
+                )
+            # fallthrough
+    
+        # Wait for the protocol state to be CLOSED before accessing close_exc.
+        await asyncio.shield(self.connection_lost_waiter)
+>       raise self.protocol.close_exc from self.recv_exc
+E       websockets.exceptions.ConnectionClosedError: received 1011 (internal error) keepalive ping timeout; then sent 1011 (internal error) keepalive ping timeout
+
+../venv/lib/python3.14/site-packages/websockets/asyncio/connection.py:322: ConnectionClosedError
+----------------------------- Captured stdout call -----------------------------
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "duration_ms": 1005, "outcome": "disconnected", "total_tokens": 17}
+------------------------------ Captured log call -------------------------------
+INFO     adr:cloud_log.py:46 App Check
+INFO     adr:cloud_log.py:46 Live session ended
+=============================== warnings summary ===============================
+../venv/lib/python3.14/site-packages/google/genai/types.py:42
+  /tmp/adr-k3-test/venv/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_live_keepalive.py::test_slow_checkpoint_read_does_not_starve_the_relay_keepalive
+========================= 1 failed, 1 warning in 4.53s =========================

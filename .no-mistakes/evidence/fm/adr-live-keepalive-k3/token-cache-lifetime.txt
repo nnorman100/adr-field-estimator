@@ -1,0 +1,7 @@
+1. fresh 60-min token                                          -> synthetic-token-1  gcloud calls=1 took 1.0s cache-until=+2700s
+2. second call within window (no gcloud)                       -> synthetic-token-1  gcloud calls=1 took 0.0s cache-until=+2700s
+3. after 45 min: gcloud hands back a token with 6 min left     -> synthetic-token-2  gcloud calls=2 took 1.0s cache-until=+240s
+4. past expiry-2min: near-expiry token 3 rejected, token 4 kept -> synthetic-token-4  gcloud calls=4 took 2.0s cache-until=+2700s
+5. tokeninfo answers 500: token used, cached briefly           -> synthetic-token-5  gcloud calls=5 took 1.0s cache-until=+120s
+6. tokeninfo unreachable: token still used, no crash           -> synthetic-token-6  gcloud calls=6 took 1.0s cache-until=+120s
+token ever in tokeninfo URL: False

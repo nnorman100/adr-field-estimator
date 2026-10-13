@@ -1,0 +1,6 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+[technician] ready
+[driver] fake Vertex aborting upstream TCP without a close frame
+[technician] received {'type': 'error', 'message': 'Live coaching disconnected. Your draft is preserved; reconnect to continue.'}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-dddddddddddddddddddddddddddddddd", "duration_ms": 63, "outcome": "APIError", "provider_code": 1006}
+[technician] socket ended: ConnectionClosedOK

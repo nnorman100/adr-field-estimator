@@ -1,0 +1,6 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+[driver] checkpoint lookup blocking for 50 s (simulated WSL2 gcloud)
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "duration_ms": 40006, "outcome": "disconnected", "total_tokens": 17}
+[driver] provider connections: 1 (2 = first session + resumed session)
+[driver] elapsed 50.6 s; result FAIL: websockets.exceptions.ConnectionClosedError: received 1011 (internal error) keepalive ping timeout; then sent 1011 (internal error) keepalive ping timeout
+exit 1
