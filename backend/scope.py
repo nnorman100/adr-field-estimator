@@ -164,11 +164,11 @@ def scope_prompt(data):
         'do not add flood-cut heights and linear feet, sum separate materials, or classify flooring/materials into a pricing bucket without an explicit technician classification. '
         'Until dry planks, perimeter flood cuts and overlapping removal segments are not confirmed total demolition SF; ask for a measured non-overlapping total and classification. '
         'Administrative monetary loss categories/budget bands are not water category 1/2/3. Photo filenames, upload dates, readings and general health statements cannot set scope values. '
-        'Dry moisture or suspected microbial growth alone cannot set category, and reported work already done cannot set work completion. '
+        'Dry moisture or suspected microbial growth alone cannot set category. '
         'Omit unstated fields; never fill missing values with defaults, zero, or false. Preserve scope not explicitly corrected. '
         'Equipment counts are job totals; do not convert per-room counts into totals or drying recommendations into confirmed quantities. '
         'Map fans to air_movers and dehus to dehumidifiers only when explicitly stated. Do not output money, rates, moisture readings, '
-        'notes, transcript changes, work completion, signatures, or scope confirmation. Never propose replacing or deleting the rooms list. '
+        'notes, transcript changes, signatures, or scope confirmation. Never propose replacing or deleting the rooms list. '
         'Ask concise questions about ambiguous quantities or room identity.\n'
         + json.dumps(
             {
