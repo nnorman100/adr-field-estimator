@@ -39,6 +39,7 @@ import firebase_admin
 from firebase_admin import app_check, auth as firebase_auth
 from google import genai
 from google.genai import types
+from websockets.exceptions import ConnectionClosed
 
 try:
     from .contracts import (
@@ -929,6 +930,7 @@ async def live_walkthrough(socket: WebSocket):
     outcome = 'closed'
     status = None
     total_tokens = None
+    provider_code = None
     try:
         packet = await asyncio.wait_for(socket.receive_text(), 10)
         if len(packet) > 16384:
@@ -1239,6 +1241,12 @@ async def live_walkthrough(socket: WebSocket):
             retain = False
         outcome = type(error).__name__
         status = getattr(error, 'status_code', None)
+        # Vertex's close code (1006 when its socket dropped without one, as the SDK reports it)
+        # or the SDK's API error code, so an upstream drop is attributable from the log.
+        if isinstance(error, ConnectionClosed):
+            provider_code = error.rcvd.code if error.rcvd else 1006
+        else:
+            provider_code = getattr(error, 'code', None)
         message = {
             'type': 'error',
             'message': error.detail
@@ -1285,6 +1293,7 @@ async def live_walkthrough(socket: WebSocket):
                     outcome=outcome,
                     status=status,
                     total_tokens=total_tokens,
+                    provider_code=provider_code,
                 )
                 with suppress(Exception):
                     await socket.close()
