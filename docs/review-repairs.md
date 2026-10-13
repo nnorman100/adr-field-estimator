@@ -15,7 +15,7 @@ The October 6, 2026 [original review](https://chatgpt.com/space/page_4a5293fc2ec
 | 5 | Authorization discarded / false dispatch | Durable immutable four-document snapshot, private signature/evidence, awaited receipt; identical concurrent retry receipts. No dispatch/email claim. | Verified |
 | 6 | Missing AI fabricates work | Unavailable/invalid AI returns error; no unrelated fallback, no invented completion. | Verified |
 | 7 | Wrong prices / missing baseline | Server Decimal rate book; $1,180.20 exactly once, $567 equipment example, category/cabinet/labor rates; model prices excluded. | Verified |
-| 8 | Invalid four-document output / missing clauses | Strict typed contracts, required audit inputs and deterministic exact age/granite/heater/crawl wording. AI narrative separate from observations/work. | Verified |
+| 8 | Invalid four-document output / missing clauses | Strict typed contracts, required audit inputs and deterministic exact age and standard estimate clause wording (granite/heater/crawl clauses since retired; see `backend/claims.py`). AI narrative separate from observations/work. | Verified |
 | 9 | Public APIs unbounded | Firebase approved verified-email authentication, owner checks, content/metadata limits, transaction quotas and one Live lease. | Verified |
 | 10 | Shared Firebase / no database | Hosting, Auth, Firestore, bucket, Cloud Run, identities and Vertex calls belong to `alert-disaster-field-2026`. Peer resources unchanged. | Verified |
 | 11 | Incomplete handoff / pending evidence | Server reads saved revision with room scope, equipment, labor, transcripts, original images, timestamps and OCR status; waits up to 30s and discloses unresolved evidence. | Verified |

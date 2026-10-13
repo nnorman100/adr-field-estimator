@@ -3,6 +3,7 @@
   const emptyData = () => ({
     address: '',
     year_built: null,
+    // Retired flags the server still accepts and returns for older drafts.
     has_crawl_space: false,
     granite_removal: false,
     water_heater_loss: false,
@@ -64,9 +65,6 @@
   const scopeJobLabels = {
     address: 'Property address',
     year_built: 'Year built',
-    has_crawl_space: 'Crawl space exists',
-    granite_removal: 'Cabinet removal under granite',
-    water_heater_loss: 'Garage water-heater loss',
     air_movers: 'Air movers',
     dehumidifiers: 'LGR dehumidifiers',
     drying_days: 'Drying days',

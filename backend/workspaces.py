@@ -21,11 +21,9 @@ from typing import Annotated, Literal
 try:
     from .contracts import StrictModel
     from .inspection_store import Conflict, now, reserve_slot
-    from .claims import HEATER
 except ImportError:
     from contracts import StrictModel
     from inspection_store import Conflict, now, reserve_slot
-    from claims import HEATER
 
 ADR_ID = 'adr'
 ROLES = {'owner', 'estimator', 'office'}
@@ -55,7 +53,6 @@ ADR_PROFILE = dict(
     license='950983',
     signoff='Matthew Myers',
     logo_data_url='',
-    water_heater_notice=HEATER,
 )
 
 INVITATION_DAILY_LIMIT = 50
@@ -90,6 +87,7 @@ class CompanyProfile(StrictModel):
     license: str = Field(default='', max_length=80)
     signoff: str = Field(default='', max_length=150)
     logo_data_url: str = Field(default='', max_length=1400000)
+    # Retired; accepted so older profiles still save, but no longer stored.
     water_heater_notice: str = Field(default='', max_length=1500)
 
 
@@ -261,7 +259,6 @@ class WorkspaceStore:
             'license': '',
             'signoff': '',
             'logo_data_url': '',
-            'water_heater_notice': '',
         }
         if not profile['name']:
             raise ValueError('Enter the company name.')
@@ -305,14 +302,12 @@ class WorkspaceStore:
             if isinstance(req, StatusUpdate):
                 company['status'] = req.status
             else:
-                profile = req.profile.model_dump()
+                profile = req.profile.model_dump(exclude={'water_heater_notice'})
                 profile['name'] = profile['name'].strip()
                 if not profile['name']:
                     raise ValueError('Enter a company name.')
                 if profile['email']:
                     profile['email'] = email_address(profile['email'])
-                if company_id == ADR_ID:
-                    profile['water_heater_notice'] = HEATER
                 profile['logo_data_url'] = clean_logo(profile['logo_data_url'])
                 company['profile'] = profile
             company.update(version=company['version'] + 1, updated_at=now())
@@ -714,8 +709,10 @@ class WorkspaceStore:
     def snapshot(self, uid):
         actor = self.company_actor(uid)
         company = actor['company']
+        # Older profiles may still store the retired water-heater notice.
+        profile = {k: v for k, v in company['profile'].items() if k != 'water_heater_notice'}
         return {
-            **company['profile'],
+            **profile,
             'company_id': company['company_id'],
             'version': company['version'],
         }

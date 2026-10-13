@@ -52,7 +52,7 @@ The additive interfaces are /api/access; /api/admin/companies and company status
 
 ## Company documents and offline drafts
 
-Company profiles provide name (up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address, because invitation emails include it), address/contact, CSLB license, sign-off and optional validated PNG/JPEG logo. This release is California-only and uses the shared existing residential workbook rates/formulas/internal scope codes. Pricing is server-owned. ADR notices remain exact; non-ADR water-heater jobs require the owner's own coordination notice. Missing company identity or coordination setup blocks signing and is shown in review.
+Company profiles provide name (up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address, because invitation emails include it), address/contact, CSLB license, sign-off and optional validated PNG/JPEG logo. This release is California-only and uses the shared existing residential workbook rates/formulas/internal scope codes. Pricing is server-owned. ADR notices remain exact; standard clauses that name the company use the company's own name. Missing company identity blocks signing and is shown in review.
 
 New audits store company_identity and its profile version. Profile changes invalidate unsigned signability until regeneration. Signed documents retain the saved identity; old signed records use historical ADR fallback. Company-supplied labels are untrusted JSON data in model context and text nodes in the browser.
 

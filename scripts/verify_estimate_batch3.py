@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend.contracts import InspectionData, AIResult, OcrResult
-from backend.claims import price_scope, make_documents, GRANITE
+from backend.claims import price_scope, make_documents
 from backend.main import generate, get_ai_client, AUDIT_MODEL, OCR_MODEL, PROJECT_ID
 from backend.prompts import audit_prompt, OCR_INSTRUCTIONS
 from backend.scope import (
@@ -31,26 +31,6 @@ async def scope_case(label, words, expected, questions=False):
     assert actual == expected, (label, result)
     if questions:
         assert result.questions, (label, 'Clarification missing')
-    if actual.get((None, 'granite_removal')):
-        reviewed = InspectionData(
-            address='Synthetic property',
-            year_built=2020,
-            granite_removal=True,
-            rooms=[{'name': 'Kitchen', 'category': 2, 'finished_sf': 28}],
-            scope_confirmed=True,
-        )
-        docs = make_documents(
-            reviewed,
-            [],
-            AIResult(
-                summary='Proposed cabinet removal beneath retained granite.',
-                suggestions=[],
-                unpriced_work=[
-                    'Kitchen: cabinet removal and countertop support need explicit pricing.'
-                ],
-            ),
-        )
-        assert GRANITE in docs['adr_estimate']['disclaimers'] and not docs['signable']
     print('PASS:', label, flush=True)
 
 
@@ -183,17 +163,16 @@ async def ocr_case():
 async def check():
     cases = [
         scope_case(
-            'cabinet removal under retained/propped granite sets notice flag',
+            'cabinet removal under retained/propped granite sets only measured room values',
             'Kitchen, water category 2. I measured 28 square feet of finished drywall demolition. '
             'Remove the lower cabinets beneath the granite countertop. Prop and preserve the granite while the cabinets are removed.',
             {
                 ('Kitchen', 'category'): 2,
                 ('Kitchen', 'finished_sf'): 28,
-                (None, 'granite_removal'): True,
             },
         ),
         scope_case(
-            'tile countertop presence does not set the granite flag',
+            'tile countertop and unconfirmed measurements set no form values',
             'Kitchen lower cabinets are to be removed. The countertop is tile, not granite, and the tile backsplash may break. '
             'No water category or demolition square footage has been confirmed.',
             {},

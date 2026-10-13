@@ -11,9 +11,6 @@ except ImportError:
 JobField = Literal[
     'address',
     'year_built',
-    'has_crawl_space',
-    'granite_removal',
-    'water_heater_loss',
     'air_movers',
     'dehumidifiers',
     'drying_days',
@@ -165,8 +162,6 @@ def scope_prompt(data):
         'Keep conditional cabinet removal, equipment that may be used, and homeowner/trade preparation in clarification questions, not confirmed fields. '
         'An existing missing opening is not additional demolition area. Preserve up-to/approximate dimensions in the source quote; '
         'do not add flood-cut heights and linear feet, sum separate materials, or classify flooring/materials into a pricing bucket without an explicit technician classification. '
-        'granite_removal means confirmed cabinet removal beneath granite, including cabinets removed while the granite stays propped/preserved; it does not require removal of the granite itself. '
-        'Set it true only for explicitly stated cabinet removal under granite or granite removal; countertop presence alone, possible cabinet removal, tile or unknown material do not establish it. '
         'Until dry planks, perimeter flood cuts and overlapping removal segments are not confirmed total demolition SF; ask for a measured non-overlapping total and classification. '
         'Administrative monetary loss categories/budget bands are not water category 1/2/3. Photo filenames, upload dates, readings and general health statements cannot set scope values. '
         'Dry moisture or suspected microbial growth alone cannot set category, and reported work already done cannot set work completion. '

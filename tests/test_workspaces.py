@@ -458,11 +458,14 @@ def test_other_company_has_no_adr_identity_or_trade_promise(store):
     )
     assert 'Alert Disaster' not in documents['iicrc_defense_letter']
     assert 'Matthew Myers' not in documents['iicrc_defense_letter']
-    assert (
-        not documents['signable']
-        and 'Water-heater coordination notice' in documents['company_setup_missing']
+    assert documents['signable'] and not documents['company_setup_missing']
+    proposal = documents['adr_estimate']
+    assert 'Alert Disaster' not in str(proposal) and 'Can Do Crew' not in str(proposal)
+    assert f'will NOT be the responsibility of {identity["name"]}.' in proposal['disclaimers'][-3]
+    assert any(
+        text.startswith(f'Per IICRC and EPA protocols, {identity["name"]} technicians')
+        for text in proposal['recommendations']
     )
-    assert not any('Can Do Crew' in notice for notice in documents['adr_estimate']['disclaimers'])
 
 
 def test_migration_preview_idempotency_and_signed_payload_unchanged():
@@ -969,6 +972,16 @@ def test_company_names_reject_links_markup_and_long_text(api, name):
     )
     assert response.status_code == 422 and 'Company name' in response.text
     assert store.db.records['_companies/adr']['profile']['name'] == 'Alert Disaster Restoration'
+
+
+def test_older_profile_with_retired_heater_notice_still_saves(api):
+    client, current, store = api
+    profile = {**ADR_PROFILE, 'water_heater_notice': 'Retired coordination wording.'}
+    response = client.put('/api/companies/adr', json={'expected_version': 1, 'profile': profile})
+    assert response.status_code == 200, response.text
+    assert 'water_heater_notice' not in store.db.records['_companies/adr']['profile']
+    store.db.records['_companies/adr']['profile']['water_heater_notice'] = 'Retired wording.'
+    assert 'water_heater_notice' not in store.workspaces.snapshot('owner')
 
 
 def test_invitation_subject_excludes_owner_text(mail):

@@ -151,7 +151,6 @@ async def check():
             ),
             {},
             {
-                'granite_removal',
                 'custom_cabinetry',
                 'category',
                 'air_movers',
