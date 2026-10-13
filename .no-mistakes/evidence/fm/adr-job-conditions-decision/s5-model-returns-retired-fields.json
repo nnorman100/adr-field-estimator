@@ -1,0 +1,6 @@
+{
+  "status": 502,
+  "body": {
+    "detail": "AI returned an unavailable or invalid result. Retry; no document or reading was verified."
+  }
+}

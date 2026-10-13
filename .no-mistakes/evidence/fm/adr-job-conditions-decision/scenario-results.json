@@ -1,0 +1,180 @@
+{
+  "S1 form checkboxes removed": [
+    {
+      "ok": true,
+      "detail": "Crawl space exists"
+    },
+    {
+      "ok": true,
+      "detail": "Cabinet removal under granite"
+    },
+    {
+      "ok": true,
+      "detail": "Garage water-heater loss"
+    },
+    {
+      "ok": true,
+      "detail": "This scope has been performed"
+    }
+  ],
+  "S2 pre-1978 standard clauses": [
+    {
+      "ok": true,
+      "detail": "pretest"
+    },
+    {
+      "ok": true,
+      "detail": "testing"
+    },
+    {
+      "ok": true,
+      "detail": "additional"
+    },
+    {
+      "ok": true,
+      "detail": "exclusionsTail"
+    },
+    {
+      "ok": true,
+      "detail": "reprice"
+    },
+    {
+      "ok": true,
+      "detail": "validity"
+    },
+    {
+      "ok": true,
+      "detail": "protection ADR"
+    },
+    {
+      "ok": true,
+      "detail": "exclusions ADR"
+    },
+    {
+      "ok": true,
+      "detail": "age finding"
+    },
+    {
+      "ok": true,
+      "detail": "no post1978 sentence"
+    },
+    {
+      "ok": true,
+      "detail": "proposed wording"
+    }
+  ],
+  "S3 post-1978 sentence": [
+    {
+      "ok": true,
+      "detail": "post1978"
+    },
+    {
+      "ok": true,
+      "detail": "old sentence gone"
+    },
+    {
+      "ok": true,
+      "detail": "no pre-1978 testing text"
+    },
+    {
+      "ok": true,
+      "detail": "additional"
+    },
+    {
+      "ok": true,
+      "detail": "exclusionsTail"
+    },
+    {
+      "ok": true,
+      "detail": "reprice"
+    },
+    {
+      "ok": true,
+      "detail": "validity"
+    }
+  ],
+  "S4 retired flags ignored": [
+    {
+      "ok": true,
+      "detail": "PUT old flags accepted: 200"
+    },
+    {
+      "ok": true,
+      "detail": "server keeps legacy value for old drafts"
+    },
+    {
+      "ok": true,
+      "detail": "absent /crawl space/i"
+    },
+    {
+      "ok": true,
+      "detail": "absent /granite/i"
+    },
+    {
+      "ok": true,
+      "detail": "absent /water heater/i"
+    },
+    {
+      "ok": true,
+      "detail": "absent /Can Do Crew/i"
+    },
+    {
+      "ok": true,
+      "detail": "absent /work was performed/i"
+    },
+    {
+      "ok": true,
+      "detail": "absent /Technician reports this work/i"
+    },
+    {
+      "ok": true,
+      "detail": "proposed wording despite work_performed"
+    },
+    {
+      "ok": true,
+      "detail": "validity"
+    }
+  ],
+  "S5 scope suggestions": [
+    {
+      "ok": true,
+      "detail": "schema enum excludes has_crawl_space"
+    },
+    {
+      "ok": true,
+      "detail": "schema enum excludes granite_removal"
+    },
+    {
+      "ok": true,
+      "detail": "schema enum excludes water_heater_loss"
+    },
+    {
+      "ok": true,
+      "detail": "schema enum excludes work_performed"
+    },
+    {
+      "ok": true,
+      "detail": "prompt has no retired field instructions"
+    },
+    {
+      "ok": true,
+      "detail": "normal suggestions still work: 200"
+    },
+    {
+      "ok": true,
+      "detail": "model-returned retired fields rejected: 502 {\"detail\":\"AI returned an unavailable or invalid result. Retry; no document or reading was verified.\"}"
+    },
+    {
+      "ok": true,
+      "detail": "panel lacks Crawl space"
+    },
+    {
+      "ok": true,
+      "detail": "panel lacks granite"
+    },
+    {
+      "ok": true,
+      "detail": "panel lacks water-heater"
+    }
+  ]
+}

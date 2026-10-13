@@ -1,0 +1,58 @@
+[
+  {
+    "ok": true,
+    "d": "profile form has no water-heater field"
+  },
+  {
+    "ok": true,
+    "d": "no water_heater_notice input"
+  },
+  {
+    "ok": true,
+    "d": "profile saved"
+  },
+  {
+    "ok": true,
+    "d": "workspace form lacks Crawl space exists"
+  },
+  {
+    "ok": true,
+    "d": "workspace form lacks Cabinet removal under granite"
+  },
+  {
+    "ok": true,
+    "d": "workspace form lacks Garage water-heater loss"
+  },
+  {
+    "ok": true,
+    "d": "workspace form lacks This scope has been performed"
+  },
+  {
+    "ok": true,
+    "d": "protection names Other Restoration"
+  },
+  {
+    "ok": true,
+    "d": "exclusions name Other Restoration"
+  },
+  {
+    "ok": true,
+    "d": "ADR name not in other company clauses"
+  },
+  {
+    "ok": true,
+    "d": "stored water-heater notice not printed"
+  },
+  {
+    "ok": true,
+    "d": "no retired wording"
+  },
+  {
+    "ok": true,
+    "d": "pre-1978 testing paragraph"
+  },
+  {
+    "ok": true,
+    "d": "no page errors "
+  }
+]

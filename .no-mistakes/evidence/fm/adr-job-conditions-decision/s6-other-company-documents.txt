@@ -1,0 +1,45 @@
+=== doc-proposal ===
+Other office · (661) 426-2151 · CSLB #123456Other Restoration · Official proposal200 Other Co Rd, Fresno, CA10-13-2026Estimator: Other Estimator · CSLB #123456Customer estimate range: $1,249.70–$1,284.45Itemized charges at base rates: $1,249.70FindingsDue to property age (1950), California State Law requires third-party lead and asbestos testing prior to destructive demolition.Proposed scopeTesting is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly.Per IICRC and EPA protocols, Other Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.Room 1: category 1 finished/drywall/trim demolitionIf technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.(this does not include the pretest for lead/asbestos)NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Other Restoration. This estimate does not include testing of any kind.If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.Estimate is valid for 30 days from date of inspection.AI summary · technician review required<img src=x onerror="window.reviewInjected=true"> Confirmed scope summary.AI suggestions · outside the authorized scopeDocument drying progress.
+      
+         I reviewed all four documents, the separate totals, and the attached evidence with the homeowner or representative.
+        
+        Homeowner / representative signature
+        
+        Clear signatureAuthorize & sign
+      Retry loading saved evidence
+
+=== doc-claim ===
+Itemized carrier claimADR internal scope codes. JSON export does not guarantee Xactimate import compatibility.ADR-TRIPEmergency call / trip charge1 EA × $133.95Waste: 0%Total: $133.95ADR-MONEquipment monitoring13.25 HR × $47.46Waste: 0%Total: $628.85ADR-HAULHaul debris & disposal1 load × $159.53Waste: 0%Total: $159.53ADR-SCRUBAir scrubber daily rental1 day × $74.75Waste: 0%Total: $74.75ADR-HEPAHEPA replacement filter1 EA × $183.12Waste: 0%Total: $183.12ADR-DEMORoom 1: category 1 finished/drywall/trim demolition25 SF × $2.78Waste: 0%Total: $69.50Code / descriptionQuantityRateWasteTotalADR-TRIP · Emergency call / trip charge1 EA$133.950%$133.95ADR-MON · Equipment monitoring13.25 HR$47.460%$628.85ADR-HAUL · Haul debris & disposal1 load$159.530%$159.53ADR-SCRUB · Air scrubber daily rental1 day$74.750%$74.75ADR-HEPA · HEPA replacement filter1 EA$183.120%$183.12ADR-DEMO · Room 1: category 1 finished/drywall/trim demolition25 SF$2.780%$69.50Itemized claim total: $1,249.70
+
+=== doc-defense ===
+IICRC scope defense letterTO: Insurance Claims Examiner / Adjuster
+
+RE: Remediation scope for 200 Other Co Rd, Fresno, CA
+
+Other Restoration • Other office • CSLB #123456
+
+This scope describes proposed work; completion has not been recorded.
+
+The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.
+
+Due to property age (1950), California State Law requires third-party lead and asbestos testing prior to destructive demolition.
+
+Scope:
+Testing is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly.
+Per IICRC and EPA protocols, Other Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.
+Room 1: category 1 finished/drywall/trim demolition
+If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.
+
+(this does not include the pretest for lead/asbestos)
+NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Other Restoration. This estimate does not include testing of any kind.
+If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.
+Estimate is valid for 30 days from date of inspection.
+
+Itemized charges at base rates: $1,249.70. Customer estimate range: $1,249.70 to $1,284.45. The range applies the estimating sheet labor/material allowance to the priced scope.
+
+Sincerely,
+Other Estimator
+Other Restoration
+
+=== doc-photos ===
+Photo moisture audit logNo photographs were attached to this inspection.
