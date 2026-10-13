@@ -1,0 +1,8 @@
+### POST /api/inspections (confirmed synthetic scope)
+HTTP 200
+### POST /api/audit (Generate documents)
+{"inspection_id":"ADR-INS-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","schema_version":3,"revision":1,"data":{"address":"Synthetic test property","year_built":1960,"has_crawl_space":false,"granite_removal":fals ..."}
+HTTP 200
+
+### Outbound Vertex request(s)
+gemini-3.8-flash:generateContent | thinkingConfig present: False | schema keys = ['summary', 'suggestions', 'unpriced_work']

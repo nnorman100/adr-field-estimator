@@ -1,0 +1,8 @@
+### POST /api/inspections (save synthetic draft)
+{"inspection_id":"ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","schema_version":3,"revision":1,"data":{"address":"Synthetic test property","year_built":2000,"has_crawl_space":false,"granite_removal":false,"water_heater_loss":false,"work_performed":false,"rooms":[{"name":"Bathroom","category":1,"unfinis
+### POST /api/inspections/ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/scope-suggestions (Fill scope from walkthrough)
+{"inspection_id":"ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","revision":1,"changes":[{"field":"finished_sf","room":"Bathroom","value":80,"source_quote":"80 square feet of drywall"}],"questions":[]}
+HTTP 200  elapsed 0.078184s
+### Outbound Vertex request(s) recorded by the local endpoint
+/v1beta1/projects/alert-disaster-field-2026/locations/global/publishers/google/models/gemini-3.8-flash:generateContent
+  thinkingConfig = {"thinking_level": "LOW"} | schema keys = ['changes', 'questions']

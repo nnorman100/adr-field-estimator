@@ -1,0 +1,3 @@
+### Provider stalls 60 s; POST scope-suggestions
+{"detail":"The request timed out. Your draft is preserved; retry. No document or reading was verified."}
+HTTP 504  elapsed 55.008034s
