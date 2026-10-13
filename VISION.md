@@ -8,7 +8,7 @@ It owns exactly one thing: the path from one water or mold loss inspection to a 
 ## Prices come from the company's sheet
 
 Each company prices from its own estimating workbook; ADR's is the `Residential Estimate Tool` sheet, traced cell by cell in `docs/pricing-source.md`.
-A subscribing company uploads its own workbook, and the server turns it into that company's price book with the same cell-traced formulas; until it does, it prices from ADR's workbook.
+A subscribing company uploads its own workbook, and the server turns it into that company's price book with the same cell-traced formulas; until it does, it prices from ADR's workbook (not built yet; today there is no workbook upload and every company prices from ADR's `Residential Estimate Tool` sheet, per `docs/pricing-source.md`).
 When a workbook and convention disagree, the company owner decides and the code mirrors the sheet, as ADR did with the $47.46 after-hours labor rate.
 The server computes every workbook-priced line in Decimal; a model never overrides a workbook total or removes required wording.
 Each company sets its state, and the server inserts that state's mandatory notices, which the subscribing company maintains; ADR's California notices stay exact.
@@ -25,16 +25,16 @@ The app never claims more than it can show: color emulation is not thermal evide
 ## A signature is a record
 
 Audits and signatures bind to a saved revision and proposal hash, and any later edit to the scope or prices invalidates both.
-A homeowner may sign on site or from their own phone through a link, under the same revision and hash binding.
+A homeowner may sign on site or from their own phone through a link, under the same revision and hash binding (the link is not built yet; today the homeowner signs only on the technician's device).
 Success is shown only after a durable server receipt.
 After signing, office staff may correct address, name and contact fields without re-signing, and each correction is recorded in an audit entry naming who changed what.
 Everything else in a signed agreement, its documents, its evidence and the walkthrough recording never changes; later coordination lives in separate sidecars.
 
 ## The agreement reaches everyone it involves
 
-Through the signing link, the homeowner can also upload photos and video of the loss, which join the photo log as evidence.
-After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter (the ESX file is not built yet; today the app exports ADR-scope-code JSON and makes no ESX compatibility claim, per `AGENTS.md`).
-Office staff schedule the drying setup and monitoring visits on a crew calendar, technicians get reminders, and readings are logged per visit against the job.
+Through the signing link, the homeowner can also upload photos and video of the loss, which join the photo log as evidence (not built yet; today there is no homeowner-facing link or upload, and the technician adds all photos).
+After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter (not built yet; today the app sends no email or text and has no delivery step after signing, as `README.md` says, and the ESX file does not exist: it exports ADR-scope-code JSON and makes no ESX compatibility claim, per `AGENTS.md`).
+Office staff schedule the drying setup and monitoring visits on a crew calendar, technicians get reminders, and readings are logged per visit against the job (not built yet; today there is no crew calendar, reminder or per-visit reading log, and saving does not dispatch technicians, per `README.md`).
 
 ## Field work is never silently lost
 
@@ -48,7 +48,7 @@ Sign-out, app updates, reloads and reconnects stop before discarding unsynced wo
 Everything lives in the dedicated `alert-disaster-field-2026` project; peer sites and shared databases are never touched, and every deploy is target-scoped.
 Browsers never reach the database or the model directly; the backend checks identity, company membership and job access on every call.
 Each company sees only its own jobs, recordings and uploaded prices.
-Owners may see how their prices compare with anonymized aggregates drawn from five or more companies, never another company's name or jobs.
+Owners may see how their prices compare with anonymized aggregates drawn from five or more companies, never another company's name or jobs (not built yet; today the app computes no cross-company aggregates or price comparisons).
 ADR's superadmin, or a support role ADR assigns, may open a subscriber's jobs read-only to diagnose a problem; every access is logged and visible to that company's owner (not built yet; today superadmin has no customer-job access, per `docs/company-workspaces.md`).
 The walkthrough is recorded from the start of Live, the signed proposal carries the recording notice, and the audio and frames are kept in the private evidence bucket, bound to the signed agreement.
 Logs carry allowlisted fields only, never prompts, transcripts, emails, tokens or user paths.
@@ -61,7 +61,7 @@ Every fix lands with a test that fails without it.
 Mock results, real-service checks and physical device observations are recorded separately, and a device behavior stays open until it is observed on a device.
 Every merge that passes CI is deployed automatically: the backend is staged and verified, then promoted, then only `hosting:alert-disaster` is deployed, with automatic rollback on a failed health check (not built yet; today every release is staged, checked and promoted only on the owner's explicit approval, per `RELEASES.md`).
 Firestore rules, indexes, secret bindings and IAM grants are declared in the repo and applied by the same pipeline, never by hand in the console.
-Each release carries its source commit, and `RELEASES.md` is the one record of what is serving.
+Each release carries its source commit, and `RELEASES.md` is the one record of what is serving (partly built; today releases made by the stamping scripts carry their commit, but several older `RELEASES.md` rows show `unknown`, per `docs/firebase-isolation.md`).
 
 ## Scope
 
