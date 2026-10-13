@@ -1,5 +1,18 @@
 {
-  "name":"alert-disaster-field-estimator","private":true,
-  "scripts":{"test":"node tests/test_frontend.js && node tests/test_lifecycle.js && node tests/test_app_check.js && node tests/test_manual_chrome.js && node --test tests/test_live_browser_targets.js","test:browser":"playwright test"},
-  "devDependencies":{"@playwright/test":"1.64.0"}
+  "name": "alert-disaster-field-estimator",
+  "private": true,
+  "scripts": {
+    "test": "node tests/test_frontend.js && node tests/test_lifecycle.js && node tests/test_app_check.js && node tests/test_manual_chrome.js && node --test tests/test_live_browser_targets.js",
+    "test:browser": "playwright test",
+    "format": "prettier --write \"**/*.{js,css}\"",
+    "format:check": "prettier --check \"**/*.{js,css}\"",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.0",
+    "eslint": "10.12.0",
+    "globals": "17.13.0",
+    "prettier": "3.9.10"
+  }
 }

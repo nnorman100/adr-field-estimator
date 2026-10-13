@@ -8,6 +8,7 @@ before every Hosting deploy so an unstamped shell, which would keep serving stal
 shell stamped with a commit other than HEAD or with Hosting changes not in that commit, is never
 released; a <commit>-dirty stamp declares such changes and is accepted as is.
 """
+
 import argparse
 import re
 import subprocess
@@ -45,7 +46,9 @@ def stamp(text, rules, marker):
     for pattern, count, kind in rules:
         text, replaced = pattern.subn(values[kind], text)
         if replaced != count:
-            raise RuntimeError(f'Expected {count} {pattern.pattern!r} markers, found {replaced}; update TARGETS.')
+            raise RuntimeError(
+                f'Expected {count} {pattern.pattern!r} markers, found {replaced}; update TARGETS.'
+            )
     return text
 
 
@@ -72,7 +75,9 @@ def check(root=ROOT, git=subprocess.run):
         found[name] = markers(texts[name], rules)
     marker = found['public/sw.js'][0]
     if not re.fullmatch(COMMIT_PATTERN, marker):
-        raise RuntimeError(f'The Hosting shell is not stamped (marker {marker!r}). Run python scripts/stamp_hosting.py first.')
+        raise RuntimeError(
+            f'The Hosting shell is not stamped (marker {marker!r}). Run python scripts/stamp_hosting.py first.'
+        )
     for name, values in found.items():
         if any(value not in (marker, display(marker)) for value in values):
             raise RuntimeError(f'{name} carries a marker other than {marker}; restamp the shell.')
@@ -82,24 +87,47 @@ def check(root=ROOT, git=subprocess.run):
         return marker
     current = source_commit([*DEPLOYED, *(':(exclude)' + name for name in TARGETS)], True, git)
     if current.removesuffix('-dirty') != marker:
-        raise RuntimeError(f'The shell is stamped {marker} but HEAD is {current.removesuffix("-dirty")}; restamp the shell.')
+        raise RuntimeError(
+            f'The shell is stamped {marker} but HEAD is {current.removesuffix("-dirty")}; restamp the shell.'
+        )
+
     def blob(*argv, **kwargs):
-        return git(['git', *argv], cwd=ROOT, capture_output=True, check=True, **kwargs).stdout.strip()
-    changed = [name for name, rules in TARGETS.items()
-               if blob('hash-object', '--path=' + name, '--stdin', input=stamp(texts[name], rules, PLACEHOLDER).encode('utf8'))
-               != blob('rev-parse', f'{marker}:{name}')]
+        return git(
+            ['git', *argv], cwd=ROOT, capture_output=True, check=True, **kwargs
+        ).stdout.strip()
+
+    changed = [
+        name
+        for name, rules in TARGETS.items()
+        if blob(
+            'hash-object',
+            '--path=' + name,
+            '--stdin',
+            input=stamp(texts[name], rules, PLACEHOLDER).encode('utf8'),
+        )
+        != blob('rev-parse', f'{marker}:{name}')
+    ]
     if current != marker or changed:
-        raise RuntimeError(f'Hosting files changed after stamping {marker}; commit them and restamp the shell.')
+        raise RuntimeError(
+            f'Hosting files changed after stamping {marker}; commit them and restamp the shell.'
+        )
     return marker
 
 
 def main(argv=None, git=subprocess.run):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument('--reset', action='store_true', help='restore the committed placeholder marker')
-    modes.add_argument('--check', action='store_true', help='fail unless the shell is consistently stamped')
-    parser.add_argument('--allow-dirty', action='store_true',
-                        help='stamp uncommitted Hosting changes as <commit>-dirty instead of refusing')
+    modes.add_argument(
+        '--reset', action='store_true', help='restore the committed placeholder marker'
+    )
+    modes.add_argument(
+        '--check', action='store_true', help='fail unless the shell is consistently stamped'
+    )
+    parser.add_argument(
+        '--allow-dirty',
+        action='store_true',
+        help='stamp uncommitted Hosting changes as <commit>-dirty instead of refusing',
+    )
     args = parser.parse_args(argv)
     try:
         if args.check:
@@ -112,16 +140,24 @@ def main(argv=None, git=subprocess.run):
         commit = source_commit(DEPLOYED, args.allow_dirty, git)
         write(commit)
     except DirtyTree as error:
-        print(f'Refusing to stamp Hosting: {error}\nCommit first (or --reset an earlier stamp), '
-              'or pass --allow-dirty to mark the release dirty.', file=sys.stderr)
+        print(
+            f'Refusing to stamp Hosting: {error}\nCommit first (or --reset an earlier stamp), '
+            'or pass --allow-dirty to mark the release dirty.',
+            file=sys.stderr,
+        )
         return 2
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 1
-    print(f'Hosting shell stamped with {commit}. Deploy with:\n'
-          '  firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026\n'
-          'then run python scripts/stamp_hosting.py --reset and append to RELEASES.md, replacing VERSION with the '
-          'Hosting version:\n' + release_row(frontend=f'`{commit}` (Hosting version `VERSION`)', commit=commit, traffic='live'))
+    print(
+        f'Hosting shell stamped with {commit}. Deploy with:\n'
+        '  firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026\n'
+        'then run python scripts/stamp_hosting.py --reset and append to RELEASES.md, replacing VERSION with the '
+        'Hosting version:\n'
+        + release_row(
+            frontend=f'`{commit}` (Hosting version `VERSION`)', commit=commit, traffic='live'
+        )
+    )
     return 0
 
 

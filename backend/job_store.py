@@ -1,4 +1,5 @@
 """Private signed agreements and evidence in the dedicated ADR project."""
+
 import base64
 import hashlib
 import json
@@ -21,6 +22,7 @@ BUCKET = os.getenv('EVIDENCE_BUCKET', f'{PROJECT}-evidence')
 if BUCKET != f'{PROJECT}-evidence':
     raise RuntimeError('Evidence must use the dedicated ADR bucket.')
 
+
 def decode_image(data_url, *, signature=False):
     match = re.fullmatch(r'data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/=\r\n]+)', data_url or '')
     if not match or (signature and match[1] != 'png'):
@@ -42,10 +44,13 @@ def decode_image(data_url, *, signature=False):
         raise ValueError('The image is damaged or cannot be decoded.') from error
     return raw, f'image/{match[1]}', match[1]
 
+
 class JobStore:
     def __init__(self, db=None, bucket=None):
         self.db = db if db is not None else firestore.Client(project=PROJECT, database=DATABASE)
-        self.bucket = bucket if bucket is not None else storage.Client(project=PROJECT).bucket(BUCKET)
+        self.bucket = (
+            bucket if bucket is not None else storage.Client(project=PROJECT).bucket(BUCKET)
+        )
 
     def save(self, owner_uid, payload):
         body = dict(payload)
@@ -58,8 +63,8 @@ class JobStore:
             raise ValueError('Photo count does not match the attached evidence.')
         signature = decode_image(body['signature_png'], signature=True)
         decoded_photos = [decode_image(photo.get('data_url', '')) for photo in photos]
-        metadata_only = {k:v for k,v in body.items() if k not in ('signature_png','photos')}
-        metadata_only['photos'] = [{k:v for k,v in p.items() if k != 'data_url'} for p in photos]
+        metadata_only = {k: v for k, v in body.items() if k not in ('signature_png', 'photos')}
+        metadata_only['photos'] = [{k: v for k, v in p.items() if k != 'data_url'} for p in photos]
         if len(json.dumps(metadata_only, allow_nan=False).encode()) > 750_000:
             raise ValueError('The signed agreement contains too much text to save.')
         canonical = json.dumps(body, sort_keys=True, separators=(',', ':'), allow_nan=False)
@@ -73,11 +78,13 @@ class JobStore:
             return current
         # Content-addressed paths keep competing retries from replacing saved evidence.
         prefix = f'users/{owner_uid}/authorizations/{auth_id}/{digest}'
+
         def upload(name, image):
             raw, mime, extension = image
             path = f'{prefix}/{name}.{extension}'
             self.bucket.blob(path).upload_from_string(raw, content_type=mime)
             return {'path': path, 'content_type': mime, 'sha256': hashlib.sha256(raw).hexdigest()}
+
         body.pop('signature_png')
         body['signature'] = upload('signature', signature)
         evidence = []
@@ -88,10 +95,15 @@ class JobStore:
         body['photos'] = evidence
         if len(json.dumps(body, allow_nan=False).encode()) > 800_000:
             raise ValueError('The signed agreement contains too much text to save.')
-        body.update(owner_uid=owner_uid, payload_sha256=digest,
-                    created_at=datetime.now(timezone.utc).isoformat(), status='saved')
+        body.update(
+            owner_uid=owner_uid,
+            payload_sha256=digest,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            status='saved',
+        )
         # create() prevents a concurrent request from overwriting an immutable agreement.
         from google.api_core.exceptions import AlreadyExists
+
         try:
             ref.create(body)
         except AlreadyExists:
@@ -113,14 +125,16 @@ class JobStore:
 
     def _page(self, collection, owner_uid, timestamp, identifier, cursor=None):
         source = self.db.collection(collection)
-        query = source.where(filter=firestore.FieldFilter('owner_uid', '==', owner_uid)).order_by(timestamp, direction=firestore.Query.DESCENDING)
+        query = source.where(filter=firestore.FieldFilter('owner_uid', '==', owner_uid)).order_by(
+            timestamp, direction=firestore.Query.DESCENDING
+        )
         if cursor:
             snapshot = source.document(cursor).get()
             if not snapshot.exists or snapshot.to_dict().get('owner_uid') != owner_uid:
                 raise LookupError('Page not found.')
             query = query.start_after(snapshot)
         records = [s.to_dict() for s in query.limit(101).stream()]
-        return records[:100], records[99][identifier] if len(records)>100 else None
+        return records[:100], records[99][identifier] if len(records) > 100 else None
 
     def authorization_page(self, owner_uid, cursor=None):
         return self._page('authorizations', owner_uid, 'created_at', 'auth_id', cursor)
