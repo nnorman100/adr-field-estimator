@@ -62,7 +62,7 @@ The scripts under `scripts/` run on Linux, macOS and Windows and resolve tools f
 | `ADR_TEST_PYTHON` | `verify_live_browser.js` | `.venv` in the repository, then `python3` (`python` on Windows) |
 | `ADR_CHROME_PATH` | `manual_chrome.js` (used by `verify_live_browser.js`) | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
 
-When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. Review evidence (screenshots, traces, logs) is local only: keep it in the gitignored `review-artifacts/` directory, and attach archives to a GitHub Release rather than committing them.
+When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. The release helper bridges the app's Live socket with Node's built-in WebSocket client, so run it with Node 22 or newer. Review evidence (screenshots, traces, logs) is local only: keep it in the gitignored `review-artifacts/` directory, and attach archives to a GitHub Release rather than committing them.
 
 ```powershell
 python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt

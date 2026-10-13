@@ -6,10 +6,24 @@ const fs = require('node:fs'),
   readline = require('node:readline');
 const { parseArgs } = require('node:util');
 const { canonicalPath, isWithin } = require('./artifact-paths');
+const {
+  PRODUCTION_LIVE,
+  bridgeLiveSocket,
+  compareHealth,
+  createRoutingAudit,
+  liveTarget,
+} = require('./verify_routing');
 const ROOT = path.resolve(__dirname, '..'),
   BASE = 'https://alert-disaster-field-2026.web.app';
 const PRODUCTION = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app';
 const SERVICE_HOST = 'alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app';
+// Every wait is bounded so a stalled phase fails with a message and cleanup still runs.
+const ACTION_TIMEOUT_MS = 60000;
+const SIGN_IN_TIMEOUT_MS = 60000;
+const FINALIZE_TIMEOUT_MS = 90000;
+const PROBE_TIMEOUT_MS = 20000;
+const PYTHON_TIMEOUT_MS = 20 * 60000;
+const CLEANUP_TIMEOUT_MS = 5 * 60000;
 // Python resolves from ADR_TEST_PYTHON, then the repository's .venv, then PATH.
 function pythonCommand(env = process.env, platform = process.platform, root = ROOT) {
   if (env.ADR_TEST_PYTHON) return env.ADR_TEST_PYTHON;
@@ -93,6 +107,14 @@ function safe(text) {
     '[token omitted]',
   );
 }
+function firstLine(text) {
+  return String(text).split('\n')[0];
+}
+async function healthJson(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000), redirect: 'manual' });
+  if (!response.ok) throw Error('GET ' + url + ' answered HTTP ' + response.status + '.');
+  return response.json();
+}
 async function main(args = process.argv.slice(2)) {
   const options = parseOptions(args);
   const logDir = createArtifactDirectory(options.artifactDir);
@@ -105,7 +127,12 @@ async function main(args = process.argv.slice(2)) {
   console.log(
     'TARGET: ' + service + '; UI: ' + (local ? 'local' : 'production') + '; ARTIFACTS: ' + logDir,
   );
-  function python(args, input, label) {
+  const audit = createRoutingAudit({
+    base: BASE,
+    service: () => service,
+    record: (line) => fs.appendFileSync(path.join(logDir, 'routing.txt'), line + '\n'),
+  });
+  function python(args, input, label, timeoutMs = PYTHON_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
       const environment = {
         ...process.env,
@@ -117,18 +144,34 @@ async function main(args = process.argv.slice(2)) {
         [path.join(ROOT, 'scripts', 'verify_live_release.py'), ...args],
         { cwd: ROOT, env: environment, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
       );
-      let output = '';
+      let output = '',
+        timedOut = false;
       const record = (data) => {
         const clean = safe(data.toString());
         output += clean;
         process.stdout.write(clean);
       };
+      const watchdog = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, timeoutMs);
       child.stdout.on('data', record);
       child.stderr.on('data', record);
-      child.once('error', reject);
+      child.once('error', (error) => {
+        clearTimeout(watchdog);
+        reject(Error(label + ' could not start Python (' + error.message + ').'));
+      });
       child.once('exit', (code) => {
+        clearTimeout(watchdog);
         fs.writeFileSync(path.join(logDir, label + '.txt'), output);
-        code === 0 ? resolve() : reject(Error(label + ' failed; see its credential-free log.'));
+        if (timedOut)
+          reject(
+            Error(
+              label + ' timed out after ' + timeoutMs / 1000 + ' s; see its credential-free log.',
+            ),
+          );
+        else if (code === 0) resolve();
+        else reject(Error(label + ' failed; see its credential-free log.'));
       });
       child.stdin.end(input + '\n');
     });
@@ -194,12 +237,24 @@ async function main(args = process.argv.slice(2)) {
         );
       cachedToken = await signedPage.evaluate(() => auth.currentUser.getIdToken());
       console.log('HANDOFF: staff sign-in confirmed in the original Chrome page.');
-      if (existing.inspection) inspections.add(existing.inspection);
+      // The manual tab is never routed: signing in there creates an empty production draft, which this run removes with its own records.
+      if (existing.inspection) {
+        inspections.add(existing.inspection);
+        console.log(
+          'SIGN_IN_TAB: production draft ' +
+            existing.inspection +
+            ' from the manual sign-in is tracked for cleanup.',
+        );
+      } else console.log('SIGN_IN_TAB: the manual sign-in tab holds no pristine draft to track.');
       await signedPage.evaluate(async () => {
         for (const registration of await navigator.serviceWorker.getRegistrations())
           await registration.unregister();
       });
       page = await sameContextPage(browser, signedPage);
+      // The same bypass Playwright applies for serviceWorkers: 'block': a worker must never answer the automated tab's navigation, assets or API calls, or the route would not see them.
+      const session = await context.newCDPSession(page);
+      await session.send('Network.enable');
+      await session.send('Network.setBypassServiceWorker', { bypass: true });
     } else {
       browser = await chromium.launch({ headless: true, channel: 'chrome' });
       context = await browser.newContext({
@@ -208,12 +263,24 @@ async function main(args = process.argv.slice(2)) {
       });
       page = await context.newPage();
     }
+    page.setDefaultTimeout(ACTION_TIMEOUT_MS);
   } catch (error) {
     await closeManual(browser, manual);
     throw error;
   }
   try {
+    page.on('request', (request) => audit.observe(request));
+    page.on('response', (response) => audit.observeResponse(response));
+    // A callback that throws would leave the request pending and exit Node before cleanup; failures abort the request and count against the phase instead.
     await page.route(BASE + '/**', async (route) => {
+      try {
+        await serve(route);
+      } catch (error) {
+        audit.fail(route, firstLine(error.message));
+        await route.abort('failed').catch(() => {});
+      }
+    });
+    async function serve(route) {
       const request = route.request(),
         url = new URL(request.url());
       if (smoke && options.slowInit && url.pathname === '/__/firebase/init.json')
@@ -229,25 +296,10 @@ async function main(args = process.argv.slice(2)) {
           const value = request.postDataJSON();
           agreements.add(value.auth_id);
         }
-        const response = await route.fetch({
-          url: service + url.pathname + url.search,
-          timeout: 115000,
-          maxRedirects: 0,
-        });
-        if (response.status() >= 300 && response.status() < 400)
-          return route.abort('blockedbyclient');
-        if (url.pathname === '/api/session' && response.ok()) userUid = (await response.json()).uid;
-        return route.fulfill({ response });
-      }
-      // Memory-only authentication: the app's auth module becomes a wrapper that re-exports the vendored build with in-memory persistence.
-      if (
-        /^\/vendor\/firebase\/[^/]+\/firebase-auth\.js$/.test(url.pathname) &&
-        url.search !== '?vendored'
-      ) {
-        return route.fulfill({
-          contentType: 'text/javascript',
-          body: "export * from './firebase-auth.js?vendored';import {initializeAuth as initialize,inMemoryPersistence} from './firebase-auth.js?vendored';export const initializeAuth=(app,deps)=>initialize(app,{...deps,persistence:inMemoryPersistence});",
-        });
+        const { response } = await audit.proxy(route);
+        if (response && url.pathname === '/api/session' && response.ok())
+          userUid = (await response.json()).uid;
+        return;
       }
       const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       // The local shell names its own SDK release, which Hosting may not serve yet.
@@ -275,22 +327,27 @@ async function main(args = process.argv.slice(2)) {
         });
       }
       return route.continue();
-    });
-    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-    if (smoke) await expect(page.locator('#signInButton')).toBeVisible({ timeout: 30000 });
-    await page.waitForFunction(
-      () => typeof auth !== 'undefined' && auth?.persistenceManager?.persistence.type === 'NONE',
-      {},
-      { timeout: 30000 },
+    }
+    // The app only accepts the production Live URL; the bridge carries that socket to the selected backend with the app's origin.
+    await page.routeWebSocket(/\/api\/live$/, (socket) =>
+      bridgeLiveSocket(socket, liveTarget(service), BASE, { record: audit.live }),
     );
+    audit.phase('load');
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     if (smoke) {
+      await expect(page.locator('#signInButton')).toBeVisible({ timeout: 30000 });
+      await page.waitForFunction(
+        () => typeof auth !== 'undefined' && !!auth,
+        {},
+        { timeout: 30000 },
+      );
       console.log(
-        'PASS: actual Firebase SDK initializes with memory-only authentication and the dedicated sign-in UI. No jobs or IAM changes.',
+        'PASS: actual Firebase SDK initializes with the dedicated sign-in UI. No jobs or IAM changes.',
       );
       return;
     }
     console.log(
-      'VERIFYING_MANUAL_SESSION: Google sign-in was completed before automation attached.',
+      "VERIFYING_MANUAL_SESSION: the automated tab inherits the private window's Google sign-in.",
     );
     await page.waitForFunction(
       () =>
@@ -298,23 +355,30 @@ async function main(args = process.argv.slice(2)) {
         auth?.currentUser &&
         document.getElementById('address').disabled === false,
       {},
-      { timeout: 30000 },
+      { timeout: SIGN_IN_TIMEOUT_MS },
     );
     userUid = await page.evaluate(() => auth.currentUser.uid);
-    const memoryOnly = await page.evaluate(() => auth.persistenceManager.persistence.type);
-    if (memoryOnly !== 'NONE') throw Error('Auth persistence is not memory-only.');
-    console.log(
-      'PASS: ordinary Google staff sign-in, memory-only Firebase authentication; no IAM changes.',
-    );
+    await audit.settle();
+    console.log(audit.report('load'));
+    audit.assertClean('load');
+    console.log('PASS: ordinary Google staff sign-in reached the automated tab; no IAM changes.');
     if (signedPage && !signedPage.isClosed()) {
       await signedPage.close();
       signedPage = null;
     }
     async function token() {
+      let timer;
       try {
-        cachedToken = await page.evaluate(() => auth.currentUser.getIdToken(true));
+        cachedToken = await Promise.race([
+          page.evaluate(() => auth.currentUser.getIdToken(true)),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(Error('Token refresh timed out.')), PROBE_TIMEOUT_MS);
+          }),
+        ]);
       } catch (error) {
         if (!cachedToken) throw error;
+      } finally {
+        clearTimeout(timer);
       }
       return cachedToken;
     }
@@ -328,9 +392,86 @@ async function main(args = process.argv.slice(2)) {
           agreements: [...agreements],
         }),
         label + '-browser-cleanup',
+        CLEANUP_TIMEOUT_MS,
       );
       inspections.clear();
       agreements.clear();
+    }
+    // Positive proof before any workflow: the page's own /api path answers with the selected backend's commit, and its Live socket reaches that backend.
+    async function verifyTarget(label) {
+      const direct = await healthJson(service + '/api/health');
+      const routed = await page.evaluate(() =>
+        fetch('/api/health', { cache: 'no-store' }).then((response) => response.json()),
+      );
+      const production =
+        service === PRODUCTION
+          ? null
+          : await healthJson(PRODUCTION + '/api/health').catch(() => null);
+      const health = compareHealth({ routed, direct, production });
+      await audit.settle();
+      if (!health.ok) throw Error('TARGET_MISMATCH: ' + health.message + '.');
+      audit.assertClean(label);
+      const liveUrl = await page.evaluate(
+        () => (typeof state !== 'undefined' && state.session?.live_url) || null,
+      );
+      if (liveUrl !== PRODUCTION_LIVE)
+        throw Error(
+          'LIVE_URL_UNEXPECTED: the app reported ' +
+            liveUrl +
+            ' but the bridge only intercepts ' +
+            PRODUCTION_LIVE +
+            '.',
+        );
+      const probe = await page.evaluate(
+        ({ url, timeout }) =>
+          new Promise((resolve) => {
+            const socket = new WebSocket(url);
+            const timer = setTimeout(() => resolve('timeout'), timeout);
+            socket.onopen = () =>
+              socket.send(
+                JSON.stringify({
+                  type: 'authenticate',
+                  token: 'synthetic-invalid-not-a-token',
+                  inspection_id: 'ADR-INS-' + 'f'.repeat(32),
+                }),
+              );
+            socket.onmessage = (event) => {
+              clearTimeout(timer);
+              let type = 'unparsed';
+              try {
+                type = JSON.parse(event.data).type;
+              } catch {}
+              resolve(type);
+              socket.close();
+            };
+            socket.onclose = (event) => {
+              clearTimeout(timer);
+              resolve('closed:' + event.code);
+            };
+          }),
+        { url: liveUrl, timeout: PROBE_TIMEOUT_MS },
+      );
+      if (probe !== 'error')
+        throw Error(
+          'LIVE_PROBE_FAILED: the bridged Live socket to ' +
+            liveTarget(service) +
+            ' answered "' +
+            probe +
+            '" instead of the expected authentication error.',
+        );
+      console.log(
+        'TARGET_VERIFIED[' +
+          label +
+          ']: /api -> ' +
+          service +
+          ' (' +
+          health.message +
+          '); Live ' +
+          liveUrl +
+          ' -> ' +
+          liveTarget(service) +
+          '.',
+      );
     }
     async function uiCheck(label) {
       await page.setViewportSize({ width: 390, height: 844 });
@@ -370,7 +511,21 @@ async function main(args = process.argv.slice(2)) {
       await page.locator('#dehumidifiers').fill('1');
       await page.locator('#scopeConfirmed').check();
       await page.locator('#finishAudit').click();
-      await expect(page.locator('#itemizedTotal')).toHaveText('$1,775.00', { timeout: 90000 });
+      try {
+        await expect(page.locator('#itemizedTotal')).toHaveText('$1,775.00', {
+          timeout: FINALIZE_TIMEOUT_MS,
+        });
+      } catch (error) {
+        await audit.settle();
+        throw Error(
+          'FINALIZE_TIMEOUT: no itemized total within ' +
+            FINALIZE_TIMEOUT_MS / 1000 +
+            ' s of Finish & review; ' +
+            audit.describe('POST', '/api/audit') +
+            '. ' +
+            firstLine(error.message),
+        );
+      }
       await expect(page.locator('#estimateRange')).toContainText('$1,788.90');
       const tabs = page.locator('[data-tab]');
       for (let index = 0; index < (await tabs.count()); index++) await tabs.nth(index).click();
@@ -396,12 +551,18 @@ async function main(args = process.argv.slice(2)) {
       );
     }
     async function run(label) {
+      audit.phase(label);
+      await verifyTarget(label);
       try {
         await python([service, '--token-stdin'], await token(), label + '-authenticated');
         await uiCheck(label);
       } finally {
+        await audit.settle();
+        console.log(audit.report(label));
         await cleanBrowserRecords(label);
       }
+      // A request that escaped the route or failed at the backend fails the phase even after the UI passed.
+      audit.assertClean(label);
     }
     let verified = false;
     while (!verified) {
@@ -412,7 +573,7 @@ async function main(args = process.argv.slice(2)) {
         if (!HOLD) throw error;
         console.error('CHECK_FAILED: ' + safe(error.message));
         console.log(
-          'AUTH_RETAINED: browser sign-in remains in memory. Send retry after repair, or quit.',
+          'AUTH_RETAINED: the private window stays signed in. Send retry after repair, or quit.',
         );
         const recovery = readline.createInterface({ input: process.stdin });
         let retry = false;
@@ -431,7 +592,7 @@ async function main(args = process.argv.slice(2)) {
       console.log(
         mode === 'production'
           ? 'PRODUCTION_VERIFIED: authenticated production API and UI checks passed; send quit.'
-          : 'READY_FOR_CUTOVER: staged checks passed; browser auth retained only in memory. Send production after backend/Hosting release, or quit.',
+          : 'READY_FOR_CUTOVER: staged checks passed through the routed tab. Send production after backend/Hosting release, or quit.',
       );
       const commands = readline.createInterface({ input: process.stdin });
       for await (const line of commands) {
@@ -461,11 +622,12 @@ async function main(args = process.argv.slice(2)) {
           agreements: [...agreements],
         }),
         'failure-browser-cleanup',
+        CLEANUP_TIMEOUT_MS,
       ).catch(() =>
         console.error('Synthetic cleanup needs attention; see its credential-free log.'),
       );
     }
-    // Credentials are never exported as browser storage state.
+    // Credentials are never exported as browser storage state; the private profile is deleted with the window.
     await page
       .evaluate(async () => {
         if (typeof auth !== 'undefined' && auth?.currentUser) await auth.signOut();

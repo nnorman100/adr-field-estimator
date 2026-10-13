@@ -122,13 +122,27 @@ deployed assets rather than the local candidate. Output defaults to a unique tem
 The helper opens normal private Chrome without automation attached. Complete Google sign-in
 with the approved staff account; do not enter a customer job. Send `signed-in` to the helper
 only after the app finishes signing in. Automation attaches after that handoff, avoiding the
-Google rejection reproduced in automated Chrome. The runner then forces Firebase
-authentication persistence to NONE in its isolated test context,
-holds the ID token in memory and passes it to Python over stdin. It exports no browser
-authentication state and never accepts a token as a command-line argument.
+Google rejection reproduced in automated Chrome. Signing in on the real site is the one
+unrouted step: the app creates an empty draft in production, which the helper reports as
+`SIGN_IN_TAB` and removes with the run's own records. The runner then opens a second tab in the
+same private window, which inherits that sign-in through the app's own Firebase persistence,
+tells Chrome to bypass service workers for that tab, holds the ID token in memory and passes it
+to Python over stdin. The private profile is temporary and deleted with the window; the helper
+exports no browser authentication state and never accepts a token as a command-line argument.
 
-The staged UI uses the local frontend and proxies only its API calls to the dedicated
-tagged revision. The Python helper validates identity through /api/session, checks for an
+The staged UI uses the local frontend and proxies every `/api` call of the automated tab to
+the dedicated tagged revision; the Live socket, which the app only opens to the production URL,
+is bridged to that revision with the app's origin. Before each workflow phase the helper proves
+the target: the page's own `/api/health` must report the tagged revision's `source_commit`, the
+app's Live URL must be the one the bridge intercepts, and a bridged probe socket must answer
+with the backend's authentication error (`TARGET_VERIFIED`). A request that escapes the route,
+is answered by a service worker, cannot be fetched from the backend (transport error or the
+115-second deadline) or is redirected stops the run with `ROUTING_VIOLATION`; HTTP error
+statuses are routed answers that the workflow itself judges. `BACKEND[phase]` lines and
+`routing.txt` in the artifact directory record what each phase reached, including the page load.
+Finish & review is bounded (`FINALIZE_TIMEOUT`), the Python phases have watchdogs, and tracked
+synthetic records are cleaned after every phase, including failed ones.
+The Python helper validates identity through /api/session, checks for an
 existing active/resumable walkthrough before opening Live, and refuses to replace that
 existing capture. It verifies review-only suggestions, selective application, stale
 revision rejection, actual OCR/Live/provider resumption, Finish checkpoint/lease deletion,
