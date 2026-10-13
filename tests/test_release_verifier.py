@@ -328,3 +328,21 @@ def test_live_prompt_fixture_ships_with_tests():
     from scripts import verify_common
 
     assert (verify_common.FIXTURES / 'live-prompt.wav').is_file()
+
+
+def test_gcloud_access_token_is_looked_up_once_per_lifetime(monkeypatch):
+    calls = []
+
+    def lookup(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=f'token-{len(calls)}\n')
+
+    clock = [1000.0]
+    monkeypatch.setattr(verifier, '_token_cache', None)
+    monkeypatch.setattr(verifier, 'gcloud', lambda: 'gcloud')
+    monkeypatch.setattr(verifier.subprocess, 'run', lookup)
+    monkeypatch.setattr(verifier.time, 'monotonic', lambda: clock[0])
+    assert verifier.access_token() == verifier.access_token() == 'token-1'
+    assert len(calls) == 1 and calls[0][:3] == ['gcloud', 'auth', 'print-access-token']
+    clock[0] += verifier.TOKEN_LIFETIME + 1
+    assert verifier.access_token() == 'token-2' and len(calls) == 2
