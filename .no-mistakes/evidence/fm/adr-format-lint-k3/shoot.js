@@ -1,0 +1,24 @@
+const { chromium } = require('@playwright/test');
+(async () => {
+  const [base, out] = [process.argv[2], process.argv[3]];
+  const b = await chromium.launch({ args: ['--ignore-certificate-errors'] });
+  const p = await b.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
+  const errors = []; p.on('pageerror', e => errors.push(e.message));
+  await p.goto(base); await p.locator('#address').waitFor({ state: 'visible' });
+  await p.waitForFunction(() => !document.querySelector('#address').disabled, null, { timeout: 15000 });
+  await p.screenshot({ path: out + '/01-app-loaded.png' });
+  await p.locator('.task-nav [data-task="property"]').click();
+  await p.locator('#address').fill('Synthetic browser property');
+  await p.locator('#yearBuilt').fill('1960');
+  await p.locator('[data-room-key="finished_sf"]').fill('10');
+  await p.locator('#scopeConfirmed').check();
+  await p.locator('#saveDraft').click();
+  await p.waitForFunction(() => document.querySelector('#saveStatus').textContent.includes('Saved privately'));
+  await p.locator('#finishAudit').click();
+  await p.locator('#documents').waitFor({ state: 'visible' });
+  console.log('range', await p.locator('#estimateRange').textContent(), 'itemized', await p.locator('#itemizedTotal').textContent());
+  await p.locator('#documents').scrollIntoViewIfNeeded();
+  await p.screenshot({ path: out + '/02-audit-documents.png', fullPage: true });
+  console.log('pageerrors', JSON.stringify(errors));
+  await b.close();
+})().catch(e => { console.error(e); process.exit(1); });
