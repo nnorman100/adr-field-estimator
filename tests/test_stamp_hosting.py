@@ -1,4 +1,5 @@
 """The Hosting shell is released only with a consistent source-commit stamp."""
+
 import hashlib
 import json
 import re
@@ -20,14 +21,18 @@ def blob_id(data):
 
 def fake_git(status=''):
     """Models a repository whose HEAD holds the committed (placeholder) shell."""
+
     def git(argv, **kwargs):
         if argv[1] == 'hash-object':
             return subprocess.CompletedProcess(argv, 0, stdout=blob_id(kwargs['input']))
         if argv[1:] == ['rev-parse', 'HEAD']:
             return subprocess.CompletedProcess(argv, 0, stdout=HEAD + '\n')
         if argv[1] == 'rev-parse':
-            return subprocess.CompletedProcess(argv, 0, stdout=blob_id((ROOT / argv[2].split(':', 1)[1]).read_bytes()))
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=blob_id((ROOT / argv[2].split(':', 1)[1]).read_bytes())
+            )
         return subprocess.CompletedProcess(argv, 0, stdout={'status': status}[argv[1]])
+
     return git
 
 
@@ -50,9 +55,15 @@ def test_every_versioned_asset_url_is_stamped():
     # A new ?v= reference outside TARGETS would keep a stale cache key after release.
     for path in [*ROOT.joinpath('public').rglob('*'), ROOT / 'index.html']:
         if path.suffix in ('.html', '.js', '.css', '.json', '.webmanifest'):
-            found = re.findall(r'\?v=[0-9A-Za-z-]+', path.read_text(encoding='utf8', errors='replace'))
+            found = re.findall(
+                r'\?v=[0-9A-Za-z-]+', path.read_text(encoding='utf8', errors='replace')
+            )
             name = path.relative_to(ROOT).as_posix()
-            assert len(found) == sum(count for pattern, count, _ in hosting.TARGETS.get(name, []) if pattern is hosting.ASSET), name
+            assert len(found) == sum(
+                count
+                for pattern, count, _ in hosting.TARGETS.get(name, [])
+                if pattern is hosting.ASSET
+            ), name
 
 
 def test_stamp_check_and_reset_round_trip(shell):
@@ -67,7 +78,9 @@ def test_stamp_check_and_reset_round_trip(shell):
     assert f'/audio-worklet.js?v={HEAD}' in (shell / 'public/app.js').read_text(encoding='utf8')
     hosting.write(HEAD + '-dirty', shell)
     assert hosting.check(shell, fake_git()) == HEAD + '-dirty'
-    assert f'App version {HEAD[:12]}-dirty</small>' in (shell / 'index.html').read_text(encoding='utf8')
+    assert f'App version {HEAD[:12]}-dirty</small>' in (shell / 'index.html').read_text(
+        encoding='utf8'
+    )
     hosting.write(hosting.PLACEHOLDER, shell)
     assert {name: (shell / name).read_bytes() for name in hosting.TARGETS} == original
 
@@ -79,7 +92,9 @@ def test_check_rejects_a_partially_stamped_shell(shell):
     with pytest.raises(RuntimeError, match='other than'):
         hosting.check(shell)
     hosting.write(HEAD, shell)
-    (shell / 'index.html').write_text((shell / 'index.html').read_text(encoding='utf8') + ' ', encoding='utf8')
+    (shell / 'index.html').write_text(
+        (shell / 'index.html').read_text(encoding='utf8') + ' ', encoding='utf8'
+    )
     with pytest.raises(RuntimeError, match='differ'):
         hosting.check(shell)
 
@@ -90,12 +105,29 @@ def test_check_binds_the_stamp_to_head_and_uncommitted_hosting_files(tmp_path):
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, repo / name)
     (repo / 'public/app.css').write_text('body{}\n')
+
     def git(argv, **kwargs):
         return subprocess.run(argv, **{**kwargs, 'cwd': repo})
+
     def commit(message):
         git(['git', 'add', '-A'], check=True)
-        git(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', message], check=True)
-        return git(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+        git(
+            [
+                'git',
+                '-c',
+                'user.name=t',
+                '-c',
+                'user.email=t@example.com',
+                'commit',
+                '-qm',
+                message,
+            ],
+            check=True,
+        )
+        return git(
+            ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
     git(['git', 'init', '-q'], check=True)
     first = commit('first')
     hosting.write(first, repo)
@@ -122,7 +154,9 @@ def test_check_binds_the_stamp_to_head_and_uncommitted_hosting_files(tmp_path):
     git(['git', 'checkout', '-q', '--', 'public/app.js'], check=True)
     hosting.write(second, repo)
     for name in ('index.html', 'public/index.html'):
-        (repo / name).write_bytes((repo / name).read_bytes().replace(b'</body>', b'<p>edit</p></body>'))
+        (repo / name).write_bytes(
+            (repo / name).read_bytes().replace(b'</body>', b'<p>edit</p></body>')
+        )
     with pytest.raises(RuntimeError, match='changed after stamping'):
         hosting.check(repo, git)
 
@@ -132,17 +166,24 @@ def test_check_accepts_a_clean_crlf_checkout_and_refuses_a_later_edit(tmp_path):
     for name in hosting.TARGETS:
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_bytes((ROOT / name).read_bytes().replace(b'\r\n', b'\n'))
+
     def git(argv, **kwargs):
         return subprocess.run(argv, **{**kwargs, 'cwd': repo})
+
     git(['git', 'init', '-q'], check=True)
     git(['git', 'add', '-A'], check=True)
-    git(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'lf'], check=True)
+    git(
+        ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'lf'],
+        check=True,
+    )
     git(['git', 'config', 'core.autocrlf', 'true'], check=True)
     for name in hosting.TARGETS:
         (repo / name).unlink()
     git(['git', 'checkout', '-q', '--', '.'], check=True)
     assert b'\r\n' in (repo / 'public/app.js').read_bytes()
-    head = git(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+    head = git(
+        ['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True
+    ).stdout.strip()
     assert hosting.source_commit(hosting.DEPLOYED, False, git) == head
     hosting.write(head, repo)
     assert hosting.check(repo, git) == head
@@ -161,7 +202,9 @@ def test_dirty_hosting_tree_is_refused_unless_marked(monkeypatch, capsys):
     assert hosting.main([], git=fake_git()) == 0
     assert written == [HEAD + '-dirty', HEAD]
     out = capsys.readouterr().out
-    assert 'hosting:alert-disaster' in out and '--reset' in out and f'`{HEAD}`' in out.splitlines()[-1]
+    assert (
+        'hosting:alert-disaster' in out and '--reset' in out and f'`{HEAD}`' in out.splitlines()[-1]
+    )
 
 
 def test_hosting_deploy_runs_the_stamp_check():
