@@ -10,3 +10,13 @@ quote-style = "single"
 [tool.ruff.lint]
 # Conservative: pyflakes and the pycodestyle errors that are not purely stylistic.
 select = ["E4", "E7", "E9", "F"]
+# Existing patterns that would need code changes to satisfy; ignored rather than rewritten.
+ignore = [
+    "E401",  # import a, b
+    "E402",  # imports after sys.path edits in scripts and tests
+    "E731",  # lambda assignment
+    "E741",  # single-letter names such as l
+    "F401",  # unused imports (some are re-exports used by tests)
+    "F811",  # redefinition, pytest fixtures imported then used as arguments
+    "F841",  # unused local variables
+]

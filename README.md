@@ -71,6 +71,8 @@ npm ci
 npm test
 npx playwright install chromium webkit
 npm run test:browser
+python -m ruff format . ; python -m ruff check .   # Python format and lint
+npm run format ; npm run lint                      # JavaScript/CSS format and lint (npm run format:check in CI)
 ```
 
 Direct Python dependencies live in `backend/requirements.in` (runtime) and `backend/requirements-dev.in` (tests). The hash-locked `requirements.txt` and `requirements-dev.txt` beside them are generated for Python 3.11 and used by Docker, CI and local installs. After editing an `.in` file, regenerate both locks from `backend/` with [uv](https://docs.astral.sh/uv/):
