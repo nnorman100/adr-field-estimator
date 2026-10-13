@@ -1,0 +1,28 @@
+== HEAD (adr)
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+relay reply to technician client: {'type': 'ready', 'model': 'gemini-3.8-live'}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-ffffffffffffffffffffffffffffffff", "duration_ms": 120, "outcome": "disconnected"}
+model: projects/alert-disaster-field-2026/locations/us-central1/publishers/google/models/gemini-3.8-live
+PROPERTY INTAKE line sent to Vertex: ["Collect the address, year built, exact room names, technician-stated water categories, and job-total equipment counts and rental days. Do not infer category from the loss source, dry readings, or suspected growth. Confirm default quantities and additional labor with the technician. Ask whether the property is residential or commercial and identify the building/unit/suite and floor when relevant. Use unit-qualified room names chosen by the technician; never merge similarly named rooms in different units or import another inspection's quantities or equipment. Commercial rate applicability and combined-job scheduling/discounts need estimator review; never promise a discount or share job charges across inspections."]
+"crawl" occurrences in instructions (before JSON context): 0
+== BASE 165bb8d (adr)
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+relay reply to technician client: {'type': 'ready', 'model': 'gemini-3.8-live'}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-ffffffffffffffffffffffffffffffff", "duration_ms": 120, "outcome": "disconnected"}
+model: projects/alert-disaster-field-2026/locations/us-central1/publishers/google/models/gemini-3.8-live
+PROPERTY INTAKE line sent to Vertex: ["Collect the address, year built, crawl-space presence, exact room names, technician-stated water categories, and job-total equipment counts and rental days. Do not infer category from the loss source, dry readings, or suspected growth. Confirm default quantities and additional labor with the technician. Ask whether the property is residential or commercial and identify the building/unit/suite and floor when relevant. Use unit-qualified room names chosen by the technician; never merge similarly named rooms in different units or import another inspection's quantities or equipment. Commercial rate applicability and combined-job scheduling/discounts need estimator review; never promise a discount or share job charges across inspections."]
+"crawl" occurrences in instructions (before JSON context): 1
+== HEAD (company)
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+relay reply to technician client: {'type': 'ready', 'model': 'gemini-3.8-live'}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-ffffffffffffffffffffffffffffffff", "duration_ms": 114, "outcome": "disconnected"}
+model: projects/alert-disaster-field-2026/locations/us-central1/publishers/google/models/gemini-3.8-live
+PROPERTY INTAKE line sent to Vertex: ["Collect the address, year built, exact room names, technician-stated water categories, and job-total equipment counts and rental days. Do not infer category from the loss source, dry readings, or suspected growth. Confirm default quantities and additional labor with the technician. Ask whether the property is residential or commercial and identify the building/unit/suite and floor when relevant. Use unit-qualified room names chosen by the technician; never merge similarly named rooms in different units or import another inspection's quantities or equipment. Commercial rate applicability and combined-job scheduling/discounts need estimator review; never promise a discount or share job charges across inspections."]
+"crawl" occurrences in instructions (before JSON context): 0
+== BASE 165bb8d (company)
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+relay reply to technician client: {'type': 'ready', 'model': 'gemini-3.8-live'}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-ffffffffffffffffffffffffffffffff", "duration_ms": 84, "outcome": "disconnected"}
+model: projects/alert-disaster-field-2026/locations/us-central1/publishers/google/models/gemini-3.8-live
+PROPERTY INTAKE line sent to Vertex: ["Collect the address, year built, crawl-space presence, exact room names, technician-stated water categories, and job-total equipment counts and rental days. Do not infer category from the loss source, dry readings, or suspected growth. Confirm default quantities and additional labor with the technician. Ask whether the property is residential or commercial and identify the building/unit/suite and floor when relevant. Use unit-qualified room names chosen by the technician; never merge similarly named rooms in different units or import another inspection's quantities or equipment. Commercial rate applicability and combined-job scheduling/discounts need estimator review; never promise a discount or share job charges across inspections."]
+"crawl" occurrences in instructions (before JSON context): 1
