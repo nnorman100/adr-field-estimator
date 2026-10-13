@@ -155,3 +155,9 @@ def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
         and closed
         and '_live_sessions/owner' not in store.db.records
     )
+
+
+def test_live_intake_no_longer_asks_about_crawl_space():
+    from backend.prompts import LIVE_INSTRUCTIONS
+    assert 'crawl-space' not in LIVE_INSTRUCTIONS.lower()
+    assert 'Collect the address, year built, exact room names' in LIVE_INSTRUCTIONS
