@@ -1,9 +1,0 @@
-PASS: cabinet removal under retained/propped granite sets notice flag and preserves required notice; unpriced specialty work remains unsigned.
-PASS: tile countertop presence does not set the granite flag.
-PASS: until dry planks, perimeter cut and monetary loss band are not measured SF or water category.
-PASS: reported health concern stays separate from suspected growth; personal symptoms referred to healthcare.
-PASS: thermal album and assistant guesses do not become verified moisture or water-category evidence.
-PASS: requested open-ended flooring outside priced quantities blocks signing.
-PASS: synthetic non-meter fixture does not produce a verified reading.
-Project: alert-disaster-field-2026; extraction/audit/OCR model: gemini-3.8-flash. Exit 0.
-All data/imagery synthetic. No customer PDF contents sent; no jobs, evidence, signatures or IAM changes.

@@ -1,3 +1,0 @@
-Python: 56 passed, one existing dependency deprecation warning.
-Node frontend/lifecycle checks: passed. HTML equality passed.
-No frontend or lifecycle changes; browser suite not repeated. Prior broad browser evidence and unchanged focused retry remain documented in docs/review-repairs.md.

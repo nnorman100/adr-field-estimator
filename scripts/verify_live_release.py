@@ -18,7 +18,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import scripts.verify_common as common
-from scripts.verify_common import admin, image, PROJECT, SDK, URL
+from scripts.verify_common import admin, gcloud, image, FIXTURES, PROJECT, URL
 from scripts.release_stamp import COMMIT_PATTERN
 
 PRODUCTION = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
@@ -36,7 +36,7 @@ def access_token():
     environment = dict(os.environ)
     environment.pop('PYTHONPATH', None)
     result = subprocess.run(
-        [str(SDK), 'auth', 'print-access-token', '--project=' + PROJECT,
+        [gcloud(), 'auth', 'print-access-token', '--project=' + PROJECT,
          '--billing-project=' + PROJECT], env=environment, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError('Cloud CLI token lookup failed; no credential was logged.')
@@ -150,7 +150,7 @@ async def live(token, iid, uid):
             protocol_version=2, capture_id=capture)))
         ready = json.loads(await asyncio.wait_for(socket.recv(), 40))
         assert ready.get('voice') == 'Charon' and ready.get('protocol_version') == 2, 'Unexpected Live setup'
-        with wave.open(str(ROOT / 'review-artifacts/live-prompt.wav'), 'rb') as recording:
+        with wave.open(str(FIXTURES / 'live-prompt.wav'), 'rb') as recording:
             assert recording.getframerate() == 16000 and recording.getnchannels() == 1
             pcm = recording.readframes(recording.getnframes())
         for offset in range(0, len(pcm), 3200):

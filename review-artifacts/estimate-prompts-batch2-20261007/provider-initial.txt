@@ -1,1 +1,0 @@
-Initial run: all eight synthetic Flash extraction/audit cases passed. Project alert-disaster-field-2026. No customer documents sent or stored jobs changed.

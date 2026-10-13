@@ -5,7 +5,13 @@ const {canonicalPath,isWithin}=require('./artifact-paths');
 const ROOT=path.resolve(__dirname,'..'),BASE='https://alert-disaster-field-2026.web.app';
 const PRODUCTION='https://alert-disaster-field-estimator-545776254070.us-west2.run.app';
 const SERVICE_HOST='alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app';
-const PYTHON=process.env.ADR_TEST_PYTHON||'C:/Users/nnorm/AppData/Roaming/uv/python/cpython-3.11.15-windows-x86_64-none/python.exe';
+// Python resolves from ADR_TEST_PYTHON, then the repository's .venv, then PATH.
+function pythonCommand(env=process.env,platform=process.platform,root=ROOT){
+  if(env.ADR_TEST_PYTHON)return env.ADR_TEST_PYTHON;
+  const venv=platform==='win32'?path.join(root,'.venv','Scripts','python.exe'):path.join(root,'.venv','bin','python');
+  if(fs.existsSync(venv))return venv;
+  return platform==='win32'?'python':'python3';
+}
 function backendUrl(tag){
   // This service leaves 16 characters for the tag in its 63-character DNS label.
   if(typeof tag!=='string'||tag.length>16||!/^[a-z](?:[a-z0-9-]*[a-z0-9])?$/.test(tag)||/[^a-z0-9-]/.test(tag))throw Error('Backend tag must be 1-16 lowercase letters/digits/hyphens, starting with a letter and ending with a letter or digit.');
@@ -48,7 +54,7 @@ console.log('TARGET: '+service+'; UI: '+(local?'local':'production')+'; ARTIFACT
 function python(args,input,label){
   return new Promise((resolve,reject)=>{
     const environment={...process.env,PYTHONPATH:path.join(ROOT,'.voice-test-deps'),PYTHONUNBUFFERED:'1'};
-    const child=spawn(PYTHON,[path.join(ROOT,'scripts','verify_live_release.py'),...args],{cwd:ROOT,env:environment,stdio:['pipe','pipe','pipe'],windowsHide:true});
+    const child=spawn(pythonCommand(),[path.join(ROOT,'scripts','verify_live_release.py'),...args],{cwd:ROOT,env:environment,stdio:['pipe','pipe','pipe'],windowsHide:true});
     let output='';
     const record=data=>{const clean=safe(data.toString());output+=clean;process.stdout.write(clean);};
     child.stdout.on('data',record);child.stderr.on('data',record);
@@ -228,5 +234,5 @@ function python(args,input,label){
     process.stdin.pause();
   }
 }
-module.exports={backendUrl,parseOptions,createArtifactDirectory};
+module.exports={pythonCommand,backendUrl,parseOptions,createArtifactDirectory};
 if(require.main===module)main().catch(error=>{console.error('FAIL: '+safe(error.message));process.exitCode=1;});

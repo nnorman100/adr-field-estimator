@@ -1,2 +1,0 @@
-Final signing-assertion rerun: seven cases passed, including both audit-to-document checks that unpriced tasks block signing. Attic cleaning extraction exceeded the unchanged 55-second verification deadline; aggregate exit 1. This extraction passed in the initial eight-case run. A targeted retry is pending.
-Targeted --attic-only retry passed in 8.5 seconds; exit 0. Original aggregate timeout remains recorded.

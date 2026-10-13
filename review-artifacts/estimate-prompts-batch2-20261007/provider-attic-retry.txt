@@ -1,2 +1,0 @@
-PASS: attic spot cleaning does not create demolition, water category, filter/equipment or labor counts.
-Targeted retry completed in 8.5 seconds, exit 0. Synthetic data only.
