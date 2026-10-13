@@ -445,6 +445,17 @@ Backend `alert-disaster-field-estimator-00011-geb` (master `e7f70e7`) was deploy
 
 Backend `alert-disaster-field-estimator-00015-kem` (recorded here as master `9b714e2`; the records conflict, so [RELEASES.md](../RELEASES.md) lists its source commit as unknown) was deployed with `scripts/deploy_backend.py --workspaces off --tag body-limits` at zero traffic, then promoted to 100%. It includes the upload hardening from nnorman100/adr-field-estimator#13: POST/PUT under `/api/` without a Bearer header returns 401 before the body is read; declared and streamed bodies are capped per route (photos 13 MB, `/api/authorize` 3.5 MB, company profile PUT 2 MB, otherwise 1 MB); body reads have a 50-second deadline (408). Resources and concurrency match `00013-hup`. CI passed on GitHub for `9b714e2`. Before promotion, the tagged URL reported healthy with workspaces disabled; an anonymous 1.2 MB POST returned 401 and an authenticated-header 1.2 MB POST to `/api/inspections` returned 413. After promotion, `/api/health` through Hosting and the direct service URL reported healthy with workspaces disabled, anonymous `GET /api/session` and `POST /api/inspections` returned 401, and no error logs appeared. The frontend is unchanged. Rollback: `gcloud run services update-traffic alert-disaster-field-estimator --region=us-west2 --project=alert-disaster-field-2026 --to-tags=harden-fixes=100`.
 
+## Staged-check routing repair — October 13, 2026
+
+The staged check (`node scripts/verify_live_browser.js --backend-tag TAG --hold`) had never
+reached its tagged revision: the automated tab was served a memory-only Firebase persistence
+stand-in, so it never inherited the private window's Google sign-in and the run stopped before
+any routed request. The helper now inherits that sign-in through the app's own persistence,
+bypasses service workers in the automated tab, bridges the Live socket and proves its target
+before each phase; the October 7 description above is historical. The current procedure and
+its output lines are in [firebase-isolation.md](firebase-isolation.md). An authenticated staged
+run with the repaired helper is still to be observed.
+
 ## Current status — October 12, 2026
 
 **Production.** Deployed revisions, Hosting releases, source commits and traffic are recorded only in [RELEASES.md](../RELEASES.md). Recheck the serving pair read-only before the next cutover and keep it as the rollback baseline.
