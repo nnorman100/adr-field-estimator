@@ -1,0 +1,19 @@
+$ ADR_CHROME_PATH=/nonexistent/chrome node -e "require(\"./scripts/manual_chrome\").launchManual(...)"
+Error: ADR_CHROME_PATH does not exist: /nonexistent/chrome
+$ PATH=<empty dir> (no Chrome anywhere), launchManual
+Error: Chrome was not found. Install Google Chrome or set ADR_CHROME_PATH to its executable.
+
+$ # verify_live_browser python resolution
+no .venv     -> python3
+with .venv   -> /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4SAHXJB6K1XZGNXPP3WG7BC/.venv/bin/python
+/home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4SAHXJB6K1XZGNXPP3WG7BC/.venv
+ADR_TEST_PYTHON -> /tmp/adrk3venv/bin/python
+
+$ # removed image / HTML sync / ignored evidence / fixture
+public/ar_preview.jpg exists: no
+references to ar_preview in tracked files: 0
+index.html == public/index.html
+tracked review-artifacts files: 0
+.gitignore:42:review-artifacts/	review-artifacts/live-release-20261007/cutover-observed.json
+.gitignore:42:review-artifacts/	review-artifacts/redesigned-live-mobile.png
+live-prompt.wav 16000 Hz 1 ch 16 bit 115120 frames

@@ -1,0 +1,18 @@
+$ # 1) gcloud absent from PATH, ADR_GCLOUD unset (Linux, no Windows SDK path)
+$ env -u ADR_GCLOUD PATH=/usr/bin:/bin python scripts/record_live_release.py observed
+RuntimeError: gcloud was not found: install the Google Cloud CLI or set ADR_GCLOUD to its full path.
+exit=0
+
+$ # 2) gcloud found on PATH (fake shim, network blocked via dead proxy so nothing reaches Google)
+$ PATH=<tmp>/bin:$PATH HTTPS_PROXY=http://127.0.0.1:9 python scripts/record_live_release.py observed
+requests.exceptions.ProxyError: HTTPSConnectionPool(host='firebasehosting.googleapis.com', port=443): Max retries exceeded with url: /v1beta1/sites/alert-disaster-field-2026/channels/live/releases?pageSize=1 (Caused by ProxyError('Unable to connect to proxy', NewConnectionError("HTTPSConnection(host='127.0.0.1', port=9): Failed to establish a new connection: [Errno 111] Connection refused")))
+shim calls:
+  gcloud run services describe alert-disaster-field-estimator --project=alert-disaster-field-2026 --region=us-west2 --format=json(status.traffic,status.latestReadyRevisionName)
+  gcloud auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+
+$ # 3) gcloud via ADR_GCLOUD (not on PATH)
+$ ADR_GCLOUD=<tmp>/my-gcloud HTTPS_PROXY=http://127.0.0.1:9 python scripts/record_live_release.py observed
+requests.exceptions.ProxyError: HTTPSConnectionPool(host='firebasehosting.googleapis.com', port=443): Max retries exceeded with url: /v1beta1/sites/alert-disaster-field-2026/channels/live/releases?pageSize=1 (Caused by ProxyError('Unable to connect to proxy', NewConnectionError("HTTPSConnection(host='127.0.0.1', port=9): Failed to establish a new connection: [Errno 111] Connection refused")))
+shim calls:
+  gcloud run services describe alert-disaster-field-estimator --project=alert-disaster-field-2026 --region=us-west2 --format=json(status.traffic,status.latestReadyRevisionName)
+  gcloud auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026

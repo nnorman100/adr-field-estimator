@@ -1,0 +1,9 @@
+$ env -u ADR_CHROME_PATH PATH=<tmp>/bin:$PATH node drive.js   # chromium on PATH, public/ served at 127.0.0.1:8765
+chromePath() resolved: /tmp/tmp.DqOZpFbVzZ/bin/chromium
+launchManual ready at http://127.0.0.1:9337 profile /tmp/adr-manual-chrome-PdBYse
+page title: Alert Disaster Restoration · Field Estimator
+images: [{"src":"/brand/adr-logo.jpg","ok":true},{"src":"/brand/adr-logo.jpg","ok":true},{"src":null,"ok":false}]
+HTTP errors/failed requests: ["404 http://127.0.0.1:8765/__/firebase/init.json"]
+ar_preview requested: false
+profile removed after close: true
+chrome argv: --user-data-dir=/tmp/adr-manual-chrome-PdBYse --incognito --remote-debugging-address=127.0.0.1 --remote-debugging-port=9337 --no-first-run --no-default-browser-check http://127.0.0.1:8765/
