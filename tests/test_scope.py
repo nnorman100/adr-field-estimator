@@ -24,6 +24,7 @@ def prepared(client, **extra):
 def provider(monkeypatch, changes, callback=None, questions=None):
     async def respond(**kwargs):
         assert kwargs['config'].response_schema == bm.scope_response_schema()
+        assert kwargs['config'].thinking_config.thinking_budget == bm.SCOPE_THINKING_BUDGET
         assert 'assistant_transcript' not in str(kwargs['contents'])
         if callback:
             callback()
@@ -38,11 +39,39 @@ def provider(monkeypatch, changes, callback=None, questions=None):
     )
 
 
+def captured_configs(monkeypatch, reply):
+    configs = []
+
+    async def respond(**kwargs):
+        configs.append(kwargs['config'])
+        return SimpleNamespace(text=json.dumps(reply))
+
+    monkeypatch.setattr(
+        bm,
+        'get_ai_client',
+        lambda: SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
+        ),
+    )
+    return configs
+
+
 def suggest(client, revision=1):
     return client.post(
         '/api/inspections/' + ID + '/scope-suggestions',
         json=dict(inspection_id=ID, expected_revision=revision),
     )
+
+
+def test_scope_request_caps_thought_tokens_so_the_55_second_deadline_holds(context, monkeypatch):
+    # Measured 2026-10-13: without a cap, about one scope call in five ran past the REST deadline.
+    client, store = context
+    prepared(client)
+    configs = captured_configs(monkeypatch, dict(changes=[], questions=[]))
+    assert suggest(client).status_code == 200
+    assert bm.SCOPE_THINKING_BUDGET == 4096
+    assert [c.thinking_config.thinking_budget for c in configs] == [bm.SCOPE_THINKING_BUDGET]
+    assert configs[0].thinking_config.thinking_level is None
 
 
 def test_scope_suggestions_are_grounded_read_only_and_preserve_confirmation(context, monkeypatch):

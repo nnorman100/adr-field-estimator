@@ -91,6 +91,12 @@ if PROJECT_ID != DEDICATED_PROJECT_ID:
 LOCATION = os.getenv('GOOGLE_CLOUD_LOCATION', 'global')
 AUDIT_MODEL = os.getenv('AUDIT_MODEL', 'gemini-3.8-flash')
 OCR_MODEL = os.getenv('OCR_MODEL', AUDIT_MODEL)
+# gemini-3.8-flash at its default thinking level occasionally spends 10,000+ thought tokens on a
+# scope extraction: measured on 2026-10-13, roughly one call in five passed the 55-second REST
+# deadline with both the dd7fe95 and 95dd328 prompts. Capping thought tokens kept every measured
+# call under 35 seconds with identical proposed changes. Audit and OCR calls never approached the
+# deadline in the same measurement, so they keep the provider default.
+SCOPE_THINKING_BUDGET = 4096
 LIVE_MODEL = os.getenv('LIVE_MODEL', 'gemini-3.8-live')
 LIVE_LOCATION = os.getenv('LIVE_LOCATION', 'us-central1')
 LIVE_RECHECK_SECONDS = 20
@@ -428,7 +434,9 @@ def parse_json_from_llm(text):
     return json.loads(text)
 
 
-async def generate(schema, contents, model, operation, inspection_id, wire_schema=None):
+async def generate(
+    schema, contents, model, operation, inspection_id, wire_schema=None, thinking_budget=None
+):
     started = time.monotonic()
     outcome = 'cancelled'
     error_fields = {}
@@ -438,7 +446,13 @@ async def generate(schema, contents, model, operation, inspection_id, wire_schem
                 model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
-                    response_mime_type='application/json', response_schema=wire_schema or schema
+                    response_mime_type='application/json',
+                    response_schema=wire_schema or schema,
+                    thinking_config=(
+                        types.ThinkingConfig(thinking_budget=thinking_budget)
+                        if thinking_budget
+                        else None
+                    ),
                 ),
             ),
             timeout=100,
@@ -714,6 +728,7 @@ async def suggest_scope(
         'scope',
         inspection_id,
         wire_schema=scope_response_schema(),
+        thinking_budget=SCOPE_THINKING_BUDGET,
     )
     try:
         result = validate_suggestions(data, result)
