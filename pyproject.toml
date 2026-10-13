@@ -1,0 +1,12 @@
+# Tooling configuration only; the backend is deployed from backend/ and is not a package.
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["node_modules", "public/vendor"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+# Conservative: pyflakes and the pycodestyle errors that are not purely stylistic.
+select = ["E4", "E7", "E9", "F"]
