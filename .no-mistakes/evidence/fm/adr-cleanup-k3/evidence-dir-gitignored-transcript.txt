@@ -1,0 +1,12 @@
+## record_live_release.py completes against stub gcloud + fake Hosting endpoint, run from cwd=/tmp
+FAKE HOSTING ENDPOINT hit with Bearer stub-token
+{
+  "checked_at_utc": "2026-10-12T23:56:30.091304+00:00",
+  "project": "alert-disaster-field-2026",
+  "backend": {
+--- written file:
+review-artifacts/live-release-20261007/cutover-after.json
+--- git check-ignore -v:
+.gitignore:42:review-artifacts/	review-artifacts/live-release-20261007/cutover-after.json
+--- git status --porcelain (empty = evidence stays out of git):
+(end)

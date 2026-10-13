@@ -1,0 +1,6 @@
+## Repo's local production-code harness (tests/browser_server.py, fake cloud adapters) serving public/, loaded in Playwright Chromium 390x844
+title: Alert Disaster Restoration · Field Estimator
+same-origin requests: 14
+any request for ar_preview: false
+failed local requests (>=400 / network): []
+service-worker cached entries: 20; includes ar_preview: false

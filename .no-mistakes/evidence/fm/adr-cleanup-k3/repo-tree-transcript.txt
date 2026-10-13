@@ -1,0 +1,7 @@
+## Tracked tree at target vs base
+review-artifacts files tracked at base 780940c: 145
+review-artifacts files tracked at HEAD: 0
+public/ar_preview.jpg at base: 762967 bytes; at HEAD: absent
+tracked bytes base=11850575 head=1657387
+owner email in tracked evidence-like files at HEAD (json under review-artifacts): 0
+Windows-only paths left in scripts/: 0

@@ -1,0 +1,7 @@
+## verify_live_browser.js pythonCommand() resolution on Linux, each result actually spawned
+ADR_TEST_PYTHON set: /tmp/adr-k3-lkgt/venv/bin/python -> spawned: /tmp/adr-k3-lkgt/venv/bin/python 3.14.4
+repo .venv present: /tmp/adr-k3-lkgt/fakeroot/.venv/bin/python -> spawned: /tmp/adr-k3-lkgt/fakeroot/.venv/bin/python 3.14.4
+no override, no .venv (this worktree): python3 -> spawned: /usr/bin/python3 3.14.4
+
+## live-prompt fixture as consumed by verify_live_release.py / verify_live_reliability.py
+/home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4S4E0SDVMTSV1RQKJGVBREZ/tests/fixtures/live-prompt.wav rate 16000 channels 1 sampwidth 2 seconds 7.2

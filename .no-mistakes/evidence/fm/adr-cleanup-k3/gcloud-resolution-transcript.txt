@@ -1,0 +1,20 @@
+## record_live_release.py run from cwd=/tmp, network blocked via dead HTTPS proxy
+$ gcloud on PATH, ADR_GCLOUD unset
+    raise ProxyError(e, request=request)
+requests.exceptions.ProxyError: HTTPSConnectionPool(host='firebasehosting.googleapis.com', port=443): Max retries exceeded with url: /v1beta1/sites/alert-disaster-field-2026/channels/live/releases?pageSize=1 (Caused by ProxyError('Unable to connect to proxy', NewConnectionError("HTTPSConnection(host='127.0.0.1', port=9): Failed to establish a new connection: [Errno 111] Connection refused")))
+gcloud log:
+gcloud-on-PATH run services describe alert-disaster-field-estimator --project=alert-disaster-field-2026 --region=us-west2 --format=json(status.traffic,status.latestReadyRevisionName)
+gcloud-on-PATH auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+
+$ ADR_GCLOUD=/tmp/adr-k3-lkgt/custom/my-gcloud, no gcloud on PATH
+    raise ProxyError(e, request=request)
+requests.exceptions.ProxyError: HTTPSConnectionPool(host='firebasehosting.googleapis.com', port=443): Max retries exceeded with url: /v1beta1/sites/alert-disaster-field-2026/channels/live/releases?pageSize=1 (Caused by ProxyError('Unable to connect to proxy', NewConnectionError("HTTPSConnection(host='127.0.0.1', port=9): Failed to establish a new connection: [Errno 111] Connection refused")))
+gcloud log:
+ADR_GCLOUD-custom run services describe alert-disaster-field-estimator --project=alert-disaster-field-2026 --region=us-west2 --format=json(status.traffic,status.latestReadyRevisionName)
+ADR_GCLOUD-custom auth print-access-token --project=alert-disaster-field-2026 --billing-project=alert-disaster-field-2026
+
+$ neither ADR_GCLOUD nor gcloud on PATH
+    raise RuntimeError('gcloud was not found: install the Google Cloud CLI or set ADR_GCLOUD to its full path.')
+RuntimeError: gcloud was not found: install the Google Cloud CLI or set ADR_GCLOUD to its full path.
+gcloud log:
+

@@ -1,0 +1,20 @@
+## scripts/manual_chrome.js launchManual on Linux (xvfb)
+mode=ADR_CHROME_PATH ADR_CHROME_PATH=/home/nnorm/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome PATH=/home/nnorm/.hermes/node/bin:/home/nnorm/.local/bin:/home/nnorm/.grok/bin:/home/nnorm/.opencode/bin:/home/nnorm/.bun/bin:/home/nnorm/.npm-global/bin:/home/nnorm/.nvm/versions/node/v24.20.0/bin:/home/nnorm/.local/share/pnpm/bin:/home/nnorm/.hermes/node/bin:/home/nnorm/.local/bin:/home/nnorm/go/bin:/home/nnorm/.cargo/bin:/home/nnorm/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin
+chromePath() -> /home/nnorm/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome
+launchManual endpoint http://127.0.0.1:9341 profile /tmp/adr-manual-chrome-3yj7cm
+Browser: Chrome/156.0.8078.4
+page heading: ADR manual Chrome launched via ADR_CHROME_PATH
+profile removed: true
+
+mode=PATH-lookup ADR_CHROME_PATH=(unset) PATH=/tmp/adr-k3-lkgt/chromebin:/usr/bin:/bin:/home/nnorm/.hermes/node/bin
+chromePath() -> /tmp/adr-k3-lkgt/chromebin/chromium
+launchManual endpoint http://127.0.0.1:9341 profile /tmp/adr-manual-chrome-GlXGib
+Browser: Chrome/156.0.8078.4
+page heading: ADR manual Chrome launched via PATH-lookup
+profile removed: true
+
+mode=bad-override ADR_CHROME_PATH=/nonexistent/chrome PATH=/home/nnorm/.hermes/node/bin:/home/nnorm/.local/bin:/home/nnorm/.grok/bin:/home/nnorm/.opencode/bin:/home/nnorm/.bun/bin:/home/nnorm/.npm-global/bin:/home/nnorm/.nvm/versions/node/v24.20.0/bin:/home/nnorm/.local/share/pnpm/bin:/home/nnorm/.hermes/node/bin:/home/nnorm/.local/bin:/home/nnorm/go/bin:/home/nnorm/.cargo/bin:/home/nnorm/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin
+chromePath() threw: ADR_CHROME_PATH does not exist: /nonexistent/chrome
+
+mode=nothing-installed ADR_CHROME_PATH=(unset) PATH=/usr/bin:/bin:/home/nnorm/.hermes/node/bin
+chromePath() threw: Chrome was not found. Install Google Chrome or set ADR_CHROME_PATH to its executable.
