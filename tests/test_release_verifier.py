@@ -4,6 +4,7 @@ import argparse
 import io
 import subprocess
 import sys
+from types import SimpleNamespace
 import pytest
 from scripts import verify_live_release as verifier
 
@@ -295,6 +296,7 @@ def test_owner_guard_survives_optimized_python():
     # python -O strips assert statements, so a deletion guard must be an explicit raise.
     code = """
 import sys
+from types import SimpleNamespace
 from scripts import verify_live_release as v
 class Other:
     status_code = 200
@@ -330,19 +332,48 @@ def test_live_prompt_fixture_ships_with_tests():
     assert (verify_common.FIXTURES / 'live-prompt.wav').is_file()
 
 
-def test_gcloud_access_token_is_looked_up_once_per_lifetime(monkeypatch):
+def test_gcloud_access_token_is_cached_only_until_its_real_expiry(monkeypatch):
     calls = []
+    lifetimes = {'token-1': 3600, 'token-2': 360, 'token-3': 60, 'token-4': 3000}
+    checked = []
 
     def lookup(command, **kwargs):
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout=f'token-{len(calls)}\n')
 
+    def tokeninfo(url, data=None, timeout=None, **kwargs):
+        assert url == verifier.TOKEN_INFO and data['access_token'] not in url and timeout
+        checked.append(data['access_token'])
+        return SimpleNamespace(ok=True, json=lambda: {'expires_in': str(lifetimes[data['access_token']])})
+
     clock = [1000.0]
     monkeypatch.setattr(verifier, '_token_cache', None)
     monkeypatch.setattr(verifier, 'gcloud', lambda: 'gcloud')
     monkeypatch.setattr(verifier.subprocess, 'run', lookup)
+    monkeypatch.setattr(verifier.requests, 'post', tokeninfo)
     monkeypatch.setattr(verifier.time, 'monotonic', lambda: clock[0])
     assert verifier.access_token() == verifier.access_token() == 'token-1'
     assert len(calls) == 1 and calls[0][:3] == ['gcloud', 'auth', 'print-access-token']
     clock[0] += verifier.TOKEN_LIFETIME + 1
     assert verifier.access_token() == 'token-2' and len(calls) == 2
+    clock[0] += 360 - verifier.TOKEN_MARGIN - 1
+    assert verifier.access_token() == 'token-2' and len(calls) == 2
+    clock[0] += 2
+    assert verifier.access_token() == 'token-4' and len(calls) == 4
+    assert checked == ['token-1', 'token-2', 'token-3', 'token-4']
+
+
+def test_failed_token_lifetime_lookup_never_reveals_the_token(monkeypatch):
+    monkeypatch.setattr(verifier, '_token_cache', None)
+    monkeypatch.setattr(verifier, 'gcloud', lambda: 'gcloud')
+    monkeypatch.setattr(
+        verifier.subprocess,
+        'run',
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout='secret-token\n'),
+    )
+    monkeypatch.setattr(
+        verifier.requests, 'post', lambda *a, **k: SimpleNamespace(ok=False, json=lambda: {})
+    )
+    with pytest.raises(RuntimeError) as error:
+        verifier.access_token()
+    assert 'secret-token' not in str(error.value) and verifier._token_cache is None

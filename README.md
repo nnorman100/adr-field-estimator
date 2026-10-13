@@ -62,7 +62,7 @@ The scripts under `scripts/` run on Linux, macOS and Windows and resolve tools f
 | `ADR_TEST_PYTHON` | `verify_live_browser.js` | `.venv` in the repository, then `python3` (`python` on Windows) |
 | `ADR_CHROME_PATH` | `manual_chrome.js` (used by `verify_live_browser.js`) | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
 
-From WSL2, `PATH` may resolve `gcloud` to the Windows SDK's shell wrapper, which takes roughly 30 seconds per call through Windows interop; point `ADR_GCLOUD` at a native Linux gcloud for a fast check. `verify_live_release.py` caches the access token for the run and reads the Live checkpoint off the socket's event loop, so a slow lookup can no longer miss the relay's keepalive pings (uvicorn closes with 1011 "keepalive ping timeout" after 20 s + 20 s).
+From WSL2, `PATH` may resolve `gcloud` to the Windows SDK's shell wrapper, which takes roughly 30 seconds per call through Windows interop; point `ADR_GCLOUD` at a native Linux gcloud for a fast check. `verify_live_release.py` caches the access token until two minutes before gcloud says it expires (at most 45 minutes) and reads the Live checkpoint off the socket's event loop, so a slow lookup can no longer miss the relay's keepalive pings (uvicorn closes with 1011 "keepalive ping timeout" after 20 s + 20 s).
 
 When gcloud or Chrome cannot be found, the helper stops with a message naming its variable. The release helper bridges the app's Live socket with Node's built-in WebSocket client, so run it with Node 22 or newer. Review evidence (screenshots, traces, logs) is local only: keep it in the gitignored `review-artifacts/` directory, and attach archives to a GitHub Release rather than committing them.
 

@@ -31,15 +31,14 @@ STAGED = 'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a
 WORKSPACE_STAGE = 'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 SERVICE = None
 EXPECTED_COMMIT = None
-# gcloud access tokens last 60 minutes; one lookup per run avoids ~30 s WSL2 interop calls.
+# One lookup per Live window avoids ~30 s WSL2 interop calls; gcloud may hand back a nearly expired token.
 TOKEN_LIFETIME = 45 * 60
+TOKEN_MARGIN = 2 * 60
+TOKEN_INFO = 'https://oauth2.googleapis.com/tokeninfo'
 _token_cache = None
 
 
-def access_token():
-    global _token_cache
-    if _token_cache and time.monotonic() - _token_cache[0] < TOKEN_LIFETIME:
-        return _token_cache[1]
+def gcloud_token():
     environment = dict(os.environ)
     environment.pop('PYTHONPATH', None)
     result = subprocess.run(
@@ -56,8 +55,31 @@ def access_token():
     )
     if result.returncode:
         raise RuntimeError('Cloud CLI token lookup failed; no credential was logged.')
-    _token_cache = (time.monotonic(), result.stdout.strip())
-    return _token_cache[1]
+    return result.stdout.strip()
+
+
+def token_remaining(token):
+    try:
+        response = requests.post(TOKEN_INFO, data={'access_token': token}, timeout=30)
+        remaining = int(response.json()['expires_in']) if response.ok else None
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        remaining = None
+    if remaining is None:
+        raise RuntimeError('Access token lifetime lookup failed; no credential was logged.')
+    return remaining
+
+
+def access_token():
+    global _token_cache
+    if _token_cache and time.monotonic() < _token_cache[0]:
+        return _token_cache[1]
+    for _ in range(2):
+        token = gcloud_token()
+        remaining = token_remaining(token)
+        if remaining > TOKEN_MARGIN:
+            break
+    _token_cache = (time.monotonic() + min(remaining - TOKEN_MARGIN, TOKEN_LIFETIME), token)
+    return token
 
 
 common.access_token = access_token
