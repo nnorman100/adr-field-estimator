@@ -159,6 +159,7 @@ def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
 
 def test_live_prompt_does_not_ask_about_crawl_space():
     from backend.prompts import live_prompt
+
     data = InspectionData().model_dump(mode='json')
     identity = {'name': 'Other Restoration Co', 'signoff': 'Pat Lee'}
     for prompt in (live_prompt(data), live_prompt(data, identity)):
