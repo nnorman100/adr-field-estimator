@@ -2,7 +2,7 @@
   "hosting": {
     "target": "alert-disaster",
     "public": "public",
-    "predeploy": ["python scripts/stamp_hosting.py --check"],
+    "predeploy": ["node scripts/run_python.js scripts/stamp_hosting.py --check"],
     "ignore": [
       "firebase.json",
       "**/.*",
