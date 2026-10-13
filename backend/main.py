@@ -2,6 +2,7 @@
 import asyncio
 import anyio
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -9,13 +10,14 @@ import os
 import re
 import time
 from uuid import uuid4
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress, AsyncExitStack
 from functools import partial, wraps
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response, Security, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, SecurityScopes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -73,6 +75,12 @@ APPCHECK_SECONDS = 2
 APPCHECK_TOKEN_LIMIT = 4096
 # Its own two threads, so a slow signing-key fetch can never hold the request threadpool.
 APPCHECK_WORKER = ThreadPoolExecutor(max_workers=2,thread_name_prefix='app-check')
+# A passed revoked/disabled-user lookup is reused for the same ID token for at most this long; see docs/firebase-isolation.md.
+REVOCATION_CACHE_SECONDS = float(os.getenv('REVOCATION_CACHE_SECONDS','45'))
+if not 0<=REVOCATION_CACHE_SECONDS<=60: raise RuntimeError('REVOCATION_CACHE_SECONDS must be between 0 and 60.')
+REVOCATION_CACHE_LIMIT = 1024
+# Routes declaring this scope always repeat the lookup: signing, evidence, and company administration or access changes.
+LIVE_REVOCATION = ['revocation:live']
 
 def read_source_commit(path=os.path.join(os.path.dirname(os.path.abspath(__file__)),'SOURCE_COMMIT')):
     # scripts/deploy_backend.py writes the deployed commit into the build context; local runs have no stamp.
@@ -102,11 +110,24 @@ def admin_app():
     try: return firebase_admin.get_app('adr')
     except ValueError: return firebase_admin.initialize_app(options={'projectId':PROJECT_ID},name='adr')
 
-async def verify_identity(token):
+# SHA-256 digests of ID tokens, never the tokens, mapped to when their passed revocation lookup lapses.
+revocation_checked = OrderedDict()
+
+async def verify_identity(token,live=False,horizon=0):
+    """Verifies signature and expiry every call; reuses a recent revocation lookup unless live or due within horizon seconds."""
+    if not isinstance(token,str): raise HTTPException(401,'Your sign-in expired. Please sign in again.')
+    key=hashlib.sha256(token.encode()).digest(); now=time.time()
+    reuse=not live and revocation_checked.get(key,0)>now+horizon
     try:
-        claims=await run_in_threadpool(firebase_auth.verify_id_token,token,app=admin_app(),check_revoked=True)
+        claims=await run_in_threadpool(firebase_auth.verify_id_token,token,app=admin_app(),check_revoked=not reuse)
     except Exception:
+        revocation_checked.pop(key,None)
         raise HTTPException(401,'Your sign-in expired. Please sign in again.')
+    if not reuse:
+        # Never beyond the token's own expiry; the oldest entries go first once the cache is full.
+        revocation_checked.pop(key,None); until=min(now+REVOCATION_CACHE_SECONDS,claims.get('exp',0))
+        if until>now: revocation_checked[key]=until
+        while len(revocation_checked)>REVOCATION_CACHE_LIMIT: revocation_checked.popitem(last=False)
     if not claims.get('email_verified') or not claims.get('email'):
         raise HTTPException(403,'A verified email address is required. Verify your email, then sign in again.')
     if WORKSPACES_ENABLED and claims.get('firebase',{}).get('sign_in_provider') not in WORKSPACE_SIGN_IN_PROVIDERS:
@@ -128,8 +149,8 @@ async def app_check_outcome(token):
 def record_app_check(outcome,method,route,status=None):
     event('App Check',outcome=outcome,method=method,route=route,status=status)
 
-async def verify_staff(token):
-    claims=await verify_identity(token)
+async def verify_staff(token,live=False,horizon=0):
+    claims=await verify_identity(token,live,horizon)
     if WORKSPACES_ENABLED:
         actor=await stored(get_job_store().workspaces.principal,claims['uid'])
         if not actor['role'] and not actor['superadmin']:
@@ -138,9 +159,9 @@ async def verify_staff(token):
         raise HTTPException(403,'Your account has not been approved for this app.')
     return claims
 
-async def current_staff(credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
+async def current_staff(scopes:SecurityScopes,credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
     if not credentials or credentials.scheme.lower()!='bearer': raise HTTPException(401,'Sign in to continue.')
-    return await verify_staff(credentials.credentials)
+    return await verify_staff(credentials.credentials,live=LIVE_REVOCATION[0] in scopes.scopes)
 
 MB=1024*1024
 # Sized to the contracts: an 8 MB photo as base64, a 3 MB signature PNG, a 1.4 MB company logo.
@@ -286,10 +307,10 @@ def health_details(staff=Depends(current_staff)):
                 schema_version=3,audit_model=AUDIT_MODEL,ocr_model=OCR_MODEL,live_model=LIVE_MODEL,workspaces_enabled=WORKSPACES_ENABLED,
                 source_commit=SOURCE_COMMIT)
 
-async def current_identity(credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
+async def current_identity(scopes:SecurityScopes,credentials: Optional[HTTPAuthorizationCredentials]=Depends(security)):
     if not WORKSPACES_ENABLED: raise HTTPException(503,'Company dashboards are not enabled yet.')
     if not credentials or credentials.scheme.lower()!='bearer': raise HTTPException(401,'Sign in to continue.')
-    return await verify_identity(credentials.credentials)
+    return await verify_identity(credentials.credentials,live=LIVE_REVOCATION[0] in scopes.scopes)
 
 @app.get('/api/session')
 async def session_info(staff=Depends(current_staff)):
@@ -298,7 +319,7 @@ async def session_info(staff=Depends(current_staff)):
         result.update(await stored(get_job_store().workspaces.principal,staff['uid']))
     return result
 
-register_workspace_routes(app,current_identity,get_job_store,stored)
+register_workspace_routes(app,current_identity,get_job_store,stored,LIVE_REVOCATION)
 
 def workspace_client(request):
     if WORKSPACES_ENABLED and request.headers.get('X-ADR-Workspace-Protocol')!='1':
@@ -418,7 +439,7 @@ async def audit_inspection(req:AuditRequest,request:Request,staff=Depends(curren
     return public_record(saved)
 
 @app.post('/api/authorize')
-async def authorize_estimate(request:Request,staff=Depends(current_staff),store=Depends(get_job_store)):
+async def authorize_estimate(request:Request,staff=Security(current_staff,scopes=LIVE_REVOCATION),store=Depends(get_job_store)):
     workspace_client(request)
     try: body=await request.json()
     except (ValueError,UnicodeDecodeError): raise HTTPException(422,'Expected a signed-agreement object.')
@@ -454,7 +475,7 @@ async def get_authorization(auth_id:str,request:Request,staff=Depends(current_st
     return public_record(record)
 
 @app.get('/api/authorizations/{auth_id}/evidence/{name}')
-async def get_evidence(auth_id:str,name:str,staff=Depends(current_staff),store=Depends(get_job_store)):
+async def get_evidence(auth_id:str,name:str,staff=Security(current_staff,scopes=LIVE_REVOCATION),store=Depends(get_job_store)):
     record=await stored(store.get,staff['uid'],auth_id)
     if not record: raise HTTPException(404,'Evidence not found.')
     evidence=await stored(store.evidence,record,name,staff['uid']) if WORKSPACES_ENABLED else await stored(store.evidence,record,name)
@@ -479,7 +500,7 @@ async def live_walkthrough(socket:WebSocket):
         capture=auth.get('capture_id') if protocol==2 else None
         if protocol==2 and (not isinstance(capture,str) or len(capture)!=32): raise ValueError('Invalid capture identifier.')
         if APPCHECK_MODE=='monitor': record_app_check(await app_check_outcome(auth.get('app_check')),'WEBSOCKET','/api/live')
-        token=auth.get('token','');staff=await verify_staff(token)
+        token=auth.get('token','');staff=await verify_staff(token,live=True)
         uid=staff['uid']; store=get_job_store(); inspection_id=auth.get('inspection_id','')
         record=await stored(store.get_inspection,uid,inspection_id)
         await stored(store._access,uid,record,'live')
@@ -599,7 +620,8 @@ async def live_walkthrough(socket:WebSocket):
                 while True:
                     await asyncio.sleep(LIVE_RECHECK_SECONDS)
                     if staff.get('exp',0)<time.time(): raise ValueError('Sign-in expired. Reconnect to continue.')
-                    refreshed=await verify_staff(token)
+                    # Repeats the revocation lookup before a reused result could outlast the next heartbeat.
+                    refreshed=await verify_staff(token,horizon=LIVE_RECHECK_SECONDS)
                     if refreshed['uid']!=uid: retain=False; raise ValueError('Session owner changed.')
                     current=await stored(store.get_inspection,uid,inspection_id)
                     try: await stored(store._access,uid,current,'live')

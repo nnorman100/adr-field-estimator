@@ -27,7 +27,7 @@ def test_real_sdk_wire_setup_events_interaction_status_and_resume(monkeypatch,tm
     # The real google-genai client talks to a local stand-in for Vertex, so SDK upgrades that change
     # the setup message, realtime input or server message parsing fail here instead of in the field.
     store=FakeStore();store.create_inspection('owner',ID,InspectionData().model_dump())
-    async def identity(token):return {'uid':'owner','exp':time.time()+600}
+    async def identity(token,**_):return {'uid':'owner','exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     def auth(resume=False):return dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP,resume=resume)
     with FakeVertexLive(tmp_path) as vertex, TestClient(bm.app) as client:
@@ -120,7 +120,7 @@ def test_protocol2_control_events_resume_fallback_pause_and_final_drain(monkeypa
         await session.queue.put(NS(server_content=None,usage_metadata=NS(total_token_count=17)))
         yield session
     async def close():pass
-    async def identity(token):return {'uid':'owner','exp':time.time()+600}
+    async def identity(token,**_):return {'uid':'owner','exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     monkeypatch.setattr(bm.genai,'Client',lambda **kw:NS(aio=NS(live=NS(connect=connect),aclose=close)))
     def auth(resume=False):return dict(type='authenticate',token='synthetic',inspection_id=ID,protocol_version=2,capture_id=CAP,resume=resume)
@@ -167,7 +167,7 @@ def finishing_relay(monkeypatch,store):
     @asynccontextmanager
     async def connect(**kw):yield Session()
     async def close():pass
-    async def identity(token):return {'uid':'owner','exp':time.time()+600}
+    async def identity(token,**_):return {'uid':'owner','exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     monkeypatch.setattr(bm.genai,'Client',lambda **kw:NS(aio=NS(live=NS(connect=connect),aclose=close)))
 
@@ -279,7 +279,7 @@ def test_genuine_resume_with_saved_checkpoint_is_not_charged_again(monkeypatch):
 
 def token_relay(monkeypatch,store,claims):
     finishing_relay(monkeypatch,store);calls=[]
-    async def identity(token):
+    async def identity(token,**_):
         calls.append(token)
         if token not in claims:raise bm.HTTPException(401,'Your sign-in expired. Please sign in again.')
         return claims[token]

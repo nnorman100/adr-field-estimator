@@ -110,7 +110,7 @@ def test_live_authentication_records_app_check_and_still_connects(monkeypatch,ve
     @asynccontextmanager
     async def connect(**kwargs):yield Session()
     async def close():pass
-    async def identity(value):identities.append(value);return {'uid':'owner','exp':time.time()+600}
+    async def identity(value,**_):identities.append(value);return {'uid':'owner','exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     monkeypatch.setattr(bm.genai,'Client',lambda **kwargs:NS(aio=NS(live=NS(connect=connect),aclose=close)))
     capsys.readouterr()

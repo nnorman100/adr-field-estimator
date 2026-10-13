@@ -267,7 +267,7 @@ def test_migration_preview_idempotency_and_signed_payload_unchanged():
 def test_live_denial_precedes_vertex(store,monkeypatch,role):
     from starlette.websockets import WebSocketDisconnect
     store.create_inspection('estimator',ID,data())
-    async def verified(token):return {**identity(role),'exp':time.time()+600}
+    async def verified(token,**_):return {**identity(role),'exp':time.time()+600}
     monkeypatch.setattr(bm,'WORKSPACES_ENABLED',True)
     monkeypatch.setattr(bm,'verify_staff',verified)
     monkeypatch.setattr(bm,'get_job_store',lambda:store)
@@ -296,7 +296,7 @@ def test_live_resume_fallback_keeps_company_identity(store,monkeypatch):
         if kwargs['config'].session_resumption.handle:raise RuntimeError('Synthetic expired provider handle')
         yield Session()
     async def close():pass
-    async def verified(token):return {**identity('other-owner'),'exp':time.time()+600}
+    async def verified(token,**_):return {**identity('other-owner'),'exp':time.time()+600}
     monkeypatch.setattr(bm,'WORKSPACES_ENABLED',True)
     monkeypatch.setattr(bm,'verify_staff',verified)
     monkeypatch.setattr(bm,'get_job_store',lambda:store)
@@ -325,7 +325,7 @@ def test_live_rechecks_workspace_permission_and_deletes_checkpoint(store,monkeyp
     store.create_inspection('estimator',ID,data())
     store.workspaces.coordination('owner',ID,CoordinationUpdate(expected_version=1,assigned_estimator_uid='estimator2'))
     closed=[]
-    async def verified(token):return {**identity('estimator2'),'exp':time.time()+600}
+    async def verified(token,**_):return {**identity('estimator2'),'exp':time.time()+600}
     class Session:
         async def receive(self):
             yield NS(server_content=None,session_resumption_update=NS(new_handle='synthetic-private',resumable=True))

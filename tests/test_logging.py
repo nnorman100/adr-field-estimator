@@ -50,7 +50,7 @@ def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch,capsys):
     @asynccontextmanager
     async def connect(**kw):yield Session()
     async def close():pass
-    async def identity(token):return {'uid':'owner','email':EMAIL,'exp':time.time()+600}
+    async def identity(token,**_):return {'uid':'owner','email':EMAIL,'exp':time.time()+600}
     monkeypatch.setattr(bm,'verify_staff',identity);monkeypatch.setattr(bm,'get_job_store',lambda:store)
     monkeypatch.setattr(bm.genai,'Client',lambda **kw:NS(aio=NS(live=NS(connect=connect),aclose=close)))
     with TestClient(bm.app) as client, client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:

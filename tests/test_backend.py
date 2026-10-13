@@ -279,7 +279,7 @@ def test_live_rejects_origins_and_unauthorized_before_vertex(context,monkeypatch
     for origin in ['https://attacker.invalid','http://localhost:8765','http://127.0.0.1:8765']:
         with pytest.raises(Exception):
             with client.websocket_connect('/api/live',headers={'origin':origin}):pass
-    async def reject(token):raise HTTPException(401,'Sign in again.')
+    async def reject(token,**_):raise HTTPException(401,'Sign in again.')
     monkeypatch.setattr(bm,'verify_staff',reject)
     with client.websocket_connect('/api/live',headers={'origin':bm.ORIGINS[0]}) as socket:
         socket.send_json({'type':'authenticate','token':'invalid','inspection_id':ID})
@@ -333,3 +333,79 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
     assert change['field']['enum']==scope_response_schema()['properties']['changes']['items']['properties']['field']['enum']
     assert change['room']=={'type':'STRING','nullable':True}
     assert change['value']=={'any_of':[{'type':'BOOLEAN'},{'type':'NUMBER'},{'type':'STRING'}]}
+
+@pytest.fixture
+def revocation(monkeypatch):
+    """Firebase verification against a controllable clock; records whether each call looked up revocation."""
+    clock=SimpleNamespace(now=1_000_000.0,revoked=set(),calls=[])
+    def verify(token,**kwargs):
+        clock.calls.append(kwargs['check_revoked'])
+        claims={'uid':token.split('.')[0],'email':next(iter(bm.STAFF_EMAILS)),'email_verified':True,'exp':clock.now+3000}
+        if token.endswith('.short'):claims['exp']=1_000_010
+        if kwargs['check_revoked'] and claims['uid'] in clock.revoked:raise ValueError('Revoked or disabled')
+        return claims
+    monkeypatch.setattr(bm.firebase_admin,'get_app',lambda name:object())
+    monkeypatch.setattr(bm.firebase_auth,'verify_id_token',verify)
+    monkeypatch.setattr(bm,'time',SimpleNamespace(time=lambda:clock.now,monotonic=time.monotonic))
+    monkeypatch.setattr(bm,'revocation_checked',bm.OrderedDict())
+    monkeypatch.setattr(bm,'REVOCATION_CACHE_SECONDS',45)
+    return clock
+
+def test_revocation_lookup_is_reused_within_the_ttl_while_signatures_are_always_verified(revocation):
+    staff=lambda token,**kwargs:asyncio.run(bm.verify_staff(token,**kwargs))
+    staff('owner.a');revocation.now+=44;staff('owner.a')
+    assert revocation.calls==[True,False]
+    revocation.now+=1.5;staff('owner.a')
+    assert revocation.calls==[True,False,True]
+    # A Live heartbeat reuses a check only if it outlasts the next heartbeat; live callers never reuse one.
+    revocation.now+=30;staff('owner.a',horizon=20);staff('owner.a',horizon=10);staff('owner.a',live=True)
+    assert revocation.calls[3:]==[True,False,True]
+
+def test_reused_revocation_check_never_outlasts_the_token_expiry(revocation):
+    asyncio.run(bm.verify_staff('owner.short'))
+    assert list(bm.revocation_checked.values())==[1_000_010]
+    revocation.now+=10;asyncio.run(bm.verify_staff('owner.short'))
+    assert revocation.calls==[True,True]
+
+def test_revoked_user_is_refused_once_the_ttl_lapses(revocation):
+    asyncio.run(bm.verify_staff('owner.a'))
+    revocation.revoked.add('owner');revocation.now+=44
+    # The documented bound: a revocation can take up to REVOCATION_CACHE_SECONDS to reach cached routes.
+    assert asyncio.run(bm.verify_staff('owner.a'))['uid']=='owner'
+    revocation.now+=2
+    for _ in range(2):
+        with pytest.raises(HTTPException) as error:asyncio.run(bm.verify_staff('owner.a'))
+        assert error.value.status_code==401
+    assert revocation.calls==[True,False,True,True] and not bm.revocation_checked
+
+def test_revocation_cache_keys_are_token_digests_and_bounded(revocation,monkeypatch):
+    monkeypatch.setattr(bm,'REVOCATION_CACHE_LIMIT',2)
+    tokens=['owner.secret-one','owner.secret-two','owner.secret-three']
+    for token in tokens:asyncio.run(bm.verify_staff(token))
+    stored=repr(bm.revocation_checked)
+    assert all(token not in stored and token.encode() not in bm.revocation_checked for token in tokens)
+    assert list(bm.revocation_checked)==[bm.hashlib.sha256(t.encode()).digest() for t in tokens[1:]]
+    asyncio.run(bm.verify_staff(tokens[0]))
+    assert revocation.calls==[True,True,True,True]
+
+def test_signing_evidence_and_administration_routes_always_check_revocation_live(revocation):
+    store=FakeStore();bm.app.dependency_overrides[bm.get_job_store]=lambda:store
+    try:
+        client=TestClient(bm.app,headers={'Authorization':'Bearer owner.a'})
+        for _ in range(2):assert client.get('/api/inspections/'+ID).status_code==404
+        assert revocation.calls==[True,False]
+        for _ in range(2):
+            assert client.post('/api/authorize',json={'auth_id':'missing'}).status_code==409
+            assert client.get('/api/authorizations/missing/evidence/signature').status_code==404
+        assert revocation.calls==[True,False,True,True,True,True]
+    finally:bm.app.dependency_overrides.clear()
+    live={(method,route.path) for route in bm.app.routes if getattr(route,'dependant',None)
+          for dependency in route.dependant.dependencies if bm.LIVE_REVOCATION[0] in (dependency.own_oauth_scopes or [])
+          for method in route.methods}
+    assert live=={('POST','/api/authorize'),('GET','/api/authorizations/{auth_id}/evidence/{name}'),
+        ('GET','/api/admin/companies'),('POST','/api/admin/companies'),('PUT','/api/admin/companies/{company_id}/status'),
+        ('GET','/api/companies/{company_id}'),('PUT','/api/companies/{company_id}'),
+        ('GET','/api/companies/{company_id}/team'),('PUT','/api/companies/{company_id}/team/{member_uid}'),
+        ('GET','/api/companies/{company_id}/invitations'),('POST','/api/companies/{company_id}/invitations'),
+        ('POST','/api/companies/{company_id}/invitations/{invitation_id}/{action}'),
+        ('POST','/api/invitations/{invitation_id}/accept'),('PUT','/api/jobs/{inspection_id}/coordination')}
