@@ -1,0 +1,26 @@
+POST /api/inspections/<id>/scope-suggestions -> HTTP 200 in 1.0s
+{
+ "inspection_id": "ADR-INS-3b2b82041d1d46af8284ba97db151fc2",
+ "revision": 1,
+ "changes": [
+  {
+   "field": "category",
+   "room": "Bathroom",
+   "value": 2,
+   "source_quote": "Bathroom, water category 2."
+  },
+  {
+   "field": "finished_sf",
+   "room": "Bathroom",
+   "value": 80,
+   "source_quote": "I measured 80 square feet of drywall to remove."
+  },
+  {
+   "field": "air_movers",
+   "room": null,
+   "value": 3,
+   "source_quote": "For this job use 3 fans and 1 dehumidifier for 4 days."
+  }
+ ],
+ "questions": []
+}

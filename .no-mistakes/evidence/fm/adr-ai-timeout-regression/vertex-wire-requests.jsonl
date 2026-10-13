@@ -1,0 +1,3 @@
+{"op": "scope", "path": "/v1beta1/projects/alert-disaster-field-2026/locations/global/publishers/google/models/gemini-3.8-flash:generateContent", "thinkingConfig": {"thinking_budget": 4096}}
+{"op": "audit", "path": "/v1beta1/projects/alert-disaster-field-2026/locations/global/publishers/google/models/gemini-3.8-flash:generateContent", "thinkingConfig": null}
+{"op": "scope", "path": "/v1beta1/projects/alert-disaster-field-2026/locations/global/publishers/google/models/gemini-3.8-flash:generateContent", "thinkingConfig": {"thinking_budget": 4096}}

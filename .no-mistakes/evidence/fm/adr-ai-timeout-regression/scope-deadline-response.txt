@@ -1,0 +1,2 @@
+POST /api/inspections/<id>/scope-suggestions with upstream hung 70s -> HTTP 504 in 55.1s
+{'detail': 'The request timed out. Your draft is preserved; retry. No document or reading was verified.'}

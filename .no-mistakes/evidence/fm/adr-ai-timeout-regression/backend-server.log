@@ -1,0 +1,10 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "scope", "elapsed_ms": 975, "outcome": "ok", "inspection_id": "ADR-INS-3b2b82041d1d46af8284ba97db151fc2"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/scope-suggestions", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 40, "outcome": "ok", "inspection_id": "ADR-INS-54155a2540e84726a64998e606bbed2f"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/audit", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "scope", "elapsed_ms": 55004, "outcome": "cancelled", "inspection_id": "ADR-INS-a466757e7e024756bbb36010ffaaaec3"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/scope-suggestions", "status": 504}
