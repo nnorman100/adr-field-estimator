@@ -296,7 +296,6 @@ def test_owner_guard_survives_optimized_python():
     # python -O strips assert statements, so a deletion guard must be an explicit raise.
     code = """
 import sys
-from types import SimpleNamespace
 from scripts import verify_live_release as v
 class Other:
     status_code = 200
@@ -363,17 +362,31 @@ def test_gcloud_access_token_is_cached_only_until_its_real_expiry(monkeypatch):
     assert checked == ['token-1', 'token-2', 'token-3', 'token-4']
 
 
-def test_failed_token_lifetime_lookup_never_reveals_the_token(monkeypatch):
+def test_failed_token_lifetime_lookup_uses_token_briefly_without_revealing_it(monkeypatch, capsys):
+    calls = []
+
+    def lookup(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout='secret-token\n')
+
+    clock = [1000.0]
     monkeypatch.setattr(verifier, '_token_cache', None)
     monkeypatch.setattr(verifier, 'gcloud', lambda: 'gcloud')
-    monkeypatch.setattr(
-        verifier.subprocess,
-        'run',
-        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout='secret-token\n'),
-    )
+    monkeypatch.setattr(verifier.subprocess, 'run', lookup)
+    monkeypatch.setattr(verifier.time, 'monotonic', lambda: clock[0])
     monkeypatch.setattr(
         verifier.requests, 'post', lambda *a, **k: SimpleNamespace(ok=False, json=lambda: {})
     )
-    with pytest.raises(RuntimeError) as error:
-        verifier.access_token()
-    assert 'secret-token' not in str(error.value) and verifier._token_cache is None
+    assert verifier.access_token() == 'secret-token' and len(calls) == 1
+    assert verifier._token_cache == (1000.0 + verifier.TOKEN_MARGIN, 'secret-token')
+    clock[0] += verifier.TOKEN_MARGIN - 1
+    assert verifier.access_token() == 'secret-token' and len(calls) == 1
+
+    def unreachable(*a, **k):
+        raise verifier.requests.ConnectionError('tokeninfo unreachable')
+
+    monkeypatch.setattr(verifier.requests, 'post', unreachable)
+    clock[0] += 2
+    assert verifier.access_token() == 'secret-token' and len(calls) == 2
+    output = capsys.readouterr()
+    assert 'secret-token' not in output.out + output.err

@@ -61,12 +61,9 @@ def gcloud_token():
 def token_remaining(token):
     try:
         response = requests.post(TOKEN_INFO, data={'access_token': token}, timeout=30)
-        remaining = int(response.json()['expires_in']) if response.ok else None
+        return int(response.json()['expires_in']) if response.ok else None
     except (requests.RequestException, ValueError, KeyError, TypeError):
-        remaining = None
-    if remaining is None:
-        raise RuntimeError('Access token lifetime lookup failed; no credential was logged.')
-    return remaining
+        return None
 
 
 def access_token():
@@ -76,9 +73,10 @@ def access_token():
     for _ in range(2):
         token = gcloud_token()
         remaining = token_remaining(token)
-        if remaining > TOKEN_MARGIN:
+        if remaining is None or remaining > TOKEN_MARGIN:
             break
-    _token_cache = (time.monotonic() + min(remaining - TOKEN_MARGIN, TOKEN_LIFETIME), token)
+    lifetime = TOKEN_MARGIN if remaining is None else min(remaining - TOKEN_MARGIN, TOKEN_LIFETIME)
+    _token_cache = (time.monotonic() + lifetime, token)
     return token
 
 
