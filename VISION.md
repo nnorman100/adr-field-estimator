@@ -12,13 +12,13 @@ A subscribing company uploads its own workbook, and the server turns it into tha
 When a workbook and convention disagree, the company owner decides and the code mirrors the sheet, as ADR did with the $47.46 after-hours labor rate.
 The server computes every workbook-priced line in Decimal; a model never overrides a workbook total or removes required wording.
 Each company sets its state, and the server inserts that state's mandatory notices, which the subscribing company maintains; ADR's California notices stay exact.
-Work the workbook does not cover may carry a model-suggested price, labeled AI-suggested; the technician accepts it, and a suggested line under $150 is accepted automatically.
+Work the workbook does not cover may carry a model-suggested price, labeled AI-suggested; every suggested price needs the technician's explicit acceptance (not built yet; today a model never supplies a price and unpriced work blocks signing, per `AGENTS.md`).
 
 ## AI does the typing; the technician attests
 
 Gemini coaches the walkthrough, reads meter photos, drafts documents and fills the form from what the technician says.
 Values the technician speaks during Live are priced as they are filled, and the technician reviews the whole proposal once at Finish and review before anything is signed.
-Pending or failed recognition stays unverified, and work is described as proposed unless the technician records completion.
+Pending or failed recognition stays unverified, and work is described as proposed; recording dated, itemized completed work is a future feature, not built yet.
 A provider failure produces a retry error, never a signable fallback.
 The app never claims more than it can show: color emulation is not thermal evidence, an interrupted or delayed capture says so, and homeowner photos are marked as homeowner-supplied.
 
@@ -33,7 +33,7 @@ Everything else in a signed agreement, its documents, its evidence and the walkt
 ## The agreement reaches everyone it involves
 
 Through the signing link, the homeowner can also upload photos and video of the loss, which join the photo log as evidence.
-After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter.
+After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter (the ESX file is not built yet; today the app exports ADR-scope-code JSON and makes no ESX compatibility claim, per `AGENTS.md`).
 Office staff schedule the drying setup and monitoring visits on a crew calendar, technicians get reminders, and readings are logged per visit against the job.
 
 ## Field work is never silently lost
@@ -49,7 +49,7 @@ Everything lives in the dedicated `alert-disaster-field-2026` project; peer site
 Browsers never reach the database or the model directly; the backend checks identity, company membership and job access on every call.
 Each company sees only its own jobs, recordings and uploaded prices.
 Owners may see how their prices compare with anonymized aggregates drawn from five or more companies, never another company's name or jobs.
-ADR's superadmin, or a support role ADR assigns, may open a subscriber's jobs read-only to diagnose a problem; every access is logged and visible to that company's owner.
+ADR's superadmin, or a support role ADR assigns, may open a subscriber's jobs read-only to diagnose a problem; every access is logged and visible to that company's owner (not built yet; today superadmin has no customer-job access, per `docs/company-workspaces.md`).
 The walkthrough is recorded from the start of Live, the signed proposal carries the recording notice, and the audio and frames are kept in the private evidence bucket, bound to the signed agreement.
 Logs carry allowlisted fields only, never prompts, transcripts, emails, tokens or user paths.
 Every AI call is capped per user per day, so a bug or a stolen session cannot run up the bill.
@@ -59,7 +59,7 @@ The frontend stays a static web app with no build step and same-origin vendored 
 
 Every fix lands with a test that fails without it.
 Mock results, real-service checks and physical device observations are recorded separately, and a device behavior stays open until it is observed on a device.
-Every merge that passes CI is deployed automatically: the backend is staged and verified, then promoted, then only `hosting:alert-disaster` is deployed, with automatic rollback on a failed health check.
+Every merge that passes CI is deployed automatically: the backend is staged and verified, then promoted, then only `hosting:alert-disaster` is deployed, with automatic rollback on a failed health check (not built yet; today every release is staged, checked and promoted only on the owner's explicit approval, per `RELEASES.md`).
 Firestore rules, indexes, secret bindings and IAM grants are declared in the repo and applied by the same pipeline, never by hand in the console.
 Each release carries its source commit, and `RELEASES.md` is the one record of what is serving.
 
