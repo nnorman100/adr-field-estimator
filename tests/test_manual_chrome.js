@@ -46,10 +46,9 @@ assert.equal(pythonCommand({ ADR_TEST_PYTHON: '/opt/python' }, 'linux', '/repo')
 assert.equal(pythonCommand({}, 'linux', '/nonexistent-root'), 'python3');
 assert.equal(pythonCommand({}, 'win32', '/nonexistent-root'), 'python');
 const source = fs.readFileSync('scripts/verify_live_browser.js', 'utf8');
-assert(
-  source.indexOf("line.trim()==='signed-in'") <
-    source.indexOf('chromium.connectOverCDP(manual.endpoint)'),
-);
+const signedIn = source.indexOf("line.trim() === 'signed-in'");
+const attach = source.indexOf('chromium.connectOverCDP(manual.endpoint)');
+assert(signedIn >= 0 && attach >= 0 && signedIn < attach);
 assert(!source.includes('ignoreDefaultArgs'));
 console.log(
   'PASS: normal private Chrome handoff precedes automation; cleanup rejects unrelated profiles.',
