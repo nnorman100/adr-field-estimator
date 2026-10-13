@@ -7,6 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from google.genai import errors
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 import backend.main as bm
 from backend.contracts import InspectionData
 from tests.fakes import FakeStore, Blob, png
@@ -213,4 +215,89 @@ def test_failed_upload_cleanup_logs_operation_and_error_class_without_uid_or_pat
         'outcome': 'PermissionError',
     }
     for secret in ('uid-7f3a', 'users/', 'gs://'):
+        assert secret not in output
+
+
+@pytest.mark.parametrize(
+    'failure, outcome, provider_code',
+    [
+        # Vertex closed the Live socket: its close code is the provider code.
+        (
+            ConnectionClosedError(Close(1011, 'internal error'), None, None),
+            'ConnectionClosedError',
+            1011,
+        ),
+        # The SDK closed it (for example its own keepalive timeout) or the link dropped: no frame, 1006.
+        (
+            ConnectionClosedError(None, Close(1011, 'keepalive ping timeout'), None),
+            'ConnectionClosedError',
+            1006,
+        ),
+        # google-genai 2.29 turns a close seen while receiving into an API error carrying the code.
+        (errors.APIError(1008, {'error': {'message': 'policy violation'}}, None), 'APIError', 1008),
+    ],
+)
+def test_live_session_end_logs_the_provider_close_code(
+    monkeypatch, capsys, failure, outcome, provider_code
+):
+    store = FakeStore()
+    store.create_inspection('owner', ID, InspectionData().model_dump())
+
+    class Session:
+        async def send_realtime_input(self, **kw):
+            pass
+
+        async def receive(self):
+            raise failure
+            yield  # pragma: no cover - keeps receive() an async generator like the SDK's
+
+    @asynccontextmanager
+    async def connect(**kw):
+        yield Session()
+
+    async def close():
+        pass
+
+    async def identity(token, **_):
+        return {'uid': 'owner', 'email': EMAIL, 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'verify_staff', identity)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    monkeypatch.setattr(
+        bm.genai, 'Client', lambda **kw: NS(aio=NS(live=NS(connect=connect), aclose=close))
+    )
+    with (
+        TestClient(bm.app) as client,
+        client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
+    ):
+        socket.send_json(
+            dict(
+                type='authenticate',
+                token='secret-id-token',
+                inspection_id=ID,
+                protocol_version=2,
+                capture_id='e' * 32,
+            )
+        )
+        assert socket.receive_json()['type'] == 'ready'
+        message = socket.receive_json()
+        assert message['type'] == 'error' and 'status' not in message
+        assert message['message'].startswith('Live coaching disconnected.')
+        with pytest.raises(WebSocketDisconnect):
+            while True:
+                socket.receive_json()
+    output = capsys.readouterr().out
+    [entry] = [
+        json.loads(line)
+        for line in output.splitlines()
+        if line.startswith('{') and '"live"' in line
+    ]
+    assert entry['message'] == 'Live session ended' and entry['severity'] == 'WARNING'
+    assert entry['outcome'] == outcome and entry['provider_code'] == provider_code
+    for secret in (
+        'secret-id-token',
+        'internal error',
+        'keepalive ping timeout',
+        'policy violation',
+    ):
         assert secret not in output

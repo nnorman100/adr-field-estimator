@@ -31,9 +31,14 @@ STAGED = 'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a
 WORKSPACE_STAGE = 'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 SERVICE = None
 EXPECTED_COMMIT = None
+# One lookup per Live window avoids ~30 s WSL2 interop calls; gcloud may hand back a nearly expired token.
+TOKEN_LIFETIME = 45 * 60
+TOKEN_MARGIN = 2 * 60
+TOKEN_INFO = 'https://oauth2.googleapis.com/tokeninfo'
+_token_cache = None
 
 
-def access_token():
+def gcloud_token():
     environment = dict(os.environ)
     environment.pop('PYTHONPATH', None)
     result = subprocess.run(
@@ -51,6 +56,28 @@ def access_token():
     if result.returncode:
         raise RuntimeError('Cloud CLI token lookup failed; no credential was logged.')
     return result.stdout.strip()
+
+
+def token_remaining(token):
+    try:
+        response = requests.post(TOKEN_INFO, data={'access_token': token}, timeout=30)
+        return int(response.json()['expires_in']) if response.ok else None
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return None
+
+
+def access_token():
+    global _token_cache
+    if _token_cache and time.monotonic() < _token_cache[0]:
+        return _token_cache[1]
+    for _ in range(2):
+        token = gcloud_token()
+        remaining = token_remaining(token)
+        if remaining is None or remaining > TOKEN_MARGIN:
+            break
+    lifetime = TOKEN_MARGIN if remaining is None else min(remaining - TOKEN_MARGIN, TOKEN_LIFETIME)
+    _token_cache = (time.monotonic() + lifetime, token)
+    return token
 
 
 common.access_token = access_token
@@ -227,7 +254,8 @@ async def live(token, iid, uid):
             json.dumps({'type': 'audio', 'data': base64.b64encode(b'\0' * 3200).decode()})
         )
         await socket.send(json.dumps({'type': 'pause'}))
-        checkpoint = private_document('_live_resume', uid)
+        # The loop must stay free to answer the relay's keepalive pings while gcloud runs.
+        checkpoint = await asyncio.to_thread(private_document, '_live_resume', uid)
         assert checkpoint and checkpoint.get('capture_id', {}).get('stringValue') == capture
         assert checkpoint.get('resumable', {}).get('booleanValue')
         assert checkpoint.get('handle', {}).get('stringValue'), 'No usable checkpoint was saved'
