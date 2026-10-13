@@ -343,7 +343,9 @@ def test_gcloud_access_token_is_cached_only_until_its_real_expiry(monkeypatch):
     def tokeninfo(url, data=None, timeout=None, **kwargs):
         assert url == verifier.TOKEN_INFO and data['access_token'] not in url and timeout
         checked.append(data['access_token'])
-        return SimpleNamespace(ok=True, json=lambda: {'expires_in': str(lifetimes[data['access_token']])})
+        return SimpleNamespace(
+            ok=True, json=lambda: {'expires_in': str(lifetimes[data['access_token']])}
+        )
 
     clock = [1000.0]
     monkeypatch.setattr(verifier, '_token_cache', None)
