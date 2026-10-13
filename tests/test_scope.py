@@ -24,7 +24,7 @@ def prepared(client, **extra):
 def provider(monkeypatch, changes, callback=None, questions=None):
     async def respond(**kwargs):
         assert kwargs['config'].response_schema == bm.scope_response_schema()
-        assert kwargs['config'].thinking_config.thinking_budget == bm.SCOPE_THINKING_BUDGET
+        assert kwargs['config'].thinking_config.thinking_level == bm.SCOPE_THINKING_LEVEL
         assert 'assistant_transcript' not in str(kwargs['contents'])
         if callback:
             callback()
@@ -63,15 +63,15 @@ def suggest(client, revision=1):
     )
 
 
-def test_scope_request_caps_thought_tokens_so_the_55_second_deadline_holds(context, monkeypatch):
-    # Measured 2026-10-13: without a cap, about one scope call in five ran past the REST deadline.
+def test_scope_request_uses_low_thinking_so_the_55_second_deadline_holds(context, monkeypatch):
+    # Measured 2026-10-13: a 4096-token budget still let staged scope calls reach the deadline.
     client, store = context
     prepared(client)
     configs = captured_configs(monkeypatch, dict(changes=[], questions=[]))
     assert suggest(client).status_code == 200
-    assert bm.SCOPE_THINKING_BUDGET == 4096
-    assert [c.thinking_config.thinking_budget for c in configs] == [bm.SCOPE_THINKING_BUDGET]
-    assert configs[0].thinking_config.thinking_level is None
+    assert bm.SCOPE_THINKING_LEVEL == bm.types.ThinkingLevel.LOW
+    assert [c.thinking_config.thinking_level for c in configs] == [bm.types.ThinkingLevel.LOW]
+    assert configs[0].thinking_config.thinking_budget is None
 
 
 def test_scope_suggestions_are_grounded_read_only_and_preserve_confirmation(context, monkeypatch):

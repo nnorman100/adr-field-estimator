@@ -92,11 +92,11 @@ LOCATION = os.getenv('GOOGLE_CLOUD_LOCATION', 'global')
 AUDIT_MODEL = os.getenv('AUDIT_MODEL', 'gemini-3.8-flash')
 OCR_MODEL = os.getenv('OCR_MODEL', AUDIT_MODEL)
 # gemini-3.8-flash at its default thinking level occasionally spends 10,000+ thought tokens on a
-# scope extraction: measured on 2026-10-13, roughly one call in five passed the 55-second REST
-# deadline with both the dd7fe95 and 95dd328 prompts. Capping thought tokens kept every measured
-# call under 35 seconds with identical proposed changes. Audit and OCR calls never approached the
-# deadline in the same measurement, so they keep the provider default.
-SCOPE_THINKING_BUDGET = 4096
+# scope extraction and passes the 55-second REST deadline. A 4096-token thinking budget still let
+# 3 of 4 staged scope calls reach the deadline on 2026-10-13. With the LOW thinking level, 10 calls
+# on the staged check's synthetic job took at most 4.5 seconds (median 2.6 s), with valid
+# suggestions. Audit and OCR calls never approached the deadline, so they keep the provider default.
+SCOPE_THINKING_LEVEL = types.ThinkingLevel.LOW
 LIVE_MODEL = os.getenv('LIVE_MODEL', 'gemini-3.8-live')
 LIVE_LOCATION = os.getenv('LIVE_LOCATION', 'us-central1')
 LIVE_RECHECK_SECONDS = 20
@@ -435,7 +435,7 @@ def parse_json_from_llm(text):
 
 
 async def generate(
-    schema, contents, model, operation, inspection_id, wire_schema=None, thinking_budget=None
+    schema, contents, model, operation, inspection_id, wire_schema=None, thinking_level=None
 ):
     started = time.monotonic()
     outcome = 'cancelled'
@@ -449,8 +449,8 @@ async def generate(
                     response_mime_type='application/json',
                     response_schema=wire_schema or schema,
                     thinking_config=(
-                        types.ThinkingConfig(thinking_budget=thinking_budget)
-                        if thinking_budget
+                        types.ThinkingConfig(thinking_level=thinking_level)
+                        if thinking_level
                         else None
                     ),
                 ),
@@ -728,7 +728,7 @@ async def suggest_scope(
         'scope',
         inspection_id,
         wire_schema=scope_response_schema(),
-        thinking_budget=SCOPE_THINKING_BUDGET,
+        thinking_level=SCOPE_THINKING_LEVEL,
     )
     try:
         result = validate_suggestions(data, result)

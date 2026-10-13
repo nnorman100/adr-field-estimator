@@ -36,7 +36,7 @@ def context(monkeypatch):
 
     async def generate(**kwargs):
         schema = kwargs['config'].response_schema
-        # Audit and OCR requests keep the provider's default thinking; only scope is capped.
+        # Audit and OCR requests keep the provider's default thinking; only scope sets LOW.
         assert kwargs['config'].thinking_config is None
         value = (
             {
@@ -736,7 +736,7 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
                 'scope',
                 ID,
                 wire_schema=scope_response_schema(),
-                thinking_budget=bm.SCOPE_THINKING_BUDGET,
+                thinking_level=bm.SCOPE_THINKING_LEVEL,
             ),
         ]
 
@@ -758,8 +758,8 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
     generation = [body['generationConfig'] for _, _, body in requests]
     assert 'thinkingConfig' not in generation[0] and 'thinkingConfig' not in generation[1]
     # google-genai 2.8.0 and 2.29.0 both send the snake_case field; Vertex's proto-JSON parser
-    # accepts it (the cap measurably held thought tokens on 2026-10-13).
-    assert generation[2]['thinkingConfig'] == {'thinking_budget': bm.SCOPE_THINKING_BUDGET}
+    # accepts it (LOW calls reported no thought tokens on 2026-10-13).
+    assert generation[2]['thinkingConfig'] == {'thinking_level': 'LOW'}
     schemas = [body['generationConfig']['responseSchema'] for _, _, body in requests]
     assert (
         schemas[0]['required']
