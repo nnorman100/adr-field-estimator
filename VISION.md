@@ -12,7 +12,7 @@ A subscribing company uploads its own workbook, and the server turns it into tha
 When a workbook and convention disagree, the company owner decides and the code mirrors the sheet, as ADR did with the $47.46 after-hours labor rate.
 The server computes every workbook-priced line in Decimal; a model never overrides a workbook total or removes required wording.
 Each company sets its state, and the server inserts that state's mandatory notices, which the subscribing company maintains; ADR's California notices stay exact.
-Work the workbook does not cover may carry a model-suggested price, labeled AI-suggested; the technician accepts it, and a suggested line under $150 is accepted automatically (not built yet; today a model never supplies a price and unpriced work blocks signing, per `AGENTS.md`).
+Work the workbook does not cover may carry a model-suggested price, labeled AI-suggested; every suggested price needs the technician's explicit acceptance (not built yet; today a model never supplies a price and unpriced work blocks signing, per `AGENTS.md`).
 
 ## AI does the typing; the technician attests
 
