@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -209,5 +210,24 @@ def test_dirty_hosting_tree_is_refused_unless_marked(monkeypatch, capsys):
 
 def test_hosting_deploy_runs_the_stamp_check():
     config = json.loads((ROOT / 'firebase.json').read_text())
-    assert config['hosting']['predeploy'] == ['python scripts/stamp_hosting.py --check']
+    assert config['hosting']['predeploy'] == [
+        'node scripts/run_python.js scripts/stamp_hosting.py --check'
+    ]
     assert hosting.main(['--check']) == 1  # the committed shell is unstamped
+
+
+@pytest.mark.skipif(
+    os.name == 'nt' or not shutil.which('node'), reason='needs POSIX shell and node'
+)
+def test_predeploy_launcher_falls_back_to_python3_and_passes_exit_code(tmp_path):
+    node, launcher = shutil.which('node'), ROOT / 'scripts' / 'run_python.js'
+    fake = tmp_path / 'python3'
+    fake.write_text('#!/bin/sh\necho "args:$*"\nexit 7\n')
+    fake.chmod(0o755)
+    run = lambda path: subprocess.run(  # noqa: E731
+        [node, str(launcher), 'x.py', '--check'], env={'PATH': path}, capture_output=True, text=True
+    )
+    only_python3 = run(str(tmp_path))
+    assert only_python3.returncode == 7 and 'args:x.py --check' in only_python3.stdout
+    none = run(str(tmp_path / 'empty'))
+    assert none.returncode == 1 and 'No Python interpreter found' in none.stderr
