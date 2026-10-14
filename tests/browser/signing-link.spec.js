@@ -155,10 +155,19 @@ test('after a reload the Review tab still offers Revoke, then flips to Signed', 
   await technician(page);
   await audit(page, 'Synthetic reloaded signing-link property');
   const url = await sendLink(page);
+  let failed = 0;
+  await page.route(/\/api\/inspections\/[^/]+\/signing-links$/, (route) =>
+    route.request().method() === 'GET' && !failed++ ? route.abort() : route.continue(),
+  );
   await page.reload();
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await task(page, 'review');
   await expect(page.locator('#documents')).toBeVisible();
+  // A failed status read is retried when the Review tab is reopened.
+  await expect.poll(() => failed).toBe(1);
+  await expect(page.locator('#homeownerLinkPanel')).toBeHidden();
+  await task(page, 'property');
+  await task(page, 'review');
   await expect(page.locator('#homeownerLinkStatus')).toContainText('Waiting for the homeowner');
   await expect(page.locator('#revokeHomeownerLink')).toBeVisible();
   // The token is never returned again, so only a new link shows a QR code.

@@ -1949,7 +1949,13 @@ async function restoreHomeownerLink() {
   )
     return;
   homeownerLink.checked = documents;
-  const link = await jsonApi('/api/inspections/' + inspection + '/signing-links');
+  let link;
+  try {
+    link = await jsonApi('/api/inspections/' + inspection + '/signing-links');
+  } catch (e) {
+    if (homeownerLink.checked === documents) homeownerLink.checked = null;
+    throw e;
+  }
   if (
     link.status !== 'pending' ||
     homeownerLink.inspection ||
