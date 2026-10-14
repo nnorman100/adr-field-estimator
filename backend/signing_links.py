@@ -7,6 +7,7 @@ job access in both modes. Tokens, IP addresses and user agents never reach the l
 
 import base64
 import hashlib
+import hmac
 import re
 import secrets
 import time
@@ -33,6 +34,8 @@ CONSENT = [
     'I agree to sign this agreement electronically and to receive it electronically. '
     'I can print or save a copy from this page.',
 ]
+# Per-address counters are keyed by an HMAC under a server key and expire once idle this long.
+ADDRESS_LIMIT_SECONDS = 3600
 UNAVAILABLE = 'This signing link is not available. Ask your technician for a new link.'
 UPDATED = 'This estimate was updated. Ask your technician for a new link.'
 
@@ -41,6 +44,24 @@ def link_id(token):
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         raise LookupError(UNAVAILABLE)
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def address_key(store, address):
+    """The _limits document for a client address; without the stored key it cannot be reversed."""
+    secret = getattr(store, '_address_secret', None)
+    if secret is None:
+        ref = store.db.collection('_server_keys').document('signing_link_addresses')
+
+        def load(tx):
+            snapshot = ref.get(transaction=tx)
+            if snapshot.exists:
+                return snapshot.to_dict()['key']
+            key = secrets.token_hex(32)
+            tx.create(ref, {'key': key})
+            return key
+
+        secret = store._address_secret = bytes.fromhex(store._atomic(load))
+    return 'ip-' + hmac.new(secret, address.encode(), hashlib.sha256).hexdigest()
 
 
 def iso(moment):
@@ -129,6 +150,35 @@ def revoke(store, uid, inspection_id):
         return 'revoked'
 
     return store._atomic(update)
+
+
+def status(store, uid, inspection_id):
+    """The job's current link for its technician, never the token; pending only while it can sign."""
+    inspection_ref = store._ref(inspection_id)
+    pointer_ref = _pointer(store, inspection_id)
+
+    def read(tx):
+        record = store._owned(inspection_ref.get(transaction=tx), uid, 'sign', tx)
+        pointer = pointer_ref.get(transaction=tx)
+        if not pointer.exists:
+            return dict(status='none')
+        link = _links(store).document(pointer.to_dict()['link_id']).get(transaction=tx).to_dict()
+        if not link or link['status'] != 'pending':
+            return dict(status=link['status'] if link else 'none')
+        if time.time() >= link['expires']:
+            return dict(status='expired')
+        try:
+            if record['status'] == 'signed':
+                raise Conflict(UPDATED)
+            store._signable(
+                record,
+                {'expected_revision': link['revision'], 'proposal_hash': link['proposal_hash']},
+            )
+        except Conflict:
+            return dict(status='voided')
+        return dict(status='pending', expires_at=iso(link['expires']))
+
+    return store._atomic(read)
 
 
 def _resolve(store, key, count=False):
@@ -253,7 +303,7 @@ class LinkClaim:
 
 
 def sign(store, token, req, client):
-    """client holds the request's IP address, forwarding chain and user agent for the record."""
+    """client holds the request's IP address and user agent for the record."""
     key = link_id(token)
     link_ref = _links(store).document(key)
 

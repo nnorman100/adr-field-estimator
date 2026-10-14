@@ -299,7 +299,7 @@ SIGNER = dict(
     consent_version='homeowner-link-v1',
     signature_png=png(),
 )
-CLIENT = dict(ip_address=None, forwarded_for='', user_agent='Synthetic')
+CLIENT = dict(ip_address=None, user_agent='Synthetic')
 
 
 def test_signing_link_lifecycle_in_real_transactions(signing):

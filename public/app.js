@@ -64,7 +64,7 @@ const ui = {
   viewed: new Set(),
 };
 // The signing link minted for the open inspection; the server keeps only its digest.
-const homeownerLink = { inspection: null, url: '', timer: null };
+const homeownerLink = { inspection: null, url: '', timer: null, checked: null };
 let roomRemoval = null,
   validationControl = null;
 function visibleBounds() {
@@ -194,7 +194,10 @@ function showTask(task, focus = true) {
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
   }
-  if (task === 'review') requestAnimationFrame(resizeSignature);
+  if (task === 'review') {
+    requestAnimationFrame(resizeSignature);
+    restoreHomeownerLink().catch(() => {});
+  }
 }
 function renderControls() {
   const editable = !!state.session && !!state.draft && !state.signed && !confirmedAuthorization,
@@ -1754,6 +1757,7 @@ function renderDocuments() {
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;
   $('sendHomeownerLink').disabled = $('authorizeJob').disabled;
   if (state.signed || confirmedAuthorization) stopHomeownerLink();
+  else if (ui.task === 'review') restoreHomeownerLink().catch(() => {});
   resizeSignature();
   window.WorkspaceUI?.documentBranding();
 }
@@ -1913,6 +1917,48 @@ function stopHomeownerLink(status = '') {
   $('homeownerLinkUrl').value = '';
   $('homeownerLinkStatus').textContent = status;
 }
+// The server returns the link itself only when it is created; a restored link shows its status.
+function showHomeownerLink(inspection, link) {
+  stopHomeownerLink();
+  Object.assign(homeownerLink, { inspection, url: link.url || '' });
+  if (link.url) $('homeownerQr').src = link.qr_svg;
+  $('homeownerLinkUrl').value = homeownerLink.url;
+  for (const id of ['homeownerQr', 'copyHomeownerLink']) $(id).hidden = !link.url;
+  $('homeownerLinkUrl').closest('label').hidden = !link.url;
+  $('shareHomeownerLink').hidden = !link.url || !navigator.share;
+  $('homeownerLinkPanel').hidden = false;
+  $('homeownerLinkStatus').textContent =
+    'Waiting for the homeowner to sign · the link expires ' +
+    new Date(link.expires_at).toLocaleString() +
+    '. Editing anything here cancels it.' +
+    (link.url ? '' : ' Send a new link to show its QR code again.');
+  homeownerLink.timer = setInterval(() => checkHomeownerLink().catch(() => {}), 10000);
+}
+// Once per displayed audit, the Review tab picks up a link sent before a reload or job switch.
+async function restoreHomeownerLink() {
+  const inspection = state.draft?.inspection_id,
+    documents = state.documents;
+  if (
+    !inspection ||
+    !documents?.signable ||
+    state.signed ||
+    confirmedAuthorization ||
+    !navigator.onLine ||
+    homeownerLink.inspection === inspection ||
+    homeownerLink.checked === documents
+  )
+    return;
+  homeownerLink.checked = documents;
+  const link = await jsonApi('/api/inspections/' + inspection + '/signing-links');
+  if (
+    link.status !== 'pending' ||
+    homeownerLink.inspection ||
+    state.draft?.inspection_id !== inspection ||
+    state.documents !== documents
+  )
+    return;
+  showHomeownerLink(inspection, link);
+}
 async function sendHomeownerLink() {
   if (!navigator.onLine) throw Error('Sending a signing link requires a connection.');
   if (!state.documents?.signable || !state.record?.audit)
@@ -1928,17 +1974,7 @@ async function sendHomeownerLink() {
     });
     if (state.draft?.inspection_id !== inspection || state.documents !== documents) return;
     // A new link replaces the previous one on the server as well.
-    stopHomeownerLink();
-    Object.assign(homeownerLink, { inspection, url: link.url });
-    $('homeownerQr').src = link.qr_svg;
-    $('homeownerLinkUrl').value = link.url;
-    $('shareHomeownerLink').hidden = !navigator.share;
-    $('homeownerLinkPanel').hidden = false;
-    $('homeownerLinkStatus').textContent =
-      'Waiting for the homeowner to sign · the link expires ' +
-      new Date(link.expires_at).toLocaleString() +
-      '. Editing anything here cancels it.';
-    homeownerLink.timer = setInterval(() => checkHomeownerLink().catch(() => {}), 10000);
+    showHomeownerLink(inspection, link);
   } catch (e) {
     $('homeownerLinkStatus').textContent = 'No link was created: ' + e.message;
     throw e;

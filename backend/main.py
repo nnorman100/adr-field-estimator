@@ -877,14 +877,24 @@ async def authorize_estimate(
 SIGNING_LINK_HEADER = 'X-ADR-Signing-Link'
 # Per client IP across the anonymous signing-link routes.
 LINK_REQUESTS_PER_MINUTE = 120
+# Google's front ends append to X-Forwarded-For rather than replace it
+# (https://cloud.google.com/load-balancing/docs/https#x-forwarded-for_header). Behind the
+# Hosting rewrite, Hosting appends the address it received the request from, then the Cloud Run
+# front end appends Hosting's own address, so the client is this many entries from the right and
+# every entry before it is client-supplied.
+TRUSTED_FORWARDED_HOPS = 2
 
 
 def client_ip(request):
-    """The first X-Forwarded-For address (Hosting and Cloud Run append theirs after it), else the peer."""
-    forwarded = request.headers.get('x-forwarded-for', '')
-    candidate = (
-        forwarded.split(',')[0].strip() if forwarded else getattr(request.client, 'host', '')
-    )
+    """The entry Firebase Hosting appended to X-Forwarded-For; the peer only without the header."""
+    forwarded = [hop.strip() for hop in request.headers.get('x-forwarded-for', '').split(',')]
+    forwarded = [hop for hop in forwarded if hop]
+    if not forwarded:
+        candidate = getattr(request.client, 'host', '')
+    elif len(forwarded) >= TRUSTED_FORWARDED_HOPS:
+        candidate = forwarded[-TRUSTED_FORWARDED_HOPS]
+    else:
+        return None
     try:
         return str(ipaddress.ip_address(candidate))
     except ValueError:
@@ -892,8 +902,10 @@ def client_ip(request):
 
 
 async def signing_link(request, store):
-    key = hashlib.sha256((client_ip(request) or 'unknown').encode()).hexdigest()
-    await stored(store.quota, 'ip-' + key, 'sign_link', LINK_REQUESTS_PER_MINUTE)
+    key = await stored(signing_links.address_key, store, client_ip(request) or 'unknown')
+    await stored(
+        store.quota, key, 'sign_link', LINK_REQUESTS_PER_MINUTE, signing_links.ADDRESS_LIMIT_SECONDS
+    )
     return request.headers.get(SIGNING_LINK_HEADER, '')
 
 
@@ -933,6 +945,13 @@ async def create_signing_link(
         qr_svg=await run_in_threadpool(signing_links.qr_data_url, url),
         expires_at=signing_links.iso(expires),
     )
+
+
+@app.get('/api/inspections/{inspection_id}/signing-links')
+async def signing_link_status(
+    inspection_id: str, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    return await stored(signing_links.status, store, staff['uid'], inspection_id)
 
 
 @app.post('/api/inspections/{inspection_id}/signing-links/revoke')
@@ -981,8 +1000,6 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
         req.model_dump(mode='json'),
         dict(
             ip_address=client_ip(request),
-            # The whole chain as received, until a staged request confirms which entry Hosting adds.
-            forwarded_for=request.headers.get('x-forwarded-for', '')[:512],
             user_agent=request.headers.get('user-agent', '')[:512],
         ),
     )

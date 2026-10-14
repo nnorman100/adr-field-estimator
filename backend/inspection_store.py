@@ -393,7 +393,8 @@ class InspectionStore(JobStore):
                 'The scope changed or requires review. Complete a new audit before signing.'
             )
 
-    def quota(self, uid, action, maximum=None):
+    def quota(self, uid, action, maximum=None, ttl=None):
+        """ttl sets expire_at, the _limits TTL field, so an idle counter document is deleted."""
         ref = self.db.collection('_limits').document(uid)
 
         def reserve(tx):
@@ -403,6 +404,8 @@ class InspectionStore(JobStore):
                 data = reserve_slot(data, action + '_day', DAILY_LIMITS[action], 86400)
             if maximum:
                 data = reserve_slot(data, action, maximum)
+            if ttl:
+                data['expire_at'] = datetime.fromtimestamp(time.time() + ttl, timezone.utc)
             tx.set(ref, data)
 
         self._atomic(reserve)

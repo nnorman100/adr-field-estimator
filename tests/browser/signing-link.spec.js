@@ -148,6 +148,30 @@ test('technician sends a link, an unsigned-in homeowner signs it and the technic
   await home.context.close();
 });
 
+test('after a reload the Review tab still offers Revoke, then flips to Signed', async ({
+  page,
+  browser,
+}) => {
+  await technician(page);
+  await audit(page, 'Synthetic reloaded signing-link property');
+  const url = await sendLink(page);
+  await page.reload();
+  await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+  await task(page, 'review');
+  await expect(page.locator('#documents')).toBeVisible();
+  await expect(page.locator('#homeownerLinkStatus')).toContainText('Waiting for the homeowner');
+  await expect(page.locator('#revokeHomeownerLink')).toBeVisible();
+  // The token is never returned again, so only a new link shows a QR code.
+  await expect(page.locator('#homeownerQr')).toBeHidden();
+  await expect(page.locator('#copyHomeownerLink')).toBeHidden();
+  const home = await homeowner(browser, url);
+  await expect(home.page.locator('#documents')).toBeVisible();
+  await signAsHomeowner(home.page);
+  await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 20000 });
+  await expect(page.locator('#homeownerLinkPanel')).toBeHidden();
+  await home.context.close();
+});
+
 test('an edit voids an unused link, and revoked or expired links are refused', async ({
   page,
   browser,

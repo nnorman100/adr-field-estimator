@@ -533,12 +533,11 @@ def signing_link(token, iid, agreements, links):
     signed = homeowner('GET', '/api/sign', current).json()
     assert signed['status'] == 'signed' and signed['receipt']['auth_id'] == receipt['auth_id']
     homeowner('GET', '/api/sign/signature', current)
-    hops = len([hop for hop in signer['forwarded_for'].split(',') if hop.strip()])
-    # Counts only; the addresses themselves stay in the record and out of this output.
+    assert set(signer) == {'name', 'role', 'ip_address', 'user_agent'}
+    # Presence only; the address itself stays in the record and out of this output.
     print(
-        f'PASS: signing link minted, replaced link refused, anonymous read and single signature; '
-        f'forwarded chain carried {hops} address(es), ip_address '
-        + ('recorded' if signer['ip_address'] else 'absent'),
+        'PASS: signing link minted, replaced link refused, anonymous read and single signature; '
+        'ip_address ' + ('recorded' if signer['ip_address'] else 'absent'),
         flush=True,
     )
 

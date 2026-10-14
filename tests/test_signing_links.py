@@ -97,7 +97,6 @@ def test_link_reads_the_bound_documents_and_signs_once_as_the_technician(ready):
         name='Synthetic Signer',
         role='owner',
         ip_address=None,
-        forwarded_for='',
         user_agent='Synthetic homeowner browser',
     )
     assert agreement['consent'] == dict(
@@ -122,15 +121,64 @@ def test_link_reads_the_bound_documents_and_signs_once_as_the_technician(ready):
     assert homeowner(value).get('/api/sign/photos/' + 'b' * 32).status_code == 200
 
 
-def test_forwarded_client_address_is_recorded(ready):
+def test_recorded_address_is_the_entry_hosting_appended(ready):
     _, store, _, value = ready
-    response = homeowner(value, **{'X-Forwarded-For': '203.0.113.7, 198.51.100.2'}).post(
+    # A client-supplied leading entry, then Hosting's entry for the client, then Hosting itself.
+    chain = '198.51.100.66, 203.0.113.7, 35.191.0.1'
+    response = homeowner(value, **{'X-Forwarded-For': chain}).post(
         '/api/sign', json={**SIGNER, 'signature_png': png()}
     )
     assert response.status_code == 200, response.text
     signer = store.db.records['authorizations/' + response.json()['auth_id']]['signer']
     assert signer['ip_address'] == '203.0.113.7'
-    assert signer['forwarded_for'] == '203.0.113.7, 198.51.100.2'
+    assert set(signer) == {'name', 'role', 'ip_address', 'user_agent'}
+    assert '198.51.100.66' not in json.dumps(store.db.records, default=str)
+
+
+def test_a_chain_without_the_hosting_hops_records_no_address(context):
+    client, store = context
+    record = audit(client, recognized(client, inspect(client)))
+    value = token(mint(client, record))
+    response = homeowner(value, **{'X-Forwarded-For': '198.51.100.66'}).post(
+        '/api/sign', json={**SIGNER, 'signature_png': png()}
+    )
+    assert response.status_code == 200, response.text
+    signer = store.db.records['authorizations/' + response.json()['auth_id']]['signer']
+    assert signer['ip_address'] is None
+
+
+def test_technician_reads_the_current_link_state_without_the_token(ready):
+    client, store, record, value = ready
+    path = '/api/inspections/' + ID + '/signing-links'
+    pending = client.get(path)
+    assert pending.status_code == 200, pending.text
+    assert pending.json()['status'] == 'pending' and pending.json()['expires_at']
+    assert value not in pending.text and sl.link_id(value) not in pending.text
+    as_user('other')
+    assert client.get(path).status_code == 404
+    as_user('owner')
+    client.post(path + '/revoke')
+    assert client.get(path).json() == {'status': 'revoked'}
+    fresh = token(mint(client, record))
+    assert sign(fresh).status_code == 200
+    assert client.get(path).json() == {'status': 'used'}
+
+
+def test_link_state_reports_an_edited_estimate_as_voided(ready):
+    client, _, record, _ = ready
+    path = '/api/inspections/' + ID + '/signing-links'
+    changed = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': record['revision'], 'data': data(labor_hours=1)},
+    )
+    assert changed.status_code == 200
+    assert client.get(path).json() == {'status': 'voided'}
+
+
+def test_link_state_is_none_before_any_link(context):
+    client, _ = context
+    audit(client, recognized(client, inspect(client)))
+    assert client.get('/api/inspections/' + ID + '/signing-links').json() == {'status': 'none'}
 
 
 @pytest.mark.parametrize(
@@ -283,15 +331,27 @@ def test_per_link_read_and_sign_attempt_limits(ready, monkeypatch):
 def test_per_address_limit_covers_every_anonymous_route(ready, monkeypatch):
     _, store, _, value = ready
     monkeypatch.setattr(bm, 'LINK_REQUESTS_PER_MINUTE', 3)
-    client = homeowner(value, **{'X-Forwarded-For': '203.0.113.9'})
-    statuses = [client.get('/api/sign/photos/' + 'b' * 32).status_code for _ in range(4)]
-    assert statuses == [200, 200, 200, 429]
-    assert client.get('/api/sign').status_code == 429
-    assert (
-        homeowner(value, **{'X-Forwarded-For': '203.0.113.10'}).get('/api/sign').status_code == 200
-    )
-    # The counter is keyed by a digest, never the address itself.
-    assert '203.0.113.9' not in json.dumps(store.db.records, default=str)
+
+    def via_hosting(address, spoofed='198.51.100.1'):
+        return homeowner(value, **{'X-Forwarded-For': spoofed + ', ' + address + ', 35.191.0.1'})
+
+    client = via_hosting('203.0.113.9')
+    statuses = [client.get('/api/sign/photos/' + 'b' * 32).status_code for _ in range(3)]
+    assert statuses == [200, 200, 200]
+    # Changing the client-supplied leading entry does not reset the count.
+    for spoofed in ['198.51.100.2', '198.51.100.3']:
+        assert via_hosting('203.0.113.9', spoofed).get('/api/sign').status_code == 429
+    assert via_hosting('203.0.113.10').get('/api/sign').status_code == 200
+    counters = {k: v for k, v in store.db.records.items() if k.startswith('_limits/ip-')}
+    assert len(counters) == 2
+    # Keyed by an HMAC under a stored server key, never the address or its plain digest.
+    plain = sl.hashlib.sha256(b'203.0.113.9').hexdigest()
+    dump = json.dumps(store.db.records, default=str)
+    assert '203.0.113.9' not in dump and plain not in dump
+    assert store.db.records['_server_keys/signing_link_addresses']['key']
+    for counter in counters.values():
+        remaining = counter['expire_at'].timestamp() - time.time()
+        assert 0 < remaining <= sl.ADDRESS_LIMIT_SECONDS
 
 
 def test_qr_code_encodes_only_the_link(ready):
