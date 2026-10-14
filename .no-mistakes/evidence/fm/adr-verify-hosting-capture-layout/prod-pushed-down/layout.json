@@ -1,0 +1,24 @@
+{
+ "base": "https://alert-disaster-field-2026.web.app",
+ "inject": "400px",
+ "results": [
+  {
+   "width": 320,
+   "oldBottom": 1525,
+   "oldPasses": false,
+   "newBottom": 1068,
+   "newPasses": false,
+   "authPanelRestored": true,
+   "signInVisible": true
+  },
+  {
+   "width": 390,
+   "oldBottom": 1434,
+   "oldPasses": false,
+   "newBottom": 999,
+   "newPasses": false,
+   "authPanelRestored": true,
+   "signInVisible": true
+  }
+ ]
+}

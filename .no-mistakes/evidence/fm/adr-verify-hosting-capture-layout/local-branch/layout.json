@@ -1,0 +1,24 @@
+{
+ "base": "http://localhost:5077",
+ "inject": null,
+ "results": [
+  {
+   "width": 320,
+   "oldBottom": 1223,
+   "oldPasses": false,
+   "newBottom": 766,
+   "newPasses": true,
+   "authPanelRestored": true,
+   "signInVisible": true
+  },
+  {
+   "width": 390,
+   "oldBottom": 1132,
+   "oldPasses": false,
+   "newBottom": 697,
+   "newPasses": true,
+   "authPanelRestored": true,
+   "signInVisible": true
+  }
+ ]
+}

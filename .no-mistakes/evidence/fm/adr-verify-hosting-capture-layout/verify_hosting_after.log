@@ -1,0 +1,12 @@
+Deployed asset URLs carry another marker
++ actual - expected
+
+  [
+    'fd514aeb311d2c9fa345b1012780fc1553affe80',
+    'fd514aeb311d2c9fa345b1012780fc1553affe80',
+    'fd514aeb311d2c9fa345b1012780fc1553affe80',
+    'fd514aeb311d2c9fa345b1012780fc1553affe80',
+-   'fd514aeb311d2c9fa345b1012780fc1553affe80'
+  ]
+
+exit=1
