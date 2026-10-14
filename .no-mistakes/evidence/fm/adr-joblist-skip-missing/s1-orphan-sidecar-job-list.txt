@@ -1,0 +1,37 @@
+POST /api/inspections ADR-INS-00000000000000000000000000000001 -> 200
+POST /api/inspections ADR-INS-00000000000000000000000000000002 -> 200
+POST /api/inspections ADR-INS-00000000000000000000000000000003 -> 200
+
+Deleted draft source inspections/ADR-INS-00000000000000000000000000000002; sidecar _workspace_jobs/ADR-INS-00000000000000000000000000000002 still exists: True
+
+[BASE 59963cc (before fix)] owner GET /api/inspections -> 404
+{
+ "detail": "Record not found."
+}
+
+[FIX 3fff2b4 (after fix)] owner GET /api/inspections -> 200
+{
+ "inspections": [
+  {
+   "inspection_id": "ADR-INS-00000000000000000000000000000003",
+   "address": "Synthetic property 3",
+   "revision": 1,
+   "status": "draft",
+   "updated_at": "2026-10-14T15:48:10.331244+00:00"
+  },
+  {
+   "inspection_id": "ADR-INS-00000000000000000000000000000001",
+   "address": "Synthetic property 1",
+   "revision": 1,
+   "status": "draft",
+   "updated_at": "2026-10-14T15:48:10.153177+00:00"
+  }
+ ],
+ "next_cursor": null
+}
+
+[FIX] owner GET /api/inspections/ADR-INS-00000000000000000000000000000002 (orphan) -> 404 {'detail': 'Record not found.'}
+[FIX] owner GET /api/inspections/ADR-INS-00000000000000000000000000000001 (kept) -> 200 address=Synthetic property 1
+[FIX] other-company owner GET /api/inspections -> 200 {'inspections': [], 'next_cursor': None}
+
+Sidecar left untouched after listing: True

@@ -1,0 +1,11 @@
+created 130 drafts via CompanyInspectionStore; deleted 25 source inspections; 105 remain
+
+[BASE 59963cc] pages:
+   HTTP 404 {'detail': 'Record not found.'}
+
+[FIX 3fff2b4] pages:
+   HTTP 200 rows=100 next_cursor=ADR-INS-00000000000000000000000000000069
+   HTTP 200 rows=5 next_cursor=None
+   total listed 105 unique 105 equals surviving set: True any orphan listed: False
+
+PASS
