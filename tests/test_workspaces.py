@@ -5,7 +5,9 @@ import html
 import json
 import logging
 import smtplib
+import socket
 from copy import deepcopy
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 import time
 import pytest
@@ -1299,7 +1301,8 @@ def message_parts(message):
 
 
 @pytest.mark.parametrize(
-    'transport, provider', [(None, 'resend'), ('resend', 'resend'), ('SMTP', 'smtp')]
+    'transport, provider',
+    [(None, 'resend'), ('', 'resend'), ('resend', 'resend'), ('smtp', 'smtp')],
 )
 def test_invitation_transport_is_selected_by_configuration(smtp, monkeypatch, transport, provider):
     client, store, accounts, sent, writes, connections, plan, sleeps = smtp
@@ -1314,11 +1317,18 @@ def test_invitation_transport_is_selected_by_configuration(smtp, monkeypatch, tr
     assert (len(sent), len(connections)) == ((1, 0) if provider == 'resend' else (0, 1))
 
 
-def test_unknown_invitation_transport_is_not_configured_and_provisions_nothing(smtp, monkeypatch):
+@pytest.mark.parametrize('transport', ['carrier-pigeon', 'SMTP', ' smtp ', 'Resend'])
+def test_unknown_invitation_transport_is_not_configured_and_provisions_nothing(
+    smtp, monkeypatch, transport
+):
     client, store, accounts, sent, writes, connections, plan, sleeps = smtp
-    monkeypatch.setenv('INVITATION_TRANSPORT', 'carrier-pigeon')
+    monkeypatch.setenv('INVITATION_TRANSPORT', transport)
     with pytest.raises(RuntimeError, match='not configured'):
         workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Owner Chosen Name'}})
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    assert invited['delivery_status'] == 'failed'
     assert not accounts.created and not accounts.links and not sent and not connections
 
 
@@ -1464,3 +1474,65 @@ def test_smtp_set_password_link_never_reaches_logs(smtp, caplog, capsys):
     assert 'secret-oob' not in logged
     assert 'placeholder-app-password' not in caplog.text + captured.out + captured.err
     assert 'secret-oob' not in json.dumps(store.db.records, default=str)
+
+
+def test_smtp_send_including_retries_ends_inside_the_delivery_reservation(smtp, monkeypatch):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    clock = [0.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+
+    monkeypatch.setattr(
+        workspaces,
+        'time',
+        SimpleNamespace(time=time.time, monotonic=lambda: clock[0], sleep=sleep),
+    )
+
+    class SlowSMTP:
+        def __init__(self, host, port, timeout):
+            connections.append(timeout)
+            clock[0] += timeout
+            raise TimeoutError('timed out')
+
+    monkeypatch.setattr(workspaces.smtplib, 'SMTP', SlowSMTP)
+    with pytest.raises(OSError):
+        workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Company'}})
+    assert connections == [8, 8, 2]
+    assert clock[0] <= workspaces.SMTP_DEADLINE < 30
+
+
+def test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry(smtp, monkeypatch):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    monkeypatch.setattr(workspaces, 'SMTP_DEADLINE', 0.3)
+    peers = []
+
+    class HungSMTP:
+        def __init__(self, host, port, timeout):
+            self.sock, peer = socket.socketpair()
+            self.sock.settimeout(2)
+            peers.append(peer)
+
+        def starttls(self, context):
+            pass
+
+        def login(self, username, password):
+            pass
+
+        def send_message(self, message):
+            if not self.sock.recv(1):
+                raise smtplib.SMTPServerDisconnected('Connection unexpectedly closed')
+
+        def close(self):
+            self.sock.close()
+
+    monkeypatch.setattr(workspaces.smtplib, 'SMTP', HungSMTP)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError, match='deadline'):
+            workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Company'}})
+        assert time.monotonic() - started < 1.5
+        assert len(peers) == 1 and not sleeps
+    finally:
+        for peer in peers:
+            peer.close()

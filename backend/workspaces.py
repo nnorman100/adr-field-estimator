@@ -8,7 +8,9 @@ import json
 import os
 import re
 import smtplib
+import socket
 import ssl
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -62,6 +64,7 @@ ADR_PROFILE = dict(
 INVITATION_DAILY_LIMIT = 50
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
+SMTP_DEADLINE = 24
 APP_URL = 'https://alert-disaster-field-2026.web.app/'
 
 
@@ -820,7 +823,7 @@ def password_setup_link(email):
 
 def send_invitation(invite, company):
     """Send through the transport INVITATION_TRANSPORT selects: 'resend' (default) or 'smtp' (Gmail app password)."""
-    transport = os.getenv('INVITATION_TRANSPORT', 'resend').strip().lower() or 'resend'
+    transport = os.getenv('INVITATION_TRANSPORT') or 'resend'
     sender = os.getenv('INVITATION_FROM', '')
     if transport == 'resend':
         key = os.getenv('RESEND_API_KEY', '')
@@ -894,14 +897,18 @@ def send_smtp(payload, username, password, invite):
     )
     message.set_content(payload['text'])
     message.add_alternative(payload['html'], subtype='html')
+    deadline = time.monotonic() + SMTP_DEADLINE
     for attempt in range(3):
         try:
-            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=8)
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=min(8, deadline - time.monotonic()))
+            watchdog = threading.Timer(deadline - time.monotonic(), stop_smtp, (server,))
+            watchdog.start()
             try:
                 server.starttls(context=ssl.create_default_context())
                 server.login(username, password)
                 server.send_message(message)
             finally:
+                watchdog.cancel()
                 # No QUIT: a failed QUIT after an accepted message must not trigger a duplicate retry.
                 server.close()
             return message['Message-ID']
@@ -919,4 +926,13 @@ def send_smtp(payload, username, password, invite):
         except OSError:
             if attempt == 2:
                 raise
+        if time.monotonic() + 2 ** (attempt + 1) >= deadline:
+            raise TimeoutError('Invitation email deadline passed.')
         time.sleep(2 ** (attempt + 1))
+
+
+def stop_smtp(server):
+    try:
+        socket.socket.shutdown(server.sock, socket.SHUT_RDWR)
+    except (TypeError, OSError):
+        pass
