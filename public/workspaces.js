@@ -83,6 +83,7 @@ window.WorkspaceUI = (() => {
       ['fillScope', 'scope'],
       ['fillScopeProperty', 'scope'],
       ['authorizeJob', 'sign'],
+      ['sendHomeownerLink', 'sign'],
     ]) {
       if (!can(cap)) $(id).disabled = true;
     }
@@ -735,29 +736,7 @@ window.WorkspaceUI = (() => {
   }
   function documentBranding() {
     if (!state.documents) return;
-    const identity = state.documents.company_identity;
-    const name = identity?.name || 'Alert Disaster Restoration',
-      letter = document.querySelector('.document-letterhead');
-    document.querySelector('#doc-proposal > h2').textContent =
-      name +
-      (identity && identity.company_id !== 'adr'
-        ? ' · Official proposal'
-        : ' · Official ADR Proposal');
-    letter.querySelector('p').textContent = identity
-      ? [
-          identity.address,
-          identity.phone,
-          identity.license ? 'CSLB #' + identity.license : 'License not provided',
-        ]
-          .filter(Boolean)
-          .join(' · ')
-      : '3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983';
-    const image = letter.querySelector('img');
-    image.hidden = !!identity && !identity.logo_data_url && identity.company_id !== 'adr';
-    image.src = identity?.logo_data_url || '/brand/adr-logo.jpg';
-    image.alt = name;
-    document.querySelector('[data-tab=proposal]').textContent =
-      identity?.company_id && identity.company_id !== 'adr' ? 'Proposal' : 'ADR proposal';
+    ADRDocuments.brand(state.documents);
     policy();
   }
   return {

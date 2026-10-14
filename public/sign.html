@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#D42B32"><meta name="robots" content="noindex, nofollow"><meta name="referrer" content="no-referrer">
+  <title>Review and sign your estimate</title>
+  <link rel="icon" href="/icon.svg">
+  <link rel="stylesheet" href="/app.css?v=unstamped">
+  <script defer src="/core.js?v=unstamped"></script><script defer src="/documents.js?v=unstamped"></script><script defer src="/sign.js?v=unstamped"></script>
+</head>
+<body class="homeowner-page">
+  <header class="sign-header"><span class="eyebrow">ESTIMATE REVIEW</span><h1>Review and sign your estimate</h1><p class="hint">Your restoration company sent you this private link. Read all four documents, then sign below. No account or password is needed.</p></header>
+  <p id="signStatus" class="message" role="status" aria-live="polite">Loading your estimate…</p>
+  <main id="signMain" class="review-panel" hidden>
+  <section id="documents" class="documents" aria-label="Estimate documents">
+    <div class="section-head"><div><span class="eyebrow">YOUR ESTIMATE</span><h2>Four documents to review</h2></div><button id="printDocuments">Print or save a copy</button></div>
+    <div class="totals-summary"><div><span>Customer estimate range</span><strong id="estimateRange"></strong></div><div><span>Itemized charges at base rates</span><strong id="itemizedTotal"></strong></div></div>
+    <p id="documentProgress" class="review-progress" role="status">Open all four documents before signing.</p>
+    <div id="auditWarnings" class="notice" hidden></div>
+    <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">ADR proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
+    <article id="doc-proposal" class="doc"><div class="document-letterhead"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><p>3300 Patton Way · Bakersfield, CA 93308<br>(661) 426-2151 · CSLB #950983</p></div><h2>Alert Disaster Restoration · Official ADR Proposal</h2><div id="proposalBody"></div>
+      <p id="signedNotice" class="signed-notice" hidden></p><img id="savedSignature" class="signature-image" alt="Your saved signature" hidden></article>
+    <article id="doc-claim" class="doc" hidden><h2>Itemized carrier claim</h2><p class="hint">ADR internal scope codes. JSON export does not guarantee Xactimate import compatibility.</p><div id="claimCards" class="claim-cards"></div><div class="table-scroll"><table><thead><tr><th>Code / description</th><th>Quantity</th><th>Rate</th><th>Waste</th><th>Total</th></tr></thead><tbody id="claimItems"></tbody></table></div><p id="claimTotal" class="money"></p></article>
+    <article id="doc-defense" class="doc" hidden><h2>IICRC scope defense letter</h2><div id="defenseBody" class="letter"></div></article>
+    <article id="doc-photos" class="doc" hidden><h2>Photo moisture audit log</h2><div id="photoAuditLog"></div></article>
+  </section>
+  <section id="homeownerSigning" class="documents signing homeowner-signing" aria-labelledby="signHeading" hidden>
+    <h2 id="signHeading">Sign the proposal</h2>
+    <p id="signGate" class="hint" role="status">Open all four documents above before signing.</p>
+    <p id="linkExpiry" class="hint"></p>
+    <form id="signForm" novalidate>
+      <fieldset id="signFields" disabled>
+        <label>Your full name<input id="signerName" maxlength="150" autocomplete="name" required></label>
+        <fieldset class="signer-role"><legend>You are signing as</legend><label class="choice"><input type="radio" name="signerRole" value="owner"> The property owner</label><label class="choice"><input type="radio" name="signerRole" value="authorized_representative"> An authorized representative of the owner</label></fieldset>
+        <label class="confirmation"><input id="consentReviewed" type="checkbox"> <span id="consentReviewedText"></span></label>
+        <label class="confirmation"><input id="consentElectronic" type="checkbox"> <span id="consentElectronicText"></span></label>
+        <p>Your signature</p><canvas id="signCanvas" aria-label="Signature pad"></canvas>
+        <div class="sign-actions"><button id="clearSignature" type="button">Clear signature</button><button id="submitSignature" type="submit" class="primary">Sign estimate</button></div>
+      </fieldset>
+      <p id="signError" class="field-error" role="alert" hidden></p>
+    </form>
+  </section>
+  <section id="signedReceipt" class="documents homeowner-receipt" aria-labelledby="receiptHeading" hidden>
+    <h2 id="receiptHeading">Signed</h2><p id="receiptText" role="status"></p><p id="viewUntil" class="hint"></p>
+  </section>
+  </main>
+  <footer id="signFooter">Private estimate review</footer>
+</body></html>

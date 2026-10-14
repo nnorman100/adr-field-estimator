@@ -137,6 +137,9 @@ def test_checkpoint_cleanup_is_conditional_on_unchanged_version(monkeypatch):
         ('authorizations', 'ADR-AUTH-12345678-1234-4321-8321-123456789abc', True),
         ('authorizations', 'ADR-AUTH-' + 'a' * 32, True),
         ('inspections', 'ADR-INS-' + 'b' * 32, True),
+        ('authorizations', 'ADR-AUTH-link-' + 'c' * 32, True),
+        ('authorizations', 'ADR-AUTH-link-' + 'c' * 31 + '/', False),
+        ('inspections', 'ADR-INS-link-' + 'c' * 32, False),
         ('authorizations', 'ADR-AUTH-12345678-1234-4321-8321-123456789abc/other', False),
         ('authorizations', 'ADR-AUTH-../../other', False),
         ('inspections', 'ADR-INS-12345678-1234-4321-8321-123456789abc', False),
@@ -152,6 +155,33 @@ def test_invalid_cleanup_target_is_rejected_before_admin_calls(monkeypatch):
     )
     with pytest.raises(RuntimeError, match='Unexpected synthetic identifier'):
         verifier.cleanup_synthetic('staff', [], ['ADR-AUTH-../../other'])
+
+
+def test_link_cleanup_rejects_other_jobs_and_malformed_digests(monkeypatch):
+    monkeypatch.setattr(
+        verifier, 'access_token', lambda: pytest.fail('Invalid link reached admin lookup')
+    )
+    with pytest.raises(RuntimeError, match='Unexpected synthetic identifier'):
+        verifier.cleanup_synthetic('staff', [], [], ['../../_memberships/staff'])
+
+    class Link:
+        status_code = 200
+
+        def json(self):
+            return {
+                'fields': {
+                    'owner_uid': {'stringValue': 'staff'},
+                    'inspection_id': {'stringValue': 'ADR-INS-' + 'b' * 32},
+                },
+                'updateTime': 'v',
+            }
+
+    monkeypatch.setattr(verifier.requests, 'get', lambda *args, **kwargs: Link())
+    monkeypatch.setattr(
+        verifier.requests, 'delete', lambda *args, **kwargs: pytest.fail('Untracked link deleted')
+    )
+    with pytest.raises(RuntimeError, match='another job'):
+        verifier.cleanup_links({}, 'staff', ['ADR-INS-' + 'a' * 32], ['d' * 64])
 
 
 def test_only_read_only_scope_extraction_retries_one_server_timeout(monkeypatch):

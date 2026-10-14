@@ -28,6 +28,9 @@ class CompanyInspectionStore(InspectionStore):
         if documents:
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
 
+    def _company_id(self, uid, record, tx=None):
+        return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']
+
     def _commit_authorization(self, uid, record, body, tx):
         job, actor = self.workspaces.job_access(uid, record, 'sign', tx)
         tx.create(

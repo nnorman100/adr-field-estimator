@@ -22,7 +22,10 @@ module.exports = [
   },
   {
     files: ['public/**/*.js'],
-    languageOptions: { sourceType: 'script', globals: { ...globals.browser, ADRCore: 'readonly' } },
+    languageOptions: {
+      sourceType: 'script',
+      globals: { ...globals.browser, ADRCore: 'readonly', ADRDocuments: 'readonly' },
+    },
   },
   {
     // Test stand-in for the vendored Firebase auth module; loaded with import().

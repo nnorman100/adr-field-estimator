@@ -105,6 +105,27 @@ class AuthorizeRequest(AuditRequest):
     documents_confirmed: Literal[True]
 
 
+class SigningLinkRequest(RevisionRequest):
+    proposal_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
+
+
+def signer_name(value):
+    value = ' '.join(value.split())
+    if not value or any(not c.isprintable() for c in value):
+        raise ValueError('Type your full name.')
+    return value
+
+
+class HomeownerSignature(StrictModel):
+    signer_name: Annotated[str, Field(min_length=1, max_length=150), AfterValidator(signer_name)]
+    signer_role: Literal['owner', 'authorized_representative']
+    documents_reviewed: Literal[True]
+    electronic_consent: Literal[True]
+    # The statements the page showed; a page with older wording must reload before signing.
+    consent_version: Literal['homeowner-link-v1']
+    signature_png: str = Field(min_length=1, max_length=3000000)
+
+
 class PhotoUpload(RevisionRequest):
     photo_id: str = Field(pattern=r'^[a-f0-9]{32}$')
     room: str = Field(min_length=1, max_length=100)

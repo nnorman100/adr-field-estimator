@@ -26,8 +26,27 @@ const unstamp = (text) =>
   );
   assert.deepEqual(
     [...shell.matchAll(/\.(?:css|js)\?v=([0-9A-Za-z-]+)/g)].map((m) => m[1]),
-    Array(4).fill(marker),
+    Array(5).fill(marker),
     'Deployed asset URLs carry another marker',
+  );
+  // The homeowner signing page: its own rewrite, never cached, same files as the commit.
+  const signing = await fetch(base + '/sign');
+  assert.match(
+    signing.headers.get('cache-control') || '',
+    /\bno-store\b/,
+    'The signing page can stay stale in a browser',
+  );
+  const signingPage = await signing.text();
+  assert.deepEqual(
+    [...signingPage.matchAll(/\.(?:css|js)\?v=([0-9A-Za-z-]+)/g)].map((m) => m[1]),
+    Array(4).fill(marker),
+    'Signing page asset URLs carry another marker',
+  );
+  assert.equal(unstamp(signingPage), unstamp(fs.readFileSync('public/sign.html', 'utf8')));
+  // Without a link the anonymous route answers with the link-specific 404, not a missing route.
+  assert.equal(
+    (await (await fetch(base + '/api/sign')).json()).detail,
+    'This signing link is not available. Ask your technician for a new link.',
   );
   assert(
     shell.includes(
@@ -51,7 +70,16 @@ const unstamp = (text) =>
       'Redesigned task navigation is missing: ' + path,
     );
   }
-  for (const file of ['app.js', 'workspaces.js', 'app.css', 'core.js', 'audio-worklet.js', 'sw.js'])
+  for (const file of [
+    'app.js',
+    'workspaces.js',
+    'app.css',
+    'core.js',
+    'documents.js',
+    'sign.js',
+    'audio-worklet.js',
+    'sw.js',
+  ])
     assert.equal(
       unstamp(await (await fetch(base + '/' + file + '?verify=repair-20261006')).text()),
       unstamp(fs.readFileSync('public/' + file, 'utf8')),

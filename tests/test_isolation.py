@@ -22,6 +22,15 @@ def test_hosting_and_database_use_dedicated_project():
     assert api['source'] == '/api/**'
     assert api['run']['serviceId'] == 'alert-disaster-field-estimator'
     assert api['run']['region'] == 'us-west2'
+    # The homeowner signing page is served before the app shell's catch-all rewrite.
+    assert [r['source'] for r in config['hosting']['rewrites']] == ['/api/**', '/sign', '**']
+    assert config['hosting']['rewrites'][1]['destination'] == '/sign.html'
+    no_store = {
+        h['source']
+        for h in config['hosting']['headers']
+        if {'key': 'Cache-Control', 'value': 'no-store'} in h['headers']
+    }
+    assert {'/sign', '/sign.html'} <= no_store
 
 
 def test_service_rejects_another_project_before_initializing_ai(monkeypatch):

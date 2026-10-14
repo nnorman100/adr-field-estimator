@@ -109,6 +109,9 @@ class InspectionStore(JobStore):
     def _check_documents(self, uid, documents, tx=None):
         pass
 
+    def _company_id(self, uid, record, tx=None):
+        return None
+
     def get_inspection(self, uid, inspection_id):
         return self._owned(self._ref(inspection_id).get(), uid)
 
@@ -285,7 +288,9 @@ class InspectionStore(JobStore):
 
         return self._change(uid, inspection_id, revision, update)
 
-    def authorize(self, uid, payload):
+    def authorize(self, uid, payload, extra=None, claim=None):
+        """extra adds fields to the record; a claim (a signing link) is checked with the
+        transaction's reads and consumed with its writes."""
         # Resolve retries before inspecting mutable state or uploading evidence.
         auth_ref = self.db.collection('authorizations').document(payload['auth_id'])
         digest = hashlib.sha256(canonical(payload).encode()).hexdigest()
@@ -332,6 +337,7 @@ class InspectionStore(JobStore):
             photos=record['photos'],
             photos_count=len(record['photos']),
             signature=dict(path=path, content_type=mime, sha256=hashlib.sha256(raw).hexdigest()),
+            **(extra or {}),
         )
         checked_metadata(body)
         blob = self.bucket.blob(path)
@@ -341,6 +347,8 @@ class InspectionStore(JobStore):
         def sign(tx):
             auth = auth_ref.get(transaction=tx)
             current = self._owned(inspection_ref.get(transaction=tx), uid, 'sign', tx)
+            if claim and not auth.exists:
+                claim.check(tx)
             if auth.exists:
                 existing = self._owned(auth, uid, 'sign', tx)
                 if existing.get('payload_sha256') != digest:
@@ -358,6 +366,8 @@ class InspectionStore(JobStore):
                 inspection_ref,
                 {'status': 'signed', 'authorization_id': payload['auth_id'], 'updated_at': now()},
             )
+            if claim:
+                claim.consume(tx, body)
             return body
 
         try:
@@ -383,7 +393,8 @@ class InspectionStore(JobStore):
                 'The scope changed or requires review. Complete a new audit before signing.'
             )
 
-    def quota(self, uid, action, maximum=None):
+    def quota(self, uid, action, maximum=None, ttl=None):
+        """ttl sets expire_at, the _limits TTL field, so an idle counter document is deleted."""
         ref = self.db.collection('_limits').document(uid)
 
         def reserve(tx):
@@ -393,6 +404,8 @@ class InspectionStore(JobStore):
                 data = reserve_slot(data, action + '_day', DAILY_LIMITS[action], 86400)
             if maximum:
                 data = reserve_slot(data, action, maximum)
+            if ttl:
+                data['expire_at'] = datetime.fromtimestamp(time.time() + ttl, timezone.utc)
             tx.set(ref, data)
 
         self._atomic(reserve)

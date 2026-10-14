@@ -14,6 +14,8 @@
       {"source":"/index.html","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/manifest.webmanifest","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/sw.js","headers":[{"key":"Cache-Control","value":"no-store"}]},
+      {"source":"/sign","headers":[{"key":"Cache-Control","value":"no-store"}]},
+      {"source":"/sign.html","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"**","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},{"key":"Content-Security-Policy","value":"default-src 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com https://www.google.com/recaptcha/ wss://alert-disaster-field-estimator-545776254070.us-west2.run.app; frame-src https://*.firebaseapp.com https://accounts.google.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"}]}
     ],
     "rewrites": [
@@ -23,6 +25,10 @@
           "serviceId": "alert-disaster-field-estimator",
           "region": "us-west2"
         }
+      },
+      {
+        "source": "/sign",
+        "destination": "/sign.html"
       },
       {
         "source": "**",

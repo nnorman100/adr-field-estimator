@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const {
   emptyData,
   stable,
-  money,
+  estimateLabel,
   pcmToFloat,
   aspect,
   scopeJobLabels,
@@ -16,10 +16,6 @@ const {
   authMessage,
   splitPhotos,
 } = ADRCore;
-const estimateLabel = (proposal) =>
-  proposal.proposed_cost_low == null
-    ? money(proposal.proposed_cost)
-    : money(proposal.proposed_cost_low) + '–' + money(proposal.proposed_cost);
 const state = {
   user: null,
   session: null,
@@ -67,6 +63,8 @@ const ui = {
   documentSource: null,
   viewed: new Set(),
 };
+// The signing link minted for the open inspection; the server keeps only its digest.
+const homeownerLink = { inspection: null, url: '', timer: null, checked: null };
 let roomRemoval = null,
   validationControl = null;
 function visibleBounds() {
@@ -196,7 +194,10 @@ function showTask(task, focus = true) {
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
   }
-  if (task === 'review') requestAnimationFrame(resizeSignature);
+  if (task === 'review') {
+    requestAnimationFrame(resizeSignature);
+    restoreHomeownerLink().catch(() => {});
+  }
 }
 function renderControls() {
   const editable = !!state.session && !!state.draft && !state.signed && !confirmedAuthorization,
@@ -227,15 +228,7 @@ function renderControls() {
 }
 function selectDocument(name) {
   if (!state.documents) return;
-  ui.viewed.add(name);
-  document.querySelectorAll('[data-tab]').forEach((tab) => {
-    const selected = tab.dataset.tab === name;
-    tab.classList.toggle('selected', selected);
-    tab.setAttribute('aria-pressed', String(selected));
-  });
-  document.querySelectorAll('.doc').forEach((doc) => (doc.hidden = doc.id !== 'doc-' + name));
-  $('documentProgress').textContent =
-    ui.viewed.size + ' of 4 documents opened · Review each before signing.';
+  ADRDocuments.select(name, ui.viewed);
   if (name === 'proposal') requestAnimationFrame(resizeSignature);
 }
 function say(text, type = '') {
@@ -526,6 +519,7 @@ function invalidate() {
   state.pendingAuthorization = null;
   ui.documentSource = null;
   ui.viewed.clear();
+  stopHomeownerLink();
   document.body.classList.remove('has-documents');
   $('documentsConfirmed').checked = false;
   $('documents').hidden = true;
@@ -534,6 +528,7 @@ function invalidate() {
   clearSigningError('documentsConfirmedError');
 }
 function clearDisplayedInspection() {
+  stopHomeownerLink();
   roomRemoval = null;
   $('removeRoomDialog').close();
   $('removeRoomDescription').textContent = '';
@@ -1655,9 +1650,15 @@ async function restoreSigned(id) {
   renderPhotos();
   renderDocuments();
   $('retrySavedEvidence').hidden = !missing;
-  $('signedEvidenceStatus').textContent = missing
-    ? 'Signed agreement saved. Some evidence could not be displayed. Retry loading saved evidence.'
-    : 'Signed agreement and evidence restored.';
+  $('signedEvidenceStatus').textContent =
+    (missing
+      ? 'Signed agreement saved. Some evidence could not be displayed. Retry loading saved evidence.'
+      : 'Signed agreement and evidence restored.') +
+    (record.signer
+      ? ' Signed through the homeowner link by ' +
+        record.signer.name +
+        (record.signer.role === 'owner' ? ' (owner).' : ' (authorized representative).')
+      : '');
   say(
     missing
       ? 'Signed agreement saved; evidence display needs a retry.'
@@ -1740,9 +1741,6 @@ async function finishAudit() {
     renderControls();
   }
 }
-function paragraphs(parent, values) {
-  for (const value of Array.isArray(values) ? values : [values]) parent.append(node('p', value));
-}
 function renderDocuments() {
   const docs = state.documents;
   document.body.classList.toggle('has-documents', !!docs);
@@ -1754,101 +1752,12 @@ function renderDocuments() {
     ui.viewed.clear();
     selectDocument('proposal');
   }
-  $('estimateRange').textContent = estimateLabel(docs.adr_estimate);
-  $('itemizedTotal').textContent = money(docs.xactimate_total);
-  const p = docs.adr_estimate,
-    body = $('proposalBody');
-  body.replaceChildren();
-  paragraphs(body, [
-    p.property_address,
-    p.date || '',
-    'Estimator: ' +
-      (docs.company_identity?.signoff || 'Matthew Myers') +
-      ' · CSLB #' +
-      (docs.company_identity?.license || '950983'),
-  ]);
-  body.append(
-    node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
-    node('p', 'Itemized charges at base rates: ' + money(docs.xactimate_total)),
-  );
-  body.append(node('h3', 'Findings'));
-  paragraphs(body, p.findings);
-  body.append(node('h3', 'Proposed scope'));
-  paragraphs(body, p.recommendations);
-  paragraphs(body, p.disclaimers || []);
-  if (docs.ai_summary) {
-    body.append(node('h3', 'AI summary · technician review required'));
-    paragraphs(body, docs.ai_summary);
-  }
-  if (docs.ai_suggestions?.length) {
-    body.append(node('h3', 'AI suggestions · outside the authorized scope'));
-    paragraphs(body, docs.ai_suggestions);
-  }
-  $('claimItems').replaceChildren();
-  for (const item of docs.xactimate_scope) {
-    const row = node('tr');
-    for (const text of [
-      item.code + ' · ' + (item.description || item.desc),
-      String(item.quantity ?? item.qty) + ' ' + item.unit,
-      money(item.unit_price ?? item.price),
-      String(item.waste_percent ?? item.waste ?? 0) + '%',
-      money(item.total),
-    ])
-      row.append(node('td', text));
-    $('claimItems').append(row);
-  }
-  $('claimCards').replaceChildren();
-  for (const item of docs.xactimate_scope) {
-    const card = node('section', undefined, 'claim-card');
-    card.append(
-      node('span', item.code, 'claim-code'),
-      node('h3', item.description || item.desc),
-      node(
-        'div',
-        String(item.quantity ?? item.qty) +
-          ' ' +
-          item.unit +
-          ' × ' +
-          money(item.unit_price ?? item.price),
-      ),
-      node('div', 'Waste: ' + String(item.waste_percent ?? item.waste ?? 0) + '%'),
-      node('p', 'Total: ' + money(item.total), 'item-total'),
-    );
-    $('claimCards').append(card);
-  }
-  $('claimTotal').textContent = 'Itemized claim total: ' + money(docs.xactimate_total);
-  $('defenseBody').textContent = docs.iicrc_defense_letter;
-  $('photoAuditLog').replaceChildren();
-  for (const photo of state.draft.photos) {
-    const entry = node('div', undefined, 'audit-photo'),
-      img = node('img');
-    img.src = photoUrl(photo);
-    img.alt = photo.room + ' evidence';
-    const detail = node('div');
-    paragraphs(detail, [
-      photo.room,
-      new Date(photo.captured_at).toLocaleString(),
-      (photo.width || '?') + ' × ' + (photo.height || '?') + ' pixels',
-      photo.ocr_status === 'verified'
-        ? 'Verified meter: ' + photo.ocr.meter_type + ' · ' + photo.ocr.value
-        : 'Unverified: ' + photo.ocr_status.replaceAll('_', ' '),
-    ]);
-    entry.append(img, detail);
-    $('photoAuditLog').append(entry);
-  }
-  if (!state.draft.photos.length)
-    $('photoAuditLog').append(node('p', 'No photographs were attached to this inspection.'));
-  const warnings = [
-    ...(docs.company_setup_missing || []).map((text) => 'Company setup required: ' + text),
-    ...(docs.unpriced_work || []).map((text) => 'Unpriced work: ' + text),
-    ...state.draft.photos
-      .filter((p) => p.ocr_status === 'pending')
-      .map((p) => 'Recognition pending: ' + p.room),
-  ];
-  $('auditWarnings').textContent = warnings.join(' · ');
-  $('auditWarnings').hidden = !warnings.length;
+  ADRDocuments.render(docs, state.draft.photos, photoUrl);
   $('signingArea').hidden = !!state.signed || !!confirmedAuthorization;
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;
+  $('sendHomeownerLink').disabled = $('authorizeJob').disabled;
+  if (state.signed || confirmedAuthorization) stopHomeownerLink();
+  else if (ui.task === 'review') restoreHomeownerLink().catch(() => {});
   resizeSignature();
   window.WorkspaceUI?.documentBranding();
 }
@@ -1998,6 +1907,123 @@ async function authorize() {
     $('authorizeJob').disabled =
       !!confirmedAuthorization || !!state.signed || !state.documents?.signable;
     window.WorkspaceUI?.policy();
+  }
+}
+function stopHomeownerLink(status = '') {
+  clearInterval(homeownerLink.timer);
+  Object.assign(homeownerLink, { inspection: null, url: '', timer: null });
+  $('homeownerLinkPanel').hidden = true;
+  $('homeownerQr').removeAttribute('src');
+  $('homeownerLinkUrl').value = '';
+  $('homeownerLinkStatus').textContent = status;
+}
+// The server returns the link itself only when it is created; a restored link shows its status.
+function showHomeownerLink(inspection, link) {
+  stopHomeownerLink();
+  Object.assign(homeownerLink, { inspection, url: link.url || '' });
+  if (link.url) $('homeownerQr').src = link.qr_svg;
+  $('homeownerLinkUrl').value = homeownerLink.url;
+  for (const id of ['homeownerQr', 'copyHomeownerLink']) $(id).hidden = !link.url;
+  $('homeownerLinkUrl').closest('label').hidden = !link.url;
+  $('shareHomeownerLink').hidden = !link.url || !navigator.share;
+  $('homeownerLinkPanel').hidden = false;
+  $('homeownerLinkStatus').textContent =
+    'Waiting for the homeowner to sign · the link expires ' +
+    new Date(link.expires_at).toLocaleString() +
+    '. Editing anything here cancels it.' +
+    (link.url ? '' : ' Send a new link to show its QR code again.');
+  homeownerLink.timer = setInterval(() => checkHomeownerLink().catch(() => {}), 10000);
+}
+// Once per displayed audit, the Review tab picks up a link sent before a reload or job switch.
+async function restoreHomeownerLink() {
+  const inspection = state.draft?.inspection_id,
+    documents = state.documents;
+  if (
+    !inspection ||
+    !documents?.signable ||
+    state.signed ||
+    confirmedAuthorization ||
+    !navigator.onLine ||
+    homeownerLink.inspection === inspection ||
+    homeownerLink.checked === documents
+  )
+    return;
+  homeownerLink.checked = documents;
+  let link;
+  try {
+    link = await jsonApi('/api/inspections/' + inspection + '/signing-links');
+  } catch (e) {
+    if (homeownerLink.checked === documents) homeownerLink.checked = null;
+    throw e;
+  }
+  if (
+    link.status !== 'pending' ||
+    homeownerLink.inspection ||
+    state.draft?.inspection_id !== inspection ||
+    state.documents !== documents
+  )
+    return;
+  showHomeownerLink(inspection, link);
+}
+async function sendHomeownerLink() {
+  if (!navigator.onLine) throw Error('Sending a signing link requires a connection.');
+  if (!state.documents?.signable || !state.record?.audit)
+    throw Error('Complete a valid current audit before sending a signing link.');
+  const inspection = state.draft.inspection_id,
+    documents = state.documents;
+  $('sendHomeownerLink').disabled = true;
+  $('homeownerLinkStatus').textContent = 'Creating a signing link…';
+  try {
+    const link = await jsonApi('/api/inspections/' + inspection + '/signing-links', 'POST', {
+      expected_revision: state.record.revision,
+      proposal_hash: state.record.audit.proposal_hash,
+    });
+    if (state.draft?.inspection_id !== inspection || state.documents !== documents) return;
+    // A new link replaces the previous one on the server as well.
+    showHomeownerLink(inspection, link);
+  } catch (e) {
+    $('homeownerLinkStatus').textContent = 'No link was created: ' + e.message;
+    throw e;
+  } finally {
+    $('sendHomeownerLink').disabled =
+      !!confirmedAuthorization || !state.documents?.signable || !navigator.onLine;
+  }
+}
+// Polls only while a link is outstanding and the Review tab is in view.
+async function checkHomeownerLink() {
+  const inspection = homeownerLink.inspection;
+  if (!inspection || document.hidden || ui.task !== 'review' || !navigator.onLine) return;
+  const remote = await jsonApi('/api/inspections/' + inspection);
+  if (homeownerLink.inspection !== inspection || state.draft?.inspection_id !== inspection) return;
+  if (remote.status === 'signed') {
+    stopHomeownerLink();
+    await restoreSigned(remote.authorization_id);
+    say('The homeowner signed the estimate.', 'success');
+  } else if (remote.revision !== state.record?.revision)
+    stopHomeownerLink('The inspection changed, so the signing link no longer works.');
+}
+async function revokeHomeownerLink() {
+  const inspection = homeownerLink.inspection;
+  if (!inspection) return;
+  const result = await jsonApi('/api/inspections/' + inspection + '/signing-links/revoke', 'POST');
+  if (homeownerLink.inspection !== inspection) return;
+  if (result.status === 'used') return checkHomeownerLink();
+  stopHomeownerLink('Signing link revoked. Send a new link or sign on this device.');
+}
+async function copyHomeownerLink() {
+  try {
+    await navigator.clipboard.writeText(homeownerLink.url);
+    say('Signing link copied.', 'success');
+  } catch {
+    $('homeownerLinkUrl').select();
+    throw Error('Clipboard access failed. The link is selected; copy it from the field.');
+  }
+}
+async function shareHomeownerLink() {
+  try {
+    await navigator.share({ title: 'Estimate to review and sign', url: homeownerLink.url });
+  } catch (e) {
+    if (e.name !== 'AbortError') throw Error('Sharing failed. Copy the link instead.');
   }
 }
 function scopeJson() {
@@ -2431,6 +2457,7 @@ function connectivity() {
   $('offlineBanner').hidden = !offline;
   $('authorizeJob').disabled =
     offline || !!confirmedAuthorization || !state.documents?.signable || !!state.signed;
+  $('sendHomeownerLink').disabled = $('authorizeJob').disabled;
   renderControls();
   renderSaveStatus();
   if (offline) {
@@ -2649,6 +2676,10 @@ async function initialize() {
       throw e;
     }
   });
+  click('sendHomeownerLink', sendHomeownerLink);
+  click('copyHomeownerLink', copyHomeownerLink);
+  click('shareHomeownerLink', shareHomeownerLink);
+  click('revokeHomeownerLink', revokeHomeownerLink);
   click('copyJson', copyJson);
   click('downloadJson', downloadJson);
   click('printDocuments', () => {

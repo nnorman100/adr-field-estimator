@@ -7,7 +7,7 @@
   <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg">
   <link rel="stylesheet" href="/app.css?v=unstamped">
   <link rel="modulepreload" href="/vendor/firebase/13.0.0/firebase-app.js"><link rel="modulepreload" href="/vendor/firebase/13.0.0/firebase-auth.js">
-  <script defer src="/core.js?v=unstamped"></script><script defer src="/app.js?v=unstamped"></script>
+  <script defer src="/core.js?v=unstamped"></script><script defer src="/documents.js?v=unstamped"></script><script defer src="/app.js?v=unstamped"></script>
   <script defer src="/workspaces.js?v=unstamped"></script>
 </head>
 <body>
@@ -88,6 +88,10 @@
         <p>Homeowner / representative signature</p><canvas id="signCanvas" aria-label="Signature pad" aria-describedby="signatureError"></canvas>
         <p id="signatureError" class="field-error" role="alert" hidden></p>
         <div class="actions"><button id="clearSignature" aria-describedby="signatureError">Clear signature</button><button id="authorizeJob" class="primary">Authorize & sign</button></div><p id="authorizationStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+        <section class="homeowner-link" aria-labelledby="homeownerLinkHeading"><h3 id="homeownerLinkHeading">Or send to the homeowner</h3><p class="hint">The homeowner reviews these four documents and signs on their own phone. The link works once, expires in 7 days and stops working if anything here changes.</p>
+          <button id="sendHomeownerLink">Send to homeowner</button>
+          <div id="homeownerLinkPanel" class="homeowner-link-panel" hidden><img id="homeownerQr" class="homeowner-qr" width="240" height="240" alt="QR code for the homeowner signing link"><label>Signing link<input id="homeownerLinkUrl" readonly></label><div class="actions"><button id="copyHomeownerLink">Copy link</button><button id="shareHomeownerLink" hidden>Share</button><button id="revokeHomeownerLink">Revoke link</button></div></div>
+          <p id="homeownerLinkStatus" role="status" aria-live="polite"></p></section>
       </div><p id="signedEvidenceStatus" role="status"></p><button id="retrySavedEvidence" hidden>Retry loading saved evidence</button><img id="savedSignature" class="signature-image" alt="Saved homeowner or representative signature" hidden></article>
     <article id="doc-claim" class="doc" hidden><h2>Itemized carrier claim</h2><p class="hint">ADR internal scope codes. JSON export does not guarantee Xactimate import compatibility.</p><div id="claimCards" class="claim-cards"></div><div class="table-scroll"><table><thead><tr><th>Code / description</th><th>Quantity</th><th>Rate</th><th>Waste</th><th>Total</th></tr></thead><tbody id="claimItems"></tbody></table></div><p id="claimTotal" class="money"></p></article>
     <article id="doc-defense" class="doc" hidden><h2>IICRC scope defense letter</h2><div id="defenseBody" class="letter"></div></article>
