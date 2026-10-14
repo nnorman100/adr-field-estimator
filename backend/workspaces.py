@@ -7,9 +7,13 @@ import io
 import json
 import os
 import re
+import smtplib
+import ssl
 import time
 import urllib.request
 import urllib.error
+from email.message import EmailMessage
+from email.utils import parseaddr
 from uuid import uuid4
 import firebase_admin
 from firebase_admin import auth as firebase_auth
@@ -56,6 +60,8 @@ ADR_PROFILE = dict(
 )
 
 INVITATION_DAILY_LIMIT = 50
+SMTP_HOST = 'smtp.gmail.com'
+SMTP_PORT = 587
 APP_URL = 'https://alert-disaster-field-2026.web.app/'
 
 
@@ -813,9 +819,19 @@ def password_setup_link(email):
 
 
 def send_invitation(invite, company):
-    key = os.getenv('RESEND_API_KEY', '')
+    """Send through the transport INVITATION_TRANSPORT selects: 'resend' (default) or 'smtp' (Gmail app password)."""
+    transport = os.getenv('INVITATION_TRANSPORT', 'resend').strip().lower() or 'resend'
     sender = os.getenv('INVITATION_FROM', '')
-    if not key or not sender:
+    if transport == 'resend':
+        key = os.getenv('RESEND_API_KEY', '')
+        configured = key and sender
+    elif transport == 'smtp':
+        username = os.getenv('INVITATION_SMTP_USERNAME', '')
+        password = os.getenv('INVITATION_SMTP_PASSWORD', '')
+        configured = username and password and sender
+    else:
+        configured = False
+    if not configured:
         raise RuntimeError('Invitation email is not configured.')
     link = APP_URL + '?invite=' + invite['invitation_id']
     setup = password_setup_link(invite['email'])
@@ -838,6 +854,8 @@ def send_invitation(invite, company):
         'text': f'You have been invited to {name} as {role}.\n{steps}\nAccept the invitation: {link}\nThis invitation expires in seven days.',
         'html': f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p>{steps_html}<p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>',
     }
+    if transport == 'smtp':
+        return send_smtp(payload, username, password, invite)
     request = urllib.request.Request(
         'https://api.resend.com/emails',
         data=json.dumps(payload).encode(),
@@ -859,6 +877,46 @@ def send_invitation(invite, company):
             if error.code not in (408, 429, 500, 502, 503, 504) or attempt == 2:
                 raise
         except (urllib.error.URLError, TimeoutError):
+            if attempt == 2:
+                raise
+        time.sleep(2 ** (attempt + 1))
+
+
+def send_smtp(payload, username, password, invite):
+    """Gmail SMTP has no idempotency key; the Message-ID is stable per attempt but Gmail does not deduplicate on it."""
+    message = EmailMessage()
+    message['From'] = payload['from']
+    message['To'] = ', '.join(payload['to'])
+    message['Subject'] = payload['subject']
+    domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'adr.invalid'
+    message['Message-ID'] = (
+        f'<invitation-{invite["invitation_id"]}-{invite["send_attempt"]}@{domain}>'
+    )
+    message.set_content(payload['text'])
+    message.add_alternative(payload['html'], subtype='html')
+    for attempt in range(3):
+        try:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=8)
+            try:
+                server.starttls(context=ssl.create_default_context())
+                server.login(username, password)
+                server.send_message(message)
+            finally:
+                # No QUIT: a failed QUIT after an accepted message must not trigger a duplicate retry.
+                server.close()
+            return message['Message-ID']
+        except smtplib.SMTPRecipientsRefused as error:
+            if attempt == 2 or not all(400 <= code < 500 for code, _ in error.recipients.values()):
+                raise
+        except smtplib.SMTPResponseException as error:
+            if not 400 <= error.smtp_code < 500 or attempt == 2:
+                raise
+        except smtplib.SMTPServerDisconnected:
+            if attempt == 2:
+                raise
+        except smtplib.SMTPException:
+            raise
+        except OSError:
             if attempt == 2:
                 raise
         time.sleep(2 ** (attempt + 1))

@@ -3,6 +3,8 @@
 import asyncio
 import html
 import json
+import logging
+import smtplib
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 import time
@@ -1243,3 +1245,222 @@ def test_signed_job_address_cannot_change_through_coordination(api):
         store.db.records['authorizations/' + payload['auth_id']]['documents']
         == record['audit']['documents']
     )
+
+
+@pytest.fixture
+def smtp(mail, monkeypatch):
+    """Real send_invitation over the SMTP transport against a fake SMTP server; never a real account."""
+    client, current, store, accounts, sent, writes = mail
+    monkeypatch.setenv('INVITATION_TRANSPORT', 'smtp')
+    monkeypatch.setenv('INVITATION_SMTP_USERNAME', 'sender@example.invalid')
+    monkeypatch.setenv('INVITATION_SMTP_PASSWORD', 'placeholder-app-password')
+    connections, plan, sleeps = [], [], []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            self.steps = []
+            self.failure = plan.pop(0) if plan else None
+            connections.append(dict(host=host, port=port, timeout=timeout, server=self))
+            self.fail('connect')
+
+        def fail(self, stage):
+            self.steps.append(stage)
+            if self.failure and self.failure[0] == stage:
+                raise self.failure[1]
+
+        def starttls(self, context):
+            self.context = context
+            self.fail('starttls')
+
+        def login(self, username, password):
+            self.credentials = (username, password)
+            self.fail('login')
+
+        def send_message(self, message):
+            self.message = message
+            self.fail('send')
+
+        def close(self):
+            self.steps.append('close')
+
+    monkeypatch.setattr(workspaces.smtplib, 'SMTP', FakeSMTP)
+    monkeypatch.setattr(workspaces.time, 'sleep', sleeps.append)
+    return client, store, accounts, sent, writes, connections, plan, sleeps
+
+
+def direct_invite():
+    return dict(
+        invitation_id='a' * 32, send_attempt='b' * 32, email='new@example.invalid', role='office'
+    )
+
+
+def message_parts(message):
+    return [part.get_content() for part in message.iter_parts()]
+
+
+@pytest.mark.parametrize(
+    'transport, provider', [(None, 'resend'), ('resend', 'resend'), ('SMTP', 'smtp')]
+)
+def test_invitation_transport_is_selected_by_configuration(smtp, monkeypatch, transport, provider):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    if transport is None:
+        monkeypatch.delenv('INVITATION_TRANSPORT')
+    else:
+        monkeypatch.setenv('INVITATION_TRANSPORT', transport)
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    assert invited['delivery_status'] == 'sent'
+    assert (len(sent), len(connections)) == ((1, 0) if provider == 'resend' else (0, 1))
+
+
+def test_unknown_invitation_transport_is_not_configured_and_provisions_nothing(smtp, monkeypatch):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    monkeypatch.setenv('INVITATION_TRANSPORT', 'carrier-pigeon')
+    with pytest.raises(RuntimeError, match='not configured'):
+        workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Owner Chosen Name'}})
+    assert not accounts.created and not accounts.links and not sent and not connections
+
+
+def test_smtp_sends_the_resend_message_over_starttls_with_a_stable_message_id(smtp, monkeypatch):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    monkeypatch.setattr(
+        workspaces, 'password_setup_link', lambda email: 'https://example.invalid/set'
+    )
+    company = {'profile': {'name': 'Owner Chosen Name'}}
+    message_id = workspaces.send_invitation(direct_invite(), company)
+    monkeypatch.setenv('INVITATION_TRANSPORT', 'resend')
+    workspaces.send_invitation(direct_invite(), company)
+    (connection,) = connections
+    server = connection['server']
+    assert (connection['host'], connection['port'], connection['timeout']) == (
+        'smtp.gmail.com',
+        587,
+        8,
+    )
+    assert server.steps == ['connect', 'starttls', 'login', 'send', 'close']
+    assert server.credentials == ('sender@example.invalid', 'placeholder-app-password')
+    message = server.message
+    assert (
+        message_id == message['Message-ID'] == f'<invitation-{"a" * 32}-{"b" * 32}@example.invalid>'
+    )
+    assert (message['From'], message['To'], message['Subject']) == (
+        sent[0]['from'],
+        'new@example.invalid',
+        sent[0]['subject'],
+    )
+    assert message_parts(message) == [sent[0]['text'] + '\n', sent[0]['html'] + '\n']
+
+
+def test_smtp_invitation_records_the_message_id_and_mails_only_the_set_password_link(smtp):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'New@Example.invalid', 'role': 'office'}
+    ).json()
+    record = store.db.records['_invitations/' + invited['invitation_id']]
+    assert invited['delivery_status'] == 'sent'
+    assert record['message_id'] == (
+        f'<invitation-{invited["invitation_id"]}-{record["send_attempt"]}@example.invalid>'
+    )
+    link = accounts.links[0]['link']
+    text, body = message_parts(connections[0]['server'].message)
+    assert 'Set your password for the ADR field app: ' + link in text
+    assert html.escape(link) in body and '?invite=' + invited['invitation_id'] in text
+    assert not any('secret-oob' in w for w in writes)
+    assert 'secret-oob' not in json.dumps(store.db.records, default=str)
+
+
+def test_smtp_retries_transient_failures_with_the_same_message_id(smtp):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    plan.extend(
+        [
+            ('connect', smtplib.SMTPServerDisconnected('Connection unexpectedly closed')),
+            ('send', smtplib.SMTPResponseException(421, b'4.7.0 Try again later')),
+        ]
+    )
+    message_id = workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Company'}})
+    assert len(connections) == 3 and sleeps == [2, 4]
+    assert [c['server'].steps[-1] for c in connections] == ['connect', 'close', 'close']
+    assert connections[2]['server'].message['Message-ID'] == message_id
+    assert connections[1]['server'].message['Message-ID'] == message_id
+
+
+def test_smtp_gives_up_after_three_transient_failures_and_shows_the_failure(smtp):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    plan.extend([('connect', TimeoutError('timed out'))] * 3)
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    assert len(connections) == 3 and sleeps == [2, 4]
+    assert invited['delivery_status'] == 'failed' and invited['message_id'] is None
+    assert 'could not be sent' in invited['delivery_error']
+    resent = client.post(
+        '/api/companies/adr/invitations/' + invited['invitation_id'] + '/resend', json={}
+    ).json()
+    assert resent['delivery_status'] == 'sent' and len(connections) == 4
+
+
+@pytest.mark.parametrize(
+    'failure',
+    [
+        (
+            'login',
+            smtplib.SMTPAuthenticationError(535, b'5.7.8 Username and Password not accepted'),
+        ),
+        (
+            'send',
+            smtplib.SMTPRecipientsRefused({'new@example.invalid': (550, b'5.1.1 No such user')}),
+        ),
+        ('send', smtplib.SMTPSenderRefused(553, b'5.7.1 Sender not allowed', 'x@example.invalid')),
+        ('starttls', smtplib.SMTPNotSupportedError('STARTTLS extension not supported by server.')),
+    ],
+)
+def test_smtp_permanent_failures_are_not_retried(smtp, failure):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    plan.append(failure)
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    assert len(connections) == 1 and not sleeps
+    assert connections[0]['server'].steps[-1] == 'close'
+    assert invited['delivery_status'] == 'failed' and invited['message_id'] is None
+
+
+@pytest.mark.parametrize(
+    'missing', ['INVITATION_SMTP_USERNAME', 'INVITATION_SMTP_PASSWORD', 'INVITATION_FROM']
+)
+def test_smtp_missing_configuration_fails_before_provisioning_or_connecting(
+    smtp, monkeypatch, missing
+):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    monkeypatch.delenv(missing)
+    with pytest.raises(RuntimeError, match='not configured'):
+        workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Company'}})
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    assert invited['delivery_status'] == 'failed'
+    assert not accounts.created and not accounts.links and not connections and not sent
+
+
+def test_smtp_set_password_link_never_reaches_logs(smtp, caplog, capsys):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    caplog.set_level(logging.DEBUG)
+    plan.append(('send', smtplib.SMTPResponseException(451, b'4.3.0 Temporary failure')))
+    first = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    plan.append(('send', smtplib.SMTPDataError(554, b'5.6.0 Message rejected')))
+    second = client.post(
+        '/api/companies/adr/invitations', json={'email': 'other@example.invalid', 'role': 'office'}
+    ).json()
+    assert (first['delivery_status'], second['delivery_status']) == ('sent', 'failed')
+    assert len(accounts.links) == 2
+    captured = capsys.readouterr()
+    mailed = ''.join(message_parts(c['server'].message)[0] for c in connections)
+    logged = caplog.text + captured.out + captured.err + ''.join(writes)
+    for link in [l['link'] for l in accounts.links]:
+        assert link in mailed and link not in logged
+    assert 'secret-oob' not in logged
+    assert 'placeholder-app-password' not in caplog.text + captured.out + captured.err
+    assert 'secret-oob' not in json.dumps(store.db.records, default=str)
