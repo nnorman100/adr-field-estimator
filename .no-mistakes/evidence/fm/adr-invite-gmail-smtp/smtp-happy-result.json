@@ -1,0 +1,89 @@
+{
+  "scenario": "smtp-happy",
+  "transport_env": {
+    "INVITATION_TRANSPORT": "smtp",
+    "INVITATION_FROM": "ADR Invitations <synthetic.sender@example.invalid>",
+    "INVITATION_SMTP_USERNAME": "synthetic.sender@example.invalid",
+    "INVITATION_SMTP_PASSWORD": "<synthetic>"
+  },
+  "http_status": 200,
+  "elapsed_s": 0.11,
+  "api_invitation": {
+    "delivery_status": "sent",
+    "delivery_error": "",
+    "message_id": "<invitation-c4357353e76745e792a0ab4f3585336b-262101f29784416fbe3ae776cea59d78@example.invalid>",
+    "send_attempt": "262101f29784416fbe3ae776cea59d78",
+    "email": "invitee-b28f82ea@example.invalid",
+    "role": "owner"
+  },
+  "firestore_invitation": {
+    "delivery_status": "sent",
+    "delivery_error": "",
+    "message_id": "<invitation-c4357353e76745e792a0ab4f3585336b-262101f29784416fbe3ae776cea59d78@example.invalid>",
+    "send_attempt": "262101f29784416fbe3ae776cea59d78"
+  },
+  "invitee_account_provisioned": true,
+  "resend": {
+    "http_status": 200,
+    "delivery_status": "sent",
+    "message_id": "<invitation-c4357353e76745e792a0ab4f3585336b-5861511f7fbd4b849699c0a60a374b3e@example.invalid>",
+    "send_attempt": "5861511f7fbd4b849699c0a60a374b3e"
+  },
+  "smtp_events": [
+    {
+      "event": "auth",
+      "ok": true,
+      "tls": true,
+      "t": 1791994285.8348353
+    },
+    {
+      "event": "delivered",
+      "mail_from": "synthetic.sender@example.invalid",
+      "rcpt": [
+        "invitee-b28f82ea@example.invalid"
+      ],
+      "tls": true,
+      "auth": true,
+      "t": 1791994285.8379707
+    },
+    {
+      "event": "auth",
+      "ok": true,
+      "tls": true,
+      "t": 1791994285.9460304
+    },
+    {
+      "event": "delivered",
+      "mail_from": "synthetic.sender@example.invalid",
+      "rcpt": [
+        "invitee-b28f82ea@example.invalid"
+      ],
+      "tls": true,
+      "auth": true,
+      "t": 1791994285.9481
+    }
+  ],
+  "delivered_count": 2,
+  "messages": [
+    {
+      "From": "ADR Invitations <synthetic.sender@example.invalid>",
+      "To": "invitee-b28f82ea@example.invalid",
+      "Subject": "Invitation to join a company on the ADR field app",
+      "Message-ID": "<invitation-c4357353e76745e792a0ab4f3585336b-262101f29784416fbe3ae776cea59d78@example.invalid>",
+      "has_html_part": true,
+      "accept_link_ok": true,
+      "has_password_setup_link": true,
+      "text_body": "You have been invited to Synthetic Restoration Co as owner.\r\nSet your password for the ADR field app: http://127.0.0.1:19099/emulator/action?mode=resetPassword&lang=en&oobCode=<redacted>&apiKey=fake-api-key&continueUrl=https%3A%2F%2Falert-disaster-field-2026.web.app%2F\r\nIf that link has expired, use Forgot password on the sign-in page.\r\nThen sign in with invitee-b28f82ea@example.invalid and that password.\r\nAccept the invitation: https://alert-disaster-field-2026.web.app/?invite=c4357353e76745e792a0ab4f3585336b\r\nThis invitation expires in seven days.\r\n"
+    },
+    {
+      "From": "ADR Invitations <synthetic.sender@example.invalid>",
+      "To": "invitee-b28f82ea@example.invalid",
+      "Subject": "Invitation to join a company on the ADR field app",
+      "Message-ID": "<invitation-c4357353e76745e792a0ab4f3585336b-5861511f7fbd4b849699c0a60a374b3e@example.invalid>",
+      "has_html_part": true,
+      "accept_link_ok": true,
+      "has_password_setup_link": true,
+      "text_body": "You have been invited to Synthetic Restoration Co as owner.\r\nSet your password for the ADR field app: http://127.0.0.1:19099/emulator/action?mode=resetPassword&lang=en&oobCode=<redacted>&apiKey=fake-api-key&continueUrl=https%3A%2F%2Falert-disaster-field-2026.web.app%2F\r\nIf that link has expired, use Forgot password on the sign-in page.\r\nThen sign in with invitee-b28f82ea@example.invalid and that password.\r\nAccept the invitation: https://alert-disaster-field-2026.web.app/?invite=c4357353e76745e792a0ab4f3585336b\r\nThis invitation expires in seven days.\r\n"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "scenario": "smtp-hang-deadline",
+  "transport_env": {
+    "INVITATION_TRANSPORT": "smtp",
+    "INVITATION_FROM": "ADR Invitations <synthetic.sender@example.invalid>",
+    "INVITATION_SMTP_USERNAME": "synthetic.sender@example.invalid",
+    "INVITATION_SMTP_PASSWORD": "<synthetic>"
+  },
+  "http_status": 200,
+  "elapsed_s": 24.12,
+  "api_invitation": {
+    "delivery_status": "failed",
+    "delivery_error": "Invitation email could not be sent. Check the sender setup and retry.",
+    "message_id": null,
+    "send_attempt": "689eaef3abd9489b88d04916ee8d9d90",
+    "email": "invitee-e0e7aacb@example.invalid",
+    "role": "owner"
+  },
+  "firestore_invitation": {
+    "delivery_status": "failed",
+    "delivery_error": "Invitation email could not be sent. Check the sender setup and retry.",
+    "message_id": null,
+    "send_attempt": "689eaef3abd9489b88d04916ee8d9d90",
+    "send_started": 1791994407.8339071
+  },
+  "seconds_from_reservation_to_response": 24.03,
+  "invitee_account_provisioned": true,
+  "smtp_events": [
+    {
+      "event": "connect_hang",
+      "t": 1791994407.8654068
+    },
+    {
+      "event": "connect_hang",
+      "t": 1791994417.872589
+    },
+    {
+      "event": "connect_hang",
+      "t": 1791994429.8812687
+    }
+  ],
+  "delivered_count": 0,
+  "messages": []
+}

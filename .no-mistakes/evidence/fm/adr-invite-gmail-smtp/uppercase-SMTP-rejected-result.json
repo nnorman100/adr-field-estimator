@@ -1,0 +1,29 @@
+{
+  "scenario": "uppercase-SMTP-rejected",
+  "transport_env": {
+    "INVITATION_TRANSPORT": "SMTP",
+    "INVITATION_FROM": "ADR Invitations <synthetic.sender@example.invalid>",
+    "INVITATION_SMTP_USERNAME": "synthetic.sender@example.invalid",
+    "INVITATION_SMTP_PASSWORD": "<synthetic>"
+  },
+  "http_status": 200,
+  "elapsed_s": 0.14,
+  "api_invitation": {
+    "delivery_status": "failed",
+    "delivery_error": "Invitation email could not be sent. Check the sender setup and retry.",
+    "message_id": null,
+    "send_attempt": "90d03204f24c4417bc3bf449bde84da6",
+    "email": "invitee-f73d9b9c@example.invalid",
+    "role": "owner"
+  },
+  "firestore_invitation": {
+    "delivery_status": "failed",
+    "delivery_error": "Invitation email could not be sent. Check the sender setup and retry.",
+    "message_id": null,
+    "send_attempt": "90d03204f24c4417bc3bf449bde84da6"
+  },
+  "invitee_account_provisioned": false,
+  "smtp_events": [],
+  "delivered_count": 0,
+  "messages": []
+}

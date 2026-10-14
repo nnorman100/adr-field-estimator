@@ -1,0 +1,67 @@
+{
+  "scenario": "smtp-transient-retry",
+  "transport_env": {
+    "INVITATION_TRANSPORT": "smtp",
+    "INVITATION_FROM": "ADR Invitations <synthetic.sender@example.invalid>",
+    "INVITATION_SMTP_USERNAME": "synthetic.sender@example.invalid",
+    "INVITATION_SMTP_PASSWORD": "<synthetic>"
+  },
+  "http_status": 200,
+  "elapsed_s": 2.16,
+  "api_invitation": {
+    "delivery_status": "sent",
+    "delivery_error": "",
+    "message_id": "<invitation-0bd5b1292ca94326b30e2ec63bd8f165-47785dcff4cb4b0586bcd8df9e590fd9@example.invalid>",
+    "send_attempt": "47785dcff4cb4b0586bcd8df9e590fd9",
+    "email": "invitee-9b2534db@example.invalid",
+    "role": "owner"
+  },
+  "firestore_invitation": {
+    "delivery_status": "sent",
+    "delivery_error": "",
+    "message_id": "<invitation-0bd5b1292ca94326b30e2ec63bd8f165-47785dcff4cb4b0586bcd8df9e590fd9@example.invalid>",
+    "send_attempt": "47785dcff4cb4b0586bcd8df9e590fd9"
+  },
+  "invitee_account_provisioned": true,
+  "smtp_events": [
+    {
+      "event": "auth",
+      "ok": true,
+      "tls": true,
+      "t": 1791994287.8789656
+    },
+    {
+      "event": "data_tempfail",
+      "t": 1791994287.8820922
+    },
+    {
+      "event": "auth",
+      "ok": true,
+      "tls": true,
+      "t": 1791994289.8877954
+    },
+    {
+      "event": "delivered",
+      "mail_from": "synthetic.sender@example.invalid",
+      "rcpt": [
+        "invitee-9b2534db@example.invalid"
+      ],
+      "tls": true,
+      "auth": true,
+      "t": 1791994289.8907366
+    }
+  ],
+  "delivered_count": 1,
+  "messages": [
+    {
+      "From": "ADR Invitations <synthetic.sender@example.invalid>",
+      "To": "invitee-9b2534db@example.invalid",
+      "Subject": "Invitation to join a company on the ADR field app",
+      "Message-ID": "<invitation-0bd5b1292ca94326b30e2ec63bd8f165-47785dcff4cb4b0586bcd8df9e590fd9@example.invalid>",
+      "has_html_part": true,
+      "accept_link_ok": true,
+      "has_password_setup_link": true,
+      "text_body": "You have been invited to Synthetic Restoration Co as owner.\r\nSet your password for the ADR field app: http://127.0.0.1:19099/emulator/action?mode=resetPassword&lang=en&oobCode=<redacted>&apiKey=fake-api-key&continueUrl=https%3A%2F%2Falert-disaster-field-2026.web.app%2F\r\nIf that link has expired, use Forgot password on the sign-in page.\r\nThen sign in with invitee-9b2534db@example.invalid and that password.\r\nAccept the invitation: https://alert-disaster-field-2026.web.app/?invite=0bd5b1292ca94326b30e2ec63bd8f165\r\nThis invitation expires in seven days.\r\n"
+    }
+  ]
+}
