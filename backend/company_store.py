@@ -1,11 +1,15 @@
 """Company-aware adapter over the unchanged inspection/document payloads."""
 
+import logging
+
 from google.cloud import firestore
 
 try:
+    from .cloud_log import event
     from .inspection_store import InspectionStore, Conflict
     from .workspaces import WorkspaceStore, AccessDenied
 except ImportError:
+    from cloud_log import event
     from inspection_store import InspectionStore, Conflict
     from workspaces import WorkspaceStore, AccessDenied
 
@@ -98,15 +102,40 @@ class CompanyInspectionStore(InspectionStore):
             ):
                 raise LookupError('Page not found.')
             query = query.start_after(snapshot)
-        rows = [s.to_dict() for s in query.limit(101).stream()]
-        records = []
-        for job in rows[:100]:
-            record = (
-                self.get(uid, job['auth_id']) if signed else self.get_inspection(uid, job['job_id'])
-            )
+        # A sidecar can outlive its draft, so a job whose source is gone is skipped and the
+        # page reads on until it holds 100 jobs.
+        records, last, skipped = [], None, 0
+        for row in self._sidecars(query):
+            if len(records) == 100:
+                next_cursor = last['auth_id'] if signed else last['job_id']
+                break
+            last = row.to_dict()
+            record = self._listed(uid, last, signed)
             if record:
                 records.append(record)
-        next_cursor = (
-            (rows[99]['auth_id'] if signed else rows[99]['job_id']) if len(rows) > 100 else None
-        )
+            else:
+                skipped += 1
+        else:
+            next_cursor = None
+        if skipped:
+            event(
+                'Job list skipped jobs whose source record is missing',
+                logging.WARNING,
+                operation='job_list',
+                outcome='missing_source',
+            )
         return records, next_cursor
+
+    def _sidecars(self, query):
+        while True:
+            rows = list(query.limit(101).stream())
+            yield from rows
+            if len(rows) < 101:
+                return
+            query = query.start_after(rows[-1])
+
+    def _listed(self, uid, job, signed):
+        if signed:
+            return self.get(uid, job['auth_id'])
+        snapshot = self._ref(job['job_id']).get()
+        return self._owned(snapshot, uid) if snapshot.exists else None
