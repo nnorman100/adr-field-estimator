@@ -836,6 +836,7 @@ def send_invitation(invite, company):
         configured = False
     if not configured:
         raise RuntimeError('Invitation email is not configured.')
+    deadline = time.monotonic() + SMTP_DEADLINE
     link = APP_URL + '?invite=' + invite['invitation_id']
     setup = password_setup_link(invite['email'])
     name = company['profile']['name']
@@ -858,7 +859,7 @@ def send_invitation(invite, company):
         'html': f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p>{steps_html}<p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>',
     }
     if transport == 'smtp':
-        return send_smtp(payload, username, password, invite)
+        return send_smtp(payload, username, password, invite, deadline)
     request = urllib.request.Request(
         'https://api.resend.com/emails',
         data=json.dumps(payload).encode(),
@@ -885,7 +886,7 @@ def send_invitation(invite, company):
         time.sleep(2 ** (attempt + 1))
 
 
-def send_smtp(payload, username, password, invite):
+def send_smtp(payload, username, password, invite, deadline):
     """Gmail SMTP has no idempotency key; the Message-ID is stable per attempt but Gmail does not deduplicate on it."""
     message = EmailMessage()
     message['From'] = payload['from']
@@ -897,7 +898,8 @@ def send_smtp(payload, username, password, invite):
     )
     message.set_content(payload['text'])
     message.add_alternative(payload['html'], subtype='html')
-    deadline = time.monotonic() + SMTP_DEADLINE
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Invitation email deadline passed.')
     for attempt in range(3):
         try:
             server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=min(8, deadline - time.monotonic()))

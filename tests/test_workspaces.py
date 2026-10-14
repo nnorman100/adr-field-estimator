@@ -1536,3 +1536,42 @@ def test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry(smtp
     finally:
         for peer in peers:
             peer.close()
+
+
+@pytest.mark.parametrize('provisioning, timeouts', [(7, [8, 7]), (25, [])])
+def test_smtp_deadline_counts_slow_account_provisioning(smtp, monkeypatch, provisioning, timeouts):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    clock = [0.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+
+    def slow_setup_link(email):
+        clock[0] += provisioning
+        return 'https://example.invalid/set'
+
+    monkeypatch.setattr(
+        workspaces,
+        'time',
+        SimpleNamespace(time=time.time, monotonic=lambda: clock[0], sleep=sleep),
+    )
+    monkeypatch.setattr(workspaces, 'password_setup_link', slow_setup_link)
+
+    class SlowSMTP:
+        def __init__(self, host, port, timeout):
+            connections.append(timeout)
+            clock[0] += timeout
+            raise TimeoutError('timed out')
+
+    monkeypatch.setattr(workspaces.smtplib, 'SMTP', SlowSMTP)
+    with pytest.raises(TimeoutError, match='deadline'):
+        workspaces.send_invitation(direct_invite(), {'profile': {'name': 'Company'}})
+    assert connections == timeouts
+    assert clock[0] <= max(provisioning, workspaces.SMTP_DEADLINE)
+    del connections[:]
+    clock[0] = 0.0
+    invited = client.post(
+        '/api/companies/adr/invitations', json={'email': 'new@example.invalid', 'role': 'office'}
+    ).json()
+    assert invited['delivery_status'] == 'failed' and invited['message_id'] is None
+    assert connections == timeouts
