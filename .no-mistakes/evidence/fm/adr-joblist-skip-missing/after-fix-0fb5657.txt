@@ -1,0 +1,28 @@
+=== AFTER FIX: backend at 0fb5657 (port 8602), same emulator database (2 dangling sidecars from the run above remain) ===
+GET /api/inspections on the pre-existing orphaned data: HTTP 200
+  {"inspections": [{"inspection_id": "ADR-INS-d172779e7f604f63ae279629f4ddac53", "address": "Synthetic draft 4, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:30.643658+00:00"}, {"inspection_id": "ADR-INS-4e58c95bb5714fb18a2c9d1837cc9c05", "address": "Synthetic draft 1, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:30.450644+00:00"}], "next_cursor": null}
+
+--- fresh scenario on the fixed backend ---
+POST /api/inspections draft 1: HTTP 200
+POST /api/inspections draft 2: HTTP 200
+POST /api/inspections draft 3: HTTP 200
+POST /api/inspections draft 4: HTTP 200
+GET /api/inspections (all 4 drafts present): HTTP 200
+  {"inspections": [{"inspection_id": "ADR-INS-78cbae55bba9400fb67f588eba0466c8", "address": "Synthetic draft 4, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:36.711755+00:00"}, {"inspection_id": "ADR-INS-a2e3b4c995c54e408d29617a917dc543", "address": "Synthetic draft 3, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:36.665075+00:00"}, {"inspection_id": "ADR-INS-71a6446afd964298861728d964385c43", "address": "Synthetic draft 2, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:36.618177+00:00"}
+deleted draft inspections/ADR-INS-71a6446afd964298861728d964385c43; sidecar _workspace_jobs/ADR-INS-71a6446afd964298861728d964385c43 still exists: True
+deleted draft inspections/ADR-INS-a2e3b4c995c54e408d29617a917dc543; sidecar _workspace_jobs/ADR-INS-a2e3b4c995c54e408d29617a917dc543 still exists: True
+GET /api/inspections (2 drafts deleted, sidecars dangling): HTTP 200
+  {"inspections": [{"inspection_id": "ADR-INS-78cbae55bba9400fb67f588eba0466c8", "address": "Synthetic draft 4, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:36.711755+00:00"}, {"inspection_id": "ADR-INS-277413c1c7024ec3b723f5c974549b3e", "address": "Synthetic draft 1, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:36.575269+00:00"}, {"inspection_id": "ADR-INS-d172779e7f604f63ae279629f4ddac53", "address": "Synthetic draft 4, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:30.643658+00:00"}
+GET /api/inspections/ADR-INS-71a6446afd964298861728d964385c43 (orphaned draft): HTTP 404
+  {"detail": "Record not found."}
+GET /api/inspections/ADR-INS-277413c1c7024ec3b723f5c974549b3e (surviving draft): HTTP 200
+  {"inspection_id": "ADR-INS-277413c1c7024ec3b723f5c974549b3e", "status": "draft", "revision": 1}
+GET /api/authorizations: HTTP 200
+  {"authorizations": [], "next_cursor": null}
+GET /api/inspections as estimator (no access to owner drafts): HTTP 200
+  {"inspections": [], "next_cursor": null}
+
+--- fixed backend log (structured warning) ---
+{"severity": "WARNING", "message": "Job list skipped jobs whose source record is missing", "operation": "job_list", "outcome": "missing_source"}
+{"severity": "WARNING", "message": "Job list skipped jobs whose source record is missing", "operation": "job_list", "outcome": "missing_source"}
+{"severity": "WARNING", "message": "Job list skipped jobs whose source record is missing", "operation": "job_list", "outcome": "missing_source"}

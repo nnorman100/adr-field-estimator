@@ -1,0 +1,19 @@
+=== BEFORE FIX: backend at base commit 3f8f076 (port 8601), WORKSPACES_ENABLED=true, Firestore+Auth emulators ===
+POST /api/inspections draft 1: HTTP 200
+POST /api/inspections draft 2: HTTP 200
+POST /api/inspections draft 3: HTTP 200
+POST /api/inspections draft 4: HTTP 200
+GET /api/inspections (all 4 drafts present): HTTP 200
+  {"inspections": [{"inspection_id": "ADR-INS-d172779e7f604f63ae279629f4ddac53", "address": "Synthetic draft 4, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:30.643658+00:00"}, {"inspection_id": "ADR-INS-48893999508f41228c9c82c3865560e6", "address": "Synthetic draft 3, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:30.587699+00:00"}, {"inspection_id": "ADR-INS-c3ade682aa744a2d8a41e3d23d438edb", "address": "Synthetic draft 2, Bakersfield CA", "revision": 1, "status": "draft", "updated_at": "2026-10-14T15:34:30.533936+00:00"}
+deleted draft inspections/ADR-INS-c3ade682aa744a2d8a41e3d23d438edb; sidecar _workspace_jobs/ADR-INS-c3ade682aa744a2d8a41e3d23d438edb still exists: True
+deleted draft inspections/ADR-INS-48893999508f41228c9c82c3865560e6; sidecar _workspace_jobs/ADR-INS-48893999508f41228c9c82c3865560e6 still exists: True
+GET /api/inspections (2 drafts deleted, sidecars dangling): HTTP 404
+  {"detail": "Record not found."}
+GET /api/inspections/ADR-INS-c3ade682aa744a2d8a41e3d23d438edb (orphaned draft): HTTP 404
+  {"detail": "Record not found."}
+GET /api/inspections/ADR-INS-4e58c95bb5714fb18a2c9d1837cc9c05 (surviving draft): HTTP 200
+  {"inspection_id": "ADR-INS-4e58c95bb5714fb18a2c9d1837cc9c05", "status": "draft", "revision": 1}
+GET /api/authorizations: HTTP 200
+  {"authorizations": [], "next_cursor": null}
+GET /api/inspections as estimator (no access to owner drafts): HTTP 200
+  {"inspections": [], "next_cursor": null}

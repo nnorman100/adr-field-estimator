@@ -1,0 +1,12 @@
+=== Paging past many orphans: fixed backend 0fb5657 (port 8602) ===
+seeded 205 sidecars; sources present for 120 jobs; 85 orphaned (every third, plus the 24 newest... i>180)
+GET /api/inspections page 1: HTTP 200, 100 rows, next_cursor=ADR-INS-00000000000000000000000000000025
+GET /api/inspections page 2 cursor=ADR-INS-00000000000000000000000000000025: HTTP 200, 24 rows, next_cursor=None
+  /api/inspections: 120 paged synthetic jobs, unique=True, equals all jobs with a source=True
+GET /api/authorizations page 1: HTTP 200, 100 rows, next_cursor=ADR-AUTH-000031
+GET /api/authorizations page 2 cursor=ADR-AUTH-000031: HTTP 200, 20 rows, next_cursor=None
+  /api/authorizations: 120 paged synthetic jobs, unique=True, equals all jobs with a source=True
+
+=== Same data, base backend 3f8f076 (port 8601) for contrast ===
+GET /api/inspections HTTP 404 {"detail":"Record not found."}
+GET /api/authorizations HTTP 200 rows 50
