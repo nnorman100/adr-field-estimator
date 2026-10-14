@@ -12,6 +12,32 @@ async function call(page, path, method = 'GET', body, role = 'owner') {
     ...(body ? { data: body } : {}),
   });
 }
+// Phones show the workspace destinations behind a menu toggle; wider screens show them in a row.
+async function navigate(page, id) {
+  const toggle = page.locator('#workspaceMenuToggle');
+  if (await toggle.isVisible()) {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  }
+  await page.locator('#' + id).click();
+}
+async function firstScreen(page, selector) {
+  return page.locator(selector).evaluate((el) => {
+    const r = el.getBoundingClientRect(),
+      bar = document.querySelector('.draft-actions').getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return {
+      scrolled: scrollY,
+      inside:
+        r.height > 0 &&
+        r.top >= 0 &&
+        r.left >= 0 &&
+        r.right <= innerWidth &&
+        r.bottom <= Math.min(innerHeight, bar.top),
+      hit: top === el || el.contains(top),
+    };
+  });
+}
 test.beforeEach(async ({ request }) => {
   await request.post('/__test/workspaces', { data: { enabled: true } });
 });
@@ -42,7 +68,7 @@ test('owner dashboard has no automatic blank inspection and fits phones', async 
       path: test.info().outputPath('workspace-owner-mobile.png'),
       fullPage: true,
     });
-  await page.locator('#dashboardTeam').click();
+  await navigate(page, 'dashboardTeam');
   await expect(page.locator('#dashboardHeading')).toHaveText('Team & invitations');
   await page
     .locator('form')
@@ -58,6 +84,97 @@ test('owner dashboard has no automatic blank inspection and fits phones', async 
   await office.getByRole('button', { name: 'Save access' }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Office staff · disabled');
   expect(errors).toEqual([]);
+});
+
+for (const role of ['owner', 'estimator'])
+  for (const width of [320, 390])
+    test(
+      role + ' phone at ' + width + '×844 shows Start walkthrough on the first screen',
+      async ({ page, browserName }) => {
+        await page.setViewportSize({ width, height: 844 });
+        await start(page, role);
+        const toggle = page.locator('#workspaceMenuToggle');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        await expect(page.locator('#dashboardHome')).toBeHidden();
+        expect((await page.locator('#workspaceNav').boundingBox()).height).toBeLessThan(64);
+        await navigate(page, 'dashboardJobs');
+        await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+        await expect(page.locator('#address')).toBeEnabled();
+        const expand = page.locator('#coordinationToggle');
+        if (role === 'owner') {
+          await expect(page.locator('#jobCoordination')).toBeVisible();
+          await expect(expand).toHaveAttribute('aria-expanded', 'false');
+          await expect(page.locator('#coordinationForm')).toBeHidden();
+        } else await expect(page.locator('#jobCoordination')).toBeHidden();
+        await page.locator('.task-nav [data-task="walkthrough"]').click();
+        await expect(page.locator('#startWalk')).toBeVisible();
+        expect(await firstScreen(page, '#startWalk')).toEqual({
+          scrolled: 0,
+          inside: true,
+          hit: true,
+        });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+          false,
+        );
+        if (browserName === 'chromium')
+          await page.screenshot({
+            path: test.info().outputPath('workspace-' + role + '-walkthrough-' + width + '.png'),
+          });
+        if (role === 'owner') {
+          await expand.click();
+          await expect(expand).toHaveAttribute('aria-expanded', 'true');
+          for (const id of ['coordAddress', 'coordEstimator', 'coordName', 'coordNotes'])
+            await expect(page.locator('#' + id)).toBeVisible();
+          await expect(page.locator('#saveCoordination')).toBeEnabled();
+          await expand.click();
+          await expect(page.locator('#coordinationForm')).toBeHidden();
+        }
+      },
+    );
+
+test('every workspace destination stays reachable from the phone menu', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await start(page, 'owner');
+  const toggle = page.locator('#workspaceMenuToggle'),
+    nav = page.getByRole('navigation', { name: 'Company workspace' });
+  await expect(toggle).toHaveAttribute('aria-controls', 'workspaceLinks');
+  const destinations = [
+    ['Dashboard', 'Alert Disaster Restoration'],
+    ['Company jobs', 'Company jobs'],
+    ['Team & invitations', 'Team & invitations'],
+    ['Company settings', 'Company settings'],
+    ['Companies', 'Companies'],
+  ];
+  for (const [name] of destinations)
+    await expect(nav.getByRole('button', { name, exact: true })).toBeHidden();
+  // Keyboard: open the menu, move to a destination and choose it.
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await expect(nav.getByRole('button', { name: 'Company jobs', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#dashboardHeading')).toHaveText('Company jobs');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // Escape closes an open menu and returns focus to its toggle.
+  await toggle.click();
+  await nav.getByRole('button', { name: 'Dashboard', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toBeFocused();
+  for (const [name, heading] of destinations) {
+    await toggle.click();
+    const destination = nav.getByRole('button', { name, exact: true });
+    await destination.click();
+    await expect(page.locator('#dashboardHeading')).toHaveText(heading);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect(destination).toHaveAttribute('aria-current', 'page');
+    await expect(nav.locator('[aria-current]')).toHaveCount(1);
+    await toggle.click();
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
 
 test('superadmin manages companies and cannot use member job routes', async ({ page }) => {
@@ -326,6 +443,7 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.locator('#address').fill('Other company synthetic property');
   await page.locator('#yearBuilt').fill('2000');
   await expect(page.locator('#coordAddress')).toHaveValue('Other company synthetic property');
+  await page.locator('#coordinationToggle').click();
   await page.locator('#coordNotes').fill('Office note retains the measured property address');
   await page.locator('#saveCoordination').click();
   await expect(page.locator('#coordinationStatus')).toHaveText('Coordination saved.');
@@ -358,7 +476,7 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.locator('#authorizeJob').click();
   await expect(page.locator('#savedSignature')).toBeVisible();
   await page.reload();
-  await page.locator('#dashboardJobs').click();
+  await navigate(page, 'dashboardJobs');
   await page.getByRole('button', { name: /Other company synthetic property.*Signed/s }).click();
   await expect(page.locator('#proposalBody')).toContainText('Other Estimator');
   await expect(page.locator('#savedSignature')).toBeVisible();

@@ -86,6 +86,20 @@ window.WorkspaceUI = (() => {
     $('jobCoordination').hidden = true;
     return viewEpoch;
   }
+  // Phones collapse the destinations behind #workspaceMenuToggle; CSS reads aria-expanded.
+  function menu(open) {
+    $('workspaceMenuToggle').setAttribute('aria-expanded', String(open));
+  }
+  function current(id) {
+    for (const control of $('workspaceLinks').querySelectorAll('button'))
+      if (control.id === id) control.setAttribute('aria-current', 'page');
+      else control.removeAttribute('aria-current');
+  }
+  // Phones fold the coordination form away while a job is worked; wider screens always show it.
+  function fold(open) {
+    $('coordinationToggle').setAttribute('aria-expanded', String(open));
+    $('jobCoordination').classList.toggle('collapsed', !open);
+  }
   function policy() {
     if (!enabled()) return;
     const editable = can('scope') && !!state.draft && !state.signed && !confirmedAuthorization;
@@ -171,7 +185,25 @@ window.WorkspaceUI = (() => {
         ['dashboardProfile', profile],
         ['dashboardAdmin', companies],
       ])
-        $(id).addEventListener('click', () => fn().catch((e) => say(e.message, 'error')));
+        $(id).addEventListener('click', () => {
+          menu(false);
+          fn().catch((e) => say(e.message, 'error'));
+        });
+      $('workspaceMenuToggle').addEventListener('click', () =>
+        menu($('workspaceMenuToggle').getAttribute('aria-expanded') !== 'true'),
+      );
+      document.addEventListener('click', (event) => {
+        if (!$('workspaceNav').contains(event.target)) menu(false);
+      });
+      $('workspaceNav').addEventListener('keydown', (event) => {
+        const toggle = $('workspaceMenuToggle');
+        if (event.key !== 'Escape' || toggle.getAttribute('aria-expanded') !== 'true') return;
+        menu(false);
+        toggle.focus();
+      });
+      $('coordinationToggle').addEventListener('click', () =>
+        fold($('coordinationToggle').getAttribute('aria-expanded') !== 'true'),
+      );
       $('coordinationForm').addEventListener('submit', (event) => {
         event.preventDefault();
         saveCoordination().catch((e) => say(e.message, 'error'));
@@ -250,6 +282,7 @@ window.WorkspaceUI = (() => {
       state.session.company?.profile.name || 'Welcome',
       'Manage your workspace and continue a saved job.',
     );
+    current('dashboardHome');
     $('dashboardEyebrow').textContent = defaultEyebrow();
     const content = $('dashboardContent'),
       grid = node('div', undefined, 'dashboard-grid');
@@ -350,6 +383,7 @@ window.WorkspaceUI = (() => {
       state.session.role === 'estimator' ? 'My jobs' : 'Company jobs',
       'Draft inspections and saved agreements.',
     );
+    current('dashboardJobs');
     const content = $('dashboardContent');
     if (can('jobs_create')) content.append(button('New job', () => openNew()));
     const list = node('div', undefined, 'dashboard-list');
@@ -496,6 +530,7 @@ window.WorkspaceUI = (() => {
   async function team() {
     const cid = state.session.company_id,
       epoch = show('Team & invitations', 'Add staff and manage their company access.');
+    current('dashboardTeam');
     const [teamData, invites] = await Promise.all([
       jsonApi('/api/companies/' + cid + '/team'),
       jsonApi('/api/companies/' + cid + '/invitations'),
@@ -555,6 +590,7 @@ window.WorkspaceUI = (() => {
         'Company settings',
         'These details appear on new proposals. Changes require unsigned documents to be regenerated.',
       );
+    current('dashboardProfile');
     const company = await jsonApi('/api/companies/' + cid);
     if (epoch !== viewEpoch) return;
     const form = node('form', undefined, 'dashboard-form'),
@@ -600,6 +636,7 @@ window.WorkspaceUI = (() => {
   }
   async function companies() {
     const epoch = show('Companies', 'Manage isolated company workspaces and their owners.');
+    current('dashboardAdmin');
     const result = await jsonApi('/api/admin/companies');
     if (epoch !== viewEpoch) return;
     const content = $('dashboardContent'),
@@ -868,6 +905,8 @@ window.WorkspaceUI = (() => {
     ++viewEpoch;
     document.body.classList.remove('dashboard-open');
     $('workspaceDashboard').hidden = true;
+    current(null);
+    fold(false);
     policy();
     await loadCoordination();
   }
