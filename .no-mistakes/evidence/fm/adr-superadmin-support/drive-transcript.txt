@@ -1,0 +1,45 @@
+setup owner invites: [200,200]
+setup owner disables estimator: 200
+setup owner audit: 200
+setup owner signs agreement: 200
+setup owner creates draft: 200
+UI heading: Support · Alert Disaster Restoration
+UI editable controls in support view: 0
+UI button labels: ["Back to company administration","Draft kitchen leak\nDraft · revision 1","Assigned bathroom\nSigned agreement · $1,775.00–$1,788.90","Change to office staff","Re-enable access","Change to estimator","Resend invitation","Cancel invitation","Resend invitation","Cancel invitation"]
+UI phone horizontal overflow: false
+UI estimator card after re-enable: test-owner-ws-estimator@example.invalid
+
+Estimator · active
+
+Change to office staff
+UI office card after role change: test-owner-ws-office@example.invalid
+
+Estimator · active
+
+Change to office staff
+UI invite A after resend: pending-a@example.invalid
+
+Office staff · pending · Email sent
+
+Resend invitationCancel invitation
+UI invite B after cancel: pending-b@example.invalid
+
+Estimator · cancelled · Email sent
+UI signed agreement editable controls: 0
+UI job detail text: 
+UI job detail editable controls: 0
+UI page errors: []
+API support jobs: 200
+API support authorizations: 200
+API support job detail: 200
+API support other company jobs: 200
+API support adr job under other company id: 404
+ADV superadmin write attempts (status codes): {"PUT inspection":403,"GET member /api/inspections":403,"GET member inspection":403,"PUT coordination":403,"POST audit":403,"POST signing-link":422,"PUT company profile":403,"POST create invitation":403,"PUT disable member":403,"PUT change owner":403}
+ADV job address after attempts: Assigned bathroom
+ADV company name after attempts: Alert Disaster Restoration
+ADV non-superadmin support route attempts: {"other -> adr jobs":403,"office -> adr jobs":403,"estimator -> adr jobs":403,"other -> adr authorization":403}
+AUDIT actions: ["support_invitation_cancel","support_invitation_resend","support_member_access","support_view_company","support_view_document","support_view_documents","support_view_evidence","support_view_invitations","support_view_job","support_view_jobs","support_view_team"]
+AUDIT all actor=admin & company set & created_at: true
+AUDIT contains any email or customer address: false
+AUDIT sample entries: [{"event_id":"185a0f7adb654d1cb1988f802b57bab2","actor_uid":"test-owner-ws-admin","action":"support_view_company","company_id":"adr","details":{},"created_at":"2026-10-14T17:16:54.179074+00:00","target":"company"},{"event_id":"578cafd0dd544ed2bbba147a86d26c32","actor_uid":"test-owner-ws-admin","action":"support_view_team","company_id":"adr","details":{},"created_at":"2026-10-14T17:16:54.192535+00:00","target":"team"},{"event_id":"d34228d814ff4911a03025c1c92e3134","actor_uid":"test-owner-ws-admin","action":"support_view_job","company_id":"adr","details":{},"created_at":"2026-10-14T17:16:54.201677+00:00","target":"job/ADR-INS-cccccccccccccccccccccccccccccccc"},{"event_id":"e7639e8905694b37aeae38cd19474d7c","actor_uid":"test-owner-ws-admin","action":"support_view_company","company_id":"adr","details":{},"created_at":"2026-10-14T17:16:54.205945+00:00","target":"company"}]
+AUDIT one more read appended entries: 1

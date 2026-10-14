@@ -1,0 +1,446 @@
+[
+  {
+    "event_id": "c53f2f5b7a274e1baff3e8524612b1d8",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.312989+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "833a53628d4e451f9ef973150f3b6024",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.313423+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "6335b297f6e24eafada05ba61e1a9351",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.381665+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "5d89bcfa010b46ce9aefde0a6673e1e1",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.382019+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "12e9534b2c1846d8955baa93d9beef4b",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.382484+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "e18ef18da1a84b6197ea0a78d3d23698",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.384904+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "c57087e44a7b4ae08299977eabb56616",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.385720+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "402f25f4dcce4f578b55ed292ffaf5b0",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_member_access",
+    "company_id": "adr",
+    "details": {
+      "uid": "test-owner-ws-estimator",
+      "role": "estimator",
+      "status": "active"
+    },
+    "created_at": "2026-10-14T17:16:52.672653+00:00",
+    "target": "member/test-owner-ws-estimator"
+  },
+  {
+    "event_id": "e2ffa05c4cf74312a0438cf91b68740a",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.689800+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "8703f9614895435bb4b7b235754bf2b0",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.690406+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "95b4e5651d19450783a8ff1745e7c990",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.690609+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "92704a5f4b3f4cccbac553b2012e8985",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.690759+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "ed10c6395cfb41adb5663d2299e45435",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.691694+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "8c10002884064cd58b96e50c998e60ec",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_member_access",
+    "company_id": "adr",
+    "details": {
+      "uid": "test-owner-ws-office",
+      "role": "estimator",
+      "status": "active"
+    },
+    "created_at": "2026-10-14T17:16:52.757323+00:00",
+    "target": "member/test-owner-ws-office"
+  },
+  {
+    "event_id": "5678022a328a42669980b2f3fe575302",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.769699+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "096b06720bfd4eb2ae1ac4d4df51b361",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.769980+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "a0081a079be84852a3794b58631d9b7d",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.771202+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "1f78b7b62ddd463f8e53d7648ba1baba",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.771325+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "e5234e9838dd48fcb10de02858fb03fa",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.772333+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "eebc2edda86941a982b3af897ce3c5f5",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_invitation_resend",
+    "company_id": "adr",
+    "details": {
+      "invitation_id": "0fe44cd319e84796a979e849355a530c"
+    },
+    "created_at": "2026-10-14T17:16:52.823091+00:00",
+    "target": "invitation/0fe44cd319e84796a979e849355a530c"
+  },
+  {
+    "event_id": "2ffb5610d4b54ea7b031fe04b5852c1c",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.835406+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "4891acf4ac804adab90d57b8c27a95eb",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.835612+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "032f07a89ed1426dbc4fbe64e6a2a6b1",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.836539+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "87d5fc4564644ba79c48eeaa4744b8ab",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.837467+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "b8f838d692324bd6b4604fdfc1d4d14d",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:52.837814+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "961fbce59ddd49ec87dd2454b5f3b4c0",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_invitation_cancel",
+    "company_id": "adr",
+    "details": {
+      "invitation_id": "61f7b66e61574669a4560bc434e6fb9c"
+    },
+    "created_at": "2026-10-14T17:16:53.655420+00:00",
+    "target": "invitation/61f7b66e61574669a4560bc434e6fb9c"
+  },
+  {
+    "event_id": "642b66a38ea54be7bbf239c5c2c5df4e",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.669783+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "f7cfead2bd80416ba4b7ac9d5220ad62",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.670385+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "9a8ee2055a474ef2893bab8c79d21da0",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.670844+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "01735b8e19cf4e1ca63b6e349a839c7d",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.672337+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "c3cc73d29c444a1284021a3894047c23",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.673072+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "adb2807cfc074cdf8b2258c493da9891",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_document",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.824736+00:00",
+    "target": "document/ADR-AUTH-livedrive01"
+  },
+  {
+    "event_id": "ac91e9947a7041e5803871e626cad3ce",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_evidence",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.835723+00:00",
+    "target": "evidence/ADR-AUTH-livedrive01/signature"
+  },
+  {
+    "event_id": "b096dff6d696401b8317c211f0c3a7ec",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_invitations",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.990297+00:00",
+    "target": "invitations"
+  },
+  {
+    "event_id": "f935b4bc3f7a4663870e5572ef4ff95a",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.991924+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "b2c2a98dee184b059eb1a0e049827eaa",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.993067+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "1f90ca267ddb42bd83940fbc19e3a88a",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.993622+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "915c6d08672248cb8811ebb97e7c9d00",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:53.994528+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "b57e4202328147229f50b7d648c49f6f",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_job",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.054225+00:00",
+    "target": "job/ADR-INS-dddddddddddddddddddddddddddddddd"
+  },
+  {
+    "event_id": "53afc8d173fc4104b41a3dad937ac3d3",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.131059+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "e3ea7b5c65d34a74b9d5a41b29a856c3",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_documents",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.135355+00:00",
+    "target": "documents"
+  },
+  {
+    "event_id": "4a1c5c48b1e745148b609db9cf30c933",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_job",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.140569+00:00",
+    "target": "job/ADR-INS-cccccccccccccccccccccccccccccccc"
+  },
+  {
+    "event_id": "aabb2119b1ec4f91a1a090439d5149fb",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_jobs",
+    "company_id": "other",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.145775+00:00",
+    "target": "jobs"
+  },
+  {
+    "event_id": "63902105a5bd4abe8bbcc8384031fa52",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_job",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.154074+00:00",
+    "target": "job/ADR-INS-cccccccccccccccccccccccccccccccc"
+  },
+  {
+    "event_id": "185a0f7adb654d1cb1988f802b57bab2",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.179074+00:00",
+    "target": "company"
+  },
+  {
+    "event_id": "578cafd0dd544ed2bbba147a86d26c32",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_team",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.192535+00:00",
+    "target": "team"
+  },
+  {
+    "event_id": "d34228d814ff4911a03025c1c92e3134",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_job",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.201677+00:00",
+    "target": "job/ADR-INS-cccccccccccccccccccccccccccccccc"
+  },
+  {
+    "event_id": "e7639e8905694b37aeae38cd19474d7c",
+    "actor_uid": "test-owner-ws-admin",
+    "action": "support_view_company",
+    "company_id": "adr",
+    "details": {},
+    "created_at": "2026-10-14T17:16:54.205945+00:00",
+    "target": "company"
+  }
+]
