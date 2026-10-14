@@ -129,7 +129,7 @@ Agents must preserve the exact standard estimate clauses in `backend/claims.py`,
 ## 6. Company workspaces
 
 - For authorization, invitations, company documents, offline queues or workspace rollout, read `docs/company-workspaces.md` before changing the implementation or cloud state.
-- Preserve company isolation on every business endpoint, evidence download and Live recheck. Superadmin privileges alone grant account management; customer jobs require an active company membership.
+- Preserve company isolation on every business endpoint, evidence download and Live recheck. Superadmin privileges alone grant account management plus audited read-only support access to any company and its listed support actions; editing customer jobs requires an active company membership.
 - Keep signed source records and evidence paths immutable. Migration and mutable assignment/coordination use private sidecars. ADR's exact notices remain the ADR defaults; other California companies use their own identity with the shared workbook.
 
 ## 7. Acceptance checks

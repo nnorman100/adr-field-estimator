@@ -1238,6 +1238,19 @@ footer {
   display: inline-block;
   margin: 0.5rem 0;
 }
+.support-note {
+  border-left: 4px solid var(--adr);
+  background: var(--wash);
+  padding: 0.75rem 1rem;
+  max-width: 740px;
+}
+.support-image {
+  display: block;
+  max-width: min(100%, 420px);
+  height: auto;
+  border-radius: 6px;
+  margin-top: 0.75rem;
+}
 .dashboard-form {
   max-width: 740px;
   background: var(--paper);

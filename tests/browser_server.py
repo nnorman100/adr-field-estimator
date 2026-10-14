@@ -215,6 +215,15 @@ async def workspaces_stats():
     return {'inspection_count': len([k for k in store.db.records if k.startswith('inspections/')])}
 
 
+@bm.app.get('/__test/support-events')
+async def support_events():
+    return [
+        v
+        for k, v in store.db.records.items()
+        if k.startswith('_admin_events/') and v['action'].startswith('support_')
+    ]
+
+
 @bm.app.get('/sw.js')
 def worker():
     return Response(
