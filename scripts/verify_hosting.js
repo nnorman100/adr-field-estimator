@@ -149,7 +149,13 @@ const unstamp = (text) =>
       'Narrow header is oversized',
     );
     await page.locator('.task-nav [data-task="walkthrough"]').click();
+    // This check runs signed out, where the email sign-in panel sits above the tasks. It models the
+    // workspaces-off signed-in layout (sign-in panel hidden, no #workspaceNav), so measure the
+    // capture action with the panel hidden. The workspaces-on signed-in layout, where #workspaceNav
+    // appears above the tasks, is not covered by this check.
+    await page.evaluate(() => (document.getElementById('authPanel').hidden = true));
     const start = await page.locator('#startWalk').boundingBox();
+    await page.evaluate(() => (document.getElementById('authPanel').hidden = false));
     assert(start.y + start.height < 844, 'Capture action is below the first screen');
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
