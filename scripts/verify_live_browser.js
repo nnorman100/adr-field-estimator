@@ -1,5 +1,6 @@
 /* Normal Google staff sign-in and synthetic release verification. No auth state is exported. */
 const fs = require('node:fs'),
+  crypto = require('node:crypto'),
   path = require('node:path'),
   os = require('node:os'),
   { spawn } = require('node:child_process'),
@@ -123,7 +124,9 @@ async function main(args = process.argv.slice(2)) {
   const { mode, smoke, hold: HOLD, headless: HEADLESS } = options;
   let { service, local } = options;
   const inspections = new Set(),
-    agreements = new Set();
+    agreements = new Set(),
+    // SHA-256 digests of minted signing links, as Firestore stores them; the links stay in memory.
+    links = new Set();
   console.log(
     'TARGET: ' + service + '; UI: ' + (local ? 'local' : 'production') + '; ARTIFACTS: ' + logDir,
   );
@@ -299,17 +302,33 @@ async function main(args = process.argv.slice(2)) {
         const { response } = await audit.proxy(route);
         if (response && url.pathname === '/api/session' && response.ok())
           userUid = (await response.json()).uid;
+        if (response?.ok() && request.method() === 'POST') {
+          if (/^\/api\/inspections\/[^/]+\/signing-links$/.test(url.pathname)) {
+            const secret = new URL((await response.json()).url).hash.slice(1);
+            links.add(crypto.createHash('sha256').update(secret).digest('hex'));
+          }
+          if (url.pathname === '/api/sign') agreements.add((await response.json()).auth_id);
+        }
         return;
       }
-      const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+      // /sign mirrors the Hosting rewrite to the homeowner signing page.
+      const file =
+        url.pathname === '/'
+          ? 'index.html'
+          : url.pathname === '/sign'
+            ? 'sign.html'
+            : url.pathname.slice(1);
       // The local shell names its own SDK release, which Hosting may not serve yet.
       if (
         local &&
         ([
           'index.html',
+          'sign.html',
           'app.js',
           'workspaces.js',
           'core.js',
+          'documents.js',
+          'sign.js',
           'app.css',
           'audio-worklet.js',
           'sw.js',
@@ -390,12 +409,14 @@ async function main(args = process.argv.slice(2)) {
           token: await token(),
           inspections: [...inspections],
           agreements: [...agreements],
+          links: [...links],
         }),
         label + '-browser-cleanup',
         CLEANUP_TIMEOUT_MS,
       );
       inspections.clear();
       agreements.clear();
+      links.clear();
     }
     // Positive proof before any workflow: the page's own /api path answers with the selected backend's commit, and its Live socket reaches that backend.
     async function verifyTarget(label) {
@@ -550,11 +571,95 @@ async function main(args = process.argv.slice(2)) {
           ' real UI reviewed form filling, selected changes, workbook range, four documents and signing.',
       );
     }
+    // The homeowner signing link: a fresh browser context with no sign-in opens it, signs, and the routed technician tab flips to signed.
+    async function linkCheck(label) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      if (await page.locator('#workspaceDashboard').isVisible())
+        await page.getByRole('button', { name: 'New job', exact: true }).click();
+      else {
+        await page.locator('#jobMenu summary').click();
+        await page.locator('#newInspection').click();
+      }
+      await expect(page.locator('#saveStatus')).toContainText('Saved privately', {
+        timeout: 30000,
+      });
+      await page
+        .locator('#address')
+        .fill('Synthetic signing-link browser verification - no customer data');
+      await page.locator('#yearBuilt').fill('2000');
+      await page.locator('[data-room-key="finished_sf"]').fill('10');
+      await page.locator('#airMovers').fill('3');
+      await page.locator('#dehumidifiers').fill('1');
+      await page.locator('#scopeConfirmed').check();
+      await page.locator('#finishAudit').click();
+      await expect(page.locator('#itemizedTotal')).toHaveText('$1,775.00', {
+        timeout: FINALIZE_TIMEOUT_MS,
+      });
+      await page.locator('#sendHomeownerLink').click();
+      await expect(page.locator('#homeownerLinkPanel')).toBeVisible();
+      const url = await page.locator('#homeownerLinkUrl').inputValue();
+      if (!url.startsWith(BASE + '/sign#'))
+        throw Error('LINK_UNEXPECTED: the link names another origin.');
+      const homeownerContext = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+        serviceWorkers: 'block',
+      });
+      try {
+        const home = await homeownerContext.newPage();
+        home.setDefaultTimeout(ACTION_TIMEOUT_MS);
+        home.on('request', (request) => audit.observe(request));
+        home.on('response', (response) => audit.observeResponse(response));
+        await home.route(BASE + '/**', async (route) => {
+          try {
+            if (route.request().headers().authorization)
+              throw Error('A signed-out homeowner request carried staff credentials.');
+            await serve(route);
+          } catch (error) {
+            audit.fail(route, firstLine(error.message));
+            await route.abort('failed').catch(() => {});
+          }
+        });
+        await home.goto(url, { waitUntil: 'domcontentloaded' });
+        await expect(home.locator('#documents')).toBeVisible({ timeout: 30000 });
+        if (await home.evaluate(() => typeof auth !== 'undefined'))
+          throw Error('The homeowner page loaded the staff sign-in.');
+        for (const name of ['proposal', 'claim', 'defense', 'photos'])
+          await home.locator('[data-tab="' + name + '"]').click();
+        await home.locator('#signerName').fill('Synthetic Release Signer');
+        await home.locator('input[name=signerRole][value=owner]').check();
+        await home.locator('#consentReviewed').check();
+        await home.locator('#consentElectronic').check();
+        const box = await home.locator('#signCanvas').boundingBox();
+        await home.mouse.move(box.x + 20, box.y + 40);
+        await home.mouse.down();
+        await home.mouse.move(box.x + 120, box.y + 80, { steps: 12 });
+        await home.mouse.move(box.x + 220, box.y + 35, { steps: 12 });
+        await home.mouse.up();
+        await home.locator('#submitSignature').click();
+        await expect(home.locator('#signedReceipt')).toBeVisible({ timeout: 45000 });
+        await expect(home.locator('#savedSignature')).toBeVisible();
+        if (await home.evaluate(() => document.documentElement.scrollWidth > innerWidth))
+          throw Error('Homeowner layout overflows.');
+        await home.screenshot({ path: path.join(logDir, label + '-homeowner-mobile.png') });
+      } finally {
+        await homeownerContext.close().catch(() => {});
+      }
+      // The technician tab polls only while visible on Review.
+      await page.bringToFront();
+      await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 45000 });
+      await expect(page.locator('#signedEvidenceStatus')).toContainText('homeowner link');
+      console.log(
+        'PASS: ' +
+          label +
+          ' signing link opened with no sign-in, signed once, and the technician tab shows the signed agreement.',
+      );
+    }
     async function run(label) {
       audit.phase(label);
       await verifyTarget(label);
       try {
         await python([service, '--token-stdin'], await token(), label + '-authenticated');
+        await linkCheck(label);
         await uiCheck(label);
       } finally {
         await audit.settle();
@@ -620,6 +725,7 @@ async function main(args = process.argv.slice(2)) {
           token: cachedToken,
           inspections: [...inspections],
           agreements: [...agreements],
+          links: [...links],
         }),
         'failure-browser-cleanup',
         CLEANUP_TIMEOUT_MS,

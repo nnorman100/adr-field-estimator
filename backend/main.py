@@ -5,6 +5,7 @@ import anyio
 import base64
 import hashlib
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -51,7 +52,10 @@ try:
         AIResult,
         AuditRequest,
         AuthorizeRequest,
+        SigningLinkRequest,
+        HomeownerSignature,
     )
+    from . import signing_links
     from .claims import make_documents, price_scope
     from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
     from .live_support import live_config, scope_fingerprint, is_speech
@@ -72,7 +76,10 @@ except ImportError:
         AIResult,
         AuditRequest,
         AuthorizeRequest,
+        SigningLinkRequest,
+        HomeownerSignature,
     )
+    import signing_links
     from claims import make_documents, price_scope
     from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
     from live_support import live_config, scope_fingerprint, is_speech
@@ -274,6 +281,7 @@ MB = 1024 * 1024
 BODY_LIMITS = [
     ('POST', re.compile(r'/api/inspections/[^/]+/photos'), 13 * MB),
     ('POST', re.compile(r'/api/authorize'), int(3.5 * MB)),
+    ('POST', re.compile(r'/api/sign'), int(3.5 * MB)),
     ('PUT', re.compile(r'/api/companies/[^/]+'), 2 * MB),
 ]
 BODY_READ_SECONDS = 50  # Below Firebase Hosting's 60-second request timeout.
@@ -316,8 +324,9 @@ class LimitPayload:
         method, path = scope['method'], scope['path']
         if method in ('POST', 'PUT'):
             headers = Headers(scope=scope)
-            # Reject before reading the body; current_staff still verifies the token.
-            if path.startswith('/api/') and not has_bearer(headers):
+            # Reject before reading the body; current_staff still verifies the token. A homeowner
+            # signing-link submission carries its own credential header instead.
+            if path.startswith('/api/') and path != '/api/sign' and not has_bearer(headers):
                 return await JSONResponse({'detail': 'Sign in to continue.'}, status_code=401)(
                     scope, receive, send
                 )
@@ -861,6 +870,127 @@ async def authorize_estimate(
         auth_id=record['auth_id'],
         timestamp=record['created_at'],
         message='Signed agreement and private evidence saved.',
+    )
+
+
+# A homeowner signing link's single credential; it never goes in Authorization or the URL path.
+SIGNING_LINK_HEADER = 'X-ADR-Signing-Link'
+# Per client IP across the anonymous signing-link routes.
+LINK_REQUESTS_PER_MINUTE = 120
+
+
+def client_ip(request):
+    """The first X-Forwarded-For address (Hosting and Cloud Run append theirs after it), else the peer."""
+    forwarded = request.headers.get('x-forwarded-for', '')
+    candidate = (
+        forwarded.split(',')[0].strip() if forwarded else getattr(request.client, 'host', '')
+    )
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return None
+
+
+async def signing_link(request, store):
+    key = hashlib.sha256((client_ip(request) or 'unknown').encode()).hexdigest()
+    await stored(store.quota, 'ip-' + key, 'sign_link', LINK_REQUESTS_PER_MINUTE)
+    return request.headers.get(SIGNING_LINK_HEADER, '')
+
+
+async def linked(method, *args):
+    """Unknown, expired, revoked and inaccessible links all answer with the same 404."""
+    try:
+        return await stored(method, *args)
+    except HTTPException as error:
+        if error.status_code in (403, 404):
+            raise HTTPException(404, signing_links.UNAVAILABLE)
+        raise
+
+
+@app.post('/api/inspections/{inspection_id}/signing-links')
+async def create_signing_link(
+    inspection_id: str,
+    req: SigningLinkRequest,
+    request: Request,
+    staff=Security(current_staff, scopes=LIVE_REVOCATION),
+    store=Depends(get_job_store),
+):
+    await stored(store.quota, staff['uid'], 'link', 10)
+    token, expires = await stored(
+        signing_links.mint,
+        store,
+        staff['uid'],
+        inspection_id,
+        req.expected_revision,
+        req.proposal_hash,
+    )
+    origin = request.headers.get('origin')
+    # The fragment never reaches Hosting or Cloud Run logs, or a Referer header.
+    url = (origin if origin in ORIGINS else ORIGINS[0]) + '/sign#' + token
+    return dict(
+        status='pending',
+        url=url,
+        qr_svg=await run_in_threadpool(signing_links.qr_data_url, url),
+        expires_at=signing_links.iso(expires),
+    )
+
+
+@app.post('/api/inspections/{inspection_id}/signing-links/revoke')
+async def revoke_signing_link(
+    inspection_id: str,
+    staff=Security(current_staff, scopes=LIVE_REVOCATION),
+    store=Depends(get_job_store),
+):
+    await stored(store.quota, staff['uid'], 'link', 10)
+    return dict(status=await stored(signing_links.revoke, store, staff['uid'], inspection_id))
+
+
+@app.get('/api/sign')
+async def signing_link_view(request: Request, store=Depends(get_job_store)):
+    token = await signing_link(request, store)
+    return await linked(signing_links.view, store, token)
+
+
+@app.get('/api/sign/photos/{photo_id}')
+async def signing_link_photo(photo_id: str, request: Request, store=Depends(get_job_store)):
+    token = await signing_link(request, store)
+    raw, media_type = await linked(signing_links.photo, store, token, photo_id)
+    return Response(raw, media_type=media_type, headers={'Cache-Control': 'private, no-store'})
+
+
+@app.get('/api/sign/signature')
+async def signing_link_signature(request: Request, store=Depends(get_job_store)):
+    token = await signing_link(request, store)
+    raw, media_type = await linked(signing_links.signature, store, token)
+    return Response(raw, media_type=media_type, headers={'Cache-Control': 'private, no-store'})
+
+
+@app.post('/api/sign')
+async def sign_with_link(request: Request, store=Depends(get_job_store)):
+    token = await signing_link(request, store)
+    try:
+        req = HomeownerSignature.model_validate(await request.json())
+    except (ValueError, UnicodeDecodeError, ValidationError):
+        raise HTTPException(
+            422, 'Signing requires your full name, your role, both confirmations and a signature.'
+        )
+    record = await linked(
+        signing_links.sign,
+        store,
+        token,
+        req.model_dump(mode='json'),
+        dict(
+            ip_address=client_ip(request),
+            # The whole chain as received, until a staged request confirms which entry Hosting adds.
+            forwarded_for=request.headers.get('x-forwarded-for', '')[:512],
+            user_agent=request.headers.get('user-agent', '')[:512],
+        ),
+    )
+    return dict(
+        status='success',
+        auth_id=record['auth_id'],
+        timestamp=record['created_at'],
+        message='Signed agreement saved.',
     )
 
 

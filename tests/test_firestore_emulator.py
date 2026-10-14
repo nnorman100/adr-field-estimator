@@ -289,3 +289,92 @@ def test_signed_records_cannot_be_altered(signing):
     assert after == before
     assert stored(db, 'authorizations/ADR-AUTH-second123456') is None
     assert len(stores[0].bucket.objects) == 1
+
+
+SIGNER = dict(
+    signer_name='Synthetic Signer',
+    signer_role='owner',
+    documents_reviewed=True,
+    electronic_consent=True,
+    consent_version='homeowner-link-v1',
+    signature_png=png(),
+)
+CLIENT = dict(ip_address=None, forwarded_for='', user_agent='Synthetic')
+
+
+def test_signing_link_lifecycle_in_real_transactions(signing):
+    from backend import signing_links
+
+    stores, record = signing
+    first, _ = signing_links.mint(
+        stores[0], 'owner', ID, record['revision'], record['audit']['proposal_hash']
+    )
+    token, _ = signing_links.mint(
+        stores[1], 'owner', ID, record['revision'], record['audit']['proposal_hash']
+    )
+    with pytest.raises(LookupError):
+        signing_links.view(stores[0], first)
+    assert signing_links.view(stores[1], token)['status'] == 'pending'
+    receipt = signing_links.sign(stores[0], token, SIGNER, CLIENT)
+    assert signing_links.sign(stores[1], token, SIGNER, CLIENT) == receipt
+    db = stores[0].db
+    link = stored(db, '_signing_links/' + signing_links.link_id(token))
+    assert link['status'] == 'used' and link['auth_id'] == receipt['auth_id']
+    assert stored(db, 'inspections/' + ID)['authorization_id'] == receipt['auth_id']
+    assert signing_links.view(stores[1], token)['receipt']['auth_id'] == receipt['auth_id']
+    assert signing_links.revoke(stores[0], 'owner', ID) == 'used'
+
+
+def test_link_and_device_signatures_race_to_one_agreement(signing):
+    from backend import signing_links
+
+    stores, record = signing
+    token, _ = signing_links.mint(
+        stores[0], 'owner', ID, record['revision'], record['audit']['proposal_hash']
+    )
+    device = sign_payload(record)
+    results = concurrently(
+        [
+            lambda: signing_links.sign(stores[0], token, SIGNER, CLIENT),
+            lambda: stores[1].authorize('owner', device),
+        ]
+    )
+    outcomes(results, refused=(Conflict, LookupError))
+    db = stores[0].db
+    inspection = stored(db, 'inspections/' + ID)
+    agreements = [s.id for s in db.collection('authorizations').stream()]
+    if inspection['status'] == 'signed':
+        assert agreements == [inspection['authorization_id']]
+    else:
+        assert agreements == []
+    link = stored(db, '_signing_links/' + signing_links.link_id(token))
+    assert (link['status'] == 'used') == (
+        inspection.get('authorization_id', '').startswith('ADR-AUTH-link-')
+    )
+
+
+def test_link_signature_and_edit_race_never_both_land(signing):
+    from backend import signing_links
+
+    stores, record = signing
+    token, _ = signing_links.mint(
+        stores[0], 'owner', ID, record['revision'], record['audit']['proposal_hash']
+    )
+    changed = data()
+    changed['technician_notes'] = 'Edited while the homeowner signs'
+    results = concurrently(
+        [
+            lambda: signing_links.sign(stores[0], token, SIGNER, CLIENT),
+            lambda: stores[1].update_inspection('owner', ID, record['revision'], changed),
+        ]
+    )
+    outcomes(results, refused=(Conflict, LookupError))
+    inspection = stored(stores[0].db, 'inspections/' + ID)
+    if inspection['status'] == 'signed':
+        assert inspection['data'] == record['data']
+        assert inspection['revision'] == record['revision']
+    else:
+        assert not list(stores[0].db.collection('authorizations').stream())
+        if inspection['revision'] != record['revision']:
+            with pytest.raises(Conflict):
+                signing_links.view(stores[0], token)

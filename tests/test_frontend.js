@@ -4,6 +4,11 @@ const assert = require('node:assert/strict'),
 const core = require('../public/core.js');
 assert.deepEqual(fs.readFileSync('index.html'), fs.readFileSync('public/index.html'));
 assert.equal(core.money(2049.99), '$2,049.99');
+assert.equal(core.estimateLabel({ proposed_cost: 1788.9 }), '$1,788.90');
+assert.equal(
+  core.estimateLabel({ proposed_cost_low: 1775, proposed_cost: 1788.9 }),
+  '$1,775.00–$1,788.90',
+);
 assert.deepEqual(core.aspect(1080, 1920, 1280), [720, 1280]);
 assert.equal(core.stable({ b: 2, a: 1 }), core.stable({ a: 1, b: 2 }));
 assert.equal(core.emptyData().year_built, null);

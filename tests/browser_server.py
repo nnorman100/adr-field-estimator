@@ -199,6 +199,17 @@ async def workspaces_fixture(request: Request):
     return {'enabled': True, 'inspection_id': 'ADR-INS-' + 'c' * 32}
 
 
+@bm.app.post('/__test/expire-signing-links')
+async def expire_signing_links():
+    # Moves every outstanding link past its seven-day expiry.
+    expired = 0
+    for key, link in store.db.records.items():
+        if key.startswith('_signing_links/') and link['status'] == 'pending':
+            link['expires'] = 0
+            expired += 1
+    return {'expired': expired}
+
+
 @bm.app.get('/__test/workspaces-stats')
 async def workspaces_stats():
     return {'inspection_count': len([k for k in store.db.records if k.startswith('inspections/')])}
@@ -253,6 +264,16 @@ def app_sdk(version: str):
 @bm.app.get('/vendor/firebase/{version}/firebase-auth.js')
 def auth_sdk(version: str):
     return Response((ROOT / 'tests/browser-auth.js').read_text(), media_type='text/javascript')
+
+
+@bm.app.get('/sign')
+def signing_page():
+    # Mirrors the /sign rewrite in firebase.json.
+    return Response(
+        (ROOT / 'public/sign.html').read_bytes(),
+        media_type='text/html',
+        headers={'Cache-Control': 'no-store'},
+    )
 
 
 bm.app.mount('/', StaticFiles(directory=str(ROOT / 'public'), html=True), name='frontend')

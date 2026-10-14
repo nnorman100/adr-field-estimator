@@ -7,6 +7,7 @@ const ASSETS = [
   '/index.html',
   '/app.css?v=' + VERSION,
   '/core.js?v=' + VERSION,
+  '/documents.js?v=' + VERSION,
   '/app.js?v=' + VERSION,
   '/workspaces.js?v=' + VERSION,
   '/audio-worklet.js?v=' + VERSION,

@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -320,6 +321,9 @@ def valid_synthetic_identifier(collection, identifier):
         return True
     if collection != 'authorizations':
         return False
+    # Homeowner signing-link agreements: ADR-AUTH-link-<first 32 hex of the link digest>.
+    if re.fullmatch(r'link-[0-9a-f]{32}', suffix):
+        return True
     try:
         return str(UUID(suffix)) == suffix
     except (ValueError, AttributeError):
@@ -363,13 +367,41 @@ def synthetic_sidecars(headers, uid, inspections, agreements):
     return pending
 
 
-def cleanup_synthetic(uid, inspections, agreements):
+def cleanup_links(headers, uid, inspections, links):
+    """Signing-link records of tracked inspections: each link digest, then each job pointer."""
+    base = f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/'
+    paths = [base + '_signing_links/' + key for key in links]
+    paths += [base + '_signing_link_jobs/' + identifier for identifier in inspections]
+    for path in paths:
+        existing = requests.get(path, headers=headers, timeout=30)
+        if existing.status_code == 404:
+            continue
+        if existing.status_code != 200:
+            raise RuntimeError('Signing-link lookup failed: ' + str(existing.status_code))
+        fields = existing.json()['fields']
+        if fields['owner_uid']['stringValue'] != uid or (
+            '/_signing_links/' in path and fields['inspection_id']['stringValue'] not in inspections
+        ):
+            raise RuntimeError('Signing link belongs to another job; retained for review.')
+        response = requests.delete(
+            path,
+            headers=headers,
+            params={'currentDocument.updateTime': existing.json()['updateTime']},
+            timeout=30,
+        )
+        if response.status_code not in (200, 404):
+            raise RuntimeError('Signing-link cleanup failed: ' + str(response.status_code))
+
+
+def cleanup_synthetic(uid, inspections, agreements, links=()):
     """Deletes only IDs tracked by this run and objects under those exact prefixes."""
     for collection, identifiers in (('authorizations', agreements), ('inspections', inspections)):
         if not all(
             valid_synthetic_identifier(collection, identifier) for identifier in identifiers
         ):
             raise RuntimeError('Unexpected synthetic identifier')
+    if not all(isinstance(key, str) and re.fullmatch(r'[0-9a-f]{64}', key) for key in links):
+        raise RuntimeError('Unexpected synthetic identifier')
     headers = {'Authorization': 'Bearer ' + access_token(), 'x-goog-user-project': PROJECT}
     sidecars = synthetic_sidecars(headers, uid, inspections, agreements)
     prefixes = []
@@ -409,6 +441,7 @@ def cleanup_synthetic(uid, inspections, agreements):
                 'DELETE',
                 f'https://storage.googleapis.com/storage/v1/b/{PROJECT}-evidence/o/{quote(item["name"], safe="")}',
             )
+    cleanup_links(headers, uid, inspections, links)
     for path, version in sidecars:
         response = requests.delete(
             path, headers=headers, params={'currentDocument.updateTime': version}, timeout=30
@@ -418,6 +451,94 @@ def cleanup_synthetic(uid, inspections, agreements):
     cleanup_test_checkpoint(uid, inspections)
     print(
         'Only tracked synthetic records and their exact evidence prefixes were removed; staff identity and other jobs unchanged.',
+        flush=True,
+    )
+
+
+def homeowner(method, path, link, body=None, expected=200):
+    """A request with no sign-in: only the signing link's own header."""
+    result = requests.request(
+        method,
+        SERVICE + path,
+        json=body,
+        headers={'X-ADR-Signing-Link': link},
+        timeout=115,
+        allow_redirects=False,
+    )
+    if result.status_code != expected:
+        raise RuntimeError(
+            f'Homeowner {method} {path}: HTTP {result.status_code}, expected {expected}'
+        )
+    return result
+
+
+def mint_link(token, record, links):
+    iid = record['inspection_id']
+    link = check(
+        'POST',
+        f'/api/inspections/{iid}/signing-links',
+        token,
+        dict(expected_revision=record['revision'], proposal_hash=record['audit']['proposal_hash']),
+    )
+    assert link['qr_svg'].startswith('data:image/svg+xml;base64,')
+    secret = link['url'].split('#', 1)[1]
+    links.append(hashlib.sha256(secret.encode()).hexdigest())
+    return secret
+
+
+SIGNER = dict(
+    signer_name='Synthetic Release Signer',
+    signer_role='authorized_representative',
+    documents_reviewed=True,
+    electronic_consent=True,
+    consent_version='homeowner-link-v1',
+)
+
+
+def signing_link(token, iid, agreements, links):
+    """One audited job: a replaced link is refused, the current one signs once with no sign-in."""
+    data = dict(
+        address='Synthetic signing-link release verification - no customer data',
+        year_built=2000,
+        rooms=[dict(name='Bathroom', category=1, finished_sf=10)],
+        air_movers=3,
+        dehumidifiers=1,
+        drying_days=3,
+        technician_notes='Localized clean-water damage. Proposed drywall removal and drying only.',
+        scope_confirmed=True,
+    )
+    record = check('POST', '/api/inspections', token, dict(inspection_id=iid, data=data))
+    record = check(
+        'POST', '/api/audit', token, {'inspection_id': iid, 'expected_revision': record['revision']}
+    )
+    documents = record['audit']['documents']
+    replaced = mint_link(token, record, links)
+    view = homeowner('GET', '/api/sign', replaced).json()
+    assert view['status'] == 'pending' and view['documents'] == documents
+    current = mint_link(token, record, links)
+    homeowner('GET', '/api/sign', replaced, expected=404)
+    homeowner('GET', '/api/sign', 'x' * 43, expected=404)
+    body = dict(SIGNER, signature_png=image(True))
+    receipt = homeowner('POST', '/api/sign', current, body).json()
+    agreements.append(receipt['auth_id'])
+    assert homeowner('POST', '/api/sign', current, body).json() == receipt
+    inspection = check('GET', f'/api/inspections/{iid}', token)
+    assert inspection['status'] == 'signed'
+    assert inspection['authorization_id'] == receipt['auth_id']
+    saved = check('GET', '/api/authorizations/' + receipt['auth_id'], token)
+    signer = saved['signer']
+    assert saved['signing_channel'] == 'link' and saved['documents'] == documents
+    assert signer['name'] == SIGNER['signer_name'] and signer['role'] == SIGNER['signer_role']
+    assert saved['consent']['version'] == SIGNER['consent_version'] and signer['user_agent']
+    signed = homeowner('GET', '/api/sign', current).json()
+    assert signed['status'] == 'signed' and signed['receipt']['auth_id'] == receipt['auth_id']
+    homeowner('GET', '/api/sign/signature', current)
+    hops = len([hop for hop in signer['forwarded_for'].split(',') if hop.strip()])
+    # Counts only; the addresses themselves stay in the record and out of this output.
+    print(
+        f'PASS: signing link minted, replaced link refused, anonymous read and single signature; '
+        f'forwarded chain carried {hops} address(es), ip_address '
+        + ('recorded' if signer['ip_address'] else 'absent'),
         flush=True,
     )
 
@@ -434,8 +555,12 @@ def main():
     no_existing_capture(uid)
     iid = 'ADR-INS-' + uuid4().hex
     aid = 'ADR-AUTH-' + uuid4().hex
+    link_iid = 'ADR-INS-' + uuid4().hex
+    agreements, links = [aid], []
     try:
         check('GET', '/api/inspections', None, expected=401)
+        # Before the Live walkthrough, so its audit and this one rarely share a one-minute quota window.
+        signing_link(token, link_iid, agreements, links)
         data = dict(
             address='Synthetic Live release verification - no customer data',
             year_built=2000,
@@ -530,6 +655,9 @@ def main():
             and documents['iicrc_defense_letter']
             and documents['xactimate_scope']
         )
+        # An unused link stops working once the estimate is signed on the device.
+        unused = mint_link(token, record, links)
+        assert homeowner('GET', '/api/sign', unused).json()['status'] == 'pending'
         check(
             'POST',
             '/api/authorize',
@@ -545,6 +673,7 @@ def main():
         )
         saved = check('GET', '/api/authorizations/' + aid, token)
         assert saved['documents'] == documents
+        homeowner('GET', '/api/sign', unused, expected=409)
         for name in ('signature', 'photo-0'):
             evidence = requests.get(
                 SERVICE + f'/api/authorizations/{aid}/evidence/{name}',
@@ -569,7 +698,7 @@ def main():
             flush=True,
         )
     finally:
-        cleanup_synthetic(uid, [iid], [aid])
+        cleanup_synthetic(uid, [iid, link_iid], agreements, links)
 
 
 def source_commit(health):
@@ -624,7 +753,7 @@ def cleanup_from_stdin():
     import io
 
     token, uid = staff_session(io.StringIO(payload['token'] + '\n'))
-    cleanup_synthetic(uid, payload['inspections'], payload['agreements'])
+    cleanup_synthetic(uid, payload['inspections'], payload['agreements'], payload.get('links', []))
 
 
 def commit_hash(value):

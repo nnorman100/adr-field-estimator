@@ -50,6 +50,10 @@
     );
   const money = (value) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value));
+  const estimateLabel = (proposal) =>
+    proposal.proposed_cost_low == null
+      ? money(proposal.proposed_cost)
+      : money(proposal.proposed_cost_low) + '–' + money(proposal.proposed_cost);
   const pcmToFloat = (bytes) => {
     if (bytes.byteLength % 2) throw Error('Invalid PCM');
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -201,6 +205,7 @@
     emptyData,
     stable,
     money,
+    estimateLabel,
     pcmToFloat,
     aspect,
     scopeJobLabels,

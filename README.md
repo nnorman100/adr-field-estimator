@@ -18,7 +18,7 @@ Use the persistent **Property / Walkthrough / Evidence / Review** navigation to 
 2. Open **Walkthrough**, choose the current photo room and start the camera/microphone for real Gemini Live coaching. The Cloud Run relay authenticates the Firebase user and checks inspection ownership before connecting with server ADC. It sends 16 kHz mono PCM and aspect-preserving JPEG at 1 FPS; responses play at 24 kHz. Technician and assistant transcripts remain separate. Active sessions reveal Stop/Mute controls; optional color emulation is under Camera options, is explicitly labeled and does not produce thermal evidence.
 3. Capture a supported native still or use Camera / upload. Originals, dimensions, room and capture time are retained privately. Pending, failed and non-meter OCR remain unverified. Recognition can be retried.
 4. Confirm every pricing input and select **Finish & review**. Capture stops. The server reads the saved revision and evidence, validates AI output, applies deterministic pricing and mandatory ADR wording, and produces four documents. Provider failures show a retry error and cannot create a signable fallback.
-5. Review the proposal's low–high estimate range, itemized claim, scope defense letter and photo log. Unpriced work or pending recognition blocks signing. Edits invalidate the audit and signature. Draw a signature and confirm document review; success is shown only after a durable server receipt.
+5. Review the proposal's low–high estimate range, itemized claim, scope defense letter and photo log. Unpriced work or pending recognition blocks signing. Edits invalidate the audit and signature. Draw a signature and confirm document review; success is shown only after a durable server receipt. To let the homeowner sign on their own phone instead, choose **Send to homeowner**: the app shows a QR code, a copyable link and (where the phone supports it) the share sheet. The homeowner opens the link with no account, reads the same four documents, types their name, chooses owner or authorized representative, checks two confirmations and draws a signature. The link works once, expires after 7 days, can be revoked, and stops working as soon as anything in the inspection changes. While it is outstanding, the Review tab checks every 10 seconds and switches to the signed agreement when the homeowner signs. After signing, the homeowner can reopen the link for 30 days to view or print the signed copy. The server sends no email or text.
 6. Open **Jobs → Drafts & signed jobs** to recover a draft or restore the immutable signed agreement, all four documents, signature and evidence. Recent records appear first; use **Load older drafts** or **Load older signed jobs** for additional pages. A confirmed agreement stays saved if evidence display fails; **Retry loading saved evidence** reloads its display without signing again. **Export** contains JSON copy/download and printing. Mobile claims use readable line-item cards; desktop and printed claims retain the table. Export uses ADR internal codes without ESX compatibility claims. Saving does not dispatch technicians or send email.
 
 ## Pricing and evidence
@@ -42,11 +42,14 @@ The field app follows [ADR's official website](https://alertdisaster.com/): the 
 | Location | Responsibility |
 | --- | --- |
 | `public/app.js`, `core.js`, `audio-worklet.js` | Lifecycle, safe DOM, offline recovery, camera and audio |
+| `public/documents.js` | The four documents, rendered with text nodes for both the app and the homeowner page |
+| `public/sign.html`, `sign.js` | Homeowner signing page reached through a signing link; no sign-in |
 | `public/app.css`, `sw.js` | Responsive/print layout and app updates |
 | `index.html`, `public/index.html` | Identical root and hosting HTML |
 | `backend/contracts.py`, `claims.py` | Typed contracts, rates and four documents |
 | `backend/inspection_store.py`, `job_store.py` | Revision transactions, owner checks, private evidence, retries and quotas |
-| `backend/main.py` | Authenticated REST and Live relay |
+| `backend/main.py` | Authenticated REST, homeowner signing-link routes and Live relay |
+| `backend/signing_links.py` | Single-use signing-link tokens (stored as digests), limits and QR codes |
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
 | `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 | `scripts/deploy_backend.py`, `stamp_hosting.py`, `RELEASES.md` | Source-commit stamping of each release and the release log |

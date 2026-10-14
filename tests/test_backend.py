@@ -898,6 +898,8 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
     }
     assert live == {
         ('POST', '/api/authorize'),
+        ('POST', '/api/inspections/{inspection_id}/signing-links'),
+        ('POST', '/api/inspections/{inspection_id}/signing-links/revoke'),
         ('GET', '/api/authorizations/{auth_id}/evidence/{name}'),
         ('GET', '/api/admin/companies'),
         ('POST', '/api/admin/companies'),
