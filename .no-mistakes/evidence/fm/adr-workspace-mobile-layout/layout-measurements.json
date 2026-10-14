@@ -1,0 +1,70 @@
+{
+ "owner-390": {
+  "navHeight": 48,
+  "startWalk": {
+   "top": 623,
+   "bottom": 671,
+   "innerHeight": 844,
+   "scrollY": 0,
+   "onTop": true,
+   "hScroll": false
+  },
+  "coord": {
+   "visible": true,
+   "formVisible": false,
+   "formAfterExpand": true
+  }
+ },
+ "owner-320": {
+  "navHeight": 48,
+  "startWalk": {
+   "top": 672,
+   "bottom": 720,
+   "innerHeight": 844,
+   "scrollY": 0,
+   "onTop": true,
+   "hScroll": false
+  },
+  "coord": {
+   "visible": true,
+   "formVisible": false,
+   "formAfterExpand": true
+  }
+ },
+ "estimator-390": {
+  "navHeight": 48,
+  "startWalk": {
+   "top": 623,
+   "bottom": 671,
+   "innerHeight": 844,
+   "scrollY": 0,
+   "onTop": true,
+   "hScroll": false
+  },
+  "coord": {
+   "visible": false,
+   "formVisible": false
+  }
+ },
+ "estimator-320": {
+  "navHeight": 48,
+  "startWalk": {
+   "top": 672,
+   "bottom": 720,
+   "innerHeight": 844,
+   "scrollY": 0,
+   "onTop": true,
+   "hScroll": false
+  },
+  "coord": {
+   "visible": false,
+   "formVisible": false
+  }
+ },
+ "owner-1280": {
+  "toggleVisible": false,
+  "buttons": 5,
+  "coordFormVisible": true,
+  "coordToggleVisible": false
+ }
+}
