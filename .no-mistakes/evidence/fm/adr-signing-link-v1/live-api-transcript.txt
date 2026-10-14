@@ -1,0 +1,134 @@
+Link URL shape: https://localhost:8791/sign#<43-char token>
+
+Technician link status read (no token returned): {
+  "http": 200,
+  "body": {
+    "status": "pending",
+    "expires_at": "2026-10-21T01:29:03.166640+00:00"
+  }
+}
+
+Status body contains token?: false
+
+Another technician reads link status: {
+  "http": 404,
+  "body": {
+    "detail": "Record not found."
+  }
+}
+
+Stored _signing_links docs (token hash only): {
+  "_signing_links/43a60fe4c6f5ab4b14dcbe49246af0eaa4f1b2cde6dd195787f5dfa3991c65c2": {
+    "inspection_id": "ADR-INS-01b8a9dff03a410db6e9d7b778f517f8",
+    "revision": 2,
+    "proposal_hash": "d45868d2a2979e7c53b1ced0f19b32fbf4761149ad5de75f6ca37d942785d038",
+    "owner_uid": "test-owner-f62ab007-5684-4952-8dd0-fca3c99a8d1f",
+    "company_id": null,
+    "status": "pending",
+    "created_at": 1791941343.16664,
+    "expires": 1792546143.16664,
+    "expire_at": "2026-10-21T01:29:03.166640+00:00",
+    "limits": {},
+    "sign_attempts": 0
+  }
+}
+
+Raw token stored anywhere in Firestore fake?: false
+
+Homeowner GET /api/sign with link header: {
+  "http": 200,
+  "keys": [
+    "consent",
+    "status",
+    "expires_at",
+    "documents"
+  ]
+}
+
+Token sent in Authorization instead: {
+  "http": 404,
+  "body": {
+    "detail": "This signing link is not available. Ask your technician for a new link."
+  }
+}
+
+Unknown token: {
+  "http": 404,
+  "body": {
+    "detail": "This signing link is not available. Ask your technician for a new link."
+  }
+}
+
+Homeowner receipt text: Signed by Evidence Homeowner, authorized representative of the owner, on 10/13/2026, 6:29:04 PM. Reference ADR-AUTH-link-43a60fe4c6f5ab4b14dcbe49246af0ea.
+
+Technician status after polling: Saved & signed · ADR-AUTH-link-43a60fe4c6f5ab4b14dcbe49246af0ea
+
+Technician evidence line: Signed agreement and evidence restored. Signed through the homeowner link by Evidence Homeowner (authorized representative).
+
+Signed record signer block (persisted): {
+  "name": "Evidence Homeowner",
+  "role": "authorized_representative",
+  "ip_address": "203.0.113.7",
+  "user_agent": "EvidenceHomeownerPhone/1.0"
+}
+
+Signed record channel/auth_id/owner: {
+  "auth_id": "ADR-AUTH-link-43a60fe4c6f5ab4b14dcbe49246af0ea",
+  "owner_uid": "test-owner-f62ab007-5684-4952-8dd0-fca3c99a8d1f",
+  "signing_channel": "link"
+}
+
+Record has forwarded_for?: false
+
+Record contains spoofed 6.6.6.6?: false
+
+_limits keys (address keys are HMAC, with expiry): {
+  "_limits/ip-1df941593ed09292e9f44a42966f0886dad1ca7a4e30c48f06920f66bb719104": {
+    "sign_link": {
+      "start": 1791941343.3066137,
+      "count": 3
+    },
+    "expire_at": "2026-10-14T02:29:03.314239+00:00"
+  },
+  "_limits/ip-c687c910807c783cc93e4bca234dfb980eb0aad47d8d8d2ea33779c13e096364": {
+    "sign_link": {
+      "start": 1791941343.4067621,
+      "count": 4
+    },
+    "expire_at": "2026-10-14T02:29:04.319154+00:00"
+  }
+}
+
+Raw 203.0.113.7 in _limits?: false
+
+Second, different signature on a used link: {
+  "http": 409,
+  "body": {
+    "detail": "This estimate is already signed."
+  }
+}
+
+Used link read-only view: {
+  "http": 200,
+  "signed": true,
+  "keys": [
+    "consent",
+    "status",
+    "view_until",
+    "documents",
+    "receipt"
+  ]
+}
+record keys: ['address', 'auth_id', 'consent', 'created_at', 'documents', 'inspection', 'inspection_id', 'inspection_revision', 'owner_uid', 'payload_sha256', 'photos', 'photos_count', 'proposal_hash', 'proposed_cost', 'proposed_cost_low', 'schema_version', 'signature', 'signer', 'signing_channel', 'signing_link', 'status']
+consent: {
+ "version": "homeowner-link-v1",
+ "statements": [
+  "I reviewed all four documents, the separate totals and the attached photo evidence.",
+  "I agree to sign this agreement electronically and to receive it electronically. I can print or save a copy from this page."
+ ],
+ "documents_reviewed": true,
+ "electronic_records": true
+}
+log contains 1SZaHPTJ...: 0
+log contains 203.0.11...: 0
+log contains Evidence...: 0
