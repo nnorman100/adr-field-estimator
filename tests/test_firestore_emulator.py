@@ -378,3 +378,54 @@ def test_link_signature_and_edit_race_never_both_land(signing):
         if inspection['revision'] != record['revision']:
             with pytest.raises(Conflict):
                 signing_links.view(stores[0], token)
+
+
+@pytest.mark.parametrize('kind', ['inspection', 'authorization'])
+def test_company_job_pages_skip_sidecars_whose_source_is_missing(kind):
+    """Real queries read past orphan sidecars across batches and still page by 100."""
+    store = CompanyInspectionStore(client(), Bucket())
+    seed_company(store.db)
+    kept = set()
+    for i in range(205):
+        writes = store.db.batch()
+        stamp = f'2026-10-06T19:{i // 60:02}:{i % 60:02}Z'
+        job_id = 'ADR-INS-' + f'{i:032x}'
+        auth_id = f'ADR-AUTH-{i:06}'
+        writes.set(
+            store.db.document('_workspace_jobs/' + job_id),
+            dict(
+                job_id=job_id,
+                company_id='adr',
+                accessible_estimator_uids=['owner'],
+                kind='inspection',
+                auth_exists=True,
+                auth_id=auth_id,
+                updated_at=stamp,
+                signed_at=stamp,
+            ),
+        )
+        writes.set(
+            store.db.document('_workspace_authorizations/' + auth_id),
+            dict(job_id=job_id, company_id='adr'),
+        )
+        if i % 3 == 0 or i > 180:
+            writes.commit()
+            continue
+        writes.set(
+            store.db.document('inspections/' + job_id),
+            dict(inspection_id=job_id, owner_uid='owner', updated_at=stamp),
+        )
+        writes.set(
+            store.db.document('authorizations/' + auth_id),
+            dict(auth_id=auth_id, owner_uid='owner', created_at=stamp),
+        )
+        writes.commit()
+        kept.add(job_id if kind == 'inspection' else auth_id)
+    page = getattr(store, kind + '_page')
+    field = 'inspection_id' if kind == 'inspection' else 'auth_id'
+    rows, cursor = page('owner')
+    assert len(rows) == 100 and cursor
+    seen = [r[field] for r in rows]
+    rows, cursor = page('owner', cursor)
+    seen += [r[field] for r in rows]
+    assert cursor is None and len(seen) == len(set(seen)) == 120 and set(seen) == kept

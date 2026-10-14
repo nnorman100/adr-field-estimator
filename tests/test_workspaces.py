@@ -153,6 +153,93 @@ def test_roles_and_cross_company_scoped_jobs(store):
         )
 
 
+def seed_jobs(store, count, orphaned):
+    """Signed company jobs whose inspection or authorization source is missing when orphaned(i)."""
+    kept = {'inspections': set(), 'authorizations': set()}
+    for i in range(count):
+        stamp = f'2026-10-06T19:{i // 60:02}:{i % 60:02}Z'
+        job_id = 'ADR-INS-' + f'{i:032x}'
+        auth_id = f'ADR-AUTH-{i:06}'
+        store.db.records['_workspace_jobs/' + job_id] = dict(
+            job_id=job_id,
+            company_id='adr',
+            accessible_estimator_uids=['estimator'],
+            kind='inspection',
+            auth_exists=True,
+            auth_id=auth_id,
+            updated_at=stamp,
+            signed_at=stamp,
+        )
+        store.db.records['_workspace_authorizations/' + auth_id] = dict(
+            job_id=job_id, company_id='adr'
+        )
+        if orphaned(i):
+            continue
+        store.db.records['inspections/' + job_id] = dict(
+            inspection_id=job_id, owner_uid='estimator', updated_at=stamp
+        )
+        store.db.records['authorizations/' + auth_id] = dict(
+            auth_id=auth_id, owner_uid='estimator', created_at=stamp
+        )
+        kept['inspections'].add(job_id)
+        kept['authorizations'].add(auth_id)
+    return kept
+
+
+@pytest.mark.parametrize(
+    'collection, id_field', [('inspections', 'inspection_id'), ('authorizations', 'auth_id')]
+)
+def test_job_list_pages_skip_jobs_whose_source_is_missing(store, collection, id_field):
+    kept = seed_jobs(store, 205, lambda i: i % 3 == 0 or i > 180)
+    page = getattr(store, collection[:-1].replace('inspection', 'inspection') + '_page')
+    for uid in ('owner', 'office', 'estimator'):
+        rows, cursor = page(uid)
+        assert len(rows) == 100 and cursor
+        seen = [r[id_field] for r in rows]
+        while cursor:
+            rows, cursor = page(uid, cursor)
+            seen += [r[id_field] for r in rows]
+        assert len(seen) == len(set(seen)) and set(seen) == kept[collection]
+    assert page('estimator2') == ([], None)
+    assert page('other-owner') == ([], None)
+    store.db.records['_workspace_jobs/' + 'ADR-INS-' + 'f' * 32] = dict(
+        job_id='ADR-INS-' + 'f' * 32, company_id='other', kind='inspection', updated_at='2027'
+    )
+    with pytest.raises(LookupError):
+        page('owner', 'ADR-INS-' + 'f' * 32 if collection == 'inspections' else 'ADR-AUTH-999999')
+
+
+def test_job_list_api_skips_orphans_but_direct_reads_stay_not_found(api, caplog):
+    client, current, store = api
+    seed_jobs(store, 3, lambda i: i == 1)
+    orphan, auth_orphan = 'ADR-INS-' + f'{1:032x}', 'ADR-AUTH-000001'
+    store.db.records['inspections/ADR-INS-' + f'{0:032x}'].update(
+        data=data(), revision=1, status='signed'
+    )
+    store.db.records['inspections/ADR-INS-' + f'{2:032x}'].update(
+        data=data(), revision=1, status='signed'
+    )
+    listed = client.get('/api/inspections')
+    assert listed.status_code == 200
+    assert [r['inspection_id'] for r in listed.json()['inspections']] == [
+        'ADR-INS-' + f'{2:032x}',
+        'ADR-INS-' + f'{0:032x}',
+    ]
+    signed = client.get('/api/authorizations')
+    assert signed.status_code == 200
+    assert [r['auth_id'] for r in signed.json()['authorizations']] == [
+        'ADR-AUTH-000002',
+        'ADR-AUTH-000000',
+    ]
+    assert client.get('/api/inspections/' + orphan).status_code == 404
+    assert client.get('/api/authorizations/' + auth_orphan).status_code == 404
+    assert '_workspace_jobs/' + orphan in store.db.records
+    skipped = [r for r in caplog.records if r.getMessage().startswith('Job list skipped')]
+    assert skipped and all(
+        r.fields == dict(operation='job_list', outcome='missing_source') for r in skipped
+    )
+
+
 @pytest.mark.parametrize('uid', ['office', 'other-owner', 'admin', 'estimator2'])
 def test_direct_api_cannot_bypass_scope_permissions(api, uid):
     client, current, store = api
