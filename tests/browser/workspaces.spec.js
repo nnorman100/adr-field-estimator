@@ -14,6 +14,8 @@ async function call(page, path, method = 'GET', body, role = 'owner') {
 }
 // Phones show the workspace destinations behind a menu toggle; wider screens show them in a row.
 async function navigate(page, id) {
+  // Wait for the workspace session to show the nav so the toggle check is not raced by a reload.
+  await expect(page.locator('#workspaceNav')).toBeVisible();
   const toggle = page.locator('#workspaceMenuToggle');
   if (await toggle.isVisible()) {
     await toggle.click();
