@@ -856,6 +856,14 @@ def test_firestore_transactions_finish_all_reads_before_writes(monkeypatch):
     )
     w.accept(identity('a'), w.invite('admin', 'adr', 'a@example.invalid', 'owner')['invitation_id'])
     assert store.db.records['_memberships/owner']['status'] == 'disabled'
+    # Superadmin support reads and fixes share the same read-then-write transactions.
+    staff = w.invite('a', 'adr', 'staff@example.invalid', 'estimator')
+    w.invitation_action('admin', 'adr', staff['invitation_id'], 'resend')
+    w.update_member(
+        'admin', 'adr', 'new', MemberUpdate(expected_version=2, role='office', status='active')
+    )
+    assert w.team('admin', 'adr') and store.support_inspection('admin', 'adr', ID)
+    assert store.support_evidence('admin', 'adr', 'ADR-AUTH-strict123', 'signature')
 
 
 def test_competing_invitation_acceptance_has_one_owner(store):
@@ -1662,3 +1670,412 @@ def test_smtp_deadline_counts_slow_account_provisioning(smtp, monkeypatch, provi
     ).json()
     assert invited['delivery_status'] == 'failed' and invited['message_id'] is None
     assert connections == timeouts
+
+
+PHOTO = 'd' * 32
+SIGNED = 'ADR-AUTH-support123456'
+
+
+def support_events(store):
+    return [
+        v
+        for k, v in store.db.records.items()
+        if k.startswith('_admin_events/') and v['action'].startswith('support_')
+    ]
+
+
+def signed_job(client, current, store):
+    """An ADR estimator's signed job with one photo, plus customer coordination text."""
+    current['uid'] = 'estimator'
+    assert (
+        client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code
+        == 200
+    )
+    store.add_photo(
+        'estimator',
+        ID,
+        dict(
+            photo_id=PHOTO,
+            expected_revision=1,
+            room='Bathroom',
+            captured_at='2026-10-14T12:00:00Z',
+            data_url=png(),
+        ),
+    )
+    # A recorded reading keeps the audit from waiting on photo recognition.
+    reading = dict(
+        meter_detected=True, meter_type='Moisture meter', value='12', classification='', notes=''
+    )
+    store.set_ocr('estimator', ID, PHOTO, reading)
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 3}).json()
+    current['uid'] = 'office'
+    job = client.get('/api/jobs/' + ID + '/coordination').json()
+    assert (
+        client.put(
+            '/api/jobs/' + ID + '/coordination',
+            json={
+                'expected_version': job['version'],
+                'customer_name': 'Synthetic Customer Name',
+                'customer_phone': '555-0100',
+                'customer_email': 'customer@example.invalid',
+            },
+        ).status_code
+        == 200
+    )
+    current['uid'] = 'estimator'
+    payload = dict(
+        inspection_id=ID,
+        expected_revision=3,
+        auth_id=SIGNED,
+        proposal_hash=record['audit']['proposal_hash'],
+        signature_png=png(),
+        documents_confirmed=True,
+    )
+    assert client.post('/api/authorize', json=payload).status_code == 200
+    store.create_inspection('other-owner', OTHER, data('Other company job'))
+
+
+@pytest.mark.parametrize('uid', ['admin', 'owner'])
+def test_superadmin_support_reads_any_company_and_audits_each_view(api, uid):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = uid
+    base = '/api/admin/companies/adr'
+    jobs = client.get(base + '/jobs').json()
+    assert [j['inspection_id'] for j in jobs['inspections']] == [ID]
+    documents = client.get(base + '/authorizations').json()
+    assert [d['auth_id'] for d in documents['authorizations']] == [SIGNED]
+    opened = client.get(base + '/jobs/' + ID).json()
+    assert opened['inspection']['status'] == 'signed' and 'owner_uid' not in opened['inspection']
+    assert opened['job']['customer_name'] == 'Synthetic Customer Name'
+    agreement = client.get(base + '/authorizations/' + SIGNED).json()
+    assert agreement['authorization']['documents']['company_identity']['company_id'] == 'adr'
+    assert client.get(base + '/jobs/' + ID + '/photos/' + PHOTO).content.startswith(b'\x89PNG')
+    for name in ('signature', 'photo-0'):
+        response = client.get(base + '/authorizations/' + SIGNED + '/evidence/' + name)
+        assert response.status_code == 200 and response.content.startswith(b'\x89PNG')
+    assert client.get(base + '/authorizations/' + SIGNED + '/evidence/photo-9').status_code == 404
+    other = '/api/admin/companies/other'
+    assert [j['inspection_id'] for j in client.get(other + '/jobs').json()['inspections']] == [
+        OTHER
+    ]
+    assert client.get(other + '/authorizations').json()['authorizations'] == []
+    # ADR records never open through another company's support view.
+    for path in (
+        '/jobs/' + ID,
+        '/jobs/' + ID + '/photos/' + PHOTO,
+        '/authorizations/' + SIGNED,
+        '/authorizations/' + SIGNED + '/evidence/signature',
+    ):
+        assert client.get(other + path).status_code == 404
+    assert client.get(base + '/jobs/' + OTHER).status_code == 404
+    assert client.get('/api/admin/companies/missing/jobs').status_code == 404
+    events = support_events(store)
+    assert {e['actor_uid'] for e in events} == {uid}
+    assert sorted((e['company_id'], e['action'], e['target']) for e in events) == sorted(
+        [
+            ('adr', 'support_view_jobs', 'jobs'),
+            ('adr', 'support_view_documents', 'documents'),
+            ('adr', 'support_view_job', 'job/' + ID),
+            ('adr', 'support_view_document', 'document/' + SIGNED),
+            ('adr', 'support_view_photo', 'photo/' + ID + '/' + PHOTO),
+            ('adr', 'support_view_evidence', 'evidence/' + SIGNED + '/signature'),
+            ('adr', 'support_view_evidence', 'evidence/' + SIGNED + '/photo-0'),
+            ('other', 'support_view_jobs', 'jobs'),
+            ('other', 'support_view_documents', 'documents'),
+        ]
+    )
+    assert all(e['created_at'] and e['details'] == {} for e in events)
+    logged = json.dumps(events)
+    for private in ('Synthetic Customer Name', '555-0100', 'customer@example.invalid', 'Test'):
+        assert private not in logged
+
+
+@pytest.mark.parametrize('uid', ['estimator', 'office', 'other-owner', 'estimator2'])
+def test_support_view_requires_superadmin(api, uid):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = uid
+    for company in ('adr', 'other'):
+        base = '/api/admin/companies/' + company
+        for path in (
+            '/jobs',
+            '/authorizations',
+            '/jobs/' + ID,
+            '/jobs/' + ID + '/photos/' + PHOTO,
+            '/authorizations/' + SIGNED,
+            '/authorizations/' + SIGNED + '/evidence/signature',
+        ):
+            assert client.get(base + path).status_code == 403, (company, path)
+    assert not support_events(store)
+
+
+def test_superadmin_cannot_change_company_jobs_documents_or_settings(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = 'estimator'
+    draft = 'ADR-INS-' + 'e' * 32
+    client.post('/api/inspections', json={'inspection_id': draft, 'data': data()})
+    record = client.post('/api/audit', json={'inspection_id': draft, 'expected_revision': 1})
+    record = record.json()
+    current['uid'] = 'admin'
+    client.get('/api/admin/companies/adr/jobs')
+    before = {k: deepcopy(v) for k, v in store.db.records.items() if not k.startswith('_limits/')}
+    job = store.db.records['_workspace_jobs/' + draft]
+    company = store.db.records['_companies/adr']
+    upload = dict(
+        photo_id='f' * 32,
+        expected_revision=2,
+        room='Bathroom',
+        captured_at='2026-10-14T12:00:00Z',
+        data_url=png(),
+    )
+    sign = dict(
+        inspection_id=draft,
+        expected_revision=record['revision'],
+        auth_id='ADR-AUTH-admin123456',
+        proposal_hash=record['audit']['proposal_hash'],
+        signature_png=png(),
+        documents_confirmed=True,
+    )
+    link = dict(
+        expected_revision=record['revision'], proposal_hash=record['audit']['proposal_hash']
+    )
+    responses = {
+        'create': client.post(
+            '/api/inspections', json={'inspection_id': 'ADR-INS-' + '9' * 32, 'data': data()}
+        ),
+        'scope': client.put(
+            '/api/inspections/' + draft, json={'expected_revision': 2, 'data': data('Changed')}
+        ),
+        'photo': client.post('/api/inspections/' + draft + '/photos', json=upload),
+        'ocr': client.post('/api/inspections/' + ID + '/photos/' + PHOTO + '/ocr', json={}),
+        'suggest': client.post(
+            '/api/inspections/' + draft + '/scope-suggestions',
+            json={'inspection_id': draft, 'expected_revision': 2},
+        ),
+        'audit': client.post('/api/audit', json={'inspection_id': draft, 'expected_revision': 2}),
+        'sign': client.post('/api/authorize', json=sign),
+        'link': client.post(
+            '/api/inspections/' + draft + '/signing-links',
+            json=link,
+            headers={'Origin': bm.ORIGINS[0]},
+        ),
+        'revoke': client.post(
+            '/api/inspections/' + draft + '/signing-links/revoke',
+            headers={'Origin': bm.ORIGINS[0]},
+        ),
+        'coordination': client.put(
+            '/api/jobs/' + draft + '/coordination',
+            json={'expected_version': job['version'], 'office_notes': 'Support note'},
+        ),
+        'profile': client.put(
+            '/api/companies/other',
+            json={
+                'expected_version': 1,
+                'profile': {**store.db.records['_companies/other']['profile'], 'name': 'Changed'},
+            },
+        ),
+        'invite': client.post(
+            '/api/companies/other/invitations',
+            json={'email': 'support-new@example.invalid', 'role': 'estimator'},
+        ),
+        'member read': client.get('/api/inspections/' + draft),
+        'member list': client.get('/api/inspections'),
+        'member document': client.get('/api/authorizations/' + SIGNED),
+        'coordination read': client.get('/api/jobs/' + draft + '/coordination'),
+    }
+    refused = {name: r.status_code for name, r in responses.items() if r.status_code not in (403,)}
+    assert not refused, refused
+    after = {k: v for k, v in store.db.records.items() if not k.startswith('_limits/')}
+    assert after == before and company == store.db.records['_companies/adr']
+
+
+def test_superadmin_support_actions_are_limited_and_audited(store):
+    w = store.workspaces
+    staff = w.invite('other-owner', 'other', 'staff@example.invalid', 'office')
+    w.deliver('other-owner', staff['invitation_id'], lambda *args: 'first')
+    resent = w.invitation_action('admin', 'other', staff['invitation_id'], 'resend')
+    assert resent['send_attempt'] != staff['send_attempt']
+    assert w.deliver('admin', staff['invitation_id'], lambda *args: 'second')['message_id'] == (
+        'second'
+    )
+    w.invitation_action('admin', 'other', staff['invitation_id'], 'cancel')
+    assert store.db.records['_invitations/' + staff['invitation_id']]['status'] == 'cancelled'
+    # Creating staff invitations stays with the owner.
+    with pytest.raises(AccessDenied):
+        w.invite('admin', 'other', 'new@example.invalid', 'estimator')
+    w.update_member(
+        'admin',
+        'adr',
+        'estimator',
+        MemberUpdate(expected_version=1, role='office', status='active'),
+    )
+    assert w.principal('estimator')['role'] == 'office'
+    store.db.records['_memberships/office']['status'] = 'disabled'
+    w.update_member(
+        'admin', 'adr', 'office', MemberUpdate(expected_version=1, role='office', status='active')
+    )
+    assert w.principal('office')['role'] == 'office'
+    refused = [
+        (
+            'estimator2',
+            'adr',
+            MemberUpdate(expected_version=1, role='estimator', status='disabled'),
+        ),
+        ('owner', 'adr', MemberUpdate(expected_version=1, role='office', status='active')),
+        ('other-owner', 'other', MemberUpdate(expected_version=1, role='office', status='active')),
+    ]
+    for member_uid, company_id, req in refused:
+        with pytest.raises(AccessDenied):
+            w.update_member('admin', company_id, member_uid, req)
+    assert store.db.records['_memberships/estimator2']['status'] == 'active'
+    # A disabled former owner returns only through the owner's own team management.
+    store.db.records['_memberships/former'] = dict(
+        uid='former',
+        email='former@example.invalid',
+        company_id='other',
+        role='owner',
+        status='disabled',
+        version=2,
+        updated_at='2026',
+    )
+    with pytest.raises(AccessDenied):
+        w.update_member(
+            'admin',
+            'other',
+            'former',
+            MemberUpdate(expected_version=2, role='estimator', status='active'),
+        )
+    events = support_events(store)
+    assert sorted((e['company_id'], e['action'], e['target']) for e in events) == sorted(
+        [
+            ('other', 'support_invitation_resend', 'invitation/' + staff['invitation_id']),
+            ('other', 'support_invitation_cancel', 'invitation/' + staff['invitation_id']),
+            ('adr', 'support_member_access', 'member/estimator'),
+            ('adr', 'support_member_access', 'member/office'),
+        ]
+    )
+    assert all(e['actor_uid'] == 'admin' and 'example.invalid' not in str(e) for e in events)
+
+
+def test_support_actions_respect_company_status_and_never_touch_the_superadmins_membership(store):
+    w = store.workspaces
+    store.db.records['_memberships/admin'] = dict(
+        uid='admin',
+        email='admin@example.invalid',
+        company_id='other',
+        role='estimator',
+        status='disabled',
+        version=1,
+        updated_at='2026',
+    )
+    with pytest.raises(AccessDenied):
+        w.update_member(
+            'admin',
+            'other',
+            'admin',
+            MemberUpdate(expected_version=1, role='estimator', status='active'),
+        )
+    assert w.principal('admin')['role'] is None
+    store.db.records['_memberships/office']['status'] = 'disabled'
+    store.db.records['_companies/adr']['status'] = 'suspended'
+    with pytest.raises(AccessDenied):
+        w.update_member(
+            'admin',
+            'adr',
+            'office',
+            MemberUpdate(expected_version=1, role='office', status='active'),
+        )
+    pending = w.invite('other-owner', 'other', 'staff@example.invalid', 'office')
+    store.db.records['_companies/other']['status'] = 'suspended'
+    with pytest.raises(AccessDenied):
+        w.invitation_action('admin', 'other', pending['invitation_id'], 'cancel')
+    # Reads stay available for troubleshooting a suspended company.
+    assert w.team('admin', 'adr') and w.invitations('admin', 'other')
+    assert not any(e['action'].startswith('support_member') for e in support_events(store))
+
+
+def test_support_access_is_not_a_membership(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = 'admin'
+    assert client.get('/api/admin/companies/adr/jobs/' + ID).status_code == 200
+    assert '_memberships/admin' not in store.db.records
+    session = client.get('/api/session').json()
+    assert session['role'] is None and session['capabilities'] == [] and session['superadmin']
+    current['uid'] = 'office'
+    job = client.get('/api/jobs/' + ID + '/coordination').json()
+    assigned = client.put(
+        '/api/jobs/' + ID + '/coordination',
+        json={'expected_version': job['version'], 'assigned_estimator_uid': 'admin'},
+    )
+    assert assigned.status_code == 400
+    # The one-membership rule still applies: the superadmin can join one company by invitation.
+    w = store.workspaces
+    invitation = w.invite('other-owner', 'other', 'admin@example.invalid', 'estimator')
+    assert w.accept(identity('admin'), invitation['invitation_id'])['company_id'] == 'other'
+    second = w.invite('owner', 'adr', 'admin@example.invalid', 'office')
+    with pytest.raises(Conflict):
+        w.accept(identity('admin'), second['invitation_id'])
+    current['uid'] = 'admin'
+    # Membership permissions apply in the member's company; support still covers others read-only.
+    own = 'ADR-INS-' + '7' * 32
+    assert (
+        client.post('/api/inspections', json={'inspection_id': own, 'data': data()}).status_code
+        == 200
+    )
+    assert client.get('/api/inspections/' + OTHER).status_code == 404
+    assert client.get('/api/admin/companies/adr/authorizations/' + SIGNED).status_code == 200
+    assert client.put(
+        '/api/inspections/' + ID, json={'expected_revision': 4, 'data': data('Changed')}
+    ).status_code in (403, 404)
+
+
+def test_owner_superadmin_uses_membership_for_own_company_without_support_audit(api):
+    client, current, store = api
+    current['uid'] = 'owner'
+    assert client.get('/api/companies/adr').status_code == 200
+    assert client.get('/api/companies/adr/team').status_code == 200
+    assert client.get('/api/companies/adr/invitations').status_code == 200
+    assert not support_events(store)
+    assert client.get('/api/companies/other').status_code == 200
+    assert client.get('/api/companies/other/team').status_code == 200
+    assert client.get('/api/companies/other/invitations').status_code == 200
+    assert sorted(e['action'] for e in support_events(store)) == [
+        'support_view_company',
+        'support_view_invitations',
+        'support_view_team',
+    ]
+    # Office staff who are also superadmin get the full roster through audited support.
+    store.db.records['_platform_admins/office'] = {'active': True}
+    current['uid'] = 'office'
+    assert len(client.get('/api/companies/adr/team').json()['members']) == 4
+    assert support_events(store)[-1]['action'] == 'support_view_team'
+
+
+def test_support_reads_recheck_superadmin_before_returning_evidence(api, monkeypatch):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = 'admin'
+    download = store.bucket.blob('any').__class__.download_as_bytes
+
+    def revoked_during_download(blob):
+        store.db.records['_platform_admins/admin']['active'] = False
+        return download(blob)
+
+    monkeypatch.setattr(
+        store.bucket.blob('any').__class__, 'download_as_bytes', revoked_during_download
+    )
+    base = '/api/admin/companies/adr'
+    assert client.get(base + '/authorizations/' + SIGNED + '/evidence/signature').status_code == 403
+    store.db.records['_platform_admins/admin']['active'] = True
+    assert client.get(base + '/jobs/' + ID + '/photos/' + PHOTO).status_code == 403
+    assert not support_events(store)
+
+
+def test_support_view_is_unavailable_in_legacy_owner_only_mode(monkeypatch):
+    monkeypatch.setattr(bm, 'WORKSPACES_ENABLED', False)
+    client = TestClient(bm.app, headers={'Authorization': 'Bearer owner.a'})
+    for path in ('/jobs', '/authorizations', '/jobs/' + ID, '/authorizations/' + SIGNED):
+        assert client.get('/api/admin/companies/adr' + path).status_code == 503

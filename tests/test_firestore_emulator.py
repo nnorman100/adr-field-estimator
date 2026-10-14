@@ -38,7 +38,7 @@ from backend.claims import make_documents
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import AIResult, InspectionData
 from backend.inspection_store import Conflict, InspectionStore, Limited
-from backend.workspaces import ADR_PROFILE
+from backend.workspaces import ADR_PROFILE, AccessDenied, MemberUpdate
 from tests.fakes import Bucket, png
 from tests.test_backend import ID, data, sign_payload
 
@@ -429,3 +429,73 @@ def test_company_job_pages_skip_sidecars_whose_source_is_missing(kind):
     rows, cursor = page('owner', cursor)
     seen += [r[field] for r in rows]
     assert cursor is None and len(seen) == len(set(seen)) == 120 and set(seen) == kept
+
+
+def support_entries(db):
+    return [
+        s.to_dict()
+        for s in db.collection('_admin_events').stream()
+        if s.to_dict()['action'].startswith('support_')
+    ]
+
+
+def test_superadmin_support_views_and_fixes_append_audit_entries():
+    """Each support read or fix appends one private entry in the transaction that rechecks access."""
+    stores = instances(CompanyInspectionStore)
+    store, db = stores[0], stores[0].db
+    receipt = store.authorize('owner', sign_payload(audited(store)))
+    auth_id = receipt['auth_id']
+    db.document('_platform_admins/admin').set({'active': True})
+    db.document('_companies/other').set(
+        dict(company_id='other', profile=deepcopy(ADR_PROFILE), version=1, status='active')
+    )
+    db.document('_memberships/staff').set(
+        dict(
+            uid='staff',
+            email='staff@example.invalid',
+            company_id='adr',
+            role='estimator',
+            status='disabled',
+            version=1,
+            updated_at='2026',
+        )
+    )
+    assert [r['inspection_id'] for r in store.support_page('admin', 'adr', False)[0]] == [ID]
+    assert [r['auth_id'] for r in stores[1].support_page('admin', 'adr', True)[0]] == [auth_id]
+    assert store.support_inspection('admin', 'adr', ID)[0]['status'] == 'signed'
+    assert stores[1].support_authorization('admin', 'adr', auth_id)[0]['auth_id'] == auth_id
+    assert store.support_evidence('admin', 'adr', auth_id, 'signature')[1] == 'image/png'
+    store.workspaces.update_member(
+        'admin', 'adr', 'staff', MemberUpdate(expected_version=1, role='office', status='active')
+    )
+    assert stored(db, '_memberships/staff')['status'] == 'active'
+    with pytest.raises(LookupError):
+        store.support_inspection('admin', 'other', ID)
+    entries = support_entries(db)
+    assert sorted((e['action'], e['target']) for e in entries) == [
+        ('support_member_access', 'member/staff'),
+        ('support_view_document', 'document/' + auth_id),
+        ('support_view_documents', 'documents'),
+        ('support_view_evidence', 'evidence/' + auth_id + '/signature'),
+        ('support_view_job', 'job/' + ID),
+        ('support_view_jobs', 'jobs'),
+    ]
+    assert all(
+        e['actor_uid'] == 'admin' and e['company_id'] == 'adr' and e['created_at'] for e in entries
+    )
+    assert stored(db, '_memberships/admin') is None
+    # Concurrent views each append their own entry; none overwrites another.
+    views = outcomes(
+        concurrently(
+            [lambda i=i: stores[i % 2].support_inspection('admin', 'adr', ID) for i in range(4)]
+        ),
+        refused=(),
+    )
+    assert len(support_entries(db)) == len(entries) + len(views)
+    # A revoked superadmin gets nothing back and leaves no entry.
+    db.document('_platform_admins/admin').set({'active': False})
+    with pytest.raises(AccessDenied):
+        store.support_inspection('admin', 'adr', ID)
+    with pytest.raises(AccessDenied):
+        store.support_evidence('admin', 'adr', auth_id, 'signature')
+    assert len(support_entries(db)) == len(entries) + len(views)

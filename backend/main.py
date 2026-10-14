@@ -611,19 +611,17 @@ async def list_inspections(
     store=Depends(get_job_store),
 ):
     records, next_cursor = await stored(store.inspection_page, staff['uid'], cursor)
-    return {
-        'inspections': [
-            dict(
-                inspection_id=r['inspection_id'],
-                address=r['data']['address'],
-                revision=r['revision'],
-                status=r['status'],
-                updated_at=r['updated_at'],
-            )
-            for r in records
-        ],
-        'next_cursor': next_cursor,
-    }
+    return {'inspections': [inspection_summary(r) for r in records], 'next_cursor': next_cursor}
+
+
+def inspection_summary(record):
+    return dict(
+        inspection_id=record['inspection_id'],
+        address=record['data']['address'],
+        revision=record['revision'],
+        status=record['status'],
+        updated_at=record['updated_at'],
+    )
 
 
 @app.get('/api/inspections/{inspection_id}')
@@ -1019,22 +1017,23 @@ async def list_authorizations(
 ):
     records, next_cursor = await stored(store.authorization_page, staff['uid'], cursor)
     return {
-        'authorizations': [
-            {
-                k: r.get(k)
-                for k in (
-                    'auth_id',
-                    'address',
-                    'proposed_cost',
-                    'proposed_cost_low',
-                    'created_at',
-                    'photos_count',
-                    'schema_version',
-                )
-            }
-            for r in records
-        ],
+        'authorizations': [authorization_summary(r) for r in records],
         'next_cursor': next_cursor,
+    }
+
+
+def authorization_summary(record):
+    return {
+        k: record.get(k)
+        for k in (
+            'auth_id',
+            'address',
+            'proposed_cost',
+            'proposed_cost_low',
+            'created_at',
+            'photos_count',
+            'schema_version',
+        )
     }
 
 
@@ -1065,6 +1064,101 @@ async def get_evidence(
         if WORKSPACES_ENABLED
         else await stored(store.evidence, record, name)
     )
+    if not evidence:
+        raise HTTPException(404, 'Evidence not found.')
+    return Response(
+        evidence[0], media_type=evidence[1], headers={'Cache-Control': 'private, no-store'}
+    )
+
+
+# Superadmin support view: read-only company records, each read audited before it returns.
+# Only GET routes exist here; every write keeps its company-membership check.
+support_identity = Security(current_identity, scopes=LIVE_REVOCATION)
+page_cursor = Query(default=None, max_length=80, pattern=r'^[A-Za-z0-9-]+$')
+
+
+@app.get('/api/admin/companies/{company_id}/jobs')
+async def support_jobs(
+    company_id: str,
+    request: Request,
+    cursor: Optional[str] = page_cursor,
+    staff=support_identity,
+    store=Depends(get_job_store),
+):
+    workspace_client(request)
+    records, next_cursor = await stored(store.support_page, staff['uid'], company_id, False, cursor)
+    return {'inspections': [inspection_summary(r) for r in records], 'next_cursor': next_cursor}
+
+
+@app.get('/api/admin/companies/{company_id}/authorizations')
+async def support_authorizations(
+    company_id: str,
+    request: Request,
+    cursor: Optional[str] = page_cursor,
+    staff=support_identity,
+    store=Depends(get_job_store),
+):
+    workspace_client(request)
+    records, next_cursor = await stored(store.support_page, staff['uid'], company_id, True, cursor)
+    return {
+        'authorizations': [authorization_summary(r) for r in records],
+        'next_cursor': next_cursor,
+    }
+
+
+@app.get('/api/admin/companies/{company_id}/jobs/{inspection_id}')
+async def support_job(
+    company_id: str,
+    inspection_id: str,
+    request: Request,
+    staff=support_identity,
+    store=Depends(get_job_store),
+):
+    workspace_client(request)
+    record, job = await stored(store.support_inspection, staff['uid'], company_id, inspection_id)
+    return {'inspection': public_record(record), 'job': job}
+
+
+@app.get('/api/admin/companies/{company_id}/jobs/{inspection_id}/photos/{photo_id}')
+async def support_photo(
+    company_id: str,
+    inspection_id: str,
+    photo_id: str,
+    staff=support_identity,
+    store=Depends(get_job_store),
+):
+    photo, raw = await stored(
+        store.support_photo, staff['uid'], company_id, inspection_id, photo_id
+    )
+    return Response(
+        raw,
+        media_type=photo['file']['content_type'],
+        headers={'Cache-Control': 'private, no-store'},
+    )
+
+
+@app.get('/api/admin/companies/{company_id}/authorizations/{auth_id}')
+async def support_authorization(
+    company_id: str,
+    auth_id: str,
+    request: Request,
+    staff=support_identity,
+    store=Depends(get_job_store),
+):
+    workspace_client(request)
+    record, job = await stored(store.support_authorization, staff['uid'], company_id, auth_id)
+    return {'authorization': public_record(record), 'job': job}
+
+
+@app.get('/api/admin/companies/{company_id}/authorizations/{auth_id}/evidence/{name}')
+async def support_evidence(
+    company_id: str,
+    auth_id: str,
+    name: str,
+    staff=support_identity,
+    store=Depends(get_job_store),
+):
+    evidence = await stored(store.support_evidence, staff['uid'], company_id, auth_id, name)
     if not evidence:
         raise HTTPException(404, 'Evidence not found.')
     return Response(

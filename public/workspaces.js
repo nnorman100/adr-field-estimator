@@ -4,7 +4,11 @@ window.WorkspaceUI = (() => {
     coordination = null,
     mirroredAddress = null,
     refreshing = false,
-    initialized = false;
+    initialized = false,
+    supportUrls = [];
+  const SUPPORT_EYEBROW = 'READ-ONLY SUPPORT VIEW',
+    SUPPORT_NOTE =
+      'Read-only: jobs, drafts and signed documents cannot be changed here. Every view and support action is recorded in the audit log.';
   const enabled = () => !!state.session?.workspaces_enabled;
   const can = (cap) => !enabled() || state.session.capabilities?.includes(cap);
   const context = () =>
@@ -59,9 +63,22 @@ window.WorkspaceUI = (() => {
       }
     });
   }
-  function show(title, description = '') {
+  function defaultEyebrow() {
+    return state.session.superadmin
+      ? state.session.role
+        ? 'PLATFORM & COMPANY WORKSPACE'
+        : 'PLATFORM ADMINISTRATION'
+      : roleName(state.session.role).toUpperCase();
+  }
+  function show(title, description = '', eyebrow) {
     ++viewEpoch;
+    for (const url of supportUrls) URL.revokeObjectURL(url);
+    supportUrls = [];
     document.body.classList.add('dashboard-open');
+    // Only the support view labels itself; leaving it restores the role's label.
+    if (eyebrow) $('dashboardEyebrow').textContent = eyebrow;
+    else if ($('dashboardEyebrow').textContent === SUPPORT_EYEBROW)
+      $('dashboardEyebrow').textContent = defaultEyebrow();
     $('workspaceDashboard').hidden = false;
     $('dashboardHeading').textContent = title;
     $('dashboardDescription').textContent = description;
@@ -233,11 +250,7 @@ window.WorkspaceUI = (() => {
       state.session.company?.profile.name || 'Welcome',
       'Manage your workspace and continue a saved job.',
     );
-    $('dashboardEyebrow').textContent = state.session.superadmin
-      ? state.session.role
-        ? 'PLATFORM & COMPANY WORKSPACE'
-        : 'PLATFORM ADMINISTRATION'
-      : roleName(state.session.role).toUpperCase();
+    $('dashboardEyebrow').textContent = defaultEyebrow();
     const content = $('dashboardContent'),
       grid = node('div', undefined, 'dashboard-grid');
     content.append(grid);
@@ -266,7 +279,10 @@ window.WorkspaceUI = (() => {
       const card = node('section', undefined, 'dashboard-card');
       card.append(
         node('h2', 'Companies'),
-        node('p', 'Create workspaces and manage owners. Customer jobs stay within each company.'),
+        node(
+          'p',
+          'Create workspaces, manage owners and open a read-only support view of any company.',
+        ),
         button('Manage companies', companies),
       );
       grid.append(card);
@@ -396,7 +412,7 @@ window.WorkspaceUI = (() => {
           );
     if (!list.childElementCount) list.append(node('p', 'No jobs saved yet.'));
   }
-  function invitationList(container, invitations, companyId) {
+  function invitationList(container, invitations, companyId, after, actions = true) {
     const list = node('div', undefined, 'dashboard-list');
     container.append(list);
     if (!invitations.length) list.append(node('p', 'No invitations yet.'));
@@ -410,7 +426,7 @@ window.WorkspaceUI = (() => {
         ),
       );
       if (invite.delivery_error) card.append(node('p', invite.delivery_error));
-      if (invite.status === 'pending')
+      if (actions && invite.status === 'pending')
         for (const action of ['resend', 'cancel'])
           card.append(
             button(action === 'resend' ? 'Resend invitation' : 'Cancel invitation', async () => {
@@ -428,9 +444,11 @@ window.WorkspaceUI = (() => {
                 result.delivery_status === 'failed' ? result.delivery_error : 'Invitation updated.',
                 result.delivery_status === 'failed' ? 'error' : 'success',
               );
-              await (state.session.role === 'owner' && companyId === state.session.company_id
-                ? team()
-                : companyAdmin(companyId));
+              await (after
+                ? after()
+                : state.session.role === 'owner' && companyId === state.session.company_id
+                  ? team()
+                  : companyAdmin(companyId));
             }),
           );
       list.append(card);
@@ -631,6 +649,7 @@ window.WorkspaceUI = (() => {
     const content = $('dashboardContent');
     content.append(
       node('p', 'Company status: ' + company.status),
+      button('Open read-only support view', () => support(cid)),
       button(company.status === 'active' ? 'Suspend company' : 'Reactivate company', async () => {
         await jsonApi('/api/admin/companies/' + cid + '/status', 'PUT', {
           expected_version: company.version,
@@ -643,6 +662,206 @@ window.WorkspaceUI = (() => {
     if (company.status === 'active') inviteForm(content, cid, true);
     content.append(node('h2', 'Invitations'));
     invitationList(content, invites.invitations, cid);
+  }
+  const supportBase = (cid) => '/api/admin/companies/' + encodeURIComponent(cid);
+  function supportImage(path, alt) {
+    const image = node('img', undefined, 'support-image'),
+      epoch = viewEpoch;
+    image.alt = alt;
+    api(path)
+      .then((response) => response.blob())
+      .then((blob) => {
+        if (epoch !== viewEpoch) return;
+        image.src = URL.createObjectURL(blob);
+        supportUrls.push(image.src);
+      })
+      .catch(() => image.replaceWith(node('p', alt + ' could not be loaded.')));
+    return image;
+  }
+  // Superadmin support: the server allows reads plus a few audited team fixes, nothing else.
+  async function support(cid) {
+    const epoch = show('Support view', SUPPORT_NOTE, SUPPORT_EYEBROW);
+    const base = supportBase(cid);
+    const [company, drafts, signed, teamData, invites] = await Promise.all([
+      jsonApi('/api/companies/' + cid),
+      jsonApi(base + '/jobs'),
+      jsonApi(base + '/authorizations'),
+      jsonApi('/api/companies/' + cid + '/team'),
+      jsonApi('/api/companies/' + cid + '/invitations'),
+    ]);
+    if (epoch !== viewEpoch) return;
+    $('dashboardHeading').textContent = 'Support · ' + company.profile.name;
+    const content = $('dashboardContent'),
+      active = company.status === 'active';
+    content.append(
+      node('p', SUPPORT_NOTE, 'support-note'),
+      node('p', 'Company status: ' + company.status),
+      button('Back to company administration', () => companyAdmin(cid)),
+      node('h2', 'Jobs and documents'),
+    );
+    const list = node('div', undefined, 'dashboard-list');
+    content.append(list);
+    // Signed jobs are listed once, as their agreements.
+    for (const record of drafts.inspections.filter((r) => r.status !== 'signed'))
+      list.append(
+        Object.assign(
+          button((record.address || 'Untitled job') + '\nDraft · revision ' + record.revision, () =>
+            supportRecord(cid, record.inspection_id, false),
+          ),
+          { className: 'job-link' },
+        ),
+      );
+    for (const record of signed.authorizations)
+      list.append(
+        Object.assign(
+          button(
+            (record.address || 'Untitled job') + '\nSigned agreement · ' + estimateLabel(record),
+            () => supportRecord(cid, record.auth_id, true),
+          ),
+          { className: 'job-link' },
+        ),
+      );
+    if (!list.childElementCount) list.append(node('p', 'No jobs saved yet.'));
+    if (drafts.next_cursor || signed.next_cursor)
+      list.append(node('p', 'Showing the 100 most recent drafts and agreements.'));
+    content.append(node('h2', 'Team'));
+    const grid = node('div', undefined, 'dashboard-grid');
+    content.append(grid);
+    const change = (member, role, status, message) =>
+      button(message, async () => {
+        await jsonApi('/api/companies/' + cid + '/team/' + member.uid, 'PUT', {
+          expected_version: member.version,
+          role,
+          status,
+        });
+        await support(cid);
+        say('Staff access updated. The change is recorded in the audit log.', 'success');
+      });
+    for (const member of teamData.members) {
+      const card = node('section', undefined, 'dashboard-card');
+      card.append(
+        node('h3', member.email),
+        node('p', roleName(member.role) + ' · ' + member.status),
+      );
+      // Owners change only through owner invitations; support never edits its own membership.
+      if (active && member.role !== 'owner' && member.uid !== state.user?.uid) {
+        const actions = node('div', undefined, 'actions'),
+          other = member.role === 'estimator' ? 'office' : 'estimator';
+        actions.append(
+          change(member, other, member.status, 'Change to ' + roleName(other).toLowerCase()),
+        );
+        if (member.status === 'disabled')
+          actions.append(change(member, member.role, 'active', 'Re-enable access'));
+        card.append(actions);
+      }
+      grid.append(card);
+    }
+    if (!teamData.members.length) grid.append(node('p', 'No team members yet.'));
+    content.append(node('h2', 'Invitations'));
+    invitationList(content, invites.invitations, cid, () => support(cid), active);
+  }
+  async function supportRecord(cid, id, signed) {
+    const epoch = show(signed ? 'Signed agreement' : 'Job details', SUPPORT_NOTE, SUPPORT_EYEBROW);
+    const base =
+      supportBase(cid) + (signed ? '/authorizations/' : '/jobs/') + encodeURIComponent(id);
+    const result = await jsonApi(base);
+    if (epoch !== viewEpoch) return;
+    const record = signed ? result.authorization : result.inspection,
+      job = result.job,
+      scope = (signed ? record.inspection : record.data) || {},
+      docs = signed ? record.documents : record.audit?.documents,
+      content = $('dashboardContent');
+    content.append(
+      node('p', SUPPORT_NOTE, 'support-note'),
+      button('Back to support view', () => support(cid)),
+    );
+    const facts = node('section', undefined, 'dashboard-card');
+    facts.append(node('h2', record.address || scope.address || 'Untitled job'));
+    for (const line of [
+      signed
+        ? 'Signed ' + new Date(record.created_at).toLocaleString()
+        : 'Status: ' + record.status + ' · revision ' + record.revision,
+      'Year built: ' + (scope.year_built || 'not entered'),
+      'Assigned estimator: ' + (job.assigned_estimator_uid || 'unassigned'),
+      [job.customer_name, job.customer_phone, job.customer_email].filter(Boolean).join(' · '),
+      job.office_notes ? 'Office notes: ' + job.office_notes : '',
+    ])
+      if (line) facts.append(node('p', line));
+    if (record.signer) facts.append(node('p', 'Signed through the homeowner link'));
+    content.append(facts);
+    const rooms = node('section', undefined, 'dashboard-card');
+    rooms.append(node('h2', 'Rooms'));
+    for (const room of scope.rooms || [])
+      rooms.append(
+        node(
+          'p',
+          room.name +
+            ' · Category ' +
+            room.category +
+            ' · ' +
+            room.finished_sf +
+            ' finished SF · ' +
+            room.unfinished_sf +
+            ' unfinished SF',
+        ),
+      );
+    if (!scope.rooms?.length) rooms.append(node('p', 'No rooms entered.'));
+    content.append(rooms);
+    const documents = node('section', undefined, 'dashboard-card');
+    documents.append(node('h2', 'Documents'));
+    if (docs) {
+      documents.append(
+        node('p', 'Customer estimate range: ' + estimateLabel(docs.adr_estimate), 'money'),
+        node('p', 'Itemized charges at base rates: ' + ADRCore.money(docs.xactimate_total)),
+        node('h3', 'Findings'),
+      );
+      for (const text of docs.adr_estimate.findings || []) documents.append(node('p', text));
+      documents.append(node('h3', 'Line items'));
+      for (const item of docs.xactimate_scope || [])
+        documents.append(
+          node(
+            'p',
+            item.code +
+              ' · ' +
+              (item.description || item.desc) +
+              ' · ' +
+              (item.quantity ?? item.qty) +
+              ' ' +
+              item.unit +
+              ' · ' +
+              ADRCore.money(item.total),
+          ),
+        );
+    } else documents.append(node('p', 'No documents generated for this revision.'));
+    content.append(documents);
+    const photos = node('section', undefined, 'dashboard-card');
+    photos.append(node('h2', 'Photos'));
+    (record.photos || []).forEach((photo, i) => {
+      photos.append(
+        supportImage(
+          base + (signed ? '/evidence/photo-' + i : '/photos/' + encodeURIComponent(photo.id)),
+          (photo.room || 'Job') + ' photo',
+        ),
+        node(
+          'p',
+          (photo.room || 'Historical evidence') +
+            ' · ' +
+            (photo.ocr_status === 'verified'
+              ? 'Verified meter: ' + photo.ocr.value
+              : 'Unverified: ' + String(photo.ocr_status || 'unknown').replaceAll('_', ' ')),
+        ),
+      );
+    });
+    if (!record.photos?.length) photos.append(node('p', 'No photos attached.'));
+    content.append(photos);
+    if (signed) {
+      const signature = node('section', undefined, 'dashboard-card');
+      signature.append(
+        node('h2', 'Signature'),
+        supportImage(base + '/evidence/signature', 'Customer signature'),
+      );
+      content.append(signature);
+    }
   }
   async function editor() {
     if (!enabled()) return;

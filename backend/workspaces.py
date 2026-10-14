@@ -223,28 +223,67 @@ class WorkspaceStore:
         if not self.principal(uid, tx)['superadmin']:
             raise AccessDenied('Superadmin access is required.')
 
-    def company(self, uid, company_id):
-        actor = self.principal(uid)
-        if not actor['superadmin']:
-            self.company_actor(uid, company_id)
-        company = self.read('_companies', company_id)
+    def support_company(self, uid, company_id, tx=None):
+        """Superadmin support: read-only access to any company plus a few audited team fixes.
+        It is not a membership, so it grants no job writes, assignments or membership slot."""
+        self.admin(uid, tx)
+        company = self.read('_companies', company_id, tx)
         if not company:
             raise LookupError('Company not found.')
         return company
 
-    def event(self, tx, uid, action, company_id, details):
+    @staticmethod
+    def supported(actor, company_id, role=None):
+        # Membership permissions come first; superadmin support covers only what they lack.
+        member = actor['role'] and actor['company_id'] == company_id
+        return actor['superadmin'] and not (member and (role is None or actor['role'] == role))
+
+    def support_job(self, uid, company_id, record, tx=None):
+        self.support_company(uid, company_id, tx)
+        job = self.job_for(record, tx)
+        if job['company_id'] != company_id:
+            raise LookupError('Job not found.')
+        return job
+
+    def support_audit(self, uid, company_id, action, target, record=None):
+        """Rechecks support access and appends the audit entry in one transaction, so a
+        superadmin receives company data only when both succeed."""
+
+        def audit(tx):
+            if record is None:
+                self.support_company(uid, company_id, tx)
+            else:
+                self.support_job(uid, company_id, record, tx)
+            self.event(tx, uid, 'support_' + action, company_id, {}, target)
+
+        self._run(audit)
+
+    def company(self, uid, company_id):
+        actor = self.principal(uid)
+        support = self.supported(actor, company_id)
+        if not support:
+            self.company_actor(uid, company_id)
+        company = self.read('_companies', company_id)
+        if not company:
+            raise LookupError('Company not found.')
+        if support:
+            self.support_audit(uid, company_id, 'view_company', 'company')
+        return company
+
+    def event(self, tx, uid, action, company_id, details, target=None):
+        # Append-only: each entry is created once and never rewritten. Targets are record IDs only.
         identifier = uuid4().hex
-        tx.create(
-            self.ref('_admin_events', identifier),
-            dict(
-                event_id=identifier,
-                actor_uid=uid,
-                action=action,
-                company_id=company_id,
-                details=details,
-                created_at=now(),
-            ),
+        entry = dict(
+            event_id=identifier,
+            actor_uid=uid,
+            action=action,
+            company_id=company_id,
+            details=details,
+            created_at=now(),
         )
+        if target:
+            entry['target'] = target
+        tx.create(self.ref('_admin_events', identifier), entry)
 
     def companies(self, uid):
         self.admin(uid)
@@ -334,7 +373,8 @@ class WorkspaceStore:
 
     def team(self, uid, company_id):
         actor = self.principal(uid)
-        if not actor['superadmin']:
+        support = self.supported(actor, company_id, 'owner')
+        if not support:
             actor = self.company_actor(uid, company_id)
         members = [
             s.to_dict()
@@ -343,7 +383,10 @@ class WorkspaceStore:
             .limit(500)
             .stream()
         ]
-        if actor['superadmin'] or 'team_manage' in actor['capabilities']:
+        if support:
+            self.support_audit(uid, company_id, 'view_team', 'team')
+            return members
+        if 'team_manage' in actor['capabilities']:
             return members
         if 'assignment' not in actor['capabilities']:
             raise AccessDenied('Only the company owner can view the team.')
@@ -371,12 +414,25 @@ class WorkspaceStore:
 
     def update_member(self, uid, company_id, member_uid, req):
         def update(tx):
-            self.company_actor(uid, company_id, True, tx)
+            support = self.supported(self.principal(uid, tx), company_id, 'owner')
+            if support:
+                if self.support_company(uid, company_id, tx)['status'] != 'active':
+                    raise AccessDenied('The company must be active to change staff access.')
+            else:
+                self.company_actor(uid, company_id, True, tx)
             member = self.read('_memberships', member_uid, tx)
             if not member or member['company_id'] != company_id:
                 raise LookupError('Staff member not found.')
             if member['role'] == 'owner' and member['status'] == 'active':
                 raise AccessDenied('Only superadmin can replace the owner.')
+            if support:
+                # Support may switch estimator/office and re-enable staff, nothing more.
+                if member_uid == uid:
+                    raise AccessDenied('Support access cannot change your own membership.')
+                if member['role'] == 'owner':
+                    raise AccessDenied('Owner access changes only through an owner invitation.')
+                if req.status == 'disabled' and member['status'] != 'disabled':
+                    raise AccessDenied('Support access cannot disable staff.')
             if member['version'] != req.expected_version:
                 raise Conflict('Staff access changed. Reload the team.')
             if req.status == 'disabled':
@@ -388,9 +444,10 @@ class WorkspaceStore:
             self.event(
                 tx,
                 uid,
-                'member_access',
+                'support_member_access' if support else 'member_access',
                 company_id,
                 {'uid': member_uid, 'role': req.role, 'status': req.status},
+                'member/' + member_uid if support else None,
             )
             return member
 
@@ -412,14 +469,20 @@ class WorkspaceStore:
             send_started=0,
         )
 
-    def invite_actor(self, uid, company_id, role, tx=None):
+    def invite_actor(self, uid, company_id, role, tx=None, support=False):
+        """support admits superadmin for an existing staff invitation's resend or cancel;
+        returns True when that, rather than ownership, authorized the call."""
+        supported = False
         if role == 'owner':
             self.admin(uid, tx)
+        elif support and self.supported(self.principal(uid, tx), company_id, 'owner'):
+            supported = True
         else:
             self.company_actor(uid, company_id, True, tx)
         company = self.read('_companies', company_id, tx)
         if not company or company['status'] != 'active':
             raise AccessDenied('The company must be active to invite staff.')
+        return supported
 
     def invitation_quota(self, company_id, tx):
         return reserve_slot(
@@ -466,16 +529,19 @@ class WorkspaceStore:
         return self._run(create)
 
     def invitations(self, uid, company_id):
-        actor = self.principal(uid)
-        if not actor['superadmin']:
+        support = self.supported(self.principal(uid), company_id, 'owner')
+        if not support:
             self.company_actor(uid, company_id, True)
-        return [
+        invitations = [
             s.to_dict()
             for s in self.db.collection('_invitations')
             .where(filter=firestore.FieldFilter('company_id', '==', company_id))
             .limit(100)
             .stream()
         ]
+        if support:
+            self.support_audit(uid, company_id, 'view_invitations', 'invitations')
+        return invitations
 
     def pending(self, claims):
         email = email_address(claims['email'])
@@ -581,7 +647,7 @@ class WorkspaceStore:
             invitation = self.read('_invitations', identifier, tx)
             if not invitation or invitation['company_id'] != company_id:
                 raise LookupError('Invitation not found.')
-            self.invite_actor(uid, company_id, invitation['role'], tx)
+            support = self.invite_actor(uid, company_id, invitation['role'], tx, True)
             if invitation['status'] != 'pending':
                 raise Conflict('This invitation is no longer pending.')
             if action == 'cancel':
@@ -599,7 +665,14 @@ class WorkspaceStore:
             else:
                 raise ValueError('Unsupported invitation action.')
             tx.set(self.ref('_invitations', identifier), invitation)
-            self.event(tx, uid, 'invitation_' + action, company_id, {'invitation_id': identifier})
+            self.event(
+                tx,
+                uid,
+                ('support_' if support else '') + 'invitation_' + action,
+                company_id,
+                {'invitation_id': identifier},
+                'invitation/' + identifier if support else None,
+            )
             return invitation
 
         return self._run(update)
@@ -609,7 +682,8 @@ class WorkspaceStore:
             invite = self.read('_invitations', identifier, tx)
             if not invite:
                 raise LookupError('Invitation not found.')
-            self.invite_actor(uid, invite['company_id'], invite['role'], tx)
+            # Only creation and resend reach delivery; creation already required ownership.
+            self.invite_actor(uid, invite['company_id'], invite['role'], tx, True)
             company = self.read('_companies', invite['company_id'], tx)
             if invite['status'] != 'pending' or invite['expires_at'] <= time.time():
                 raise Conflict('Invitation is no longer pending.')
@@ -649,8 +723,7 @@ class WorkspaceStore:
 
         return self._run(finish)
 
-    def job_access(self, uid, record, action='read', tx=None):
-        actor = self.company_actor(uid, tx=tx)
+    def job_for(self, record, tx=None):
         if record.get('inspection_id') and not record.get('auth_id'):
             job_id = record['inspection_id']
         else:
@@ -659,7 +732,14 @@ class WorkspaceStore:
                 raise LookupError('Job not found.')
             job_id = mapping['job_id']
         job = self.read('_workspace_jobs', job_id, tx)
-        if not job or job['company_id'] != actor['company_id']:
+        if not job:
+            raise LookupError('Job not found.')
+        return job
+
+    def job_access(self, uid, record, action='read', tx=None):
+        actor = self.company_actor(uid, tx=tx)
+        job = self.job_for(record, tx)
+        if job['company_id'] != actor['company_id']:
             raise LookupError('Job not found.')
         if actor['role'] == 'estimator' and uid not in job['accessible_estimator_uids']:
             raise LookupError('Job not found.')

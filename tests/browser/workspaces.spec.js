@@ -60,7 +60,7 @@ test('owner dashboard has no automatic blank inspection and fits phones', async 
   expect(errors).toEqual([]);
 });
 
-test('superadmin manages companies without customer job access', async ({ page }) => {
+test('superadmin manages companies and cannot use member job routes', async ({ page }) => {
   await start(page, 'admin');
   await expect(page.locator('#dashboardJobs')).toBeHidden();
   await expect(page.locator('#dashboardTeam')).toBeHidden();
@@ -80,6 +80,137 @@ test('superadmin manages companies without customer job access', async ({ page }
   await expect(page.locator('#dashboardContent')).toContainText('Company status: suspended');
   await page.getByRole('button', { name: 'Reactivate company', exact: true }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Company status: active');
+});
+
+test('superadmin support view is read-only with audited team fixes', async ({ page, request }) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const invited = await call(
+    page,
+    '/api/companies/adr/invitations',
+    'POST',
+    { email: 'support-invitee@example.invalid', role: 'office' },
+    'owner',
+  );
+  expect(invited.status()).toBe(200);
+  await start(page, 'admin');
+  await page.locator('#dashboardAdmin').click();
+  await page
+    .locator('.dashboard-card')
+    .filter({ has: page.getByRole('heading', { name: 'Alert Disaster Restoration' }) })
+    .getByRole('button', { name: 'Manage company' })
+    .click();
+  await page.getByRole('button', { name: 'Open read-only support view' }).click();
+  await expect(page.locator('#dashboardEyebrow')).toHaveText('READ-ONLY SUPPORT VIEW');
+  await expect(page.locator('#dashboardHeading')).toHaveText(
+    'Support · Alert Disaster Restoration',
+  );
+  const content = page.locator('#dashboardContent');
+  await expect(content).toContainText('recorded in the audit log');
+  const editable = content.locator('form, input, select, textarea');
+  await expect(editable).toHaveCount(0);
+  const owner = content.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: uid('owner') + '@example.invalid', exact: true }),
+  });
+  await expect(owner.getByRole('button')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await expect(page.locator('#dashboardHeading')).toHaveText('Job details');
+  await expect(content).toContainText('Bathroom · Category 1');
+  await expect(content).toContainText('No documents generated for this revision.');
+  await expect(editable).toHaveCount(0);
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Back to support view' }).click();
+
+  const office = content.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: uid('office') + '@example.invalid', exact: true }),
+  });
+  await office.getByRole('button', { name: 'Change to estimator' }).click();
+  await expect(office).toContainText('Estimator · active');
+  await expect(office.getByRole('button', { name: 'Change to office staff' })).toBeVisible();
+  const invitation = content.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: 'support-invitee@example.invalid', exact: true }),
+  });
+  await invitation.getByRole('button', { name: 'Cancel invitation' }).click();
+  await expect(invitation).toContainText('Office staff · cancelled');
+  await expect(invitation.getByRole('button')).toHaveCount(0);
+
+  const audit = await call(
+    page,
+    '/api/audit',
+    'POST',
+    { inspection_id: 'ADR-INS-' + 'c'.repeat(32), expected_revision: 1 },
+    'estimator',
+  );
+  const record = await audit.json();
+  const signaturePng = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 120;
+    canvas.height = 60;
+    const context = canvas.getContext('2d');
+    context.lineWidth = 3;
+    context.moveTo(10, 35);
+    context.lineTo(40, 12);
+    context.lineTo(105, 15);
+    context.stroke();
+    return canvas.toDataURL('image/png');
+  });
+  const signed = await call(
+    page,
+    '/api/authorize',
+    'POST',
+    {
+      inspection_id: record.inspection_id,
+      expected_revision: record.revision,
+      auth_id: 'ADR-AUTH-supportview1',
+      proposal_hash: record.audit.proposal_hash,
+      signature_png: signaturePng,
+      documents_confirmed: true,
+    },
+    'estimator',
+  );
+  expect(signed.status()).toBe(200);
+  await page.getByRole('button', { name: 'Back to company administration' }).click();
+  await page.getByRole('button', { name: 'Open read-only support view' }).click();
+  await page.getByRole('button', { name: /Signed agreement/ }).click();
+  await expect(page.locator('#dashboardHeading')).toHaveText('Signed agreement');
+  await expect(content).toContainText('Customer estimate range: $1,775.00–$1,788.90');
+  const signature = content.getByRole('img', { name: 'Customer signature' });
+  await expect.poll(() => signature.evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+  await expect(editable).toHaveCount(0);
+
+  expect(
+    (
+      await call(
+        page,
+        '/api/inspections/ADR-INS-' + 'c'.repeat(32),
+        'PUT',
+        { expected_revision: 1, data: { address: 'Support edit' } },
+        'admin',
+      )
+    ).status(),
+  ).toBe(403);
+  const events = await (await request.get('/__test/support-events')).json();
+  const actions = events.map((e) => e.action);
+  for (const action of [
+    'support_view_company',
+    'support_view_jobs',
+    'support_view_documents',
+    'support_view_team',
+    'support_view_invitations',
+    'support_view_job',
+    'support_member_access',
+    'support_invitation_cancel',
+    'support_view_document',
+    'support_view_evidence',
+  ])
+    expect(actions).toContain(action);
+  expect(events.every((e) => e.actor_uid === uid('admin') && e.company_id === 'adr')).toBe(true);
+  expect(JSON.stringify(events)).not.toContain('example.invalid');
+  expect(errors).toEqual([]);
 });
 
 test('office creates empty scope and coordinates without scope or signing controls', async ({
