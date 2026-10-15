@@ -1,0 +1,10 @@
+transport (200, {'transport': 'smtp'})
+PUT hostile name 422 {"detail":[{"type":"value_error","loc":["body","profile","name"],"msg":"Value error, Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.","input":"<img src=x onerror=alert(1)> & \"Co\" <a href=\"https://evil.invalid\">","ctx":{"error":{}}}]}
+POST invite 200 sent
+received mail/smtp-3.eml subject: Invitation to join a company on the ADR field app
+raw <img src=x in HTML: False | raw evil link tag: False
+<img count: 1 | <a href= count: 3
+escaped heading: You're invited to join Alert Disaster Restoration
+emailed accept link: https://alert-disaster-field-2026.web.app/?invite=feb2702ceccf43adb3814be701a34578
+GET invitation as invitee (200, {'invitation_id': 'feb2702ceccf43adb3814be701a34578', 'company_id': 'adr', 'email': 'test-owner-ws-newbie@example.invalid', 'role': 'owner', 'status': 'pending', 'expires_at': 1792689806.0695734, 'created_by': 'test-owner-ws-owner', 'created_at': '2026-10-15T17:23:26.069576+00:00', 'delivery_status': 'sent', 'send_attempt': '5b82ee6b3ba6439e94067e7e6ae72b2a', 'send_started': 1792085006.0698173, 'expected_owner_uid': 'test-owner-ws-owner', 'delivery_error': '', 'message_id': '<invitation-feb2702ceccf43adb3814be701a34578-5b82ee6b3ba6439e94067e7e6ae72b2a@example.invalid>', 'company_name': 'Alert Disaster Restoration'})
+ACCEPT as invitee (200, {'uid': 'test-owner-ws-newbie', 'company_id': 'adr', 'role': 'owner'})

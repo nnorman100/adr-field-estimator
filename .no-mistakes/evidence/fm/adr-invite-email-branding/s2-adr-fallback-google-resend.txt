@@ -1,0 +1,17 @@
+to: ['google-office@example.invalid'] subject: Invitation to join a company on the ADR field app
+attachments: [{'content': '<13532 b64 chars>', 'filename': 'logo.jpg', 'content_type': 'image/jpeg', 'content_id': 'invitation-logo@adr-field-app'}]
+inline logo == public/brand/adr-logo.jpg: True ac7916c6c26ae39a
+HTML cid refs: ['invitation-logo@adr-field-app'] ['<img src="cid:invitation-logo@adr-field-app" width="131" height="64" alt="Alert Disaster Restoration logo" style="display:block;border:0;outline:none;">']
+"Set your password" present: False
+---- text ----
+Alert Disaster Restoration has invited you to join their team on the ADR field app as office staff.
+
+The ADR field app is what Alert Disaster Restoration uses for water and mold loss inspections, estimates and homeowner signatures.
+
+Accept the invitation. Sign in with Google using this email (google-office@example.invalid).
+
+Accept the invitation: https://alert-disaster-field-2026.web.app/?invite=36cf8330f74d4a16bb0c7f3739b17804
+
+This invitation expires in seven days.
+
+Sent by Alert Disaster Restoration through the ADR field app. If you weren't expecting this, you can ignore this email.

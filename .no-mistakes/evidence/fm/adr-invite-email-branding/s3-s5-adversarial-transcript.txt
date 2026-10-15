@@ -1,0 +1,14 @@
+== S3a: API-allowed special characters in company name ==
+PUT name 200 O'Brien & Sons (Kern)
+sent 200 sent mail/smtp-1.eml
+h1: You're invited to join O&#x27;Brien &amp; Sons (Kern)
+alt: O&#x27;Brien &amp; Sons (Kern) logo
+== S3b: hostile name stored directly (legacy data bypassing the API validator) ==
+sent 200 sent mail/smtp-2.eml
+raw injected <img src=x present: False | raw evil <a> present: False
+<img count: 1 | <a href= count: 3
+h1: You're invited to join &lt;img src=x onerror=alert(1)&gt; &amp; &quot;Co&quot; &lt;a href=&quot;https://evil.invalid&quot;&gt;
+== S5: corrupt / non-image / remote-URL logos in stored profile fall back to ADR logo ==
+corrupt png bytes: invite 200 sent; inline image == ADR logo: True; img tag: <img src="cid:invitation-logo@adr-field-app" width="131" height="64" alt="Kern Water Pros  | evil.invalid in HTML: False
+oversized jpeg (>100KB): invite 200 sent; inline image == ADR logo: True; img tag: <img src="cid:invitation-logo@adr-field-app" width="131" height="64" alt="Kern Water Pros  | evil.invalid in HTML: False
+remote URL (tracking pixel attempt): invite 200 sent; inline image == ADR logo: True; img tag: <img src="cid:invitation-logo@adr-field-app" width="131" height="64" alt="Kern Water Pros  | evil.invalid in HTML: False
