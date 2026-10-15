@@ -149,9 +149,9 @@ def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
             # The error reports revocation; server close acknowledges resource cleanup.
             with pytest.raises(WebSocketDisconnect):
                 socket.receive_json()
-    # The start always checks live; heartbeats may reuse only a check that outlasts the next heartbeat.
+    # The start and every heartbeat repeat the revocation lookup.
     assert (
-        calls == [('synthetic', {'live': True}), ('synthetic', {'horizon': 0.01})]
+        calls == [('synthetic', {'live': True}), ('synthetic', {'live': True})]
         and closed
         and '_live_sessions/owner' not in store.db.records
     )

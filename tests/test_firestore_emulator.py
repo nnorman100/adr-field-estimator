@@ -42,7 +42,7 @@ from backend.claims import make_documents
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import AIResult, InspectionData
 from backend.inspection_store import Conflict, InspectionStore, Limited
-from backend.workspaces import ADR_PROFILE, AccessDenied, MemberUpdate
+from backend.workspaces import ADR_PROFILE, AccessDenied, MemberUpdate, WorkspaceStore
 from tests.fakes import Bucket, png
 from tests.test_backend import ID, data, sign_payload
 
@@ -503,6 +503,70 @@ def test_superadmin_support_views_and_fixes_append_audit_entries():
     with pytest.raises(AccessDenied):
         store.support_evidence('admin', 'adr', auth_id, 'signature')
     assert len(support_entries(db)) == len(entries) + len(views)
+
+
+def verified(uid):
+    return dict(uid=uid, email=uid + '@example.invalid', email_verified=True)
+
+
+def test_owner_transfer_switches_atomically_and_leaves_one_owner(monkeypatch):
+    """Acceptance replaces the owner in one transaction: a failure before commit changes nothing,
+    and competing acceptances on separate instances leave exactly one active owner."""
+    stores = instances(CompanyInspectionStore)
+    db = stores[0].db
+    seed_company(db)
+    db.document('_platform_admins/admin').set({'active': True})
+    invitations = {
+        uid: stores[0].workspaces.invite('admin', 'adr', uid + '@example.invalid', 'owner')
+        for uid in ('first', 'second')
+    }
+    paths = ['_companies/adr', '_memberships/owner', '_memberships/first']
+    paths += ['_invitations/' + i['invitation_id'] for i in invitations.values()]
+    before = {path: stored(db, path) for path in paths}
+    event = WorkspaceStore.event
+
+    def failing(self, tx, uid, action, *args):
+        if action == 'invitation_accepted':
+            raise RuntimeError('Synthetic failure after the switch was staged')
+        return event(self, tx, uid, action, *args)
+
+    monkeypatch.setattr(WorkspaceStore, 'event', failing)
+    with pytest.raises(RuntimeError):
+        stores[0].workspaces.accept(verified('first'), invitations['first']['invitation_id'])
+    assert {path: stored(db, path) for path in paths} == before
+    monkeypatch.setattr(WorkspaceStore, 'event', event)
+
+    def accept(store, uid):
+        return lambda: store.workspaces.accept(verified(uid), invitations[uid]['invitation_id'])
+
+    winners = outcomes(
+        concurrently([accept(stores[0], 'first'), accept(stores[1], 'second')]), refused=Conflict
+    )
+    assert len(winners) <= 1
+    if not winners:
+        winners = [accept(stores[0], 'first')()]
+    winner = winners[0]['uid']
+    loser = 'second' if winner == 'first' else 'first'
+    with pytest.raises(Conflict):
+        accept(stores[1], loser)()
+    # Repeated acceptance by the winner is idempotent.
+    assert accept(stores[1], winner)()['role'] == 'owner'
+    owners = [
+        s.to_dict()['uid']
+        for s in db.collection('_memberships').stream()
+        if s.to_dict()['role'] == 'owner' and s.to_dict()['status'] == 'active'
+    ]
+    assert owners == [winner] and stored(db, '_companies/adr')['owner_uid'] == winner
+    assert stored(db, '_memberships/owner')['status'] == 'disabled'
+    assert stored(db, '_memberships/' + loser) is None
+    accepted = [
+        s.to_dict()
+        for s in db.collection('_admin_events').stream()
+        if s.to_dict()['action'] == 'invitation_accepted'
+    ]
+    assert [(e['actor_uid'], e['details']) for e in accepted] == [
+        (winner, {'role': 'owner', 'previous_owner_uid': 'owner'})
+    ]
 
 
 def browser_token(uid, **claims):
