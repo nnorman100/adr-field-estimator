@@ -1505,6 +1505,7 @@ function helpContact() {
     );
   line.replaceChildren(...parts, '.');
 }
+let helpTopics;
 function openHelp() {
   closeMenus();
   const roles = helpRoles();
@@ -1515,7 +1516,8 @@ function openHelp() {
   $('helpIntro').textContent = roles.length
     ? 'How to use the field estimator. Topics for your role come first.'
     : 'How to use the field estimator. Sign in to see the topics for your role first.';
-  for (const topic of document.querySelectorAll('#helpDialog [data-help-roles]')) {
+  helpTopics ??= [...document.querySelectorAll('#helpDialog [data-help-roles]')];
+  for (const topic of helpTopics) {
     const yours = topic.dataset.helpRoles.split(' ').some((role) => roles.includes(role));
     $(yours ? 'helpYours' : 'helpOther').append(topic);
   }

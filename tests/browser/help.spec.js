@@ -120,6 +120,29 @@ test.describe('company roles', () => {
       await page.getByRole('button', { name: 'Close', exact: true }).click();
       await expect(dialog).toBeHidden();
     });
+  test('a role change without reload keeps the topics in workflow order', async ({ page }) => {
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('office'),
+    );
+    await page.goto('/');
+    await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
+    await openHelp(page);
+    expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[4], ALL[6]]);
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    const result = await page.request.fetch('/api/companies/adr/team/' + uid('office'), {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer ' + uid('owner'), 'X-ADR-Workspace-Protocol': '1' },
+      data: { expected_version: 1, role: 'estimator', status: 'active' },
+    });
+    expect(result.ok()).toBe(true);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#dashboardJobs')).toHaveText('My jobs');
+    await openHelp(page);
+    await expect(page.locator('#helpYoursHeading')).toHaveText('For you: Estimator');
+    expect(await topics(page, 'helpYours')).toEqual(FIELD);
+    expect(await topics(page, 'helpOther')).toEqual(ALL.slice(FIELD.length));
+  });
 });
 
 test('help without company workspaces lists the field workflow first', async ({ page }) => {
