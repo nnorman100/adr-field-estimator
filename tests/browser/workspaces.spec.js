@@ -57,6 +57,16 @@ test('owner dashboard has no automatic blank inspection and fits phones', async 
   expect((await (await page.request.get('/__test/workspaces-stats')).json()).inspection_count).toBe(
     1,
   );
+  await expect(page.locator('#dashboardDescription')).toContainText(
+    'Water & mold loss estimates, signed on site.',
+  );
+  await expect(page.locator('#dashboardDescription')).toContainText(
+    'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.',
+  );
+  await expect(page.locator('#dashboardEyebrow')).toHaveText('LOSS ESTIMATES · PLATFORM & COMPANY');
+  await expect(page.locator('#authPanel')).toBeHidden();
+  await expect(page.locator('body')).not.toHaveClass(/login-page/);
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
   await expect(page.locator('#dashboardTeam')).toBeVisible();
   await expect(page.locator('#dashboardAdmin')).toBeVisible();
   for (const width of [320, 390]) {

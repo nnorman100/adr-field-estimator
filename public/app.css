@@ -1657,3 +1657,31 @@ footer {
     padding: 0.75rem 1rem;
   }
 }
+
+.positioning {
+  max-width: 460px;
+  margin: 0 0 1rem;
+}
+.positioning-headline {
+  margin: 0 0 0.35rem;
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+.positioning-line {
+  margin: 0;
+}
+
+/* Signed out: a plain login page, no workspace behind it. */
+.login-page .workspace-bar,
+.login-page .inspection-shell,
+.login-page .workspace,
+.login-page #jobCoordination,
+.login-page #conflictActions {
+  display: none !important;
+}
+.login-page .auth-panel {
+  margin-top: 2.5rem;
+}
+.positioning #googleSignIn {
+  margin-top: 1rem;
+}

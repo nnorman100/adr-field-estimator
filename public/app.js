@@ -2564,11 +2564,13 @@ async function initialize() {
     $('emailAuthForm').reportValidity()
       ? { email: $('authEmail').value.trim(), password: $('authPassword').value }
       : null;
-  authClick('signInButton', async () => {
+  const googleSignIn = async () => {
     const provider = new authSdk.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     await authSdk.signInWithPopup(auth, provider);
-  });
+  };
+  authClick('signInButton', googleSignIn);
+  authClick('googleSignIn', googleSignIn);
   $('emailAuthForm').addEventListener('submit', (e) => e.preventDefault());
   authClick('emailSignIn', async () => {
     const entered = credentials();
@@ -2900,6 +2902,9 @@ async function applyUser(user) {
   $('inspectionFields').disabled = true;
   $('accountStatus').textContent = user ? user.email : 'Sign in to start an inspection';
   $('authPanel').hidden = stage === 'ready';
+  $('googleSignIn').hidden = stage !== 'signedOut';
+  // Signed out or unverified: only the login page shows, never the inspection workspace.
+  document.body.classList.toggle('login-page', stage !== 'ready');
   $('emailAuthForm').hidden = stage !== 'signedOut';
   $('verifyEmail').hidden = stage !== 'unverified';
   $('verifyAddress').textContent = user?.email || '';

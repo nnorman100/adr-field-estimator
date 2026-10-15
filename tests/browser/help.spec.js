@@ -64,6 +64,24 @@ test.describe('signed out', () => {
     );
 });
 
+test('signed-out screen says what the app is for before sign-in', async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
+  await page.goto('/');
+  await expect(page).toHaveTitle(
+    'Field Estimator · Water & mold loss estimates | Alert Disaster Restoration',
+  );
+  for (const hidden of ['.inspection-shell', '.workspace', '.workspace-bar', '#jobCoordination'])
+    await expect(page.locator(hidden).first()).toBeHidden();
+  await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
+  await expect(page.locator('#emailAuthForm')).toBeVisible();
+  const line = page.locator('#authPanel #positioning');
+  await expect(line).toBeVisible();
+  await expect(line).toContainText('Water & mold loss estimates, signed on site.');
+  await expect(line).toContainText(
+    'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.',
+  );
+});
+
 test.describe('company roles', () => {
   test.beforeEach(async ({ request }) => {
     await request.post('/__test/workspaces', { data: { enabled: true } });

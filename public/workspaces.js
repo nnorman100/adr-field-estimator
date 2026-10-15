@@ -6,6 +6,9 @@ window.WorkspaceUI = (() => {
     refreshing = false,
     initialized = false,
     supportUrls = [];
+  const POSITIONING_HEADLINE = 'Water & mold loss estimates, signed on site.',
+    POSITIONING_LINE =
+      'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.';
   const SUPPORT_EYEBROW = 'READ-ONLY SUPPORT VIEW',
     SUPPORT_NOTE =
       'Read-only: jobs, drafts and signed documents cannot be changed here. Every view and support action is recorded in the audit log.';
@@ -72,9 +75,9 @@ window.WorkspaceUI = (() => {
   function defaultEyebrow() {
     return state.session.superadmin
       ? state.session.role
-        ? 'PLATFORM & COMPANY WORKSPACE'
-        : 'PLATFORM ADMINISTRATION'
-      : roleName(state.session.role).toUpperCase();
+        ? 'LOSS ESTIMATES · PLATFORM & COMPANY'
+        : 'LOSS ESTIMATES · PLATFORM ADMINISTRATION'
+      : 'LOSS ESTIMATES · ' + roleName(state.session.role).toUpperCase();
   }
   function show(title, description = '', eyebrow) {
     ++viewEpoch;
@@ -286,7 +289,7 @@ window.WorkspaceUI = (() => {
     await persist();
     const epoch = show(
       state.session.company?.profile.name || 'Welcome',
-      'Manage your workspace and continue a saved job.',
+      POSITIONING_HEADLINE + ' ' + POSITIONING_LINE,
     );
     current('dashboardHome');
     $('dashboardEyebrow').textContent = defaultEyebrow();
