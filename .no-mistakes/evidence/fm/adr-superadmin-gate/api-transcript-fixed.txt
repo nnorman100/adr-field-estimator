@@ -1,0 +1,58 @@
+== caller: estimator (not a superadmin)
+estimator GET  /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+estimator POST /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+estimator PUT  /api/admin/companies/other/status                    -> 403 {"detail":"Superadmin access is required."}
+estimator PUT  /api/admin/companies/adr/status                      -> 403 {"detail":"Superadmin access is required."}
+estimator PUT  /api/admin/companies/missing-co/status               -> 403 {"detail":"Superadmin access is required."}
+estimator GET  /api/admin/companies/other/jobs                      -> 403 {"detail":"Superadmin access is required."}
+estimator GET  /api/admin/companies/adr/jobs                        -> 403 {"detail":"Superadmin access is required."}
+estimator GET  /api/admin/companies/adr/authorizations              -> 403 {"detail":"Superadmin access is required."}
+estimator GET  /api/companies/other/team                            -> 403 {"detail":"Your company access is unavailable."}
+estimator GET  /api/companies/other/invitations                     -> 403 {"detail":"Your company access is unavailable."}
+estimator POST /api/companies/other/invitations                     -> 403 {"detail":"Superadmin access is required."}
+== caller: office (not a superadmin)
+office    GET  /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+office    POST /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+office    PUT  /api/admin/companies/other/status                    -> 403 {"detail":"Superadmin access is required."}
+office    PUT  /api/admin/companies/adr/status                      -> 403 {"detail":"Superadmin access is required."}
+office    PUT  /api/admin/companies/missing-co/status               -> 403 {"detail":"Superadmin access is required."}
+office    GET  /api/admin/companies/other/jobs                      -> 403 {"detail":"Superadmin access is required."}
+office    GET  /api/admin/companies/adr/jobs                        -> 403 {"detail":"Superadmin access is required."}
+office    GET  /api/admin/companies/adr/authorizations              -> 403 {"detail":"Superadmin access is required."}
+office    GET  /api/companies/other/team                            -> 403 {"detail":"Your company access is unavailable."}
+office    GET  /api/companies/other/invitations                     -> 403 {"detail":"Your company access is unavailable."}
+office    POST /api/companies/other/invitations                     -> 403 {"detail":"Superadmin access is required."}
+== caller: other (not a superadmin)
+other     GET  /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+other     POST /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+other     PUT  /api/admin/companies/adr/status                      -> 403 {"detail":"Superadmin access is required."}
+other     PUT  /api/admin/companies/other/status                    -> 403 {"detail":"Superadmin access is required."}
+other     PUT  /api/admin/companies/missing-co/status               -> 403 {"detail":"Superadmin access is required."}
+other     GET  /api/admin/companies/adr/jobs                        -> 403 {"detail":"Superadmin access is required."}
+other     GET  /api/admin/companies/other/jobs                      -> 403 {"detail":"Superadmin access is required."}
+other     GET  /api/admin/companies/other/authorizations            -> 403 {"detail":"Superadmin access is required."}
+other     GET  /api/companies/adr/team                              -> 403 {"detail":"Your company access is unavailable."}
+other     GET  /api/companies/adr/invitations                       -> 403 {"detail":"Your company access is unavailable."}
+other     POST /api/companies/adr/invitations                       -> 403 {"detail":"Superadmin access is required."}
+== caller: outsider (not a superadmin)
+outsider  GET  /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+outsider  POST /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+outsider  PUT  /api/admin/companies/other/status                    -> 403 {"detail":"Superadmin access is required."}
+outsider  PUT  /api/admin/companies/adr/status                      -> 403 {"detail":"Superadmin access is required."}
+outsider  PUT  /api/admin/companies/missing-co/status               -> 403 {"detail":"Superadmin access is required."}
+outsider  GET  /api/admin/companies/other/jobs                      -> 403 {"detail":"Superadmin access is required."}
+outsider  GET  /api/admin/companies/adr/jobs                        -> 403 {"detail":"Superadmin access is required."}
+outsider  GET  /api/admin/companies/adr/authorizations              -> 403 {"detail":"Superadmin access is required."}
+outsider  GET  /api/companies/other/team                            -> 403 {"detail":"Your company access is unavailable."}
+outsider  GET  /api/companies/other/invitations                     -> 403 {"detail":"Your company access is unavailable."}
+outsider  POST /api/companies/other/invitations                     -> 403 {"detail":"Superadmin access is required."}
+== forged superadmin hints (office caller)
+office    GET  /api/admin/companies                                 -> 403 {"detail":"Superadmin access is required."}
+office    PUT  /api/admin/companies/other/status                    -> 422 {"detail":[{"type":"extra_forbidden","loc":["body","superadmin"],"msg":"Extra inputs are not permitted","input
+== state after all refused calls (read by the real superadmin)
+admin     GET  /api/admin/companies                                 -> 200 {"companies":[{"company_id":"adr","profile":{"name":"Alert Disaster Restoration","address":"3300 Patton Way ·
+== positive control: active superadmin
+admin     PUT  /api/admin/companies/missing-co/status               -> 404 {"detail":"Record not found."}
+admin     GET  /api/companies/other/team                            -> 200 {"members":[{"uid":"test-owner-ws-other","email":"test-owner-ws-other@example.invalid","company_id":"other","r
+admin     PUT  /api/admin/companies/other/status                    -> 200 {"company_id":"other","profile":{"name":"Other Restoration","address":"Other office","phone":"(661) 426-2151",
+admin     PUT  /api/admin/companies/other/status                    -> 200 {"company_id":"other","profile":{"name":"Other Restoration","address":"Other office","phone":"(661) 426-2151",

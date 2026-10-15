@@ -1,0 +1,3 @@
+tests/test_firestore_emulator.py::test_superadmin_support_views_and_fixes_append_audit_entries PASSED [ 50%]
+tests/test_firestore_emulator.py::test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims PASSED [100%]
+================= 2 passed, 17 deselected, 1 warning in 3.75s ==================

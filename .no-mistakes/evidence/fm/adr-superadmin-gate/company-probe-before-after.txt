@@ -1,0 +1,26 @@
+== port 8799 (fixed 16792d0)
+estimator PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+estimator PUT /api/admin/companies/missing-co/status ->  403{"detail":"Superadmin access is required."}
+office    PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+office    PUT /api/admin/companies/missing-co/status ->  403{"detail":"Superadmin access is required."}
+other     PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+other     PUT /api/admin/companies/missing-co/status ->  403{"detail":"Superadmin access is required."}
+outsider  PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+outsider  PUT /api/admin/companies/missing-co/status ->  403{"detail":"Superadmin access is required."}
+admin     PUT /api/admin/companies/other     /status ->  200{"company_id":"other","profile":{"name":"Other Restoration",
+admin     PUT /api/admin/companies/missing-co/status ->  404{"detail":"Record not found."}
+company statuses after:
+[('adr', 'active', 1), ('other', 'suspended', 2)]
+== port 8798 (base 0810e24)
+estimator PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+estimator PUT /api/admin/companies/missing-co/status ->  404{"detail":"Record not found."}
+office    PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+office    PUT /api/admin/companies/missing-co/status ->  404{"detail":"Record not found."}
+other     PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+other     PUT /api/admin/companies/missing-co/status ->  404{"detail":"Record not found."}
+outsider  PUT /api/admin/companies/other     /status ->  403{"detail":"Superadmin access is required."}
+outsider  PUT /api/admin/companies/missing-co/status ->  404{"detail":"Record not found."}
+admin     PUT /api/admin/companies/other     /status ->  200{"company_id":"other","profile":{"name":"Other Restoration",
+admin     PUT /api/admin/companies/missing-co/status ->  404{"detail":"Record not found."}
+company statuses after:
+[('adr', 'active', 1), ('other', 'suspended', 2)]

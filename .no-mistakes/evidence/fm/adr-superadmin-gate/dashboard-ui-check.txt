@@ -1,0 +1,4 @@
+estimator heading= My jobs adminPanelVisible= false manageCompaniesButtons= 0 supportViewButtons= 0
+office heading= Company jobs adminPanelVisible= false manageCompaniesButtons= 0 supportViewButtons= 0
+other heading= Other Restoration adminPanelVisible= false manageCompaniesButtons= 0 supportViewButtons= 0
+admin heading= Welcome adminPanelVisible= true manageCompaniesButtons= 1 supportViewButtons= 0
