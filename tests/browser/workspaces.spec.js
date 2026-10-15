@@ -110,6 +110,9 @@ for (const role of ['owner', 'estimator'])
         } else await expect(page.locator('#jobCoordination')).toBeHidden();
         await page.locator('.task-nav [data-task="walkthrough"]').click();
         await expect(page.locator('#startWalk')).toBeVisible();
+        const help = page.getByRole('button', { name: 'Help', exact: true });
+        await expect(help).toBeVisible();
+        expect(await firstScreen(page, '.help-button')).toMatchObject({ inside: true, hit: true });
         expect(await firstScreen(page, '#startWalk')).toEqual({
           scrolled: 0,
           inside: true,
