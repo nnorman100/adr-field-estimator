@@ -136,3 +136,10 @@ Agents must preserve the exact standard estimate clauses in `backend/claims.py`,
 
 - Run `python -m pytest tests -q -p no:cacheprovider`, `npm test` and `npm run test:browser` for lifecycle changes. Keep the HTML copies identical.
 - Record synthetic real-service checks separately from mock tests. Physical iPhone camera, microphone, Bluetooth, reconnect, interruption, Finish cleanup and sub-second latency remain open until observed on the device. See `docs/review-repairs.md` for the guided test and current evidence.
+
+## Wiki rules
+- Pick a pstack tier per task. Light (docs, config, lint, CI, small fixes): unslop, principle-prove-it-works. Standard (normal features and bug fixes) is the default. Full (money math, auth/access control, database, answer files/tests, or >~300 lines) adds architect, boundary/type discipline, explain-the-number, and blast-radius before the PR. Reports name the skills run.
+- Jev gate: one bundled Jev call per step, model pinned to jev-1.13.0, logged before acting. Confidence by action: reads ≥0.5, reversible writes ≥0.7, merges/deletes ≥0.9. Below 0.5, ask Nate. Sends, money, prod deploys, auth, database changes and anything irreversible always need Nate's yes. Do the math in code, not in Jev. If Jev is down, retry once and then take the safe branch; never self-score.
+- No proof, no done: QA checks outcomes before merge.
+- Cost: keep PRs small and default to Standard. Don't run research/scout tasks when this AGENTS.md already covers the repo. Grok models first, with reasoning effort matched to the job.
+- Full rules: [LLM wiki on Drive](https://drive.google.com/drive/folders/1N7EzAt5rmV9TYupYK21toT_MjHLBzt8A)
