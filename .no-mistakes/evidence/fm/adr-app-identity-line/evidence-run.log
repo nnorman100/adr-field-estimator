@@ -1,0 +1,18 @@
+
+Running 4 tests using 1 worker
+
+desktop {"title":"Field Estimator · Water & mold loss estimates | Alert Disaster Restoration","meta":"Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log. Alert Disaster Restoration.","googleButtons":1,"visibleWorkspace":[],"bodyLogin":true,"visibleEyebrows":[]}
+phone {"title":"Field Estimator · Water & mold loss estimates | Alert Disaster Restoration","meta":"Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log. Alert Disaster Restoration.","googleButtons":1,"visibleWorkspace":[],"bodyLogin":true,"visibleEyebrows":[]}
+manifest.description Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.
+finishAudit visible signed-out: false
+  ✓  1 [chromium] › .evtmp/evidence.spec.js:5:1 › signed-out login page desktop+phone (840ms)
+owner eyebrow: LOSS ESTIMATES · PLATFORM & COMPANY | desc: Water & mold loss estimates, signed on site. Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.
+  ✓  2 [chromium] › .evtmp/evidence.spec.js:37:46 › workspaces › dashboard owner (426ms)
+estimator landing eyebrow: LOSS ESTIMATES | heading: My jobs
+estimator eyebrow: LOSS ESTIMATES · ESTIMATOR | desc: Water & mold loss estimates, signed on site. Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.
+  ✓  3 [chromium] › .evtmp/evidence.spec.js:37:46 › workspaces › dashboard estimator (531ms)
+jobbar eyebrow: LOSS INSPECTION
+documents eyebrow: LOSS ESTIMATE
+  ✓  4 [chromium] › .evtmp/evidence.spec.js:54:1 › legacy signed-in inspection eyebrows + claims documents (896ms)
+
+  4 passed (5.4s)

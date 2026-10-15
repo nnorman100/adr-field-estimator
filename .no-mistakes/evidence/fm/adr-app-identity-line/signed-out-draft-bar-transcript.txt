@@ -1,0 +1,6 @@
+.draft-actions visible: true disabled: false
+#saveDraft visible: true disabled: true
+#finishAudit visible: true disabled: true
+footer visible: true disabled: false
+click finishAudit failed: page.click: Timeout 3000ms exceeded.
+message after Finish click: (hidden)

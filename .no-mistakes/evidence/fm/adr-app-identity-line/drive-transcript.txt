@@ -1,0 +1,30 @@
+[signed-out desktop] title: Field Estimator · Water & mold loss estimates | Alert Disaster Restoration
+[signed-out desktop] body.login-page: true
+[signed-out desktop] positioning: Water & mold loss estimates, signed on site. |  | Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log. |  | Sign in with Google
+[signed-out desktop] visible google buttons: 1  #signInButton exists: 0
+   .inspection-shell visible: false
+   .workspace-bar visible: false
+   #workspaceDashboard visible: false
+   #emailAuthForm visible: true
+   horizontal overflow: false
+   clicked #googleSignIn, page errors none
+[signed-out phone] title: Field Estimator · Water & mold loss estimates | Alert Disaster Restoration
+[signed-out phone] body.login-page: true
+[signed-out phone] positioning: Water & mold loss estimates, signed on site. |  | Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log. |  | Sign in with Google
+[signed-out phone] visible google buttons: 1  #signInButton exists: 0
+   .inspection-shell visible: false
+   .workspace-bar visible: false
+   #workspaceDashboard visible: false
+   #emailAuthForm visible: true
+   horizontal overflow: false
+[manifest] description: Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.
+[meta] description: Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log. Alert Disaster Restoration.
+[dashboard] eyebrow: LOSS ESTIMATES · PLATFORM & COMPANY
+[dashboard] description: Water & mold loss estimates, signed on site. Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.
+[dashboard] authPanel visible: false  body.login-page: false
+[after sign-out] body.login-page: true  dashboard visible: false  inspection-shell visible: false
+[estimator dashboard] eyebrow: LOSS ESTIMATES
+[inspection] eyebrow: LOSS INSPECTION  body.login-page: false
+[review] eyebrow: READY TO ESTIMATE?
+[documents] eyebrow (static markup): LOSS ESTIMATE
+[unverified] body.login-page: true  inspection-shell visible: false  workspace-bar visible: false  googleSignIn visible: false  positioning visible: true
