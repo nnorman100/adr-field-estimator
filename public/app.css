@@ -846,6 +846,32 @@ footer {
   .header-tools {
     gap: 0.4rem;
   }
+  /* On phones the update prompt joins the masthead row, so it never covers or displaces page content. */
+  #updateBanner {
+    position: static;
+    flex: 0 1 auto;
+    max-width: 4.5rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+  }
+  #updateBanner .update-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  #updateBanner button {
+    padding: 0.25rem 0.45rem;
+    font-size: 0.8125rem;
+    line-height: 1.2;
+    background: #fff3da;
+    border-color: #e1c27e;
+    color: #634716;
+  }
   .header-tools button,
   .menu summary {
     padding: 0.6rem 0.75rem;

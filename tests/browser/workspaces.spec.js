@@ -688,3 +688,59 @@ for (const role of ['estimator', 'office', 'other', 'outsider']) {
     ]);
   });
 }
+
+// A new release shows the compact "Update ready" banner; it must never hide the first action.
+async function showUpdateBanner(page) {
+  await page.evaluate(() => {
+    document.getElementById('jobTitle').textContent =
+      'Synthetic property with a long building, unit and street description';
+    document.getElementById('updateBanner').hidden = false;
+  });
+  await expect(page.locator('#updateBanner')).toBeVisible();
+}
+async function bannerUsable(page) {
+  return page.locator('#applyUpdate').evaluate((el) => {
+    const r = el.getBoundingClientRect(),
+      top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return {
+      inside: r.top >= 0 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+      hit: top === el || el.contains(top),
+    };
+  });
+}
+for (const mode of ['owner', 'estimator', 'legacy owner-only'])
+  for (const width of [320, 390])
+    test(
+      mode + ' phone at ' + width + '×844 keeps Start walkthrough clear of the Update ready banner',
+      async ({ page, request, browserName }) => {
+        await page.setViewportSize({ width, height: 844 });
+        if (mode === 'legacy owner-only') {
+          await request.post('/__test/workspaces', { data: { enabled: false } });
+          await page.goto('/');
+          await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+        } else {
+          await start(page, mode);
+          await navigate(page, 'dashboardJobs');
+          await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+        }
+        await expect(page.locator('#address')).toBeEnabled();
+        await page.locator('.task-nav [data-task="walkthrough"]').click();
+        await showUpdateBanner(page);
+        await expect(page.locator('#startWalk')).toBeVisible();
+        if (browserName === 'chromium')
+          await page.screenshot({
+            path: test
+              .info()
+              .outputPath('update-banner-' + mode.replace(/\W+/g, '-') + '-' + width + '.png'),
+          });
+        expect(await firstScreen(page, '#startWalk')).toEqual({
+          scrolled: 0,
+          inside: true,
+          hit: true,
+        });
+        expect(await bannerUsable(page)).toEqual({ inside: true, hit: true });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+          false,
+        );
+      },
+    );
