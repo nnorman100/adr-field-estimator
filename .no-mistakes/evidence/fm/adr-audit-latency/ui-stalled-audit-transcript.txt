@@ -1,0 +1,18 @@
+{
+ "documents_visible_after_s": 28.6,
+ "message": "Audit ready. Review all four documents before signing.",
+ "provider_calls": [
+  {
+   "n": 1,
+   "thinking": "ThinkingLevel.LOW",
+   "outcome": "cancelled",
+   "after_s": 25
+  },
+  {
+   "n": 2,
+   "thinking": "ThinkingLevel.LOW",
+   "outcome": "finished",
+   "after_s": 3
+  }
+ ]
+}

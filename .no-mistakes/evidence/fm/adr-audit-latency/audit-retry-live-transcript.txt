@@ -1,0 +1,33 @@
+{"enabled":true,"inspection_id":"ADR-INS-cccccccccccccccccccccccccccccccc"}
+=== S1 healthy audit, workspaces on ===
+plan: {"delays":[2]}
+HTTP 200
+wall: 2.03 s
+audit saved, revision 1 signable True summary: <img src=x onerror="window.reviewInjected=true"> Confirmed s
+provider calls: [{"n":1,"thinking":"ThinkingLevel.LOW","outcome":"finished","after_s":2.0}]
+saved audit on record: {'revision': 1, 'hash': '744a511f4d24'}
+
+=== S2 first attempt stalls (60s), retry succeeds ===
+plan: {"delays":[60,3]}
+HTTP 200
+wall: 28.02 s
+audit saved, revision 1 signable True summary: <img src=x onerror="window.reviewInjected=true"> Confirmed s
+provider calls: [{"n":1,"thinking":"ThinkingLevel.LOW","outcome":"cancelled","after_s":25.0},{"n":2,"thinking":"ThinkingLevel.LOW","outcome":"finished","after_s":3.0}]
+saved audit on record: {'revision': 1, 'hash': '744a511f4d24'}
+
+=== S3 both attempts stall ===
+plan: {"delays":[60,60]}
+HTTP 504
+wall: 50.02 s
+detail: AI generation timed out. Retry; no document or reading was verified.
+provider calls: [{"n":1,"thinking":"ThinkingLevel.LOW","outcome":"cancelled","after_s":25.0},{"n":2,"thinking":"ThinkingLevel.LOW","outcome":"cancelled","after_s":25.0}]
+saved audit on record: {'revision': 1, 'hash': '744a511f4d24'}
+
+=== S4 provider error is not retried ===
+plan: {"error":true}
+HTTP 502
+wall: 0.01 s
+detail: AI returned an unavailable or invalid result. Retry; no document or reading was verified.
+provider calls: [{"n":1,"thinking":"ThinkingLevel.LOW","outcome":"error"}]
+saved audit on record: {'revision': 1, 'hash': '744a511f4d24'}
+

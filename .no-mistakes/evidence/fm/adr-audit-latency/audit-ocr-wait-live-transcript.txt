@@ -1,0 +1,19 @@
+create job HTTP 200
+=== S5 OCR wait leaves ~20 s: stalled single attempt gets whole budget, no retry, 504 before deadline ===
+plan: {"delays":[60]}
+photo upload HTTP 200 (OCR left pending)
+HTTP 504
+wall: 50.02 s
+detail: AI generation timed out. Retry; no document or reading was verified.
+provider calls: [{"n":1,"thinking":"ThinkingLevel.LOW","outcome":"cancelled","after_s":19.87}]
+
+=== S6 OCR wait leaves ~20 s: an 18 s healthy call gets the whole remaining budget and succeeds ===
+plan: {"delays":[18]}
+photo upload HTTP 200 (OCR left pending)
+HTTP 200
+wall: 48.14 s
+audit saved for revision 3
+provider calls: [{"n":1,"thinking":"ThinkingLevel.LOW","outcome":"finished","after_s":18.0}]
+
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 19865, "outcome": "timeout", "inspection_id": "ADR-INS-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 18001, "outcome": "ok", "inspection_id": "ADR-INS-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}

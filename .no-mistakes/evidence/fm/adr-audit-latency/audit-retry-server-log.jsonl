@@ -1,0 +1,8 @@
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 2010, "outcome": "ok", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 25001, "outcome": "timeout", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "WARNING", "message": "Vertex AI retry", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 25002, "timeout_ms": 24998, "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 3002, "outcome": "ok", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 25002, "outcome": "timeout", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "WARNING", "message": "Vertex AI retry", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 25004, "timeout_ms": 24996, "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 24998, "outcome": "timeout", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 0, "outcome": "RuntimeError", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc"}
