@@ -102,8 +102,17 @@ OCR_MODEL = os.getenv('OCR_MODEL', AUDIT_MODEL)
 # scope extraction and passes the 55-second REST deadline. A 4096-token thinking budget still let
 # 3 of 4 staged scope calls reach the deadline on 2026-10-13. With the LOW thinking level, 10 calls
 # on the staged check's synthetic job took at most 4.5 seconds (median 2.6 s), with valid
-# suggestions. Audit and OCR calls never approached the deadline, so they keep the provider default.
+# suggestions. OCR calls never approached the deadline, so they keep the provider default.
 SCOPE_THINKING_LEVEL = types.ThinkingLevel.LOW
+AUDIT_THINKING_LEVEL = types.ThinkingLevel.LOW
+REST_DEADLINE_SECONDS = 55
+# Thinking is not what stalls audits: 2 of 7 production audits on 2026-10-15 reached the deadline,
+# and in 17 real-Vertex audits with LOW thinking (no thought tokens) 15 took at most 21.6 s while
+# provider stalls held two for 49 s and 82 s. A first attempt still running at 25 s is cancelled
+# and retried once with the rest of the deadline, keeping 5 s to price and save the documents.
+AUDIT_ATTEMPT_SECONDS = 25
+AUDIT_RETRY_MIN_SECONDS = 10
+AUDIT_SAVE_RESERVE_SECONDS = 5
 LIVE_MODEL = os.getenv('LIVE_MODEL', 'gemini-3.8-live')
 LIVE_LOCATION = os.getenv('LIVE_LOCATION', 'us-central1')
 LIVE_RECHECK_SECONDS = 20
@@ -444,7 +453,14 @@ def parse_json_from_llm(text):
 
 
 async def generate(
-    schema, contents, model, operation, inspection_id, wire_schema=None, thinking_level=None
+    schema,
+    contents,
+    model,
+    operation,
+    inspection_id,
+    wire_schema=None,
+    thinking_level=None,
+    timeout=100,
 ):
     started = time.monotonic()
     outcome = 'cancelled'
@@ -464,7 +480,7 @@ async def generate(
                     ),
                 ),
             ),
-            timeout=100,
+            timeout=timeout,
         )
         result = schema.model_validate(parse_json_from_llm(response.text))
         outcome = 'ok'
@@ -502,7 +518,7 @@ def rest_deadline(operation):
     @wraps(operation)
     async def bounded(*args, **kwargs):
         try:
-            return await asyncio.wait_for(operation(*args, **kwargs), 55)
+            return await asyncio.wait_for(operation(*args, **kwargs), REST_DEADLINE_SECONDS)
         except asyncio.TimeoutError:
             raise HTTPException(
                 504,
@@ -510,6 +526,42 @@ def rest_deadline(operation):
             )
 
     return bounded
+
+
+async def generate_audit(contents, inspection_id, started):
+    # `started` is when the request's REST deadline began, so no attempt can outlast it. A timed-out
+    # attempt is cancelled with its HTTP request and discarded; nothing is saved until one succeeds.
+    end = started + REST_DEADLINE_SECONDS - AUDIT_SAVE_RESERVE_SECONDS
+    remaining = end - time.monotonic()
+    timeout = (
+        AUDIT_ATTEMPT_SECONDS
+        if remaining - AUDIT_ATTEMPT_SECONDS >= AUDIT_RETRY_MIN_SECONDS
+        else remaining
+    )
+    for attempt in (1, 2):
+        try:
+            return await generate(
+                AIResult,
+                contents,
+                AUDIT_MODEL,
+                'audit',
+                inspection_id,
+                thinking_level=AUDIT_THINKING_LEVEL,
+                timeout=timeout,
+            )
+        except HTTPException as error:
+            timeout = end - time.monotonic()
+            if error.status_code != 504 or attempt == 2 or timeout < AUDIT_RETRY_MIN_SECONDS:
+                raise
+            event(
+                'Vertex AI retry',
+                logging.WARNING,
+                model=AUDIT_MODEL,
+                operation='audit',
+                elapsed_ms=round((time.monotonic() - started) * 1000),
+                timeout_ms=round(timeout * 1000),
+                inspection_id=inspection_id,
+            )
 
 
 def model_image(raw):
@@ -763,6 +815,7 @@ async def suggest_scope(
 async def audit_inspection(
     req: AuditRequest, request: Request, staff=Depends(current_staff), store=Depends(get_job_store)
 ):
+    started = time.monotonic()
     await stored(store.quota, staff['uid'], 'audit', 3)
     record = await stored(store.get_inspection, staff['uid'], req.inspection_id)
     await stored(store._access, staff['uid'], record, 'audit')
@@ -799,7 +852,7 @@ async def audit_inspection(
     for photo in record['photos']:
         _, raw = await stored(store.photo, staff['uid'], req.inspection_id, photo['id'])
         contents.append(await run_in_threadpool(model_image, raw))
-    ai = await generate(AIResult, contents, AUDIT_MODEL, 'audit', req.inspection_id)
+    ai = await generate_audit(contents, req.inspection_id, started)
     try:
         documents = make_documents(data, record['photos'], ai, identity)
     except (ValueError, ValidationError):
