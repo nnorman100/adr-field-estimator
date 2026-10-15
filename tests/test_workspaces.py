@@ -2079,3 +2079,374 @@ def test_support_view_is_unavailable_in_legacy_owner_only_mode(monkeypatch):
     client = TestClient(bm.app, headers={'Authorization': 'Bearer owner.a'})
     for path in ('/jobs', '/authorizations', '/jobs/' + ID, '/authorizations/' + SIGNED):
         assert client.get('/api/admin/companies/adr' + path).status_code == 503
+
+
+# Superadmin-only tools: every caller who is not an active superadmin is refused.
+NON_SUPERADMINS = [
+    'owner',  # ADR owner; superadmin_gate removes this fixture's superadmin record
+    'estimator',
+    'office',
+    'outsider',  # verified sign-in, no membership
+    'disabled',  # disabled ADR estimator
+    'suspended',  # owner of a suspended company
+    'inactive',  # superadmin record set inactive
+    'removed',  # former ADR office member whose superadmin record was deleted
+]
+
+
+def superadmin_gate(client, current, store):
+    """Adds the non-superadmin callers and the records each superadmin tool targets."""
+    signed_job(client, current, store)
+    records = store.db.records
+    del records['_platform_admins/owner']
+    records['_companies/paused'] = {
+        **deepcopy(records['_companies/other']),
+        'company_id': 'paused',
+        'status': 'suspended',
+        'owner_uid': 'suspended',
+    }
+    for uid, role, company_id, status in [
+        ('disabled', 'estimator', 'adr', 'disabled'),
+        ('suspended', 'owner', 'paused', 'active'),
+        ('removed', 'office', 'adr', 'active'),
+        ('other-estimator', 'estimator', 'other', 'active'),
+        ('other-staff', 'office', 'other', 'disabled'),
+    ]:
+        records['_memberships/' + uid] = dict(
+            uid=uid,
+            email=uid + '@example.invalid',
+            company_id=company_id,
+            role=role,
+            status=status,
+            version=1,
+            updated_at='2026',
+        )
+    records['_platform_admins/inactive'] = {'active': False}
+    records['_platform_admins/removed'] = {'active': True}
+    del records['_platform_admins/removed']
+    w = store.workspaces
+    return dict(
+        staff=w.invite('other-owner', 'other', 'other-new@example.invalid', 'office'),
+        owner=w.invite('admin', 'other', 'other-next-owner@example.invalid', 'owner'),
+        adr_owner=w.invite('admin', 'adr', 'adr-next-owner@example.invalid', 'owner'),
+    )
+
+
+def superadmin_tools(invites):
+    """(name, method, path, body, superadmin status), ordered so an active superadmin succeeds."""
+    support = '/api/admin/companies/'
+    other = '/api/companies/other'
+    staff = other + '/invitations/' + invites['staff']['invitation_id']
+    owner = other + '/invitations/' + invites['owner']['invitation_id']
+    adr_owner = '/api/companies/adr/invitations/' + invites['adr_owner']['invitation_id']
+    return [
+        ('list companies', 'GET', '/api/admin/companies', None, 200),
+        ('company metadata', 'GET', other, None, 200),
+        ('team metadata', 'GET', other + '/team', None, 200),
+        ('invitation metadata', 'GET', other + '/invitations', None, 200),
+        ('support jobs', 'GET', support + 'adr/jobs', None, 200),
+        ('support documents', 'GET', support + 'adr/authorizations', None, 200),
+        ('support job', 'GET', support + 'adr/jobs/' + ID, None, 200),
+        ('support photo', 'GET', support + 'adr/jobs/' + ID + '/photos/' + PHOTO, None, 200),
+        ('support document', 'GET', support + 'adr/authorizations/' + SIGNED, None, 200),
+        (
+            'support evidence',
+            'GET',
+            support + 'adr/authorizations/' + SIGNED + '/evidence/signature',
+            None,
+            200,
+        ),
+        ('support other jobs', 'GET', support + 'other/jobs', None, 200),
+        ('support other job', 'GET', support + 'other/jobs/' + OTHER, None, 200),
+        ('support other documents', 'GET', support + 'other/authorizations', None, 200),
+        (
+            'switch member role',
+            'PUT',
+            other + '/team/other-estimator',
+            {'expected_version': 1, 'role': 'office', 'status': 'active'},
+            200,
+        ),
+        (
+            're-enable member',
+            'PUT',
+            other + '/team/other-staff',
+            {'expected_version': 1, 'role': 'office', 'status': 'active'},
+            200,
+        ),
+        ('resend staff invitation', 'POST', staff + '/resend', None, 200),
+        ('cancel staff invitation', 'POST', staff + '/cancel', None, 200),
+        ('resend owner invitation', 'POST', owner + '/resend', None, 200),
+        ('cancel owner invitation', 'POST', owner + '/cancel', None, 200),
+        (
+            'replace owner',
+            'POST',
+            other + '/invitations',
+            {'email': 'other-replacement@example.invalid', 'role': 'owner'},
+            200,
+        ),
+        (
+            'replace own company owner',
+            'POST',
+            '/api/companies/adr/invitations',
+            {'email': 'adr-replacement@example.invalid', 'role': 'owner'},
+            200,
+        ),
+        ('cancel own company owner invitation', 'POST', adr_owner + '/cancel', None, 200),
+        (
+            'suspend own company',
+            'PUT',
+            support + 'adr/status',
+            {'expected_version': 1, 'status': 'suspended'},
+            200,
+        ),
+        (
+            'reactivate suspended company',
+            'PUT',
+            support + 'paused/status',
+            {'expected_version': 1, 'status': 'active'},
+            200,
+        ),
+        (
+            'suspend company',
+            'PUT',
+            support + 'other/status',
+            {'expected_version': 1, 'status': 'suspended'},
+            200,
+        ),
+        (
+            'status of unknown company',
+            'PUT',
+            support + 'missing/status',
+            {'expected_version': 1, 'status': 'suspended'},
+            404,
+        ),
+        (
+            'create company',
+            'POST',
+            '/api/admin/companies',
+            {'name': 'Forged Restoration', 'owner_email': 'forged-owner@example.invalid'},
+            200,
+        ),
+    ]
+
+
+def unrestricted(store):
+    # A refused caller's own rate-limit counter (_limits) is the only record a request may touch.
+    return {k: deepcopy(v) for k, v in store.db.records.items() if not k.startswith('_limits/')}
+
+
+def assert_refused(client, tools, headers=None, expected=(403,)):
+    for name, method, path, body, _ in tools:
+        response = client.request(method, path, json=body, headers=headers)
+        assert response.status_code in expected, (name, response.status_code, response.text)
+        assert set(response.json()) == {'detail'}, name
+
+
+@pytest.mark.parametrize('uid', NON_SUPERADMINS)
+def test_superadmin_tools_refuse_every_non_superadmin(mail, uid):
+    client, current, store, accounts, sent, _ = mail
+    invites = superadmin_gate(client, current, store)
+    sent.clear()
+    before = unrestricted(store)
+    current['uid'] = uid
+    assert not client.get('/api/access').json()['superadmin']
+    assert_refused(client, superadmin_tools(invites))
+    assert unrestricted(store) == before
+    assert not sent and not accounts.created
+
+
+def test_superadmin_tools_succeed_for_an_active_superadmin(mail):
+    """The same requests succeed for a superadmin, so each refusal above comes from the gate."""
+    client, current, store, accounts, sent, _ = mail
+    invites = superadmin_gate(client, current, store)
+    current['uid'] = 'admin'
+    for name, method, path, body, expected in superadmin_tools(invites):
+        response = client.request(method, path, json=body)
+        assert response.status_code == expected, (name, response.text)
+    assert store.db.records['_companies/paused']['status'] == 'active'
+    assert store.db.records['_memberships/other-staff']['status'] == 'active'
+    assert {m['to'][0] for m in sent} >= {
+        'other-new@example.invalid',
+        'other-next-owner@example.invalid',
+        'forged-owner@example.invalid',
+    }
+
+
+def test_superadmin_tool_inventory_is_covered_and_rechecks_revocation():
+    """Every /api/admin route is in the refusal matrix and always repeats the revoked-account check."""
+    invites = {k: {'invitation_id': k} for k in ('staff', 'owner', 'adr_owner')}
+    tools = superadmin_tools(invites)
+    for route in bm.app.routes:
+        if not route.path.startswith('/api/admin'):
+            continue
+        for method in route.methods:
+            assert any(m == method and route.path_regex.fullmatch(p) for _, m, p, _, _ in tools), (
+                method,
+                route.path,
+            )
+        scopes = [
+            scope
+            for dependency in route.dependant.dependencies
+            if dependency.call is bm.current_identity
+            for scope in dependency.own_oauth_scopes
+        ]
+        assert bm.LIVE_REVOCATION[0] in scopes, route.path
+
+
+def revoke_admin(store):
+    store.db.records['_platform_admins/admin']['active'] = False
+
+
+def revoked(records):
+    # The revocation itself is the one expected change.
+    return {**records, '_platform_admins/admin': {'active': False}}
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        'switch member role',
+        're-enable member',
+        'resend staff invitation',
+        'cancel staff invitation',
+        'resend owner invitation',
+        'cancel owner invitation',
+        'replace owner',
+        'suspend company',
+        'reactivate suspended company',
+        'create company',
+    ],
+)
+def test_superadmin_revoked_before_a_write_is_refused_without_changes(mail, monkeypatch, name):
+    client, current, store, accounts, sent, _ = mail
+    invites = superadmin_gate(client, current, store)
+    sent.clear()
+    tool = next(t for t in superadmin_tools(invites) if t[0] == name)
+    quota = store.quota
+
+    def revoked_after_sign_in(*args):
+        revoke_admin(store)
+        return quota(*args)
+
+    monkeypatch.setattr(store, 'quota', revoked_after_sign_in)
+    before = unrestricted(store)
+    current['uid'] = 'admin'
+    assert_refused(client, [tool])
+    assert unrestricted(store) == revoked(before)
+    assert not sent and not accounts.created
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        'company metadata',
+        'team metadata',
+        'invitation metadata',
+        'support jobs',
+        'support documents',
+        'support job',
+        'support photo',
+        'support document',
+        'support evidence',
+        'support other jobs',
+        'support other job',
+        'switch member role',
+        're-enable member',
+    ],
+)
+def test_superadmin_revoked_during_a_support_request_gets_nothing(api, monkeypatch, name):
+    client, current, store = api
+    invites = superadmin_gate(client, current, store)
+    tool = next(t for t in superadmin_tools(invites) if t[0] == name)
+    principal = store.workspaces.principal
+
+    def revoked_after_first_check(*args, **kwargs):
+        actor = principal(*args, **kwargs)
+        revoke_admin(store)
+        return actor
+
+    monkeypatch.setattr(store.workspaces, 'principal', revoked_after_first_check)
+    before = unrestricted(store)
+    current['uid'] = 'admin'
+    assert_refused(client, [tool])
+    assert unrestricted(store) == revoked(before)
+
+
+def test_owner_invitations_from_a_revoked_superadmin_cannot_be_accepted(store):
+    w = store.workspaces
+    company, created = w.create_company('admin', 'Revoked Restoration', 'first@example.invalid')
+    replacement = w.invite('admin', 'other', 'next@example.invalid', 'owner')
+    revoke_admin(store)
+    for uid, invitation in (('first', created), ('next', replacement)):
+        with pytest.raises(AccessDenied):
+            w.accept(identity(uid), invitation['invitation_id'])
+        assert '_memberships/' + uid not in store.db.records
+    assert store.db.records['_companies/' + company['company_id']]['owner_uid'] is None
+    assert store.db.records['_companies/other']['owner_uid'] == 'other-owner'
+
+
+FORGED_CLAIMS = dict(
+    superadmin=True,
+    admin=True,
+    role='superadmin',
+    capabilities=['team_manage', 'profile_manage', 'superadmin'],
+    platform_admin=True,
+)
+FORGED_HEADERS = {
+    'X-ADR-Superadmin': 'true',
+    'X-ADR-Role': 'superadmin',
+    'X-ADR-Capabilities': 'superadmin,team_manage',
+}
+
+
+@pytest.mark.parametrize('uid', ['outsider', 'office', 'owner', 'inactive'])
+def test_forged_claims_headers_and_fields_cannot_grant_superadmin(mail, monkeypatch, uid):
+    """Firebase custom claims and browser-supplied capabilities never grant superadmin tools."""
+    client, current, store, accounts, sent, _ = mail
+    invites = superadmin_gate(client, current, store)
+    sent.clear()
+    for endpoint in (bm.current_staff, bm.current_identity):
+        bm.app.dependency_overrides.pop(endpoint)
+    checks = []
+
+    def verified(token, app=None, check_revoked=False):
+        checks.append((token, check_revoked))
+        return {**identity(uid), **FORGED_CLAIMS}
+
+    monkeypatch.setattr(bm, 'revocation_checked', type(bm.revocation_checked)())
+    monkeypatch.setattr(bm.firebase_admin, 'get_app', lambda name: object())
+    monkeypatch.setattr(bm.firebase_auth, 'verify_id_token', verified)
+    before = unrestricted(store)
+    # A cached revocation lookup from an ordinary read must not carry over to superadmin tools.
+    access = client.get('/api/access', headers=FORGED_HEADERS).json()
+    assert not access['superadmin'] and 'superadmin' not in access['capabilities']
+    checks.clear()
+    tools = superadmin_tools(invites)
+    assert_refused(client, tools, FORGED_HEADERS)
+    assert len(checks) == len(tools) and all(check for _, check in checks)
+    forged_fields = [
+        (
+            'create company',
+            'POST',
+            '/api/admin/companies',
+            {'name': 'Forged', 'owner_email': 'forged@example.invalid', **FORGED_CLAIMS},
+            None,
+        ),
+        (
+            'suspend company',
+            'PUT',
+            '/api/admin/companies/other/status',
+            {'expected_version': 1, 'status': 'suspended', 'superadmin': True},
+            None,
+        ),
+        (
+            'replace owner',
+            'POST',
+            '/api/companies/other/invitations',
+            {'email': 'forged@example.invalid', 'role': 'owner', 'superadmin': True},
+            None,
+        ),
+    ]
+    assert_refused(client, forged_fields, FORGED_HEADERS, (403, 422))
+    assert unrestricted(store) == before
+    assert not sent and not accounts.created
