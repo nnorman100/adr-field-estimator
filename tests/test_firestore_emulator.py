@@ -12,7 +12,11 @@ tests therefore assert the safety properties (no lost update, nothing past a lim
 receipt), accept contention aborts, then check the settled state with a sequential call.
 """
 
+import base64
+import json
 import os
+import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -499,3 +503,77 @@ def test_superadmin_support_views_and_fixes_append_audit_entries():
     with pytest.raises(AccessDenied):
         store.support_evidence('admin', 'adr', auth_id, 'signature')
     assert len(support_entries(db)) == len(entries) + len(views)
+
+
+def browser_token(uid, **claims):
+    """An unsigned Firebase ID token, as the emulator accepts, carrying forged custom claims."""
+
+    def part(value):
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip('=')
+
+    issued = int(time.time())
+    payload = dict(
+        iss='https://securetoken.google.com/' + PROJECT,
+        aud=PROJECT,
+        iat=issued,
+        exp=issued + 3600,
+        auth_time=issued,
+        sub=uid,
+        user_id=uid,
+        email=uid + '@example.invalid',
+        email_verified=True,
+        firebase={'sign_in_provider': 'google.com', 'identities': {}},
+        **claims,
+    )
+    return part({'alg': 'none', 'kid': 'fakekid', 'typ': 'JWT'}) + '.' + part(payload) + '.'
+
+
+def browser_request(method, path, token, body=None):
+    request = urllib.request.Request(
+        f'http://{EMULATOR}/v1/projects/{PROJECT}/databases/(default)/documents/{path}',
+        data=json.dumps(body).encode() if body is not None else None,
+        method=method,
+        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
+
+
+def test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims():
+    """Superadmin status and its audit log are server-only; custom claims grant no database access."""
+    db = client()
+    db.document('_platform_admins/admin').set({'active': True})
+    db.document('_admin_events/event').set({'actor_uid': 'admin', 'action': 'support_view_jobs'})
+    db.document('_companies/adr').set({'company_id': 'adr', 'status': 'active'})
+    db.document('_memberships/office').set({'uid': 'office', 'company_id': 'adr', 'role': 'office'})
+    active = {'booleanValue': True}
+    attempts = [
+        ('GET', '_platform_admins/admin', None),
+        ('GET', '_platform_admins', None),
+        ('PATCH', '_platform_admins/office', {'fields': {'active': active}}),
+        ('PATCH', '_platform_admins/admin', {'fields': {'active': active}}),
+        ('GET', '_admin_events/event', None),
+        ('GET', '_admin_events', None),
+        ('PATCH', '_admin_events/forged', {'fields': {'actor_uid': {'stringValue': 'office'}}}),
+        ('DELETE', '_admin_events/event', None),
+        ('GET', '_companies/adr', None),
+        ('PATCH', '_companies/adr', {'fields': {'status': {'stringValue': 'suspended'}}}),
+        ('PATCH', '_memberships/office', {'fields': {'role': {'stringValue': 'owner'}}}),
+        ('GET', '_invitations', None),
+    ]
+    forged = dict(superadmin=True, admin=True, role='superadmin', platform_admin=True)
+    for uid in ('office', 'admin', 'outsider'):
+        for token in (browser_token(uid), browser_token(uid, **forged)):
+            for method, path, body in attempts:
+                assert browser_request(method, path, token, body) == 403, (uid, method, path)
+    # The emulator's admin token bypasses rules, so the same reads fail only because of the rules.
+    assert browser_request('GET', '_platform_admins/admin', 'owner') == 200
+    assert stored(db, '_platform_admins/admin') == {'active': True}
+    assert stored(db, '_platform_admins/office') is None
+    assert stored(db, '_admin_events/event')['actor_uid'] == 'admin'
+    assert stored(db, '_admin_events/forged') is None
+    assert stored(db, '_companies/adr')['status'] == 'active'
+    assert stored(db, '_memberships/office')['role'] == 'office'

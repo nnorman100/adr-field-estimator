@@ -337,13 +337,14 @@ class WorkspaceStore:
 
     def update_company(self, uid, company_id, req):
         def update(tx):
-            company = self.read('_companies', company_id, tx)
-            if not company:
-                raise LookupError('Company not found.')
+            # Authorize before the lookup so a refused caller cannot probe which companies exist.
             if isinstance(req, StatusUpdate):
                 self.admin(uid, tx)
             else:
                 self.company_actor(uid, company_id, True, tx)
+            company = self.read('_companies', company_id, tx)
+            if not company:
+                raise LookupError('Company not found.')
             expected = req.expected_version
             if company['version'] != expected:
                 raise Conflict('Company settings changed. Reload before saving.')
