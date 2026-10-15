@@ -1464,7 +1464,8 @@ footer {
     -webkit-line-clamp: 2;
     overflow: hidden;
     white-space: normal;
-    padding-left: 0.5rem;
+    padding-left: 0;
+    border-left: 0;
   }
   .company-brand .masthead:has(> #updateBanner:not([hidden])) .brand img {
     display: none;
@@ -1631,6 +1632,12 @@ footer {
 .help-contact a {
   color: var(--adr);
   font-weight: 700;
+}
+/* Below 390px the Help button leaves no room for the brand beside the Update ready banner. */
+@media (max-width: 389px) {
+  .masthead:has(> #updateBanner:not([hidden])) .help-button {
+    display: none;
+  }
 }
 @media (max-width: 700px) {
   .header-tools .help-button {
