@@ -688,3 +688,152 @@ for (const role of ['estimator', 'office', 'other', 'outsider']) {
     ]);
   });
 }
+
+// A new release shows the compact "Update ready" banner; it must never hide the first action.
+async function showUpdateBanner(page) {
+  await page.evaluate(() => (document.getElementById('updateBanner').hidden = false));
+  await expect(page.locator('#updateBanner')).toBeVisible();
+  await expect(page.locator('#updateBanner .update-text')).toHaveText('Update ready.');
+}
+// Both the button and the "Update ready." wording must be on screen and uncovered, so the
+// prompt reads as an app update rather than a job save.
+async function bannerUsable(page) {
+  return page.locator('#updateBanner').evaluate((banner) =>
+    ['.update-text', 'button'].every((selector) => {
+      const el = banner.querySelector(selector),
+        r = el.getBoundingClientRect(),
+        top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return (
+        r.width > 8 &&
+        r.height > 8 &&
+        r.top >= 0 &&
+        r.left >= 0 &&
+        r.right <= innerWidth &&
+        r.bottom <= innerHeight &&
+        (top === el || el.contains(top))
+      );
+    }),
+  );
+}
+// The company name must stay fully readable beside the banner and must not run under it.
+async function brandReadable(page) {
+  return page.locator('.masthead .brand strong').evaluate((el) => {
+    const r = el.getBoundingClientRect(),
+      banner = document.getElementById('updateBanner').getBoundingClientRect();
+    return {
+      unclipped: el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth,
+      clear: r.right <= banner.left,
+    };
+  });
+}
+for (const mode of [
+  'owner',
+  'estimator',
+  'legacy owner-only',
+  'other company',
+  'other company with logo',
+])
+  for (const width of [320, 390])
+    test(
+      mode + ' phone at ' + width + '×844 keeps Start walkthrough clear of the Update ready banner',
+      async ({ page, request, browserName }) => {
+        await page.setViewportSize({ width, height: 844 });
+        if (mode === 'legacy owner-only') {
+          await request.post('/__test/workspaces', { data: { enabled: false } });
+          await page.goto('/');
+          await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+        } else if (mode.startsWith('other company')) {
+          await start(page, 'other');
+          await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
+          if (mode.endsWith('with logo'))
+            await page.evaluate(() => {
+              const logo = document.querySelector('.masthead .brand img');
+              logo.src = '/brand/adr-logo.jpg';
+              logo.hidden = false;
+            });
+          await page.getByRole('button', { name: 'New job', exact: true }).click();
+        } else {
+          await start(page, mode);
+          await navigate(page, 'dashboardJobs');
+          await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+        }
+        await expect(page.locator('#address')).toBeEnabled();
+        await page.locator('.task-nav [data-task="walkthrough"]').click();
+        await expect(page.locator('#startWalk')).toBeVisible();
+        const startTop = () =>
+          page.locator('#startWalk').evaluate((el) => el.getBoundingClientRect().top);
+        const before = await startTop();
+        await showUpdateBanner(page);
+        // The banner shares the masthead row, so it must not push Start walkthrough down.
+        expect(Math.abs((await startTop()) - before)).toBeLessThan(1);
+        if (browserName === 'chromium')
+          await page.screenshot({
+            path: test
+              .info()
+              .outputPath('update-banner-' + mode.replace(/\W+/g, '-') + '-' + width + '.png'),
+          });
+        expect(await firstScreen(page, '#startWalk')).toEqual({
+          scrolled: 0,
+          inside: true,
+          hit: true,
+        });
+        expect(await bannerUsable(page)).toBe(true);
+        if (mode.startsWith('other company'))
+          expect(await brandReadable(page)).toEqual({ unclipped: true, clear: true });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+          false,
+        );
+      },
+    );
+
+test('long company name keeps its phone rendering until the Update ready banner shows', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await start(page, 'other');
+  const name = page.locator('.masthead .brand strong');
+  await page.evaluate(() => {
+    document.querySelector('.masthead .brand strong').textContent =
+      'Central Valley Water Damage & Mold Remediation Specialists';
+  });
+  const render = () =>
+    name.evaluate((el) => {
+      const r = el.getBoundingClientRect(),
+        style = getComputedStyle(el);
+      return {
+        box: [r.left, r.top, r.width, r.height],
+        overflow: style.overflow,
+        clamp: style.webkitLineClamp,
+        clear: r.right <= document.getElementById('updateBanner').getBoundingClientRect().left,
+      };
+    });
+  const before = await render();
+  expect(before).toMatchObject({ overflow: 'visible', clamp: 'none' });
+  await page.evaluate(() => (document.getElementById('updateBanner').hidden = false));
+  expect(await render()).toMatchObject({ overflow: 'hidden', clamp: '2', clear: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.evaluate(() => (document.getElementById('updateBanner').hidden = true));
+  expect(await render()).toEqual(before);
+});
+
+test('signed-out phone header at 320×844 fits the Update ready banner without overlap', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
+  await page.goto('/');
+  await expect(page.locator('#signInButton')).toBeVisible();
+  await showUpdateBanner(page);
+  const boxes = await page.evaluate(() =>
+    ['.brand img', '#updateBanner', '#signInButton', '#accountMenu'].map((s) => {
+      const r = document.querySelector(s).getBoundingClientRect();
+      return [r.left, r.right];
+    }),
+  );
+  for (let i = 1; i < boxes.length; i++)
+    expect(boxes[i][0]).toBeGreaterThanOrEqual(boxes[i - 1][1]);
+  expect(boxes[0][1] - boxes[0][0]).toBeGreaterThan(0);
+  expect(boxes[3][1]).toBeLessThanOrEqual(320);
+  expect(await bannerUsable(page)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
