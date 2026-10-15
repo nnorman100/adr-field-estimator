@@ -4,11 +4,11 @@ An owner-private mobile inspection app for ADR technicians in Bakersfield and Ke
 
 Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical `alert-disaster-live` site was retired as of 2026-10-12; use this app's address. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md).
 
-## Company dashboards — staged release
+## Company dashboards
 
 The new build adds isolated company workspaces with superadmin, owner, estimator and office roles. Owners manage their company and team; estimators see jobs they create or are assigned; office staff coordinate jobs and view documents. Google or verified email/password sign-in uses private server-checked memberships. Password accounts are created only by invitation: the invitation email carries a link to set the password. Public sign-up is disabled in the Firebase project and must stay disabled. Invitations require explicit acceptance by a verified account with the matching email. The initial ADR owner also has a separate superadmin role.
 
-Production remains on the existing Live release while the workspace backend is staged. Real invitation delivery (Resend or Gmail SMTP) and authenticated role workflows must pass before activation. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
+Company workspaces are enabled in production since October 15, 2026; the serving backend and Hosting release are recorded in [RELEASES.md](RELEASES.md). Invitations are sent by Gmail SMTP. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
 
 ## Inspection workflow
 
