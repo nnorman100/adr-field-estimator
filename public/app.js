@@ -2564,12 +2564,11 @@ async function initialize() {
     $('emailAuthForm').reportValidity()
       ? { email: $('authEmail').value.trim(), password: $('authPassword').value }
       : null;
-  const googleSignIn = async () => {
+  authClick('googleSignIn', async () => {
     const provider = new authSdk.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     await authSdk.signInWithPopup(auth, provider);
-  };
-  authClick('googleSignIn', googleSignIn);
+  });
   $('emailAuthForm').addEventListener('submit', (e) => e.preventDefault());
   authClick('emailSignIn', async () => {
     const entered = credentials();
