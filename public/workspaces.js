@@ -21,6 +21,12 @@ window.WorkspaceUI = (() => {
   const roleName = (role) =>
     ({ owner: 'Owner', estimator: 'Estimator', office: 'Office staff' })[role] ||
     'No company access';
+  // Display only: the server already decides access; this just names both hats on the Account menu.
+  const accountRoleLabel = () => {
+    const { role, superadmin } = state.session;
+    if (!superadmin) return roleName(role);
+    return role ? roleName(role) + ' · Superadmin' : 'Superadmin';
+  };
   function formField(form, label, name, value = '', type = 'text') {
     const wrapper = node('label', label),
       input = node(type === 'textarea' ? 'textarea' : 'input');
@@ -160,7 +166,7 @@ window.WorkspaceUI = (() => {
     const details = $('workspaceAccountDetails');
     details.replaceChildren(
       node('strong', profile?.name || 'Platform administration'),
-      node('p', roleName(state.session.role)),
+      node('p', accountRoleLabel()),
     );
     if (profile)
       details.append(
