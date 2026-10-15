@@ -73,6 +73,7 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   for (const hidden of ['.inspection-shell', '.workspace', '.workspace-bar', '#jobCoordination'])
     await expect(page.locator(hidden).first()).toBeHidden();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
+  await expect(page.getByRole('button', { name: /google/i })).toHaveCount(1);
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   const line = page.locator('#authPanel #positioning');
   await expect(line).toBeVisible();

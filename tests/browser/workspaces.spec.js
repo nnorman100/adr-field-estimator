@@ -597,7 +597,7 @@ test('invited password account stays unverified without authenticated calls, the
   }, email);
   await page.goto('/?invite=' + invitation.invitation_id);
   await expect(page.locator('#emailAuthForm')).toBeVisible();
-  await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#googleSignIn')).toBeVisible();
   await expect(page.locator('#emailAuthForm')).toContainText('link in your invitation email');
   await page.locator('#authEmail').fill(email);
   await page.locator('#authPassword').fill('synthetic-password');
@@ -845,10 +845,10 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   await page.setViewportSize({ width: 320, height: 844 });
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   await page.goto('/');
-  await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#googleSignIn')).toBeVisible();
   await showUpdateBanner(page);
   const boxes = await page.evaluate(() =>
-    ['.brand img', '#updateBanner', '#signInButton', '#accountMenu'].map((s) => {
+    ['.brand img', '#updateBanner', '#accountMenu'].map((s) => {
       const r = document.querySelector(s).getBoundingClientRect();
       return [r.left, r.right];
     }),
@@ -856,7 +856,7 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   for (let i = 1; i < boxes.length; i++)
     expect(boxes[i][0]).toBeGreaterThanOrEqual(boxes[i - 1][1]);
   expect(boxes[0][1] - boxes[0][0]).toBeGreaterThan(0);
-  expect(boxes[3][1]).toBeLessThanOrEqual(320);
+  expect(boxes[2][1]).toBeLessThanOrEqual(320);
   expect(await bannerUsable(page)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });

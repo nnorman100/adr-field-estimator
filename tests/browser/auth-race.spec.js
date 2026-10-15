@@ -33,12 +33,12 @@ test('signing out while the session request is delayed ends signed out with no s
   await page.goto('/');
   await page.waitForFunction(() => window.__sessionStarted);
   await page.evaluate(() => auth.signOut());
-  await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#googleSignIn')).toBeVisible();
   await release();
   expect(
     await page.evaluate(() => ({ user: state.user, session: state.session, draft: state.draft })),
   ).toEqual({ user: null, session: null, draft: null });
-  await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#googleSignIn')).toBeVisible();
   await expect(page.locator('#authPanel')).toBeVisible();
   await expect(page.locator('#address')).toBeDisabled();
   await expect(page.locator('#workspaceNav')).toBeHidden();

@@ -2569,7 +2569,6 @@ async function initialize() {
     provider.setCustomParameters({ prompt: 'select_account' });
     await authSdk.signInWithPopup(auth, provider);
   };
-  authClick('signInButton', googleSignIn);
   authClick('googleSignIn', googleSignIn);
   $('emailAuthForm').addEventListener('submit', (e) => e.preventDefault());
   authClick('emailSignIn', async () => {
@@ -2897,7 +2896,6 @@ async function applyUser(user) {
   $('workspaceDashboard').hidden = true;
   $('jobCoordination').hidden = true;
   $('dashboardContent').replaceChildren();
-  $('signInButton').hidden = !!user;
   $('signOutButton').hidden = !user;
   $('inspectionFields').disabled = true;
   $('accountStatus').textContent = user ? user.email : 'Sign in to start an inspection';

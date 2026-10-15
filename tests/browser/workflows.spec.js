@@ -511,7 +511,7 @@ test('sign out keeps an unsynced offline draft until the user discards it', asyn
   await expect(page.locator('#unsyncedCount')).toHaveText(
     '1 draft has not synced. Connect to the internet and wait for sync, or discard it and sign out.',
   );
-  await expect(page.locator('#signInButton')).toBeHidden();
+  await expect(page.locator('#googleSignIn')).toBeHidden();
   await expect(page.locator('#technicianNotes')).toHaveValue('Unsynced offline observations');
   expect(
     (await rows()).some(
@@ -522,7 +522,7 @@ test('sign out keeps an unsynced offline draft until the user discards it', asyn
     page.waitForEvent('domcontentloaded'),
     page.locator('#discardSignOut').click(),
   ]);
-  await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#googleSignIn')).toBeVisible();
   expect((await rows()).length).toBe(0);
   await context.setOffline(false);
 });
