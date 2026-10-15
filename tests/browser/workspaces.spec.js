@@ -697,16 +697,27 @@ async function showUpdateBanner(page) {
     document.getElementById('updateBanner').hidden = false;
   });
   await expect(page.locator('#updateBanner')).toBeVisible();
+  await expect(page.locator('#updateBanner .update-text')).toHaveText('Update ready.');
 }
+// Both the button and the "Update ready." wording must be on screen and uncovered, so the
+// prompt reads as an app update rather than a job save.
 async function bannerUsable(page) {
-  return page.locator('#applyUpdate').evaluate((el) => {
-    const r = el.getBoundingClientRect(),
-      top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return {
-      inside: r.top >= 0 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
-      hit: top === el || el.contains(top),
-    };
-  });
+  return page.locator('#updateBanner').evaluate((banner) =>
+    ['.update-text', 'button'].every((selector) => {
+      const el = banner.querySelector(selector),
+        r = el.getBoundingClientRect(),
+        top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return (
+        r.width > 8 &&
+        r.height > 8 &&
+        r.top >= 0 &&
+        r.left >= 0 &&
+        r.right <= innerWidth &&
+        r.bottom <= innerHeight &&
+        (top === el || el.contains(top))
+      );
+    }),
+  );
 }
 // The company name must stay fully readable beside the banner and must not run under it.
 async function brandReadable(page) {
@@ -765,7 +776,7 @@ for (const mode of [
           inside: true,
           hit: true,
         });
-        expect(await bannerUsable(page)).toEqual({ inside: true, hit: true });
+        expect(await bannerUsable(page)).toBe(true);
         if (mode.startsWith('other company'))
           expect(await brandReadable(page)).toEqual({ unclipped: true, clear: true });
         expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
@@ -822,6 +833,6 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
     expect(boxes[i][0]).toBeGreaterThanOrEqual(boxes[i - 1][1]);
   expect(boxes[0][1] - boxes[0][0]).toBeGreaterThan(0);
   expect(boxes[3][1]).toBeLessThanOrEqual(320);
-  expect(await bannerUsable(page)).toEqual({ inside: true, hit: true });
+  expect(await bannerUsable(page)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
