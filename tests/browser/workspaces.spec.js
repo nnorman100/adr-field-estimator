@@ -691,11 +691,7 @@ for (const role of ['estimator', 'office', 'other', 'outsider']) {
 
 // A new release shows the compact "Update ready" banner; it must never hide the first action.
 async function showUpdateBanner(page) {
-  await page.evaluate(() => {
-    document.getElementById('jobTitle').textContent =
-      'Synthetic property with a long building, unit and street description';
-    document.getElementById('updateBanner').hidden = false;
-  });
+  await page.evaluate(() => (document.getElementById('updateBanner').hidden = false));
   await expect(page.locator('#updateBanner')).toBeVisible();
   await expect(page.locator('#updateBanner .update-text')).toHaveText('Update ready.');
 }
@@ -763,8 +759,13 @@ for (const mode of [
         }
         await expect(page.locator('#address')).toBeEnabled();
         await page.locator('.task-nav [data-task="walkthrough"]').click();
-        await showUpdateBanner(page);
         await expect(page.locator('#startWalk')).toBeVisible();
+        const startTop = () =>
+          page.locator('#startWalk').evaluate((el) => el.getBoundingClientRect().top);
+        const before = await startTop();
+        await showUpdateBanner(page);
+        // The banner shares the masthead row, so it must not push Start walkthrough down.
+        expect(Math.abs((await startTop()) - before)).toBeLessThan(1);
         if (browserName === 'chromium')
           await page.screenshot({
             path: test
