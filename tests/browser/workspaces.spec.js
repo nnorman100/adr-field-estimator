@@ -708,7 +708,24 @@ async function bannerUsable(page) {
     };
   });
 }
-for (const mode of ['owner', 'estimator', 'legacy owner-only'])
+// The company name must stay fully readable beside the banner and must not run under it.
+async function brandReadable(page) {
+  return page.locator('.masthead .brand strong').evaluate((el) => {
+    const r = el.getBoundingClientRect(),
+      banner = document.getElementById('updateBanner').getBoundingClientRect();
+    return {
+      unclipped: el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth,
+      clear: r.right <= banner.left,
+    };
+  });
+}
+for (const mode of [
+  'owner',
+  'estimator',
+  'legacy owner-only',
+  'other company',
+  'other company with logo',
+])
   for (const width of [320, 390])
     test(
       mode + ' phone at ' + width + '×844 keeps Start walkthrough clear of the Update ready banner',
@@ -718,6 +735,16 @@ for (const mode of ['owner', 'estimator', 'legacy owner-only'])
           await request.post('/__test/workspaces', { data: { enabled: false } });
           await page.goto('/');
           await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+        } else if (mode.startsWith('other company')) {
+          await start(page, 'other');
+          await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
+          if (mode.endsWith('with logo'))
+            await page.evaluate(() => {
+              const logo = document.querySelector('.masthead .brand img');
+              logo.src = '/brand/adr-logo.jpg';
+              logo.hidden = false;
+            });
+          await page.getByRole('button', { name: 'New job', exact: true }).click();
         } else {
           await start(page, mode);
           await navigate(page, 'dashboardJobs');
@@ -739,6 +766,8 @@ for (const mode of ['owner', 'estimator', 'legacy owner-only'])
           hit: true,
         });
         expect(await bannerUsable(page)).toEqual({ inside: true, hit: true });
+        if (mode.startsWith('other company'))
+          expect(await brandReadable(page)).toEqual({ unclipped: true, clear: true });
         expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
           false,
         );

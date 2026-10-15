@@ -849,7 +849,7 @@ footer {
   /* On phones the update prompt joins the masthead row, so it never covers or displaces page content. */
   #updateBanner {
     position: static;
-    flex: 0 1 auto;
+    flex: none;
     max-width: 4.5rem;
     padding: 0;
     border: 0;
@@ -1439,18 +1439,29 @@ footer {
 }
 
 @media (max-width: 640px) {
+  .company-brand .brand {
+    gap: 0.5rem;
+  }
   .company-brand .brand strong {
-    display: block;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
     font-size: 0.875rem;
     max-width: 180px;
     overflow-wrap: anywhere;
     line-height: 1.25;
+    padding-left: 0.5rem;
   }
   .company-brand .brand img {
     max-width: 72px;
     max-height: 45px;
     width: auto;
     height: auto;
+  }
+  .company-brand .masthead:has(> #updateBanner:not([hidden])) .brand img {
+    display: none;
   }
 }
 .auth-panel {
