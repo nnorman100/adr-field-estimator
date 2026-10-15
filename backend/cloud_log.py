@@ -11,6 +11,7 @@ LOG_FIELDS = frozenset(
         'operation',
         'elapsed_ms',
         'duration_ms',
+        'timeout_ms',
         'outcome',
         'provider_status',
         'provider_code',

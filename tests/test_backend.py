@@ -36,8 +36,13 @@ def context(monkeypatch):
 
     async def generate(**kwargs):
         schema = kwargs['config'].response_schema
-        # Audit and OCR requests keep the provider's default thinking; only scope sets LOW.
-        assert kwargs['config'].thinking_config is None
+        # Audit requests use LOW thinking so the 55-second deadline holds; OCR keeps the default.
+        thinking = kwargs['config'].thinking_config
+        if schema is bm.AIResult:
+            assert thinking.thinking_level == bm.AUDIT_THINKING_LEVEL
+            assert thinking.thinking_budget is None
+        else:
+            assert thinking is None
         value = (
             {
                 'summary': 'The technician confirmed a localized bathroom scope.',
@@ -217,6 +222,30 @@ def test_model_output_missing_and_provider_error_never_produces_documents(contex
         '/api/audit', json={'inspection_id': ID, 'expected_revision': record['revision']}
     )
     assert response.status_code == 502 and store.get_inspection('owner', ID)['audit'] is None
+
+
+def test_audit_request_uses_low_thinking_so_the_55_second_deadline_holds(context, monkeypatch):
+    # Measured 2026-10-15: default-thinking audits reached the 55-second deadline in production.
+    client, _ = context
+    configs = []
+
+    async def generate(**kwargs):
+        configs.append(kwargs['config'])
+        return SimpleNamespace(
+            text=json.dumps({'summary': 'Scope confirmed.', 'suggestions': [], 'unpriced_work': []})
+        )
+
+    monkeypatch.setattr(
+        bm,
+        'get_ai_client',
+        lambda: SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
+        ),
+    )
+    audit(client, inspect(client))
+    assert bm.AUDIT_THINKING_LEVEL == bm.types.ThinkingLevel.LOW
+    assert [c.thinking_config.thinking_level for c in configs] == [bm.types.ThinkingLevel.LOW]
+    assert configs[0].thinking_config.thinking_budget is None
 
 
 def test_zero_work_audit_is_rejected_before_the_model_runs(context, monkeypatch):
@@ -727,7 +756,14 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
 
     async def run():
         return [
-            await bm.generate(bm.AIResult, ['Synthetic audit'], bm.AUDIT_MODEL, 'audit', ID),
+            await bm.generate(
+                bm.AIResult,
+                ['Synthetic audit'],
+                bm.AUDIT_MODEL,
+                'audit',
+                ID,
+                thinking_level=bm.AUDIT_THINKING_LEVEL,
+            ),
             await bm.generate(bm.OcrResult, ['Synthetic photo'], bm.OCR_MODEL, 'ocr', ID),
             await bm.generate(
                 ScopeSuggestions,
@@ -756,10 +792,14 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
             and body['generationConfig']['responseMimeType'] == 'application/json'
         )
     generation = [body['generationConfig'] for _, _, body in requests]
-    assert 'thinkingConfig' not in generation[0] and 'thinkingConfig' not in generation[1]
+    assert 'thinkingConfig' not in generation[1]
     # google-genai 2.8.0 and 2.29.0 both send the snake_case field; Vertex's proto-JSON parser
     # accepts it (LOW calls reported no thought tokens on 2026-10-13).
-    assert generation[2]['thinkingConfig'] == {'thinking_level': 'LOW'}
+    assert (
+        generation[0]['thinkingConfig']
+        == generation[2]['thinkingConfig']
+        == {'thinking_level': 'LOW'}
+    )
     schemas = [body['generationConfig']['responseSchema'] for _, _, body in requests]
     assert (
         schemas[0]['required']
