@@ -66,6 +66,11 @@ SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_DEADLINE = 24
 APP_URL = 'https://alert-disaster-field-2026.web.app/'
+INVITATION_SUBJECT = 'Invitation to join a company on the ADR field app'
+# The build context is backend/, so it carries its own copy of public/brand/adr-logo.jpg.
+with open(os.path.join(os.path.dirname(__file__), 'brand', 'adr-logo.jpg'), 'rb') as _logo:
+    ADR_LOGO = _logo.read()
+LOGO_CID = 'invitation-logo@adr-field-app'
 
 
 class AccessDenied(PermissionError):
@@ -902,6 +907,111 @@ def password_setup_link(email):
     )
 
 
+def invitation_logo(company):
+    """The company's saved logo (already a capped JPEG from clean_logo), otherwise the ADR logo."""
+    match = re.fullmatch(
+        r'data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)',
+        company['profile'].get('logo_data_url') or '',
+    )
+    candidates = [(match[2], match[1])] if match else []
+    for data, subtype in candidates + [(ADR_LOGO, 'jpeg')]:
+        try:
+            if isinstance(data, str):
+                data = base64.b64decode(data, validate=True)
+            if len(data) > 100000:
+                continue
+            with Image.open(io.BytesIO(data)) as image:
+                width, height = image.size
+            # Display box for the email header; width/height attributes keep Outlook from upscaling.
+            scale = min(200 / width, 64 / height, 1)
+            return dict(
+                data=data,
+                subtype=subtype,
+                width=max(1, round(width * scale)),
+                height=max(1, round(height * scale)),
+            )
+        except Exception:
+            continue
+    raise RuntimeError('The ADR logo could not be read.')
+
+
+def invitation_email(invite, company, setup):
+    """Subject, text, HTML and inline logo of an invitation. setup is the set-password link, or None for Google."""
+    link = APP_URL + '?invite=' + invite['invitation_id']
+    name = company['profile']['name']
+    role = {'owner': 'an owner', 'estimator': 'an estimator', 'office': 'office staff'}[
+        invite['role']
+    ]
+    email = invite['email']
+    logo = invitation_logo(company)
+    invited = f'{name} has invited you to join their team on the ADR field app as {role}.'
+    about = f'The ADR field app is what {name} uses for water and mold loss inspections, estimates and homeowner signatures.'
+    ignore = "If you weren't expecting this, you can ignore this email."
+    if setup:
+        steps = [
+            f'Set your password for the ADR field app: {setup}\nIf that link has expired, use Forgot password on the sign-in page.',
+            f'Accept the invitation. Then sign in with {email} and that password.',
+        ]
+        steps_html = [
+            f'<a href="{html.escape(setup)}" style="color:#b9232a;font-weight:bold;">Set your password for the ADR field app</a>.'
+            ' If that link has expired, use Forgot password on the sign-in page.',
+            f'Accept the invitation. Then sign in with <strong>{html.escape(email)}</strong> and that password.',
+        ]
+    else:
+        steps = [f'Accept the invitation. Sign in with Google using this email ({email}).']
+        steps_html = [
+            f'Accept the invitation. Sign in with Google using this email (<strong>{html.escape(email)}</strong>).'
+        ]
+    numbered = len(steps) > 1
+    text = '\n\n'.join(
+        [
+            invited,
+            about,
+            *[f'{i}. {step}' if numbered else step for i, step in enumerate(steps, 1)],
+            f'Accept the invitation: {link}',
+            'This invitation expires in seven days.',
+            f'Sent by {name} through the ADR field app. {ignore}',
+        ]
+    )
+    e = html.escape
+    font = 'font-family:Lato,Arial,Helvetica,sans-serif;color:#212529;'
+    step_rows = ''.join(
+        f'<tr><td valign="top" style="{font}font-size:15px;line-height:22px;padding:0 10px 10px 0;font-weight:bold;color:#d42b32;">{i}.</td>'
+        f'<td style="{font}font-size:15px;line-height:22px;padding:0 0 10px 0;">{step}</td></tr>'
+        if numbered
+        else f'<tr><td style="{font}font-size:15px;line-height:22px;padding:0 0 10px 0;">{step}</td></tr>'
+        for i, step in enumerate(steps_html, 1)
+    )
+    page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(INVITATION_SUBJECT)}</title></head>
+<body style="margin:0;padding:0;background:#f1f2f2;">
+<div style="display:none;max-height:0;overflow:hidden;">{e(invited)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f1f2f2" style="background:#f1f2f2;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="max-width:560px;background:#ffffff;border:1px solid #dadddd;border-top:4px solid #d42b32;">
+<tr><td style="padding:24px 24px 16px 24px;border-bottom:1px solid #dadddd;">
+<img src="cid:{LOGO_CID}" width="{logo['width']}" height="{logo['height']}" alt="{e(name)} logo" style="display:block;border:0;outline:none;">
+<div style="{font}font-size:18px;line-height:24px;font-weight:bold;padding-top:12px;">{e(name)}</div>
+</td></tr>
+<tr><td style="padding:24px;">
+<h1 style="{font}font-size:22px;line-height:28px;margin:0 0 12px 0;">You're invited to join {e(name)}</h1>
+<p style="{font}font-size:15px;line-height:22px;margin:0 0 12px 0;">{e(invited)}</p>
+<p style="{font}font-size:15px;line-height:22px;margin:0 0 20px 0;color:#4b4b4b;">{e(about)}</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px 0;">{step_rows}</table>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 12px 0;"><tr><td bgcolor="#d42b32" style="background:#d42b32;border-radius:4px;">
+<a href="{e(link)}" style="display:inline-block;padding:13px 28px;font-family:Lato,Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;">Accept invitation</a>
+</td></tr></table>
+<p style="{font}font-size:13px;line-height:20px;margin:0 0 16px 0;color:#4b4b4b;">Or open this link: <a href="{e(link)}" style="color:#b9232a;word-break:break-all;">{e(link)}</a></p>
+<p style="{font}font-size:15px;line-height:22px;margin:0;">This invitation expires in seven days.</p>
+</td></tr>
+<tr><td style="padding:16px 24px;border-top:1px solid #dadddd;background:#f7f7f7;" bgcolor="#f7f7f7">
+<p style="{font}font-size:13px;line-height:20px;margin:0;color:#4b4b4b;">Sent by {e(name)} through the ADR field app. {e(ignore)}</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+    return dict(subject=INVITATION_SUBJECT, text=text, html=page, logo=logo)
+
+
 def send_invitation(invite, company):
     """Send through the transport INVITATION_TRANSPORT selects: 'resend' (default) or 'smtp' (Gmail app password)."""
     transport = os.getenv('INVITATION_TRANSPORT') or 'resend'
@@ -918,26 +1028,23 @@ def send_invitation(invite, company):
     if not configured:
         raise RuntimeError('Invitation email is not configured.')
     deadline = time.monotonic() + SMTP_DEADLINE
-    link = APP_URL + '?invite=' + invite['invitation_id']
-    setup = password_setup_link(invite['email'])
-    name = company['profile']['name']
-    role = {'office': 'office staff'}.get(invite['role'], invite['role'])
-    email = invite['email']
-    if setup:
-        steps = f'Set your password for the ADR field app: {setup}\nIf that link has expired, use Forgot password on the sign-in page.\nThen sign in with {email} and that password.'
-        steps_html = (
-            f'<p>Set your password for the ADR field app: <a href="{html.escape(setup)}">{html.escape(setup)}</a></p>'
-            f'<p>If that link has expired, use Forgot password on the sign-in page.</p><p>Then sign in with {html.escape(email)} and that password.</p>'
-        )
-    else:
-        steps = f'Sign in with Google using this email ({email}).'
-        steps_html = f'<p>Sign in with Google using this email ({html.escape(email)}).</p>'
+    message = invitation_email(invite, company, password_setup_link(invite['email']))
+    logo = message['logo']
     payload = {
         'from': sender,
-        'to': [email],
-        'subject': 'Invitation to join a company on the ADR field app',
-        'text': f'You have been invited to {name} as {role}.\n{steps}\nAccept the invitation: {link}\nThis invitation expires in seven days.',
-        'html': f'<p>You have been invited to {html.escape(name)} as {html.escape(role)}.</p>{steps_html}<p><a href="{link}">Accept invitation</a></p><p>Expires in seven days.</p>',
+        'to': [invite['email']],
+        'subject': message['subject'],
+        'text': message['text'],
+        'html': message['html'],
+        # Resend's inline image: the HTML refers to it as cid:<content_id>.
+        'attachments': [
+            {
+                'content': base64.b64encode(logo['data']).decode(),
+                'filename': 'logo.' + logo['subtype'].replace('jpeg', 'jpg'),
+                'content_type': 'image/' + logo['subtype'],
+                'content_id': LOGO_CID,
+            }
+        ],
     }
     if transport == 'smtp':
         return send_smtp(payload, username, password, invite, deadline)
@@ -979,6 +1086,17 @@ def send_smtp(payload, username, password, invite, deadline):
     )
     message.set_content(payload['text'])
     message.add_alternative(payload['html'], subtype='html')
+    # multipart/alternative [text, multipart/related [html, inline logo]] so Gmail and Outlook show it.
+    page = message.get_payload()[1]
+    for item in payload['attachments']:
+        page.add_related(
+            base64.b64decode(item['content']),
+            'image',
+            item['content_type'].partition('/')[2],
+            cid='<' + item['content_id'] + '>',
+            filename=item['filename'],
+            disposition='inline',
+        )
     if time.monotonic() >= deadline:
         raise TimeoutError('Invitation email deadline passed.')
     for attempt in range(3):

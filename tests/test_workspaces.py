@@ -1393,7 +1393,8 @@ def direct_invite():
 
 
 def message_parts(message):
-    return [part.get_content() for part in message.iter_parts()]
+    """The text and HTML bodies, in order, wherever the inline logo nests them."""
+    return [part.get_content() for part in message.walk() if part.get_content_maintype() == 'text']
 
 
 @pytest.mark.parametrize(
@@ -1456,6 +1457,126 @@ def test_smtp_sends_the_resend_message_over_starttls_with_a_stable_message_id(sm
         sent[0]['subject'],
     )
     assert message_parts(message) == [sent[0]['text'] + '\n', sent[0]['html'] + '\n']
+
+
+def branded(role='office', name='Kern Water Pros', logo=''):
+    invite = {**direct_invite(), 'role': role}
+    return invite, {'profile': {'name': name, 'logo_data_url': logo}}
+
+
+def test_invitation_email_shows_the_company_logo_inline_and_explains_the_app():
+    logo = workspaces.clean_logo(png())
+    invite, company = branded(logo=logo)
+    message = workspaces.invitation_email(invite, company, 'https://example.invalid/set?a=1&b=2')
+    assert message['logo']['data'] == base64.b64decode(logo.partition(',')[2])
+    assert message['logo']['subtype'] == 'jpeg' and message['logo']['data'] != workspaces.ADR_LOGO
+    page, text = message['html'], message['text']
+    assert page.count('src="cid:invitation-logo@adr-field-app"') == 1
+    assert 'data:' not in page and 'src="http' not in page
+    for body in (page, text):
+        assert (
+            'Kern Water Pros has invited you to join their team on the ADR field app as office staff.'
+            in body
+        )
+        assert 'water and mold loss inspections, estimates and homeowner signatures' in body
+        assert 'Sent by Kern Water Pros through the ADR field app.' in body
+        assert 'This invitation expires in seven days.' in body
+    assert 'If you weren&#x27;t expecting this, you can ignore this email.' in page
+    assert "If you weren't expecting this, you can ignore this email." in text
+    assert 'cid:' not in text and '<' not in text
+
+
+def test_invitation_email_falls_back_to_the_adr_logo():
+    with open('public/brand/adr-logo.jpg', 'rb') as public:
+        assert workspaces.ADR_LOGO == public.read()
+    oversized = 'data:image/jpeg;base64,' + base64.b64encode(b'x' * 100001).decode()
+    for logo in [
+        '',
+        'data:image/png;base64,bm90IGFuIGltYWdl',
+        oversized,
+        'https://example.invalid/a.png',
+    ]:
+        message = workspaces.invitation_email(*branded(logo=logo), None)
+        assert message['logo'] == dict(
+            data=workspaces.ADR_LOGO, subtype='jpeg', width=131, height=64
+        )
+        assert 'width="131" height="64"' in message['html']
+    legacy = {'profile': {'name': 'Company'}}
+    assert (
+        workspaces.invitation_email(direct_invite(), legacy, None)['logo']['data']
+        == workspaces.ADR_LOGO
+    )
+
+
+def test_invitation_email_escapes_a_hostile_company_name():
+    hostile = '<img src=x onerror=alert(1)> & "Co" <a href="https://evil.invalid">'
+    message = workspaces.invitation_email(*branded(name=hostile), 'https://example.invalid/set')
+    assert message['subject'] == 'Invitation to join a company on the ADR field app'
+    page = message['html']
+    assert (
+        '<img src=x' not in page
+        and 'evil.invalid">' not in page
+        and 'onerror=alert(1)>' not in page
+    )
+    assert html.escape(hostile) in page and hostile in message['text']
+    assert page.count('<a href=') == 3 and page.count('<img ') == 1
+
+
+@pytest.mark.parametrize(
+    'role, phrase',
+    [('owner', 'an owner'), ('estimator', 'an estimator'), ('office', 'office staff')],
+)
+def test_invitation_email_sign_in_steps_and_links(role, phrase):
+    invite, company = branded(role=role)
+    accept = 'https://alert-disaster-field-2026.web.app/?invite=' + 'a' * 32
+    setup = 'https://example.invalid/set?mode=resetPassword&oobCode=secret-oob'
+    password = workspaces.invitation_email(invite, company, setup)
+    google = workspaces.invitation_email(invite, company, None)
+    for message in (password, google):
+        assert f'on the ADR field app as {phrase}.' in message['text']
+        assert f'Accept the invitation: {accept}' in message['text']
+        assert message['html'].count(f'href="{accept}"') == 2
+        assert f'>{accept}</a>' in message['html'] and '>Accept invitation</a>' in message['html']
+    assert '1. Set your password for the ADR field app: ' + setup in password['text']
+    assert (
+        '2. Accept the invitation. Then sign in with new@example.invalid and that password.'
+        in password['text']
+    )
+    assert 'use Forgot password on the sign-in page' in password['text'] + password['html']
+    assert f'href="{html.escape(setup)}"' in password['html'] and setup not in password['html']
+    assert 'Sign in with Google using this email (new@example.invalid).' in google['text']
+    assert 'Sign in with Google using this email' in google['html']
+    assert 'Set your password' not in google['text'] + google['html'] and '1.' not in google['text']
+
+
+def test_both_transports_send_the_logo_as_an_inline_attachment(smtp, monkeypatch):
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    monkeypatch.setattr(workspaces, 'password_setup_link', lambda email: None)
+    logo = workspaces.clean_logo(png())
+    company = {'profile': {'name': 'Kern Water Pros', 'logo_data_url': logo}}
+    workspaces.send_invitation(direct_invite(), company)
+    monkeypatch.setenv('INVITATION_TRANSPORT', 'resend')
+    workspaces.send_invitation(direct_invite(), company)
+    data = base64.b64decode(logo.partition(',')[2])
+    (attachment,) = sent[0]['attachments']
+    assert attachment == {
+        'content': base64.b64encode(data).decode(),
+        'filename': 'logo.jpg',
+        'content_type': 'image/jpeg',
+        'content_id': 'invitation-logo@adr-field-app',
+    }
+    message = connections[0]['server'].message
+    assert [part.get_content_type() for part in message.walk()] == [
+        'multipart/alternative',
+        'text/plain',
+        'multipart/related',
+        'text/html',
+        'image/jpeg',
+    ]
+    image = list(message.walk())[-1]
+    assert image['Content-ID'] == '<invitation-logo@adr-field-app>'
+    assert image.get_content_disposition() == 'inline' and image.get_content() == data
+    assert len(message.as_bytes()) < 60000
 
 
 def test_smtp_invitation_records_the_message_id_and_mails_only_the_set_password_link(smtp):
