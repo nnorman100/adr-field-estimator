@@ -1,7 +1,7 @@
 {
   "name": "Alert Disaster Restoration Field Estimator",
   "short_name": "ADR Estimator",
-  "description": "Multimodal AI Field Walkthrough & Insurance Claims Estimator for Alert Disaster Restoration",
+  "description": "Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FFFFFE",

@@ -76,7 +76,7 @@ test('the vendored modular Firebase SDK starts the app same-origin under the Hos
     return route.continue();
   });
   await page.goto('/');
-  await expect(page.locator('#signInButton')).toBeVisible();
+  await expect(page.locator('#googleSignIn')).toBeVisible();
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   expect(
     await page.evaluate(() => ({

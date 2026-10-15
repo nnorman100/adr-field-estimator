@@ -137,7 +137,7 @@ const unstamp = (text) =>
     () =>
       typeof auth !== 'undefined' &&
       auth !== null &&
-      document.getElementById('signInButton').hidden === false,
+      document.getElementById('googleSignIn').checkVisibility(),
   );
   await page.waitForTimeout(1500);
   assert(!(await page.locator('#message').textContent()).includes('initialization failed'));
@@ -194,7 +194,7 @@ const unstamp = (text) =>
   await page.screenshot({ path: nodePath.join(EVIDENCE, 'redesigned-live-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   const popupPromise = page.waitForEvent('popup', { timeout: 15000 });
-  await page.locator('#signInButton').click();
+  await page.locator('#googleSignIn').click();
   const popup = await popupPromise;
   await popup.waitForURL((url) => url.hostname === 'accounts.google.com', { timeout: 20000 });
   console.log(

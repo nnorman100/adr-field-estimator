@@ -354,7 +354,7 @@ async function main(args = process.argv.slice(2)) {
     audit.phase('load');
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     if (smoke) {
-      await expect(page.locator('#signInButton')).toBeVisible({ timeout: 30000 });
+      await expect(page.locator('#googleSignIn')).toBeVisible({ timeout: 30000 });
       await page.waitForFunction(
         () => typeof auth !== 'undefined' && !!auth,
         {},
