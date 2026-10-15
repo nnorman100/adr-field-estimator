@@ -644,3 +644,44 @@ test('server validation errors show the field message instead of a generic retry
     "Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.",
   );
 });
+
+// The server refusal is the control; the UI only has to keep the superadmin tools out of sight.
+for (const role of ['estimator', 'office', 'other', 'outsider']) {
+  test(`superadmin tools are hidden from and refused to ${role}`, async ({ page }) => {
+    await start(page, role);
+    await navigate(page, 'dashboardHome');
+    await expect(page.locator('#dashboardHeading')).not.toHaveText('Companies');
+    await expect(page.locator('#dashboardAdmin')).toBeHidden();
+    for (const name of ['Manage companies', 'Open read-only support view'])
+      await expect(page.getByRole('button', { name })).toHaveCount(0);
+    const target = role === 'other' ? 'adr' : 'other';
+    for (const [path, method, body] of [
+      ['/api/admin/companies', 'GET'],
+      [
+        '/api/admin/companies',
+        'POST',
+        { name: 'Forged Restoration', owner_email: 'forged@example.invalid' },
+      ],
+      [
+        '/api/admin/companies/' + target + '/status',
+        'PUT',
+        { expected_version: 1, status: 'suspended' },
+      ],
+      ['/api/admin/companies/' + target + '/jobs', 'GET'],
+      ['/api/companies/' + target + '/team', 'GET'],
+      [
+        '/api/companies/' + target + '/invitations',
+        'POST',
+        { email: 'forged-owner@example.invalid', role: 'owner' },
+      ],
+    ])
+      expect((await call(page, path, method, body, role)).status(), method + ' ' + path).toBe(403);
+    const companies = await (
+      await call(page, '/api/admin/companies', 'GET', undefined, 'admin')
+    ).json();
+    expect(companies.companies.map((c) => [c.company_id, c.status]).sort()).toEqual([
+      ['adr', 'active'],
+      ['other', 'active'],
+    ]);
+  });
+}
