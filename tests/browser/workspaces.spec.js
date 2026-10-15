@@ -182,6 +182,19 @@ test('every workspace destination stays reachable from the phone menu', async ({
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
 
+for (const [role, label] of [
+  ['owner', 'Owner · Superadmin'],
+  ['other', 'Owner'],
+  ['estimator', 'Estimator'],
+  ['admin', 'Superadmin'],
+]) {
+  test(`account menu names the ${role} access`, async ({ page }) => {
+    await start(page, role);
+    await page.locator('#accountMenu summary').click();
+    await expect(page.locator('#workspaceAccountDetails p').first()).toHaveText(label);
+  });
+}
+
 test('superadmin manages companies and cannot use member job routes', async ({ page }) => {
   await start(page, 'admin');
   await expect(page.locator('#dashboardJobs')).toBeHidden();
