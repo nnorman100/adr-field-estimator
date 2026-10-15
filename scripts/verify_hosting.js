@@ -148,21 +148,28 @@ const unstamp = (text) =>
       (await page.locator('.masthead').boundingBox()).height < 85,
       'Narrow header is oversized',
     );
-    await page.locator('.task-nav [data-task="walkthrough"]').click();
-    // This check runs signed out, where the email sign-in panel sits above the tasks. It models the
-    // workspaces-off signed-in layout (sign-in panel hidden, no #workspaceNav), so measure the
-    // capture action with the panel hidden. The workspaces-on signed-in layout, where #workspaceNav
-    // appears above the tasks, is not covered by this check.
-    await page.evaluate(() => (document.getElementById('authPanel').hidden = true));
-    const start = await page.locator('#startWalk').boundingBox();
-    await page.evaluate(() => (document.getElementById('authPanel').hidden = false));
-    assert(start.y + start.height < 844, 'Capture action is below the first screen');
+    // Signed out, only the login page shows: one Google sign-in, no inspection workspace behind it.
+    assert(await page.evaluate(() => document.body.classList.contains('login-page')));
+    assert.equal(
+      await page.evaluate(
+        () =>
+          [...document.querySelectorAll('button')].filter(
+            (b) => b.checkVisibility() && /sign in with google/i.test(b.textContent),
+          ).length,
+      ),
+      1,
+      'Signed-out login page needs exactly one Google sign-in',
+    );
+    for (const selector of ['.task-nav', 'main.workspace', '#inspectionForm', '#startWalk'])
+      assert(
+        await page.locator(selector).evaluate((el) => !el.checkVisibility()),
+        'Inspection workspace is visible while signed out: ' + selector,
+      );
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
       false,
       'Mobile task layout overflows',
     );
-    assert(await page.locator('#stopWalk').isHidden(), 'Idle Stop control is visible');
   }
   assert.equal(await page.locator('.brand img').evaluate((img) => img.naturalWidth), 225);
   assert.equal(
@@ -198,7 +205,7 @@ const unstamp = (text) =>
   const popup = await popupPromise;
   await popup.waitForURL((url) => url.hostname === 'accounts.google.com', { timeout: 20000 });
   console.log(
-    'PASS: deployed assets, narrow/mobile task navigation and capture layout, local fonts/cache, dedicated Firebase/API, CSP and real Google OAuth popup',
+    'PASS: deployed assets, signed-out login page at narrow widths, local fonts/cache, dedicated Firebase/API, CSP and real Google OAuth popup',
   );
   assert.equal(errors.length, 0, 'Browser initialization/CSP error: ' + errors.join(';'));
   await browser.close();
