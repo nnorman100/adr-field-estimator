@@ -1,0 +1,29 @@
+i  emulators: Starting emulators: firestore
+i  emulators: Detected demo project ID "demo-adr-emulator", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
+✔  firestore: Firestore Emulator was started in standard edition.
+✔  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: /tmp/adr-test-venv/bin/python -m pytest tests/test_firestore_emulator.py -p no:cacheprovider -v -k 'owner_transfer or superadmin or member'
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-9.1.1, pluggy-1.6.0 -- /tmp/adr-test-venv/bin/python
+rootdir: /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M4ZYWY5ZRTY1RR1E2C8530Y5
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 20 items / 17 deselected / 3 selected
+
+tests/test_firestore_emulator.py::test_superadmin_support_views_and_fixes_append_audit_entries PASSED [ 33%]
+tests/test_firestore_emulator.py::test_owner_transfer_switches_atomically_and_leaves_one_owner PASSED [ 66%]
+tests/test_firestore_emulator.py::test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims PASSED [100%]
+
+=============================== warnings summary ===============================
+../../../../../../tmp/adr-test-venv/lib/python3.14/site-packages/google/genai/types.py:42
+  /tmp/adr-test-venv/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 3 passed, 17 deselected, 1 warning in 5.63s ==================
+✔  Script exited successfully (code 0)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator

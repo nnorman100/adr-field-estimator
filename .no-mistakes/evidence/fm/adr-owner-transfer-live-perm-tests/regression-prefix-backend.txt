@@ -1,0 +1,54 @@
+.....F..                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_live_permission_loss_ends_session_at_next_recheck_and_refuses_resume[account revoked] _
+
+store = <tests.fakes.FakeCompanyStore object at 0x71090c4928d0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x71090b3b8b50>
+change = 'account revoked'
+
+    @pytest.mark.parametrize('change', LIVE_LOSSES)
+    def test_live_permission_loss_ends_session_at_next_recheck_and_refuses_resume(
+        store, monkeypatch, change
+    ):
+        """A change that ends access cuts Live at the first 20-second recheck after it: no Vertex call
+        follows the refusal, the checkpoint and lease are deleted and a resume is refused before Vertex."""
+        from starlette.websockets import WebSocketDisconnect
+    
+        uid = live_participant(store, change)
+        harness = LiveHarness(store, monkeypatch)
+        audio = {'type': 'audio', 'data': base64.b64encode(bytes(3200)).decode()}
+        with TestClient(bm.app) as client:
+            with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+                harness.start(socket, uid)
+                assert socket.receive_json()['type'] == 'ready'
+                harness.until(
+                    lambda: store.db.records.get('_live_resume/' + uid, {}).get('handle'),
+                    'checkpoint saved',
+                )
+                harness.until(lambda: harness.parked == 1, 'first heartbeat parked')
+                socket.send_json(audio)
+                harness.until(lambda: 'vertex audio' in harness.log, 'audio reached Vertex')
+                apply_loss(harness, change)
+                # The technician keeps streaming while the recheck runs.
+                for _ in range(10):
+                    socket.send_json(audio)
+                harness.tick()
+>               assert harness.parked == 1, 'Access must end at the first recheck after the change'
+E               AssertionError: Access must end at the first recheck after the change
+E               assert 2 == 1
+E                +  where 2 = <tests.test_workspaces.LiveHarness object at 0x71090c490b90>.parked
+
+tests/test_workspaces.py:2956: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+------------------------------ Captured log call -------------------------------
+INFO     adr:cloud_log.py:47 App Check
+=============================== warnings summary ===============================
+../../../../../../tmp/adr-test-venv/lib/python3.14/site-packages/google/genai/types.py:42
+  /tmp/adr-test-venv/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_workspaces.py::test_live_permission_loss_ends_session_at_next_recheck_and_refuses_resume[account revoked]
+1 failed, 7 passed, 158 deselected, 1 warning in 0.94s
