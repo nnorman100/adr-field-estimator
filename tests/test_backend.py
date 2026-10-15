@@ -868,12 +868,11 @@ def test_revocation_lookup_is_reused_within_the_ttl_while_signatures_are_always_
     revocation.now += 1.5
     staff('owner.a')
     assert revocation.calls == [True, False, True]
-    # A Live heartbeat reuses a check only if it outlasts the next heartbeat; live callers never reuse one.
+    # Live callers, including each Live heartbeat, never reuse one.
     revocation.now += 30
-    staff('owner.a', horizon=20)
-    staff('owner.a', horizon=10)
+    staff('owner.a')
     staff('owner.a', live=True)
-    assert revocation.calls[3:] == [True, False, True]
+    assert revocation.calls[3:] == [False, True]
 
 
 def test_reused_revocation_check_never_outlasts_the_token_expiry(revocation):

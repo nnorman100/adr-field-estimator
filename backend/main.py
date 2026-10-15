@@ -209,13 +209,13 @@ def admin_app():
 revocation_checked = OrderedDict()
 
 
-async def verify_identity(token, live=False, horizon=0):
-    """Verifies signature and expiry every call; reuses a recent revocation lookup unless live or due within horizon seconds."""
+async def verify_identity(token, live=False):
+    """Verifies signature and expiry every call; reuses a recent revocation lookup unless live."""
     if not isinstance(token, str):
         raise HTTPException(401, 'Your sign-in expired. Please sign in again.')
     key = hashlib.sha256(token.encode()).digest()
     now = time.time()
-    reuse = not live and revocation_checked.get(key, 0) > now + horizon
+    reuse = not live and revocation_checked.get(key, 0) > now
     try:
         claims = await run_in_threadpool(
             firebase_auth.verify_id_token, token, app=admin_app(), check_revoked=not reuse
@@ -266,8 +266,8 @@ def record_app_check(outcome, method, route, status=None):
     event('App Check', outcome=outcome, method=method, route=route, status=status)
 
 
-async def verify_staff(token, live=False, horizon=0):
-    claims = await verify_identity(token, live, horizon)
+async def verify_staff(token, live=False):
+    claims = await verify_identity(token, live)
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, claims['uid'])
         if not actor['role'] and not actor['superadmin']:
@@ -1504,8 +1504,8 @@ async def live_walkthrough(socket: WebSocket):
                     await asyncio.sleep(LIVE_RECHECK_SECONDS)
                     if staff.get('exp', 0) < time.time():
                         raise ValueError('Sign-in expired. Reconnect to continue.')
-                    # Repeats the revocation lookup before a reused result could outlast the next heartbeat.
-                    refreshed = await verify_staff(token, horizon=LIVE_RECHECK_SECONDS)
+                    # Always repeats the revocation lookup, so a revoked account ends at this recheck.
+                    refreshed = await verify_staff(token, live=True)
                     if refreshed['uid'] != uid:
                         retain = False
                         raise ValueError('Session owner changed.')

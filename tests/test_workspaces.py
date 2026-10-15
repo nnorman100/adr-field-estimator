@@ -1,6 +1,7 @@
 """Company policy is tested through real API handlers and transactional storage."""
 
 import asyncio
+import base64
 import html
 import json
 import logging
@@ -2450,3 +2451,570 @@ def test_forged_claims_headers_and_fields_cannot_grant_superadmin(mail, monkeypa
     assert_refused(client, forged_fields, FORGED_HEADERS, (403, 422))
     assert unrestricted(store) == before
     assert not sent and not accounts.created
+
+
+# Ownership transfer: superadmin replaces the owner; the switch is atomic on acceptance.
+
+DRAFT = 'ADR-INS-' + 'c' * 32
+
+
+def transfer_setup(client, current, store):
+    """A plain owner (no superadmin record), the owner's draft, an estimator's signed job and
+    a staff invitation the owner sent; returns that invitation."""
+    signed_job(client, current, store)
+    del store.db.records['_platform_admins/owner']
+    current['uid'] = 'owner'
+    assert (
+        client.post(
+            '/api/inspections', json={'inspection_id': DRAFT, 'data': data('Owner draft')}
+        ).status_code
+        == 200
+    )
+    staff = client.post(
+        '/api/companies/adr/invitations', json={'email': 'staff@example.invalid', 'role': 'office'}
+    )
+    assert staff.status_code == 200
+    return staff.json()
+
+
+def owner_routes(store, staff_invitation):
+    """(name, method, path, body) for every owner route, with bodies valid for the current records."""
+    records = store.db.records
+    company = records['_companies/adr']
+    job = records['_workspace_jobs/' + ID]
+    evidence = '/api/authorizations/' + SIGNED
+    return [
+        ('company', 'GET', '/api/companies/adr', None),
+        (
+            'profile',
+            'PUT',
+            '/api/companies/adr',
+            {'expected_version': company['version'], 'profile': company['profile']},
+        ),
+        ('team', 'GET', '/api/companies/adr/team', None),
+        (
+            'member',
+            'PUT',
+            '/api/companies/adr/team/estimator2',
+            {
+                'expected_version': records['_memberships/estimator2']['version'],
+                'role': 'estimator',
+                'status': 'active',
+            },
+        ),
+        ('invitations', 'GET', '/api/companies/adr/invitations', None),
+        (
+            'invite',
+            'POST',
+            '/api/companies/adr/invitations',
+            {'email': 'next-staff@example.invalid', 'role': 'estimator'},
+        ),
+        (
+            'cancel invitation',
+            'POST',
+            '/api/companies/adr/invitations/' + staff_invitation['invitation_id'] + '/cancel',
+            None,
+        ),
+        ('jobs', 'GET', '/api/inspections', None),
+        ('job', 'GET', '/api/inspections/' + ID, None),
+        ('draft', 'GET', '/api/inspections/' + DRAFT, None),
+        ('photo', 'GET', '/api/inspections/' + ID + '/photos/' + PHOTO, None),
+        ('documents', 'GET', '/api/authorizations', None),
+        ('document', 'GET', evidence, None),
+        ('evidence', 'GET', evidence + '/evidence/signature', None),
+        ('coordination', 'GET', '/api/jobs/' + ID + '/coordination', None),
+        (
+            'coordinate',
+            'PUT',
+            '/api/jobs/' + ID + '/coordination',
+            {
+                'expected_version': job['version'],
+                **{
+                    k: job[k]
+                    for k in ('customer_name', 'customer_phone', 'customer_email', 'office_notes')
+                },
+            },
+        ),
+    ]
+
+
+def active_owners(store, company_id='adr'):
+    return sorted(
+        m['uid']
+        for k, m in store.db.records.items()
+        if k.startswith('_memberships/')
+        and m['company_id'] == company_id
+        and m['role'] == 'owner'
+        and m['status'] == 'active'
+    )
+
+
+def company_records(store):
+    """Customer jobs, drafts, signed agreements and their company sidecars."""
+    prefixes = ('inspections/', 'authorizations/', '_workspace_jobs/', '_workspace_authorizations/')
+    return {k: deepcopy(v) for k, v in store.db.records.items() if k.startswith(prefixes)}
+
+
+def events(store, action):
+    return [
+        v
+        for k, v in store.db.records.items()
+        if k.startswith('_admin_events/') and v['action'] == action
+    ]
+
+
+def test_owner_transfer_end_to_end_moves_owner_access_and_keeps_company_records(mail):
+    client, current, store, accounts, sent, _ = mail
+    staff_invitation = transfer_setup(client, current, store)
+    records = store.db.records
+    jobs = company_records(store)
+    current['uid'] = 'admin'
+    invited = client.post(
+        '/api/companies/adr/invitations',
+        json={'email': 'successor@example.invalid', 'role': 'owner'},
+    )
+    assert invited.status_code == 200
+    invitation = invited.json()
+    assert invitation['expected_owner_uid'] == 'owner'
+    assert sent[-1]['to'] == ['successor@example.invalid']
+    competing = client.post(
+        '/api/companies/adr/invitations', json={'email': 'rival@example.invalid', 'role': 'owner'}
+    ).json()
+    accept = '/api/invitations/' + invitation['invitation_id'] + '/accept'
+    # Until acceptance the current owner keeps the company.
+    assert active_owners(store) == ['owner'] and records['_companies/adr']['owner_uid'] == 'owner'
+
+    # Only the exact invited, verified account can accept.
+    for uid in ('intruder', 'owner', 'estimator'):
+        current['uid'] = uid
+        assert client.post(accept).status_code == 404, uid
+    bm.app.dependency_overrides[bm.current_identity] = lambda: {
+        **identity('successor'),
+        'email_verified': False,
+    }
+    assert client.post(accept).status_code == 403
+    bm.app.dependency_overrides[bm.current_identity] = lambda: identity(current['uid'])
+    assert active_owners(store) == ['owner'] and records['_memberships/owner']['version'] == 1
+
+    current['uid'] = 'successor'
+    assert client.post(accept).json() == {'uid': 'successor', 'company_id': 'adr', 'role': 'owner'}
+    company = deepcopy(records['_companies/adr'])
+    assert company['owner_uid'] == 'successor'
+    assert active_owners(store) == ['successor']
+    assert records['_memberships/owner'] | {'updated_at': None} == dict(
+        uid='owner',
+        email='owner@example.invalid',
+        company_id='adr',
+        role='owner',
+        status='disabled',
+        version=2,
+        updated_at=None,
+    )
+    # Repeating the acceptance changes nothing; a competing invitation bound to the old owner fails.
+    assert client.post(accept).status_code == 200
+    assert records['_companies/adr'] == company and active_owners(store) == ['successor']
+    current['uid'] = 'rival'
+    assert (
+        client.post('/api/invitations/' + competing['invitation_id'] + '/accept').status_code == 409
+    )
+    assert active_owners(store) == ['successor'] and '_memberships/rival' not in records
+
+    # The former owner immediately loses every owner route and changes nothing.
+    current['uid'] = 'owner'
+    before = unrestricted(store)
+    for name, method, path, body in owner_routes(store, staff_invitation):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 403, (name, response.status_code, response.text)
+        assert set(response.json()) == {'detail'}, name
+    assert unrestricted(store) == before
+
+    # The new owner gains them, over the same company jobs, drafts and signed agreements.
+    current['uid'] = 'successor'
+    for name, method, path, body in owner_routes(store, staff_invitation):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, (name, response.status_code, response.text)
+    assert {j['inspection_id'] for j in client.get('/api/inspections').json()['inspections']} == {
+        ID,
+        DRAFT,
+    }
+    assert [a['auth_id'] for a in client.get('/api/authorizations').json()['authorizations']] == [
+        SIGNED
+    ]
+    after = company_records(store)
+    # Only the coordination sidecar's version moved; jobs, drafts and signed agreements are intact.
+    after['_workspace_jobs/' + ID].update(
+        version=jobs['_workspace_jobs/' + ID]['version'],
+        updated_at=jobs['_workspace_jobs/' + ID]['updated_at'],
+    )
+    assert after == jobs
+    assert all(after['_workspace_jobs/' + job]['company_id'] == 'adr' for job in (ID, DRAFT))
+
+    # The former owner can later be given a staff role, and then has only that role's access.
+    assert (
+        client.put(
+            '/api/companies/adr/team/owner',
+            json={'expected_version': 2, 'role': 'estimator', 'status': 'active'},
+        ).status_code
+        == 200
+    )
+    current['uid'] = 'owner'
+    allowed = {'company', 'jobs', 'draft', 'documents'}
+    for name, method, path, body in owner_routes(store, staff_invitation):
+        response = client.request(method, path, json=body)
+        expected = (200,) if name in allowed else (403, 404)
+        assert response.status_code in expected, (name, response.status_code, response.text)
+    assert [j['inspection_id'] for j in client.get('/api/inspections').json()['inspections']] == [
+        DRAFT
+    ]
+    assert client.get('/api/authorizations').json()['authorizations'] == []
+    assert active_owners(store) == ['successor']
+
+    created = [e for e in events(store, 'invitation_created') if e['details']['role'] == 'owner']
+    assert [(e['actor_uid'], e['details']['invitation_id']) for e in created] == [
+        ('admin', invitation['invitation_id']),
+        ('admin', competing['invitation_id']),
+    ]
+    accepted = [e for e in events(store, 'invitation_accepted') if e['actor_uid'] == 'successor']
+    assert [e['details'] for e in accepted] == [{'role': 'owner', 'previous_owner_uid': 'owner'}]
+    assert [(e['actor_uid'], e['details']) for e in events(store, 'member_access')][-1] == (
+        'successor',
+        {'uid': 'owner', 'role': 'estimator', 'status': 'active'},
+    )
+    assert all(e['company_id'] == 'adr' for e in created + accepted)
+
+
+@pytest.mark.parametrize('ending', ['expired', 'cancelled'])
+def test_expired_or_cancelled_owner_invitation_changes_nothing(mail, ending):
+    client, current, store, accounts, sent, _ = mail
+    del store.db.records['_platform_admins/owner']
+    current['uid'] = 'admin'
+    invitation = client.post(
+        '/api/companies/adr/invitations',
+        json={'email': 'successor@example.invalid', 'role': 'owner'},
+    ).json()
+    path = '/api/companies/adr/invitations/' + invitation['invitation_id']
+    if ending == 'expired':
+        store.db.records['_invitations/' + invitation['invitation_id']]['expires_at'] = 0
+    else:
+        assert client.post(path + '/cancel').status_code == 200
+    before = unrestricted(store)
+    current['uid'] = 'successor'
+    response = client.post('/api/invitations/' + invitation['invitation_id'] + '/accept')
+    assert response.status_code == 409 and 'expired or cancelled' in response.json()['detail']
+    assert unrestricted(store) == before
+    assert (
+        active_owners(store) == ['owner']
+        and store.workspaces.principal('successor')['role'] is None
+    )
+    if ending == 'cancelled':
+        current['uid'] = 'admin'
+        assert client.post(path + '/resend').status_code == 409
+
+
+def test_owner_cannot_transfer_disable_or_demote_themselves(mail):
+    client, current, store, accounts, sent, _ = mail
+    del store.db.records['_platform_admins/owner']
+    current['uid'] = 'owner'
+    before = unrestricted(store)
+    attempts = [
+        ('POST', '/api/companies/adr/invitations', {'email': 'x@example.invalid', 'role': 'owner'}),
+        (
+            'PUT',
+            '/api/companies/adr/team/owner',
+            {'expected_version': 1, 'role': 'estimator', 'status': 'disabled'},
+        ),
+        (
+            'PUT',
+            '/api/companies/adr/team/owner',
+            {'expected_version': 1, 'role': 'office', 'status': 'active'},
+        ),
+    ]
+    for method, path, body in attempts:
+        response = client.request(method, path, json=body)
+        assert response.status_code == 403, (path, body, response.text)
+    assert unrestricted(store) == before and not sent
+    # A staff invitation to the owner's own email cannot demote the active owner either.
+    staff = client.post(
+        '/api/companies/adr/invitations', json={'email': 'owner@example.invalid', 'role': 'office'}
+    ).json()
+    assert client.post('/api/invitations/' + staff['invitation_id'] + '/accept').status_code == 409
+    assert active_owners(store) == ['owner']
+    assert store.db.records['_memberships/owner']['role'] == 'owner'
+
+
+def test_staff_member_promoted_to_owner_leaves_one_owner(store):
+    w = store.workspaces
+    invitation = w.invite('admin', 'adr', 'estimator2@example.invalid', 'owner')
+    assert w.accept(identity('estimator2'), invitation['invitation_id'])['role'] == 'owner'
+    assert active_owners(store) == ['estimator2']
+    assert store.db.records['_memberships/estimator2']['version'] == 2
+    assert w.principal('owner')['role'] is None
+    assert 'team_manage' in w.principal('estimator2')['capabilities']
+
+
+# Permission changes during a Live walkthrough, at the production 20-second recheck.
+
+
+class LiveHarness:
+    """Real identity, membership and job checks around a fake Vertex session.
+
+    Each heartbeat parks until the test ticks it; a tick moves the virtual clock forward by the
+    full LIVE_RECHECK_SECONDS. The log orders Vertex calls against the first refused check."""
+
+    def __init__(self, store, monkeypatch):
+        self.store = store
+        self.now = 1_000_000.0
+        self.parked = 0
+        self.ticks = 0
+        self.revoked = set()
+        self.log = []
+        self.connects = 0
+        harness = self
+
+        async def sleep(seconds):
+            if seconds != bm.LIVE_RECHECK_SECONDS:
+                return await asyncio.sleep(seconds)
+            harness.parked += 1
+            while harness.ticks < harness.parked:
+                await asyncio.sleep(0.002)
+            harness.now += seconds
+
+        def verify_id_token(token, app=None, check_revoked=False):
+            if check_revoked and token in harness.revoked:
+                raise ValueError('Synthetic revoked account')
+            return {**identity(token), 'exp': harness.now + 3000}
+
+        class Session:
+            async def send_realtime_input(self, **kwargs):
+                harness.log.append('vertex ' + next(iter(kwargs)))
+
+            async def receive(self):
+                yield SimpleNamespace(
+                    server_content=None,
+                    session_resumption_update=SimpleNamespace(
+                        new_handle='synthetic-private', resumable=True
+                    ),
+                )
+                await asyncio.Event().wait()
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def connect(**kwargs):
+            harness.connects += 1
+            harness.log.append('vertex connect')
+            yield Session()
+
+        async def close():
+            harness.log.append('vertex closed')
+
+        def refused(call):
+            async def wrapped(*args, **kwargs):
+                try:
+                    return await call(*args, **kwargs)
+                except bm.HTTPException as error:
+                    if error.status_code in (401, 403, 404):
+                        harness.log.append('refused')
+                    raise
+
+            return wrapped
+
+        clock = asyncio.__dict__ | {'sleep': sleep}
+        monkeypatch.setattr(bm, 'asyncio', SimpleNamespace(**clock))
+        monkeypatch.setattr(
+            bm, 'time', SimpleNamespace(time=lambda: harness.now, monotonic=time.monotonic)
+        )
+        monkeypatch.setattr(bm, 'LIVE_RECHECK_SECONDS', 20)
+        monkeypatch.setattr(bm, 'REVOCATION_CACHE_SECONDS', 45)
+        monkeypatch.setattr(bm, 'revocation_checked', type(bm.revocation_checked)())
+        monkeypatch.setattr(bm.firebase_admin, 'get_app', lambda name: object())
+        monkeypatch.setattr(bm.firebase_auth, 'verify_id_token', verify_id_token)
+        monkeypatch.setattr(bm, 'WORKSPACES_ENABLED', True)
+        monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+        monkeypatch.setattr(bm, 'verify_staff', refused(bm.verify_staff))
+        monkeypatch.setattr(bm, 'stored', refused(bm.stored))
+        monkeypatch.setattr(
+            bm.genai,
+            'Client',
+            lambda **kwargs: SimpleNamespace(
+                aio=SimpleNamespace(live=SimpleNamespace(connect=connect), aclose=close)
+            ),
+        )
+
+    def until(self, condition, what):
+        deadline = time.monotonic() + 5
+        while not condition():
+            assert time.monotonic() < deadline, what
+            time.sleep(0.002)
+
+    def tick(self):
+        """Let the parked heartbeat run once, then wait until it parks again or the session ends."""
+        self.ticks += 1
+        self.until(
+            lambda: self.parked > self.ticks or 'vertex closed' in self.log, 'heartbeat finished'
+        )
+
+    def start(self, socket, uid, resume=False):
+        socket.send_json(
+            {
+                'type': 'authenticate',
+                'token': uid,
+                'inspection_id': ID,
+                'protocol_version': 2,
+                'workspace_protocol_version': 1,
+                'capture_id': 'f' * 32,
+                'resume': resume,
+            }
+        )
+
+
+LIVE_LOSSES = [
+    'member disabled',
+    'role changed to office',
+    'job reassigned away',
+    'company suspended',
+    'membership removed',
+    'account revoked',
+    'owner replaced',
+    'superadmin owner replaced',
+]
+
+
+def live_participant(store, change):
+    """Creates the job and returns who runs Live for this change."""
+    if 'owner' in change:
+        if change == 'owner replaced':
+            del store.db.records['_platform_admins/owner']
+        store.create_inspection('owner', ID, data())
+        return 'owner'
+    store.create_inspection('estimator', ID, data())
+    if change == 'job reassigned away':
+        store.workspaces.coordination(
+            'owner', ID, CoordinationUpdate(expected_version=1, assigned_estimator_uid='estimator2')
+        )
+        return 'estimator2'
+    return 'estimator'
+
+
+def apply_loss(harness, change):
+    w = harness.store.workspaces
+    if change == 'member disabled':
+        w.update_member(
+            'owner',
+            'adr',
+            'estimator',
+            MemberUpdate(expected_version=1, role='estimator', status='disabled'),
+        )
+    elif change == 'role changed to office':
+        w.update_member(
+            'owner',
+            'adr',
+            'estimator',
+            MemberUpdate(expected_version=1, role='office', status='active'),
+        )
+    elif change == 'job reassigned away':
+        w.coordination('owner', ID, CoordinationUpdate(expected_version=2))
+    elif change == 'company suspended':
+        w.update_company('admin', 'adr', StatusUpdate(expected_version=1, status='suspended'))
+    elif change == 'membership removed':
+        del harness.store.db.records['_memberships/estimator']
+    elif change == 'account revoked':
+        harness.revoked.add('estimator')
+    else:
+        # The owner is live while a superadmin replacement is accepted.
+        invitation = w.invite('admin', 'adr', 'successor@example.invalid', 'owner')
+        w.accept(identity('successor'), invitation['invitation_id'])
+
+
+@pytest.mark.parametrize('change', LIVE_LOSSES)
+def test_live_permission_loss_ends_session_at_next_recheck_and_refuses_resume(
+    store, monkeypatch, change
+):
+    """A change that ends access cuts Live at the first 20-second recheck after it: no Vertex call
+    follows the refusal, the checkpoint and lease are deleted and a resume is refused before Vertex."""
+    from starlette.websockets import WebSocketDisconnect
+
+    uid = live_participant(store, change)
+    harness = LiveHarness(store, monkeypatch)
+    audio = {'type': 'audio', 'data': base64.b64encode(bytes(3200)).decode()}
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+            harness.start(socket, uid)
+            assert socket.receive_json()['type'] == 'ready'
+            harness.until(
+                lambda: store.db.records.get('_live_resume/' + uid, {}).get('handle'),
+                'checkpoint saved',
+            )
+            harness.until(lambda: harness.parked == 1, 'first heartbeat parked')
+            socket.send_json(audio)
+            harness.until(lambda: 'vertex audio' in harness.log, 'audio reached Vertex')
+            apply_loss(harness, change)
+            # The technician keeps streaming while the recheck runs.
+            for _ in range(10):
+                socket.send_json(audio)
+            harness.tick()
+            assert harness.parked == 1, 'Access must end at the first recheck after the change'
+            message = socket.receive_json()
+            assert message['type'] == 'error' and message['status'] in (401, 403, 404), message
+            with pytest.raises(WebSocketDisconnect):
+                socket.receive_json()
+    refused = harness.log.index('refused')
+    assert [e for e in harness.log[refused:] if e.startswith('vertex ')] == ['vertex closed']
+    assert '_live_resume/' + uid not in store.db.records
+    assert '_live_sessions/' + uid not in store.db.records
+
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+            harness.start(socket, uid, resume=True)
+            message = socket.receive_json()
+            assert message['type'] == 'error' and message['status'] in (401, 403, 404), message
+            with pytest.raises(WebSocketDisconnect):
+                socket.receive_json()
+    assert harness.connects == 1
+    assert not any(k.startswith(('_live_sessions/', '_live_resume/')) for k in store.db.records)
+
+
+LIVE_KEEPS = {
+    'same role saved again': lambda w: w.update_member(
+        'owner',
+        'adr',
+        'estimator',
+        MemberUpdate(expected_version=1, role='estimator', status='active'),
+    ),
+    'job also assigned to another estimator': lambda w: w.coordination(
+        'owner', ID, CoordinationUpdate(expected_version=1, assigned_estimator_uid='estimator2')
+    ),
+    'company profile changed': lambda w: w.update_company(
+        'owner',
+        'adr',
+        ProfileUpdate(
+            expected_version=1, profile=CompanyProfile(**{**ADR_PROFILE, 'phone': '555-0101'})
+        ),
+    ),
+    'another member disabled': lambda w: w.update_member(
+        'owner', 'adr', 'office', MemberUpdate(expected_version=1, role='office', status='disabled')
+    ),
+    'owner replaced': lambda w: w.accept(
+        identity('successor'),
+        w.invite('admin', 'adr', 'successor@example.invalid', 'owner')['invitation_id'],
+    ),
+}
+
+
+@pytest.mark.parametrize('change', LIVE_KEEPS)
+def test_live_permission_change_that_keeps_access_keeps_the_session(store, monkeypatch, change):
+    store.create_inspection('estimator', ID, data())
+    harness = LiveHarness(store, monkeypatch)
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+            harness.start(socket, 'estimator')
+            assert socket.receive_json()['type'] == 'ready'
+            harness.until(lambda: harness.parked == 1, 'first heartbeat parked')
+            LIVE_KEEPS[change](store.workspaces)
+            harness.tick()
+            harness.tick()
+            assert harness.parked == 3 and 'refused' not in harness.log
+            socket.send_json({'type': 'end', 'preserve_resume': True})
+            assert socket.receive_json() == {'type': 'finished', 'complete': True}
+    assert 'refused' not in harness.log and harness.connects == 1
+    assert store.db.records['_live_resume/estimator']['handle'] == 'synthetic-private'
