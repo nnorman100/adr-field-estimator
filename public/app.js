@@ -1470,6 +1470,60 @@ async function loadPhotoUrls(prefix) {
     renderPhotos();
   }
 }
+// Help is static text; role only orders the topics and never reveals data or controls.
+const HELP_ROLES = {
+  estimator: 'Estimator',
+  office: 'Office staff',
+  owner: 'Owner',
+  superadmin: 'Superadmin',
+};
+function helpRoles() {
+  const session = state.session;
+  if (!state.user || !session) return [];
+  // Without company workspaces every approved account runs the full field workflow.
+  if (!session.workspaces_enabled) return ['estimator'];
+  return [session.role, session.superadmin && 'superadmin'].filter((role) => HELP_ROLES[role]);
+}
+let helpContactDefault;
+function helpContact() {
+  const line = $('helpContact');
+  helpContactDefault ??= [...line.childNodes].map((child) => child.cloneNode(true));
+  line.hidden = false;
+  if (!state.session?.workspaces_enabled) return line.replaceChildren(...helpContactDefault);
+  // The same company details the Account menu shows once a workspace session loads.
+  const profile = state.session.company?.profile;
+  // A superadmin without a company membership is the platform contact; there is no one to name.
+  if (!profile && state.session.superadmin) return (line.hidden = true);
+  if (!profile) return line.replaceChildren('For company access, ask your company owner.');
+  const parts = ['Need help with a job? Contact ' + profile.name];
+  const phone = profile.phone?.replace(/[^\d+]/g, '');
+  if (phone) parts.push(' at ', Object.assign(node('a', profile.phone), { href: 'tel:' + phone }));
+  if (profile.email)
+    parts.push(
+      phone ? ' or ' : ' at ',
+      Object.assign(node('a', profile.email), { href: 'mailto:' + profile.email }),
+    );
+  line.replaceChildren(...parts, '.');
+}
+function openHelp() {
+  closeMenus();
+  const roles = helpRoles();
+  $('helpYours').hidden = !roles.length;
+  $('helpYoursHeading').textContent =
+    'For you: ' + roles.map((role) => HELP_ROLES[role]).join(' and ');
+  $('helpOtherHeading').textContent = roles.length ? 'Other roles' : 'App features';
+  $('helpIntro').textContent = roles.length
+    ? 'How to use the field estimator. Topics for your role come first.'
+    : 'How to use the field estimator. Sign in to see the topics for your role first.';
+  for (const topic of document.querySelectorAll('#helpDialog [data-help-roles]')) {
+    const yours = topic.dataset.helpRoles.split(' ').some((role) => roles.includes(role));
+    $(yours ? 'helpYours' : 'helpOther').append(topic);
+  }
+  $('helpOther').hidden = !$('helpOther').querySelector('[data-help-roles]');
+  $('helpDialog').querySelector('[data-help-topic="start"]').open = !roles.length;
+  helpContact();
+  $('helpDialog').showModal();
+}
 async function showJobs() {
   closeMenus();
   $('jobsDialog').showModal();
@@ -2590,6 +2644,9 @@ async function initialize() {
   click('newInspection', () => openNew());
   click('openJobs', () => (window.WorkspaceUI?.enabled() ? WorkspaceUI.jobs() : showJobs()));
   click('closeJobs', () => $('jobsDialog').close());
+  click('helpButton', openHelp);
+  click('closeHelp', () => $('helpDialog').close());
+  $('helpDialog').addEventListener('close', () => $('helpButton').focus());
   click('cancelRoomRemoval', () => $('removeRoomDialog').close());
   click('confirmRoomRemoval', confirmRoomRemoval);
   $('removeRoomDialog').addEventListener('close', closeRoomRemoval);

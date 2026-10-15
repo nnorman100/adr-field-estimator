@@ -1539,3 +1539,71 @@ footer {
     display: none !important;
   }
 }
+.help-button {
+  width: 48px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.25rem;
+  font-weight: 900;
+  color: var(--adr);
+  flex-shrink: 0;
+}
+.help-dialog {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  line-height: 1.6;
+  /* Keeps a focused or scrolled-to topic below the sticky title bar. */
+  scroll-padding-top: 5rem;
+}
+.help-dialog .section-head {
+  position: sticky;
+  top: -1.5rem;
+  margin: -1.5rem -1.5rem 0;
+  padding: 1rem 1.5rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.help-dialog h2 {
+  margin: 0;
+}
+.help-group h3 {
+  margin: 1.5rem 0 0;
+  font-size: 0.875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.help-topic ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+.help-topic li + li {
+  margin-top: 0.4rem;
+}
+.help-contact {
+  margin: 1.5rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.help-contact a {
+  color: var(--adr);
+  font-weight: 700;
+}
+@media (max-width: 700px) {
+  .header-tools .help-button {
+    padding: 0;
+    font-size: 1.125rem;
+  }
+  .help-dialog {
+    width: calc(100% - 1rem);
+    max-height: calc(100dvh - 1rem);
+    padding: 1rem;
+  }
+  .help-dialog .section-head {
+    align-items: center;
+    flex-wrap: nowrap;
+    top: -1rem;
+    margin: -1rem -1rem 0;
+    padding: 0.75rem 1rem;
+  }
+}
