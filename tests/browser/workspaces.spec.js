@@ -773,3 +773,55 @@ for (const mode of [
         );
       },
     );
+
+test('long company name keeps its phone rendering until the Update ready banner shows', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await start(page, 'other');
+  const name = page.locator('.masthead .brand strong');
+  await page.evaluate(() => {
+    document.querySelector('.masthead .brand strong').textContent =
+      'Central Valley Water Damage & Mold Remediation Specialists';
+  });
+  const render = () =>
+    name.evaluate((el) => {
+      const r = el.getBoundingClientRect(),
+        style = getComputedStyle(el);
+      return {
+        box: [r.left, r.top, r.width, r.height],
+        overflow: style.overflow,
+        clamp: style.webkitLineClamp,
+        clear: r.right <= document.getElementById('updateBanner').getBoundingClientRect().left,
+      };
+    });
+  const before = await render();
+  expect(before).toMatchObject({ overflow: 'visible', clamp: 'none' });
+  await page.evaluate(() => (document.getElementById('updateBanner').hidden = false));
+  expect(await render()).toMatchObject({ overflow: 'hidden', clamp: '2', clear: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.evaluate(() => (document.getElementById('updateBanner').hidden = true));
+  expect(await render()).toEqual(before);
+});
+
+test('signed-out phone header at 320×844 fits the Update ready banner without overlap', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
+  await page.goto('/');
+  await expect(page.locator('#signInButton')).toBeVisible();
+  await showUpdateBanner(page);
+  const boxes = await page.evaluate(() =>
+    ['.brand img', '#updateBanner', '#signInButton', '#accountMenu'].map((s) => {
+      const r = document.querySelector(s).getBoundingClientRect();
+      return [r.left, r.right];
+    }),
+  );
+  for (let i = 1; i < boxes.length; i++)
+    expect(boxes[i][0]).toBeGreaterThanOrEqual(boxes[i - 1][1]);
+  expect(boxes[0][1] - boxes[0][0]).toBeGreaterThan(0);
+  expect(boxes[3][1]).toBeLessThanOrEqual(320);
+  expect(await bannerUsable(page)).toEqual({ inside: true, hit: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
