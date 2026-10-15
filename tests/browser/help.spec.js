@@ -70,7 +70,13 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   await expect(page).toHaveTitle(
     'Field Estimator · Water & mold loss estimates | Alert Disaster Restoration',
   );
-  for (const hidden of ['.inspection-shell', '.workspace', '.workspace-bar', '#jobCoordination'])
+  for (const hidden of [
+    '.inspection-shell',
+    '.workspace',
+    '.workspace-bar',
+    '#jobCoordination',
+    '.draft-actions',
+  ])
     await expect(page.locator(hidden).first()).toBeHidden();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
   await expect(page.getByRole('button', { name: /google/i })).toHaveCount(1);

@@ -1676,7 +1676,8 @@ footer {
 .login-page .inspection-shell,
 .login-page .workspace,
 .login-page #jobCoordination,
-.login-page #conflictActions {
+.login-page #conflictActions,
+.login-page .draft-actions {
   display: none !important;
 }
 .login-page .auth-panel {
