@@ -58,7 +58,13 @@ try:
     from . import signing_links
     from .claims import make_documents, price_scope
     from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS, GREETING_TRIGGER
-    from .live_support import live_config, scope_fingerprint, is_speech
+    from .live_support import (
+        live_config,
+        scope_fingerprint,
+        is_speech,
+        LiveCounters,
+        AUDIO_ACK_EVERY,
+    )
     from .company_store import CompanyInspectionStore
     from .workspaces import AccessDenied
     from .workspace_api import register_workspace_routes
@@ -82,7 +88,13 @@ except ImportError:
     import signing_links
     from claims import make_documents, price_scope
     from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS, GREETING_TRIGGER
-    from live_support import live_config, scope_fingerprint, is_speech
+    from live_support import (
+        live_config,
+        scope_fingerprint,
+        is_speech,
+        LiveCounters,
+        AUDIO_ACK_EVERY,
+    )
     from company_store import CompanyInspectionStore
     from workspaces import AccessDenied
     from workspace_api import register_workspace_routes
@@ -1241,6 +1253,7 @@ async def live_walkthrough(socket: WebSocket):
     status = None
     total_tokens = None
     provider_code = None
+    counters = LiveCounters()
     try:
         packet = await asyncio.wait_for(socket.receive_text(), 10)
         if len(packet) > 16384:
@@ -1357,6 +1370,7 @@ async def live_walkthrough(socket: WebSocket):
                     voice=LIVE_VOICE,
                     token_refresh=True,
                     recovery=recovery,
+                    audio_ack=AUDIO_ACK_EVERY,
                 )
             await socket.send_json(ready)
             if recovery == 'new':
@@ -1389,12 +1403,23 @@ async def live_walkthrough(socket: WebSocket):
                         if len(audio) > 64000 or len(audio) % 2:
                             raise ValueError('Invalid PCM audio.')
                         # The client streams the open microphone, so only speech can still be awaiting a transcript.
-                        if is_speech(audio):
+                        speech = is_speech(audio)
+                        if speech:
                             pending = True
                             final_text.clear()
                         await session.send_realtime_input(
                             audio=types.Blob(data=audio, mime_type='audio/pcm;rate=16000')
                         )
+                        counters.audio(len(audio), speech, moment)
+                        seq = data.get('seq')
+                        # Acknowledging after forwarding lets the client measure how far behind its audio is.
+                        if (
+                            protocol == 2
+                            and type(seq) is int
+                            and seq > 0
+                            and seq % AUDIO_ACK_EVERY == 0
+                        ):
+                            await socket.send_json({'type': 'ack', 'seq': seq})
                     elif kind == 'video':
                         if moment - frame_at < 0.95:
                             continue
@@ -1405,7 +1430,9 @@ async def live_walkthrough(socket: WebSocket):
                         await session.send_realtime_input(
                             video=types.Blob(data=image, mime_type='image/jpeg')
                         )
+                        counters.frames += 1
                     elif kind == 'pause' and protocol == 2:
+                        counters.pause()
                         await session.send_realtime_input(audio_stream_end=True)
                     elif kind == 'refresh':
                         # A renewed ID token extends the session only for the same verified user.
@@ -1417,6 +1444,7 @@ async def live_walkthrough(socket: WebSocket):
                         token = data['token']
                     elif kind == 'end':
                         outcome = 'finished'
+                        counters.client_end(data)
                         retain = (
                             bool(data.get('preserve_resume', False)) if protocol == 2 else False
                         )
@@ -1464,6 +1492,7 @@ async def live_walkthrough(socket: WebSocket):
                         content = getattr(response, 'server_content', None)
                         if content:
                             if content.interrupted:
+                                counters.end_reply(interrupted=True)
                                 await socket.send_json({'type': 'interrupted'})
                             for side, value in [
                                 ('technician', content.input_transcription),
@@ -1486,9 +1515,14 @@ async def live_walkthrough(socket: WebSocket):
                                     if side == 'technician' and getattr(value, 'finished', False):
                                         pending = False
                                         final_text.set()
-                            if content.model_turn and not finishing:
+                            if content.model_turn:
                                 for part in content.model_turn.parts:
                                     if part.inline_data and part.inline_data.data:
+                                        counters.model_audio(
+                                            len(part.inline_data.data), time.monotonic()
+                                        )
+                                        if finishing:
+                                            continue
                                         await socket.send_json(
                                             {
                                                 'type': 'audio',
@@ -1499,6 +1533,11 @@ async def live_walkthrough(socket: WebSocket):
                                             }
                                         )
                             if content.turn_complete:
+                                # Vertex Live never sets a transcription's finished flag, so a model turn that
+                                # began after the last speech and completed proves that speech was heard.
+                                if counters.end_reply():
+                                    pending = False
+                                    final_text.set()
                                 await socket.send_json({'type': 'turn_complete'})
                         if away:
                             outcome = 'rollover'
@@ -1611,6 +1650,7 @@ async def live_walkthrough(socket: WebSocket):
                     status=status,
                     total_tokens=total_tokens,
                     provider_code=provider_code,
+                    **counters.fields(),
                 )
                 with suppress(Exception):
                     await socket.close()

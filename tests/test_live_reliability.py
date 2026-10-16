@@ -664,3 +664,248 @@ def test_refresh_for_another_user_or_invalid_token_closes_without_switching_iden
         '_live_resume/owner' not in store.db.records
         and '_live_sessions/owner' not in store.db.records
     )
+
+
+def test_numbered_audio_is_acknowledged_and_a_completed_turn_ends_the_finish_drain(
+    monkeypatch, capsys
+):
+    # gemini-3.8-live never sets a transcription's finished flag; the completed model turn must
+    # still let Finish report a complete capture at once, and the session log carries only counts.
+    store = FakeStore()
+    store.create_inspection('owner', ID, InspectionData().model_dump())
+    frames = []
+
+    class Session:
+        def __init__(self):
+            self.queue = asyncio.Queue()
+
+        async def send_client_content(self, **kw):
+            pass
+
+        async def send_realtime_input(self, **kw):
+            if 'video' in kw:
+                frames.append(kw)
+            elif 'audio' in kw and bm.is_speech(kw['audio'].data):
+                reply = dict(interrupted=False, input_transcription=None, turn_complete=False)
+                for content in (
+                    dict(reply, input_transcription=NS(text='the kitchen', finished=None)),
+                    dict(
+                        reply,
+                        output_transcription=NS(text='Which wall?', finished=None),
+                        model_turn=NS(parts=[NS(inline_data=NS(data=b'\0' * 48000))]),
+                    ),
+                    dict(reply, turn_complete=True),
+                ):
+                    content.setdefault('output_transcription', None)
+                    content.setdefault('model_turn', None)
+                    await self.queue.put(NS(server_content=NS(**content)))
+
+        async def receive(self):
+            yield await self.queue.get()
+
+    @asynccontextmanager
+    async def connect(**kw):
+        yield Session()
+
+    async def close():
+        pass
+
+    async def identity(token, **_):
+        return {'uid': 'owner', 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'verify_staff', identity)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    monkeypatch.setattr(
+        bm.genai, 'Client', lambda **kw: NS(aio=NS(live=NS(connect=connect), aclose=close))
+    )
+    with (
+        TestClient(bm.app) as client,
+        client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
+    ):
+        socket.send_json(
+            dict(
+                type='authenticate',
+                token='synthetic',
+                inspection_id=ID,
+                protocol_version=2,
+                capture_id=CAP,
+            )
+        )
+        assert socket.receive_json()['audio_ack'] == bm.AUDIO_ACK_EVERY == 10
+        for seq in range(1, 10):
+            socket.send_json({'type': 'audio', 'data': pcm(0), 'seq': seq})
+        socket.send_json({'type': 'audio', 'data': pcm(3300), 'seq': 10})
+        events = []
+        while not {'ack', 'turn_complete'} <= {e['type'] for e in events}:
+            events.append(socket.receive_json())
+        assert [e for e in events if e['type'] == 'ack'] == [{'type': 'ack', 'seq': 10}]
+        assert [e.get('text') for e in events if e['type'] == 'transcript'] == [
+            'the kitchen',
+            'Which wall?',
+        ]
+        # Unnumbered or non-integer packets are forwarded but never acknowledged.
+        socket.send_json({'type': 'audio', 'data': pcm(0)})
+        socket.send_json({'type': 'audio', 'data': pcm(0), 'seq': True})
+        socket.send_json({'type': 'audio', 'data': pcm(0), 'seq': 20})
+        assert socket.receive_json() == {'type': 'ack', 'seq': 20}
+        socket.send_json(
+            {'type': 'video', 'data': base64.b64encode(b'\xff\xd8\xffsynthetic').decode()}
+        )
+        started = time.monotonic()
+        socket.send_json({'type': 'end', 'gap_count': 92, 'video_pauses': 3, 'secret': 'x'})
+        assert socket.receive_json() == {'type': 'finished', 'complete': True}
+        assert time.monotonic() - started < 1
+        with pytest.raises(WebSocketDisconnect):
+            while True:
+                socket.receive_json()
+    output = capsys.readouterr().out
+    [entry] = [json.loads(line) for line in output.splitlines() if '"Live session ended"' in line]
+    assert entry['outcome'] == 'finished' and len(frames) == 1
+    assert {k: entry[k] for k in entry if k not in ('reply_latency_ms_median', 'severity')} == {
+        'message': 'Live session ended',
+        'model': bm.LIVE_MODEL,
+        'operation': 'live',
+        'inspection_id': ID,
+        'duration_ms': entry['duration_ms'],
+        'outcome': 'finished',
+        'mic_seconds': 1.3,
+        'mic_gap_max_ms': entry['mic_gap_max_ms'],
+        'video_frames': 1,
+        'turns': 1,
+        'interruptions': 0,
+        'model_audio_seconds': 1.0,
+        'reply_latency_ms_max': entry['reply_latency_ms_median'],
+        'reply_pace_median': 20.0,
+        'client_gap_count': 92,
+        'client_video_pauses': 3,
+    }
+    assert 0 <= entry['reply_latency_ms_median'] < 5000 and 0 <= entry['mic_gap_max_ms'] < 5000
+    for content in ('the kitchen', 'Which wall?'):
+        assert content not in output
+
+
+def test_live_counters_measure_reply_latency_pace_and_gaps_without_content():
+    from backend.live_support import LiveCounters
+
+    counters = LiveCounters()
+    counters.audio(3200, False, 10.0)
+    counters.pause()
+    # A muted stretch is not a delivery gap.
+    counters.audio(3200, True, 40.0)
+    counters.audio(3200, False, 40.5)
+    counters.model_audio(24000, 41.7)
+    counters.model_audio(72000, 42.7)
+    counters.end_reply()
+    # A reply with no new speech before it (a continuation) adds no latency sample.
+    counters.model_audio(4800, 50.0)
+    counters.end_reply(interrupted=True)
+    counters.client_end({'gap_count': 7, 'video_pauses': -1})
+    assert counters.fields() == {
+        'mic_seconds': 0.3,
+        'mic_gap_max_ms': 500,
+        'video_frames': 0,
+        'turns': 1,
+        'interruptions': 1,
+        'model_audio_seconds': 2.1,
+        'reply_latency_ms_median': 1700,
+        'reply_latency_ms_max': 1700,
+        'reply_pace_median': 2.0,
+        'client_gap_count': 7,
+        'client_video_pauses': None,
+    }
+
+
+def test_only_a_reply_begun_after_the_last_speech_proves_that_speech_was_heard():
+    from backend.live_support import LiveCounters
+
+    counters = LiveCounters()
+    counters.audio(3200, True, 1.0)
+    counters.model_audio(4800, 2.0)
+    assert counters.end_reply() is True
+    # Speech over a reply in progress is still unanswered when that reply completes.
+    counters.audio(3200, True, 3.0)
+    counters.model_audio(4800, 4.0)
+    counters.audio(3200, True, 4.5)
+    assert counters.end_reply() is False
+    # Live closes an interrupted reply with its own turn_complete, which is not another turn.
+    counters.model_audio(4800, 6.0)
+    counters.audio(3200, True, 6.5)
+    assert counters.end_reply(interrupted=True) is False
+    assert counters.end_reply() is False
+    assert (counters.turns, counters.interruptions) == (2, 1)
+
+
+def test_finish_stays_incomplete_when_only_an_interrupted_reply_completes(monkeypatch):
+    store = FakeStore()
+    store.create_inspection('owner', ID, InspectionData().model_dump())
+    speech = []
+
+    class Session:
+        def __init__(self):
+            self.queue = asyncio.Queue()
+
+        async def send_client_content(self, **kw):
+            pass
+
+        async def send_realtime_input(self, **kw):
+            if 'audio' not in kw or not bm.is_speech(kw['audio'].data):
+                return
+            speech.append(1)
+            base = dict(
+                interrupted=False,
+                input_transcription=None,
+                output_transcription=None,
+                model_turn=None,
+                turn_complete=False,
+            )
+            if len(speech) == 1:
+                part = NS(inline_data=NS(data=b'\0' * 4800))
+                await self.queue.put(
+                    NS(server_content=NS(**dict(base, model_turn=NS(parts=[part]))))
+                )
+            else:
+                await self.queue.put(NS(server_content=NS(**dict(base, interrupted=True))))
+                await self.queue.put(NS(server_content=NS(**dict(base, turn_complete=True))))
+
+        async def receive(self):
+            yield await self.queue.get()
+
+    @asynccontextmanager
+    async def connect(**kw):
+        yield Session()
+
+    async def close():
+        pass
+
+    async def identity(token, **_):
+        return {'uid': 'owner', 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'verify_staff', identity)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    monkeypatch.setattr(
+        bm.genai, 'Client', lambda **kw: NS(aio=NS(live=NS(connect=connect), aclose=close))
+    )
+    with (
+        TestClient(bm.app) as client,
+        client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
+    ):
+        socket.send_json(
+            dict(
+                type='authenticate',
+                token='synthetic',
+                inspection_id=ID,
+                protocol_version=2,
+                capture_id=CAP,
+            )
+        )
+        assert socket.receive_json()['type'] == 'ready'
+        socket.send_json({'type': 'audio', 'data': pcm(3300)})
+        assert socket.receive_json()['type'] == 'audio'
+        # The technician talks over the reply with a final measurement, then taps Stop.
+        socket.send_json({'type': 'audio', 'data': pcm(3300)})
+        assert [socket.receive_json()['type'] for _ in range(2)] == [
+            'interrupted',
+            'turn_complete',
+        ]
+        socket.send_json({'type': 'end'})
+        assert socket.receive_json() == {'type': 'finished', 'complete': False}

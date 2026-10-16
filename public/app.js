@@ -12,6 +12,7 @@ const {
   roomKey,
   applyScopeChanges,
   ingestTranscript,
+  closeTranscript,
   authStage,
   authMessage,
   authDomainFor,
@@ -46,6 +47,16 @@ const state = {
   retries: 0,
   lastSpeech: 0,
   firstAudio: true,
+  cutTurn: false,
+  held: [],
+  heldSeconds: 0,
+  audioSeq: 0,
+  ackEvery: 0,
+  unacked: new Map(),
+  videoPausedUntil: 0,
+  videoPauses: 0,
+  liveStatusText: '',
+  weakShown: false,
 };
 let syncChain = Promise.resolve(),
   saveTimer = null,
@@ -2121,6 +2132,21 @@ function bytes64(bytes) {
   for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
   return btoa(text);
 }
+// Live frames are context only (evidence photos upload separately), so they stay small and yield to
+// voice. On a weak cellular uplink, 1280 px frames every second filled the send buffer: microphone
+// audio was dropped or arrived seconds late, and the model kept re-asking what it never heard.
+const LIVE_FRAME_MS = 2000,
+  LIVE_FRAME_WIDTH = 640,
+  LIVE_FRAME_QUALITY = 0.5,
+  // A frame waits while more than about two microphone packets are still queued in the browser.
+  LIVE_FRAME_BACKLOG = 8000,
+  // Acknowledged microphone audio this far behind pauses video; the pause renews while it lasts.
+  LIVE_AUDIO_LAG_MS = 600,
+  LIVE_VIDEO_PAUSE_MS = 10000,
+  // When nothing is playing, model speech is held until this much is queued, so a burst after a
+  // network stall plays smoothly instead of in fragments.
+  LIVE_REBUFFER_SECONDS = 0.3,
+  LIVE_WEAK_SIGNAL = 'Weak signal: video paused, voice may be delayed';
 function clearPlayback() {
   for (const source of state.playing) {
     try {
@@ -2128,6 +2154,8 @@ function clearPlayback() {
     } catch {}
   }
   state.playing.clear();
+  state.held = [];
+  state.heldSeconds = 0;
   state.audioTime = 0;
   state.firstAudio = true;
 }
@@ -2137,22 +2165,63 @@ function playback(data) {
     values = pcmToFloat(bytes),
     buffer = state.audio.createBuffer(1, values.length, 24000);
   buffer.copyToChannel(values, 0);
-  if (state.audioTime - state.audio.currentTime > 5) clearPlayback();
-  const source = state.audio.createBufferSource();
-  source.buffer = buffer;
-  source.connect(state.audio.destination);
-  state.playing.add(source);
-  source.onended = () => state.playing.delete(source);
-  const start = Math.max(state.audio.currentTime + 0.025, state.audioTime);
-  source.start(start);
-  state.audioTime = start + buffer.duration;
-  if (state.firstAudio && state.lastSpeech) {
-    $('latencyStatus').textContent =
-      'First response audio: ' +
-      ((performance.now() - state.lastSpeech) / 1000).toFixed(2) +
-      ' s after last detected speech (approximate).';
-    state.firstAudio = false;
+  state.held.push(buffer);
+  state.heldSeconds += buffer.duration;
+  if (state.audioTime > state.audio.currentTime || state.heldSeconds >= LIVE_REBUFFER_SECONDS)
+    flushPlayback();
+}
+// Schedules held model speech back to back; turn_complete also flushes a reply shorter than the cushion.
+function flushPlayback() {
+  if (!state.audio) return;
+  const held = state.held;
+  state.held = [];
+  state.heldSeconds = 0;
+  for (const buffer of held) {
+    const source = state.audio.createBufferSource();
+    source.buffer = buffer;
+    source.connect(state.audio.destination);
+    state.playing.add(source);
+    source.onended = () => state.playing.delete(source);
+    const start = Math.max(state.audio.currentTime + 0.025, state.audioTime);
+    source.start(start);
+    state.audioTime = start + buffer.duration;
+    if (state.firstAudio && state.lastSpeech) {
+      $('latencyStatus').textContent =
+        'First response audio: ' +
+        ((performance.now() - state.lastSpeech) / 1000 + start - state.audio.currentTime).toFixed(
+          2,
+        ) +
+        ' s after last detected speech (approximate).';
+      state.firstAudio = false;
+    }
   }
+}
+// Pauses video while acknowledged microphone audio is behind and shows it in the Live status.
+function renderSignal() {
+  if (!state.liveReady) return;
+  const now = performance.now();
+  // The oldest unacknowledged packet bounds the lag even when a stalled link returns no ack.
+  const oldest = state.unacked.values().next().value;
+  if (state.ackEvery && oldest !== undefined && now - oldest > LIVE_AUDIO_LAG_MS) pauseVideo(now);
+  const weak = !!state.lastGap || now < state.videoPausedUntil;
+  if (weak === state.weakShown) return;
+  state.weakShown = weak;
+  $('liveStatus').textContent = weak ? LIVE_WEAK_SIGNAL : state.liveStatusText;
+  $('liveStatus').className = weak ? 'status weak' : 'status connected';
+}
+function pauseVideo(now) {
+  if (now >= state.videoPausedUntil) state.videoPauses++;
+  state.videoPausedUntil = now + LIVE_VIDEO_PAUSE_MS;
+}
+function acknowledged(seq) {
+  const sent = state.unacked.get(seq);
+  for (const key of state.unacked.keys()) {
+    if (key > seq) break;
+    state.unacked.delete(key);
+  }
+  if (sent !== undefined && performance.now() - sent > LIVE_AUDIO_LAG_MS)
+    pauseVideo(performance.now());
+  renderSignal();
 }
 function captureGap(message) {
   const capture = state.draft?.data.capture_metadata;
@@ -2215,6 +2284,11 @@ async function connectLive() {
       state.liveProtocol = msg.protocol_version || 1;
       state.liveReady = true;
       state.liveConnection = msg.connection_id || 'legacy';
+      // An older relay sends no acknowledgements, so video is then never paused for lag.
+      state.ackEvery = msg.audio_ack || 0;
+      state.unacked.clear();
+      state.weakShown = false;
+      state.cutTurn = false;
       clearTimeout(state.stableTimer);
       state.stableTimer = setTimeout(() => {
         if (state.socket === socket && !state.stopping) state.retries = 0;
@@ -2222,12 +2296,13 @@ async function connectLive() {
       clearInterval(state.tokenTimer);
       if (msg.token_refresh)
         state.tokenTimer = setInterval(() => refreshLiveToken(socket, uid), LIVE_TOKEN_REFRESH_MS);
-      $('liveStatus').textContent =
+      state.liveStatusText =
         msg.recovery === 'resumed'
           ? 'Live conversation resumed'
           : msg.recovery === 'restarted'
             ? 'Live restarted using saved inspection'
             : 'Live AI connected';
+      $('liveStatus').textContent = state.liveStatusText;
       $('liveStatus').className = 'status connected';
       if (state.resumeAvailable) {
         capture.recovery_count = Math.min(10000, capture.recovery_count + 1);
@@ -2238,8 +2313,21 @@ async function connectLive() {
       state.resumeAvailable = true;
     } else if (msg.type === 'audio') {
       if (!state.draining && !state.stopping) playback(msg.data);
-    } else if (msg.type === 'interrupted') clearPlayback();
-    else if (msg.type === 'turn_complete') state.firstAudio = true;
+    } else if (msg.type === 'interrupted') {
+      clearPlayback();
+      state.cutTurn = true;
+      closeTranscript(draft.data, state.liveConnection, ['assistant']);
+    } else if (msg.type === 'turn_complete') {
+      flushPlayback();
+      state.firstAudio = true;
+      // An interrupted turn completes while the technician is still speaking.
+      closeTranscript(
+        draft.data,
+        state.liveConnection,
+        state.cutTurn ? ['assistant'] : ['technician', 'assistant'],
+      );
+      state.cutTurn = false;
+    } else if (msg.type === 'ack') acknowledged(msg.seq);
     else if (msg.type === 'transcript') {
       if (state.liveProtocol === 1) {
         msg.connection_id = state.liveConnection;
@@ -2270,7 +2358,8 @@ async function connectLive() {
       state.finishComplete = msg.complete;
       state.finishResolve?.();
     } else if (msg.type === 'recovery') {
-      $('liveStatus').textContent = 'Refreshing Live connection…';
+      state.liveStatusText = 'Refreshing Live connection…';
+      if (!state.weakShown) $('liveStatus').textContent = state.liveStatusText;
     } else if (msg.type === 'usage') {
       state.liveUsage = msg.total_tokens;
     } else if (msg.type === 'error') {
@@ -2291,6 +2380,8 @@ async function connectLive() {
     if (state.socket !== socket) return;
     state.socket = null;
     state.liveReady = false;
+    state.unacked.clear();
+    state.videoPausedUntil = 0;
     clearTimeout(state.stableTimer);
     clearInterval(state.tokenTimer);
     clearPlayback();
@@ -2331,6 +2422,7 @@ async function startWalk() {
   state.muted = false;
   state.retries = 0;
   state.legacySequence = 0;
+  state.videoPauses = 0;
   if (!resume || !draft.data.capture_metadata) {
     draft.data.capture_metadata = {
       capture_id: newId(),
@@ -2395,9 +2487,16 @@ async function startWalk() {
         state.socket?.readyState === WebSocket.OPEN
       ) {
         if (state.socket.bufferedAmount < 128000) {
+          const seq = ++state.audioSeq;
           state.socket.send(
-            JSON.stringify({ type: 'audio', data: bytes64(new Uint8Array(event.data.buffer)) }),
+            JSON.stringify({
+              type: 'audio',
+              data: bytes64(new Uint8Array(event.data.buffer)),
+              seq,
+            }),
           );
+          if (state.ackEvery && seq % state.ackEvery === 0)
+            state.unacked.set(seq, performance.now());
           state.lastGap = false;
         } else if (!state.lastGap) {
           state.lastGap = true;
@@ -2405,25 +2504,31 @@ async function startWalk() {
             'Audio was interrupted by network congestion. Review and repeat missing measurements.',
           );
         }
+        renderSignal();
       }
     };
     state.frameTimer = setInterval(() => {
       const video = $('cameraVideo');
+      renderSignal();
       if (
         !state.liveReady ||
         state.stopping ||
         !video.videoWidth ||
         state.socket?.readyState !== WebSocket.OPEN ||
-        state.socket.bufferedAmount > 128000
+        state.socket.bufferedAmount > LIVE_FRAME_BACKLOG ||
+        performance.now() < state.videoPausedUntil
       )
         return;
       const canvas = $('frameCanvas');
-      [canvas.width, canvas.height] = aspect(video.videoWidth, video.videoHeight, 1280);
+      [canvas.width, canvas.height] = aspect(video.videoWidth, video.videoHeight, LIVE_FRAME_WIDTH);
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
       state.socket.send(
-        JSON.stringify({ type: 'video', data: canvas.toDataURL('image/jpeg', 0.65).split(',')[1] }),
+        JSON.stringify({
+          type: 'video',
+          data: canvas.toDataURL('image/jpeg', LIVE_FRAME_QUALITY).split(',')[1],
+        }),
       );
-    }, 1000);
+    }, LIVE_FRAME_MS);
     await connectLive();
   } catch (e) {
     await stopWalk({ preserveResume: true, drain: false });
@@ -2449,6 +2554,9 @@ async function stopWalk(options = {}) {
     state.draining = true;
     state.liveReady = false;
     state.finishComplete = false;
+    state.unacked.clear();
+    state.videoPausedUntil = 0;
+    state.weakShown = false;
     clearTimeout(state.reconnectTimer);
     clearTimeout(state.stableTimer);
     clearInterval(state.tokenTimer);
@@ -2476,7 +2584,15 @@ async function stopWalk(options = {}) {
               state.finishResolve = resolve;
               state.drainTimer = setTimeout(resolve, 3500);
             });
-          socket.send(JSON.stringify({ type: 'end', preserve_resume: preserve }));
+          // Counts only, so the session-ended log shows how much audio the client had to drop.
+          socket.send(
+            JSON.stringify({
+              type: 'end',
+              preserve_resume: preserve,
+              gap_count: draft?.data.capture_metadata?.gap_count ?? 0,
+              video_pauses: state.videoPauses,
+            }),
+          );
           if (drain) await drain;
         }
         socket.close();
@@ -2517,6 +2633,10 @@ async function stopWalk(options = {}) {
 }
 function mute() {
   state.muted = !state.muted;
+  // A muted microphone sends nothing, so pending acknowledgements and past congestion must not read as lag.
+  state.unacked.clear();
+  state.lastGap = false;
+  renderSignal();
   state.media?.getAudioTracks().forEach((track) => (track.enabled = !state.muted));
   if (state.muted && state.liveProtocol === 2 && state.socket?.readyState === WebSocket.OPEN)
     state.socket.send(JSON.stringify({ type: 'pause' }));

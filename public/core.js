@@ -170,6 +170,20 @@
     }
     return { changed: true, preview: message.finished !== true };
   }
+  // Vertex Live never sets a transcription's finished flag, so a completed or interrupted model
+  // turn closes the speakers' open segments; each speaker's next text then starts a new line.
+  function closeTranscript(data, connectionId, speakers) {
+    const segments = data.capture_metadata?.segments || [];
+    let closed = false;
+    for (const speaker of speakers) {
+      const last = [...segments].reverse().find((segment) => segment.speaker === speaker);
+      if (last && last.connection_id === connectionId && last.finished !== true) {
+        last.finished = true;
+        closed = true;
+      }
+    }
+    return closed;
+  }
   const authStage = (user) =>
     !user
       ? 'signedOut'
@@ -231,6 +245,7 @@
     roomKey,
     applyScopeChanges,
     ingestTranscript,
+    closeTranscript,
     authStage,
     authMessage,
     authDomainFor,

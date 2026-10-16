@@ -20,7 +20,7 @@ This document specifies the operational protocols, business rules, architectural
 - **Transport**: Authenticated Cloud Run WebSocket relay using server ADC, Vertex AI in `us-central1`. Authenticate the first message and check origin and authorized inspection access before connecting.
 - **Payloads**:
   - Outbound Audio: 16kHz PCM (single channel, little-endian).
-  - Outbound Video: 1 FPS JPEG frames (compressed to 720p/1080p).
+  - Outbound Video: one 640 px JPEG frame every 2 s. Frames wait behind queued microphone audio and pause automatically, with a visible weak-signal status, while acknowledged audio is more than 0.6 s behind.
 - **Latency Target**: Sub-second conversational turnaround in technician's Bluetooth earpiece.
 - **HUD Integration**:
   - Live Extech MO290 moisture meter HUD overlay.

@@ -104,6 +104,41 @@ console.log(
 }
 
 {
+  // gemini-3.8-live never sends finished, so turn events must separate the saved utterances.
+  const core = require('../public/core.js'),
+    data = core.emptyData();
+  data.capture_metadata = { capture_id: 'c'.repeat(32), status: 'recording', segments: [] };
+  let sequence = 0;
+  const say = (speaker, text, connection_id = 'live') =>
+    core.ingestTranscript(data, {
+      speaker,
+      connection_id,
+      sequence: ++sequence,
+      text,
+      finished: null,
+    });
+  say('technician', 'This is ');
+  say('technician', 'the kitchen.');
+  say('assistant', 'Which wall?');
+  assert.equal(core.closeTranscript(data, 'live', ['technician', 'assistant']), true);
+  say('technician', 'The east wall.');
+  say('assistant', 'Got it.');
+  assert.equal(data.technician_transcript, 'This is the kitchen.\nThe east wall.');
+  assert.equal(data.assistant_transcript, 'Which wall?\nGot it.');
+  // An interruption closes only the assistant's cut-off reply.
+  assert.equal(core.closeTranscript(data, 'live', ['assistant']), true);
+  assert.equal(core.closeTranscript(data, 'live', ['assistant']), false);
+  say('assistant', 'Go ahead.');
+  say('technician', ' Two feet up.');
+  assert.equal(data.assistant_transcript, 'Which wall?\nGot it.\nGo ahead.');
+  assert.equal(data.technician_transcript, 'This is the kitchen.\nThe east wall. Two feet up.');
+  // A stale connection's turn event never touches the current connection's open segment.
+  assert.equal(core.closeTranscript(data, 'earlier', ['technician']), false);
+  assert.equal(core.closeTranscript(core.emptyData(), 'live', ['assistant']), false);
+  console.log('PASS: Live turn and interruption events close transcript segments');
+}
+
+{
   const core = require('../public/core.js'),
     data = core.emptyData();
   data.technician_transcript = '語'.repeat(60000);

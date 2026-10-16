@@ -516,6 +516,9 @@ h3 {
 .connected {
   color: var(--green);
 }
+.weak {
+  color: var(--adr);
+}
 #captureStatus {
   font-size: 0.9375rem;
   color: var(--green);
