@@ -57,7 +57,7 @@ try:
     )
     from . import signing_links
     from .claims import make_documents, price_scope
-    from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
+    from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS, GREETING_TRIGGER
     from .live_support import live_config, scope_fingerprint, is_speech
     from .company_store import CompanyInspectionStore
     from .workspaces import AccessDenied
@@ -81,7 +81,7 @@ except ImportError:
     )
     import signing_links
     from claims import make_documents, price_scope
-    from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS
+    from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS, GREETING_TRIGGER
     from live_support import live_config, scope_fingerprint, is_speech
     from company_store import CompanyInspectionStore
     from workspaces import AccessDenied
@@ -1347,6 +1347,7 @@ async def live_walkthrough(socket: WebSocket):
             finishing = False
             final_text = asyncio.Event()
             final_text.set()
+            recovery = 'resumed' if handle else 'restarted' if auth.get('resume') else 'new'
             ready = {'type': 'ready', 'model': LIVE_MODEL}
             if protocol == 2:
                 ready.update(
@@ -1354,9 +1355,15 @@ async def live_walkthrough(socket: WebSocket):
                     connection_id=connection,
                     voice=LIVE_VOICE,
                     token_refresh=True,
-                    recovery='resumed' if handle else 'restarted' if auth.get('resume') else 'new',
+                    recovery=recovery,
                 )
             await socket.send_json(ready)
+            if recovery == 'new':
+                # The Live API waits for input, so only a brand-new walkthrough asks the model to speak first.
+                await session.send_client_content(
+                    turns=types.Content(role='user', parts=[types.Part(text=GREETING_TRIGGER)]),
+                    turn_complete=True,
+                )
 
             async def upstream():
                 nonlocal pending, finishing, retain, outcome, staff, token

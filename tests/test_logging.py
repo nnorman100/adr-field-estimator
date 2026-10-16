@@ -102,6 +102,9 @@ def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch, capsys):
         def __init__(self):
             self.queue = asyncio.Queue()
 
+        async def send_client_content(self, **kw):
+            pass
+
         async def send_realtime_input(self, **kw):
             if 'audio' in kw:
                 await self.queue.put(
@@ -244,6 +247,9 @@ def test_live_session_end_logs_the_provider_close_code(
     store.create_inspection('owner', ID, InspectionData().model_dump())
 
     class Session:
+        async def send_client_content(self, **kw):
+            pass
+
         async def send_realtime_input(self, **kw):
             pass
 
