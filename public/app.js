@@ -676,8 +676,42 @@ function renderSaveStatus() {
           ? 'Changes saved on this device · cloud sync pending'
           : 'Saved on this device · offline';
 }
+// A voice note whose response was lost still committed its transcript block on the server; when
+// that is the only difference, take the server's transcript instead of raising a conflict.
+async function absorbNotes(remote) {
+  const draft = state.draft,
+    acked = JSON.parse(state.ack),
+    base = acked.technician_transcript,
+    text = remote.data.technician_transcript,
+    local = draft.data.technician_transcript;
+  if (
+    !text.startsWith(base) ||
+    !local.startsWith(base) ||
+    stable({ ...remote.data, technician_transcript: base }) !== state.ack
+  )
+    return;
+  const tail = text.slice(base.length).replace(/^\n/, ''),
+    ids = [...tail.matchAll(/\[Offline voice note ([a-f0-9]{8})/g)].map((m) => m[1]),
+    own = await draftNotes(noteKey());
+  if (
+    state.draft !== draft ||
+    !tail.startsWith('[Offline voice note ') ||
+    !ids.every((id) => own.some((note) => note.id.startsWith(id)))
+  )
+    return;
+  const added = local.slice(base.length).replace(/^\n/, '');
+  draft.data.technician_transcript = text + added;
+  $('technicianTranscript').value = draft.data.technician_transcript;
+  state.ack = stable(remote.data);
+  for (const note of own.filter((n) => ids.includes(n.id.slice(0, 8)) && n.status !== 'done'))
+    await saveNote({ ...note, status: 'done', error: '' });
+  await persist();
+  renderNotes();
+}
 async function reconcile() {
   const remote = await jsonApi('/api/inspections/' + state.draft.inspection_id);
+  if (remote.status !== 'signed' && state.ack !== null && stable(remote.data) !== state.ack)
+    await absorbNotes(remote);
   if (remote.status === 'signed' || (state.ack !== null && stable(remote.data) !== state.ack)) {
     state.conflict = true;
     $('conflictActions').hidden = false;
@@ -2915,6 +2949,8 @@ function addTypedNote() {
 function noteStatus(note) {
   if (note.status === 'recording') return 'Recording…';
   if (note.status === 'done') return 'Added to the walkthrough transcript';
+  if (note.status === 'failed')
+    return 'Not transcribed: ' + note.error + ' Play it here and type what it says.';
   if (notes.active === note.id) return 'Uploading and transcribing…';
   if (note.error) return 'Not uploaded yet: ' + note.error;
   return navigator.onLine ? 'Waiting to upload' : 'Saved on this phone · uploads when online';
@@ -2986,7 +3022,7 @@ async function renderNotes() {
   $('noteQueue').hidden = !rows.length;
 }
 // Uploads the open draft's saved notes one at a time while online; a failure keeps the note on the
-// phone and retries later. When notes were added, the existing scope fill proposes values for review.
+// phone and retries later, unless the server refused it for good. When notes were added, the existing scope fill proposes values for review.
 async function processNotes() {
   clearTimeout(notes.retry);
   if (
@@ -3020,9 +3056,14 @@ async function processNotes() {
         note.error = '';
         added++;
       } catch (e) {
-        note.error = e.status ? e.message : 'no connection to the server, retrying';
-        waiting = true;
-        if (e.status === 429) retryAfter = Math.max(1, e.retryAfter) * 1000;
+        if (e.status >= 400 && e.status < 500 && e.status !== 409 && e.status !== 429) {
+          note.status = 'failed';
+          note.error = e.message;
+        } else {
+          note.error = e.status ? e.message : 'no connection to the server, retrying';
+          waiting = true;
+          if (e.status === 429) retryAfter = Math.max(1, e.retryAfter) * 1000;
+        }
       }
       notes.active = null;
       await saveNote(note);

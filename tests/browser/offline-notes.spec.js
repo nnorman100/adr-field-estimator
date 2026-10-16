@@ -350,4 +350,71 @@ test.describe('controlled voice-note uploads', () => {
     await walkthrough(page);
     await expect(page.locator('#voiceNotes button')).toHaveText('Play');
   });
+  test('a note saved on the server whose response was lost does not leave the draft in a conflict', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    await page.route('**/voice-notes', async (route) => {
+      await route.fetch();
+      await route.abort();
+    });
+    await page.goto('/');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Not uploaded yet: no connection to the server, retrying',
+    );
+    await page.locator('#typedNote').fill('Use 3 fans.');
+    await page.locator('#addTypedNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Added to the walkthrough transcript',
+    );
+    await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+    await expect(page.locator('#conflictActions')).toBeHidden();
+    await expect(page.locator('#technicianNotes')).toHaveValue('Room 1: Use 3 fans.');
+    await expect(page.locator('#technicianTranscript')).toHaveValue(
+      /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
+    );
+  });
+  test('a note the server refuses for good stops retrying and does not block later notes', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    let calls = 0;
+    await page.route('**/voice-notes', (route) =>
+      ++calls === 1
+        ? route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'The voice note does not match its audio type.' }),
+          })
+        : route.continue(),
+    );
+    await page.goto('/');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Not transcribed: The voice note does not match its audio type. Play it here and type what it says.',
+    );
+    await expect(page.locator('#notesQueue')).toHaveText(
+      'All voice notes and photos are uploaded.',
+    );
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li').nth(1)).toContainText(
+      'Added to the walkthrough transcript',
+    );
+    await expect(page.locator('#voiceNotes li').first()).toContainText('Not transcribed');
+    await expect(page.locator('#voiceNotes li').first().locator('button')).toHaveText('Play');
+    expect(calls).toBe(2);
+  });
 });

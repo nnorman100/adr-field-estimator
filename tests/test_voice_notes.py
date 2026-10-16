@@ -128,6 +128,10 @@ def test_silent_voice_note_is_still_marked_processed(context, monkeypatch):
         dict(audio_base64=base64.b64encode(b'not audio at all').decode()),
         dict(audio_base64='!!!'),
         dict(mime_type='audio/mpeg'),
+        dict(
+            mime_type='audio/wav',
+            audio_base64=base64.b64encode(b'RIFF\x00\x00\x00\x00WAVE' + b'\x00' * 64).decode(),
+        ),
         dict(note_id='not-a-note'),
         dict(duration_seconds=900),
         dict(room='x' * 101),
@@ -166,10 +170,19 @@ def test_provider_failure_leaves_the_transcript_unchanged(context, monkeypatch):
 def test_full_transcript_refuses_the_note(context, monkeypatch):
     client, store = context
     prepared(client, technician_transcript='x' * 79990)
-    transcriber(monkeypatch)
+    calls = transcriber(monkeypatch)
     result = send(client)
     assert result.status_code == 400
     assert 'Transcript storage is full' in result.json()['detail']
+    assert calls == []
+
+
+def test_a_note_that_fits_the_transcript_is_still_transcribed(context, monkeypatch):
+    client, store = context
+    prepared(client, technician_transcript='x' * 70000)
+    calls = transcriber(monkeypatch)
+    assert send(client).status_code == 200
+    assert len(calls) == 1
 
 
 def test_signed_or_foreign_inspections_refuse_voice_notes(context, monkeypatch):

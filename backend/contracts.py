@@ -142,7 +142,7 @@ class VoiceNoteUpload(StrictModel):
     # The phone's offset from UTC, so the transcript shows the technician's local recording time.
     utc_offset_minutes: int = Field(default=0, ge=-840, le=840)
     duration_seconds: float = Field(ge=0, le=660)
-    mime_type: Literal['audio/mp4', 'audio/webm', 'audio/ogg', 'audio/wav']
+    mime_type: Literal['audio/mp4', 'audio/webm', 'audio/ogg']
     # Base64 of at most 10 MB of audio.
     audio_base64: str = Field(min_length=1, max_length=14_000_000)
 

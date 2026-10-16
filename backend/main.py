@@ -78,7 +78,7 @@ try:
     from .workspaces import AccessDenied
     from .workspace_api import register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
-    from .inspection_store import InspectionStore, Conflict, Limited
+    from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
     from .cloud_log import event
 except ImportError:
@@ -116,7 +116,7 @@ except ImportError:
     from workspaces import AccessDenied
     from workspace_api import register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
-    from inspection_store import InspectionStore, Conflict, Limited
+    from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from job_store import BUCKET, decode_image, IMAGE_WORKER
     from cloud_log import event
 
@@ -845,7 +845,6 @@ AUDIO_SIGNATURES = {
     'audio/mp4': lambda raw: raw[4:8] == b'ftyp',
     'audio/webm': lambda raw: raw.startswith(b'\x1a\x45\xdf\xa3'),
     'audio/ogg': lambda raw: raw.startswith(b'OggS'),
-    'audio/wav': lambda raw: raw.startswith(b'RIFF') and raw[8:12] == b'WAVE',
 }
 
 
@@ -891,6 +890,12 @@ async def transcribe_voice_note(
     if marker in record['data'].get('technician_transcript', ''):
         return public_record(record)
     raw = voice_note_audio(req)
+    transcript = record['data'].get('technician_transcript', '')
+    longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
+    if len(transcript) + 1 + len(longest) > TRANSCRIPT_LIMIT:
+        raise HTTPException(
+            400, 'Transcript storage is full. Type the remaining observations in notes.'
+        )
     await stored(store.quota, staff['uid'], 'transcribe', 10)
     result = await generate(
         TranscriptionResult,
