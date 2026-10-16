@@ -1,0 +1,19 @@
+S1 login order: [{"id":"authEmail","top":382,"font":"15px","primary":false},{"id":"authPassword","top":477,"font":"15px","primary":false},{"id":"emailSignIn","top":543,"font":"16px","primary":true},{"id":"emailReset","top":591,"font":"15px","primary":false},{"id":"googleSignIn","top":672,"font":"15px","primary":false}]
+S1 heading: "Sign in"
+S2 wrong password message: ["Email or password is incorrect."]
+S2b reset emails: [{"type":"reset","email":"tech@example.invalid"}]
+S3 after sign-in: login-page class / authPanel hidden: [false,true]
+S4 code auth/web-storage-unsupported message: ["Sign-in could not be completed (auth/web-storage-unsupported). Try again."]
+S4 injected img count: 0
+S5 code auth/<img src=x onerror=alert(1)> message: ["Sign-in could not be completed. Try again."]
+S5 injected img count: 0
+S5b code undefined message: ["Sign-in could not be completed. Try again."]
+S5b injected img count: 0
+S6 live authDomain: ["alert-disaster-field-2026.web.app","alert-disaster-field-2026.web.app"]
+S6 live popup url: null
+S6 live helper requests: []
+S6 live CSP console: []
+S7 preview authDomain: ["alert-disaster-field-2026.firebaseapp.com","alert-disaster-field-2026.firebaseapp.com"]
+S7 preview popup url: null
+S7 preview helper requests: []
+S7 preview CSP console: []
