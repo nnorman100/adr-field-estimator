@@ -100,7 +100,7 @@ def mint(store, uid, inspection_id, revision, proposal_hash):
         if record['status'] == 'signed':
             raise Conflict('This inspection is already signed.')
         store._signable(record, {'expected_revision': revision, 'proposal_hash': proposal_hash})
-        store._check_documents(uid, record['audit']['documents'], tx)
+        store._check_documents(uid, record, tx)
         company_id = store._company_id(uid, record, tx)
         pointer = pointer_ref.get(transaction=tx)
         previous_ref = (

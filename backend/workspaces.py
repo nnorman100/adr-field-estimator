@@ -822,6 +822,15 @@ class WorkspaceStore:
         ):
             raise Conflict('Company details changed. Generate new documents before signing.')
 
+    def customer_name(self, record, tx=None):
+        return self.job_for(record, tx).get('customer_name', '').strip()
+
+    def check_customer(self, record, proposal, tx=None):
+        # Documents audited before customer names were added carry none to compare.
+        named = proposal.get('customer_name')
+        if named is not None and named != self.customer_name(record, tx):
+            raise Conflict('Customer details changed. Generate new documents before signing.')
+
     def coordination(self, uid, inspection_id, req):
         ref = self.ref('_workspace_jobs', inspection_id)
         inspection_ref = self.ref('inspections', inspection_id)
@@ -852,6 +861,14 @@ class WorkspaceStore:
                 record.update(
                     revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
                 )
+            # The documents name the customer, so a new name needs new documents.
+            customer_changed = (
+                req.customer_name.strip() != job.get('customer_name', '').strip()
+                and record['status'] != 'signed'
+                and record.get('audit') is not None
+            )
+            if customer_changed:
+                record.update(audit=None, status='draft', updated_at=now())
             updates = req.model_dump(exclude={'expected_version', 'address'})
             if updates['customer_email']:
                 updates['customer_email'] = email_address(updates['customer_email'])
@@ -869,7 +886,7 @@ class WorkspaceStore:
                 updated_at=now(),
             )
             tx.set(ref, job)
-            if req.address is not None and record['status'] != 'signed':
+            if (req.address is not None or customer_changed) and record['status'] != 'signed':
                 tx.set(inspection_ref, record)
             self.event(
                 tx,

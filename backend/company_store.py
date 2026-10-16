@@ -29,9 +29,11 @@ class CompanyInspectionStore(InspectionStore):
     def _sync_access(self, record, tx):
         self.workspaces.sync_job(record, tx)
 
-    def _check_documents(self, uid, documents, tx=None):
-        if documents:
+    def _check_documents(self, uid, record, tx=None):
+        if record.get('audit'):
+            documents = record['audit']['documents']
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
+            self.workspaces.check_customer(record, documents['adr_estimate'], tx)
 
     def _company_id(self, uid, record, tx=None):
         return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']

@@ -106,7 +106,7 @@ class InspectionStore(JobStore):
     def _commit_authorization(self, uid, record, body, tx):
         pass
 
-    def _check_documents(self, uid, documents, tx=None):
+    def _check_documents(self, uid, record, tx=None):
         pass
 
     def _company_id(self, uid, record, tx=None):
@@ -164,9 +164,7 @@ class InspectionStore(JobStore):
             record = transform(record)
             checked_metadata(record)
             record['updated_at'] = now()
-            self._check_documents(
-                uid, record.get('audit', {}).get('documents') if record.get('audit') else None, tx
-            )
+            self._check_documents(uid, record, tx)
             self._sync_access(record, tx)
             tx.set(ref, record)
             return record
@@ -304,7 +302,7 @@ class InspectionStore(JobStore):
             return existing
         record = self.get_inspection(uid, payload['inspection_id'])
         self._access(uid, record, 'sign')
-        self._check_documents(uid, record['audit']['documents'] if record.get('audit') else None)
+        self._check_documents(uid, record)
         self._signable(record, payload)
         raw, mime, extension = decode_image(payload['signature_png'], signature=True)
         with IMAGE_WORKER, Image.open(io.BytesIO(raw)) as image:
@@ -359,7 +357,7 @@ class InspectionStore(JobStore):
             self._signable(current, payload)
             if current.get('status') == 'signed':
                 raise Conflict('This inspection is already signed.')
-            self._check_documents(uid, current['audit']['documents'], tx)
+            self._check_documents(uid, current, tx)
             self._commit_authorization(uid, current, body, tx)
             tx.create(auth_ref, body)
             tx.update(

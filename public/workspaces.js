@@ -890,8 +890,11 @@ window.WorkspaceUI = (() => {
         ),
         node(
           'p',
-          (photo.room || 'Historical evidence') +
-            ' · ' +
+          'Photo ' +
+            (i + 1) +
+            ' (' +
+            (photo.room || 'Historical evidence') +
+            ') · ' +
             (photo.ocr_status === 'verified'
               ? 'Verified meter: ' + photo.ocr.value
               : 'Unverified: ' + String(photo.ocr_status || 'unknown').replaceAll('_', ' ')),

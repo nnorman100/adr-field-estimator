@@ -24,13 +24,23 @@
     $('documentProgress').textContent =
       viewed.size + ' of 4 documents opened · Review each before signing.';
   }
+  // Photos in photo-log order, each labelled "Photo N (Room)" as the findings cite them.
+  function numbered(docs, photos) {
+    const order = (docs.photo_audit_log || []).map((photo) => photo.id),
+      position = (photo) => (order.includes(photo.id) ? order.indexOf(photo.id) : order.length);
+    return [...photos]
+      .sort((a, b) => position(a) - position(b))
+      .map((photo, i) => ({ photo, label: 'Photo ' + (i + 1) + ' (' + photo.room + ')' }));
+  }
   function render(docs, photos, photoUrl) {
     $('estimateRange').textContent = estimateLabel(docs.adr_estimate);
     $('itemizedTotal').textContent = money(docs.xactimate_total);
     const p = docs.adr_estimate,
-      body = $('proposalBody');
+      body = $('proposalBody'),
+      customer = p.customer_name ? ['Customer: ' + p.customer_name] : [];
     body.replaceChildren();
     paragraphs(body, [
+      ...customer,
       p.property_address,
       p.date || '',
       'Estimator: ' +
@@ -55,6 +65,8 @@
       body.append(node('h3', 'AI suggestions · outside the authorized scope'));
       paragraphs(body, docs.ai_suggestions);
     }
+    $('claimParty').replaceChildren();
+    paragraphs($('claimParty'), [...customer, 'Property: ' + p.property_address]);
     $('claimItems').replaceChildren();
     for (const item of docs.xactimate_scope) {
       const row = node('tr');
@@ -90,14 +102,15 @@
     $('claimTotal').textContent = 'Itemized claim total: ' + money(docs.xactimate_total);
     $('defenseBody').textContent = docs.iicrc_defense_letter;
     $('photoAuditLog').replaceChildren();
-    for (const photo of photos) {
+    const log = numbered(docs, photos);
+    for (const { photo, label } of log) {
       const entry = node('div', undefined, 'audit-photo'),
         img = node('img');
       img.src = photoUrl(photo);
       img.alt = photo.room + ' evidence';
       const detail = node('div');
       paragraphs(detail, [
-        photo.room,
+        label,
         new Date(photo.captured_at).toLocaleString(),
         (photo.width || '?') + ' × ' + (photo.height || '?') + ' pixels',
         photo.ocr_status === 'verified'
@@ -112,9 +125,9 @@
     const warnings = [
       ...(docs.company_setup_missing || []).map((text) => 'Company setup required: ' + text),
       ...(docs.unpriced_work || []).map((text) => 'Unpriced work: ' + text),
-      ...photos
-        .filter((p) => p.ocr_status === 'pending')
-        .map((p) => 'Recognition pending: ' + p.room),
+      ...log
+        .filter(({ photo }) => photo.ocr_status === 'pending')
+        .map(({ label }) => 'Recognition pending: ' + label),
     ];
     $('auditWarnings').textContent = warnings.join(' · ');
     $('auditWarnings').hidden = !warnings.length;
@@ -122,26 +135,28 @@
   // The issuing company's letterhead; documents without an identity keep the ADR default.
   function brand(docs) {
     const identity = docs.company_identity;
-    const name = identity?.name || 'Alert Disaster Restoration',
-      letter = document.querySelector('.document-letterhead');
+    const name = identity?.name || 'Alert Disaster Restoration';
     document.querySelector('#doc-proposal > h2').textContent =
       name +
       (identity && identity.company_id !== 'adr'
         ? ' · Official proposal'
         : ' · Official ADR Proposal');
-    letter.querySelector('p').textContent = identity
-      ? [
-          identity.address,
-          identity.phone,
-          identity.license ? 'CSLB #' + identity.license : 'License not provided',
-        ]
-          .filter(Boolean)
-          .join(' · ')
-      : '3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983';
-    const image = letter.querySelector('img');
-    image.hidden = !!identity && !identity.logo_data_url && identity.company_id !== 'adr';
-    image.src = identity?.logo_data_url || '/brand/adr-logo.jpg';
-    image.alt = name;
+    // The proposal and the defense letter carry the same letterhead.
+    for (const letter of document.querySelectorAll('.document-letterhead')) {
+      letter.querySelector('p').textContent = identity
+        ? [
+            identity.address,
+            identity.phone,
+            identity.license ? 'CSLB #' + identity.license : 'License not provided',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : '3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983';
+      const image = letter.querySelector('img');
+      image.hidden = !!identity && !identity.logo_data_url && identity.company_id !== 'adr';
+      image.src = identity?.logo_data_url || '/brand/adr-logo.jpg';
+      image.alt = name;
+    }
     document.querySelector('[data-tab=proposal]').textContent =
       identity?.company_id && identity.company_id !== 'adr' ? 'Proposal' : 'ADR proposal';
     return name;
