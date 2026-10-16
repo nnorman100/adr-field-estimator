@@ -286,6 +286,8 @@ def test_signed_records_cannot_be_altered(signing):
             ),
         )
     with pytest.raises(Conflict):
+        stores[1].append_transcript('owner', ID, '[Offline voice note 12345678', 'Late note\n')
+    with pytest.raises(Conflict):
         stores[1].authorize('owner', {**payload, 'auth_id': 'ADR-AUTH-second123456'})
     with pytest.raises(Conflict):
         stores[1].authorize('owner', {**payload, 'signature_png': png(blank=True)})
@@ -293,6 +295,30 @@ def test_signed_records_cannot_be_altered(signing):
     assert after == before
     assert stored(db, 'authorizations/ADR-AUTH-second123456') is None
     assert len(stores[0].bucket.objects) == 1
+
+
+def test_concurrent_voice_note_appends_keep_every_note_exactly_once():
+    stores = instances()
+    stores[0].create_inspection('owner', ID, data(technician_transcript='Live words.'))
+    notes = {
+        f'[Offline voice note {c * 8}': f'[Offline voice note {c * 8} · Room]\nWords {c}.\n'
+        for c in 'abcd'
+    }
+    calls = [
+        lambda marker=marker, block=block, i=i: stores[i % 2].append_transcript(
+            'owner', ID, marker, block
+        )
+        for i, (marker, block) in enumerate(list(notes.items()) * 2)
+    ]
+    outcomes(concurrently(calls), refused=())
+    # Contention may abort some calls; each note's retry then lands once.
+    for marker, block in notes.items():
+        stores[1].append_transcript('owner', ID, marker, block)
+    record = stores[0].get_inspection('owner', ID)
+    transcript = record['data']['technician_transcript']
+    assert transcript.startswith('Live words.\n')
+    assert all(transcript.count(marker) == 1 for marker in notes)
+    assert record['revision'] == 1 + len(notes)
 
 
 SIGNER = dict(

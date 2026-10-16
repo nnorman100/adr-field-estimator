@@ -19,7 +19,8 @@ except ImportError:
     from cloud_log import event
 
 # Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
-DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40}
+DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40, 'transcribe': 200}
+TRANSCRIPT_LIMIT = 80000
 
 
 class Conflict(ValueError):
@@ -231,6 +232,36 @@ class InspectionStore(JobStore):
         except Exception:
             self._discard_unreferenced(blob, self._ref(inspection_id))
             raise
+
+    def append_transcript(self, uid, inspection_id, marker, block):
+        """Appends a transcribed offline voice note once; a retried note whose marker is already
+        in the transcript returns the record unchanged. It is an append, so a revision that moved
+        on (for example a finished OCR) does not refuse it."""
+        ref = self._ref(inspection_id)
+
+        def update(tx):
+            record = self._owned(ref.get(transaction=tx), uid, 'scope', tx)
+            if record['status'] == 'signed':
+                raise Conflict('Signed inspections are immutable. Start a new inspection.')
+            transcript = record['data'].get('technician_transcript', '')
+            if marker in transcript:
+                return record
+            joined = transcript + ('\n' if transcript and not transcript.endswith('\n') else '')
+            joined += block
+            if len(joined) > TRANSCRIPT_LIMIT:
+                raise ValueError(
+                    'Transcript storage is full. Type the remaining observations in notes.'
+                )
+            record['data']['technician_transcript'] = joined
+            record.update(
+                revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
+            )
+            checked_metadata(record)
+            self._sync_access(record, tx)
+            tx.set(ref, record)
+            return record
+
+        return self._atomic(update)
 
     def set_ocr(self, uid, inspection_id, photo_id, result):
         ref = self._ref(inspection_id)

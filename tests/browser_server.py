@@ -100,6 +100,11 @@ async def generate(**kwargs):
                 }
             )
         )
+    if schema is bm.TranscriptionResult:
+        # Offline voice notes: the same statements the synthetic scope fill quotes.
+        return SimpleNamespace(
+            text=json.dumps({'text': 'Room 1, category 2, 80 square feet of drywall.'})
+        )
     result = (
         {
             'summary': '<img src=x onerror="window.reviewInjected=true"> Confirmed scope summary.',

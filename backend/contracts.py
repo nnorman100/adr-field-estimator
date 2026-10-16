@@ -133,6 +133,24 @@ class PhotoUpload(RevisionRequest):
     data_url: str = Field(min_length=1, max_length=12000000)
 
 
+class VoiceNoteUpload(StrictModel):
+    """One offline voice note recorded on the phone; the audio is transcribed and never stored."""
+
+    note_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    room: str = Field(default='', max_length=100)
+    recorded_at: datetime
+    # The phone's offset from UTC, so the transcript shows the technician's local recording time.
+    utc_offset_minutes: int = Field(default=0, ge=-840, le=840)
+    duration_seconds: float = Field(ge=0, le=660)
+    mime_type: Literal['audio/mp4', 'audio/webm', 'audio/ogg', 'audio/wav']
+    # Base64 of at most 10 MB of audio.
+    audio_base64: str = Field(min_length=1, max_length=14_000_000)
+
+
+class TranscriptionResult(StrictModel):
+    text: str = Field(max_length=20000)
+
+
 class OcrResult(StrictModel):
     meter_detected: bool
     meter_type: str = Field(max_length=100)

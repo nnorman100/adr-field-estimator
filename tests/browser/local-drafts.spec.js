@@ -50,7 +50,12 @@ const storage = (page) =>
               drafts = tx.objectStore('drafts').getAll(),
               photos = tx.objectStore('photos').getAll();
             tx.oncomplete = () => {
-              resolve({ version: db.version, drafts: drafts.result, photos: photos.result });
+              resolve({
+                version: db.version,
+                stores: [...db.objectStoreNames].sort(),
+                drafts: drafts.result,
+                photos: photos.result,
+              });
               db.close();
             };
           } catch (e) {
@@ -294,8 +299,10 @@ test('version 1 draft rows with embedded photos migrate on upgrade and still syn
     ).photos?.map((p) => p.width) || [];
   await expect.poll(() => remote(open)).toEqual([300, 200]);
   await expect.poll(() => remote(queued)).toEqual([120]);
-  const { version, drafts, photos } = await storage(page);
-  expect(version).toBe(2);
+  const { version, stores, drafts, photos } = await storage(page);
+  // Version 3 adds the offline voice-note stores on the same upgrade.
+  expect(version).toBe(3);
+  expect(stores).toEqual(['drafts', 'note_audio', 'notes', 'photos']);
   expect(drafts.map((r) => r.draft.data.address).sort()).toEqual([
     'Migrated open property',
     'Migrated queued property',
