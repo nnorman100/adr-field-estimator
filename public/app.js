@@ -2623,8 +2623,10 @@ async function stopWalk(options = {}) {
 }
 function mute() {
   state.muted = !state.muted;
-  // A muted microphone sends nothing to acknowledge, so pending packets must not read as lag.
+  // A muted microphone sends nothing, so pending acknowledgements and past congestion must not read as lag.
   state.unacked.clear();
+  state.lastGap = false;
+  renderSignal();
   state.media?.getAudioTracks().forEach((track) => (track.enabled = !state.muted));
   if (state.muted && state.liveProtocol === 2 && state.socket?.readyState === WebSocket.OPEN)
     state.socket.send(JSON.stringify({ type: 'pause' }));

@@ -366,3 +366,17 @@ test('an interrupted turn keeps the technician speaking on one line and rollover
   await page.locator('#stopWalk').click();
   await cleanup(page);
 });
+test('muting after congestion clears the weak-signal status once nothing is being sent', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 200000));
+  await expect(page.locator('#liveStatus')).toHaveText(
+    'Weak signal: video paused, voice may be delayed',
+  );
+  await page.locator('#muteMic').click();
+  await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 0));
+  await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
+  await page.locator('#stopWalk').click();
+  await cleanup(page);
+});
