@@ -192,8 +192,18 @@
       'This email already uses a different sign-in method. Use that method.',
     'auth/popup-closed-by-user': 'Google sign-in was closed before it finished.',
   };
+  // Unmapped Firebase codes stay visible so a failed sign-in can be diagnosed from a screenshot.
   const authMessage = (error) =>
-    authMessages[error?.code] || 'Sign-in could not be completed. Try again.';
+    authMessages[error?.code] ||
+    (/^auth\/[a-z0-9-]+$/.test(error?.code)
+      ? 'Sign-in could not be completed (' + error.code + '). Try again.'
+      : 'Sign-in could not be completed. Try again.');
+  // Hosting serves the sign-in helper at /__/auth/ on every site. On the live web.app site the app
+  // uses that same-origin copy, so Safari's third-party storage blocking cannot separate the Google
+  // popup from the page. Elsewhere (preview channels, localhost) the configured authDomain stays,
+  // because each handler URL must be an authorized redirect URI on the Google OAuth client.
+  const authDomainFor = (config, host) =>
+    host === config.projectId + '.web.app' ? host : config.authDomain;
   // Draft rows are rewritten on every save; photo bytes are stored once beside them.
   const splitPhotos = (draft) => ({
     draft: { ...draft, photos: draft.photos.map(({ data_url, ...photo }) => photo) },
@@ -215,6 +225,7 @@
     ingestTranscript,
     authStage,
     authMessage,
+    authDomainFor,
     splitPhotos,
   };
   if (typeof module !== 'undefined') module.exports = api;

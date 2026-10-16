@@ -148,8 +148,27 @@ const unstamp = (text) =>
       (await page.locator('.masthead').boundingBox()).height < 85,
       'Narrow header is oversized',
     );
-    // Signed out, only the login page shows: one Google sign-in, no inspection workspace behind it.
+    // Signed out, only the login page shows: email and password first, then one smaller Google sign-in below.
     assert(await page.evaluate(() => document.body.classList.contains('login-page')));
+    assert.deepEqual(
+      await page.evaluate(() =>
+        ['authEmail', 'authPassword', 'emailSignIn', 'emailReset', 'googleSignIn']
+          .map((id) => document.getElementById(id))
+          .filter((el) => el.checkVisibility())
+          .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+          .map((el) => el.id),
+      ),
+      ['authEmail', 'authPassword', 'emailSignIn', 'emailReset', 'googleSignIn'],
+      'Signed-out login page needs email and password above Google sign-in',
+    );
+    assert(
+      await page.evaluate(
+        () =>
+          document.getElementById('emailSignIn').classList.contains('primary') &&
+          !document.getElementById('googleSignIn').classList.contains('primary'),
+      ),
+      'Email sign-in must be the primary button, Google the secondary one',
+    );
     assert.equal(
       await page.evaluate(
         () =>
@@ -204,6 +223,11 @@ const unstamp = (text) =>
   await page.locator('#googleSignIn').click();
   const popup = await popupPromise;
   await popup.waitForURL((url) => url.hostname === 'accounts.google.com', { timeout: 20000 });
+  // A redirect URI missing from the OAuth client still lands on accounts.google.com, at its error page.
+  assert(
+    !popup.url().includes('/signin/oauth/error'),
+    'Google rejected the sign-in request: ' + popup.url(),
+  );
   console.log(
     'PASS: deployed assets, signed-out login page at narrow widths, local fonts/cache, dedicated Firebase/API, CSP and real Google OAuth popup',
   );

@@ -97,6 +97,59 @@ test('the vendored modular Firebase SDK starts the app same-origin under the Hos
   expect(external.filter((url) => url.includes('/firebasejs/'))).toEqual([]);
 });
 
+test('on the live web.app site Google sign-in uses the same-origin auth helper under the Hosting CSP', async ({
+  page,
+  baseURL,
+  browserName,
+}) => {
+  const live = 'https://alert-disaster-field-2026.web.app';
+  await observeCsp(page);
+  // The live origin is served from the local test server; Google's scripts stay offline.
+  await page.route('**/*', async (route) => {
+    const request = route.request(),
+      url = new URL(request.url());
+    if (url.origin !== live) return route.abort();
+    if (url.pathname.startsWith('/vendor/firebase/'))
+      return route.fulfill({
+        contentType: 'text/javascript',
+        body: fs.readFileSync(path.join(PUBLIC, url.pathname)),
+      });
+    if (url.pathname === '/__/auth/iframe')
+      return route.fulfill({
+        contentType: 'text/html',
+        body: '<!doctype html><title>helper</title>',
+      });
+    const response = await route.fetch({ url: new URL(url.pathname + url.search, baseURL).href });
+    return route.fulfill({
+      response,
+      headers:
+        request.resourceType() === 'document'
+          ? { ...response.headers(), 'content-security-policy': DIAGNOSTIC_CSP }
+          : response.headers(),
+    });
+  });
+  await page.goto(live + '/');
+  await expect(page.locator('#googleSignIn')).toBeVisible();
+  expect(await page.evaluate(() => [auth.app.options.authDomain, auth.config.authDomain])).toEqual([
+    'alert-disaster-field-2026.web.app',
+    'alert-disaster-field-2026.web.app',
+  ]);
+  // The SDK frames /__/auth/iframe from authDomain, now the page's own origin.
+  expect(
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const frame = document.createElement('iframe');
+          frame.hidden = true;
+          frame.onload = () => resolve(frame.contentDocument?.title);
+          frame.src = '/__/auth/iframe';
+          document.body.append(frame);
+        }),
+    ),
+  ).toBe('helper');
+  expect(await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom'])).toEqual([]);
+});
+
 test('native select CSP diagnostics keep authored inline styles visible', async ({
   page,
   browserName,

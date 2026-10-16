@@ -188,7 +188,44 @@ console.log(
     core.authMessage(Error('raw provider detail')),
     'Sign-in could not be completed. Try again.',
   );
-  console.log('PASS: auth stage derivation and non-enumerating sign-in error messages');
+  // Unmapped Firebase codes are shown so an iPhone screenshot names the failure; other text is not.
+  assert.equal(
+    message('auth/popup-blocked'),
+    'Sign-in could not be completed (auth/popup-blocked). Try again.',
+  );
+  assert.equal(
+    message('auth/internal-error'),
+    'Sign-in could not be completed (auth/internal-error). Try again.',
+  );
+  assert.equal(
+    message('auth/popup-closed-by-user'),
+    'Google sign-in was closed before it finished.',
+  );
+  for (const code of [undefined, null, 42, 'storage/unknown', 'auth/<b>x</b>', 'auth/x y'])
+    assert.equal(message(code), 'Sign-in could not be completed. Try again.');
+  const firebaseConfig = {
+    projectId: 'alert-disaster-field-2026',
+    authDomain: 'alert-disaster-field-2026.firebaseapp.com',
+  };
+  assert.equal(
+    core.authDomainFor(firebaseConfig, 'alert-disaster-field-2026.web.app'),
+    'alert-disaster-field-2026.web.app',
+  );
+  for (const host of [
+    'alert-disaster-field-2026.firebaseapp.com',
+    'alert-disaster-field-2026--loginpage-20261015b-rgxf1x24.web.app',
+    'localhost:8765',
+    'other-project.web.app',
+    'alert-disaster-field-2026.web.app.example.com',
+  ])
+    assert.equal(
+      core.authDomainFor(firebaseConfig, host),
+      'alert-disaster-field-2026.firebaseapp.com',
+      host,
+    );
+  console.log(
+    'PASS: auth stage derivation, non-enumerating sign-in error messages with diagnosable codes and same-origin live authDomain',
+  );
 }
 
 {
