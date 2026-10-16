@@ -268,7 +268,12 @@ test('Live reconnect falls back to the cached token when the forced refresh fail
 });
 test('weak uplink: small frames wait behind queued audio, and lagging acks pause video visibly', async ({
   page,
+  browserName,
 }) => {
+  test.skip(
+    browserName === 'webkit',
+    'Playwright WebKit never starts playing the synthetic canvas camera, so the preview has no dimensions and no Live frames to send; physical iPhone acceptance remains open.',
+  );
   await page.clock.install();
   await page.evaluate(() => {
     window.cameraSize = [1920, 1080];
@@ -281,8 +286,11 @@ test('weak uplink: small frames wait behind queued audio, and lagging acks pause
       (kind) => window.livePackets.filter((packet) => packet.type === kind).length,
       type,
     );
+  // The clock stands still, so frames come only from runFor, which fires each acknowledgement when it
+  // was due. A natural frame tick or a fastForward jump past a pending ack would make the counts race.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   // Frames are context only: at most 640 px wide and one every 2 s, so voice keeps the uplink.
-  await page.clock.fastForward(2000);
+  await page.clock.runFor(2000);
   await expect.poll(() => count('video')).toBe(1);
   const width = await page.evaluate(async () => {
     const frame = window.livePackets.find((packet) => packet.type === 'video');
@@ -290,17 +298,17 @@ test('weak uplink: small frames wait behind queued audio, and lagging acks pause
     return (await createImageBitmap(blob)).width;
   });
   expect(width).toBe(640);
-  await page.clock.fastForward(2000);
+  await page.clock.runFor(2000);
   await expect.poll(() => count('video')).toBe(2);
   // A few queued microphone packets hold the next frame back while audio keeps flowing.
   await expect.poll(() => count('audio')).toBeGreaterThan(10);
   const audio = await count('audio');
   await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 20000));
-  await page.clock.fastForward(4000);
+  await page.clock.runFor(4000);
   await expect.poll(() => count('audio')).toBeGreaterThan(audio + 5);
   expect(await count('video')).toBe(2);
   await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 0));
-  await page.clock.fastForward(2000);
+  await page.clock.runFor(2000);
   await expect.poll(() => count('video')).toBe(3);
   expect(
     await page.evaluate(() =>
@@ -311,19 +319,22 @@ test('weak uplink: small frames wait behind queued audio, and lagging acks pause
   ).toBe(true);
   await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
   // Acknowledgements stop: within a second the status says so and video pauses for 10 s.
+  await page.clock.resume();
   await page.evaluate(() => (window.autoAck = false));
   await expect(page.locator('#liveStatus')).toHaveText(
     'Weak signal: video paused, voice may be delayed',
   );
   await expect(page.locator('#liveStatus')).toHaveClass('status weak');
+  // A frame tick may land before the lag shows, so the pause is measured from here.
+  const paused = await count('video');
   // Acknowledgements resume; real time (not a clock jump) passes, so only genuine lag counts.
   await page.evaluate(() => (window.autoAck = true));
   await expect.poll(() => page.evaluate(() => state.unacked.size)).toBe(0);
   await page.waitForTimeout(3000);
-  expect(await count('video')).toBe(3);
+  expect(await count('video')).toBe(paused);
   // Once voice keeps up again the pause expires, the status returns and frames resume.
   await expect(page.locator('#liveStatus')).toHaveText('Live AI connected', { timeout: 12000 });
-  await expect.poll(() => count('video'), { timeout: 5000 }).toBe(4);
+  await expect.poll(() => count('video'), { timeout: 5000 }).toBe(paused + 1);
   await page.locator('#stopWalk').click();
   await expect(page.locator('#liveStatus')).toHaveText('Not connected');
   const end = await page.evaluate(() => window.livePackets.find((packet) => packet.type === 'end'));
