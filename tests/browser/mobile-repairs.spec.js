@@ -448,6 +448,48 @@ for (const width of [320, 390])
       await capture(page, 'wrapped-shell-validation.png');
     });
 
+    test('save-status changes never resize the sticky shell, and a later good save clears a rejected save', async ({
+      page,
+    }) => {
+      // The page bounced after a Live walkthrough: each save state swapped a one-line status for
+      // a two-line one, resizing the sticky shell and moving everything below it.
+      await page.route('**/api/inspections/*', async (route) => {
+        // Hold each save long enough for "Saving changes…" to render.
+        if (route.request().method() === 'PUT') await new Promise((r) => setTimeout(r, 600));
+        await route.continue();
+      });
+      await page.evaluate(() => {
+        window.shellHeights = new Set();
+        window.statuses = new Set();
+        const shell = document.querySelector('.inspection-shell');
+        new ResizeObserver(() =>
+          window.shellHeights.add(Math.round(shell.getBoundingClientRect().height)),
+        ).observe(shell);
+        new MutationObserver(() => window.statuses.add($('saveStatus').textContent)).observe(
+          $('saveStatus'),
+          { childList: true, characterData: true, subtree: true },
+        );
+      });
+      // An emptied required count is rejected by the server (422).
+      await page.locator('#dryingDays').fill('');
+      await expect(page.locator('#message')).toHaveText('Input should be a valid integer');
+      await expect(page.locator('#saveStatus')).toHaveText(
+        'Changes saved on this device · cloud sync pending',
+      );
+      await page.locator('#dryingDays').fill('3');
+      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await expect(page.locator('#message')).toBeHidden();
+      const seen = await page.evaluate(() => [...window.statuses]);
+      expect(seen).toEqual(
+        expect.arrayContaining([
+          'Changes saved on this device · cloud sync pending',
+          'Saving changes…',
+          expect.stringMatching(/^Saved privately · revision \d+$/),
+        ]),
+      );
+      expect(await page.evaluate(() => [...window.shellHeights])).toHaveLength(1);
+    });
+
     test('short viewport keeps invalid room and feedback usable with a fixed footer, then restores sticky shell', async ({
       page,
     }) => {
