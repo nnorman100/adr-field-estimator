@@ -2534,11 +2534,17 @@ function connectivity() {
 }
 const unsynced = (row) =>
   row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some((p) => !p.uploaded);
+const openDraftUnsynced = () =>
+  !!state.draft &&
+  !state.signed &&
+  (state.conflict ||
+    stable(state.draft.data) !== state.ack ||
+    state.draft.photos.some((p) => !p.uploaded));
 const canonical = canonicalUrl(location.href);
 // Local drafts belong to this origin, so the app stays here until every one has synced.
 async function leaveForCanonical() {
   const rows = await dbAction('readonly', (store) => store.getAll()).catch(() => []);
-  if (rows.some(unsynced)) return false;
+  if (openDraftUnsynced() || rows.some(unsynced)) return false;
   // A Home Screen app keeps the origin it was added from; iOS opens the canonical one in a sheet.
   if (matchMedia('(display-mode: standalone)').matches || navigator.standalone)
     say(
@@ -2827,13 +2833,7 @@ async function initialize() {
     stopWalk();
   });
   window.addEventListener('beforeunload', (e) => {
-    if (
-      state.draft &&
-      !state.signed &&
-      (state.conflict ||
-        stable(state.draft.data) !== state.ack ||
-        state.draft.photos.some((p) => !p.uploaded))
-    ) {
+    if (openDraftUnsynced()) {
       e.preventDefault();
       e.returnValue = '';
     }
