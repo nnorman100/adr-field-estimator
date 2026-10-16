@@ -1683,6 +1683,19 @@ footer {
 .login-page .auth-panel {
   margin-top: 2.5rem;
 }
-.positioning #googleSignIn {
+/* Email and password lead; Google is the smaller secondary option below. */
+.auth-alt {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
   margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+.auth-alt #googleSignIn {
+  min-height: 44px;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.9375rem;
+  font-weight: 400;
 }

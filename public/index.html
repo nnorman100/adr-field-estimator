@@ -18,11 +18,13 @@
   </header>
   <div id="offlineBanner" class="notice" hidden>You are offline. Changes stay on this device until synced. AI and signing need a connection.</div>
   <section id="authPanel" class="auth-panel" aria-label="Sign in" hidden>
-    <div id="positioning" class="positioning"><p class="positioning-headline">Water &amp; mold loss estimates, signed on site.</p><p class="positioning-line">Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.</p><button id="googleSignIn" type="button" class="primary">Sign in with Google</button></div>
-    <form id="emailAuthForm" novalidate><h2>Sign in with email</h2><p class="hint">Use Google above, or your email and password. New staff set a password with the link in your invitation email.</p>
+    <div id="positioning" class="positioning"><p class="positioning-headline">Water &amp; mold loss estimates, signed on site.</p><p class="positioning-line">Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.</p></div>
+    <form id="emailAuthForm" novalidate><h2>Sign in</h2><p class="hint">New staff set a password with the link in your invitation email.</p>
       <label>Email<input id="authEmail" type="email" maxlength="254" required autocomplete="username"></label>
       <label>Password<input id="authPassword" type="password" maxlength="128" required autocomplete="current-password"></label>
-      <div class="actions"><button id="emailSignIn" type="submit" class="primary">Sign in</button><button id="emailReset" type="button" class="text-action">Forgot password</button></div>
+      <div class="actions"><button id="emailSignIn" type="submit" class="primary">Sign in</button></div>
+      <button id="emailReset" type="button" class="text-action">Forgot password</button>
+      <div class="auth-alt"><span>or</span><button id="googleSignIn" type="button">Sign in with Google</button></div>
     </form>
     <div id="verifyEmail" hidden><h2>Verify your email</h2><p>Open the verification link sent to <strong id="verifyAddress"></strong>, then continue.</p>
       <div class="actions"><button id="confirmVerified" type="button" class="primary">I've verified</button><button id="resendVerification" type="button">Resend verification email</button><button id="verifySignOut" type="button">Sign out</button></div>

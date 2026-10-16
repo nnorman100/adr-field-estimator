@@ -14,6 +14,7 @@ const {
   ingestTranscript,
   authStage,
   authMessage,
+  authDomainFor,
   splitPhotos,
 } = ADRCore;
 const state = {
@@ -2851,7 +2852,7 @@ async function initialize() {
     loadAppCheck(),
   ]);
   if (config.projectId !== 'alert-disaster-field-2026') throw Error('Incorrect Firebase project.');
-  const app = initializeApp(config);
+  const app = initializeApp({ ...config, authDomain: authDomainFor(config, location.host) });
   activateAppCheck(app, appCheckSdk);
   authSdk = sdk;
   // IndexedDB, or localStorage where IndexedDB is unavailable: the persistence the compat SDK's Persistence.LOCAL chose.

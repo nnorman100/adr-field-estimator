@@ -1,4 +1,28 @@
 const { test, expect } = require('@playwright/test');
+// Visible login controls from top to bottom, with each control's font size.
+const LOGIN_ORDER = [
+  ['authEmail', 'email'],
+  ['authPassword', 'password'],
+  ['emailSignIn', 'big'],
+  ['emailReset', 'small'],
+  ['googleSignIn', 'small'],
+];
+const signedOutLoginOrder = () => {
+  const ids = ['authEmail', 'authPassword', 'emailSignIn', 'emailReset', 'googleSignIn'];
+  const signIn = parseFloat(getComputedStyle(document.getElementById('emailSignIn')).fontSize);
+  return ids
+    .map((id) => document.getElementById(id))
+    .filter((el) => el.checkVisibility())
+    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+    .map((el) => [
+      el.id,
+      el.tagName === 'INPUT'
+        ? el.type
+        : parseFloat(getComputedStyle(el).fontSize) < signIn
+          ? 'small'
+          : 'big',
+    ]);
+};
 const uid = (role) => 'test-owner-ws-' + role;
 const topics = (page, group) =>
   page.locator('#' + group + ' > details > summary').allTextContents();
@@ -81,6 +105,10 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
   await expect(page.getByRole('button', { name: /google/i })).toHaveCount(1);
   await expect(page.locator('#emailAuthForm')).toBeVisible();
+  // Email and password lead; Google is the smaller, non-primary option below them.
+  expect(await page.evaluate(signedOutLoginOrder)).toEqual(LOGIN_ORDER);
+  await expect(page.locator('#emailSignIn')).toHaveClass(/primary/);
+  await expect(page.locator('#googleSignIn')).not.toHaveClass(/primary/);
   const line = page.locator('#authPanel #positioning');
   await expect(line).toBeVisible();
   await expect(line).toContainText('Water & mold loss estimates, signed on site.');
