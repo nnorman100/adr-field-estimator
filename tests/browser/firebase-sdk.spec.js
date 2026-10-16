@@ -150,6 +150,112 @@ test('on the live web.app site Google sign-in uses the same-origin auth helper u
   expect(await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom'])).toEqual([]);
 });
 
+test('a trailing-dot web.app address reopens on the live host before Firebase starts', async ({
+  page,
+  baseURL,
+}) => {
+  const live = 'https://alert-disaster-field-2026.web.app',
+    dotted = 'https://alert-disaster-field-2026.web.app.',
+    dottedRequests = [];
+  // Both hosts are served from the local test server; Google's scripts stay offline.
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== live && url.origin !== dotted) return route.abort();
+    if (url.origin === dotted) dottedRequests.push(url.pathname);
+    if (url.pathname.startsWith('/vendor/firebase/'))
+      return route.fulfill({
+        contentType: 'text/javascript',
+        body: fs.readFileSync(path.join(PUBLIC, url.pathname)),
+      });
+    const response = await route.fetch({ url: new URL(url.pathname + url.search, baseURL).href });
+    return route.fulfill({ response });
+  });
+  await page.goto(dotted + '/?from=link#top');
+  await expect(page).toHaveURL(live + '/?from=link#top');
+  await expect(page.locator('#googleSignIn')).toBeVisible();
+  expect(await page.evaluate(() => auth.app.options.authDomain)).toBe(
+    'alert-disaster-field-2026.web.app',
+  );
+  expect(dottedRequests).not.toContain('/__/firebase/init.json');
+  // The homeowner signing link keeps its token fragment.
+  await page.goto(dotted + '/sign#synthetic-link-token');
+  await expect(page).toHaveURL(live + '/sign#synthetic-link-token');
+});
+
+test('a Home Screen app on the trailing-dot address says to re-add the icon', async ({
+  page,
+  baseURL,
+}) => {
+  const dotted = 'https://alert-disaster-field-2026.web.app.';
+  // iOS opens the canonical origin in a sheet above the installed app; a 204 keeps this page in view.
+  await page.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }));
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== dotted) return route.fulfill({ status: 204 });
+    const response = await route.fetch({ url: new URL(url.pathname + url.search, baseURL).href });
+    return route.fulfill({ response });
+  });
+  // Locators would wait for the cancelled redirect to finish, so the page is read directly.
+  await page.goto(dotted + '/', { waitUntil: 'commit' });
+  await expect
+    .poll(() => page.evaluate(() => document.getElementById('message')?.textContent))
+    .toBe(
+      'This Home Screen icon opens a wrong address, where Google sign-in and walkthroughs fail. Delete the icon, then open alert-disaster-field-2026.web.app in Safari and add it to the Home Screen again.',
+    );
+  expect(page.url()).toBe(dotted + '/');
+});
+
+test('a trailing-dot address with unsynced drafts stays until they sync', async ({
+  page,
+  baseURL,
+}) => {
+  const dotted = 'https://alert-disaster-field-2026.web.app.';
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== dotted) return route.abort();
+    if (url.pathname === '/seed') return route.fulfill({ contentType: 'text/html', body: '' });
+    if (url.pathname.startsWith('/vendor/firebase/'))
+      return route.fulfill({
+        contentType: 'text/javascript',
+        body: fs.readFileSync(path.join(PUBLIC, url.pathname)),
+      });
+    const response = await route.fetch({ url: new URL(url.pathname + url.search, baseURL).href });
+    return route.fulfill({ response });
+  });
+  await page.goto(dotted + '/seed');
+  await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('adr-private-drafts-v2', 2);
+        request.onupgradeneeded = () => {
+          request.result.createObjectStore('photos', { keyPath: ['draft_key', 'id'] });
+          request.result.createObjectStore('drafts', { keyPath: 'key' });
+        };
+        request.onsuccess = () => {
+          const tx = request.result.transaction('drafts', 'readwrite');
+          tx.objectStore('drafts').put({
+            key: 'synthetic-uid:synthetic-inspection',
+            uid: 'synthetic-uid',
+            draft: { inspection_id: 'synthetic-inspection', data: { address: 'x' }, photos: [] },
+            ack: null,
+          });
+          tx.oncomplete = () => {
+            request.result.close();
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+        request.onerror = () => reject(request.error);
+      }),
+  );
+  await page.goto(dotted + '/');
+  await expect(page.locator('#hostSyncNotice')).toHaveText(
+    'Drafts on this device are still syncing. Sign in with email and keep this Home Screen icon until they finish.',
+  );
+  await expect(page.locator('#emailAuthForm')).toBeVisible();
+  expect(page.url()).toBe(dotted + '/');
+});
+
 test('native select CSP diagnostics keep authored inline styles visible', async ({
   page,
   browserName,

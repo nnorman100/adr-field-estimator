@@ -68,7 +68,7 @@ function load({
     setTimeout,
     clearTimeout,
     console,
-    location: { hostname },
+    location: { hostname, href: 'https://' + hostname + '/' },
     document: { getElementById: element, addEventListener() {} },
     fetch: async (path, options) => {
       calls.fetches.push({ path, headers: { ...options.headers } });

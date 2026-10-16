@@ -257,6 +257,8 @@
     }
   }
   function init() {
+    const canonical = ADRCore.canonicalUrl(location.href);
+    if (canonical) return location.replace(canonical);
     document
       .querySelectorAll('[data-tab]')
       .forEach((tab) => tab.addEventListener('click', () => select(tab.dataset.tab)));

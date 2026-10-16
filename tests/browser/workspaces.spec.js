@@ -658,6 +658,7 @@ test('email sign-in errors share one message and do not reveal accounts', async 
   await signIn('nobody@example.invalid', 'wrong-password');
   await expect(page.locator('#authStatus')).toHaveText('Email or password is incorrect.');
   await page.getByRole('button', { name: 'Forgot password' }).click();
+  await page.getByRole('button', { name: 'Send reset link' }).click();
   await expect(page.locator('#authStatus')).toHaveText(
     'If an account uses nobody@example.invalid, a password reset email is on its way.',
   );
@@ -668,6 +669,52 @@ test('email sign-in errors share one message and do not reveal accounts', async 
   await expect(page.locator('#workspaceDashboard')).toBeVisible();
   await expect(page.locator('#authPanel')).toBeHidden();
   await expect(page.locator('#dashboardTeam')).toBeVisible();
+});
+
+// Forgot password sits just above Sign in with Google, so a stray tap must not send a reset email.
+test('Forgot password asks before it sends a reset email', async ({ page, browserName }) => {
+  const email = 'a-long-staff-address.synthetic@restoration-company.example.invalid';
+  await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
+  await page.goto('/');
+  await expect(page.locator('#emailAuthForm')).toBeVisible();
+  const forgot = page.getByRole('button', { name: 'Forgot password' }),
+    dialog = page.getByRole('dialog', { name: 'Reset password?' }),
+    emails = () => page.evaluate(() => window.__testEmails);
+  // An empty Email field still only shows the browser's validation message.
+  await forgot.click();
+  await expect(dialog).toBeHidden();
+  expect(await page.locator('#authEmail').evaluate((input) => input.validity.valueMissing)).toBe(
+    true,
+  );
+  await page.locator('#authEmail').fill(email);
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await forgot.click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Send a password reset link to ' + email + '?');
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+      false,
+    );
+    const box = await dialog.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    if (browserName === 'chromium')
+      await page.screenshot({ path: test.info().outputPath('reset-confirm-' + width + '.png') });
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+  }
+  await forgot.click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  expect(await emails()).toEqual([]);
+  await expect(page.locator('#authStatus')).toBeHidden();
+  await forgot.click();
+  await dialog.getByRole('button', { name: 'Send reset link' }).click();
+  await expect(page.locator('#authStatus')).toHaveText(
+    'If an account uses ' + email + ', a password reset email is on its way.',
+  );
+  expect(await emails()).toEqual([{ type: 'reset', email }]);
 });
 
 test('server validation errors show the field message instead of a generic retry', async ({

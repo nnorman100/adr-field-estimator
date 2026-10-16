@@ -31,6 +31,7 @@ const context = {
   ADRCore: require('../public/core.js'),
   document: { getElementById: element, addEventListener() {} },
   navigator: { onLine: true },
+  location: { href: 'https://alert-disaster-field-2026.web.app/' },
   WebSocket: Socket,
   clearTimeout: (id) => timers.delete(id),
   clearInterval: (id) => timers.delete(id),

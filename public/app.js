@@ -15,6 +15,7 @@ const {
   authStage,
   authMessage,
   authDomainFor,
+  canonicalUrl,
   splitPhotos,
 } = ADRCore;
 const state = {
@@ -813,6 +814,7 @@ async function drainQueue() {
               ' queued drafts changed on another device. Open them from Jobs to choose which version to keep.',
         'error',
       );
+    else if (canonical) await leaveForCanonical();
   } catch (e) {
     if (e.status === 429 && state.user?.uid === uid) {
       clearTimeout(state.queueRetry);
@@ -2530,7 +2532,35 @@ function connectivity() {
       .then(() => drainQueue())
       .catch((e) => say(e.message, 'error'));
 }
+const unsynced = (row) =>
+  row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some((p) => !p.uploaded);
+const openDraftUnsynced = () =>
+  !!state.draft &&
+  !state.signed &&
+  (state.conflict ||
+    stable(state.draft.data) !== state.ack ||
+    state.draft.photos.some((p) => !p.uploaded));
+const canonical = canonicalUrl(location.href);
+// Local drafts belong to this origin, so the app stays here until every one has synced.
+async function leaveForCanonical() {
+  const rows = await dbAction('readonly', (store) => store.getAll()).catch(() => []);
+  if (openDraftUnsynced() || rows.some(unsynced)) return false;
+  // A Home Screen app keeps the origin it was added from; iOS opens the canonical one in a sheet.
+  if (matchMedia('(display-mode: standalone)').matches || navigator.standalone)
+    say(
+      'This Home Screen icon opens a wrong address, where Google sign-in and walkthroughs fail. Delete the icon, then open ' +
+        new URL(canonical).host +
+        ' in Safari and add it to the Home Screen again.',
+      'error',
+    );
+  location.replace(canonical);
+  return true;
+}
 async function initialize() {
+  if (canonical) {
+    if (await leaveForCanonical()) return;
+    $('hostSyncNotice').hidden = false;
+  }
   initSignature();
   initFocusVisibility();
   renderControls();
@@ -2562,6 +2592,17 @@ async function initialize() {
         controls.forEach((control) => (control.disabled = false));
       }
     });
+  // Forgot password sits just above Google sign-in, so a stray tap must not send a reset email.
+  const confirmReset = (email) =>
+    new Promise((resolve) => {
+      const dialog = $('resetDialog');
+      $('resetDescription').textContent = 'Send a password reset link to ' + email + '?';
+      dialog.returnValue = '';
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'send'), {
+        once: true,
+      });
+      dialog.showModal();
+    });
   const credentials = () =>
     $('emailAuthForm').reportValidity()
       ? { email: $('authEmail').value.trim(), password: $('authPassword').value }
@@ -2579,6 +2620,7 @@ async function initialize() {
   authClick('emailReset', async () => {
     if (!$('authEmail').reportValidity()) return;
     const email = $('authEmail').value.trim();
+    if (!(await confirmReset(email))) return;
     try {
       await authSdk.sendPasswordResetEmail(auth, email);
     } catch (e) {
@@ -2603,8 +2645,6 @@ async function initialize() {
     }
     await applyUser(auth.currentUser);
   });
-  const unsynced = (row) =>
-    row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some((p) => !p.uploaded);
   const discardAndSignOut = async () => {
     state.queuePaused = true;
     await stopWalk();
@@ -2793,13 +2833,7 @@ async function initialize() {
     stopWalk();
   });
   window.addEventListener('beforeunload', (e) => {
-    if (
-      state.draft &&
-      !state.signed &&
-      (state.conflict ||
-        stable(state.draft.data) !== state.ack ||
-        state.draft.photos.some((p) => !p.uploaded))
-    ) {
+    if (openDraftUnsynced()) {
       e.preventDefault();
       e.returnValue = '';
     }
