@@ -473,6 +473,7 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await expect(page.locator('#coordAddress')).toHaveValue('Other company synthetic property');
   await page.locator('#coordinationToggle').click();
   await page.locator('#coordNotes').fill('Office note retains the measured property address');
+  await page.locator('#coordName').fill('Synthetic Homeowner');
   await page.locator('#saveCoordination').click();
   await expect(page.locator('#coordinationStatus')).toHaveText('Coordination saved.');
   await expect(page.locator('#address')).toHaveValue('Other company synthetic property');
@@ -482,7 +483,17 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await expect(page.locator('#documents')).toBeVisible();
   await expect(page.locator('#doc-proposal > h2')).toContainText('Other Restoration');
   await expect(page.locator('#proposalBody')).toContainText('Other Estimator · CSLB #123456');
-  await expect(page.locator('.document-letterhead img')).toBeHidden();
+  await expect(page.locator('#proposalBody p').first()).toHaveText('Customer: Synthetic Homeowner');
+  await expect(page.locator('#claimParty')).toHaveText(
+    'Customer: Synthetic HomeownerProperty: Other company synthetic property',
+  );
+  await expect(page.locator('#defenseBody')).toContainText('Customer: Synthetic Homeowner');
+  // The defense letter carries the proposal's letterhead from the same company profile.
+  await expect(page.locator('.document-letterhead')).toHaveCount(2);
+  for (const doc of ['#doc-proposal', '#doc-defense']) {
+    await expect(page.locator(doc + ' .document-letterhead img')).toBeHidden();
+    await expect(page.locator(doc + ' .document-letterhead p')).toContainText('CSLB #123456');
+  }
   await expect(page.locator('#defenseBody')).not.toContainText('Matthew Myers');
   if (browserName === 'chromium')
     await page.screenshot({

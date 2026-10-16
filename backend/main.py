@@ -847,6 +847,7 @@ async def audit_inspection(
     # OCR may advance the revision; bind the resulting audit to that exact snapshot.
     revision = record['revision']
     identity = await stored(store.workspaces.snapshot, staff['uid']) if WORKSPACES_ENABLED else None
+    customer = await stored(store.workspaces.customer_name, record) if WORKSPACES_ENABLED else ''
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
     contents = [prompt]
     for photo in record['photos']:
@@ -854,7 +855,7 @@ async def audit_inspection(
         contents.append(await run_in_threadpool(model_image, raw))
     ai = await generate_audit(contents, req.inspection_id, started)
     try:
-        documents = make_documents(data, record['photos'], ai, identity)
+        documents = make_documents(data, record['photos'], ai, identity, customer)
     except (ValueError, ValidationError):
         raise HTTPException(
             400, 'The scope could not be priced. Review the inspection inputs and retry.'

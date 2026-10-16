@@ -169,6 +169,8 @@ class LineItem(StrictModel):
 
 class Proposal(StrictModel):
     property_address: str
+    # From job coordination when the audit ran; documents audited before this field omit it.
+    customer_name: str = Field(default='', max_length=150)
     date: str
     proposed_cost: float = Field(gt=0)
     proposed_cost_low: float = Field(gt=0)

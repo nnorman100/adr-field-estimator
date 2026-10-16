@@ -162,7 +162,7 @@ def proposal_range(data: InspectionData, items):
     return amount(job + equipment + low_labor), amount(job + equipment + high_labor)
 
 
-def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
+def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, customer_name=''):
     company_name = identity['name'] if identity else 'Alert Disaster Restoration'
     company_address = identity['address'] if identity else 'Bakersfield, CA'
     company_license = identity['license'] if identity else '950983'
@@ -202,10 +202,11 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
         observations.append('Technician observations: ' + data.technician_notes.strip())
     if data.technician_transcript.strip():
         observations.append('Technician transcript: ' + data.technician_transcript.strip())
-    verified = [p for p in photos if p.get('ocr_status') == 'verified']
+    # Photos are numbered in photo-log order, so an adjuster can match a finding to its picture.
     observations.extend(
-        f'{p["room"]} — {p["ocr"]["meter_type"]}: {p["ocr"]["value"]} (photo {p["id"]})'
-        for p in verified
+        f'Photo {number} ({p["room"]}) — {p["ocr"]["meter_type"]}: {p["ocr"]["value"]}'
+        for number, p in enumerate(photos, 1)
+        if p.get('ocr_status') == 'verified'
     )
     recommendations = (
         ([TESTING] if before else [])
@@ -213,10 +214,12 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
         + [i['description'] for i in items if i['code'] not in SCOPE_EXCLUDED]
         + [ADDITIONAL]
     )
+    customer = customer_name.strip()
     letter = '\n\n'.join(
         [
             'TO: Insurance Claims Examiner / Adjuster',
-            f'RE: Remediation scope for {data.address}',
+            f'RE: Remediation scope for {data.address}'
+            + (f'\nCustomer: {customer}' if customer else ''),
             f'{company_name} • {company_address} • CSLB #{company_license}',
             'This scope describes proposed work; completion has not been recorded.',
             'The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.',
@@ -240,6 +243,7 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None):
         company_setup_missing=setup,
         adr_estimate=dict(
             property_address=data.address,
+            customer_name=customer,
             date=datetime.now(ZoneInfo('America/Los_Angeles')).strftime('%m-%d-%Y'),
             proposed_cost=float(estimate_high),
             proposed_cost_low=float(estimate_low),

@@ -206,3 +206,55 @@ def test_sheet_job_charge_quantities_are_confirmed_inputs():
         scoped(dump_truck_loads=-1)
     with pytest.raises(ValidationError):
         scoped(labor_hours=float('nan'))
+
+
+def photo(photo_id, room, value=None):
+    return dict(
+        id=photo_id,
+        room=room,
+        captured_at='2026-10-15T12:00:00Z',
+        width=10,
+        height=10,
+        ocr_status='verified' if value else 'no_meter',
+        ocr=dict(
+            meter_detected=True, meter_type='Extech MO290', value=value, classification='', notes=''
+        )
+        if value
+        else None,
+    )
+
+
+def test_findings_cite_photos_by_their_photo_log_number():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    photos = [
+        photo('a' * 32, 'Hallway'),
+        photo('b' * 32, 'Kitchen', '31.4% WME'),
+        photo('c' * 32, 'Bathroom', '18.0% WME'),
+    ]
+    docs = make_documents(scoped(), photos, ai)
+    cited = [text for text in docs['adr_estimate']['findings'] if text.startswith('Photo ')]
+    assert cited == [
+        'Photo 2 (Kitchen) — Extech MO290: 31.4% WME',
+        'Photo 3 (Bathroom) — Extech MO290: 18.0% WME',
+    ]
+    # The photo log keeps internal IDs in the order the numbers count.
+    assert [entry['id'] for entry in docs['photo_audit_log']] == ['a' * 32, 'b' * 32, 'c' * 32]
+    assert all(text in docs['iicrc_defense_letter'] for text in cited)
+    assert not any(
+        'b' * 32 in text or 'c' * 32 in text
+        for text in docs['adr_estimate']['findings'] + [docs['iicrc_defense_letter']]
+    )
+
+
+@pytest.mark.parametrize('name', ['', '   '])
+def test_documents_without_a_customer_name_omit_it(name):
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    docs = make_documents(scoped(), [], ai, customer_name=name)
+    assert docs['adr_estimate']['customer_name'] == ''
+    assert 'Customer:' not in docs['iicrc_defense_letter']
+    named = make_documents(scoped(), [], ai, customer_name=' Pat Example ')
+    assert named['adr_estimate']['customer_name'] == 'Pat Example'
+    assert (
+        'RE: Remediation scope for Synthetic\nCustomer: Pat Example\n\n'
+        in named['iicrc_defense_letter']
+    )

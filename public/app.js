@@ -545,6 +545,7 @@ function clearDisplayedInspection() {
     'proposalBody',
     'claimCards',
     'claimItems',
+    'claimParty',
     'defenseBody',
     'photoAuditLog',
     'scopeSuggestionList',

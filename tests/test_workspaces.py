@@ -1319,6 +1319,90 @@ def test_signed_job_records_evidence_and_coordination_stay_scoped(api, uid):
     assert payload['auth_id'] not in json.dumps(client.get('/api/authorizations').json())
 
 
+def coordinate_customer(client, current, name):
+    current['uid'] = 'office'
+    job = client.get('/api/jobs/' + ID + '/coordination').json()
+    request = {'expected_version': job['version'], 'customer_name': name}
+    assert client.put('/api/jobs/' + ID + '/coordination', json=request).status_code == 200
+    current['uid'] = 'estimator'
+
+
+def test_documents_name_the_coordinated_customer_and_a_new_name_needs_new_documents(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    assert (
+        client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code
+        == 200
+    )
+    unnamed = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    assert unnamed['audit']['documents']['adr_estimate']['customer_name'] == ''
+    assert 'Customer:' not in unnamed['audit']['documents']['iicrc_defense_letter']
+    coordinate_customer(client, current, '  Synthetic Homeowner  ')
+    cleared = client.get('/api/inspections/' + ID).json()
+    assert cleared['audit'] is None and cleared['status'] == 'draft' and cleared['revision'] == 1
+    named = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    documents = named['audit']['documents']
+    assert documents['adr_estimate']['customer_name'] == 'Synthetic Homeowner'
+    assert (
+        'RE: Remediation scope for Test property\nCustomer: Synthetic Homeowner'
+        in documents['iicrc_defense_letter']
+    )
+    # Phone, email and notes are not on the documents, so they keep the audit.
+    current['uid'] = 'office'
+    job = client.get('/api/jobs/' + ID + '/coordination').json()
+    request = {
+        'expected_version': job['version'],
+        'customer_name': 'Synthetic Homeowner',
+        'customer_phone': '555-0100',
+    }
+    assert client.put('/api/jobs/' + ID + '/coordination', json=request).status_code == 200
+    current['uid'] = 'estimator'
+    assert client.get('/api/inspections/' + ID).json()['audit'] == named['audit']
+    # A name saved while the audit was running no longer matches the documents.
+    store.db.records['_workspace_jobs/' + ID]['customer_name'] = 'Renamed Mid-Audit'
+    payload = dict(
+        inspection_id=ID,
+        expected_revision=1,
+        auth_id='ADR-AUTH-customer123456',
+        proposal_hash=named['audit']['proposal_hash'],
+        signature_png=png(),
+        documents_confirmed=True,
+    )
+    response = client.post('/api/authorize', json=payload)
+    assert response.status_code == 409
+    assert response.json()['detail'] == (
+        'Customer details changed. Generate new documents before signing.'
+    )
+    store.db.records['_workspace_jobs/' + ID]['customer_name'] = 'Synthetic Homeowner'
+    assert client.post('/api/authorize', json=payload).status_code == 200
+    signed = store.db.records['authorizations/' + payload['auth_id']]
+    assert signed['documents']['adr_estimate']['customer_name'] == 'Synthetic Homeowner'
+    # The signed agreement keeps the name it was signed with.
+    coordinate_customer(client, current, 'Later Name')
+    assert store.db.records['authorizations/' + payload['auth_id']]['documents'] == documents
+
+
+def test_documents_audited_before_customer_names_still_sign(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    assert (
+        client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code
+        == 200
+    )
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    del store.db.records['inspections/' + ID]['audit']['documents']['adr_estimate']['customer_name']
+    store.db.records['_workspace_jobs/' + ID]['customer_name'] = 'Named Later'
+    payload = dict(
+        inspection_id=ID,
+        expected_revision=1,
+        auth_id='ADR-AUTH-legacy1234567',
+        proposal_hash=record['audit']['proposal_hash'],
+        signature_png=png(),
+        documents_confirmed=True,
+    )
+    assert client.post('/api/authorize', json=payload).status_code == 200
+
+
 def test_signed_job_address_cannot_change_through_coordination(api):
     client, current, store = api
     current['uid'] = 'estimator'
@@ -1835,7 +1919,6 @@ def signed_job(client, current, store):
         meter_detected=True, meter_type='Moisture meter', value='12', classification='', notes=''
     )
     store.set_ocr('estimator', ID, PHOTO, reading)
-    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 3}).json()
     current['uid'] = 'office'
     job = client.get('/api/jobs/' + ID + '/coordination').json()
     assert (
@@ -1851,6 +1934,8 @@ def signed_job(client, current, store):
         == 200
     )
     current['uid'] = 'estimator'
+    # Audited after coordination, so the documents name the customer.
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 3}).json()
     payload = dict(
         inspection_id=ID,
         expected_revision=3,
