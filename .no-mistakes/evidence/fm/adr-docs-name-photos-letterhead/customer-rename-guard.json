@@ -1,0 +1,38 @@
+[
+  {
+    "step": "audited job",
+    "status": "audited",
+    "revision": 11,
+    "customer_name_in_documents": "Jordan Q. Testcase"
+  },
+  {
+    "step": "control: mint signing link for current documents",
+    "http": 200
+  },
+  {
+    "step": "coordination before",
+    "customer_name": "Jordan Q. Testcase",
+    "version": 2
+  },
+  {
+    "step": "rename customer to \"Riley Renamed\"",
+    "http": 200
+  },
+  {
+    "step": "job after rename",
+    "status": "draft",
+    "revision": 11,
+    "audit_present": false
+  },
+  {
+    "step": "attempt signing link with stale documents",
+    "http": 409,
+    "body": "{\"detail\":\"The scope changed or requires review. Complete a new audit before signing.\"}"
+  },
+  {
+    "step": "re-audit",
+    "http": 200,
+    "customer_name_in_documents": "Riley Renamed",
+    "letter_customer_line": "Customer: Riley Renamed"
+  }
+]
