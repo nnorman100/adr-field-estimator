@@ -228,6 +228,10 @@ def realtime(message):
     return message.get('realtimeInput', message.get('realtime_input'))
 
 
+def client_content(message):
+    return message.get('clientContent', message.get('client_content'))
+
+
 class FakeVertexLive:
     """A local TLS stand-in for the Vertex AI Live endpoint, driven by the real SDK client."""
 
@@ -320,7 +324,13 @@ class FakeVertexLive:
             while True:
                 message = json.loads(socket.recv())
                 received.append(message)
-                kind = 'setup' if 'setup' in message else next(iter(realtime(message) or {}), None)
+                kind = (
+                    'setup'
+                    if 'setup' in message
+                    else 'client_content'
+                    if client_content(message)
+                    else next(iter(realtime(message) or {}), None)
+                )
                 for reply in self.replies.pop(kind, []):
                     socket.send(json.dumps(reply))
         except ConnectionClosed:

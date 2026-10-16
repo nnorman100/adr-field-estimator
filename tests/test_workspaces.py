@@ -631,6 +631,9 @@ def test_live_resume_fallback_keeps_company_identity(store, monkeypatch):
     configs = []
 
     class Session:
+        async def send_client_content(self, **kw):
+            pass
+
         async def receive(self):
             yield NS(
                 server_content=None,
@@ -706,6 +709,9 @@ def test_live_rechecks_workspace_permission_and_deletes_checkpoint(store, monkey
         return {**identity('estimator2'), 'exp': time.time() + 600}
 
     class Session:
+        async def send_client_content(self, **kw):
+            pass
+
         async def receive(self):
             yield NS(
                 server_content=None,
@@ -2906,6 +2912,9 @@ class LiveHarness:
             return {**identity(token), 'exp': harness.now + 3000}
 
         class Session:
+            async def send_client_content(self, **kwargs):
+                pass
+
             async def send_realtime_input(self, **kwargs):
                 harness.log.append('vertex ' + next(iter(kwargs)))
 

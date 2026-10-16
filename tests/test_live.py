@@ -15,10 +15,14 @@ def test_authenticated_relay_pcm_frames_interruption_and_release(monkeypatch):
     store = FakeStore()
     store.create_inspection('owner', ID, InspectionData().model_dump(mode='json'))
     sent = []
+    greetings = []
     closed = []
     gate = asyncio.Event()
 
     class Session:
+        async def send_client_content(self, **kwargs):
+            greetings.append(kwargs)
+
         async def send_realtime_input(self, **kwargs):
             sent.append(kwargs)
             gate.set()
@@ -82,7 +86,7 @@ def test_authenticated_relay_pcm_frames_interruption_and_release(monkeypatch):
             socket.send_json({'type': 'audio', 'data': base64.b64encode(b'x').decode()})
             while socket.receive_json()['type'] != 'error':
                 pass
-    assert sum('video' in item for item in sent) == 1
+    assert sum('video' in item for item in sent) == 1 and len(greetings) == 1
     assert closed and '_live_sessions/owner' not in store.db.records
 
 
@@ -121,6 +125,9 @@ def test_live_rechecks_revocation_and_releases_resources(monkeypatch):
         return {'uid': 'owner', 'exp': time.time() + 600}
 
     class Session:
+        async def send_client_content(self, **kwargs):
+            pass
+
         async def receive(self):
             await asyncio.Event().wait()
             yield None

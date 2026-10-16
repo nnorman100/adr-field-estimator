@@ -1,4 +1,4 @@
-import asyncio, base64, time
+import asyncio, base64, json, time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 import pytest
@@ -7,7 +7,7 @@ from starlette.websockets import WebSocketDisconnect
 import backend.main as bm
 from backend.contracts import InspectionData
 from backend.live_support import scope_fingerprint
-from tests.fakes import FakeStore, FakeVertexLive, realtime
+from tests.fakes import FakeStore, FakeVertexLive, client_content, realtime
 
 ID = 'ADR-INS-' + 'd' * 32
 CAP = 'e' * 32
@@ -67,6 +67,10 @@ def test_real_sdk_wire_setup_events_interaction_status_and_resume(monkeypatch, t
             {'sessionResumptionUpdate': {'newHandle': 'wire-handle', 'resumable': True}},
             {'usageMetadata': {'totalTokenCount': 17}},
         ]
+        vertex.replies['client_content'] = [
+            wire_audio("Hi, I'm ready. What's the property address?"),
+            {'serverContent': {'turnComplete': True, 'interactionStatus': 'IDLE'}},
+        ]
         # A completed turn still marked IN_PROGRESS no longer ends one SDK receive() pass; IDLE does.
         vertex.replies['audio'] = [
             {
@@ -85,6 +89,13 @@ def test_real_sdk_wire_setup_events_interaction_status_and_resume(monkeypatch, t
             socket.send_json(auth())
             assert socket.receive_json()['recovery'] == 'new'
             assert socket.receive_json() == {'type': 'usage', 'total_tokens': 17}
+            # The model speaks first on a new walkthrough; only its own reply reaches the client.
+            greeting = [socket.receive_json() for _ in range(3)]
+            assert [(e['type'], e.get('speaker'), e.get('text')) for e in greeting] == [
+                ('transcript', 'assistant', "Hi, I'm ready. What's the property address?"),
+                ('audio', None, None),
+                ('turn_complete', None, None),
+            ]
             socket.send_json({'type': 'audio', 'data': pcm(3300)})
             events = [socket.receive_json() for _ in range(6)]
             assert [(e['type'], e.get('speaker'), e.get('text')) for e in events] == [
@@ -99,6 +110,9 @@ def test_real_sdk_wire_setup_events_interaction_status_and_resume(monkeypatch, t
                 events[2]['data'] == base64.b64encode(b'\x01\x02').decode()
                 and events[0]['finished'] is True
             )
+            # The greeting trigger is an instruction, never technician speech or saved job data.
+            assert bm.GREETING_TRIGGER not in json.dumps(greeting + events)
+            assert bm.GREETING_TRIGGER not in json.dumps(store.db.records, default=str)
             socket.send_json(
                 {'type': 'video', 'data': base64.b64encode(b'\xff\xd8\xffsynthetic').decode()}
             )
@@ -141,13 +155,21 @@ def test_real_sdk_wire_setup_events_interaction_status_and_resume(monkeypatch, t
         and setup['inputAudioTranscription'] == {}
         and setup['outputAudioTranscription'] == {}
     )
-    assert setup['systemInstruction']['parts'][0]['text']
+    assert 'GREETING (NEW WALKTHROUGH ONLY)' in setup['systemInstruction']['parts'][0]['text']
+    assert [client_content(m) for m in first['received'] if client_content(m)] == [
+        {
+            'turns': [{'parts': [{'text': bm.GREETING_TRIGGER}], 'role': 'user'}],
+            'turnComplete': True,
+        }
+    ]
+    # A resumed walkthrough already holds the conversation, so it does not greet again.
+    assert not any(client_content(m) for m in second['received'])
     # Bytes travel as URL-safe base64, as they did with 2.8.0.
     spoken = base64.urlsafe_b64encode(base64.b64decode(pcm(3300))).decode()
-    assert realtime(first['received'][1]) == {
+    assert realtime(first['received'][2]) == {
         'audio': {'data': spoken, 'mime_type': 'audio/pcm;rate=16000'}
     }
-    assert realtime(first['received'][2])['video']['mime_type'] == 'image/jpeg'
+    assert realtime(first['received'][3])['video']['mime_type'] == 'image/jpeg'
     assert second['received'][0]['setup']['sessionResumption'] == {'handle': 'wire-handle'}
     assert [realtime(m) for m in second['received'][1:]] == [{'audioStreamEnd': True}] * 2
 
@@ -189,7 +211,11 @@ def test_protocol2_control_events_resume_fallback_pause_and_final_drain(monkeypa
     class Session:
         def __init__(self):
             self.queue = asyncio.Queue()
+            self.greetings = []
             sessions.append(self)
+
+        async def send_client_content(self, **kw):
+            self.greetings.append(kw)
 
         async def send_realtime_input(self, **kw):
             sent.append(kw)
@@ -284,6 +310,9 @@ def test_protocol2_control_events_resume_fallback_pause_and_final_drain(monkeypa
                 while True:
                     assert socket.receive_json()['type'] != 'finished'
     assert rejected and len(configs) == 3 and any(item.get('audio_stream_end') for item in sent)
+    # Only the new walkthrough greets; the restart after a rejected handle continues silently.
+    assert [len(s.greetings) for s in sessions] == [1, 0]
+    assert sessions[0].greetings[0]['turn_complete'] is True
     assert (
         '_live_resume/owner' not in store.db.records
         and '_live_sessions/owner' not in store.db.records
@@ -305,6 +334,9 @@ def finishing_relay(monkeypatch, store):
         def __init__(self):
             self.queue = asyncio.Queue()
             self.spoken = False
+
+        async def send_client_content(self, **kw):
+            pass
 
         async def send_realtime_input(self, **kw):
             if 'audio' in kw and not self.spoken:
