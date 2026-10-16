@@ -15,6 +15,7 @@ const {
   authStage,
   authMessage,
   authDomainFor,
+  canonicalUrl,
   splitPhotos,
 } = ADRCore;
 const state = {
@@ -2531,6 +2532,19 @@ function connectivity() {
       .catch((e) => say(e.message, 'error'));
 }
 async function initialize() {
+  const canonical = canonicalUrl(location.href);
+  if (canonical) {
+    // A Home Screen app keeps the origin it was added from; iOS opens the canonical one in a sheet.
+    if (matchMedia('(display-mode: standalone)').matches || navigator.standalone)
+      say(
+        'This Home Screen icon opens a wrong address, where Google sign-in and walkthroughs fail. Delete the icon, then open ' +
+          new URL(canonical).host +
+          ' in Safari and add it to the Home Screen again.',
+        'error',
+      );
+    location.replace(canonical);
+    return;
+  }
   initSignature();
   initFocusVisibility();
   renderControls();
@@ -2562,6 +2576,17 @@ async function initialize() {
         controls.forEach((control) => (control.disabled = false));
       }
     });
+  // Forgot password sits just above Google sign-in, so a stray tap must not send a reset email.
+  const confirmReset = (email) =>
+    new Promise((resolve) => {
+      const dialog = $('resetDialog');
+      $('resetDescription').textContent = 'Send a password reset link to ' + email + '?';
+      dialog.returnValue = '';
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'send'), {
+        once: true,
+      });
+      dialog.showModal();
+    });
   const credentials = () =>
     $('emailAuthForm').reportValidity()
       ? { email: $('authEmail').value.trim(), password: $('authPassword').value }
@@ -2579,6 +2604,7 @@ async function initialize() {
   authClick('emailReset', async () => {
     if (!$('authEmail').reportValidity()) return;
     const email = $('authEmail').value.trim();
+    if (!(await confirmReset(email))) return;
     try {
       await authSdk.sendPasswordResetEmail(auth, email);
     } catch (e) {

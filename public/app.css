@@ -66,6 +66,10 @@ body {
 #validationFeedback {
   grid-column: 1 / -1;
 }
+#resetDescription {
+  overflow-wrap: anywhere;
+}
+#resetDialog .actions,
 #removeRoomDialog .actions {
   display: flex;
   flex-wrap: wrap;

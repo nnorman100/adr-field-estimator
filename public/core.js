@@ -204,6 +204,14 @@
   // because each handler URL must be an authorized redirect URI on the Google OAuth client.
   const authDomainFor = (config, host) =>
     host === config.projectId + '.web.app' ? host : config.authDomain;
+  // A host with a trailing dot (web.app.) is a separate origin that Firebase Auth and the Live relay
+  // refuse. Returns the same URL on the host without the dots, or null when the host is canonical.
+  const canonicalUrl = (href) => {
+    const url = new URL(href);
+    if (!url.hostname.endsWith('.')) return null;
+    url.hostname = url.hostname.replace(/\.+$/, '');
+    return url.href;
+  };
   // Draft rows are rewritten on every save; photo bytes are stored once beside them.
   const splitPhotos = (draft) => ({
     draft: { ...draft, photos: draft.photos.map(({ data_url, ...photo }) => photo) },
@@ -226,6 +234,7 @@
     authStage,
     authMessage,
     authDomainFor,
+    canonicalUrl,
     splitPhotos,
   };
   if (typeof module !== 'undefined') module.exports = api;

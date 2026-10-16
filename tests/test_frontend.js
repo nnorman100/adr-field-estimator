@@ -223,8 +223,25 @@ console.log(
       'alert-disaster-field-2026.firebaseapp.com',
       host,
     );
+  // Safari opened the app at web.app. (trailing dot), where Google sign-in and Live are refused.
+  assert.equal(
+    core.canonicalUrl('https://alert-disaster-field-2026.web.app./'),
+    'https://alert-disaster-field-2026.web.app/',
+  );
+  assert.equal(
+    core.canonicalUrl('https://alert-disaster-field-2026.web.app../sign?x=1#link-token'),
+    'https://alert-disaster-field-2026.web.app/sign?x=1#link-token',
+  );
+  assert.equal(core.canonicalUrl('https://localhost.:8765/?a=b'), 'https://localhost:8765/?a=b');
+  for (const href of [
+    'https://alert-disaster-field-2026.web.app/',
+    'https://alert-disaster-field-2026.web.app/sign#token.',
+    'https://alert-disaster-field-2026.web.app/path./?q=.',
+    'https://localhost:8765/',
+  ])
+    assert.equal(core.canonicalUrl(href), null, href);
   console.log(
-    'PASS: auth stage derivation, non-enumerating sign-in error messages with diagnosable codes and same-origin live authDomain',
+    'PASS: auth stage derivation, non-enumerating sign-in error messages with diagnosable codes, same-origin live authDomain and canonical trailing-dot host',
   );
 }
 
