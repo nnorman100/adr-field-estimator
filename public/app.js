@@ -586,7 +586,17 @@ function changed(resetConfirmation = true) {
   renderSaveStatus();
   schedulePersist();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => syncDraft().catch((e) => say(e.message, 'error')), 1500);
+  saveTimer = setTimeout(
+    () =>
+      syncDraft().then(
+        () =>
+          $('message').classList.contains('save-error') &&
+          stable(state.draft?.data) === state.ack &&
+          say(''),
+        (e) => say(e.message, 'error save-error'),
+      ),
+    1500,
+  );
 }
 function renderSaveStatus() {
   $('jobTitle').textContent = state.draft?.data.address || 'New inspection';
