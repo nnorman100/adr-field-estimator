@@ -1,0 +1,12 @@
+liveStatus: Live AI connected
+S1 frames in 9 s: 4 intervals s: [1.99,2,2.01] jpeg bytes: [4615,4644,4776,4793]
+S1 frame dimensions at relay->Vertex: [640,360]
+S2 weak status after 1515 ms: Weak signal: video paused, voice may be delayed | class: status weak
+screenshot /home/nnorm/.no-mistakes/evidence/01M530J61T6XW791HC9B9ARCNX/S2-weak-signal-status.png
+S2 during weak link (8 s window, after 2 s in-flight grace): video frames reaching Vertex: 0 audio packets reaching Vertex: 60
+S2 status still: Weak signal: video paused, voice may be delayed video_pauses: 1
+S2 status recovered 11535 ms after link healed: Live AI connected
+screenshot /home/nnorm/.no-mistakes/evidence/01M530J61T6XW791HC9B9ARCNX/S2-recovered-status.png
+S2 frames in 5 s after recovery: 2
+S7 muted after weak signal: status cleared 11281 ms later while still muted: Live AI connected | mute button: Unmute microphone
+screenshot /home/nnorm/.no-mistakes/evidence/01M530J61T6XW791HC9B9ARCNX/S7-muted-status-cleared.png

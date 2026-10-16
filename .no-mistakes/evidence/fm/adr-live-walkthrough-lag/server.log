@@ -1,0 +1,16 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-7465d9f15ead42f7b93a66603a86f77b", "duration_ms": 16273, "outcome": "finished", "mic_seconds": 16.1, "mic_gap_max_ms": 115, "video_frames": 8, "turns": 4, "interruptions": 1, "model_audio_seconds": 11.1, "reply_latency_ms_median": 437, "reply_latency_ms_max": 998, "reply_pace_median": 20.0, "client_gap_count": 0, "client_video_pauses": 0}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-876035af10904fe4824b7c7f724d2617", "duration_ms": 48232, "outcome": "finished", "mic_seconds": 36.7, "mic_gap_max_ms": 1601, "video_frames": 9, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0, "client_gap_count": 0, "client_video_pauses": 2}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "INFO", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-a00b22d788674cb399d952836eef9d65", "duration_ms": 4427, "outcome": "finished", "mic_seconds": 1.4, "mic_gap_max_ms": 111, "video_frames": 0, "turns": 0, "interruptions": 1, "model_audio_seconds": 0.5, "client_gap_count": 0, "client_video_pauses": 0}

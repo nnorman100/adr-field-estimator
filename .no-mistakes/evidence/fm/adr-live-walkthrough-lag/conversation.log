@@ -1,0 +1,6 @@
+liveStatus: Live AI connected
+S4 technician transcript: "Kitchen wall reads forty percent.\nNext is the hallway.Bathroom floor is twelve square feet."
+S4 assistant transcript: "Hi, I'm ready. What's the property address?\nGot it, forty percent on the kitchen wall.\nOkay, in the hallway"
+S5 scheduled audio ahead / sources after burst: [7.58,16] after 6 s: [1.56,4]
+S5 0.1 s chunk after silence: [held, playing] = [1,0] after turn_complete: [0,0]
+S3 stop took 94 ms; transcriptStatus: Transcript capture completed. | capture status: complete
