@@ -119,6 +119,8 @@ text retains segment identities and incomplete/gap/edit metadata; form changes s
 Live connects with a freshly issued Firebase ID token and, when the relay's ready message offers
 token_refresh, sends a new one every 10 minutes. The relay verifies each refresh like the initial token,
 rejects one for a different user and re-checks the newest token, so sessions outlive the one-hour token.
+A new walkthrough opens with a brief spoken greeting that asks for the property address, or the next
+missing intake item when the address is saved; resumed and restarted sessions do not greet again.
 
 Deployed backend and Hosting releases, their source commits and traffic are recorded only in
 [RELEASES.md](RELEASES.md). Recheck the live pair before any release and keep it as the rollback
