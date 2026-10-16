@@ -3067,7 +3067,13 @@ async function processNotes() {
         note.error = '';
         added++;
       } catch (e) {
-        if (e.status >= 400 && e.status < 500 && e.status !== 409 && e.status !== 429) {
+        if (
+          !e.draftSync &&
+          e.status >= 400 &&
+          e.status < 500 &&
+          e.status !== 409 &&
+          e.status !== 429
+        ) {
           note.status = 'failed';
           note.error = e.message;
         } else {
@@ -3116,7 +3122,12 @@ async function uploadNote(note, draft) {
     try {
       await doSync();
     } catch (e) {
-      throw Error(e.status ? 'The draft has not saved yet: ' + e.message : e.message);
+      if (!e.status) throw e;
+      throw Object.assign(Error('The draft has not saved yet: ' + e.message), {
+        status: e.status,
+        retryAfter: e.retryAfter,
+        draftSync: true,
+      });
     }
     if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
     if (state.conflict || !state.record || stable(draft.data) !== state.ack)

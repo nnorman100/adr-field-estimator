@@ -468,4 +468,31 @@ test.describe('controlled voice-note uploads', () => {
       'Added to the walkthrough transcript',
     );
   });
+  test('a draft save that loses its connection leaves the voice note waiting with the connection message', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    let drop = true;
+    await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>
+      drop && route.request().method() === 'PUT' ? route.abort() : route.continue(),
+    );
+    await page.goto('/');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#typedNote').fill('Use 3 fans.');
+    await page.locator('#addTypedNote').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Not uploaded yet: no connection to the server, retrying',
+    );
+    await expect(page.locator('#notesQueue')).toHaveText('1 voice note waiting to upload.');
+    drop = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Added to the walkthrough transcript',
+    );
+  });
 });
