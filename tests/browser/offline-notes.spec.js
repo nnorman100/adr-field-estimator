@@ -380,7 +380,7 @@ test.describe('controlled voice-note uploads', () => {
       /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
     );
   });
-  test('a note the server refuses for good stops retrying and does not block later notes', async ({
+  test('a note the server refuses for good stops retrying, does not block later notes, and can be removed', async ({
     page,
   }) => {
     await fakeRecorder(page);
@@ -402,7 +402,7 @@ test.describe('controlled voice-note uploads', () => {
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
     await expect(page.locator('#voiceNotes li')).toContainText(
-      'Not transcribed: The voice note does not match its audio type. Play it here and type what it says.',
+      'Could not be processed: The voice note does not match its audio type. Play it, type the key facts, then remove it.',
     );
     await expect(page.locator('#notesQueue')).toHaveText(
       'All voice notes and photos are uploaded.',
@@ -413,8 +413,59 @@ test.describe('controlled voice-note uploads', () => {
     await expect(page.locator('#voiceNotes li').nth(1)).toContainText(
       'Added to the walkthrough transcript',
     );
-    await expect(page.locator('#voiceNotes li').first()).toContainText('Not transcribed');
-    await expect(page.locator('#voiceNotes li').first().locator('button')).toHaveText('Play');
+    const failed = page.locator('#voiceNotes li').first();
+    await expect(failed).toContainText('Could not be processed');
+    await expect(failed.locator('button')).toHaveText(['Play', 'Remove']);
     expect(calls).toBe(2);
+    // The refused note is not pending sync: sign-out names it instead of asking to wait.
+    await page.waitForFunction(() => state.session && !state.workspaceInitializing);
+    if (!(await page.locator('#accountMenu').evaluate((el) => el.open)))
+      await page.locator('#accountMenu summary').click();
+    await page.locator('#signOutButton').click();
+    await expect(page.locator('#unsyncedCount')).toHaveText(
+      '1 voice note could not be processed and is kept only on this phone. Signing out removes it.',
+    );
+    await expect(page.locator('#googleSignIn')).toBeHidden();
+    const before = await savedParts(page);
+    await walkthrough(page);
+    await failed.getByRole('button', { name: 'Remove' }).click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(1);
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Added to the walkthrough transcript',
+    );
+    expect(await savedParts(page)).toBeLessThan(before);
+  });
+  test('a draft save the server refuses leaves the voice note waiting instead of refused', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    let refuse = true;
+    await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>
+      refuse && route.request().method() === 'PUT'
+        ? route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'Enter a valid address.' }),
+          })
+        : route.continue(),
+    );
+    await page.goto('/');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#typedNote').fill('Use 3 fans.');
+    await page.locator('#addTypedNote').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Not uploaded yet: The draft has not saved yet: Enter a valid address.',
+    );
+    await expect(page.locator('#notesQueue')).toHaveText('1 voice note waiting to upload.');
+    refuse = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Added to the walkthrough transcript',
+    );
   });
 });

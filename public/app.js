@@ -2950,10 +2950,20 @@ function noteStatus(note) {
   if (note.status === 'recording') return 'Recording…';
   if (note.status === 'done') return 'Added to the walkthrough transcript';
   if (note.status === 'failed')
-    return 'Not transcribed: ' + note.error + ' Play it here and type what it says.';
+    return (
+      'Could not be processed: ' + note.error + ' Play it, type the key facts, then remove it.'
+    );
   if (notes.active === note.id) return 'Uploading and transcribing…';
   if (note.error) return 'Not uploaded yet: ' + note.error;
   return navigator.onLine ? 'Waiting to upload' : 'Saved on this phone · uploads when online';
+}
+async function removeNote(note) {
+  if (notes.player) notes.player.pause();
+  await dbAction('readwrite', (drafts, photos, stored, audio) => {
+    audio.delete(IDBKeyRange.bound([note.draft_key, note.id], [note.draft_key, note.id, []]));
+    return stored.delete([note.draft_key, note.id]);
+  });
+  renderNotes();
 }
 async function playNote(note) {
   notes.player?.pause();
@@ -3002,6 +3012,7 @@ async function renderNotes() {
       if (note.status !== 'recording') {
         const actions = node('div', undefined, 'actions');
         actions.append(button('Play', () => playNote(note)));
+        if (note.status === 'failed') actions.append(button('Remove', () => removeNote(note)));
         item.append(actions);
       }
       return item;
@@ -3060,7 +3071,10 @@ async function processNotes() {
           note.status = 'failed';
           note.error = e.message;
         } else {
-          note.error = e.status ? e.message : 'no connection to the server, retrying';
+          note.error =
+            e instanceof TypeError || e.name === 'AbortError'
+              ? 'no connection to the server, retrying'
+              : e.message;
           waiting = true;
           if (e.status === 429) retryAfter = Math.max(1, e.retryAfter) * 1000;
         }
@@ -3099,7 +3113,11 @@ async function uploadNote(note, draft) {
     reader.readAsDataURL(blob);
   });
   const task = async () => {
-    await doSync();
+    try {
+      await doSync();
+    } catch (e) {
+      throw Error(e.status ? 'The draft has not saved yet: ' + e.message : e.message);
+    }
     if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
     if (state.conflict || !state.record || stable(draft.data) !== state.ack)
       throw Error('Save the draft first. The note stays on this phone.');
@@ -3164,12 +3182,16 @@ function connectivity() {
 }
 const unsynced = (row) =>
   row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some((p) => !p.uploaded);
-// Draft keys with a voice note that has not reached the transcript yet.
+const allNotes = () =>
+  dbAction('readonly', (drafts, photos, stored) => stored.getAll()).catch(() => []);
+// Draft keys with a voice note that is still recording or waiting to upload; a note the server
+// refused for good stays on the phone but is not pending.
 async function pendingNoteKeys() {
-  const rows = await dbAction('readonly', (drafts, photos, stored) => stored.getAll()).catch(
-    () => [],
+  return new Set(
+    (await allNotes())
+      .filter((note) => note.status === 'saved' || note.status === 'recording')
+      .map((note) => note.draft_key),
   );
-  return new Set(rows.filter((note) => note.status !== 'done').map((note) => note.draft_key));
 }
 const openDraftUnsynced = () =>
   !!state.draft &&
@@ -3319,6 +3341,17 @@ async function initialize() {
         (pending === 1
           ? ' draft has not synced. Connect to the internet and wait for sync, or discard it and sign out.'
           : ' drafts have not synced. Connect to the internet and wait for sync, or discard them and sign out.');
+      $('unsyncedActions').hidden = false;
+      return;
+    }
+    const failed = (await allNotes()).filter((note) => note.status === 'failed').length;
+    if (failed) {
+      state.queuePaused = paused;
+      $('unsyncedCount').textContent =
+        failed +
+        (failed === 1
+          ? ' voice note could not be processed and is kept only on this phone. Signing out removes it.'
+          : ' voice notes could not be processed and are kept only on this phone. Signing out removes them.');
       $('unsyncedActions').hidden = false;
       return;
     }
