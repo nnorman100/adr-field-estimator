@@ -18,10 +18,11 @@ async function setup(page) {
       configurable: true,
       value: {
         getUserMedia: async () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = 640;
-          canvas.height = 480;
-          canvas.getContext('2d').fillRect(0, 0, 640, 480);
+          const canvas = document.createElement('canvas'),
+            [width, height] = window.cameraSize || [640, 480];
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext('2d').fillRect(0, 0, width, height);
           const audio = new (window.AudioContext || window.webkitAudioContext)();
           window.syntheticContexts.push(audio);
           const tracks = [
@@ -50,6 +51,9 @@ async function setup(page) {
       send(raw) {
         const packet = JSON.parse(raw);
         window.livePackets.push(packet);
+        // window.liveAck makes this fake relay acknowledge every 10th numbered audio packet.
+        if (window.liveAck && window.autoAck && packet.type === 'audio' && packet.seq % 10 === 0)
+          setTimeout(() => this.emit({ type: 'ack', seq: packet.seq }), 0);
         if (packet.type === 'authenticate')
           setTimeout(
             () =>
@@ -59,6 +63,7 @@ async function setup(page) {
                 token_refresh: true,
                 connection_id: 'synthetic-' + window.liveSockets.length,
                 recovery: packet.resume ? 'resumed' : 'new',
+                ...(window.liveAck ? { audio_ack: 10 } : {}),
               }),
             0,
           );
@@ -259,5 +264,70 @@ test('Live reconnect falls back to the cached token when the forced refresh fail
   await expect(page.locator('#startWalk')).not.toHaveText('Resume walkthrough');
   await page.locator('#stopWalk').click();
   await expect(page.locator('#liveStatus')).toHaveText('Not connected');
+  await cleanup(page);
+});
+test('weak uplink: small frames wait behind queued audio, and lagging acks pause video visibly', async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.evaluate(() => {
+    window.cameraSize = [1920, 1080];
+    window.liveAck = true;
+    window.autoAck = true;
+  });
+  await setup(page);
+  const count = (type) =>
+    page.evaluate(
+      (kind) => window.livePackets.filter((packet) => packet.type === kind).length,
+      type,
+    );
+  // Frames are context only: at most 640 px wide and one every 2 s, so voice keeps the uplink.
+  await page.clock.fastForward(2000);
+  await expect.poll(() => count('video')).toBe(1);
+  const width = await page.evaluate(async () => {
+    const frame = window.livePackets.find((packet) => packet.type === 'video');
+    const blob = await (await fetch('data:image/jpeg;base64,' + frame.data)).blob();
+    return (await createImageBitmap(blob)).width;
+  });
+  expect(width).toBe(640);
+  await page.clock.fastForward(2000);
+  await expect.poll(() => count('video')).toBe(2);
+  // A few queued microphone packets hold the next frame back while audio keeps flowing.
+  await expect.poll(() => count('audio')).toBeGreaterThan(10);
+  const audio = await count('audio');
+  await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 20000));
+  await page.clock.fastForward(4000);
+  await expect.poll(() => count('audio')).toBeGreaterThan(audio + 5);
+  expect(await count('video')).toBe(2);
+  await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 0));
+  await page.clock.fastForward(2000);
+  await expect.poll(() => count('video')).toBe(3);
+  expect(
+    await page.evaluate(() =>
+      window.livePackets
+        .filter((packet) => packet.type === 'audio')
+        .every((packet, index, all) => !index || packet.seq === all[index - 1].seq + 1),
+    ),
+  ).toBe(true);
+  await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
+  // Acknowledgements stop: within a second the status says so and video pauses for 10 s.
+  await page.evaluate(() => (window.autoAck = false));
+  await expect(page.locator('#liveStatus')).toHaveText(
+    'Weak signal: video paused, voice may be delayed',
+  );
+  await expect(page.locator('#liveStatus')).toHaveClass('status weak');
+  // Acknowledgements resume; real time (not a clock jump) passes, so only genuine lag counts.
+  await page.evaluate(() => (window.autoAck = true));
+  await expect.poll(() => page.evaluate(() => state.unacked.size)).toBe(0);
+  await page.waitForTimeout(3000);
+  expect(await count('video')).toBe(3);
+  // Once voice keeps up again the pause expires, the status returns and frames resume.
+  await expect(page.locator('#liveStatus')).toHaveText('Live AI connected', { timeout: 12000 });
+  await expect.poll(() => count('video'), { timeout: 5000 }).toBe(4);
+  await page.locator('#stopWalk').click();
+  await expect(page.locator('#liveStatus')).toHaveText('Not connected');
+  const end = await page.evaluate(() => window.livePackets.find((packet) => packet.type === 'end'));
+  expect(end).toMatchObject({ type: 'end', video_pauses: 1 });
+  expect(typeof end.gap_count).toBe('number');
   await cleanup(page);
 });

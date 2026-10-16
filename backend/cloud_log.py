@@ -20,6 +20,18 @@ LOG_FIELDS = frozenset(
         'inspection_id',
         'method',
         'route',
+        # Live session counters: numbers only (backend/live_support.py LiveCounters).
+        'mic_seconds',
+        'mic_gap_max_ms',
+        'video_frames',
+        'turns',
+        'interruptions',
+        'model_audio_seconds',
+        'reply_latency_ms_median',
+        'reply_latency_ms_max',
+        'reply_pace_median',
+        'client_gap_count',
+        'client_video_pauses',
     }
 )
 

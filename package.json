@@ -2,7 +2,7 @@
   "name": "alert-disaster-field-estimator",
   "private": true,
   "scripts": {
-    "test": "node tests/test_frontend.js && node tests/test_lifecycle.js && node tests/test_app_check.js && node tests/test_manual_chrome.js && node --test tests/test_live_browser_targets.js && node --test tests/test_verifier_routing.js",
+    "test": "node tests/test_frontend.js && node tests/test_lifecycle.js && node tests/test_live_signal.js && node tests/test_app_check.js && node tests/test_manual_chrome.js && node --test tests/test_live_browser_targets.js && node --test tests/test_verifier_routing.js",
     "test:browser": "playwright test",
     "format": "prettier --write \"**/*.{js,css}\"",
     "format:check": "prettier --check \"**/*.{js,css}\"",
