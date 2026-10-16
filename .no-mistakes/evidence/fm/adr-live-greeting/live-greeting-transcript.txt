@@ -1,0 +1,38 @@
+# real backend listening on ws://127.0.0.1:35113/api/live (uvicorn), Vertex stand-in on https://127.0.0.1:43963
+
+## A. New walkthrough, no saved address
+client <- {"type": "ready", "model": "gemini-3.8-live", "protocol_version": 2, "connection_id": "d65acfb463c9406284b83a8270aed95c", "voice": "Charon", "token_refresh": true, "recovery": "new"}
+client <- {"type": "transcript", "speaker": "assistant", "text": "Hi, I'm ready. What's the property address?", "connection_id": "d65acfb463c9406284b83a8270aed95c", "sequence": 1, "finished": null}
+client <- {"type": "audio", "data": "AQI=...", "rate": 24000}
+client <- {"type": "turn_complete"}
+(technician has not spoken; no audio/video was sent by the client)
+vertex <- setup.sessionResumption = {}
+vertex <- clientContent turns = [{"turns": [{"parts": [{"text": "Application signal: a new walkthrough has started. Give your opening greeting now."}], "role": "user"}], "turnComplete": true}]
+saved inspection JSON in prompt shows address = ""
+
+## B. New walkthrough, address already saved
+client <- {"type": "ready", "model": "gemini-3.8-live", "protocol_version": 2, "connection_id": "1dff24347d124dbbb10e01ea13dcd7b8", "voice": "Charon", "token_refresh": true, "recovery": "new"}
+client <- {"type": "transcript", "speaker": "assistant", "text": "Hi, I'm ready. What year was 1234 Truxtun Ave built?", "connection_id": "1dff24347d124dbbb10e01ea13dcd7b8", "sequence": 1, "finished": null}
+client <- {"type": "audio", "data": "AQI=...", "rate": 24000}
+client <- {"type": "turn_complete"}
+(technician has not spoken; no audio/video was sent by the client)
+vertex <- setup.sessionResumption = {}
+vertex <- clientContent turns = [{"turns": [{"parts": [{"text": "Application signal: a new walkthrough has started. Give your opening greeting now."}], "role": "user"}], "turnComplete": true}]
+saved inspection JSON in prompt shows address = "1234 Truxtun Ave, Bakersfield, CA 93301"
+system instruction greeting rule present: True
+
+## C. Resume the same walkthrough (saved handle)
+client <- {"type": "ready", "model": "gemini-3.8-live", "protocol_version": 2, "connection_id": "02c7636af8434193a7849954d87e17e0", "voice": "Charon", "token_refresh": true, "recovery": "resumed"}
+(technician has not spoken; no audio/video was sent by the client)
+vertex <- setup.sessionResumption = {"handle": "handle-1"}
+vertex <- clientContent turns = []
+
+## D. Resume requested but no checkpoint exists (restarted)
+client <- {"type": "ready", "model": "gemini-3.8-live", "protocol_version": 2, "connection_id": "a1cd69d143434e9dbe18b3887f80e78b", "voice": "Charon", "token_refresh": true, "recovery": "restarted"}
+(technician has not spoken; no audio/video was sent by the client)
+vertex <- setup.sessionResumption = {}
+vertex <- clientContent turns = []
+
+## E. Greeting trigger never persisted: trigger text found in stored records = False
+
+RESULTS {"A": true, "B": true, "C": true, "D": true, "E": true}
