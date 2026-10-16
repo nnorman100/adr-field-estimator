@@ -813,3 +813,99 @@ def test_live_counters_measure_reply_latency_pace_and_gaps_without_content():
         'client_gap_count': 7,
         'client_video_pauses': None,
     }
+
+
+def test_only_a_reply_begun_after_the_last_speech_proves_that_speech_was_heard():
+    from backend.live_support import LiveCounters
+
+    counters = LiveCounters()
+    counters.audio(3200, True, 1.0)
+    counters.model_audio(4800, 2.0)
+    assert counters.end_reply() is True
+    # Speech over a reply in progress is still unanswered when that reply completes.
+    counters.audio(3200, True, 3.0)
+    counters.model_audio(4800, 4.0)
+    counters.audio(3200, True, 4.5)
+    assert counters.end_reply() is False
+    # Live closes an interrupted reply with its own turn_complete, which is not another turn.
+    counters.model_audio(4800, 6.0)
+    counters.audio(3200, True, 6.5)
+    assert counters.end_reply(interrupted=True) is False
+    assert counters.end_reply() is False
+    assert (counters.turns, counters.interruptions) == (2, 1)
+
+
+def test_finish_stays_incomplete_when_only_an_interrupted_reply_completes(monkeypatch):
+    store = FakeStore()
+    store.create_inspection('owner', ID, InspectionData().model_dump())
+    speech = []
+
+    class Session:
+        def __init__(self):
+            self.queue = asyncio.Queue()
+
+        async def send_client_content(self, **kw):
+            pass
+
+        async def send_realtime_input(self, **kw):
+            if 'audio' not in kw or not bm.is_speech(kw['audio'].data):
+                return
+            speech.append(1)
+            base = dict(
+                interrupted=False,
+                input_transcription=None,
+                output_transcription=None,
+                model_turn=None,
+                turn_complete=False,
+            )
+            if len(speech) == 1:
+                part = NS(inline_data=NS(data=b'\0' * 4800))
+                await self.queue.put(
+                    NS(server_content=NS(**dict(base, model_turn=NS(parts=[part]))))
+                )
+            else:
+                await self.queue.put(NS(server_content=NS(**dict(base, interrupted=True))))
+                await self.queue.put(NS(server_content=NS(**dict(base, turn_complete=True))))
+
+        async def receive(self):
+            yield await self.queue.get()
+
+    @asynccontextmanager
+    async def connect(**kw):
+        yield Session()
+
+    async def close():
+        pass
+
+    async def identity(token, **_):
+        return {'uid': 'owner', 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'verify_staff', identity)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    monkeypatch.setattr(
+        bm.genai, 'Client', lambda **kw: NS(aio=NS(live=NS(connect=connect), aclose=close))
+    )
+    with (
+        TestClient(bm.app) as client,
+        client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
+    ):
+        socket.send_json(
+            dict(
+                type='authenticate',
+                token='synthetic',
+                inspection_id=ID,
+                protocol_version=2,
+                capture_id=CAP,
+            )
+        )
+        assert socket.receive_json()['type'] == 'ready'
+        socket.send_json({'type': 'audio', 'data': pcm(3300)})
+        assert socket.receive_json()['type'] == 'audio'
+        # The technician talks over the reply with a final measurement, then taps Stop.
+        socket.send_json({'type': 'audio', 'data': pcm(3300)})
+        assert [socket.receive_json()['type'] for _ in range(2)] == [
+            'interrupted',
+            'turn_complete',
+        ]
+        socket.send_json({'type': 'end'})
+        assert socket.receive_json() == {'type': 'finished', 'complete': False}

@@ -47,6 +47,7 @@ const state = {
   retries: 0,
   lastSpeech: 0,
   firstAudio: true,
+  cutTurn: false,
   held: [],
   heldSeconds: 0,
   audioSeq: 0,
@@ -2277,6 +2278,7 @@ async function connectLive() {
       state.ackEvery = msg.audio_ack || 0;
       state.unacked.clear();
       state.weakShown = false;
+      state.cutTurn = false;
       clearTimeout(state.stableTimer);
       state.stableTimer = setTimeout(() => {
         if (state.socket === socket && !state.stopping) state.retries = 0;
@@ -2303,11 +2305,18 @@ async function connectLive() {
       if (!state.draining && !state.stopping) playback(msg.data);
     } else if (msg.type === 'interrupted') {
       clearPlayback();
+      state.cutTurn = true;
       closeTranscript(draft.data, state.liveConnection, ['assistant']);
     } else if (msg.type === 'turn_complete') {
       flushPlayback();
       state.firstAudio = true;
-      closeTranscript(draft.data, state.liveConnection, ['technician', 'assistant']);
+      // An interrupted turn completes while the technician is still speaking.
+      closeTranscript(
+        draft.data,
+        state.liveConnection,
+        state.cutTurn ? ['assistant'] : ['technician', 'assistant'],
+      );
+      state.cutTurn = false;
     } else if (msg.type === 'ack') acknowledged(msg.seq);
     else if (msg.type === 'transcript') {
       if (state.liveProtocol === 1) {
@@ -2339,7 +2348,8 @@ async function connectLive() {
       state.finishComplete = msg.complete;
       state.finishResolve?.();
     } else if (msg.type === 'recovery') {
-      $('liveStatus').textContent = 'Refreshing Live connection…';
+      state.liveStatusText = 'Refreshing Live connection…';
+      if (!state.weakShown) $('liveStatus').textContent = state.liveStatusText;
     } else if (msg.type === 'usage') {
       state.liveUsage = msg.total_tokens;
     } else if (msg.type === 'error') {

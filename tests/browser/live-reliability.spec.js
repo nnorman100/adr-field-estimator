@@ -331,3 +331,38 @@ test('weak uplink: small frames wait behind queued audio, and lagging acks pause
   expect(typeof end.gap_count).toBe('number');
   await cleanup(page);
 });
+test('an interrupted turn keeps the technician speaking on one line and rollover status stays visible', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.evaluate(() => {
+    const socket = window.liveSockets[0],
+      chunk = (sequence, text) => ({
+        type: 'transcript',
+        speaker: 'technician',
+        connection_id: 'synthetic-1',
+        sequence,
+        text,
+        finished: null,
+      });
+    socket.emit(chunk(1, 'Kitchen wall is'));
+    socket.emit({ type: 'interrupted' });
+    socket.emit({ type: 'turn_complete' });
+    socket.emit(chunk(2, ' 80 SF'));
+    socket.emit({ type: 'turn_complete' });
+    socket.emit(chunk(3, 'Next room'));
+  });
+  await expect(page.locator('#technicianTranscript')).toHaveValue(
+    'Kitchen wall is 80 SF\nNext room',
+  );
+  await page.evaluate(() => {
+    window.liveSockets[0].emit({ type: 'recovery', reason: 'rollover' });
+    state.lastGap = true;
+    renderSignal();
+    state.lastGap = false;
+    renderSignal();
+  });
+  await expect(page.locator('#liveStatus')).toHaveText('Refreshing Live connection…');
+  await page.locator('#stopWalk').click();
+  await cleanup(page);
+});

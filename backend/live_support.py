@@ -35,6 +35,7 @@ class LiveCounters:
         self.reply_start = None
         self.reply_last = None
         self.reply_bytes = 0
+        self.answered = False
         self.client = {}
 
     def audio(self, size, speech, now):
@@ -44,6 +45,7 @@ class LiveCounters:
         self.last_mic = now
         if speech:
             self.last_speech = now
+            self.answered = False
 
     def pause(self):
         # A muted microphone is a deliberate silence, not a gap in delivery.
@@ -52,6 +54,7 @@ class LiveCounters:
     def model_audio(self, size, now):
         if self.reply_start is None:
             self.reply_start = now
+            self.answered = True
             # Only a reply that follows new speech measures response time.
             if self.last_speech is not None:
                 self.latencies.append(now - self.last_speech)
@@ -61,6 +64,11 @@ class LiveCounters:
         self.model_bytes += size
 
     def end_reply(self, interrupted=False):
+        """Closes the model's reply and returns whether it began after all speech so far."""
+        # Live also closes an interrupted reply with turn_complete, which is not another turn.
+        if self.reply_start is None:
+            return False
+        answered = self.answered and not interrupted
         if interrupted:
             self.interruptions += 1
         else:
@@ -71,6 +79,8 @@ class LiveCounters:
             self.paces.append(seconds / max(self.reply_last - self.reply_start, 0.05))
         self.reply_start = self.reply_last = None
         self.reply_bytes = 0
+        self.answered = False
+        return answered
 
     def client_end(self, packet):
         for key in ('gap_count', 'video_pauses'):

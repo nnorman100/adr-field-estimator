@@ -1515,12 +1515,14 @@ async def live_walkthrough(socket: WebSocket):
                                     if side == 'technician' and getattr(value, 'finished', False):
                                         pending = False
                                         final_text.set()
-                            if content.model_turn and not finishing:
+                            if content.model_turn:
                                 for part in content.model_turn.parts:
                                     if part.inline_data and part.inline_data.data:
                                         counters.model_audio(
                                             len(part.inline_data.data), time.monotonic()
                                         )
+                                        if finishing:
+                                            continue
                                         await socket.send_json(
                                             {
                                                 'type': 'audio',
@@ -1531,11 +1533,11 @@ async def live_walkthrough(socket: WebSocket):
                                             }
                                         )
                             if content.turn_complete:
-                                counters.end_reply()
-                                # Vertex Live never sets a transcription's finished flag, so a completed
-                                # model turn is what proves the technician's preceding speech was heard.
-                                pending = False
-                                final_text.set()
+                                # Vertex Live never sets a transcription's finished flag, so a model turn that
+                                # began after the last speech and completed proves that speech was heard.
+                                if counters.end_reply():
+                                    pending = False
+                                    final_text.set()
                                 await socket.send_json({'type': 'turn_complete'})
                         if away:
                             outcome = 'rollover'
