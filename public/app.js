@@ -253,7 +253,8 @@ function renderControls() {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
     $(id).textContent = ui.fillingScope ? 'Reading walkthrough…' : 'Fill scope from walkthrough';
   }
-  $('notesFillScope').disabled = $('fillScope').disabled;
+  for (const id of ['notesFillScope', 'notesFillScopeWalk'])
+    $(id).disabled = $('fillScope').disabled;
   window.WorkspaceUI?.policy();
 }
 function selectDocument(name) {
@@ -616,7 +617,7 @@ function clearDisplayedInspection() {
   ])
     $(id).textContent = '';
   $('noteQueue').hidden = true;
-  $('notesFillScope').hidden = true;
+  $('notesFillScope').hidden = $('notesFillScopeWalk').hidden = true;
   $('typedNote').value = '';
   hideOffer();
   if ($('savedSignature').src.startsWith('blob:')) URL.revokeObjectURL($('savedSignature').src);
@@ -3102,11 +3103,13 @@ async function renderNotes() {
       : '';
   $('noteQueue').hidden = !rows.length;
   const unread = rows.filter((note) => note.status === 'done' && note.scoped === false).length;
-  $('notesFillScope').textContent =
-    unread +
-    (unread === 1 ? ' voice note' : ' voice notes') +
-    ' transcribed - Fill scope and check for missing items';
-  $('notesFillScope').hidden = !unread;
+  for (const id of ['notesFillScope', 'notesFillScopeWalk']) {
+    $(id).textContent =
+      unread +
+      (unread === 1 ? ' voice note' : ' voice notes') +
+      ' transcribed - Fill scope and check for missing items';
+    $(id).hidden = !unread;
+  }
 }
 // Uploads a draft's saved notes one at a time, reading the list again after each so a note saved
 // meanwhile is not skipped. A failure keeps the note on the phone and returns a retry delay, unless
@@ -3538,7 +3541,12 @@ async function initialize() {
   click('finishAudit', finishAudit);
   click('fillScope', fillScopeFromWalkthrough);
   click('fillScopeProperty', fillScopeFromWalkthrough);
-  click('notesFillScope', fillScopeFromWalkthrough);
+  const fillFromNotes = () => {
+    showTask('property');
+    return fillScopeFromWalkthrough();
+  };
+  click('notesFillScope', fillFromNotes);
+  click('notesFillScopeWalk', fillFromNotes);
   click('applyScopeSuggestions', applyScopeSuggestions);
   click('dismissScopeSuggestions', clearScopePreview);
   click('startWalk', startWalk);

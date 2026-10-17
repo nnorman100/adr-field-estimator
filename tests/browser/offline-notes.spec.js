@@ -572,15 +572,22 @@ test.describe('controlled voice-note uploads', () => {
     await page.evaluate((id) => restoreDraft(id), first);
     await expect(page.locator('#conflictActions')).toBeHidden();
     await expect(page.locator('#technicianTranscript')).toHaveValue(/^\[Offline voice note /);
-    const prompt = page.locator('#notesFillScope');
-    await expect(prompt).toHaveText(
-      '1 voice note transcribed - Fill scope and check for missing items',
-    );
+    const prompt = page.locator('#notesFillScope'),
+      walkPrompt = page.locator('#notesFillScopeWalk'),
+      text = '1 voice note transcribed - Fill scope and check for missing items';
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toHaveText(text);
     await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
-    await prompt.click();
+    // The technician on the walkthrough sees the same prompt there; tapping it opens the scope.
+    await walkthrough(page);
+    await expect(walkPrompt).toBeVisible();
+    await expect(walkPrompt).toHaveText(text);
+    await walkPrompt.click();
+    await expect(page.locator('#panel-property')).toBeVisible();
     await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
     await expect(page.locator('#scopeMissing')).not.toBeEmpty();
     await expect(prompt).toBeHidden();
+    await expect(walkPrompt).toBeHidden();
   });
   // Records a note on the open job while voice-note uploads fail, then opens a new job.
   async function noteForOtherJob(page, reception = () => {}) {
