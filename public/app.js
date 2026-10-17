@@ -253,6 +253,7 @@ function renderControls() {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
     $(id).textContent = ui.fillingScope ? 'Reading walkthrough…' : 'Fill scope from walkthrough';
   }
+  $('notesFillScope').disabled = $('fillScope').disabled;
   window.WorkspaceUI?.policy();
 }
 function selectDocument(name) {
@@ -615,6 +616,7 @@ function clearDisplayedInspection() {
   ])
     $(id).textContent = '';
   $('noteQueue').hidden = true;
+  $('notesFillScope').hidden = true;
   $('typedNote').value = '';
   hideOffer();
   if ($('savedSignature').src.startsWith('blob:')) URL.revokeObjectURL($('savedSignature').src);
@@ -696,7 +698,7 @@ async function takeLostNotes(key, ack, local, remote, save = saveNote) {
     return false;
   local.technician_transcript = text + mine.slice(base.length).replace(/^\n/, '');
   for (const note of own.filter((n) => ids.includes(n.id.slice(0, 8)) && n.status !== 'done'))
-    await save({ ...note, status: 'done', error: '' });
+    await save({ ...note, status: 'done', error: '', scoped: false });
   return true;
 }
 async function absorbNotes(remote) {
@@ -924,7 +926,7 @@ async function drainQueue() {
             syncChain = syncChain
               .catch(() => {})
               .then(() => state.draft?.inspection_id === id && reconcile());
-            syncChain.catch((e) => say(e.message, 'error'));
+            await syncChain.catch((e) => say(e.message, 'error'));
             return;
           }
           row.draft.data = record.data;
@@ -1041,7 +1043,8 @@ async function fillScopeFromWalkthrough() {
       throw Error(
         'The draft changed while reading the walkthrough. Retry to use its current values.',
       );
-    const revision = state.record.revision;
+    const revision = state.record.revision,
+      read = (await draftNotes(noteKey())).filter((n) => n.status === 'done' && n.scoped === false);
     const result = await jsonApi(
       '/api/inspections/' + draft.inspection_id + '/scope-suggestions',
       'POST',
@@ -1055,6 +1058,8 @@ async function fillScopeFromWalkthrough() {
       );
     if (result.inspection_id !== draft.inspection_id || result.revision !== revision)
       throw Error('Scope suggestions belong to a different draft. Retry.');
+    for (const note of read) await saveNote({ ...note, scoped: true });
+    renderNotes();
     state.scopePreview = { draft, uid, version, revision, groups: [] };
     const groups = new Map();
     for (const change of result.changes) {
@@ -3096,6 +3101,12 @@ async function renderNotes() {
       ? 'All voice notes and photos are uploaded.'
       : '';
   $('noteQueue').hidden = !rows.length;
+  const unread = rows.filter((note) => note.status === 'done' && note.scoped === false).length;
+  $('notesFillScope').textContent =
+    unread +
+    (unread === 1 ? ' voice note' : ' voice notes') +
+    ' transcribed - Fill scope and check for missing items';
+  $('notesFillScope').hidden = !unread;
 }
 // Uploads a draft's saved notes one at a time, reading the list again after each so a note saved
 // meanwhile is not skipped. A failure keeps the note on the phone and returns a retry delay, unless
@@ -3108,6 +3119,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
     if (!note || stop()) return { added, retry: 0 };
     if (sendingNotes.has(note.id)) {
       await sendingNotes.get(note.id);
+      if ((await draftNotes(key)).some((n) => n.id === note.id && n.status === 'done')) added++;
       continue;
     }
     let retry = 0,
@@ -3117,6 +3129,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
       await upload(note);
       note.status = 'done';
       note.error = '';
+      note.scoped = false;
       added++;
     } catch (e) {
       if (
@@ -3148,7 +3161,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
 }
 // Uploads the open draft's saved notes while online. When notes were added, the existing scope
 // fill proposes values for review.
-async function processNotes() {
+async function processNotes(carried = 0) {
   clearTimeout(notes.retry);
   if (notes.processing) {
     notes.again = true;
@@ -3185,12 +3198,12 @@ async function processNotes() {
   }
   if (notes.again) {
     notes.again = false;
-    return processNotes();
+    return processNotes(state.draft === draft ? carried + sent.added : 0);
   }
   if (sent.retry && state.draft === draft) notes.retry = setTimeout(processNotes, sent.retry);
   // Not while Live runs: the scope fill would stop it.
   if (
-    sent.added &&
+    carried + sent.added &&
     state.draft === draft &&
     !notes.recorder &&
     !state.media &&
@@ -3525,6 +3538,7 @@ async function initialize() {
   click('finishAudit', finishAudit);
   click('fillScope', fillScopeFromWalkthrough);
   click('fillScopeProperty', fillScopeFromWalkthrough);
+  click('notesFillScope', fillScopeFromWalkthrough);
   click('applyScopeSuggestions', applyScopeSuggestions);
   click('dismissScopeSuggestions', clearScopePreview);
   click('startWalk', startWalk);

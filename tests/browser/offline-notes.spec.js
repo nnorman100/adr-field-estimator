@@ -539,6 +539,8 @@ test.describe('controlled voice-note uploads', () => {
     const first = await page.evaluate(() => state.draft.inspection_id);
     await walkthrough(page);
     await page.locator('#startNotes').click();
+    await page.locator('#typedNote').fill('Use 3 fans.');
+    await page.locator('#addTypedNote').click();
     await page.locator('#recordNote').click();
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
@@ -565,10 +567,20 @@ test.describe('controlled voice-note uploads', () => {
     await expect
       .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
       .toEqual(['done']);
-    // Reopening the first job shows the transcript and the note as added, with no conflict.
+    // Reopening the first job shows the transcript and the note as added, with no conflict, and
+    // offers one tap to read it into the scope instead of filling the scope on its own.
     await page.evaluate((id) => restoreDraft(id), first);
     await expect(page.locator('#conflictActions')).toBeHidden();
     await expect(page.locator('#technicianTranscript')).toHaveValue(/^\[Offline voice note /);
+    const prompt = page.locator('#notesFillScope');
+    await expect(prompt).toHaveText(
+      '1 voice note transcribed - Fill scope and check for missing items',
+    );
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await prompt.click();
+    await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
+    await expect(page.locator('#scopeMissing')).not.toBeEmpty();
+    await expect(prompt).toBeHidden();
   });
   // Records a note on the open job while voice-note uploads fail, then opens a new job.
   async function noteForOtherJob(page, reception = () => {}) {
@@ -580,6 +592,8 @@ test.describe('controlled voice-note uploads', () => {
     const first = await page.evaluate(() => state.draft.inspection_id);
     await walkthrough(page);
     await page.locator('#startNotes').click();
+    await page.locator('#typedNote').fill('Use 3 fans.');
+    await page.locator('#addTypedNote').click();
     await page.locator('#recordNote').click();
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
@@ -588,7 +602,8 @@ test.describe('controlled voice-note uploads', () => {
     await page.locator('#newInspection').click();
     await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
     await ready(page);
-    await reception();
+    await page.waitForFunction(() => !drainingQueue);
+    await reception(first);
     await page.unroute('**/voice-notes', fail);
     return first;
   }
@@ -651,15 +666,20 @@ test.describe('controlled voice-note uploads', () => {
     );
     await expect(page.locator('#technicianTranscript')).toHaveValue(noteBlock);
     await expect(page.locator('#conflictActions')).toBeHidden();
+    // The note reached the open job, so its scope is read as if the job had sent it.
+    await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
+    await expect(page.locator('#notesFillScope')).toBeHidden();
     expect(calls).toBe(1);
   });
   test('a background sync that loses its connection retries so the other job’s note still uploads', async ({
     page,
   }) => {
     await page.clock.install();
-    const first = await noteForOtherJob(page);
-    const other = new RegExp('/api/inspections/' + first + '$');
-    await page.route(other, (route) => route.abort());
+    let other;
+    const first = await noteForOtherJob(page, (id) => {
+      other = new RegExp('/api/inspections/' + id + '$');
+      return page.route(other, (route) => route.abort());
+    });
     // The queue's next attempt loses its connection while the browser still reports online.
     await page.clock.fastForward(61000);
     await expect(page.locator('#message')).toContainText(

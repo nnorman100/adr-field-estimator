@@ -44,7 +44,7 @@
   <main class="workspace">
     <section id="panel-property" data-panel="property" class="inspector" aria-labelledby="inspectionHeading">
       <div class="section-head"><h2 id="inspectionHeading">Property & scope</h2><button data-task="walkthrough" class="text-action">Go to walkthrough &rarr;</button></div>
-      <button id="fillScopeProperty" type="button">Fill scope from walkthrough</button><p class="hint">Stops capture and proposes values from your recorded observations. Review before applying.</p>
+      <button id="notesFillScope" type="button" class="primary" hidden></button><button id="fillScopeProperty" type="button">Fill scope from walkthrough</button><p class="hint">Stops capture and proposes values from your recorded observations. Review before applying.</p>
       <section id="scopeSuggestionPanel" class="scope-suggestions" aria-labelledby="scopeSuggestionHeading" hidden><h3 id="scopeSuggestionHeading">Proposed form values</h3><p id="scopeSuggestionStatus" role="status"></p><div id="scopeSuggestionList"></div><h4 id="scopeGapsHeading" hidden>Still missing or unclear</h4><ul id="scopeMissing"></ul><ul id="scopeQuestions"></ul><div class="actions"><button id="applyScopeSuggestions" type="button" class="primary">Apply selected changes</button><button id="dismissScopeSuggestions" type="button">Dismiss</button></div></section>
       <p id="validationFeedback" class="field-error" role="alert" hidden></p>
       <form id="inspectionForm"><fieldset id="inspectionFields" disabled>
