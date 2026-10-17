@@ -495,4 +495,79 @@ test.describe('controlled voice-note uploads', () => {
       'Added to the walkthrough transcript',
     );
   });
+  test('a note recorded while another note uploads is not skipped', async ({ page }) => {
+    await fakeRecorder(page);
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    let calls = 0;
+    await page.route('**/voice-notes', async (route) => {
+      if (++calls === 1) await held;
+      await route.continue();
+    });
+    await page.goto('/');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText('Uploading and transcribing…');
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(2);
+    await expect(page.locator('#voiceNotes li').nth(1)).toContainText('Waiting to upload');
+    release();
+    await expect(page.locator('#voiceNotes li').nth(0)).toContainText(
+      'Added to the walkthrough transcript',
+    );
+    await expect(page.locator('#voiceNotes li').nth(1)).toContainText(
+      'Added to the walkthrough transcript',
+    );
+    expect(calls).toBe(2);
+    await expect(page.locator('#technicianTranscript')).toHaveValue(
+      /^(\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n){2}$/,
+    );
+  });
+  test('a note recorded for one job uploads in the background while another job is open', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    await page.route('**/voice-notes', (route) => route.abort());
+    await page.goto('/');
+    await ready(page);
+    const first = await page.evaluate(() => state.draft.inspection_id);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Not uploaded yet: no connection to the server, retrying',
+    );
+    await page.locator('#jobMenu summary').click();
+    await page.locator('#newInspection').click();
+    await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
+    await ready(page);
+    await page.unroute('**/voice-notes');
+    // Reception returns while the second job is open.
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async (id) => (await jsonApi('/api/inspections/' + id)).data.technician_transcript,
+          first,
+        ),
+      )
+      .toMatch(
+        /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
+      );
+    await expect
+      .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
+      .toEqual(['done']);
+    // Reopening the first job shows the transcript and the note as added, with no conflict.
+    await page.evaluate((id) => restoreDraft(id), first);
+    await expect(page.locator('#conflictActions')).toBeHidden();
+    await expect(page.locator('#technicianTranscript')).toHaveValue(/^\[Offline voice note /);
+  });
 });

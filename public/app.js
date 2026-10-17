@@ -676,35 +676,34 @@ function renderSaveStatus() {
           ? 'Changes saved on this device · cloud sync pending'
           : 'Saved on this device · offline';
 }
-// A voice note whose response was lost still committed its transcript block on the server; when
-// that is the only difference, take the server's transcript instead of raising a conflict.
-async function absorbNotes(remote) {
-  const draft = state.draft,
-    acked = JSON.parse(state.ack),
-    base = acked.technician_transcript,
-    text = remote.data.technician_transcript,
-    local = draft.data.technician_transcript;
-  if (
-    !text.startsWith(base) ||
-    !local.startsWith(base) ||
-    stable({ ...remote.data, technician_transcript: base }) !== state.ack
-  )
-    return;
+// A voice note whose response was lost still committed its transcript block on the server. When
+// that is the only difference from the acknowledged data, takes the server's transcript plus the
+// local additions, marks those notes done and returns true; otherwise leaves everything unchanged.
+async function takeLostNotes(key, ack, local, remote) {
+  const base = JSON.parse(ack).technician_transcript,
+    text = remote.technician_transcript;
+  if (!text.startsWith(base) || stable({ ...remote, technician_transcript: base }) !== ack)
+    return false;
   const tail = text.slice(base.length).replace(/^\n/, ''),
     ids = [...tail.matchAll(/\[Offline voice note ([a-f0-9]{8})/g)].map((m) => m[1]),
-    own = await draftNotes(noteKey());
+    own = await draftNotes(key),
+    mine = local.technician_transcript;
   if (
-    state.draft !== draft ||
+    !mine.startsWith(base) ||
     !tail.startsWith('[Offline voice note ') ||
     !ids.every((id) => own.some((note) => note.id.startsWith(id)))
   )
-    return;
-  const added = local.slice(base.length).replace(/^\n/, '');
-  draft.data.technician_transcript = text + added;
-  $('technicianTranscript').value = draft.data.technician_transcript;
-  state.ack = stable(remote.data);
+    return false;
+  local.technician_transcript = text + mine.slice(base.length).replace(/^\n/, '');
   for (const note of own.filter((n) => ids.includes(n.id.slice(0, 8)) && n.status !== 'done'))
     await saveNote({ ...note, status: 'done', error: '' });
+  return true;
+}
+async function absorbNotes(remote) {
+  const draft = state.draft;
+  if (!(await takeLostNotes(noteKey(), state.ack, draft.data, remote.data))) return;
+  $('technicianTranscript').value = draft.data.technician_transcript;
+  state.ack = stable(remote.data);
   await persist();
   renderNotes();
 }
@@ -790,10 +789,14 @@ function syncDraft() {
   syncChain = syncChain.catch(() => {}).then(doSync);
   return syncChain;
 }
-let drainingQueue = false;
+let drainingQueue = false,
+  drainAgain = false;
 async function drainQueue() {
+  if (drainingQueue) {
+    drainAgain = true;
+    return;
+  }
   if (
-    drainingQueue ||
     state.queuePaused ||
     !navigator.onLine ||
     !state.session ||
@@ -823,7 +826,15 @@ async function drainQueue() {
       return store.put(row);
     });
   };
-  let conflicts = 0;
+  const saveNoteRow = (note) => {
+    guard();
+    return dbAction('readwrite', (drafts, photos, stored) => {
+      guard();
+      return stored.put({ ...note });
+    });
+  };
+  let conflicts = 0,
+    retry = 0;
   try {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
@@ -848,16 +859,21 @@ async function drainQueue() {
       }
       if (stable(row.draft.data) !== row.ack) {
         if (stable(record.data) !== row.ack && stable(record.data) !== stable(row.draft.data)) {
-          row.conflict = true;
-          conflicts++;
-          await saveRow(row);
-          continue;
+          if (!(await takeLostNotes(row.key, row.ack, row.draft.data, record.data))) {
+            row.conflict = true;
+            conflicts++;
+            await saveRow(row);
+            continue;
+          }
+          row.ack = stable(record.data);
         }
-        record = await request(path, 'PUT', {
-          expected_revision: record.revision,
-          data: row.draft.data,
-        });
-        row.ack = stable(row.draft.data);
+        if (stable(row.draft.data) !== row.ack) {
+          record = await request(path, 'PUT', {
+            expected_revision: record.revision,
+            data: row.draft.data,
+          });
+          row.ack = stable(row.draft.data);
+        }
       } else {
         row.draft.data = record.data;
         row.ack = stable(record.data);
@@ -899,6 +915,23 @@ async function drainQueue() {
           row.draft.photos.push({ ...photo, uploaded: true });
       row.record = record;
       await saveRow(row);
+      if (id === state.draft?.inspection_id) continue;
+      const sent = await sendNotes(
+        row.key,
+        async (note) => {
+          record = await request(path + '/voice-notes', 'POST', await notePayload(note));
+          row.draft.data = record.data;
+          row.ack = stable(record.data);
+          row.record = record;
+          await saveRow(row);
+        },
+        saveNoteRow,
+      );
+      if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
+    }
+    if (retry) {
+      clearTimeout(state.queueRetry);
+      state.queueRetry = setTimeout(() => drainQueue(), retry);
     }
     if (conflicts)
       say(
@@ -920,6 +953,10 @@ async function drainQueue() {
       );
   } finally {
     drainingQueue = false;
+    if (drainAgain) {
+      drainAgain = false;
+      drainQueue();
+    }
   }
 }
 function startOCR(photo) {
@@ -1475,6 +1512,7 @@ async function openNew(data = emptyData(), photos = []) {
   await syncDraft();
   await window.WorkspaceUI?.editor();
   renderNotes();
+  drainQueue();
 }
 async function restoreDraft(id) {
   const epoch = authEpoch;
@@ -1519,6 +1557,15 @@ async function restoreDraft(id) {
   if (
     remote &&
     local &&
+    remote.status !== 'signed' &&
+    stable(remote.data) !== local.ack &&
+    stable(local.draft.data) !== stable(remote.data) &&
+    (await takeLostNotes(local.key, local.ack, local.draft.data, remote.data))
+  )
+    state.ack = local.ack = stable(remote.data);
+  if (
+    remote &&
+    local &&
     stable(remote.data) !== local.ack &&
     stable(local.draft.data) !== stable(remote.data)
   ) {
@@ -1550,6 +1597,7 @@ async function restoreDraft(id) {
   await syncDraft();
   await window.WorkspaceUI?.editor();
   processNotes();
+  drainQueue();
 }
 async function loadPhotoUrls(prefix) {
   const draft = state.draft,
@@ -2747,6 +2795,7 @@ const notes = {
   done: null,
   timer: null,
   processing: false,
+  again: false,
   active: null,
   retry: null,
   player: null,
@@ -3032,12 +3081,52 @@ async function renderNotes() {
       : '';
   $('noteQueue').hidden = !rows.length;
 }
-// Uploads the open draft's saved notes one at a time while online; a failure keeps the note on the
-// phone and retries later, unless the server refused it for good. When notes were added, the existing scope fill proposes values for review.
+// Uploads a draft's saved notes one at a time, reading the list again after each so a note saved
+// meanwhile is not skipped. A failure keeps the note on the phone and returns a retry delay, unless
+// the server refused the note itself for good. The open draft and the background queue share it.
+async function sendNotes(key, upload, save = saveNote) {
+  let added = 0;
+  for (;;) {
+    const note = (await draftNotes(key)).find((n) => n.status === 'saved' && n.parts);
+    if (!note) return { added, retry: 0 };
+    let retry = 0;
+    try {
+      await upload(note);
+      note.status = 'done';
+      note.error = '';
+      added++;
+    } catch (e) {
+      if (
+        !e.draftSync &&
+        e.status >= 400 &&
+        e.status < 500 &&
+        e.status !== 409 &&
+        e.status !== 429
+      ) {
+        note.status = 'failed';
+        note.error = e.message;
+      } else {
+        note.error =
+          e instanceof TypeError || e.name === 'AbortError'
+            ? 'no connection to the server, retrying'
+            : e.message;
+        retry = e.status === 429 ? Math.max(1, e.retryAfter) * 1000 : NOTE_RETRY_MS;
+      }
+    }
+    await save(note);
+    renderNotes();
+    if (retry) return { added, retry };
+  }
+}
+// Uploads the open draft's saved notes while online. When notes were added, the existing scope
+// fill proposes values for review.
 async function processNotes() {
   clearTimeout(notes.retry);
+  if (notes.processing) {
+    notes.again = true;
+    return renderNotes();
+  }
   if (
-    notes.processing ||
     !navigator.onLine ||
     !state.draft ||
     !state.session ||
@@ -3046,58 +3135,33 @@ async function processNotes() {
     (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope'))
   )
     return renderNotes();
-  const draft = state.draft,
-    key = noteKey();
+  const draft = state.draft;
   notes.processing = true;
-  let added = 0,
-    waiting = false,
-    retryAfter = NOTE_RETRY_MS;
+  let sent;
   try {
-    for (const note of await draftNotes(key)) {
-      if (note.status !== 'saved' || !note.parts) continue;
-      if (state.draft !== draft || !navigator.onLine) {
-        waiting = true;
-        break;
-      }
+    sent = await sendNotes(noteKey(), async (note) => {
+      if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
       notes.active = note.id;
       renderNotes();
       try {
         await uploadNote(note, draft);
-        note.status = 'done';
-        note.error = '';
-        added++;
-      } catch (e) {
-        if (
-          !e.draftSync &&
-          e.status >= 400 &&
-          e.status < 500 &&
-          e.status !== 409 &&
-          e.status !== 429
-        ) {
-          note.status = 'failed';
-          note.error = e.message;
-        } else {
-          note.error =
-            e instanceof TypeError || e.name === 'AbortError'
-              ? 'no connection to the server, retrying'
-              : e.message;
-          waiting = true;
-          if (e.status === 429) retryAfter = Math.max(1, e.retryAfter) * 1000;
-        }
+      } finally {
+        notes.active = null;
       }
-      notes.active = null;
-      await saveNote(note);
-      if (waiting) break;
-    }
+    });
   } finally {
     notes.processing = false;
     notes.active = null;
     renderNotes();
   }
-  if (waiting && state.draft === draft) notes.retry = setTimeout(processNotes, retryAfter);
+  if (notes.again) {
+    notes.again = false;
+    return processNotes();
+  }
+  if (sent.retry && state.draft === draft) notes.retry = setTimeout(processNotes, sent.retry);
   // Not while Live runs: the scope fill would stop it.
   if (
-    added &&
+    sent.added &&
     state.draft === draft &&
     !notes.recorder &&
     !state.media &&
@@ -3107,10 +3171,7 @@ async function processNotes() {
   )
     fillScopeFromWalkthrough().catch((e) => say(e.message, 'error'));
 }
-// Runs in the sync chain so no draft save overlaps it: the draft is saved first, then the server
-// appends the transcribed note. The local transcript takes the server's text plus anything Live
-// appended while the note uploaded; typing in the transcript waits until then.
-async function uploadNote(note, draft) {
+async function notePayload(note) {
   const blob = await noteAudio(note);
   const audio = await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -3118,6 +3179,21 @@ async function uploadNote(note, draft) {
     reader.onerror = () => reject(Error('The voice note could not be read on this phone.'));
     reader.readAsDataURL(blob);
   });
+  return {
+    note_id: note.id,
+    room: note.room,
+    recorded_at: note.recorded_at,
+    utc_offset_minutes: note.utc_offset_minutes,
+    duration_seconds: Math.min(660, note.duration_ms / 1000),
+    mime_type: note.mime_type,
+    audio_base64: audio,
+  };
+}
+// Runs in the sync chain so no draft save overlaps it: the draft is saved first, then the server
+// appends the transcribed note. The local transcript takes the server's text plus anything Live
+// appended while the note uploaded; typing in the transcript waits until then.
+async function uploadNote(note, draft) {
+  const payload = await notePayload(note);
   const task = async () => {
     try {
       await doSync();
@@ -3138,15 +3214,7 @@ async function uploadNote(note, draft) {
       const record = await jsonApi(
         '/api/inspections/' + draft.inspection_id + '/voice-notes',
         'POST',
-        {
-          note_id: note.id,
-          room: note.room,
-          recorded_at: note.recorded_at,
-          utc_offset_minutes: note.utc_offset_minutes,
-          duration_seconds: Math.min(660, note.duration_ms / 1000),
-          mime_type: note.mime_type,
-          audio_base64: audio,
-        },
+        payload,
       );
       if (state.draft !== draft) return;
       absorb(record);
