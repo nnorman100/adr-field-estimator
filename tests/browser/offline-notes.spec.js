@@ -570,4 +570,103 @@ test.describe('controlled voice-note uploads', () => {
     await expect(page.locator('#conflictActions')).toBeHidden();
     await expect(page.locator('#technicianTranscript')).toHaveValue(/^\[Offline voice note /);
   });
+  // Records a note on the open job while voice-note uploads fail, then opens a new job.
+  async function noteForOtherJob(page, reception = () => {}) {
+    await fakeRecorder(page);
+    const fail = (route) => route.abort();
+    await page.route('**/voice-notes', fail);
+    await page.goto('/');
+    await ready(page);
+    const first = await page.evaluate(() => state.draft.inspection_id);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toContainText('Not uploaded yet');
+    await page.locator('#jobMenu summary').click();
+    await page.locator('#newInspection').click();
+    await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
+    await ready(page);
+    await reception();
+    await page.unroute('**/voice-notes', fail);
+    return first;
+  }
+  const transcriptOf = (page, id) =>
+    page.evaluate(
+      async (id) => (await jsonApi('/api/inspections/' + id)).data.technician_transcript,
+      id,
+    );
+  const noteBlock =
+    /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/;
+  test('a note interrupted while recording on another job still uploads in the background', async ({
+    page,
+  }) => {
+    const first = await noteForOtherJob(page);
+    // The page was killed mid-recording: the stored note is still marked as recording.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const request = indexedDB.open('adr-private-drafts-v2');
+          request.onsuccess = () => {
+            const store = request.result.transaction('notes', 'readwrite').objectStore('notes');
+            const all = store.getAll();
+            all.onsuccess = () => {
+              for (const note of all.result) store.put({ ...note, status: 'recording' });
+              store.transaction.oncomplete = () => {
+                request.result.close();
+                resolve();
+              };
+            };
+          };
+        }),
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect.poll(() => transcriptOf(page, first)).toMatch(noteBlock);
+    await expect
+      .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
+      .toEqual(['done']);
+  });
+  test('opening a job while its note uploads in the background does not send the note twice', async ({
+    page,
+  }) => {
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    let calls = 0;
+    const first = await noteForOtherJob(page, () =>
+      page.route('**/voice-notes', async (route) => {
+        calls++;
+        await held;
+        await route.continue();
+      }),
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await expect.poll(() => calls).toBe(1);
+    await page.evaluate((id) => restoreDraft(id), first);
+    await walkthrough(page);
+    await expect(page.locator('#voiceNotes li')).toHaveCount(1);
+    release();
+    await expect(page.locator('#voiceNotes li')).toContainText(
+      'Added to the walkthrough transcript',
+    );
+    await expect(page.locator('#technicianTranscript')).toHaveValue(noteBlock);
+    await expect(page.locator('#conflictActions')).toBeHidden();
+    expect(calls).toBe(1);
+  });
+  test('a background sync that loses its connection retries so the other job’s note still uploads', async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const first = await noteForOtherJob(page);
+    const other = new RegExp('/api/inspections/' + first + '$');
+    await page.route(other, (route) => route.abort());
+    // The queue's next attempt loses its connection while the browser still reports online.
+    await page.clock.fastForward(61000);
+    await expect(page.locator('#message')).toContainText(
+      'Some queued drafts still need synchronization',
+    );
+    await page.unroute(other);
+    await page.clock.fastForward(61000);
+    await expect.poll(() => transcriptOf(page, first)).toMatch(noteBlock);
+  });
 });

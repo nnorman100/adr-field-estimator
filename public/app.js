@@ -679,7 +679,7 @@ function renderSaveStatus() {
 // A voice note whose response was lost still committed its transcript block on the server. When
 // that is the only difference from the acknowledged data, takes the server's transcript plus the
 // local additions, marks those notes done and returns true; otherwise leaves everything unchanged.
-async function takeLostNotes(key, ack, local, remote) {
+async function takeLostNotes(key, ack, local, remote, save = saveNote) {
   const base = JSON.parse(ack).technician_transcript,
     text = remote.technician_transcript;
   if (!text.startsWith(base) || stable({ ...remote, technician_transcript: base }) !== ack)
@@ -696,7 +696,7 @@ async function takeLostNotes(key, ack, local, remote) {
     return false;
   local.technician_transcript = text + mine.slice(base.length).replace(/^\n/, '');
   for (const note of own.filter((n) => ids.includes(n.id.slice(0, 8)) && n.status !== 'done'))
-    await saveNote({ ...note, status: 'done', error: '' });
+    await save({ ...note, status: 'done', error: '' });
   return true;
 }
 async function absorbNotes(remote) {
@@ -821,6 +821,7 @@ async function drainQueue() {
   };
   const saveRow = (row) => {
     guard();
+    if (row.draft.inspection_id === state.draft?.inspection_id) return;
     return dbAction('readwrite', (store) => {
       guard();
       return store.put(row);
@@ -859,7 +860,7 @@ async function drainQueue() {
       }
       if (stable(row.draft.data) !== row.ack) {
         if (stable(record.data) !== row.ack && stable(record.data) !== stable(row.draft.data)) {
-          if (!(await takeLostNotes(row.key, row.ack, row.draft.data, record.data))) {
+          if (!(await takeLostNotes(row.key, row.ack, row.draft.data, record.data, saveNoteRow))) {
             row.conflict = true;
             conflicts++;
             await saveRow(row);
@@ -915,17 +916,24 @@ async function drainQueue() {
           row.draft.photos.push({ ...photo, uploaded: true });
       row.record = record;
       await saveRow(row);
-      if (id === state.draft?.inspection_id) continue;
       const sent = await sendNotes(
         row.key,
         async (note) => {
           record = await request(path + '/voice-notes', 'POST', await notePayload(note));
+          if (id === state.draft?.inspection_id) {
+            syncChain = syncChain
+              .catch(() => {})
+              .then(() => state.draft?.inspection_id === id && reconcile());
+            syncChain.catch((e) => say(e.message, 'error'));
+            return;
+          }
           row.draft.data = record.data;
           row.ack = stable(record.data);
           row.record = record;
           await saveRow(row);
         },
         saveNoteRow,
+        () => id === state.draft?.inspection_id,
       );
       if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
     }
@@ -946,11 +954,16 @@ async function drainQueue() {
     if (e.status === 429 && state.user?.uid === uid) {
       clearTimeout(state.queueRetry);
       state.queueRetry = setTimeout(() => drainQueue(), Math.max(1, e.retryAfter) * 1000);
-    } else if (state.user?.uid === uid && navigator.onLine)
+    } else if (state.user?.uid === uid && navigator.onLine) {
+      if (!state.queuePaused && (!e.status || e.status >= 500)) {
+        clearTimeout(state.queueRetry);
+        state.queueRetry = setTimeout(() => drainQueue(), NOTE_RETRY_MS);
+      }
       say(
         'Some queued drafts still need synchronization. They remain on this device; reopen them to review or retry.',
         'error',
       );
+    }
   } finally {
     drainingQueue = false;
     if (drainAgain) {
@@ -2849,11 +2862,23 @@ const noteKey = () => draftKey(state.draft.inspection_id);
 function saveNote(note) {
   return dbAction('readwrite', (drafts, photos, stored) => stored.put({ ...note }));
 }
+// A note left 'recording' by a reload or crash keeps every slice that was saved and waits to upload.
 async function draftNotes(key) {
-  const rows = await dbAction('readonly', (drafts, photos, stored) =>
-    stored.getAll(photoRange(key)),
-  );
-  return rows.sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
+  const rows = await dbAction('readwrite', (drafts, photos, stored) => {
+    const all = stored.getAll(photoRange(key));
+    all.onsuccess = () => {
+      for (const note of all.result)
+        if (note.status === 'recording' && notes.note?.id !== note.id) {
+          note.status = 'saved';
+          if (note.parts) stored.put(note);
+          else stored.delete([key, note.id]);
+        }
+    };
+    return all;
+  });
+  return rows
+    .filter((note) => note.parts || note.status === 'recording')
+    .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
 }
 async function noteAudio(note) {
   const parts = await dbAction('readonly', (drafts, photos, stored, audio) =>
@@ -3027,17 +3052,8 @@ async function renderNotes() {
   if (!state.draft || !state.user) return;
   const draft = state.draft,
     key = noteKey();
-  let rows = await draftNotes(key);
+  const rows = await draftNotes(key);
   if (state.draft !== draft) return;
-  for (const note of rows)
-    if (note.status === 'recording' && notes.note?.id !== note.id) {
-      // Recording stopped without finishing (reload or crash): keep every slice that was saved.
-      note.status = 'saved';
-      await (note.parts
-        ? saveNote(note)
-        : dbAction('readwrite', (drafts, photos, stored) => stored.delete([key, note.id])));
-    }
-  rows = rows.filter((note) => note.parts || note.status === 'recording');
   $('voiceNotes').replaceChildren(
     ...rows.map((note) => {
       const item = node('li', undefined, 'voice-note'),
@@ -3084,12 +3100,19 @@ async function renderNotes() {
 // Uploads a draft's saved notes one at a time, reading the list again after each so a note saved
 // meanwhile is not skipped. A failure keeps the note on the phone and returns a retry delay, unless
 // the server refused the note itself for good. The open draft and the background queue share it.
-async function sendNotes(key, upload, save = saveNote) {
+const sendingNotes = new Map();
+async function sendNotes(key, upload, save = saveNote, stop = () => false) {
   let added = 0;
   for (;;) {
     const note = (await draftNotes(key)).find((n) => n.status === 'saved' && n.parts);
-    if (!note) return { added, retry: 0 };
-    let retry = 0;
+    if (!note || stop()) return { added, retry: 0 };
+    if (sendingNotes.has(note.id)) {
+      await sendingNotes.get(note.id);
+      continue;
+    }
+    let retry = 0,
+      sent;
+    sendingNotes.set(note.id, new Promise((resolve) => (sent = resolve)));
     try {
       await upload(note);
       note.status = 'done';
@@ -3113,7 +3136,12 @@ async function sendNotes(key, upload, save = saveNote) {
         retry = e.status === 429 ? Math.max(1, e.retryAfter) * 1000 : NOTE_RETRY_MS;
       }
     }
-    await save(note);
+    try {
+      await save(note);
+    } finally {
+      sendingNotes.delete(note.id);
+      sent();
+    }
     renderNotes();
     if (retry) return { added, retry };
   }
@@ -3137,6 +3165,7 @@ async function processNotes() {
     return renderNotes();
   const draft = state.draft;
   notes.processing = true;
+  renderNotes();
   let sent;
   try {
     sent = await sendNotes(noteKey(), async (note) => {
