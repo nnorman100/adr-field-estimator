@@ -31,6 +31,7 @@ from backend.workspaces import (
 from backend.inspection_store import Conflict, Limited
 from backend.workspace_migration import migrate
 from tests.fakes import FakeCompanyStore, FakeStore, png
+from tests.test_voice_notes import note as voice_note
 
 ID = 'ADR-INS-' + 'a' * 32
 OTHER = 'ADR-INS-' + 'b' * 32
@@ -263,6 +264,33 @@ def test_direct_api_cannot_bypass_scope_permissions(api, uid):
     assert client.post(
         '/api/inspections/' + ID + '/photos/' + 'c' * 32 + '/ocr', json={}
     ).status_code in (403, 404)
+    assert client.post(
+        '/api/inspections/' + ID + '/voice-notes', json=voice_note()
+    ).status_code in (
+        403,
+        404,
+    )
+    assert (
+        'Offline voice note'
+        not in store.get_inspection('estimator', ID)['data']['technician_transcript']
+    )
+
+
+@pytest.mark.parametrize('uid', ['owner', 'estimator'])
+def test_owner_and_job_estimator_can_add_offline_voice_notes(api, monkeypatch, uid):
+    client, current, store = api
+    store.create_inspection('estimator', ID, data())
+
+    async def generate(schema, *args, **kwargs):
+        assert schema is bm.TranscriptionResult
+        return bm.TranscriptionResult(text='Bathroom category 1.')
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    current['uid'] = uid
+    saved = client.post('/api/inspections/' + ID + '/voice-notes', json=voice_note())
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['data']['technician_transcript'].endswith('\nBathroom category 1.\n')
+    assert store.db.records['_workspace_jobs/' + ID]['updated_at'] == saved.json()['updated_at']
 
 
 def test_office_creation_and_assignment(api):
@@ -2068,6 +2096,7 @@ def test_superadmin_cannot_change_company_jobs_documents_or_settings(api):
             json={'inspection_id': draft, 'expected_revision': 2},
         ),
         'audit': client.post('/api/audit', json={'inspection_id': draft, 'expected_revision': 2}),
+        'voice note': client.post('/api/inspections/' + draft + '/voice-notes', json=voice_note()),
         'sign': client.post('/api/authorize', json=sign),
         'link': client.post(
             '/api/inspections/' + draft + '/signing-links',

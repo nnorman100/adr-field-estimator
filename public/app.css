@@ -982,7 +982,9 @@ footer {
     grid-template-columns: 1fr 1fr;
     gap: 0.6rem;
   }
-  .session-controls #startWalk {
+  .session-controls #startWalk,
+  .session-controls #startNotes,
+  .offline-notes #recordNote {
     grid-column: 1/-1;
     min-width: 0;
   }
@@ -1214,6 +1216,57 @@ footer {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+/* Offline notes: the record-now, process-later option for bad reception. */
+.offline-offer {
+  margin: 0 0 1rem;
+}
+.offline-offer p {
+  margin: 0 0 0.75rem;
+}
+.offline-offer .actions,
+.voice-note .actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.notes-mode .viewfinder {
+  display: none;
+}
+.offline-notes,
+.note-queue {
+  margin-top: 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+.offline-notes h3,
+.note-queue h3 {
+  margin: 0 0 0.5rem;
+}
+.offline-notes label {
+  display: block;
+  margin-top: 1rem;
+}
+.offline-notes textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+#addTypedNote {
+  margin-top: 0.5rem;
+}
+#voiceNotes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.voice-note {
+  border-top: 1px solid #ddd;
+  padding: 0.75rem 0;
+  overflow-wrap: anywhere;
+}
+.voice-note p {
+  margin: 0.25rem 0;
 }
 
 .workspace-nav,

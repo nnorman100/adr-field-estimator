@@ -116,6 +116,10 @@ window.WorkspaceUI = (() => {
     $('technicianTranscript').readOnly = !editable;
     for (const [id, cap] of [
       ['startWalk', 'live'],
+      ['backToLive', 'live'],
+      ['startNotes', 'scope'],
+      ['recordNote', 'scope'],
+      ['addTypedNote', 'scope'],
       ['takePhoto', 'photos'],
       ['uploadPhoto', 'photos'],
       ['finishAudit', 'audit'],

@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+from datetime import timedelta, timezone
 from uuid import uuid4
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -54,10 +55,18 @@ try:
         AuthorizeRequest,
         SigningLinkRequest,
         HomeownerSignature,
+        VoiceNoteUpload,
+        TranscriptionResult,
     )
     from . import signing_links
     from .claims import make_documents, price_scope
-    from .prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS, GREETING_TRIGGER
+    from .prompts import (
+        live_prompt,
+        audit_prompt,
+        OCR_INSTRUCTIONS,
+        TRANSCRIBE_INSTRUCTIONS,
+        GREETING_TRIGGER,
+    )
     from .live_support import (
         live_config,
         scope_fingerprint,
@@ -69,7 +78,7 @@ try:
     from .workspaces import AccessDenied
     from .workspace_api import register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
-    from .inspection_store import InspectionStore, Conflict, Limited
+    from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
     from .cloud_log import event
 except ImportError:
@@ -84,10 +93,18 @@ except ImportError:
         AuthorizeRequest,
         SigningLinkRequest,
         HomeownerSignature,
+        VoiceNoteUpload,
+        TranscriptionResult,
     )
     import signing_links
     from claims import make_documents, price_scope
-    from prompts import live_prompt, audit_prompt, OCR_INSTRUCTIONS, GREETING_TRIGGER
+    from prompts import (
+        live_prompt,
+        audit_prompt,
+        OCR_INSTRUCTIONS,
+        TRANSCRIBE_INSTRUCTIONS,
+        GREETING_TRIGGER,
+    )
     from live_support import (
         live_config,
         scope_fingerprint,
@@ -99,7 +116,7 @@ except ImportError:
     from workspaces import AccessDenied
     from workspace_api import register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
-    from inspection_store import InspectionStore, Conflict, Limited
+    from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from job_store import BUCKET, decode_image, IMAGE_WORKER
     from cloud_log import event
 
@@ -298,9 +315,10 @@ async def current_staff(
 
 
 MB = 1024 * 1024
-# Sized to the contracts: an 8 MB photo as base64, a 3 MB signature PNG, a 1.4 MB company logo.
+# Sized to the contracts: an 8 MB photo or 10 MB voice note as base64, a 3 MB signature PNG, a 1.4 MB company logo.
 BODY_LIMITS = [
     ('POST', re.compile(r'/api/inspections/[^/]+/photos'), 13 * MB),
+    ('POST', re.compile(r'/api/inspections/[^/]+/voice-notes'), 14 * MB),
     ('POST', re.compile(r'/api/authorize'), int(3.5 * MB)),
     ('POST', re.compile(r'/api/sign'), int(3.5 * MB)),
     ('PUT', re.compile(r'/api/companies/[^/]+'), 2 * MB),
@@ -819,6 +837,83 @@ async def suggest_scope(
         inspection_id=inspection_id,
         revision=req.expected_revision,
         **result.model_dump(mode='json'),
+    )
+
+
+VOICE_NOTE_BYTES = 10 * MB
+AUDIO_SIGNATURES = {
+    'audio/mp4': lambda raw: raw[4:8] == b'ftyp',
+    'audio/webm': lambda raw: raw.startswith(b'\x1a\x45\xdf\xa3'),
+    'audio/ogg': lambda raw: raw.startswith(b'OggS'),
+}
+
+
+def voice_note_audio(req):
+    try:
+        raw = base64.b64decode(req.audio_base64, validate=True)
+    except ValueError:
+        raise HTTPException(400, 'The voice note could not be read. Record it again.')
+    if not raw or len(raw) > VOICE_NOTE_BYTES:
+        raise HTTPException(400, 'A voice note can be at most 10 MB. Record shorter notes.')
+    if not AUDIO_SIGNATURES[req.mime_type](raw):
+        raise HTTPException(400, 'The voice note does not match its audio type.')
+    return raw
+
+
+def voice_note_marker(note_id):
+    return '[Offline voice note ' + note_id[:8]
+
+
+def voice_note_block(req, text):
+    """The transcript entry for one note, labeled as recorded offline and transcribed later."""
+    local = req.recorded_at.astimezone(timezone(timedelta(minutes=req.utc_offset_minutes)))
+    label = local.strftime('%b %d, %I:%M %p').replace(' 0', ' ')
+    room = ' '.join(req.room.split()) or 'no room chosen'
+    words = text.strip() or '(No speech recognized.)'
+    return f'{voice_note_marker(req.note_id)} · {room} · recorded {label} · transcribed later]\n{words}\n'
+
+
+@app.post('/api/inspections/{inspection_id}/voice-notes')
+@rest_deadline
+async def transcribe_voice_note(
+    inspection_id: str,
+    req: VoiceNoteUpload,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    """Transcribes an offline voice note into the walkthrough transcript; the audio is not kept."""
+    record = await stored(store.get_inspection, staff['uid'], inspection_id)
+    await stored(store._access, staff['uid'], record, 'scope')
+    if record['status'] == 'signed':
+        raise HTTPException(409, 'Signed inspections are immutable. Start a new inspection.')
+    marker = voice_note_marker(req.note_id)
+    if marker in record['data'].get('technician_transcript', ''):
+        return public_record(record)
+    raw = voice_note_audio(req)
+    transcript = record['data'].get('technician_transcript', '')
+    longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
+    if len(transcript) + 1 + len(longest) > TRANSCRIPT_LIMIT:
+        raise HTTPException(
+            400, 'Transcript storage is full. Type the remaining observations in notes.'
+        )
+    await stored(store.quota, staff['uid'], 'transcribe', 10)
+    result = await generate(
+        TranscriptionResult,
+        [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS],
+        AUDIT_MODEL,
+        'transcribe',
+        inspection_id,
+        thinking_level=SCOPE_THINKING_LEVEL,
+        timeout=REST_DEADLINE_SECONDS - 5,
+    )
+    return public_record(
+        await stored(
+            store.append_transcript,
+            staff['uid'],
+            inspection_id,
+            marker,
+            voice_note_block(req, result.text),
+        )
     )
 
 

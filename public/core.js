@@ -233,6 +233,31 @@
       .filter((photo) => photo.data_url)
       .map((photo) => ({ id: photo.id, data_url: photo.data_url })),
   });
+  // Gaps the technician can still fill on site, checked against the form with any proposed scope
+  // values applied. The model's clarification questions are listed beside these.
+  function missingItems(data, photos = []) {
+    const items = [];
+    if (!String(data.address || '').trim()) items.push('No property address');
+    if (data.year_built == null) items.push('No year built');
+    if (!data.rooms.length) items.push('No affected rooms');
+    for (const room of data.rooms) {
+      const name = room.name.trim() || 'Unnamed room';
+      if (!(room.finished_sf > 0) && !(room.unfinished_sf > 0))
+        items.push('No measured demolition area for ' + name);
+      if (!photos.some((photo) => roomKey(photo.room) === roomKey(room.name)))
+        items.push('No photo of ' + name);
+    }
+    if (!(data.air_movers > 0) && !(data.dehumidifiers > 0) && !(data.wood_floor_systems > 0))
+      items.push('No drying equipment counts');
+    return items;
+  }
+  // Voice-note formats in preference order: iPhone Safari and Home Screen apps record MP4 (AAC);
+  // Chrome and Firefox record WebM or Ogg Opus. The upload type drops the codec parameter.
+  const NOTE_TYPES = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+  function noteFormat(isSupported) {
+    const type = NOTE_TYPES.find((candidate) => isSupported(candidate));
+    return type ? { recorder: type, upload: type.split(';')[0] } : null;
+  }
   const api = {
     emptyData,
     stable,
@@ -251,6 +276,8 @@
     authDomainFor,
     canonicalUrl,
     splitPhotos,
+    missingItems,
+    noteFormat,
   };
   if (typeof module !== 'undefined') module.exports = api;
   else root.ADRCore = api;

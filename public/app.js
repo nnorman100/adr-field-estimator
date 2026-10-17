@@ -18,6 +18,8 @@ const {
   authDomainFor,
   canonicalUrl,
   splitPhotos,
+  missingItems,
+  noteFormat,
 } = ADRCore;
 const state = {
   user: null,
@@ -57,6 +59,8 @@ const state = {
   videoPauses: 0,
   liveStatusText: '',
   weakShown: false,
+  poorSince: 0,
+  offerDeclined: false,
 };
 let syncChain = Promise.resolve(),
   saveTimer = null,
@@ -73,6 +77,7 @@ const ui = {
   starting: false,
   auditing: false,
   fillingScope: false,
+  notesMode: false,
   documentSource: null,
   viewed: new Set(),
 };
@@ -226,7 +231,18 @@ function renderControls() {
   $('stopWalk').hidden = !active;
   $('stopWalk').disabled = ui.starting;
   $('muteMic').hidden = !active;
+  $('panel-walkthrough').classList.toggle('notes-mode', ui.notesMode);
+  $('startWalk').hidden = active || ui.notesMode;
+  $('startNotes').hidden = ui.notesMode;
+  $('startNotes').disabled = !editable || ui.starting;
+  $('offlineNotes').hidden = !ui.notesMode;
+  $('recordNote').disabled = !editable;
+  $('recordNote').textContent = notes.recorder ? 'Stop and save note' : 'Record voice note';
+  $('backToLive').disabled = !editable || !navigator.onLine || ui.starting;
+  $('typedNote').disabled = !editable;
+  $('addTypedNote').disabled = !editable;
   $('takePhoto').disabled = !editable || !active;
+  $('takePhoto').hidden = ui.notesMode;
   $('uploadPhoto').disabled = !editable;
   $('thermalToggle').disabled = !active;
   $('photoRoom').disabled = !editable;
@@ -237,6 +253,8 @@ function renderControls() {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
     $(id).textContent = ui.fillingScope ? 'Reading walkthrough…' : 'Fill scope from walkthrough';
   }
+  for (const id of ['notesFillScope', 'notesFillScopeWalk'])
+    $(id).disabled = $('fillScope').disabled;
   window.WorkspaceUI?.policy();
 }
 function selectDocument(name) {
@@ -271,10 +289,16 @@ function button(text, fn) {
 function database() {
   if (!dbPromise)
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open('adr-private-drafts-v2', 2);
+      const request = indexedDB.open('adr-private-drafts-v2', 3);
       request.onupgradeneeded = (event) => {
-        const db = request.result,
-          photos = db.createObjectStore('photos', { keyPath: ['draft_key', 'id'] });
+        const db = request.result;
+        // Version 3 keeps offline voice notes beside their draft: metadata in notes, audio in note_audio.
+        if (event.oldVersion < 3) {
+          db.createObjectStore('notes', { keyPath: ['draft_key', 'id'] });
+          db.createObjectStore('note_audio', { keyPath: ['draft_key', 'id', 'seq'] });
+        }
+        if (event.oldVersion >= 2) return;
+        const photos = db.createObjectStore('photos', { keyPath: ['draft_key', 'id'] });
         if (event.oldVersion < 1) {
           db.createObjectStore('drafts', { keyPath: 'key' });
           return;
@@ -309,8 +333,13 @@ function database() {
 async function dbAction(mode, fn) {
   const db = await database();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(['drafts', 'photos'], mode);
-    const request = fn(tx.objectStore('drafts'), tx.objectStore('photos'));
+    const tx = db.transaction(['drafts', 'photos', 'notes', 'note_audio'], mode);
+    const request = fn(
+      tx.objectStore('drafts'),
+      tx.objectStore('photos'),
+      tx.objectStore('notes'),
+      tx.objectStore('note_audio'),
+    );
     tx.oncomplete = () => resolve(request?.result);
     tx.onerror = () =>
       reject(Error('Local draft could not be saved. Keep this page open and retry.'));
@@ -324,9 +353,12 @@ async function photoBytes(key) {
     ),
   );
 }
+// A draft's voice notes go with it (photoRange matches their [draft_key, ...] keys too).
 function deleteDraft(key) {
-  return dbAction('readwrite', (drafts, photos) => {
+  return dbAction('readwrite', (drafts, photos, noteRows, audio) => {
     photos.delete(photoRange(key));
+    noteRows.delete(photoRange(key));
+    audio.delete(photoRange(key));
     return drafts.delete(key);
   });
 }
@@ -388,8 +420,10 @@ function schedulePersist() {
   persistTimer = setTimeout(() => persist().catch((e) => say(e.message, 'error')), 400);
 }
 async function clearLocal() {
-  await dbAction('readwrite', (drafts, photos) => {
+  await dbAction('readwrite', (drafts, photos, noteRows, audio) => {
     photos.clear();
+    noteRows.clear();
+    audio.clear();
     return drafts.clear();
   });
 }
@@ -563,6 +597,8 @@ function clearDisplayedInspection() {
     'photoAuditLog',
     'scopeSuggestionList',
     'scopeQuestions',
+    'scopeMissing',
+    'voiceNotes',
     'jobsList',
   ])
     $(id).replaceChildren();
@@ -576,8 +612,14 @@ function clearDisplayedInspection() {
     'itemizedTotal',
     'auditWarnings',
     'scopeSuggestionStatus',
+    'notesQueue',
+    'recordingStatus',
   ])
     $(id).textContent = '';
+  $('noteQueue').hidden = true;
+  $('notesFillScope').hidden = $('notesFillScopeWalk').hidden = true;
+  $('typedNote').value = '';
+  hideOffer();
   if ($('savedSignature').src.startsWith('blob:')) URL.revokeObjectURL($('savedSignature').src);
   $('savedSignature').src = '';
   $('savedSignature').hidden = true;
@@ -637,8 +679,41 @@ function renderSaveStatus() {
           ? 'Changes saved on this device · cloud sync pending'
           : 'Saved on this device · offline';
 }
+// A voice note whose response was lost still committed its transcript block on the server. When
+// that is the only difference from the acknowledged data, takes the server's transcript plus the
+// local additions, marks those notes done and returns true; otherwise leaves everything unchanged.
+async function takeLostNotes(key, ack, local, remote, save = saveNote) {
+  const base = JSON.parse(ack).technician_transcript,
+    text = remote.technician_transcript;
+  if (!text.startsWith(base) || stable({ ...remote, technician_transcript: base }) !== ack)
+    return false;
+  const tail = text.slice(base.length).replace(/^\n/, ''),
+    ids = [...tail.matchAll(/\[Offline voice note ([a-f0-9]{8})/g)].map((m) => m[1]),
+    own = await draftNotes(key),
+    mine = local.technician_transcript;
+  if (
+    !mine.startsWith(base) ||
+    !tail.startsWith('[Offline voice note ') ||
+    !ids.every((id) => own.some((note) => note.id.startsWith(id)))
+  )
+    return false;
+  local.technician_transcript = text + mine.slice(base.length).replace(/^\n/, '');
+  for (const note of own.filter((n) => ids.includes(n.id.slice(0, 8)) && n.status !== 'done'))
+    await save({ ...note, status: 'done', error: '', scoped: false });
+  return true;
+}
+async function absorbNotes(remote) {
+  const draft = state.draft;
+  if (!(await takeLostNotes(noteKey(), state.ack, draft.data, remote.data))) return;
+  $('technicianTranscript').value = draft.data.technician_transcript;
+  state.ack = stable(remote.data);
+  await persist();
+  renderNotes();
+}
 async function reconcile() {
   const remote = await jsonApi('/api/inspections/' + state.draft.inspection_id);
+  if (remote.status !== 'signed' && state.ack !== null && stable(remote.data) !== state.ack)
+    await absorbNotes(remote);
   if (remote.status === 'signed' || (state.ack !== null && stable(remote.data) !== state.ack)) {
     state.conflict = true;
     $('conflictActions').hidden = false;
@@ -717,10 +792,14 @@ function syncDraft() {
   syncChain = syncChain.catch(() => {}).then(doSync);
   return syncChain;
 }
-let drainingQueue = false;
+let drainingQueue = false,
+  drainAgain = false;
 async function drainQueue() {
+  if (drainingQueue) {
+    drainAgain = true;
+    return;
+  }
   if (
-    drainingQueue ||
     state.queuePaused ||
     !navigator.onLine ||
     !state.session ||
@@ -745,12 +824,21 @@ async function drainQueue() {
   };
   const saveRow = (row) => {
     guard();
+    if (row.draft.inspection_id === state.draft?.inspection_id) return;
     return dbAction('readwrite', (store) => {
       guard();
       return store.put(row);
     });
   };
-  let conflicts = 0;
+  const saveNoteRow = (note) => {
+    guard();
+    return dbAction('readwrite', (drafts, photos, stored) => {
+      guard();
+      return stored.put({ ...note });
+    });
+  };
+  let conflicts = 0,
+    retry = 0;
   try {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
@@ -775,16 +863,21 @@ async function drainQueue() {
       }
       if (stable(row.draft.data) !== row.ack) {
         if (stable(record.data) !== row.ack && stable(record.data) !== stable(row.draft.data)) {
-          row.conflict = true;
-          conflicts++;
-          await saveRow(row);
-          continue;
+          if (!(await takeLostNotes(row.key, row.ack, row.draft.data, record.data, saveNoteRow))) {
+            row.conflict = true;
+            conflicts++;
+            await saveRow(row);
+            continue;
+          }
+          row.ack = stable(record.data);
         }
-        record = await request(path, 'PUT', {
-          expected_revision: record.revision,
-          data: row.draft.data,
-        });
-        row.ack = stable(row.draft.data);
+        if (stable(row.draft.data) !== row.ack) {
+          record = await request(path, 'PUT', {
+            expected_revision: record.revision,
+            data: row.draft.data,
+          });
+          row.ack = stable(row.draft.data);
+        }
       } else {
         row.draft.data = record.data;
         row.ack = stable(record.data);
@@ -826,6 +919,30 @@ async function drainQueue() {
           row.draft.photos.push({ ...photo, uploaded: true });
       row.record = record;
       await saveRow(row);
+      const sent = await sendNotes(
+        row.key,
+        async (note) => {
+          record = await request(path + '/voice-notes', 'POST', await notePayload(note));
+          if (id === state.draft?.inspection_id) {
+            syncChain = syncChain
+              .catch(() => {})
+              .then(() => state.draft?.inspection_id === id && reconcile());
+            await syncChain.catch((e) => say(e.message, 'error'));
+            return;
+          }
+          row.draft.data = record.data;
+          row.ack = stable(record.data);
+          row.record = record;
+          await saveRow(row);
+        },
+        saveNoteRow,
+        () => id === state.draft?.inspection_id,
+      );
+      if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
+    }
+    if (retry) {
+      clearTimeout(state.queueRetry);
+      state.queueRetry = setTimeout(() => drainQueue(), retry);
     }
     if (conflicts)
       say(
@@ -840,13 +957,22 @@ async function drainQueue() {
     if (e.status === 429 && state.user?.uid === uid) {
       clearTimeout(state.queueRetry);
       state.queueRetry = setTimeout(() => drainQueue(), Math.max(1, e.retryAfter) * 1000);
-    } else if (state.user?.uid === uid && navigator.onLine)
+    } else if (state.user?.uid === uid && navigator.onLine) {
+      if (!state.queuePaused && (!e.status || e.status >= 500)) {
+        clearTimeout(state.queueRetry);
+        state.queueRetry = setTimeout(() => drainQueue(), NOTE_RETRY_MS);
+      }
       say(
         'Some queued drafts still need synchronization. They remain on this device; reopen them to review or retry.',
         'error',
       );
+    }
   } finally {
     drainingQueue = false;
+    if (drainAgain) {
+      drainAgain = false;
+      drainQueue();
+    }
   }
 }
 function startOCR(photo) {
@@ -918,7 +1044,8 @@ async function fillScopeFromWalkthrough() {
       throw Error(
         'The draft changed while reading the walkthrough. Retry to use its current values.',
       );
-    const revision = state.record.revision;
+    const revision = state.record.revision,
+      read = (await draftNotes(noteKey())).filter((n) => n.status === 'done' && n.scoped === false);
     const result = await jsonApi(
       '/api/inspections/' + draft.inspection_id + '/scope-suggestions',
       'POST',
@@ -932,6 +1059,8 @@ async function fillScopeFromWalkthrough() {
       );
     if (result.inspection_id !== draft.inspection_id || result.revision !== revision)
       throw Error('Scope suggestions belong to a different draft. Retry.');
+    for (const note of read) await saveNote({ ...note, scoped: true });
+    renderNotes();
     state.scopePreview = { draft, uid, version, revision, groups: [] };
     const groups = new Map();
     for (const change of result.changes) {
@@ -995,6 +1124,13 @@ async function fillScopeFromWalkthrough() {
     $('scopeQuestions').replaceChildren(
       ...result.questions.map((question) => node('li', question)),
     );
+    let proposed = draft.data;
+    try {
+      proposed = applyScopeChanges(draft.data, result.changes);
+    } catch {}
+    const missing = missingItems(proposed, draft.photos);
+    $('scopeMissing').replaceChildren(...missing.map((item) => node('li', item)));
+    $('scopeGapsHeading').hidden = !missing.length && !result.questions.length;
     $('scopeSuggestionStatus').textContent = result.changes.length
       ? 'Review the proposed changes and their source statements. Uncheck any you want to keep as entered.'
       : 'No explicit changes found. Add or clarify technician observations and try again.';
@@ -1363,6 +1499,7 @@ async function openNew(data = emptyData(), photos = []) {
     photos = [];
   }
   const epoch = authEpoch;
+  await leaveNotes();
   await stopWalk();
   await syncChain.catch(() => {});
   await persist();
@@ -1393,9 +1530,12 @@ async function openNew(data = emptyData(), photos = []) {
   await persist();
   await syncDraft();
   await window.WorkspaceUI?.editor();
+  renderNotes();
+  drainQueue();
 }
 async function restoreDraft(id) {
   const epoch = authEpoch;
+  await leaveNotes();
   await stopWalk();
   await syncChain.catch(() => {});
   await persist();
@@ -1436,6 +1576,15 @@ async function restoreDraft(id) {
   if (
     remote &&
     local &&
+    remote.status !== 'signed' &&
+    stable(remote.data) !== local.ack &&
+    stable(local.draft.data) !== stable(remote.data) &&
+    (await takeLostNotes(local.key, local.ack, local.draft.data, remote.data))
+  )
+    state.ack = local.ack = stable(remote.data);
+  if (
+    remote &&
+    local &&
     stable(remote.data) !== local.ack &&
     stable(local.draft.data) !== stable(remote.data)
   ) {
@@ -1466,6 +1615,8 @@ async function restoreDraft(id) {
   await persist();
   await syncDraft();
   await window.WorkspaceUI?.editor();
+  processNotes();
+  drainQueue();
 }
 async function loadPhotoUrls(prefix) {
   const draft = state.draft,
@@ -2403,6 +2554,7 @@ async function connectLive() {
       } else {
         say('Live could not recover. Tap Resume walkthrough to retry.', 'error');
         stopWalk({ preserveResume: true, drain: false });
+        showOffer('Live could not reconnect. Switch to offline notes and keep working?');
       }
     }
   };
@@ -2413,6 +2565,9 @@ async function startWalk() {
   if (!navigator.onLine) throw Error('Live guidance requires a connection.');
   if (ui.starting || state.stopPromise) return;
   ui.starting = true;
+  hideOffer();
+  state.poorSince = 0;
+  state.offerDeclined = false;
   renderControls();
   const resume = !!state.resumeAvailable,
     draft = state.draft,
@@ -2510,6 +2665,7 @@ async function startWalk() {
     state.frameTimer = setInterval(() => {
       const video = $('cameraVideo');
       renderSignal();
+      checkOffer();
       if (
         !state.liveReady ||
         state.stopping ||
@@ -2642,6 +2798,488 @@ function mute() {
     state.socket.send(JSON.stringify({ type: 'pause' }));
   $('muteMic').textContent = state.muted ? 'Unmute microphone' : 'Mute microphone';
 }
+// Offline notes: when reception is too weak for Live, the technician records voice notes, takes
+// photos and types notes on the phone. Each voice note is saved in IndexedDB as it records, so a
+// reload or crash keeps what was captured. Once online, a note uploads to the server, which has it
+// transcribed into the walkthrough transcript without storing the audio; the phone keeps its copy
+// for replay until the local draft is removed. The existing scope fill then runs for review.
+const OFFER_AFTER_MS = 25000,
+  NOTE_SLICE_MS = 4000,
+  NOTE_MAX_MS = 600000,
+  NOTE_MAX_BYTES = 9 * 1024 * 1024,
+  NOTE_RETRY_MS = 60000;
+const notes = {
+  recorder: null,
+  note: null,
+  done: null,
+  timer: null,
+  processing: false,
+  again: false,
+  active: null,
+  retry: null,
+  player: null,
+};
+function showOffer(text) {
+  $('offlineOfferText').textContent = text;
+  $('offlineOffer').hidden = false;
+}
+function hideOffer() {
+  $('offlineOffer').hidden = true;
+}
+// Offers offline notes once Live has been weak or disconnected for OFFER_AFTER_MS; never switches.
+function checkOffer() {
+  const now = performance.now();
+  if (state.liveReady && !state.weakShown) {
+    state.poorSince = 0;
+    state.offerDeclined = false;
+    return;
+  }
+  state.poorSince ||= now;
+  if (!state.offerDeclined && now - state.poorSince >= OFFER_AFTER_MS && $('offlineOffer').hidden)
+    showOffer(
+      'Reception has been weak for a while. Switch to offline notes? What Live already captured is kept.',
+    );
+}
+async function startNotes() {
+  if (!state.session || !state.draft || state.signed || confirmedAuthorization)
+    throw Error('Sign in and open an unsigned inspection first.');
+  hideOffer();
+  await stopWalk({ preserveResume: !!state.resumeAvailable || !!state.media, drain: false });
+  ui.notesMode = true;
+  renderControls();
+  showTask('walkthrough', false);
+  say(
+    'Offline notes on. Voice notes, photos and typed notes stay on this phone until they upload.',
+  );
+  processNotes();
+}
+async function leaveNotes() {
+  await stopNote();
+  ui.notesMode = false;
+  renderControls();
+}
+async function backToLive() {
+  if (!navigator.onLine)
+    throw Error('Live guidance requires a connection. Keep taking offline notes for now.');
+  await leaveNotes();
+  await startWalk();
+}
+const noteKey = () => draftKey(state.draft.inspection_id);
+function saveNote(note) {
+  return dbAction('readwrite', (drafts, photos, stored) => stored.put({ ...note }));
+}
+// A note left 'recording' by a reload or crash keeps every slice that was saved and waits to upload.
+async function draftNotes(key) {
+  const rows = await dbAction('readwrite', (drafts, photos, stored) => {
+    const all = stored.getAll(photoRange(key));
+    all.onsuccess = () => {
+      for (const note of all.result)
+        if (note.status === 'recording' && notes.note?.id !== note.id) {
+          note.status = 'saved';
+          if (note.parts) stored.put(note);
+          else stored.delete([key, note.id]);
+        }
+    };
+    return all;
+  });
+  return rows
+    .filter((note) => note.parts || note.status === 'recording')
+    .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
+}
+async function noteAudio(note) {
+  const parts = await dbAction('readonly', (drafts, photos, stored, audio) =>
+    audio.getAll(IDBKeyRange.bound([note.draft_key, note.id], [note.draft_key, note.id, []])),
+  );
+  return new Blob(
+    parts.map((part) => part.data),
+    { type: note.mime_type },
+  );
+}
+async function recordNote() {
+  if (notes.recorder) return stopNote();
+  if (!state.draft || state.signed || confirmedAuthorization)
+    throw Error('Open an unsigned inspection first.');
+  const format = window.MediaRecorder && noteFormat((type) => MediaRecorder.isTypeSupported(type));
+  if (!format) throw Error('This browser cannot record voice notes. Type your notes instead.');
+  if (notes.note) return;
+  const draft = state.draft;
+  // Claims the slot while the microphone permission is pending, so a second tap cannot start a second note.
+  notes.note = {};
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } finally {
+    notes.note = null;
+  }
+  if (state.draft !== draft || notes.recorder) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  const recorder = new MediaRecorder(stream, {
+    mimeType: format.recorder,
+    audioBitsPerSecond: 32000,
+  });
+  const started = Date.now(),
+    note = {
+      draft_key: noteKey(),
+      id: newId(),
+      room: $('photoRoom').value || '',
+      recorded_at: new Date(started).toISOString(),
+      utc_offset_minutes: -new Date(started).getTimezoneOffset(),
+      mime_type: format.upload,
+      status: 'recording',
+      parts: 0,
+      size: 0,
+      duration_ms: 0,
+      error: '',
+    };
+  notes.note = note;
+  try {
+    await saveNote(note);
+  } catch (e) {
+    notes.note = null;
+    stream.getTracks().forEach((track) => track.stop());
+    throw e;
+  }
+  let saving = Promise.resolve();
+  // Each slice is written as it arrives; a slice that cannot be saved is reported, never dropped silently.
+  recorder.ondataavailable = (event) => {
+    if (!event.data.size) return;
+    const seq = note.parts++;
+    note.size += event.data.size;
+    note.duration_ms = Date.now() - started;
+    const row = { ...note };
+    saving = saving
+      .then(async () => {
+        const data = await event.data.arrayBuffer();
+        await dbAction('readwrite', (drafts, photos, stored, audio) => {
+          audio.put({ draft_key: note.draft_key, id: note.id, seq, data });
+          return stored.put(row);
+        });
+      })
+      .catch((e) => say('Part of a voice note could not be saved: ' + e.message, 'error'));
+    if (note.size >= NOTE_MAX_BYTES) stopNote();
+  };
+  notes.done = new Promise((resolve) => (recorder.onstop = resolve)).then(async () => {
+    stream.getTracks().forEach((track) => track.stop());
+    clearInterval(notes.timer);
+    await saving;
+    note.duration_ms = Date.now() - started;
+    note.status = 'saved';
+    if (note.parts) await saveNote(note);
+    else
+      await dbAction('readwrite', (drafts, photos, stored) =>
+        stored.delete([note.draft_key, note.id]),
+      );
+    notes.recorder = null;
+    notes.note = null;
+    $('recordingStatus').textContent = note.parts
+      ? 'Voice note saved on this phone' + (note.room ? ' · ' + note.room : '') + '.'
+      : 'Nothing was recorded.';
+    renderControls();
+    renderNotes();
+    processNotes();
+  });
+  notes.recorder = recorder;
+  recorder.start(NOTE_SLICE_MS);
+  const tick = () => {
+    const elapsed = Date.now() - started;
+    $('recordingStatus').textContent =
+      'Recording' +
+      (note.room ? ' · ' + note.room : '') +
+      ' · ' +
+      Math.floor(elapsed / 60000) +
+      ':' +
+      String(Math.floor(elapsed / 1000) % 60).padStart(2, '0');
+    if (elapsed >= NOTE_MAX_MS) {
+      stopNote();
+      say('Voice notes stop at 10 minutes. The note is saved; record another to continue.');
+    }
+  };
+  tick();
+  notes.timer = setInterval(tick, 1000);
+  renderControls();
+  renderNotes();
+}
+function stopNote() {
+  const recorder = notes.recorder;
+  if (!recorder) return Promise.resolve();
+  if (recorder.state !== 'inactive') recorder.stop();
+  return notes.done;
+}
+// Room-tagged typed facts join the technician notes, which the scope fill already reads.
+function addTypedNote() {
+  if (!state.draft || state.signed || confirmedAuthorization)
+    throw Error('Open an unsigned inspection first.');
+  const text = $('typedNote').value.trim();
+  if (!text) throw Error('Type a note first.');
+  const room = $('photoRoom').value,
+    current = state.draft.data.technician_notes,
+    joined =
+      current + (current && !current.endsWith('\n') ? '\n' : '') + (room ? room + ': ' : '') + text;
+  if (joined.length > 40000) throw Error('Notes are full. Shorten earlier notes first.');
+  state.draft.data.technician_notes = joined;
+  $('technicianNotes').value = joined;
+  $('typedNote').value = '';
+  changed();
+  say('Note added' + (room ? ' for ' + room : '') + '.', 'success');
+}
+function noteStatus(note) {
+  if (note.status === 'recording') return 'Recording…';
+  if (note.status === 'done') return 'Added to the walkthrough transcript';
+  if (note.status === 'failed')
+    return (
+      'Could not be processed: ' + note.error + ' Play it, type the key facts, then remove it.'
+    );
+  if (notes.active === note.id) return 'Uploading and transcribing…';
+  if (note.error) return 'Not uploaded yet: ' + note.error;
+  return navigator.onLine ? 'Waiting to upload' : 'Saved on this phone · uploads when online';
+}
+async function removeNote(note) {
+  if (notes.player) notes.player.pause();
+  await dbAction('readwrite', (drafts, photos, stored, audio) => {
+    audio.delete(IDBKeyRange.bound([note.draft_key, note.id], [note.draft_key, note.id, []]));
+    return stored.delete([note.draft_key, note.id]);
+  });
+  renderNotes();
+}
+async function playNote(note) {
+  notes.player?.pause();
+  const url = URL.createObjectURL(await noteAudio(note)),
+    player = new Audio(url);
+  notes.player = player;
+  player.onended = player.onpause = () => URL.revokeObjectURL(url);
+  await player.play();
+}
+// Lists the open draft's voice notes and what is still waiting to upload.
+async function renderNotes() {
+  if (!state.draft || !state.user) return;
+  const draft = state.draft,
+    key = noteKey();
+  const rows = await draftNotes(key);
+  if (state.draft !== draft) return;
+  $('voiceNotes').replaceChildren(
+    ...rows.map((note) => {
+      const item = node('li', undefined, 'voice-note'),
+        seconds = Math.round(note.duration_ms / 1000);
+      item.append(
+        node(
+          'p',
+          (note.room || 'No room chosen') +
+            ' · ' +
+            new Date(note.recorded_at).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            }) +
+            ' · ' +
+            Math.floor(seconds / 60) +
+            ':' +
+            String(seconds % 60).padStart(2, '0'),
+        ),
+        node('p', noteStatus(note), 'hint'),
+      );
+      if (note.status !== 'recording') {
+        const actions = node('div', undefined, 'actions');
+        actions.append(button('Play', () => playNote(note)));
+        if (note.status === 'failed') actions.append(button('Remove', () => removeNote(note)));
+        item.append(actions);
+      }
+      return item;
+    }),
+  );
+  const waiting = rows.filter((note) => note.status === 'saved').length,
+    photos = draft.photos.filter((photo) => !photo.uploaded).length;
+  const parts = [];
+  if (waiting) parts.push(waiting + (waiting === 1 ? ' voice note' : ' voice notes'));
+  if (photos) parts.push(photos + (photos === 1 ? ' photo' : ' photos'));
+  $('notesQueue').textContent = parts.length
+    ? parts.join(' and ') +
+      ' waiting to upload.' +
+      (navigator.onLine ? '' : ' They upload when you have signal.')
+    : rows.length
+      ? 'All voice notes and photos are uploaded.'
+      : '';
+  $('noteQueue').hidden = !rows.length;
+  const unread = rows.filter((note) => note.status === 'done' && note.scoped === false).length;
+  for (const id of ['notesFillScope', 'notesFillScopeWalk']) {
+    $(id).textContent =
+      unread +
+      (unread === 1 ? ' voice note' : ' voice notes') +
+      ' transcribed - Fill scope and check for missing items';
+    $(id).hidden = !unread;
+  }
+}
+// Uploads a draft's saved notes one at a time, reading the list again after each so a note saved
+// meanwhile is not skipped. A failure keeps the note on the phone and returns a retry delay, unless
+// the server refused the note itself for good. The open draft and the background queue share it.
+const sendingNotes = new Map();
+async function sendNotes(key, upload, save = saveNote, stop = () => false) {
+  let added = 0;
+  for (;;) {
+    const note = (await draftNotes(key)).find((n) => n.status === 'saved' && n.parts);
+    if (!note || stop()) return { added, retry: 0 };
+    if (sendingNotes.has(note.id)) {
+      await sendingNotes.get(note.id);
+      if ((await draftNotes(key)).some((n) => n.id === note.id && n.status === 'done')) added++;
+      continue;
+    }
+    let retry = 0,
+      sent;
+    sendingNotes.set(note.id, new Promise((resolve) => (sent = resolve)));
+    try {
+      await upload(note);
+      note.status = 'done';
+      note.error = '';
+      note.scoped = false;
+      added++;
+    } catch (e) {
+      if (
+        !e.draftSync &&
+        e.status >= 400 &&
+        e.status < 500 &&
+        e.status !== 409 &&
+        e.status !== 429
+      ) {
+        note.status = 'failed';
+        note.error = e.message;
+      } else {
+        note.error =
+          e instanceof TypeError || e.name === 'AbortError'
+            ? 'no connection to the server, retrying'
+            : e.message;
+        retry = e.status === 429 ? Math.max(1, e.retryAfter) * 1000 : NOTE_RETRY_MS;
+      }
+    }
+    try {
+      await save(note);
+    } finally {
+      sendingNotes.delete(note.id);
+      sent();
+    }
+    renderNotes();
+    if (retry) return { added, retry };
+  }
+}
+// Uploads the open draft's saved notes while online. When notes were added, the existing scope
+// fill proposes values for review.
+async function processNotes(carried = 0) {
+  clearTimeout(notes.retry);
+  if (notes.processing) {
+    notes.again = true;
+    return renderNotes();
+  }
+  if (
+    !navigator.onLine ||
+    !state.draft ||
+    !state.session ||
+    state.signed ||
+    confirmedAuthorization ||
+    (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope'))
+  )
+    return renderNotes();
+  const draft = state.draft;
+  notes.processing = true;
+  renderNotes();
+  let sent;
+  try {
+    sent = await sendNotes(noteKey(), async (note) => {
+      if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
+      notes.active = note.id;
+      renderNotes();
+      try {
+        await uploadNote(note, draft);
+      } finally {
+        notes.active = null;
+      }
+    });
+  } finally {
+    notes.processing = false;
+    notes.active = null;
+    renderNotes();
+  }
+  if (notes.again) {
+    notes.again = false;
+    return processNotes(state.draft === draft ? carried + sent.added : 0);
+  }
+  if (sent.retry && state.draft === draft) notes.retry = setTimeout(processNotes, sent.retry);
+  // Not while Live runs: the scope fill would stop it.
+  if (
+    carried + sent.added &&
+    state.draft === draft &&
+    !notes.recorder &&
+    !state.media &&
+    !ui.starting &&
+    !ui.fillingScope &&
+    !ui.auditing
+  )
+    fillScopeFromWalkthrough().catch((e) => say(e.message, 'error'));
+}
+async function notePayload(note) {
+  const blob = await noteAudio(note);
+  const audio = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(Error('The voice note could not be read on this phone.'));
+    reader.readAsDataURL(blob);
+  });
+  return {
+    note_id: note.id,
+    room: note.room,
+    recorded_at: note.recorded_at,
+    utc_offset_minutes: note.utc_offset_minutes,
+    duration_seconds: Math.min(660, note.duration_ms / 1000),
+    mime_type: note.mime_type,
+    audio_base64: audio,
+  };
+}
+// Runs in the sync chain so no draft save overlaps it: the draft is saved first, then the server
+// appends the transcribed note. The local transcript takes the server's text plus anything Live
+// appended while the note uploaded; typing in the transcript waits until then.
+async function uploadNote(note, draft) {
+  const payload = await notePayload(note);
+  const task = async () => {
+    try {
+      await doSync();
+    } catch (e) {
+      if (!e.status) throw e;
+      throw Object.assign(Error('The draft has not saved yet: ' + e.message), {
+        status: e.status,
+        retryAfter: e.retryAfter,
+        draftSync: true,
+      });
+    }
+    if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
+    if (state.conflict || !state.record || stable(draft.data) !== state.ack)
+      throw Error('Save the draft first. The note stays on this phone.');
+    $('technicianTranscript').readOnly = true;
+    const base = draft.data.technician_transcript;
+    try {
+      const record = await jsonApi(
+        '/api/inspections/' + draft.inspection_id + '/voice-notes',
+        'POST',
+        payload,
+      );
+      if (state.draft !== draft) return;
+      absorb(record);
+      const local = draft.data.technician_transcript,
+        added = local.startsWith(base) ? local.slice(base.length).replace(/^\n/, '') : '';
+      draft.data.technician_transcript = record.data.technician_transcript + added;
+      $('technicianTranscript').value = draft.data.technician_transcript;
+      state.ack = stable(record.data);
+      // Fields edited while the note uploaded still need saving.
+      if (stable(draft.data) !== state.ack) changed(false);
+      else await persist();
+      renderSaveStatus();
+    } finally {
+      $('technicianTranscript').readOnly = false;
+      renderControls();
+    }
+  };
+  syncChain = syncChain.catch(() => {}).then(task);
+  return syncChain;
+}
 function connectivity() {
   const offline = !navigator.onLine;
   $('offlineBanner').hidden = !offline;
@@ -2650,20 +3288,35 @@ function connectivity() {
   $('sendHomeownerLink').disabled = $('authorizeJob').disabled;
   renderControls();
   renderSaveStatus();
+  renderNotes();
   if (offline) {
-    if (state.media)
+    if (state.media) {
       captureGap(
         'Connection went offline. Tap Resume walkthrough when online and review missing observations.',
       );
+      showOffer('You are offline, so Live stopped. Switch to offline notes and keep working?');
+    }
     stopWalk({ preserveResume: true, drain: false });
   } else
     Promise.resolve(window.WorkspaceUI?.refresh())
       .then(() => syncDraft())
       .then(() => drainQueue())
+      .then(() => processNotes())
       .catch((e) => say(e.message, 'error'));
 }
 const unsynced = (row) =>
   row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some((p) => !p.uploaded);
+const allNotes = () =>
+  dbAction('readonly', (drafts, photos, stored) => stored.getAll()).catch(() => []);
+// Draft keys with a voice note that is still recording or waiting to upload; a note the server
+// refused for good stays on the phone but is not pending.
+async function pendingNoteKeys() {
+  return new Set(
+    (await allNotes())
+      .filter((note) => note.status === 'saved' || note.status === 'recording')
+      .map((note) => note.draft_key),
+  );
+}
 const openDraftUnsynced = () =>
   !!state.draft &&
   !state.signed &&
@@ -2674,7 +3327,7 @@ const canonical = canonicalUrl(location.href);
 // Local drafts belong to this origin, so the app stays here until every one has synced.
 async function leaveForCanonical() {
   const rows = await dbAction('readonly', (store) => store.getAll()).catch(() => []);
-  if (openDraftUnsynced() || rows.some(unsynced)) return false;
+  if (openDraftUnsynced() || rows.some(unsynced) || (await pendingNoteKeys()).size) return false;
   // A Home Screen app keeps the origin it was added from; iOS opens the canonical one in a sheet.
   if (matchMedia('(display-mode: standalone)').matches || navigator.standalone)
     say(
@@ -2777,6 +3430,7 @@ async function initialize() {
   });
   const discardAndSignOut = async () => {
     state.queuePaused = true;
+    await leaveNotes();
     await stopWalk();
     clearTimeout(state.queueRetry);
     clearTimeout(saveTimer);
@@ -2794,12 +3448,16 @@ async function initialize() {
   const signOut = async () => {
     const paused = state.queuePaused;
     state.queuePaused = true;
+    await leaveNotes();
     await stopWalk();
     clearTimeout(state.queueRetry);
     clearTimeout(saveTimer);
     await syncDraft().catch(() => {});
     await persist();
-    const pending = (await localDrafts()).filter(unsynced).length;
+    const noteKeys = await pendingNoteKeys();
+    const pending = (await localDrafts()).filter(
+      (row) => unsynced(row) || noteKeys.has(row.key),
+    ).length;
     if (pending) {
       state.queuePaused = paused;
       $('unsyncedCount').textContent =
@@ -2807,6 +3465,17 @@ async function initialize() {
         (pending === 1
           ? ' draft has not synced. Connect to the internet and wait for sync, or discard it and sign out.'
           : ' drafts have not synced. Connect to the internet and wait for sync, or discard them and sign out.');
+      $('unsyncedActions').hidden = false;
+      return;
+    }
+    const failed = (await allNotes()).filter((note) => note.status === 'failed').length;
+    if (failed) {
+      state.queuePaused = paused;
+      $('unsyncedCount').textContent =
+        failed +
+        (failed === 1
+          ? ' voice note could not be processed and is kept only on this phone. Signing out removes it.'
+          : ' voice notes could not be processed and are kept only on this phone. Signing out removes them.');
       $('unsyncedActions').hidden = false;
       return;
     }
@@ -2872,11 +3541,26 @@ async function initialize() {
   click('finishAudit', finishAudit);
   click('fillScope', fillScopeFromWalkthrough);
   click('fillScopeProperty', fillScopeFromWalkthrough);
+  const fillFromNotes = () => {
+    showTask('property');
+    return fillScopeFromWalkthrough();
+  };
+  click('notesFillScope', fillFromNotes);
+  click('notesFillScopeWalk', fillFromNotes);
   click('applyScopeSuggestions', applyScopeSuggestions);
   click('dismissScopeSuggestions', clearScopePreview);
   click('startWalk', startWalk);
   click('stopWalk', () => stopWalk());
   click('muteMic', mute);
+  click('startNotes', startNotes);
+  click('acceptOffline', startNotes);
+  click('declineOffline', () => {
+    hideOffer();
+    state.offerDeclined = true;
+  });
+  click('recordNote', recordNote);
+  click('backToLive', backToLive);
+  click('addTypedNote', addTypedNote);
   click('takePhoto', captureStill);
   click('uploadPhoto', () => $('photoFileInput').click());
   click('thermalToggle', () => {
@@ -2960,7 +3644,12 @@ async function initialize() {
   window.addEventListener('offline', connectivity);
   window.addEventListener('pagehide', () => {
     persist();
+    stopNote();
     stopWalk();
+  });
+  // A backgrounded page may never return, so the audio recorded so far is saved now.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && notes.recorder?.state === 'recording') notes.recorder.requestData();
   });
   window.addEventListener('beforeunload', (e) => {
     if (openDraftUnsynced()) {
@@ -3032,6 +3721,7 @@ async function applyUser(user) {
     stale = () => epoch !== authEpoch;
   if (state.user && state.user.uid !== user?.uid) {
     state.queuePaused = true;
+    await leaveNotes();
     await stopWalk();
     clearTimeout(state.queueRetry);
     await syncChain.catch(() => {});

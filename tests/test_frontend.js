@@ -301,3 +301,39 @@ console.log(
     'PASS: draft rows keep photo metadata while photo bytes split out without mutating the open draft',
   );
 }
+{
+  // Offline notes list what a technician can still fill on site before leaving.
+  const data = core.emptyData();
+  assert.deepEqual(core.missingItems(data), [
+    'No property address',
+    'No year built',
+    'No measured demolition area for Room 1',
+    'No photo of Room 1',
+    'No drying equipment counts',
+  ]);
+  Object.assign(data, { address: '1 Test Way', year_built: 1990, air_movers: 3 });
+  data.rooms = [
+    { ...data.rooms[0], name: 'Bedroom 2', finished_sf: 120 },
+    { ...data.rooms[0], name: 'Hall', unfinished_sf: 0 },
+  ];
+  assert.deepEqual(core.missingItems(data, [{ room: ' bedroom  2 ' }]), [
+    'No measured demolition area for Hall',
+    'No photo of Hall',
+  ]);
+  data.rooms = [];
+  assert.deepEqual(core.missingItems(data), ['No affected rooms']);
+  // iPhone Safari records MP4; Chrome falls back to WebM Opus; nothing supported means typing only.
+  assert.deepEqual(
+    core.noteFormat((type) => type === 'audio/mp4'),
+    { recorder: 'audio/mp4', upload: 'audio/mp4' },
+  );
+  assert.deepEqual(
+    core.noteFormat((type) => type.startsWith('audio/webm')),
+    { recorder: 'audio/webm;codecs=opus', upload: 'audio/webm' },
+  );
+  assert.equal(
+    core.noteFormat(() => false),
+    null,
+  );
+  console.log('PASS: offline notes list missing scope and pick a recordable audio format');
+}
