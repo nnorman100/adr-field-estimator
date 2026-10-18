@@ -296,7 +296,7 @@
         items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' and ' + items.at(-1),
       count = setup.length + unpriced.length + pending.length;
     if (!count)
-      return "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 01 Property, then Finish & review again.";
+      return "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 2. Check Scope, then Finish & review again.";
     const lines = ["Can't sign yet: " + count + (count === 1 ? ' item' : ' items') + ' to fix.'];
     if (unpriced.length)
       lines.push(
@@ -304,7 +304,7 @@
           (text) => 'Unpriced work: ' + text.trim() + (/[.!?]$/.test(text.trim()) ? '' : '.'),
         ),
         (unpriced.length === 1 ? 'Add it' : 'Add them') +
-          ' on 01 Property (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again.',
+          ' on 2. Check Scope (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again.',
       );
     if (setup.length)
       lines.push(

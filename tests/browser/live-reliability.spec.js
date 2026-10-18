@@ -3,6 +3,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await page.locator('.task-nav [data-task="property"]').click();
 });
 async function setup(page) {
   test.skip(

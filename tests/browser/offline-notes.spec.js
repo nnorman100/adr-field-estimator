@@ -50,6 +50,7 @@ async function fakeRecorder(page) {
 async function ready(page) {
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await page.locator('.task-nav [data-task="property"]').click();
 }
 async function walkthrough(page) {
   await page.locator('.task-nav [data-task="walkthrough"]').click();
@@ -97,7 +98,13 @@ test('offline notes record on the phone, survive a reload, then fill the transcr
   await expect(page.locator('#backToLive')).toBeEnabled();
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    for (const control of ['#recordNote', '#backToLive', '#addTypedNote', '#uploadPhoto'])
+    for (const control of [
+      '#recordNote',
+      '#backToLive',
+      '#addTypedNote',
+      '#takePhoto',
+      '#uploadPhoto',
+    ])
       await expect(page.locator(control)).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
       false,

@@ -266,6 +266,7 @@ test.describe('company workspaces', () => {
     await page.goto('/');
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await task(page, 'property');
     await page.locator('#address').fill('Other company signing-link property');
     await page.locator('#yearBuilt').fill('2000');
     await page.locator('[data-room-key=finished_sf]').fill('10');
@@ -306,6 +307,7 @@ test.describe('company workspaces', () => {
     await page.goto('/');
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await task(page, 'property');
     await page.locator('#address').fill('ADR signing-link property');
     await page.locator('#yearBuilt').fill('2000');
     await page.locator('[data-room-key=finished_sf]').fill('10');

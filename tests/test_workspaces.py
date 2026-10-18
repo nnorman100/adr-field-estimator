@@ -2161,6 +2161,10 @@ def test_superadmin_cannot_change_company_jobs_documents_or_settings(api):
         ),
         'photo': client.post('/api/inspections/' + draft + '/photos', json=upload),
         'ocr': client.post('/api/inspections/' + ID + '/photos/' + PHOTO + '/ocr', json={}),
+        'move photo': client.put(
+            '/api/inspections/' + ID + '/photos/' + PHOTO + '/room',
+            json={'expected_revision': 2, 'room': 'Bathroom'},
+        ),
         'suggest': client.post(
             '/api/inspections/' + draft + '/scope-suggestions',
             json={'inspection_id': draft, 'expected_revision': 2},

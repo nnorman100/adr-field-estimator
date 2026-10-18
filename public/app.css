@@ -349,7 +349,7 @@ body:not(.company-brand) .masthead {
   margin: auto;
   padding: 0 1.5rem;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
 }
 .task-nav button {
@@ -382,7 +382,6 @@ body:not(.company-brand) .masthead {
 }
 .inspector,
 .capture-card,
-.photo-card,
 .documents,
 .empty-review {
   background: var(--paper);
@@ -530,10 +529,51 @@ h3 {
 .draft-actions .primary {
   min-width: 170px;
 }
-.room-picker {
-  max-width: 420px;
-  font-size: 1rem;
+/* Walk & Photo: the current room is a chip row; the selected chip renames in place. */
+.room-chips {
   margin-bottom: 1rem;
+}
+.chip-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text-2);
+  margin-bottom: 0.4rem;
+}
+.room-chip-list {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: thin;
+}
+.room-chip,
+.room-chip-input {
+  flex: 0 0 auto;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--navy);
+  padding: 0.5rem 1rem;
+  font-size: 0.9375rem;
+}
+.room-chip[aria-pressed='true'] {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: white;
+  font-weight: 700;
+}
+.room-chip-add {
+  border-style: dashed;
+  color: var(--navy);
+}
+.room-chip-input {
+  width: 11rem;
+  font-weight: 700;
+}
+.chip-edit {
+  opacity: 0.85;
 }
 .viewfinder {
   position: relative;
@@ -635,33 +675,78 @@ summary {
   min-height: 44px;
   line-height: 1.5;
 }
+/* Photo strips: a horizontal row under the capture button and inside each room card. */
+.photo-strip {
+  margin-top: 1.25rem;
+}
+.photo-strip .section-head {
+  margin-bottom: 0.5rem;
+}
+.photo-strip h3 {
+  margin: 0;
+}
 .photo-gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: thin;
 }
 .photo {
+  flex: 0 0 220px;
   margin: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+  background: var(--paper);
 }
 .photo img {
   width: 100%;
-  height: 200px;
+  height: 130px;
   object-fit: contain;
   background: var(--page);
 }
 .photo figcaption {
-  padding: 1rem;
-  font-size: 0.9375rem;
-  line-height: 1.6;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .photo button {
-  margin-top: 0.75rem;
+  margin-top: 0.5rem;
   font-size: 0.875rem;
+}
+.photo select {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+.ocr-badge {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--page);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.ocr-badge.ocr-verified {
+  color: var(--mold-deep);
+}
+.ocr-badge.ocr-failed {
+  color: var(--error);
+}
+.room-photos {
+  margin-top: 0.75rem;
+}
+.room-photos .photo {
+  flex-basis: 180px;
+}
+.room-photos .photo img {
+  height: 100px;
+}
+.room-photos .hint {
+  margin: 0;
 }
 .empty {
   color: var(--text-2);
@@ -1063,7 +1148,6 @@ footer {
   }
   .inspector,
   .capture-card,
-  .photo-card,
   .documents {
     padding: 1.1rem;
     border-radius: 8px;
@@ -1134,18 +1218,11 @@ footer {
   .viewfinder {
     min-height: 140px;
   }
-  .room-picker {
-    width: 100%;
-    max-width: none;
-  }
   .capture-card.capturing .viewfinder {
     aspect-ratio: 4/3;
   }
   .status {
     font-size: 0.875rem;
-  }
-  .photo-gallery {
-    grid-template-columns: 1fr;
   }
   .doc-tabs {
     grid-template-columns: 1fr 1fr;

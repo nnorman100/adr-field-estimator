@@ -457,7 +457,7 @@ console.log(
     unpriced,
     "Can't sign yet: 1 item to fix. Unpriced work: " +
       dehumidifier +
-      ' Add it on 01 Property (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again.',
+      ' Add it on 2. Check Scope (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again.',
   );
   assert.doesNotMatch(unpriced, /evidence|Photo recognition/);
   assert.equal(
@@ -491,12 +491,12 @@ console.log(
         photo('Bath', 'pending'),
       ],
     }),
-    "Can't sign yet: 5 items to fix. Unpriced work: Kitchen: Plumbing reset lacks an ADR rate. Unpriced work: Hall: Baseboard removal. Add them on 01 Property (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again. Photo recognition is still running for Photo 1 (Kitchen), Photo 3 (Hall) and Photo 4 (Bath). Wait a moment, then Finish & review again.",
+    "Can't sign yet: 5 items to fix. Unpriced work: Kitchen: Plumbing reset lacks an ADR rate. Unpriced work: Hall: Baseboard removal. Add them on 2. Check Scope (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again. Photo recognition is still running for Photo 1 (Kitchen), Photo 3 (Hall) and Photo 4 (Bath). Wait a moment, then Finish & review again.",
   );
   // Only job charges, with no measured work, equipment or labor: the server lists nothing else.
   assert.equal(
     core.auditBlockMessage({ unpriced_work: [], company_setup_missing: [], photo_audit_log: [] }),
-    "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 01 Property, then Finish & review again.",
+    "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 2. Check Scope, then Finish & review again.",
   );
   console.log('PASS: the audit-block banner lists each unpriced item, setup gap and pending photo');
 }

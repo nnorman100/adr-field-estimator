@@ -613,6 +613,42 @@ def test_authenticated_full_size_photo_upload_still_works(context):
     assert r.json()['photos'][0]['id'] == 'b' * 32
 
 
+def test_moving_a_photo_between_rooms_relabels_it_and_invalidates_the_audit(context):
+    client, _ = context
+    payload = data()
+    payload['rooms'].append({**payload['rooms'][0], 'name': 'Hallway', 'finished_sf': 5})
+    r = client.post('/api/inspections', json={'inspection_id': ID, 'data': payload})
+    assert r.status_code == 200, r.text
+    record = audit(client, photo(client, r.json()))
+    path = '/api/inspections/' + ID + '/photos/' + 'b' * 32 + '/room'
+    moved = client.put(path, json={'expected_revision': record['revision'], 'room': 'Hallway'})
+    assert moved.status_code == 200, moved.text
+    moved = moved.json()
+    assert moved['photos'][0]['room'] == 'Hallway'
+    assert moved['photos'][0]['file'] == record['photos'][0]['file']
+    assert moved['revision'] == record['revision'] + 1 and moved['audit'] is None
+    # Same room again: nothing changes, and a stale revision or unknown room is refused.
+    again = client.put(path, json={'expected_revision': moved['revision'], 'room': 'Hallway'})
+    assert again.status_code == 200 and again.json()['revision'] == moved['revision']
+    assert client.put(path, json={'expected_revision': 1, 'room': 'Bathroom'}).status_code == 409
+    unknown = client.put(path, json={'expected_revision': moved['revision'], 'room': 'Attic'})
+    assert unknown.status_code == 400
+    missing = '/api/inspections/' + ID + '/photos/' + 'c' * 32 + '/room'
+    assert (
+        client.put(missing, json={'expected_revision': moved['revision'], 'room': 'Bathroom'})
+    ).status_code == 404
+    # A verified reading makes the draft signable; a signed agreement then keeps its photo rooms.
+    ocr = client.post('/api/inspections/' + ID + '/photos/' + 'b' * 32 + '/ocr', json={})
+    assert ocr.status_code == 200, ocr.text
+    signed = audit(client, ocr.json())
+    r = client.post('/api/authorize', json=sign_payload(signed))
+    assert r.status_code == 200, r.text
+    after = client.get('/api/inspections/' + ID).json()
+    locked = client.put(path, json={'expected_revision': after['revision'], 'room': 'Bathroom'})
+    assert locked.status_code == 409
+    assert client.get('/api/inspections/' + ID).json()['photos'][0]['room'] == 'Hallway'
+
+
 def as_user(uid):
     bm.app.dependency_overrides[bm.current_staff] = lambda: {
         'uid': uid,

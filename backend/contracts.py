@@ -133,6 +133,12 @@ class PhotoUpload(RevisionRequest):
     data_url: str = Field(min_length=1, max_length=12000000)
 
 
+class PhotoRoomUpdate(RevisionRequest):
+    """Moves an uploaded photo to another room of the same unsigned draft."""
+
+    room: str = Field(min_length=1, max_length=100)
+
+
 class VoiceNoteUpload(StrictModel):
     """One offline voice note recorded on the phone; the audio is transcribed and never stored."""
 
