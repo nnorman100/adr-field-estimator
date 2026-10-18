@@ -93,6 +93,7 @@ test.describe('signed out', () => {
 test('signed-out screen says what the app is for before sign-in', async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   await page.goto('/');
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page).toHaveTitle('DryScope · Water & mold loss estimates');
   for (const hidden of [
     '.inspection-shell',
@@ -103,6 +104,11 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   ])
     await expect(page.locator(hidden).first()).toBeHidden();
   await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
+  for (const width of [320, 390, 641, 700, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
   await expect(page.locator('.masthead .brand img')).toBeHidden();
   await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
@@ -216,6 +222,7 @@ test('help without company workspaces lists the field workflow first', async ({ 
 
 // The cached navigation shell must be as neutral as the online sign-in page.
 test('signed-out offline shell keeps DryScope identity', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   await page.goto('/');
   await expect(page.locator('#authPanel')).toBeVisible();
@@ -229,6 +236,11 @@ test('signed-out offline shell keeps DryScope identity', async ({ page, context 
   await context.setOffline(true);
   await page.reload();
   await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
+  for (const width of [320, 390, 641, 700, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
   await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|661/);
 });

@@ -920,6 +920,8 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   await page.goto('/');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await showUpdateBanner(page);
+  await expect(page.locator('.brand strong')).toBeVisible();
+  await expect(page.locator('.brand strong')).toHaveText('DryScope');
   const boxes = await page.evaluate(() =>
     ['.brand', '#updateBanner', '#accountMenu'].map((s) => {
       const r = document.querySelector(s).getBoundingClientRect();
@@ -928,7 +930,20 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   );
   for (let i = 1; i < boxes.length; i++)
     expect(boxes[i][0]).toBeGreaterThanOrEqual(boxes[i - 1][1]);
+  expect(boxes[0][1] - boxes[0][0]).toBeGreaterThan(0);
   expect(boxes[2][1]).toBeLessThanOrEqual(320);
   expect(await bannerUsable(page)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('company without a logo keeps its name visible between phone and tablet widths', async ({
+  page,
+}) => {
+  await start(page, 'owner');
+  for (const width of [641, 670, 700]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator('.masthead .brand img')).toBeHidden();
+    await expect(page.locator('.masthead .brand strong')).toHaveText('Alert Disaster Restoration');
+    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+  }
 });

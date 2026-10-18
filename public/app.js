@@ -3737,6 +3737,32 @@ async function initialize() {
   });
   sdk.onAuthStateChanged(auth, applyUser);
 }
+function resetShellBranding() {
+  const brand = document.querySelector('.masthead .brand'),
+    image = brand.querySelector('img');
+  document.body.classList.remove('company-brand');
+  brand.querySelector('strong').textContent = 'DryScope';
+  brand.setAttribute('aria-label', 'DryScope');
+  image.hidden = true;
+  image.removeAttribute('src');
+  image.alt = 'DryScope';
+  $('workspaceAccountDetails').replaceChildren();
+  $('dashboardHeading').textContent = 'Dashboard';
+  $('dashboardEyebrow').textContent = 'LOSS ESTIMATES';
+  $('dashboardDescription').replaceChildren();
+  document.querySelector('footer').textContent = 'DryScope · Private field inspections';
+  $('helpContact').replaceChildren('For company access, ask your company owner.');
+  $('helpContact').hidden = false;
+  // Rendered document identity must not survive an auth callback either.
+  document.querySelector('#doc-proposal > h2').replaceChildren();
+  for (const letterhead of document.querySelectorAll('.document-letterhead')) {
+    letterhead.querySelector('p').replaceChildren();
+    const logo = letterhead.querySelector('img');
+    logo.hidden = true;
+    logo.removeAttribute('src');
+    logo.alt = '';
+  }
+}
 async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,
@@ -3767,6 +3793,7 @@ async function applyUser(user) {
   const stage = authStage(user);
   state.user = user;
   state.session = null;
+  if (!user) resetShellBranding();
   state.workspaceInitializing = true;
   document.body.classList.remove('dashboard-open', 'office-view');
   $('workspaceNav').hidden = true;

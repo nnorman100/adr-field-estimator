@@ -87,4 +87,61 @@ test.describe('company workspaces', () => {
     await page.locator('#dashboardJobs').click();
     await expect(page.locator('#dashboardContent')).not.toContainText('Assigned bathroom');
   });
+  test('a sign-out auth callback clears company shell identity without reloading', async ({
+    page,
+  }) => {
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('owner'),
+    );
+    await page.goto('/');
+    await expect(page.locator('#dashboardHeading')).toHaveText('Alert Disaster Restoration');
+    // Configure a real synthetic profile logo so the reset must clear both its image and its text.
+    await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 20;
+      canvas.getContext('2d').fillRect(0, 0, 20, 20);
+      const company = state.session.company;
+      const response = await fetch('/api/companies/adr', {
+        method: 'PUT',
+        headers: {
+          Authorization: 'Bearer ' + state.user.uid,
+          'Content-Type': 'application/json',
+          'X-ADR-Workspace-Protocol': '1',
+        },
+        body: JSON.stringify({
+          expected_version: company.version,
+          profile: { ...company.profile, logo_data_url: canvas.toDataURL('image/png') },
+        }),
+      });
+      if (!response.ok) throw Error('Synthetic company profile update failed');
+      await WorkspaceUI.refresh();
+      window.noReloadMarker = true;
+    });
+    await expect(page.locator('.masthead .brand img')).toBeVisible();
+    await expect(page.locator('.masthead .brand')).toHaveAttribute(
+      'aria-label',
+      'Alert Disaster Restoration',
+    );
+    await expect(page.locator('#workspaceAccountDetails')).toContainText('950983');
+    // This invokes the SDK's shared auth callback, as a sign-out in another tab does, without
+    // the local Account handler's location.reload().
+    await page.evaluate(() => auth.signOut());
+    await expect(page.locator('#authPanel')).toBeVisible();
+    expect(await page.evaluate(() => window.noReloadMarker)).toBe(true);
+    await expect(page.locator('body')).not.toHaveClass(/company-brand/);
+    await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
+    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+    await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
+    await expect(page.locator('.masthead .brand img')).toBeHidden();
+    await expect(page.locator('.masthead .brand img')).toHaveAttribute('alt', 'DryScope');
+    expect(await page.locator('.masthead .brand img').getAttribute('src')).toBeNull();
+    await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
+    await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
+    await page.locator('#helpButton').click();
+    await expect(page.locator('#helpContact')).toHaveText(
+      'For company access, ask your company owner.',
+    );
+    await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|661/);
+  });
 });
