@@ -1139,26 +1139,34 @@ async function fillScopeFromWalkthrough() {
         });
       }
     }
-    retagDefaultPhotos(before, filled);
-    draft.data = filled;
-    changed();
-    // Re-reading a walkthrough must not erase Undo for values that remain unchanged.
-    const previous = state.scopeEdits;
-    if (previous?.draft === draft)
-      for (const entry of previous.entries) {
-        const index = previous.data.rooms.indexOf(entry.target),
-          target = entry.target === previous.data ? filled : filled.rooms[index];
-        if (!target || entries.some((item) => item.target === target && item.field === entry.field))
-          continue;
-        if (
-          entry.removesRoom
-            ? stable(before.rooms[index]) === entry.snapshot
-            : target[entry.field] === entry.after
-        )
-          entries.push({ ...entry, target, snapshot: stable(target) });
-      }
-    state.scopeEdits = { draft, data: filled, entries };
-    fillForm();
+    const effective =
+        stable({ ...filled, scope_confirmed: before.scope_confirmed }) !== stable(before),
+      previous = state.scopeEdits;
+    if (effective) {
+      retagDefaultPhotos(before, filled);
+      draft.data = filled;
+      changed();
+      // Re-reading a walkthrough must not erase Undo for values that remain unchanged.
+      if (previous?.draft === draft)
+        for (const entry of previous.entries) {
+          const index = previous.data.rooms.indexOf(entry.target),
+            target = entry.target === previous.data ? filled : filled.rooms[index];
+          if (
+            !target ||
+            entries.some((item) => item.target === target && item.field === entry.field)
+          )
+            continue;
+          if (
+            entry.removesRoom
+              ? stable(before.rooms[index]) === entry.snapshot
+              : target[entry.field] === entry.after
+          )
+            entries.push({ ...entry, target, snapshot: stable(target) });
+        }
+      state.scopeEdits = { draft, data: filled, entries };
+      fillForm();
+    }
+    const applied = draft.data;
     const appliedVersion = state.localVersion;
     await persist();
     if (
@@ -1166,7 +1174,7 @@ async function fillScopeFromWalkthrough() {
       state.user?.uid !== uid ||
       state.signed ||
       confirmedAuthorization ||
-      state.draft.data !== filled ||
+      state.draft.data !== applied ||
       state.localVersion !== appliedVersion
     )
       return;
@@ -1191,13 +1199,13 @@ async function fillScopeFromWalkthrough() {
         return row;
       }),
     );
-    $('scopeSuggestionStatus').textContent = changes.length
+    $('scopeSuggestionStatus').textContent = effective
       ? 'Walkthrough values filled. Review the marked fields; Undo restores what was entered before. Confirm scope when everything is right.'
       : 'No explicit changes found. Add or clarify technician observations and try again.';
     $('scopeSuggestionPanel').hidden = false;
     showTask('property');
     say(
-      changes.length
+      effective
         ? 'Walkthrough values filled. Review and confirm the scope.'
         : 'No explicit changes found. Clarify your observations and retry.',
     );

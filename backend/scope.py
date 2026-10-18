@@ -98,7 +98,6 @@ def default_photo_rename(before, after):
     )
     undo = (
         new_rooms[0]['name'] == 'Room 1'
-        and len(old_rooms) == len(new_rooms)
         and not any(normalized(r['name']) == 'room 1' for r in old_rooms)
         and not any(normalized(r['name']) == normalized(old_rooms[0]['name']) for r in new_rooms)
     )

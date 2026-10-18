@@ -115,7 +115,6 @@
         untouchedDefaultRoom(oldRooms[0]) &&
         !newRooms.some((room) => roomKey(room.name) === 'room 1')) ||
       (newRooms[0].name === 'Room 1' &&
-        oldRooms.length === newRooms.length &&
         !oldRooms.some((room) => roomKey(room.name) === 'room 1') &&
         !newRooms.some((room) => roomKey(room.name) === roomKey(oldRooms[0].name)))
     )

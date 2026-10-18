@@ -125,6 +125,7 @@ console.log(
     ['Kitchen', 'Hall'],
   );
   assert.throws(() => core.applyScopeChanges(fresh, changes.slice(1)));
+  assert.deepEqual(core.defaultPhotoRename(multiple, fresh), { from: 'Kitchen', to: 'Room 1' });
   assert.equal(core.defaultPhotoRename({ rooms: [kitchen.rooms[0], fresh.rooms[0]] }, fresh), null);
 }
 

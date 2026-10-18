@@ -415,6 +415,19 @@ def test_kitchen_replaces_placeholder_in_validation_and_saved_photo_labels(conte
     assert undone['photos'][0]['file'] == photo_record['photos'][0]['file']
 
 
+def test_default_photo_rename_follows_name_undo_combined_with_room_removal():
+    from backend.scope import default_photo_rename
+
+    kitchen = {'name': 'Kitchen', 'unfinished_sf': 0, 'finished_sf': 80, 'custom_cabinetry': False}
+    hall = {'name': 'Hall', 'unfinished_sf': 20, 'finished_sf': 0, 'custom_cabinetry': False}
+    undone = {**kitchen, 'name': 'Room 1'}
+    assert default_photo_rename({'rooms': [kitchen, hall]}, {'rooms': [undone]}) == (
+        'Kitchen',
+        'Room 1',
+    )
+    assert default_photo_rename({'rooms': [kitchen, undone]}, {'rooms': [undone]}) is None
+
+
 def test_default_replacement_still_requires_category_and_area_and_validates_room_limit():
     from backend.contracts import Room
 

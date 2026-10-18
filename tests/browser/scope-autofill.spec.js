@@ -46,6 +46,19 @@ test('fresh Kitchen autofill and explicit confirmation reach review with zero ma
   const data = await page.evaluate(() => state.record.data);
   expect(data.rooms).toHaveLength(1);
   expect(data.scope_confirmed).toBe(true);
+  const audited = await page.evaluate(() => ({
+    revision: state.record.revision,
+    version: state.localVersion,
+  }));
+  await page.locator('.task-nav [data-task="property"]').click();
+  await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionStatus')).toContainText('No explicit changes found');
+  await expect(page.locator('#scopeConfirmed')).toBeChecked();
+  await expect(room(page, 'finished_sf').locator('..')).toContainText('From walkthrough · Undo');
+  expect(
+    await page.evaluate(() => ({ revision: state.record.revision, version: state.localVersion })),
+  ).toEqual(audited);
+  expect(await page.evaluate(() => state.record.audit)).not.toBeNull();
 });
 
 test('Undo restores the original room and manual edits are retained', async ({ page }) => {
