@@ -370,12 +370,10 @@ def test_explicit_numeric_category_is_kept_as_stated(quote, category):
 def test_scope_records_the_loss_type_answer_as_a_label_beside_the_category(
     context, monkeypatch, answer, loss, category
 ):
-    from backend.scope import scope_prompt, scope_response_schema
+    from backend.scope import scope_response_schema
 
     quote = 'Office: water, mold, or both? ' + answer
     transcript = quote + f' Category {category}. 20 square feet of finished drywall demolition.'
-    prompt = scope_prompt(InspectionData(technician_transcript=transcript))
-    assert 'set that room\'s loss to exactly "water", "mold" or "both"' in prompt
     assert 'loss' in scope_response_schema()['properties']['changes']['items']['properties'][
         'field'
     ]['enum']

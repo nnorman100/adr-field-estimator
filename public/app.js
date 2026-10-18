@@ -1441,7 +1441,9 @@ function fillForm() {
   renderSaveStatus();
   renderControls();
 }
-function seedRoomLoss(data) {
+function seedRoomLoss(record, data) {
+  if (record?.status === 'signed' || (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope')))
+    return;
   for (const room of data.rooms) room.loss = roomLoss(room);
 }
 // The word is the signal, the colour repeats it. A room with both losses gets both tags.
@@ -1983,7 +1985,7 @@ async function restoreDraft(id) {
     }
     $('conflictActions').hidden = true;
   }
-  if (state.record?.status !== 'signed') seedRoomLoss(state.draft.data);
+  seedRoomLoss(state.record, state.draft.data);
   state.documents = state.record?.audit?.documents || null;
   if (stable(state.draft.data) !== state.ack) state.documents = null;
   fillForm();
@@ -4015,7 +4017,7 @@ async function initialize() {
     state.record = record;
     state.ack = stable(record.data);
     state.conflict = false;
-    if (record.status !== 'signed') seedRoomLoss(state.draft.data);
+    seedRoomLoss(record, state.draft.data);
     $('conflictActions').hidden = true;
     invalidate();
     fillForm();
