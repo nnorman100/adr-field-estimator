@@ -2234,7 +2234,7 @@ async function authorize() {
   if (!$('documentsConfirmed').checked) {
     signingError(
       'documentsConfirmedError',
-      'Confirm all four documents were reviewed with the homeowner or representative before signing.',
+      'Confirm the proposal was reviewed with the homeowner or representative before signing.',
       $('documentsConfirmed'),
     );
     return;
