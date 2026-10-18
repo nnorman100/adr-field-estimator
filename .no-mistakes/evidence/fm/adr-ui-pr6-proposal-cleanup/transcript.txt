@@ -1,0 +1,27 @@
+== Technician (index.html) ==
+proposalBody contains "technician review required": false
+proposalBody contains "outside the authorized scope": false
+proposalBody contains "Itemized scope total": true
+proposalBody contains "Itemized charges at base rates": false
+totals-summary: Customer estimate range | $1,208.00–$1,221.90 | Itemized scope total | $1,208.00
+documentProgress: Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.
+#auditNotes (expanded) text:
+AI review notes · estimator only
+AI summary · technician review required
+
+<img src=x onerror="window.reviewInjected=true"> Confirmed scope summary.
+
+AI suggestions · outside the authorized scope
+
+Document drying progress.
+
+== Homeowner (sign.html) ==
+signGate on load: Proposal opened. Complete the details below to sign.
+signFields disabled on load: false
+tabs on load: proposal=true, claim=false, defense=false, photos=false
+proposalBody contains "technician review required": false
+proposalBody contains "outside the authorized scope": false
+#auditNotes count: 0
+Empty-name submit error: Type your full name.
+tabs at signing: proposal=true, claim=false, defense=false, photos=false
+Receipt: Signed by Synthetic Homeowner, property owner, on 10/18/2026, 12:37:24 PM. Reference ADR-AUTH-link-8ac6aa541d58f6afd269831dcb36967d.
