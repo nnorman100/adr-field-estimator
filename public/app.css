@@ -1517,6 +1517,10 @@ footer {
     overflow-wrap: anywhere;
     line-height: 1.25;
   }
+  /* A phone row has no room for both; the logo carries the brand and the link keeps the name. */
+  .company-brand .brand img:not([hidden]) + strong {
+    display: none;
+  }
   .company-brand .brand img {
     max-width: 72px;
     max-height: 45px;
