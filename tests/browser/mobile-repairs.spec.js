@@ -1,3 +1,4 @@
+const { saveDraft } = require('./actions');
 const { test, expect } = require('@playwright/test');
 const pageErrors = new WeakMap();
 
@@ -46,7 +47,7 @@ async function scope(page, names = ['Kitchen']) {
     await roomName(page, i).fill(names[i]);
   }
   await page.locator('#scopeConfirmed').check();
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 }
 async function audit(page, names) {
@@ -398,7 +399,7 @@ for (const width of [320, 390])
           page.on('request', (request) => {
             if (request.url().endsWith('/api/audit')) auditRequests.push(request);
           });
-          for (const start of ['review', 'walkthrough']) {
+          for (const start of ['evidence', 'walkthrough']) {
             await task(page, start);
             await page.locator('#finishAudit').click();
             await expect(page.locator('#panel-property')).toBeVisible();
@@ -428,7 +429,7 @@ for (const width of [320, 390])
       await longShell(page);
       for (const nextWidth of [width, width === 320 ? 390 : 320]) {
         await page.setViewportSize({ width: nextWidth, height: 844 });
-        await task(page, 'review');
+        await task(page, 'evidence');
         await page.locator('#finishAudit').click();
         await expect(roomName(page, 1)).toBeFocused();
         await clearOfChrome(page, '[data-room-index="1"][data-room-key="name"]');
@@ -500,7 +501,7 @@ for (const width of [320, 390])
       await longShell(page);
       const selector = '[data-room-index="1"][data-room-key="name"]';
       await page.setViewportSize({ width, height: 450 });
-      await task(page, 'review');
+      await task(page, 'evidence');
       await page.locator('#finishAudit').click();
       await expect(roomName(page, 1)).toBeFocused();
       await clearOfChrome(page, selector);

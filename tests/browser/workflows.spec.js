@@ -1,3 +1,4 @@
+const { saveDraft } = require('./actions');
 const { test, expect } = require('@playwright/test');
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -18,7 +19,7 @@ async function scope(page) {
   await page.locator('#yearBuilt').fill('1960');
   await page.locator('[data-room-key="finished_sf"]').fill('10');
   await page.locator('#scopeConfirmed').check();
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 }
 async function audit(page) {
@@ -323,7 +324,7 @@ test('offline draft reload and reconnection preserve local work', async ({
   await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
   await expect(page.locator('#finishAudit')).toBeDisabled();
   await context.setOffline(false);
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await page.reload();
   await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
@@ -428,7 +429,7 @@ test('revision conflict preserves local work and explicit recovery restores the 
     });
   });
   await page.locator('#technicianNotes').fill('Local work must survive');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#conflictActions')).toBeVisible();
   await expect(page.locator('#technicianNotes')).toHaveValue('Local work must survive');
   await page.reload();
@@ -443,7 +444,7 @@ test('worker update prompts, preserves the draft and keeps protected data out of
   await scope(page);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.locator('#technicianNotes').fill('Preserve during installed update');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await fault(page, { worker: true });
   await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready;
@@ -561,7 +562,7 @@ test('reconnection synchronizes an older queued inspection as well as the open d
   await page.locator('#newInspection').click();
   await expect(page.locator('#address')).toHaveValue('');
   await page.locator('#address').fill('Second local draft');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await context.setOffline(false);
   await expect
     .poll(() =>
@@ -622,7 +623,7 @@ test('reopening a draft after a signed job releases the signed photo object URLs
   page,
 }) => {
   await page.locator('#address').fill('Draft to reopen');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await menu(page, 'jobMenu');
   await page.locator('#newInspection').click();
@@ -733,7 +734,7 @@ test('cloud-restored originals survive photo-backed conflict fork', async ({ pag
   }, id);
   await task(page, 'property');
   await page.locator('#technicianNotes').fill('Keep this device work and photo');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#conflictActions')).toBeVisible();
   await page.locator('#forkLocal').click();
   await expect(page.locator('#conflictActions')).toBeHidden();
@@ -881,7 +882,7 @@ test('walkthrough form fill requires review, supports selection and invalidates 
   await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
   await expect(page.locator('#documents')).toBeHidden();
   await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await page.reload();
   await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
   await page.locator('#scopeConfirmed').check();
