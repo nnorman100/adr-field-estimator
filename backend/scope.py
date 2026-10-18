@@ -40,7 +40,8 @@ MOLD_CATEGORY_VALUES = {
     '3 · contaminated / mold',
 }
 MOLD_QUALIFIER_RE = re.compile(
-    r'\b(?:no|not|without|suspected|possible|potential|unconfirmed)(?:\s+(?:visible|confirmed|active|black|toxic|water\s+or|microbial\s+growth\s+or))*\s+mold\b'
+    r"\b(?:no|not|\w+n't|never|without|free\s+of|suspected|possible|potential|unconfirmed)"
+    r'(?:\s+(?:any|visible|confirmed|active|black|toxic|evidence|signs?|of|water\s+or|microbial\s+growth\s+or))*\s+mold\b'
 )
 MOLD_WORD_RE = re.compile(r'\bmold\b')
 
@@ -101,17 +102,18 @@ def normalize_category_change(change):
         return change
     text = normalized(change.source_quote)
     quote_has_mold = states_mold(change.source_quote)
-    quote_has_both = bool(re.search(r'\bboth\b', text)) and 'suspect' not in text
-    if isinstance(change.value, str):
-        label = normalized(change.value)
-        if label in MOLD_CATEGORY_VALUES and (
-            quote_has_mold or (label == 'both' and quote_has_both)
-        ):
-            return change.model_copy(update={'value': 3})
+    if (
+        isinstance(change.value, str)
+        and normalized(change.value) in MOLD_CATEGORY_VALUES
+        and quote_has_mold
+    ):
+        return change.model_copy(update={'value': 3})
     if type(change.value) is not int:
         raise ValueError('A water category must be an explicit category number.')
     if change.value in (1, 2) and quote_has_mold:
-        return change.model_copy(update={'value': 3})
+        raise ValueError(
+            'A room with technician-reported mold uses category 3; clarify the category.'
+        )
     if (
         change.value == 3
         and ('suspect' in text or MOLD_QUALIFIER_RE.search(text))
@@ -128,7 +130,9 @@ def validate_suggestions(data, suggestions):
     known = {}
     for i, room in enumerate(data.rooms):
         known.setdefault(normalized(room.name), []).append(i)
-    prepared = []
+    seen = set()
+    new_rooms = {}
+    changes = []
     for change in suggestions.changes:
         if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
             raise ValueError('A proposed value has no supporting technician quote.')
@@ -136,26 +140,7 @@ def validate_suggestions(data, suggestions):
             raise ValueError(
                 'A room value must identify its room; job values cannot target a room.'
             )
-        prepared.append(normalize_category_change(change))
-    mold_rooms = {
-        normalized(c.room)
-        for c in prepared
-        if c.room and c.field == 'category' and c.value == 3 and states_mold(c.source_quote)
-    }
-    prepared = [
-        c
-        for c in prepared
-        if not (
-            c.room
-            and c.field == 'category'
-            and normalized(c.room) in mold_rooms
-            and c.value in (1, 2)
-        )
-    ]
-    seen = set()
-    new_rooms = {}
-    changes = []
-    for change in prepared:
+        change = normalize_category_change(change)
         key = (normalized(change.room) if change.room else None, change.field)
         if key in seen:
             raise ValueError('Conflicting scope suggestions require clarification.')

@@ -197,18 +197,23 @@ def test_live_prompt_labels_signoff_and_keeps_company_strings_in_json_boundary()
 
 
 def test_live_prompt_points_to_fill_scope_and_asks_water_mold_or_both_per_room():
-    from backend.prompts import LIVE_INSTRUCTIONS
+    from backend.prompts import live_prompt
 
-    assert (
-        'When the technician is done, tell them to tap Fill scope from walkthrough and review the form; never tell them to submit'
-        in LIVE_INSTRUCTIONS
-    )
-    assert 'water, mold, or both?' in LIVE_INSTRUCTIONS
-    assert (
-        'When the technician reports mold (alone or with water), record it as technician-reported mold and map that room to category 3 ("Contaminated / mold")'
-        in LIVE_INSTRUCTIONS
-    )
-    assert (
-        'never diagnose mold yourself: record mold as technician-reported, and record suspected microbial growth as suspected, not confirmed mold'
-        in LIVE_INSTRUCTIONS
-    )
+    data = InspectionData().model_dump(mode='json')
+    identity = {'name': 'Custom Company Name', 'signoff': 'Matthew Myers'}
+    for prompt in (live_prompt(data), live_prompt(data, identity)):
+        instructions, context = prompt.split('\nCurrent inspection context (JSON):\n')
+        assert json.loads(context) == data
+        assert (
+            'When the technician is done, tell them to tap Fill scope from walkthrough and review the form; never tell them to submit'
+            in instructions
+        )
+        assert 'water, mold, or both?' in instructions
+        assert (
+            'When the technician reports mold (alone or with water), record it as technician-reported mold and map that room to category 3 ("Contaminated / mold")'
+            in instructions
+        )
+        assert (
+            'never diagnose mold yourself: record mold as technician-reported, and record suspected microbial growth as suspected, not confirmed mold'
+            in instructions
+        )

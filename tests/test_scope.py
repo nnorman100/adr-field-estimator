@@ -283,41 +283,6 @@ def test_scope_extraction_daily_cap_returns_retry_after(context, monkeypatch):
                 ),
             ],
         ),
-        (
-            'Office, category 1 water and mold. 20 square feet of finished drywall demolition.',
-            [
-                change(
-                    'category',
-                    1,
-                    quote='Office, category 1 water and mold.',
-                    room='Office',
-                ),
-                change(
-                    'finished_sf',
-                    20,
-                    quote='20 square feet of finished drywall demolition.',
-                    room='Office',
-                ),
-            ],
-        ),
-        (
-            'Office, water category 1. There is also mold in the Office. 20 square feet of finished drywall demolition.',
-            [
-                change('category', 1, quote='Office, water category 1.', room='Office'),
-                change(
-                    'category',
-                    '3 · Contaminated / mold',
-                    quote='There is also mold in the Office.',
-                    room='Office',
-                ),
-                change(
-                    'finished_sf',
-                    20,
-                    quote='20 square feet of finished drywall demolition.',
-                    room='Office',
-                ),
-            ],
-        ),
     ],
 )
 def test_scope_maps_mold_alone_or_with_water_to_category_3(
@@ -362,6 +327,15 @@ def test_scope_maps_mold_alone_or_with_water_to_category_3(
             'Bathroom has no mold and 20 square feet of finished drywall.',
             change('category', 3, quote='Bathroom has no mold', room='Bathroom'),
         ),
+        (
+            'Bathroom, category 1 water; no evidence of mold. 20 square feet of finished drywall.',
+            change(
+                'category',
+                3,
+                quote='Bathroom, category 1 water; no evidence of mold.',
+                room='Bathroom',
+            ),
+        ),
     ],
 )
 def test_suspected_or_negated_mold_does_not_map_to_category_3(transcript, bad_change):
@@ -370,3 +344,84 @@ def test_suspected_or_negated_mold_does_not_map_to_category_3(transcript, bad_ch
     )
     with pytest.raises(ValueError):
         validate_suggestions(values, ScopeSuggestions(changes=[bad_change], questions=[]))
+
+
+@pytest.mark.parametrize(
+    'transcript,proposed',
+    [
+        (
+            'Office, category 1 water and mold. 20 square feet of finished drywall demolition.',
+            [
+                change(
+                    'category',
+                    1,
+                    quote='Office, category 1 water and mold.',
+                    room='Office',
+                ),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='20 square feet of finished drywall demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office, water category 1. There is also mold in the Office. 20 square feet of finished drywall demolition.',
+            [
+                change('category', 1, quote='Office, water category 1.', room='Office'),
+                change(
+                    'category',
+                    '3 · Contaminated / mold',
+                    quote='There is also mold in the Office.',
+                    room='Office',
+                ),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='20 square feet of finished drywall demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office has mold. Correction: Office has no mold, water category 1. 20 square feet of finished drywall demolition.',
+            [
+                change('category', 3, quote='Office has mold.', room='Office'),
+                change(
+                    'category',
+                    1,
+                    quote='Office has no mold, water category 1.',
+                    room='Office',
+                ),
+            ],
+        ),
+    ],
+)
+def test_conflicting_or_unmapped_mold_category_requires_clarification(transcript, proposed):
+    values = InspectionData(
+        technician_transcript=transcript, rooms=[{'name': 'Office', 'category': 1}]
+    )
+    with pytest.raises(ValueError):
+        validate_suggestions(values, ScopeSuggestions(changes=proposed, questions=[]))
+
+
+@pytest.mark.parametrize(
+    'quote',
+    [
+        'Bathroom, category 1 water; no evidence of mold.',
+        "Bathroom, category 1 water, there isn't any mold.",
+        'Bathroom, category 1 water, no signs of mold.',
+    ],
+)
+def test_negated_mold_keeps_stated_water_category(quote):
+    values = InspectionData(
+        technician_transcript=quote, rooms=[{'name': 'Bathroom', 'category': 2}]
+    )
+    result = validate_suggestions(
+        values,
+        ScopeSuggestions(
+            changes=[change('category', 1, quote=quote, room='Bathroom')], questions=[]
+        ),
+    )
+    assert [(c.room, c.field, c.value) for c in result.changes] == [('Bathroom', 'category', 1)]
