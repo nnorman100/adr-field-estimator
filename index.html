@@ -11,11 +11,12 @@
   <script defer src="/workspaces.js?v=unstamped"></script>
 </head>
 <body>
-  <header class="masthead">
-    <a class="brand" href="/" aria-label="DryScope"><img src="/brand/dryscope-wordmark.svg" width="240" height="70" alt="DryScope"><strong>DryScope</strong></a>
+  <header class="product-bar">
+    <a class="lockup" href="/" aria-label="DryScope"><img src="/brand/dryscope-wordmark-white.svg" width="1754" height="512" alt="DryScope"></a>
     <div id="updateBanner" class="notice" hidden><span class="update-text">Update ready.</span> <button id="applyUpdate">Save &amp; update</button></div>
-    <div class="header-tools"><button id="helpButton" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="helpDialog">?</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><div id="workspaceAccountDetails"></div><small>App version unstamped</small></div></details></div>
+    <div class="header-tools"><button id="helpButton" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="helpDialog">?</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><div id="workspaceAccountDetails"></div><small>DryScope &middot; App version unstamped</small></div></details></div>
   </header>
+  <div class="masthead"><a class="brand" href="/" aria-label="DryScope"><img src="/brand/dryscope-wordmark.svg" width="240" height="70" alt="DryScope"><strong>DryScope</strong></a></div>
   <div id="offlineBanner" class="notice" hidden>You are offline. Changes stay on this device until synced. AI and signing need a connection.</div>
   <div id="hostSyncNotice" class="notice" role="status" hidden>Drafts on this device are still syncing. Sign in with email and keep this Home Screen icon until they finish.</div>
   <section id="authPanel" class="auth-panel" aria-label="Sign in" hidden>
@@ -85,6 +86,7 @@
   <section id="documents" class="documents" hidden>
     <div class="section-head"><div><span class="eyebrow">LOSS ESTIMATE</span><h2>Review before signing</h2></div><details id="exportMenu" class="menu"><summary>Export</summary><div class="menu-content"><button id="copyJson">Copy scope JSON</button><button id="downloadJson">Download scope JSON</button><button id="printDocuments">Print documents</button></div></details></div>
     <div class="totals-summary"><div><span>Customer estimate range</span><strong id="estimateRange"></strong></div><div><span>Itemized charges at base rates</span><strong id="itemizedTotal"></strong></div></div>
+    <div id="reviewRooms" class="loss-chips" aria-label="Rooms in this estimate"></div>
     <p id="documentProgress" class="review-progress" role="status">Open all four documents before signing.</p>
     <div id="auditWarnings" class="notice" hidden></div>
     <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">Proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
@@ -153,5 +155,5 @@
     </section>
     <p id="helpContact" class="help-contact">For company access, ask your company owner.</p>
   </dialog>
-<footer>DryScope &middot; Private field inspections</footer>
+<footer><span id="footerText">DryScope &middot; Private field inspections</span><span class="powered">Powered by DryScope</span></footer>
 </body></html>

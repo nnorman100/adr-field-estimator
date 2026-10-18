@@ -277,9 +277,12 @@ test.describe('company workspaces', () => {
     await expect(view.locator('[data-tab=proposal]')).toHaveText('Proposal');
     await expect(view.locator('#signFooter')).toContainText('Other Restoration');
     await expect(view.locator('#doc-proposal .document-letterhead img')).toBeHidden();
-    // Without a company logo, the page chrome carries the DryScope wordmark instead.
-    await expect(view.locator('#signBrand')).toBeVisible();
-    await expect(view.locator('#signBrand')).toHaveAttribute('src', '/brand/dryscope-wordmark.svg');
+    // The navy bar carries DryScope; the letterhead and footer name the sender.
+    await expect(view.locator('.product-bar .lockup img')).toHaveAttribute(
+      'src',
+      '/brand/dryscope-wordmark-white.svg',
+    );
+    await expect(view.locator('footer .powered')).toHaveText('Powered by DryScope');
     await signAsHomeowner(view);
     await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 20000 });
     await page.reload();
@@ -311,7 +314,6 @@ test.describe('company workspaces', () => {
         'src',
         '/brand/adr-logo.jpg',
       );
-    await expect(home.page.locator('#signBrand')).toBeHidden();
     await home.context.close();
   });
 });

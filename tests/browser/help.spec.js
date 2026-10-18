@@ -41,17 +41,20 @@ const ALL = [
   'Company settings',
   'Companies and the support view',
 ];
-// Signed out, the masthead shows the loaded DryScope wordmark, never a blank brand.
+// Signed out, the navy bar shows the loaded white DryScope lockup with the controls; no empty company strip.
 async function expectWordmark(page) {
-  const wordmark = page.locator('.masthead .brand img');
-  await expect(wordmark).toBeVisible();
-  await expect(wordmark).toHaveAttribute('src', '/brand/dryscope-wordmark.svg');
-  await expect(wordmark).toHaveAttribute('alt', 'DryScope');
+  const lockup = page.locator('.product-bar .lockup img');
+  await expect(lockup).toBeVisible();
+  await expect(lockup).toHaveAttribute('src', '/brand/dryscope-wordmark-white.svg');
+  await expect(lockup).toHaveAttribute('alt', 'DryScope');
   await expect
-    .poll(() => wordmark.evaluate((img) => img.complete && img.naturalWidth > 0))
+    .poll(() => lockup.evaluate((img) => img.complete && img.naturalWidth > 0))
     .toBe(true);
-  expect((await wordmark.boundingBox()).width).toBeGreaterThan(80);
-  await expect(page.locator('.masthead .brand strong')).toBeHidden();
+  expect((await lockup.boundingBox()).width).toBeGreaterThan(80);
+  await expect(page.locator('.product-bar #helpButton')).toBeVisible();
+  await expect(page.locator('.product-bar #accountMenu')).toBeVisible();
+  await expect(page.locator('.masthead')).toBeHidden();
+  expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 }
 async function openHelp(page) {
@@ -74,7 +77,6 @@ test.describe('signed out', () => {
         await page.setViewportSize({ width, height: 844 });
         await page.goto('/');
         await expect(page.locator('#authPanel')).toBeVisible();
-        expect((await page.locator('.masthead').boundingBox()).height).toBeLessThan(85);
         await expectWordmark(page);
         const help = page.getByRole('button', { name: 'Help', exact: true });
         await expect(help).toHaveAttribute('aria-haspopup', 'dialog');
@@ -121,7 +123,9 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
-  await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
+  await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
+  await expect(page.locator('footer .powered')).toHaveText('Powered by DryScope');
+  await expect(page.locator('#accountMenu')).toContainText('DryScope · App version');
   await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
   await expect(page.getByRole('button', { name: /google/i })).toHaveCount(1);
@@ -165,6 +169,15 @@ test.describe('company roles', () => {
       await page.goto('/');
       await expect(page.locator('#workspaceDashboard')).toBeVisible();
       await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
+      // Signed in, the company takes the white strip; DryScope stays in the bar, Account and footer.
+      await expect(page.locator('.product-bar .lockup img')).toBeVisible();
+      expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
+      await expect(page.locator('.masthead .brand')).toBeVisible();
+      await expect(page.locator('#accountMenu')).toContainText('DryScope · App version');
+      await expect(page.locator('footer .powered')).toHaveText('Powered by DryScope');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+        false,
+      );
       const dialog = await openHelp(page);
       await expect(page.locator('#helpYoursHeading')).toHaveText(heading);
       expect(await topics(page, 'helpYours')).toEqual(yours);
@@ -251,6 +264,6 @@ test('signed-out offline shell keeps DryScope identity', async ({ page, context 
     await expectWordmark(page);
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
+  await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
   await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|661/);
 });

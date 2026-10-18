@@ -602,6 +602,7 @@ function clearDisplayedInspection() {
   for (const id of [
     'rooms',
     'photoRoom',
+    'reviewRooms',
     'proposalBody',
     'claimCards',
     'claimItems',
@@ -1374,6 +1375,23 @@ function fillForm() {
   renderSaveStatus();
   renderControls();
 }
+// Category 1 and 2 are water losses; category 3 is contaminated water or mold. The word is the signal, the colour repeats it.
+function lossTag(room, prefix) {
+  const category = Number(room.category),
+    loss = category === 3 ? 'mold' : 'water';
+  const tag = node(
+    'span',
+    (prefix ? prefix + ' · ' : '') + loss.toUpperCase() + ' · Cat ' + category,
+    'loss-tag',
+  );
+  tag.dataset.loss = loss;
+  return tag;
+}
+function renderRoomChips() {
+  $('reviewRooms').replaceChildren(
+    ...state.draft.data.rooms.map((room) => lossTag(room, room.name.trim() || 'Unnamed room')),
+  );
+}
 function renderRooms() {
   clearValidationFeedback();
   $('inspectionForm').before($('validationFeedback'));
@@ -1382,6 +1400,12 @@ function renderRooms() {
   state.draft.data.rooms.forEach((room, i) => {
     const card = node('div', undefined, 'room'),
       head = node('div', undefined, 'section-head');
+    const tagRoom = () => {
+      card.querySelector('.loss-tag')?.remove();
+      card.prepend(lossTag(room));
+      card.dataset.loss = card.querySelector('.loss-tag').dataset.loss;
+    };
+    tagRoom();
     head.append(node('h3', 'Room ' + (i + 1)));
     const remove = button('Remove', () => requestRoomRemoval(room, remove));
     remove.disabled = !!state.signed || !!confirmedAuthorization;
@@ -1426,6 +1450,7 @@ function renderRooms() {
         room[key] = type === 'text' ? input.value : Number(input.value);
         changed();
         if (key === 'name') updateRoomPicker();
+        if (key === 'category') tagRoom();
       });
       wrap.append(input);
       grid.append(wrap);
@@ -1934,7 +1959,7 @@ async function restoreSigned(id) {
   confirmedAuthorization = id;
   state.draft = {
     inspection_id: record.inspection_id || '',
-    data: { ...emptyData(), ...record.inspection, address: record.address },
+    data: { ...emptyData(), rooms: [], ...record.inspection, address: record.address },
     photos: record.photos.map((p, i) => ({
       ...p,
       id: p.id || String(i),
@@ -2104,6 +2129,7 @@ function renderDocuments() {
     selectDocument('proposal');
   }
   ADRDocuments.render(docs, state.draft.photos, photoUrl, state.session?.legacy_identity);
+  renderRoomChips();
   $('signingArea').hidden = !!state.signed || !!confirmedAuthorization;
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;
   $('sendHomeownerLink').disabled = $('authorizeJob').disabled;
@@ -3876,7 +3902,7 @@ function resetShellBranding() {
   $('dashboardHeading').textContent = 'Dashboard';
   $('dashboardEyebrow').textContent = 'LOSS ESTIMATES';
   $('dashboardDescription').replaceChildren();
-  document.querySelector('footer').textContent = 'DryScope · Private field inspections';
+  $('footerText').textContent = 'DryScope · Private field inspections';
   $('helpContact').replaceChildren('For company access, ask your company owner.');
   $('helpContact').hidden = false;
   // Rendered document identity must not survive an auth callback either.

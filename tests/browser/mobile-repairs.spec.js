@@ -89,7 +89,7 @@ async function clearOfChrome(page, selector) {
       () =>
         page.locator(selector).evaluate((el) => {
           const r = el.getBoundingClientRect();
-          const obstacles = ['.masthead', '.inspection-shell', '.draft-actions']
+          const obstacles = ['.product-bar', '.masthead', '.inspection-shell', '.draft-actions']
             .map((s) => document.querySelector(s))
             .filter(
               (node) =>
@@ -640,6 +640,34 @@ for (const width of [320, 390])
       await expect(page.locator('#removeRoomDialog')).toBeHidden();
       await expect(page.locator('#rooms .room')).toHaveCount(1);
       await expect(roomName(page, 0)).toHaveValue('Kitchen');
+    });
+
+    // The word is what the test asserts; the tint and chip colour only repeat it.
+    test('room cards and the review say WATER or MOLD from the water category', async ({
+      page,
+    }) => {
+      await scope(page, ['Kitchen', 'Bathroom']);
+      const cards = page.locator('#rooms .room');
+      await expect(cards.locator('.loss-tag')).toHaveText(['WATER · Cat 1', 'WATER · Cat 1']);
+      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('3');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText('MOLD · Cat 3');
+      await expect(cards.nth(1)).toHaveAttribute('data-loss', 'mold');
+      await expect(cards.nth(0)).toHaveAttribute('data-loss', 'water');
+      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('2');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText('WATER · Cat 2');
+      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('3');
+      await page.locator('#scopeConfirmed').check();
+      await page.locator('#finishAudit').click();
+      await expect(page.locator('#documents')).toBeVisible();
+      await expect(page.locator('#reviewRooms .loss-tag')).toHaveText([
+        'Kitchen · WATER · Cat 1',
+        'Bathroom · MOLD · Cat 3',
+      ]);
+      expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
+      await expect(page.locator('.product-bar #helpButton')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+        false,
+      );
     });
 
     test('a later signing error replaces an earlier save-not-confirmed status', async ({

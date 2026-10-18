@@ -157,7 +157,7 @@ const unstamp = (text) =>
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     assert(
-      (await page.locator('.masthead').boundingBox()).height < 85,
+      (await page.locator('.product-bar').boundingBox()).height < 85,
       'Narrow header is oversized',
     );
     // Signed out, only the login page shows: email and password first, then one smaller Google sign-in below.
@@ -203,9 +203,15 @@ const unstamp = (text) =>
     );
   }
   assert.deepEqual(
-    await page.locator('.brand img').evaluate((img) => [img.getAttribute('src'), img.naturalWidth]),
-    ['/brand/dryscope-wordmark.svg', 1754],
-    'Signed-out masthead lacks the DryScope wordmark',
+    await page
+      .locator('.product-bar .lockup img')
+      .evaluate((img) => [img.getAttribute('src'), img.naturalWidth, img.checkVisibility()]),
+    ['/brand/dryscope-wordmark-white.svg', 1754, true],
+    'Signed-out header bar lacks the DryScope lockup',
+  );
+  assert(
+    !(await page.locator('.masthead').evaluate((el) => el.checkVisibility())),
+    'Signed-out page shows an empty company strip',
   );
   assert.equal(
     await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
@@ -227,6 +233,7 @@ const unstamp = (text) =>
   for (const path of [
     '/brand/adr-logo.jpg',
     '/brand/dryscope-wordmark.svg',
+    '/brand/dryscope-wordmark-white.svg',
     '/fonts/lato-400-latin.woff2',
     '/fonts/ebgaramond-400-latin.woff2',
   ])
