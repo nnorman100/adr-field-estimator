@@ -1,0 +1,19 @@
+PASS S1 loss selector offers Water / Mold / Water and mold ["Water","Mold","Water and mold"]
+PASS S1 new room defaults to water 
+PASS S1 category 3 without mold tagged WATER ["WATER · Cat 3"]
+PASS S1 both shows WATER and MOLD tags ["WATER · Cat 3","MOLD · Cat 3"]
+S3 range with loss=both $1,515.80–$1,683.60 ["Bathroom · WATER · Cat 3","Bathroom · MOLD · Cat 3"]
+S3 range with loss=water $1,515.80–$1,683.60
+PASS S3 estimate range identical for water vs both at category 3 {"rangeBoth":"$1,515.80–$1,683.60","rangeWater":"$1,515.80–$1,683.60"}
+PASS S3 documents still price by category 3 
+PASS S3 server saved explicit loss and category {"name":"Bathroom","category":3,"loss":"water","unfinished_sf":0,"finished_sf":40,"custom_cabinetry":false,"waste_percent":0}
+PASS S2 Fill scope sets loss=water {"v":"water","t":["WATER · Cat 3"],"lbl":"Loss type\nWater\nMold\nWater and mold\nFrom walkthrough ·\nUndo"}
+S2 suggestion panel Scope from walkthrough Walkthrough values filled. Review the marked fields; Undo restores what was entered before. Confirm scope when everything is right. Confirm scope Dismiss summary Still missing or unclear No photo of Room 1 No drying equipment counts Filled values & source statements
+PASS S2 Fill scope sets loss=both {"v":"both","t":["WATER · Cat 3","MOLD · Cat 3"],"lbl":"Loss type\nWater\nMold\nWater and mold\nFrom walkthrough ·\nUndo"}
+S2 suggestion panel Scope from walkthrough Walkthrough values filled. Review the marked fields; Undo restores what was entered before. Confirm scope when everything is right. Confirm scope Dismiss summary Still missing or unclear No photo of Room 1 No drying equipment counts Filled values & source statements
+PASS S4 legacy room stored without loss 
+PASS S4 opening editable legacy draft seeds water and saves it {"seeded":"water","after":"water"}
+PASS S4 Undo on loss restores seeded WATER even with category 3 {"undone":"water","cat":"3","t":["WATER · Cat 3"]}
+S5 audited legacy record {"revision":3,"audit":true}
+PASS S5 office open leaves loss unseeded, keeps documents, no save {"st":{"docs":true,"disabled":false,"finish":true,"canScope":false},"t":["MOLD · Cat 3"],"rev":[3,3],"doc":"Assigned bathroom10-18-2026Estimator: Matthew Myers · CSLB #950983Customer estim"}
+PASS S5 office sees display-only legacy tag MOLD · Cat 3 ["MOLD · Cat 3"]
