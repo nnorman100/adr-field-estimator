@@ -135,6 +135,20 @@ const labelled = core.applyScopeChanges(original, [
 ]);
 assert.deepEqual([labelled.rooms[0].category, labelled.rooms[0].loss], [3, 'both']);
 assert.equal(core.scopeRoomLabels.loss, 'Loss type');
+// A room saved before the label existed keeps the tag it showed when Fill scope changes its category.
+const legacy = core.emptyData();
+delete legacy.rooms[0].loss;
+assert.equal(core.roomLoss(legacy.rooms[0]), 'water');
+const recategorized = core.applyScopeChanges(legacy, [
+  { field: 'category', room: 'Room 1', value: 3 },
+]);
+assert.deepEqual([recategorized.rooms[0].category, recategorized.rooms[0].loss], [3, 'water']);
+assert.equal(
+  core.applyScopeChanges({ ...legacy, rooms: [{ ...legacy.rooms[0], category: 3 }] }, [
+    { field: 'category', room: 'Room 1', value: 1 },
+  ]).rooms[0].loss,
+  'mold',
+);
 console.log(
   'PASS: selective scope application preserves manual values and sheet defaults; resets confirmation and requires complete new-room measurements',
 );

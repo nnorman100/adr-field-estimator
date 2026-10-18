@@ -10,6 +10,7 @@ const {
   scopeJobLabels,
   scopeRoomLabels,
   roomKey,
+  roomLoss,
   applyScopeChanges,
   defaultPhotoRename,
   ingestTranscript,
@@ -1440,11 +1441,6 @@ function fillForm() {
   renderSaveStatus();
   renderControls();
 }
-// The loss type is a label chosen beside the category; pricing still reads the category. A room
-// saved before the label existed shows the tag it showed then: category 3 as mold, otherwise water.
-function roomLoss(room) {
-  return room.loss || (Number(room.category) === 3 ? 'mold' : 'water');
-}
 // The word is the signal, the colour repeats it. A room with both losses gets both tags.
 function lossTags(room, prefix) {
   const loss = roomLoss(room);
@@ -1528,6 +1524,7 @@ function renderRooms() {
       let photos = [];
       if (key === 'name') input.addEventListener('focus', () => (photos = roomPhotos(room.name)));
       input.addEventListener('input', () => {
+        if (key === 'category') room.loss = roomLoss(room);
         room[key] = type === 'text' || key === 'loss' ? input.value : Number(input.value);
         if (key === 'name') retagPhotos(photos, input.value);
         changed();
