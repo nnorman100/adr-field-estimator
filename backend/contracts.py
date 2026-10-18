@@ -163,6 +163,9 @@ class AIResult(StrictModel):
     summary: str = Field(min_length=1, max_length=6000)
     suggestions: list[Annotated[str, Field(max_length=1000)]] = Field(max_length=30)
     unpriced_work: list[Annotated[str, Field(max_length=1000)]] = Field(max_length=30)
+    testing_advice: list[Annotated[str, Field(max_length=1000)]] = Field(
+        default_factory=list, max_length=10
+    )
 
 
 class PhotoLog(StrictModel):
