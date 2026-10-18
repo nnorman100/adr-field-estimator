@@ -387,6 +387,9 @@ def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
             ' indicates 0 dehumidifiers and 1 air scrubber.',
             'Confirm laminate square footage; 10 linear feet is not an area.',
             'Check whether a leak could lead to further damage under the flooring.',
+            'Testing for lead may be needed given the 1978 build year.',
+            'The homeowner supplied an asbestos report; cabinet removal remains conditional on'
+            ' its review.',
         ],
         unpriced_work=['Office: one dehumidifier for three days is absent from priced_scope.'],
     )
@@ -396,17 +399,23 @@ def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
         ' indicates 0 dehumidifiers and 1 air scrubber.',
         'Confirm laminate square footage; 10 linear feet is not an area.',
         'Check whether a leak could lead to further damage under the flooring.',
+        'The homeowner supplied an asbestos report; cabinet removal remains conditional on'
+        ' its review.',
     ]
     assert docs['ai_summary'] == (
         'Office has laminate and drywall removal. The saved inspection lists no dehumidifier.'
     )
     lines = AIResult(
-        summary='Office: drywall removal\n- Lead testing may be needed\n- Laminate removal',
+        summary=(
+            'Office: drywall removal\n- Lead testing may be needed\n- Laminate removal\n'
+            '- Homeowner shared an asbestos report. Testing for lead may be needed given the'
+            ' 1978 build year.'
+        ),
         suggestions=[],
         unpriced_work=[],
     )
     assert make_documents(acme(year_built=year), [], lines)['ai_summary'] == (
-        'Office: drywall removal\n- Laminate removal'
+        'Office: drywall removal\n- Laminate removal\n- Homeowner shared an asbestos report.'
     )
     assert docs['unpriced_work'] == [
         'Office: one dehumidifier for three days is absent from priced scope.'

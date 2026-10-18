@@ -49,11 +49,22 @@ APP_QUESTION = re.compile(
     r'(can|could|may|should) (i|we) (add|take|attach|send|upload) (a |an |another |the |this |more )?'
     r'(picture|photo|image)s?|can you hear me|are you (there|listening)|did you (get|catch) (that|it)'
 )
-# The age finding is the app's lead/asbestos rule, so AI text may not restate or contradict it.
-TESTING_TOPIC = re.compile(
-    r'asbestos|\blead\b[\s/-]*(and\b|or\b|&)?[\s/-]*(based|paint|test|pre-?test|abatement|hazard|exposure)',
+# The age finding is the app's lead/asbestos testing rule, so AI text may not claim testing is needed.
+HAZARD = re.compile(
+    r'asbestos|\b(for|of)\s+lead\b|\blead\b(?=[\s/-]*(and|or|&|based|paint|test|pre-?test|sampl))',
     re.IGNORECASE,
 )
+HAZARD_TEST = re.compile(r'\b(pre-?)?test(s|ing|ed)?\b|\bsampl(e|es|ing)\b', re.IGNORECASE)
+REQUIREMENT = re.compile(
+    r'\b(requir\w*|need\w*|necessary|must|should|recommend\w*|advis\w*|determin\w*|mandat\w*)\b',
+    re.IGNORECASE,
+)
+
+
+def testing_claim(text):
+    return bool(HAZARD.search(text) and HAZARD_TEST.search(text) and REQUIREMENT.search(text))
+
+
 JSON_TERM = re.compile(
     r'\b(the\s+)?(inspection\s+)?JSON(\s+(metadata|data|payload|record|evidence|input|object))?\b',
     re.IGNORECASE,
@@ -235,7 +246,7 @@ def plain(text):
 def customer_text(summary):
     """The AI summary in plain words, without sentences about the app's testing rule."""
     lines = (
-        ' '.join(plain(text) for text in sentences(line) if not TESTING_TOPIC.search(text))
+        ' '.join(plain(text) for text in sentences(line) if not testing_claim(text))
         for line in summary.splitlines()
     )
     return '\n'.join(line for line in lines if line)
@@ -351,7 +362,7 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
             for p in photos
         ],
         ai_summary=customer_text(ai.summary),
-        ai_suggestions=[plain(text) for text in ai.suggestions if not TESTING_TOPIC.search(text)],
+        ai_suggestions=[plain(text) for text in ai.suggestions if not testing_claim(text)],
         unpriced_work=[plain(text) for text in ai.unpriced_work],
         signable=bool(
             not setup
