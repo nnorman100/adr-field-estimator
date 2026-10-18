@@ -1,0 +1,15 @@
+GET /api/health: {"status":"healthy","schema_version":3,"source_commit":"unknown"}
+document.title: DryScope · Water & mold loss estimates
+meta theme-color: #0B2545
+manifest (via <link rel=manifest>): {"name":"DryScope","short_name":"DryScope","theme_color":"#0B2545","background_color":"#F6F8FA"}
+Cache Storage keys after SW activation: ["dryscope-unstamped"]
+body: {"backgroundColor":"rgba(0, 0, 0, 0)","color":"rgb(11, 37, 69)"}
+#startWalk (primary): {"backgroundColor":"rgb(11, 37, 69)","color":"rgb(255, 255, 255)"}
+active task tab: {"backgroundColor":"rgba(0, 0, 0, 0)","color":"rgb(11, 37, 69)","borderBottomColor":"rgb(11, 37, 69)"}
+#message text: Draft saved privately.
+#message success style: {"color":"rgb(11, 37, 69)","bg":"rgb(255, 255, 255)","borderLeft":"rgb(11, 37, 69)","before":"\"✓ \""}
+visible elements with green colour (should be only mold-category accents, if any): []
+documents first letterhead-ish rule: {"cls":"document-letterhead","borderBottom":"2px solid rgb(11, 37, 69)"}
+selected document tab: none
+sign.html meta theme-color: #0B2545
+page errors: []

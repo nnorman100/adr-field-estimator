@@ -1,20 +1,14 @@
-ADR owner, old client (no workspace_protocol_version)
-  sent: {"type": "authenticate", "token": "owner", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "protocol_version": 2}
-  received: {"type":"error","message":"Update the app before a company walkthrough.","status":409}
-
-ADR owner, workspace_protocol_version=0
-  sent: {"type": "authenticate", "token": "owner", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "protocol_version": 2, "workspace_protocol_version": 0}
-  received: {"type":"error","message":"Update the app before a company walkthrough.","status":409}
-
-Other company owner, old client
-  sent: {"type": "authenticate", "token": "other-owner", "inspection_id": "ADR-INS-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "protocol_version": 2}
-  received: {"type":"error","message":"Update the app before a company walkthrough.","status":409}
-
-ADR owner, current client (workspace_protocol_version=1)
-  sent: {"type": "authenticate", "token": "owner", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "protocol_version": 2, "workspace_protocol_version": 1}
-  received: {"type":"error","message":"Live coaching disconnected. Your draft is preserved; reconnect to continue."}
-
-Other company owner, current client (=1)
-  sent: {"type": "authenticate", "token": "other-owner", "inspection_id": "ADR-INS-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "protocol_version": 2, "workspace_protocol_version": 1}
-  received: {"type":"error","message":"Live coaching disconnected. Your draft is preserved; reconnect to continue."}
-
+Workspaces enabled; ADR estimator test-owner-ws-estimator owns ADR-INS-cccccccccccccccccccccccccccccccc
+[1] Old ADR client (no workspace_protocol_version) - previously waived
+  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff"}
+  got:  {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
+[2] ADR client claiming workspace_protocol_version=0
+  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff", "workspace_protocol_version": 0}
+  got:  {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
+[3] ADR client sending workspace_protocol_version="1" (string)
+  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff", "workspace_protocol_version": "1"}
+  got:  {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
+[4] Current ADR client (workspace_protocol_version=1)
+  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff", "workspace_protocol_version": 1}
+  got:  {"type": "error", "message": "Live coaching disconnected. Your draft is preserved; reconnect to continue."}
+RESULT: PASS

@@ -1,0 +1,2 @@
+npx playwright test --project=chromium tests/browser/mobile-repairs.spec.js tests/browser/help.spec.js tests/browser/service-worker-lifecycle.spec.js tests/browser/live-reliability.spec.js
+52 passed (1.8m): includes navy primary/success-check test at 320 and 390, weak-signal #8A5A00 Live status, Save & update replacement-worker banner.
