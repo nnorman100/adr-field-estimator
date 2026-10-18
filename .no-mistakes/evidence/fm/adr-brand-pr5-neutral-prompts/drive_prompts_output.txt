@@ -1,0 +1,11 @@
+== no_identity_legacy: {"instructions_mention_ADR": false, "instructions_mention_Alert_Disaster": false, "company_json": null, "saved_company_identity_name": null}
+== company_other: {"instructions_mention_ADR": false, "instructions_mention_Alert_Disaster": false, "company_json": {"name": "Other Company", "proposal_signoff_name": "Other Estimator"}, "saved_company_identity_name": "Other Company"}
+== company_adr: {"instructions_mention_ADR": false, "instructions_mention_Alert_Disaster": false, "company_json": {"name": "Alert Disaster Restoration", "proposal_signoff_name": "Matthew Myers"}, "saved_company_identity_name": "Alert Disaster Restoration"}
+== live_prompt with company identity, base first line: 'You are an the restoration company (ADR) field walkthrough assistant helping a technician '
+== live_prompt with company identity, new  first line: 'You are a restoration field walkthrough assistant helping a technician prepare a room-by-r'
+== live_prompt identical to base after the first line: True
+== audit_prompt with company identity, base first line: 'You assist an company technician reviewing a CONFIRMED structured scope. Return only a bri'
+== audit_prompt with company identity, new  first line: 'You assist the technician reviewing a CONFIRMED structured scope. Return only a brief AI s'
+== audit_prompt identical to base after the first line: True
+== base commit no-identity audit prompt contained ADR: True | new: False
+== base commit no-identity live prompt contained Alert Disaster: True | new: False
