@@ -1,0 +1,54 @@
+{
+ "other 390": {
+  "name": "Other Restoration",
+  "nameVisible": false,
+  "logoVisible": true,
+  "aria": "Other Restoration",
+  "header": 65
+ },
+ "other 390 banner": {
+  "name": "Other Restoration",
+  "nameVisible": true,
+  "logoVisible": true,
+  "aria": "Other Restoration",
+  "header": 65
+ },
+ "other 1280": {
+  "name": "Other Restoration",
+  "nameVisible": true,
+  "logoVisible": true,
+  "aria": "Other Restoration",
+  "header": 70
+ },
+ "other letterhead": {
+  "heading": "Other Restoration · Official proposal",
+  "logoVisible": true,
+  "isDataUrl": true
+ },
+ "owner 390": {
+  "name": "Alert Disaster Restoration",
+  "nameVisible": false,
+  "logoVisible": true,
+  "aria": "Alert Disaster Restoration",
+  "header": 65
+ },
+ "owner 390 banner": {
+  "name": "Alert Disaster Restoration",
+  "nameVisible": true,
+  "logoVisible": true,
+  "aria": "Alert Disaster Restoration",
+  "header": 65
+ },
+ "owner 1280": {
+  "name": "Alert Disaster Restoration",
+  "nameVisible": true,
+  "logoVisible": true,
+  "aria": "Alert Disaster Restoration",
+  "header": 76
+ },
+ "owner letterhead": {
+  "heading": "Alert Disaster Restoration · Official proposal",
+  "logoVisible": true,
+  "isDataUrl": true
+ }
+}

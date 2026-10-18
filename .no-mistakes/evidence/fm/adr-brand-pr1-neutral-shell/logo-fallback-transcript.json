@@ -1,0 +1,147 @@
+[
+  {
+    "step": "ADR owner, no profile logo, app",
+    "imgs": [
+      {
+        "s": ".masthead .brand img",
+        "hidden": false,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      },
+      {
+        "s": "#doc-proposal .document-letterhead img",
+        "hidden": false,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      },
+      {
+        "s": "#doc-defense .document-letterhead img",
+        "hidden": true,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      }
+    ]
+  },
+  {
+    "step": "ADR owner, print media",
+    "imgs": [
+      {
+        "s": ".masthead .brand img",
+        "hidden": true,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      },
+      {
+        "s": "#doc-proposal .document-letterhead img",
+        "hidden": false,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      },
+      {
+        "s": "#doc-defense .document-letterhead img",
+        "hidden": false,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      }
+    ]
+  },
+  {
+    "step": "ADR signing page",
+    "imgs": [
+      {
+        "s": ".masthead .brand img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-proposal .document-letterhead img",
+        "hidden": false,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      },
+      {
+        "s": "#doc-defense .document-letterhead img",
+        "hidden": true,
+        "src": "/brand/adr-logo.jpg",
+        "loaded": 225
+      }
+    ]
+  },
+  {
+    "step": "Other company app",
+    "imgs": [
+      {
+        "s": ".masthead .brand img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-proposal .document-letterhead img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-defense .document-letterhead img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      }
+    ],
+    "adrLogoAnywhere": 0
+  },
+  {
+    "step": "Other signing page",
+    "imgs": [
+      {
+        "s": ".masthead .brand img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-proposal .document-letterhead img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-defense .document-letterhead img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      }
+    ],
+    "adrLogoAnywhere": 0
+  },
+  {
+    "step": "no-membership signed-in",
+    "imgs": [
+      {
+        "s": ".masthead .brand img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-proposal .document-letterhead img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      },
+      {
+        "s": "#doc-defense .document-letterhead img",
+        "hidden": true,
+        "src": "",
+        "loaded": 0
+      }
+    ]
+  },
+  {
+    "step": "signed-out",
+    "adrLogoVisible": 0,
+    "brand": "DryScope"
+  }
+]

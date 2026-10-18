@@ -1,0 +1,138 @@
+[
+ [
+  "signed-out 1280",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "DryScope",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "DryScope",
+   "footer": "DryScope · Private field inspections",
+   "adrInBody": false
+  }
+ ],
+ [
+  "signed-out help contact",
+  "For company access, ask your company owner."
+ ],
+ [
+  "signed-out 390",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "DryScope",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "DryScope",
+   "footer": "DryScope · Private field inspections",
+   "adrInBody": false
+  }
+ ],
+ [
+  "offline 390",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "DryScope",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "DryScope",
+   "footer": "DryScope · Private field inspections",
+   "adrInBody": false
+  }
+ ],
+ [
+  "adr-owner 1280",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "Alert Disaster Restoration",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "Alert Disaster Restoration",
+   "footer": "Alert Disaster Restoration · Private company workspaces",
+   "adrInBody": true
+  }
+ ],
+ [
+  "adr-owner account details",
+  "Alert Disaster Restoration\n\nOwner · Superadmin\n\n3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983"
+ ],
+ [
+  "adr-owner 390",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "Alert Disaster Restoration",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "Alert Disaster Restoration",
+   "footer": "Alert Disaster Restoration · Private company workspaces",
+   "adrInBody": true
+  }
+ ],
+ [
+  "adr-owner proposal",
+  {
+   "heading": "Alert Disaster Restoration · Official proposal",
+   "tab": "Proposal",
+   "letterhead": "3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983",
+   "logo": false,
+   "adrInBody": true
+  }
+ ],
+ [
+  "other-company 1280",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "Other Restoration",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "Other Restoration",
+   "footer": "Other Restoration · Private company workspaces",
+   "adrInBody": false
+  }
+ ],
+ [
+  "other-company account details",
+  "Other Restoration\n\nOwner\n\nOther office · (555) 123-4567 · CSLB #123456"
+ ],
+ [
+  "other-company 390",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "Other Restoration",
+   "strongVisible": true,
+   "imgVisible": false,
+   "aria": "Other Restoration",
+   "footer": "Other Restoration · Private company workspaces",
+   "adrInBody": false
+  }
+ ],
+ [
+  "other-company proposal",
+  {
+   "heading": "Other Restoration · Official proposal",
+   "tab": "Proposal",
+   "letterhead": "Other office · (555) 123-4567 · CSLB #123456",
+   "logo": false,
+   "adrInBody": false
+  }
+ ],
+ [
+  "other+logo 390",
+  {
+   "title": "DryScope · Water & mold loss estimates",
+   "strong": "Other Restoration",
+   "strongVisible": false,
+   "imgVisible": true,
+   "aria": "Other Restoration",
+   "footer": "Other Restoration · Private company workspaces",
+   "adrInBody": false
+  }
+ ],
+ [
+  "legacy proposal",
+  {
+   "heading": "Alert Disaster Restoration · Official proposal",
+   "letterhead": "3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983",
+   "logo": true
+  }
+ ]
+]
