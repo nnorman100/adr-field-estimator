@@ -202,7 +202,11 @@ const unstamp = (text) =>
       'Mobile task layout overflows',
     );
   }
-  assert.equal(await page.locator('.brand img').evaluate((img) => img.naturalWidth), 225);
+  assert.deepEqual(
+    await page.locator('.brand img').evaluate((img) => [img.getAttribute('src'), img.naturalWidth]),
+    ['/brand/dryscope-wordmark.svg', 1754],
+    'Signed-out masthead lacks the DryScope wordmark',
+  );
   assert.equal(
     await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
     false,
