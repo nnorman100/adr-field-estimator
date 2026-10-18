@@ -78,6 +78,33 @@ def normalized(text):
     return ' '.join(text.split()).casefold()
 
 
+def untouched_default_room(room):
+    return (
+        room.get('name') == 'Room 1'
+        and room.get('unfinished_sf') == 0
+        and room.get('finished_sf') == 0
+        and room.get('custom_cabinetry') is False
+    )
+
+
+def default_photo_rename(before, after):
+    old_rooms, new_rooms = before['rooms'], after['rooms']
+    if not old_rooms or not new_rooms or old_rooms[0]['name'] == new_rooms[0]['name']:
+        return None
+    forward = (
+        len(old_rooms) == 1
+        and untouched_default_room(old_rooms[0])
+        and not any(normalized(r['name']) == 'room 1' for r in new_rooms)
+    )
+    undo = (
+        new_rooms[0]['name'] == 'Room 1'
+        and len(old_rooms) == len(new_rooms)
+        and not any(normalized(r['name']) == 'room 1' for r in old_rooms)
+        and not any(normalized(r['name']) == normalized(old_rooms[0]['name']) for r in new_rooms)
+    )
+    return (old_rooms[0]['name'], new_rooms[0]['name']) if forward or undo else None
+
+
 def validate_suggestions(data, suggestions):
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
     candidate = data.model_dump(mode='json')
@@ -128,12 +155,23 @@ def validate_suggestions(data, suggestions):
                 continue
             target[change.field] = change.value
         changes.append(change)
+    replace_default = (
+        len(candidate['rooms']) == 1
+        and untouched_default_room(candidate['rooms'][0])
+        and not any(c.room and normalized(c.room) == 'room 1' for c in changes)
+    )
     for room in new_rooms.values():
         if 'category' not in room or not ({'finished_sf', 'unfinished_sf'} & room.keys()):
             raise ValueError(
                 'State the water category and measured demolition area for a new room, then retry.'
             )
-        candidate['rooms'].append(Room.model_validate(room, strict=True).model_dump(mode='json'))
+        values = {**candidate['rooms'][0], **room} if replace_default else room
+        validated = Room.model_validate(values, strict=True).model_dump(mode='json')
+        if replace_default:
+            candidate['rooms'][0] = validated
+            replace_default = False
+        else:
+            candidate['rooms'].append(validated)
     InspectionData.model_validate(candidate, strict=True)
     if any(len(q) > 1000 for q in suggestions.questions):
         raise ValueError('Clarification is too long.')

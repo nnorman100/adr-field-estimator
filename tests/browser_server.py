@@ -73,21 +73,28 @@ bm.get_job_store = lambda: store
 async def generate(**kwargs):
     schema = kwargs['config'].response_schema
     if isinstance(schema, dict) and schema == bm.scope_response_schema():
+        kitchen = 'Kitchen, category 2, 80 SF drywall' in str(kwargs['contents'])
+        room = 'Kitchen' if kitchen else 'Room 1'
+        quote = (
+            'Kitchen, category 2, 80 SF drywall'
+            if kitchen
+            else 'Room 1, category 2, 80 square feet of drywall.'
+        )
         return SimpleNamespace(
             text=json.dumps(
                 {
                     'changes': [
                         {
                             'field': 'category',
-                            'room': 'Room 1',
+                            'room': room,
                             'value': 2,
-                            'source_quote': 'Room 1, category 2, 80 square feet of drywall.',
+                            'source_quote': quote,
                         },
                         {
                             'field': 'finished_sf',
-                            'room': 'Room 1',
+                            'room': room,
                             'value': 80,
-                            'source_quote': 'Room 1, category 2, 80 square feet of drywall.',
+                            'source_quote': quote,
                         },
                         {
                             'field': 'air_movers',

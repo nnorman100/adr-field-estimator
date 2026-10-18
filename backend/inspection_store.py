@@ -14,10 +14,12 @@ from google.cloud import firestore
 try:
     from .job_store import JobStore, decode_image, IMAGE_WORKER
     from .cloud_log import event
+    from .scope import default_photo_rename
     from .contracts import InspectionData
 except ImportError:
     from job_store import JobStore, decode_image, IMAGE_WORKER
     from cloud_log import event
+    from scope import default_photo_rename
     from contracts import InspectionData
 
 # Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
@@ -200,6 +202,11 @@ class InspectionStore(JobStore):
             # Recomputed on each transaction attempt; the log line reports the committed one.
             changed[:] = changed_fields(record['data'], data)
             if record['data'] != data:
+                rename = default_photo_rename(record['data'], data)
+                if rename:
+                    for photo in record['photos']:
+                        if photo['room'] == rename[0]:
+                            photo['room'] = rename[1]
                 record.update(
                     data=data, revision=record['revision'] + 1, audit=None, status='draft'
                 )
