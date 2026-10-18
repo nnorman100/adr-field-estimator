@@ -325,6 +325,8 @@ def test_documents_use_the_technician_statement_without_echo_or_chatter():
         'Water category for it is 2.',
         'Yes.',
         'Okay, the bathroom vanity is wet.',
+        'To the right.',
+        'Right side.',
     ],
 )
 def test_technician_facts_survive_cleaning(turn):

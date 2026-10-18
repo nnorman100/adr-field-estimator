@@ -40,13 +40,15 @@ ADDITIONAL = 'If technicians encounter additional affected building materials be
 EXCLUSIONS = 'NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of {company}. This estimate does not include testing of any kind.'
 REPRICE = 'If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.'
 VALIDITY = 'Estimate is valid for 30 days from date of inspection.'
-# Walkthrough sentences made only of these words are conversation, not technician evidence.
-FILLER_WORDS = set(
-    'ok okay alright all right thanks thank you very much so um uh hmm got it but get cool great'
-    ' perfect hello hi hey bye goodbye sounds good welcome to the morning afternoon evening'.split()
+# Walkthrough sentences made only of these complete phrases are conversation, not technician evidence.
+CHATTER_PHRASE = (
+    r'(ok|okay|alright|all right|um|uh|hmm|cool|great|perfect|got it|sounds good|thanks'
+    r'|thank you( very much)?|hello|hi|hey|bye|goodbye|good (morning|afternoon|evening)'
+    r'|welcome to the( walkthrough)?|(but )?you get it)'
 )
-APP_QUESTION = re.compile(
-    r'(can|could|may|should) (i|we) (add|take|attach|send|upload) (a |an |another |the |this |more )?'
+CHATTER = re.compile(
+    rf'{CHATTER_PHRASE}( {CHATTER_PHRASE})*'
+    r'|(can|could|may|should) (i|we) (add|take|attach|send|upload) (a |an |another |the |this |more )?'
     r'(picture|photo|image)s?|can you hear me|are you (there|listening)|did you (get|catch) (that|it)'
 )
 JSON_TERM = re.compile(
@@ -197,8 +199,7 @@ def technician_statement(data: InspectionData):
         text = ' '.join(
             sentence
             for sentence in sentences(turn)
-            if not set(words(sentence)) <= FILLER_WORDS
-            and not APP_QUESTION.fullmatch(' '.join(words(sentence)))
+            if words(sentence) and not CHATTER.fullmatch(' '.join(words(sentence)))
         )
         if text:
             kept.append(text)
