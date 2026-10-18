@@ -181,6 +181,7 @@ function closeMenus() {
   document.querySelectorAll('.menu[open]').forEach((menu) => (menu.open = false));
 }
 function showTask(task, focus = true) {
+  if (task === 'evidence') task = 'walkthrough';
   ui.task = task;
   renderDraftActions();
   document
@@ -1598,7 +1599,7 @@ function updateRoomPicker() {
     $('photoRoom').append(opt);
   }
   if (state.draft.data.rooms.some((r) => r.name === value)) $('photoRoom').value = value;
-  renderRoomChips();
+  renderWalkRoomChips();
 }
 function canEditDraft(capability) {
   return (
@@ -1625,7 +1626,7 @@ function addRoomEntry() {
   return room;
 }
 // Walk & Photo: one chip per room; tap to select, tap the selected chip to rename, + Room adds.
-function renderRoomChips() {
+function renderWalkRoomChips() {
   const list = $('roomChips');
   list.replaceChildren();
   if (!state.draft) return;
@@ -1637,7 +1638,7 @@ function renderRoomChips() {
         if (selected) beginRoomRename(index);
         else {
           $('photoRoom').value = room.name;
-          renderRoomChips();
+          renderWalkRoomChips();
         }
       });
     chip.className = 'room-chip';
@@ -1664,7 +1665,7 @@ function beginRoomRename(index) {
   const room = state.draft?.data.rooms[index];
   if (!room || !canEditDraft('scope')) return;
   $('photoRoom').value = room.name;
-  renderRoomChips();
+  renderWalkRoomChips();
   const chip = $('roomChips').querySelector('[data-room-chip="' + index + '"]'),
     input = node('input', undefined, 'room-chip-input');
   input.type = 'text';
@@ -1677,7 +1678,7 @@ function beginRoomRename(index) {
     done = true;
     const name = input.value.trim();
     if (commit && name && name !== room.name) renameRoom(room, name);
-    else renderRoomChips();
+    else renderWalkRoomChips();
     $('roomChips')
       .querySelector('[data-room-chip="' + index + '"]')
       ?.focus();
@@ -1700,7 +1701,7 @@ function renameRoom(room, name) {
   changed();
   renderRooms();
   $('photoRoom').value = name;
-  renderRoomChips();
+  renderWalkRoomChips();
   renderPhotos();
 }
 function roomPhotos(name) {

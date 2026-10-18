@@ -115,6 +115,15 @@ test('a new job opens on Walk & Photo and a two-room walkthrough never leaves it
   await expect(cards.nth(0).locator('.room-photos .photo strong')).toHaveText(['Kitchen']);
   await expect(cards.nth(1).locator('.room-photos .photo strong')).toHaveText(['Hallway']);
   await expect(cards.nth(1).locator('.room-photos select')).toHaveValue('Hallway');
+  // The former Evidence step now opens Walk & Photo with its photo strip.
+  await page.evaluate(() => showTask('evidence'));
+  await expect(page.locator('#panel-walkthrough')).toBeVisible();
+  await expect(page.locator('#panel-property')).toBeHidden();
+  await expect(page.locator('.task-nav [data-task="walkthrough"]')).toHaveAttribute(
+    'aria-current',
+    'step',
+  );
+  await expect(page.locator('#photoGallery .photo strong')).toHaveText(['Kitchen', 'Hallway']);
 });
 
 test('a chip rename relabels saved photos through a reload and Escape cancels', async ({
