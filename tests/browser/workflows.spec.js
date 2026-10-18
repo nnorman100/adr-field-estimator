@@ -96,7 +96,7 @@ test('all four mobile document choices fit and claims use readable cards', async
       await expect(tab).toHaveAttribute('aria-pressed', 'true');
     }
   }
-  await expect(page.locator('#documentProgress')).toContainText('4 of 4');
+  await expect(page.locator('#documentProgress')).toContainText('Proposal opened');
   await page.locator('[data-tab="claim"]').click();
   await expect(page.locator('#claimCards')).toBeVisible();
   await expect(page.locator('.table-scroll')).toBeHidden();
@@ -110,6 +110,50 @@ test('all four mobile document choices fit and claims use readable cards', async
   await page.emulateMedia({ media: 'print' });
   await expect(page.locator('.table-scroll')).toBeVisible();
   await expect(page.locator('#claimCards')).toBeHidden();
+});
+
+test('AI notes stay out of the proposal and the technician signs after the proposal alone', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await audit(page);
+  const proposal = page.locator('#proposalBody');
+  await expect(proposal).toContainText('Itemized scope total: $1,208.00');
+  for (const internal of [
+    'technician review required',
+    'outside the authorized scope',
+    'Confirmed scope summary.',
+    'Document drying progress.',
+    'Itemized charges at base rates',
+  ])
+    await expect(proposal).not.toContainText(internal);
+  await expect(page.locator('.totals-summary')).toContainText('Itemized scope total');
+  // The estimator-only callout sits above the document tabs, collapsed until opened.
+  const notes = page.locator('#auditNotes');
+  await expect(notes).toBeVisible();
+  await expect(page.locator('#auditNotesBody')).toBeHidden();
+  expect((await notes.boundingBox()).y).toBeLessThan(
+    (await page.locator('.doc-tabs').boundingBox()).y,
+  );
+  await notes.locator('summary').click();
+  await expect(notes).toContainText('AI summary · technician review required');
+  await expect(notes).toContainText('Confirmed scope summary.');
+  await expect(notes).toContainText('AI suggestions · outside the authorized scope');
+  await expect(notes).toContainText('Document drying progress.');
+  await page.emulateMedia({ media: 'print' });
+  await expect(notes).toBeHidden();
+  await page.emulateMedia({ media: 'screen' });
+  // Only the proposal is opened; the other three documents stay optional.
+  await expect(page.locator('#documentProgress')).toContainText('Proposal opened');
+  for (const name of ['claim', 'defense', 'photos'])
+    await expect(page.locator('[data-tab="' + name + '"]')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  await page.locator('#documentsConfirmed').check();
+  await draw(page);
+  await page.locator('#authorizeJob').click();
+  await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
 });
 
 test('optional sheet charges appear in the calculated estimate range', async ({ page }) => {
@@ -241,7 +285,7 @@ test('safe four-document render, separate currency, signed recovery and invalida
   await audit(page);
   await expect(page.locator('#proposalBody')).toContainText('$1,208.00–$1,221.90');
   await expect(page.locator('#proposalBody')).toContainText('$1,208.00');
-  await expect(page.locator('#proposalBody')).toContainText('<img src=x');
+  await expect(page.locator('#auditNotesBody')).toContainText('<img src=x');
   expect(await page.evaluate(() => window.reviewInjected)).toBeUndefined();
   await page.locator('#documentsConfirmed').check();
   await draw(page);

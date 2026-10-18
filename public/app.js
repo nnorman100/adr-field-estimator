@@ -2104,7 +2104,7 @@ async function finishAudit() {
     renderDocuments();
     say(
       state.documents.signable
-        ? 'Audit ready. Review all four documents before signing.'
+        ? 'Audit ready. Review the proposal before signing.'
         : auditBlockMessage(state.documents, !!window.WorkspaceUI?.can('profile_manage')),
       state.documents.signable ? 'success' : 'error',
     );

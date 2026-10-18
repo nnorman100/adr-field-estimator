@@ -63,7 +63,7 @@
         <p id="scopeConfirmNotice" class="field-error" role="status" hidden>Scope changed · confirm again.</p>
       </fieldset></form>
       
-      <p class="hint">The estimating sheet provides a low–high customer range from the confirmed scope. Itemized charges show the base-rate calculation. Unpriced work requires correction before signing.</p>
+      <p class="hint">The estimating sheet provides a low–high customer range from the confirmed scope. The itemized scope total shows the base-rate calculation. Unpriced work requires correction before signing.</p>
     </section>
       <section id="panel-walkthrough" data-panel="walkthrough" class="capture-card" aria-labelledby="walkHeading" hidden>
         <div class="section-head"><h2 id="walkHeading">Field walkthrough</h2><span id="liveStatus" class="status">Not connected</span></div>
@@ -85,10 +85,11 @@
     <div id="reviewEmpty" class="empty-review"><span class="eyebrow">READY TO ESTIMATE?</span><h2>Confirm your scope, then generate the documents.</h2><p>Review room measurements, equipment and sheet charge quantities. All four documents are generated from the saved inspection.</p><button data-task="property" class="primary">Review property &amp; scope</button></div>
   <section id="documents" class="documents" hidden>
     <div class="section-head"><div><span class="eyebrow">LOSS ESTIMATE</span><h2>Review before signing</h2></div><details id="exportMenu" class="menu"><summary>Export</summary><div class="menu-content"><button id="copyJson">Copy scope JSON</button><button id="downloadJson">Download scope JSON</button><button id="printDocuments">Print documents</button></div></details></div>
-    <div class="totals-summary"><div><span>Customer estimate range</span><strong id="estimateRange"></strong></div><div><span>Itemized charges at base rates</span><strong id="itemizedTotal"></strong></div></div>
+    <div class="totals-summary"><div><span>Customer estimate range</span><strong id="estimateRange"></strong></div><div><span>Itemized scope total</span><strong id="itemizedTotal"></strong></div></div>
     <div id="reviewRooms" class="loss-chips" aria-label="Rooms in this estimate"></div>
-    <p id="documentProgress" class="review-progress" role="status">Open all four documents before signing.</p>
+    <p id="documentProgress" class="review-progress" role="status">Open the proposal before signing.</p>
     <div id="auditWarnings" class="notice" hidden></div>
+    <details id="auditNotes" class="notice audit-notes" hidden><summary>AI review notes · estimator only</summary><div id="auditNotesBody"></div></details>
     <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">Proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
     <article id="doc-proposal" class="doc"><div class="document-letterhead"><img width="225" height="110" alt="" hidden><p></p></div><h2></h2><div id="proposalBody"></div>
     </article>
@@ -101,7 +102,7 @@
         <p>Homeowner / representative signature</p><canvas id="signCanvas" aria-label="Signature pad" aria-describedby="signatureError"></canvas>
         <p id="signatureError" class="field-error" role="alert" hidden></p>
         <div class="actions"><button id="clearSignature" aria-describedby="signatureError">Clear signature</button><button id="authorizeJob" class="primary">Authorize & sign</button></div><p id="authorizationStatus" role="status" aria-live="polite" aria-atomic="true"></p>
-        <section class="homeowner-link" aria-labelledby="homeownerLinkHeading"><h3 id="homeownerLinkHeading">Or send to the homeowner</h3><p class="hint">The homeowner reviews these four documents and signs on their own phone. The link works once, expires in 7 days and stops working if anything here changes.</p>
+        <section class="homeowner-link" aria-labelledby="homeownerLinkHeading"><h3 id="homeownerLinkHeading">Or send to the homeowner</h3><p class="hint">The homeowner reviews the proposal, with the other three documents available, and signs on their own phone. The link works once, expires in 7 days and stops working if anything here changes.</p>
           <button id="sendHomeownerLink">Send to homeowner</button>
           <div id="homeownerLinkPanel" class="homeowner-link-panel" hidden><img id="homeownerQr" class="homeowner-qr" width="240" height="240" alt="QR code for the homeowner signing link"><label>Signing link<input id="homeownerLinkUrl" readonly></label><div class="actions"><button id="copyHomeownerLink">Copy link</button><button id="shareHomeownerLink" hidden>Share</button><button id="revokeHomeownerLink">Revoke link</button></div></div>
           <p id="homeownerLinkStatus" role="status" aria-live="polite"></p></section>
