@@ -66,11 +66,11 @@ SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_DEADLINE = 24
 APP_URL = 'https://alert-disaster-field-2026.web.app/'
-INVITATION_SUBJECT = 'Invitation to join a company on the ADR field app'
+INVITATION_SUBJECT = 'Invitation to join {company} on DryScope'
 # The build context is backend/, so it carries its own copy of public/brand/adr-logo.jpg.
 with open(os.path.join(os.path.dirname(__file__), 'brand', 'adr-logo.jpg'), 'rb') as _logo:
     ADR_LOGO = _logo.read()
-LOGO_CID = 'invitation-logo@adr-field-app'
+LOGO_CID = 'invitation-logo@dryscope'
 
 
 class AccessDenied(PermissionError):
@@ -961,16 +961,17 @@ def invitation_email(invite, company, setup):
     ]
     email = invite['email']
     logo = invitation_logo(company)
-    invited = f'{name} has invited you to join their team on the ADR field app as {role}.'
-    about = f'The ADR field app is what {name} uses for water and mold loss inspections, estimates and homeowner signatures.'
+    subject = INVITATION_SUBJECT.format(company=name)
+    invited = f'{name} has invited you to join their team on DryScope as {role}.'
+    about = f'DryScope is what {name} uses for water and mold loss inspections, estimates and homeowner signatures.'
     ignore = "If you weren't expecting this, you can ignore this email."
     if setup:
         steps = [
-            f'Set your password for the ADR field app: {setup}\nIf that link has expired, use Forgot password on the sign-in page.',
+            f'Set your password for DryScope: {setup}\nIf that link has expired, use Forgot password on the sign-in page.',
             f'Accept the invitation. Then sign in with {email} and that password.',
         ]
         steps_html = [
-            f'<a href="{html.escape(setup)}" style="color:#b9232a;font-weight:bold;">Set your password for the ADR field app</a>.'
+            f'<a href="{html.escape(setup)}" style="color:#0B2545;font-weight:bold;">Set your password for DryScope</a>.'
             ' If that link has expired, use Forgot password on the sign-in page.',
             f'Accept the invitation. Then sign in with <strong>{html.escape(email)}</strong> and that password.',
         ]
@@ -987,24 +988,24 @@ def invitation_email(invite, company, setup):
             *[f'{i}. {step}' if numbered else step for i, step in enumerate(steps, 1)],
             f'Accept the invitation: {link}',
             'This invitation expires in seven days.',
-            f'Sent by {name} through the ADR field app. {ignore}',
+            f'Sent by {name} through DryScope. {ignore}',
         ]
     )
     e = html.escape
     font = 'font-family:Lato,Arial,Helvetica,sans-serif;color:#212529;'
     step_rows = ''.join(
-        f'<tr><td valign="top" style="{font}font-size:15px;line-height:22px;padding:0 10px 10px 0;font-weight:bold;color:#d42b32;">{i}.</td>'
+        f'<tr><td valign="top" style="{font}font-size:15px;line-height:22px;padding:0 10px 10px 0;font-weight:bold;color:#0B2545;">{i}.</td>'
         f'<td style="{font}font-size:15px;line-height:22px;padding:0 0 10px 0;">{step}</td></tr>'
         if numbered
         else f'<tr><td style="{font}font-size:15px;line-height:22px;padding:0 0 10px 0;">{step}</td></tr>'
         for i, step in enumerate(steps_html, 1)
     )
     page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(INVITATION_SUBJECT)}</title></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{e(subject)}</title></head>
 <body style="margin:0;padding:0;background:#f1f2f2;">
 <div style="display:none;max-height:0;overflow:hidden;">{e(invited)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f1f2f2" style="background:#f1f2f2;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="max-width:560px;background:#ffffff;border:1px solid #dadddd;border-top:4px solid #d42b32;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="max-width:560px;background:#ffffff;border:1px solid #dadddd;border-top:4px solid #0B2545;">
 <tr><td style="padding:24px 24px 16px 24px;border-bottom:1px solid #dadddd;">
 <img src="cid:{LOGO_CID}" width="{logo['width']}" height="{logo['height']}" alt="{e(name)} logo" style="display:block;border:0;outline:none;">
 <div style="{font}font-size:18px;line-height:24px;font-weight:bold;padding-top:12px;">{e(name)}</div>
@@ -1014,19 +1015,19 @@ def invitation_email(invite, company, setup):
 <p style="{font}font-size:15px;line-height:22px;margin:0 0 12px 0;">{e(invited)}</p>
 <p style="{font}font-size:15px;line-height:22px;margin:0 0 20px 0;color:#4b4b4b;">{e(about)}</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px 0;">{step_rows}</table>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 12px 0;"><tr><td bgcolor="#d42b32" style="background:#d42b32;border-radius:4px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 12px 0;"><tr><td bgcolor="#0B2545" style="background:#0B2545;border-radius:4px;">
 <a href="{e(link)}" style="display:inline-block;padding:13px 28px;font-family:Lato,Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;">Accept invitation</a>
 </td></tr></table>
-<p style="{font}font-size:13px;line-height:20px;margin:0 0 16px 0;color:#4b4b4b;">Or open this link: <a href="{e(link)}" style="color:#b9232a;word-break:break-all;">{e(link)}</a></p>
+<p style="{font}font-size:13px;line-height:20px;margin:0 0 16px 0;color:#4b4b4b;">Or open this link: <a href="{e(link)}" style="color:#0B2545;word-break:break-all;">{e(link)}</a></p>
 <p style="{font}font-size:15px;line-height:22px;margin:0;">This invitation expires in seven days.</p>
 </td></tr>
 <tr><td style="padding:16px 24px;border-top:1px solid #dadddd;background:#f7f7f7;" bgcolor="#f7f7f7">
-<p style="{font}font-size:13px;line-height:20px;margin:0;color:#4b4b4b;">Sent by {e(name)} through the ADR field app. {e(ignore)}</p>
+<p style="{font}font-size:13px;line-height:20px;margin:0;color:#4b4b4b;">Sent by {e(name)} through DryScope. {e(ignore)}</p>
 </td></tr>
 </table>
 </td></tr></table>
 </body></html>"""
-    return dict(subject=INVITATION_SUBJECT, text=text, html=page, logo=logo)
+    return dict(subject=subject, text=text, html=page, logo=logo)
 
 
 def send_invitation(invite, company):

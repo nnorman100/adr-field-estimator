@@ -1141,13 +1141,13 @@ def test_older_profile_with_retired_heater_notice_still_saves(api):
     assert 'water_heater_notice' not in store.workspaces.snapshot('owner')
 
 
-def test_invitation_subject_excludes_owner_text(mail):
+def test_invitation_subject_names_the_company(mail):
     sent = mail[4]
     invite = dict(
         invitation_id='a' * 32, send_attempt='b' * 32, email='new@example.invalid', role='office'
     )
     workspaces.send_invitation(invite, {'profile': {'name': 'Owner Chosen Name'}})
-    assert sent[0]['subject'] == 'Invitation to join a company on the ADR field app'
+    assert sent[0]['subject'] == 'Invitation to join Owner Chosen Name on DryScope'
     assert 'Owner Chosen Name' in sent[0]['text']
 
 
@@ -1227,7 +1227,7 @@ def test_invitation_provisions_a_password_account_and_mails_only_its_set_passwor
         ('new@example.invalid', 'https://alert-disaster-field-2026.web.app/', False)
     ]
     link = accounts.links[0]['link']
-    assert 'Set your password for the ADR field app: ' + link in sent[0]['text']
+    assert 'Set your password for DryScope: ' + link in sent[0]['text']
     assert html.escape(link) in sent[0]['html'] and link not in sent[0]['html']
     assert '?invite=' + invited['invitation_id'] in sent[0]['text']
     assert writes and not any('secret-oob' in w for w in writes)
@@ -1612,15 +1612,15 @@ def test_invitation_email_shows_the_company_logo_inline_and_explains_the_app():
     assert message['logo']['data'] == base64.b64decode(logo.partition(',')[2])
     assert message['logo']['subtype'] == 'jpeg' and message['logo']['data'] != workspaces.ADR_LOGO
     page, text = message['html'], message['text']
-    assert page.count('src="cid:invitation-logo@adr-field-app"') == 1
+    assert page.count('src="cid:invitation-logo@dryscope"') == 1
     assert 'data:' not in page and 'src="http' not in page
     for body in (page, text):
         assert (
-            'Kern Water Pros has invited you to join their team on the ADR field app as office staff.'
+            'Kern Water Pros has invited you to join their team on DryScope as office staff.'
             in body
         )
         assert 'water and mold loss inspections, estimates and homeowner signatures' in body
-        assert 'Sent by Kern Water Pros through the ADR field app.' in body
+        assert 'Sent by Kern Water Pros through DryScope.' in body
         assert 'This invitation expires in seven days.' in body
     assert 'If you weren&#x27;t expecting this, you can ignore this email.' in page
     assert "If you weren't expecting this, you can ignore this email." in text
@@ -1652,7 +1652,7 @@ def test_invitation_email_falls_back_to_the_adr_logo():
 def test_invitation_email_escapes_a_hostile_company_name():
     hostile = '<img src=x onerror=alert(1)> & "Co" <a href="https://evil.invalid">'
     message = workspaces.invitation_email(*branded(name=hostile), 'https://example.invalid/set')
-    assert message['subject'] == 'Invitation to join a company on the ADR field app'
+    assert message['subject'] == f'Invitation to join {hostile} on DryScope'
     page = message['html']
     assert (
         '<img src=x' not in page
@@ -1674,11 +1674,11 @@ def test_invitation_email_sign_in_steps_and_links(role, phrase):
     password = workspaces.invitation_email(invite, company, setup)
     google = workspaces.invitation_email(invite, company, None)
     for message in (password, google):
-        assert f'on the ADR field app as {phrase}.' in message['text']
+        assert f'on DryScope as {phrase}.' in message['text']
         assert f'Accept the invitation: {accept}' in message['text']
         assert message['html'].count(f'href="{accept}"') == 2
         assert f'>{accept}</a>' in message['html'] and '>Accept invitation</a>' in message['html']
-    assert '1. Set your password for the ADR field app: ' + setup in password['text']
+    assert '1. Set your password for DryScope: ' + setup in password['text']
     assert (
         '2. Accept the invitation. Then sign in with new@example.invalid and that password.'
         in password['text']
@@ -1704,7 +1704,7 @@ def test_both_transports_send_the_logo_as_an_inline_attachment(smtp, monkeypatch
         'content': base64.b64encode(data).decode(),
         'filename': 'logo.jpg',
         'content_type': 'image/jpeg',
-        'content_id': 'invitation-logo@adr-field-app',
+        'content_id': 'invitation-logo@dryscope',
     }
     message = connections[0]['server'].message
     assert [part.get_content_type() for part in message.walk()] == [
@@ -1715,7 +1715,7 @@ def test_both_transports_send_the_logo_as_an_inline_attachment(smtp, monkeypatch
         'image/jpeg',
     ]
     image = list(message.walk())[-1]
-    assert image['Content-ID'] == '<invitation-logo@adr-field-app>'
+    assert image['Content-ID'] == '<invitation-logo@dryscope>'
     assert image.get_content_disposition() == 'inline' and image.get_content() == data
     assert len(message.as_bytes()) < 60000
 
@@ -1732,7 +1732,7 @@ def test_smtp_invitation_records_the_message_id_and_mails_only_the_set_password_
     )
     link = accounts.links[0]['link']
     text, body = message_parts(connections[0]['server'].message)
-    assert 'Set your password for the ADR field app: ' + link in text
+    assert 'Set your password for DryScope: ' + link in text
     assert html.escape(link) in body and '?invite=' + invited['invitation_id'] in text
     assert not any('secret-oob' in w for w in writes)
     assert 'secret-oob' not in json.dumps(store.db.records, default=str)
