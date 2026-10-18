@@ -14,9 +14,11 @@ from google.cloud import firestore
 try:
     from .job_store import JobStore, decode_image, IMAGE_WORKER
     from .cloud_log import event
+    from .contracts import InspectionData
 except ImportError:
     from job_store import JobStore, decode_image, IMAGE_WORKER
     from cloud_log import event
+    from contracts import InspectionData
 
 # Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
 DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40, 'transcribe': 200}
@@ -52,6 +54,22 @@ def canonical(value):
 def checked_metadata(value):
     if len(canonical(value).encode()) > 750_000:
         raise ValueError('Inspection text exceeds the storage limit.')
+
+
+def changed_fields(old, new):
+    return sorted(key for key in old.keys() | new.keys() if old.get(key) != new.get(key))
+
+
+def saved(inspection_id, record, changed):
+    # Field names from the fixed inspection schema only, never their values.
+    event(
+        'Inspection saved',
+        operation='save',
+        inspection_id=inspection_id,
+        revision=record['revision'],
+        changed_fields=changed,
+    )
+    return record
 
 
 def now():
@@ -125,6 +143,7 @@ class InspectionStore(JobStore):
     def create_inspection(self, uid, inspection_id, data):
         checked_metadata(data)
         ref = self._ref(inspection_id)
+        changed = []
 
         def create(tx):
             snapshot = ref.get(transaction=tx)
@@ -132,7 +151,9 @@ class InspectionStore(JobStore):
                 existing = self._owned(snapshot, uid, 'create', tx)
                 if existing['data'] != data:
                     raise Conflict('This inspection already exists. Restore it before editing.')
+                changed.clear()
                 return existing
+            changed[:] = changed_fields(InspectionData().model_dump(mode='json'), data)
             record = dict(
                 inspection_id=inspection_id,
                 schema_version=3,
@@ -149,7 +170,7 @@ class InspectionStore(JobStore):
             tx.create(ref, record)
             return record
 
-        return self._atomic(create)
+        return saved(inspection_id, self._atomic(create), changed)
 
     def _change(self, uid, inspection_id, revision, transform):
         ref = self._ref(inspection_id)
@@ -177,28 +198,14 @@ class InspectionStore(JobStore):
 
         def update(record):
             # Recomputed on each transaction attempt; the log line reports the committed one.
-            old = record['data']
-            changed[:] = sorted(
-                key
-                for key in old.keys() | data.keys()
-                if key not in old or key not in data or old[key] != data[key]
-            )
-            if old != data:
+            changed[:] = changed_fields(record['data'], data)
+            if record['data'] != data:
                 record.update(
                     data=data, revision=record['revision'] + 1, audit=None, status='draft'
                 )
             return record
 
-        record = self._change(uid, inspection_id, revision, update)
-        # Field names from the fixed inspection schema only, never their values.
-        event(
-            'Inspection saved',
-            operation='save',
-            inspection_id=inspection_id,
-            revision=record['revision'],
-            changed_fields=changed,
-        )
-        return record
+        return saved(inspection_id, self._change(uid, inspection_id, revision, update), changed)
 
     def add_photo(self, uid, inspection_id, upload):
         record = self.get_inspection(uid, inspection_id)
