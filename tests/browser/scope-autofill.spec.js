@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { saveDraft } = require('./actions');
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
 
@@ -140,12 +141,12 @@ test('initial-walk photo labels follow the default-room rename and name Undo thr
   expect(original.room).toBe('Room 1');
   await page.locator('#fillScope').click();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect.poll(() => page.evaluate(() => state.record.photos[0].room)).toBe('Kitchen');
   expect(await page.evaluate(() => state.record.photos[0].file)).toEqual(original.file);
   await room(page, 'name').locator('..').getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(room(page, 'finished_sf')).toHaveValue('80');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect.poll(() => page.evaluate(() => state.record.photos[0].room)).toBe('Room 1');
   await page.reload();
   await expect(room(page, 'name')).toHaveValue('Room 1');
