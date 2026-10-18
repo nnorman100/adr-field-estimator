@@ -1,0 +1,42 @@
+{
+  "documentTitle": "DryScope · Water & mold loss estimates",
+  "indexThemeColor": "#0B2545",
+  "manifestLink": "/manifest.webmanifest",
+  "signThemeColor": "#0B2545",
+  "manifest": {
+    "name": "DryScope",
+    "short_name": "DryScope",
+    "theme_color": "#0B2545",
+    "background_color": "#F6F8FA",
+    "icons": [
+      "/icon-192.png",
+      "/icon-512.png",
+      "/icon.svg"
+    ]
+  },
+  "health": {
+    "status": "healthy",
+    "schema_version": 3,
+    "source_commit": "unknown"
+  },
+  "swCacheName": "const CACHE='dryscope-'+VERSION+'';",
+  "computed": {
+    "body": {
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "color": "rgb(11, 37, 69)"
+    },
+    "startWalk": {
+      "backgroundColor": "rgb(11, 37, 69)",
+      "color": "rgb(255, 255, 255)"
+    },
+    "successMessage": {
+      "color": "rgb(11, 37, 69)",
+      "backgroundColor": "rgb(255, 255, 255)",
+      "borderLeftColor": "rgb(11, 37, 69)"
+    },
+    "successBefore": "\"✓ \"",
+    "weakStatus": {
+      "color": "rgb(138, 90, 0)"
+    }
+  }
+}
