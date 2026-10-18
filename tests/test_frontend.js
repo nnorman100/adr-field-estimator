@@ -363,13 +363,19 @@ console.log(
     }),
     "Can't sign yet: 1 item to fix. Photo recognition is still running for Photo 2 (Office). Wait a moment, then Finish & review again.",
   );
+  const setupGap = {
+    company_setup_missing: ['CSLB license', 'Document sign-off'],
+    unpriced_work: [],
+    photo_audit_log: [],
+  };
   assert.equal(
-    core.auditBlockMessage({
-      company_setup_missing: ['CSLB license', 'Document sign-off'],
-      unpriced_work: [],
-      photo_audit_log: [],
-    }),
+    core.auditBlockMessage(setupGap, true),
     "Can't sign yet: 2 items to fix. Company settings are missing the CSLB license and Document sign-off. Complete them in Company settings, then Finish & review again.",
+  );
+  // Estimators cannot open Company settings, so they are sent to the owner instead.
+  assert.equal(
+    core.auditBlockMessage(setupGap, false),
+    "Can't sign yet: 2 items to fix. Company settings are missing the CSLB license and Document sign-off. Ask your company owner to complete them in Company settings, then Finish & review again.",
   );
   assert.equal(
     core.auditBlockMessage({

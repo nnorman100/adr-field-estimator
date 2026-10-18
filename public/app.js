@@ -1962,7 +1962,7 @@ async function finishAudit() {
     say(
       state.documents.signable
         ? 'Audit ready. Review all four documents before signing.'
-        : auditBlockMessage(state.documents),
+        : auditBlockMessage(state.documents, !!window.WorkspaceUI?.can('profile_manage')),
       state.documents.signable ? 'success' : 'error',
     );
     showTask('review');

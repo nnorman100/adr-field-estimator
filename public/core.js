@@ -253,7 +253,7 @@
   }
   // Why the audit blocks signing, built from the audit's own lists so it names only real causes.
   // Photos are numbered in photo-log order, as the documents cite them.
-  function auditBlockMessage(docs) {
+  function auditBlockMessage(docs, canManageProfile) {
     const setup = docs.company_setup_missing || [],
       unpriced = docs.unpriced_work || [],
       pending = (docs.photo_audit_log || []).flatMap((photo, i) =>
@@ -277,7 +277,9 @@
       lines.push(
         'Company settings are missing the ' +
           list(setup) +
-          '. Complete them in Company settings, then Finish & review again.',
+          (canManageProfile
+            ? '. Complete them in Company settings, then Finish & review again.'
+            : '. Ask your company owner to complete them in Company settings, then Finish & review again.'),
       );
     if (pending.length)
       lines.push(
