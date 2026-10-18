@@ -537,7 +537,7 @@ h3 {
   display: block;
   font-size: 0.875rem;
   font-weight: 700;
-  color: var(--muted);
+  color: var(--text-2);
   margin-bottom: 0.4rem;
 }
 .room-chip-list {
@@ -554,19 +554,19 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--paper);
-  color: var(--ink);
+  color: var(--navy);
   padding: 0.5rem 1rem;
   font-size: 0.9375rem;
 }
 .room-chip[aria-pressed='true'] {
-  background: var(--adr);
-  border-color: var(--adr);
+  background: var(--navy);
+  border-color: var(--navy);
   color: white;
   font-weight: 700;
 }
 .room-chip-add {
   border-style: dashed;
-  color: var(--adr);
+  color: var(--navy);
 }
 .room-chip-input {
   width: 11rem;
@@ -726,15 +726,15 @@ summary {
   display: inline-block;
   padding: 0 0.5rem;
   border-radius: 999px;
-  background: var(--wash);
+  background: var(--page);
   font-size: 0.75rem;
   font-weight: 700;
 }
 .ocr-badge.ocr-verified {
-  color: var(--green);
+  color: var(--mold-deep);
 }
 .ocr-badge.ocr-failed {
-  color: var(--adr);
+  color: var(--error);
 }
 .room-photos {
   margin-top: 0.75rem;

@@ -685,6 +685,10 @@ function changed(resetConfirmation = true) {
     1500,
   );
 }
+// A photo is synced once its bytes and its locally chosen room are both stored.
+function photoUnsynced(photo) {
+  return !photo.uploaded || photo.pending_room !== undefined;
+}
 function renderSaveStatus() {
   $('jobTitle').textContent = state.draft?.data.address || 'New inspection';
   if (confirmedAuthorization) {
@@ -702,7 +706,7 @@ function renderSaveStatus() {
   const synced =
     state.record &&
     stable(state.draft.data) === state.ack &&
-    state.draft.photos.every((p) => p.uploaded);
+    !state.draft.photos.some(photoUnsynced);
   $('saveStatus').textContent = state.conflict
     ? 'Revision conflict · local draft preserved'
     : state.syncing
@@ -833,7 +837,7 @@ async function doSync() {
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
-        absorb(await move());
+        if (photo.pending_room !== undefined) absorb(await move());
       }
     }
     renderPhotos();
@@ -954,6 +958,7 @@ async function drainQueue() {
         }
         if (
           photo.pending_room !== undefined &&
+          record.photos.find((p) => p.id === photo.id).room !== photo.pending_room &&
           record.data.rooms.some((room) => room.name === photo.pending_room)
         )
           record = await request(path + '/photos/' + photo.id + '/room', 'PUT', {
@@ -1692,18 +1697,18 @@ function renameRoom(room, name) {
   renderRoomChips();
   renderPhotos();
 }
-// Photos follow their room's new name; uploaded ones are relabelled on the next sync.
+// Photos follow their room's new name and are relabelled on the next sync.
 function retagPhotos(from, to) {
   for (const photo of state.draft.photos)
     if (roomKey(photo.room) === roomKey(from)) {
       photo.room = to;
-      if (photo.uploaded) photo.pending_room = to;
+      photo.pending_room = to;
     }
 }
 function reassignPhoto(photo, room) {
   if (!canEditDraft('photos') || !state.draft.photos.includes(photo)) return;
   photo.room = room;
-  if (photo.uploaded) photo.pending_room = room;
+  photo.pending_room = room;
   changed();
   renderPhotos();
 }
@@ -2278,7 +2283,7 @@ async function finishAudit() {
       state.conflict ||
       !state.record ||
       stable(state.draft.data) !== state.ack ||
-      state.draft.photos.some((p) => !p.uploaded)
+      state.draft.photos.some(photoUnsynced)
     )
       throw Error('Finish saving the draft and its photos before auditing.');
     const until = Date.now() + 30000;
@@ -3649,7 +3654,7 @@ function connectivity() {
       .catch((e) => say(e.message, 'error'));
 }
 const unsynced = (row) =>
-  row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some((p) => !p.uploaded);
+  row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some(photoUnsynced);
 const allNotes = () =>
   dbAction('readonly', (drafts, photos, stored) => stored.getAll()).catch(() => []);
 // Draft keys with a voice note that is still recording or waiting to upload; a note the server
@@ -3666,7 +3671,7 @@ const openDraftUnsynced = () =>
   !state.signed &&
   (state.conflict ||
     stable(state.draft.data) !== state.ack ||
-    state.draft.photos.some((p) => !p.uploaded));
+    state.draft.photos.some(photoUnsynced));
 const canonical = canonicalUrl(location.href);
 // Local drafts belong to this origin, so the app stays here until every one has synced.
 async function leaveForCanonical() {

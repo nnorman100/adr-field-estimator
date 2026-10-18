@@ -145,3 +145,40 @@ test('a chip rename relabels saved photos through a reload and Escape cancels', 
   await expect(room(page, 0, 'name')).toHaveValue('Master bath');
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 });
+
+test('a room chosen while its photo uploads or offline is kept and saved', async ({ page }) => {
+  await open(page);
+  await chip(page, 'Room 1').click();
+  await rename(page, 'Kitchen');
+  await page.locator('#addRoomChip').click();
+  await rename(page, 'Hallway');
+  await chip(page, 'Kitchen').click();
+  await expect.poll(() => page.evaluate(() => stable(state.draft.data) === state.ack)).toBe(true);
+  // Hold the upload so the photo is reassigned while its POST is still in flight.
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  let posted;
+  const sent = new Promise((resolve) => (posted = resolve));
+  await page.route('**/api/inspections/*/photos', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    posted();
+    await held;
+    await route.continue();
+  });
+  await addImage(page, 'in-flight.png');
+  await sent;
+  await page.locator('#photoGallery .photo select').selectOption('Hallway');
+  release();
+  await expect.poll(() => settled(page)).toEqual(['Hallway']);
+  await expect(page.locator('#photoGallery .photo strong')).toHaveText(['Hallway']);
+  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  // An offline reassignment of an uploaded photo is unsynced work until the server stores it.
+  await page.context().setOffline(true);
+  await page.locator('#photoGallery .photo select').selectOption('Kitchen');
+  await expect(page.locator('#saveStatus')).toContainText('offline');
+  expect(await page.evaluate(() => openDraftUnsynced())).toBe(true);
+  await page.context().setOffline(false);
+  await expect.poll(() => settled(page)).toEqual(['Kitchen']);
+  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  expect(await page.evaluate(() => openDraftUnsynced())).toBe(false);
+});
