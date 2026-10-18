@@ -700,40 +700,46 @@ for (const width of [320, 390])
       );
     });
 
-    test('a draft saved before the loss type existed seeds the tag it showed and keeps its saved shape', async ({
+    test('a draft saved before the loss type existed seeds the tag it showed when it opens', async ({
       page,
     }) => {
       await scope(page, ['Kitchen', 'Bathroom']);
       await idle(page);
-      // Older rooms have no loss key: category 3 still reads as mold, anything else as water.
+      // Older rooms have no loss key, and the server keeps an absent loss absent.
       await page.evaluate(() => {
         delete state.draft.data.rooms[0].loss;
         delete state.draft.data.rooms[1].loss;
         state.draft.data.rooms[1].category = 3;
-        renderRooms();
         fillForm();
       });
+      await saveDraft(page);
+      await idle(page);
+      const remoteRooms = () =>
+        page.evaluate(async () =>
+          (await jsonApi('/api/inspections/' + state.draft.inspection_id)).data.rooms.map(
+            (room) => room.loss,
+          ),
+        );
+      expect(await remoteRooms()).toEqual([undefined, undefined]);
+      // Opening the editable draft seeds each loss type once: category 3 as mold, otherwise water.
+      await page.evaluate(() => restoreDraft(state.draft.inspection_id));
       const cards = page.locator('#rooms .room');
       await expect(cards.nth(0).locator('.loss-tag')).toHaveText(['WATER · Cat 1']);
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 3']);
       await expect(page.locator('[data-room-index="1"][data-room-key="loss"]')).toHaveValue('mold');
-      expect(await page.evaluate(() => 'loss' in state.draft.data.rooms[1])).toBe(false);
-      // Saving the untouched legacy room keeps the stored shape: the server adds no loss key.
-      await saveDraft(page);
+      expect(await page.evaluate(() => state.draft.data.rooms.map((room) => room.loss))).toEqual([
+        'water',
+        'mold',
+      ]);
       await idle(page);
-      const remote = await page.evaluate(() =>
-        jsonApi('/api/inspections/' + state.draft.inspection_id),
-      );
-      expect(remote.data.rooms.map((room) => 'loss' in room)).toEqual([false, false]);
+      expect(await remoteRooms()).toEqual(['water', 'mold']);
       expect(await page.evaluate(() => state.conflict)).toBe(false);
-      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
       // Once seeded, the tag follows the selector, not the category.
       await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('3');
       await expect(cards.nth(0).locator('.loss-tag')).toHaveText(['WATER · Cat 3']);
       await expect(page.locator('[data-room-index="0"][data-room-key="loss"]')).toHaveValue(
         'water',
       );
-      expect(await page.evaluate(() => state.draft.data.rooms[0].loss)).toBe('water');
       await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('1');
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 1']);
       await page.locator('[data-room-index="1"][data-room-key="loss"]').selectOption('water');

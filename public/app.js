@@ -1441,6 +1441,9 @@ function fillForm() {
   renderSaveStatus();
   renderControls();
 }
+function seedRoomLoss(data) {
+  for (const room of data.rooms) room.loss = roomLoss(room);
+}
 // The word is the signal, the colour repeats it. A room with both losses gets both tags.
 function lossTags(room, prefix) {
   const loss = roomLoss(room);
@@ -1524,7 +1527,6 @@ function renderRooms() {
       let photos = [];
       if (key === 'name') input.addEventListener('focus', () => (photos = roomPhotos(room.name)));
       input.addEventListener('input', () => {
-        if (key === 'category') room.loss = roomLoss(room);
         room[key] = type === 'text' || key === 'loss' ? input.value : Number(input.value);
         if (key === 'name') retagPhotos(photos, input.value);
         changed();
@@ -1981,6 +1983,7 @@ async function restoreDraft(id) {
     }
     $('conflictActions').hidden = true;
   }
+  if (state.record?.status !== 'signed') seedRoomLoss(state.draft.data);
   state.documents = state.record?.audit?.documents || null;
   if (stable(state.draft.data) !== state.ack) state.documents = null;
   fillForm();
@@ -4012,6 +4015,7 @@ async function initialize() {
     state.record = record;
     state.ack = stable(record.data);
     state.conflict = false;
+    if (record.status !== 'signed') seedRoomLoss(state.draft.data);
     $('conflictActions').hidden = true;
     invalidate();
     fillForm();

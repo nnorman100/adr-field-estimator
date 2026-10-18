@@ -124,8 +124,8 @@
     return null;
   }
   // The loss type is a label chosen beside the category; pricing still reads the category. A room
-  // saved before the label existed shows the tag it showed then: category 3 as mold, otherwise
-  // water. The first category change on such a room keeps that tag as its loss type.
+  // saved before the label existed reads as the tag it showed then: category 3 as mold, otherwise
+  // water. Editable drafts take that value as their loss type when they open.
   function roomLoss(room) {
     return room.loss || (Number(room.category) === 3 ? 'mold' : 'water');
   }
@@ -147,7 +147,7 @@
           const key = roomKey(change.room);
           if (!newRooms.has(key)) newRooms.set(key, { name: change.room });
           room = newRooms.get(key);
-        } else if (change.field === 'category') room.loss = roomLoss(room);
+        }
         room[change.field] = change.value;
       }
     }
