@@ -443,7 +443,8 @@ h3 {
   border-radius: 8px;
   border-left: 4px solid var(--line);
 }
-.room[data-loss='water'] {
+.room[data-loss='water'],
+.room[data-loss='both'] {
   background: var(--water-tint);
   border-left-color: var(--water);
 }
@@ -465,15 +466,19 @@ h3 {
   border: 1px solid var(--line);
 }
 .room .loss-tag {
-  margin-bottom: 0.75rem;
+  margin: 0 0.5rem 0.75rem 0;
 }
-.room[data-loss='water'] .loss-tag {
+.room .loss-tag[data-loss='water'] {
   background: var(--water);
   border-color: var(--water);
 }
-.room[data-loss='mold'] .loss-tag {
+.room .loss-tag[data-loss='mold'] {
   background: var(--mold);
   border-color: var(--mold);
+}
+/* The room name takes its own row so the loss type sits beside the water category. */
+.room .form-grid > label:first-child {
+  grid-column: 1/-1;
 }
 .loss-chips {
   display: flex;
@@ -1176,8 +1181,10 @@ footer {
     grid-template-columns: 1fr 1fr;
     gap: 0 0.75rem;
   }
+  /* A phone column is too narrow for two selects to keep their words, so each takes a row. */
   .room .form-grid > label:first-child,
-  .room .form-grid > label:nth-child(2) {
+  .room .form-grid > label:nth-child(2),
+  .room .form-grid > label:nth-child(3) {
     grid-column: 1/-1;
   }
   .draft-actions {

@@ -9,9 +9,16 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
 
 
+LossType = Literal['water', 'mold', 'both']
+
+
 class Room(StrictModel):
     name: str = Field(min_length=1, max_length=100)
     category: Literal[1, 2, 3] = 1
+    # A label beside the category: pricing and audit wording keep reading category. Rooms saved
+    # before the field existed stay without it, and the app reads an absent value as the tag the
+    # room showed then: category 3 as mold, otherwise water.
+    loss: LossType | None = None
     unfinished_sf: float = Field(default=0, ge=0, le=100000)
     finished_sf: float = Field(default=0, ge=0, le=100000)
     custom_cabinetry: bool = False

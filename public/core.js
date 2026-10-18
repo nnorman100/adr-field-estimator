@@ -12,6 +12,7 @@
       {
         name: 'Room 1',
         category: 1,
+        loss: 'water',
         unfinished_sf: 0,
         finished_sf: 0,
         custom_cabinetry: false,
@@ -88,6 +89,7 @@
   };
   const scopeRoomLabels = {
     category: 'Water category',
+    loss: 'Loss type',
     unfinished_sf: 'Unfinished / subfloor SF',
     finished_sf: 'Finished / drywall / trim SF',
     custom_cabinetry: 'Custom cabinetry',

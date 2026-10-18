@@ -4,9 +4,9 @@ from typing import Literal
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 try:
-    from .contracts import StrictModel, InspectionData, Room
+    from .contracts import StrictModel, InspectionData, Room, LossType
 except ImportError:
-    from contracts import StrictModel, InspectionData, Room
+    from contracts import StrictModel, InspectionData, Room, LossType
 
 JobField = Literal[
     'address',
@@ -28,8 +28,11 @@ JobField = Literal[
     'wood_floor_systems',
     'wood_floor_days',
 ]
-RoomField = Literal['category', 'unfinished_sf', 'finished_sf', 'custom_cabinetry', 'waste_percent']
+RoomField = Literal[
+    'category', 'loss', 'unfinished_sf', 'finished_sf', 'custom_cabinetry', 'waste_percent'
+]
 ROOM_FIELDS = set(RoomField.__args__)
+LOSS_TYPES = set(LossType.__args__)
 
 
 class ScopeChange(StrictModel):
@@ -118,6 +121,8 @@ def validate_suggestions(data, suggestions):
             raise ValueError('A proposed value has no supporting technician quote.')
         if change.field == 'category' and type(change.value) is not int:
             raise ValueError('A water category must be an explicit category number.')
+        if change.field == 'loss' and change.value not in LOSS_TYPES:
+            raise ValueError('A loss type must be water, mold or both.')
         if (change.field in ROOM_FIELDS) != (change.room is not None):
             raise ValueError(
                 'A room value must identify its room; job values cannot target a room.'
@@ -188,6 +193,7 @@ def scope_prompt(data):
         'Never treat a hypothetical example, an AI suggestion, a requested calculation, or an estimate from camera imagery as a measurement. '
         'Only explicit demolition areas in square feet can set finished_sf or unfinished_sf; do not use floor area or multiply dimensions. '
         'Do not infer a water category from the cause. When the technician explicitly states a room has mold, or both water and mold, for a room with demolition, map that room category to 3 ("Contaminated / mold"), even if a water category 1 or 2 was also stated for that room; for water-only rooms require an explicit water category (1, 2, or 3). '
+        'When the technician answers whether a room is water, mold, or both, also set that room\'s loss to exactly "water", "mold" or "both"; loss is a label and never replaces the category. Omit loss when the answer was not stated; a null loss in current_form means it was never recorded. '
         'Room values need room set to an exact existing room name or an explicitly spoken new room name; '
         'job values must use room:null. New rooms require explicit category (including technician-stated mold or water-and-mold mapped to 3) and at least one measured demolition area; otherwise omit that room and ask. '
         'Preserve exact unit-qualified room names. Never merge bathrooms or other matching names across units; if unit identity is ambiguous, omit affected room changes and ask. '

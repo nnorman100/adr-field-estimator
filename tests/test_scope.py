@@ -363,6 +363,63 @@ def test_explicit_numeric_category_is_kept_as_stated(quote, category):
     ]
 
 
+@pytest.mark.parametrize(
+    'answer,loss,category',
+    [('Water.', 'water', 3), ('Mold.', 'mold', 3), ('Both.', 'both', 3), ('Water.', 'water', 1)],
+)
+def test_scope_records_the_loss_type_answer_as_a_label_beside_the_category(
+    context, monkeypatch, answer, loss, category
+):
+    from backend.scope import scope_prompt, scope_response_schema
+
+    quote = 'Office: water, mold, or both? ' + answer
+    transcript = quote + f' Category {category}. 20 square feet of finished drywall demolition.'
+    prompt = scope_prompt(InspectionData(technician_transcript=transcript))
+    assert 'set that room\'s loss to exactly "water", "mold" or "both"' in prompt
+    assert 'loss' in scope_response_schema()['properties']['changes']['items']['properties'][
+        'field'
+    ]['enum']
+    client, _ = context
+    prepared(client, rooms=[], technician_transcript=transcript)
+    provider(
+        monkeypatch,
+        [
+            change('loss', loss, quote=quote, room='Office'),
+            change('category', category, quote=f'Category {category}.', room='Office'),
+            change(
+                'finished_sf',
+                20,
+                quote='20 square feet of finished drywall demolition.',
+                room='Office',
+            ),
+        ],
+    )
+    response = suggest(client)
+    assert response.status_code == 200, response.text
+    assert {(c['room'], c['field']): c['value'] for c in response.json()['changes']} == {
+        ('Office', 'loss'): loss,
+        ('Office', 'category'): category,
+        ('Office', 'finished_sf'): 20,
+    }
+
+
+@pytest.mark.parametrize('proposed', ['black water', 3, True, 'Mold'])
+def test_loss_type_must_be_water_mold_or_both(proposed):
+    quote = 'Office: water, mold, or both? Mold.'
+    values = InspectionData(technician_transcript=quote, rooms=[{'name': 'Office', 'category': 3}])
+    with pytest.raises(ValueError, match='water, mold or both'):
+        validate_suggestions(
+            values,
+            ScopeSuggestions(changes=[change('loss', proposed, quote=quote, room='Office')], questions=[]),
+        )
+    # A loss type alone does not make a new room; the category and area rule is unchanged.
+    with pytest.raises(ValueError, match='water category'):
+        validate_suggestions(
+            InspectionData(technician_transcript=quote, rooms=[]),
+            ScopeSuggestions(changes=[change('loss', 'mold', quote=quote, room='Office')], questions=[]),
+        )
+
+
 def test_kitchen_replaces_placeholder_in_validation_and_saved_photo_labels(context, monkeypatch):
     from backend.contracts import Room
     from tests.fakes import png

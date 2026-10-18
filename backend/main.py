@@ -689,6 +689,11 @@ def inspection_payload(data):
     result = data.model_dump(mode='json')
     if result.get('capture_metadata') is None:
         result.pop('capture_metadata', None)
+    # Absent values stay absent so an older draft keeps its stored shape and the client's
+    # acknowledged copy; a saved record never gains a key the technician did not set.
+    for room in result['rooms']:
+        if room.get('loss') is None:
+            room.pop('loss', None)
     return result
 
 

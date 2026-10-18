@@ -116,6 +116,22 @@ def test_retired_job_condition_flags_load_but_print_nothing():
     assert 'This scope describes proposed work; completion has not been recorded.' in text
 
 
+@pytest.mark.parametrize('category', [1, 2, 3])
+def test_loss_type_is_a_label_that_never_changes_pricing_or_documents(category):
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    room = {'name': 'Bathroom', 'category': category, 'finished_sf': 10, 'unfinished_sf': 4}
+    legacy = make_documents(scoped(rooms=[room]), [], ai)
+    for loss in ['water', 'mold', 'both']:
+        labelled = scoped(rooms=[{**room, 'loss': loss}])
+        assert labelled.rooms[0].loss == loss
+        assert price_scope(labelled) == price_scope(scoped(rooms=[room]))
+        assert make_documents(labelled, [], ai) == legacy
+    assert f'category {category}' in str(legacy)
+    assert scoped(rooms=[room]).rooms[0].loss is None
+    with pytest.raises(ValidationError):
+        scoped(rooms=[{**room, 'loss': 'sewage'}])
+
+
 def test_pending_evidence_and_unpriced_work_block_signature():
     ai = AIResult(
         summary='Review', suggestions=[], unpriced_work=['Plumbing reset lacks an ADR rate.']
