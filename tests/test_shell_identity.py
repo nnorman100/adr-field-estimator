@@ -1,4 +1,5 @@
 """The public shells must not assume a restoration company's identity."""
+
 from pathlib import Path
 
 import pytest
