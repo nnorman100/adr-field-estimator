@@ -1134,6 +1134,7 @@ async function fillScopeFromWalkthrough() {
           before: (prior || emptyData().rooms[0])[change.field],
           after: change.value,
           removesRoom: !prior && change.field === 'name',
+          snapshot: stable(target),
           quotes: change.source_quote ? [change.source_quote] : quotes,
         });
       }
@@ -1149,7 +1150,12 @@ async function fillScopeFromWalkthrough() {
           target = entry.target === previous.data ? filled : filled.rooms[index];
         if (!target || entries.some((item) => item.target === target && item.field === entry.field))
           continue;
-        if (target[entry.field] === entry.after) entries.push({ ...entry, target });
+        if (
+          entry.removesRoom
+            ? stable(before.rooms[index]) === entry.snapshot
+            : target[entry.field] === entry.after
+        )
+          entries.push({ ...entry, target, snapshot: stable(target) });
       }
     state.scopeEdits = { draft, data: filled, entries };
     fillForm();
@@ -1227,7 +1233,9 @@ function renderWalkthroughEdits() {
   edit.entries = edit.entries.filter(
     (entry) =>
       (entry.target === edit.data || edit.data.rooms.includes(entry.target)) &&
-      entry.target[entry.field] === entry.after,
+      (entry.removesRoom
+        ? stable(entry.target) === entry.snapshot
+        : entry.target[entry.field] === entry.after),
   );
   for (const entry of edit.entries) {
     const field = entry.field,
@@ -1259,6 +1267,8 @@ function renderWalkthroughEdits() {
         else entry.target[entry.field] = entry.before;
         retagDefaultPhotos(before, edit.data);
         edit.entries = edit.entries.filter((item) => item !== entry);
+        for (const item of edit.entries)
+          if (item.removesRoom && item.target === entry.target) item.snapshot = stable(item.target);
         changed();
         fillForm();
         await persist();

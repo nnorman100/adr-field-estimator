@@ -171,36 +171,54 @@ async function fillBesideOffice(page) {
   await expect(kitchen(page, 'name')).toHaveValue('Kitchen');
 }
 
-test('a manual edit in a new walkthrough room clears only that field’s marker', async ({
+test('a manual edit in a new walkthrough room keeps other field Undos and drops room removal', async ({
   page,
 }) => {
   await fillBesideOffice(page);
   await kitchen(page, 'finished_sf').fill('95');
   await expect(marker(kitchen(page, 'finished_sf'))).toHaveCount(0);
-  await expect(marker(kitchen(page, 'name'))).toHaveCount(1);
+  await expect(marker(kitchen(page, 'name'))).toHaveCount(0);
   await expect(marker(kitchen(page, 'category'))).toHaveCount(1);
   await marker(kitchen(page, 'category'))
     .getByRole('button', { name: 'Undo', exact: true })
     .click();
   await expect(kitchen(page, 'category')).toHaveValue('1');
+  await expect(page.locator('#rooms .room')).toHaveCount(2);
+  await expect(kitchen(page, 'name')).toHaveValue('Kitchen');
   await expect(kitchen(page, 'finished_sf')).toHaveValue('95');
-  await expect(marker(kitchen(page, 'name'))).toHaveCount(1);
+});
+
+test('a field Undo keeps room removal for an otherwise unedited walkthrough room', async ({
+  page,
+}) => {
+  await fillBesideOffice(page);
+  await marker(kitchen(page, 'category'))
+    .getByRole('button', { name: 'Undo', exact: true })
+    .click();
+  await expect(kitchen(page, 'category')).toHaveValue('1');
+  await expect(marker(kitchen(page, 'finished_sf'))).toHaveCount(1);
   await marker(kitchen(page, 'name')).getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.locator('#rooms .room')).toHaveCount(1);
   await expect(room(page, 'name')).toHaveValue('Office');
 });
 
-test('a repeated fill keeps unchanged new-room markers after an unrelated manual edit', async ({
+test('a repeated fill keeps unchanged field Undos but no room removal after a manual edit', async ({
   page,
 }) => {
   await fillBesideOffice(page);
   await kitchen(page, 'waste_percent').fill('10');
+  await expect(marker(kitchen(page, 'name'))).toHaveCount(0);
   await expect(marker(kitchen(page, 'finished_sf'))).toHaveCount(1);
   await page.locator('#fillScopeProperty').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(kitchen(page, 'waste_percent')).toHaveValue('10');
-  for (const key of ['name', 'category', 'finished_sf'])
+  await expect(marker(kitchen(page, 'name'))).toHaveCount(0);
+  for (const key of ['category', 'finished_sf'])
     await expect(marker(kitchen(page, key))).toHaveCount(1);
-  await marker(kitchen(page, 'name')).getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.locator('#rooms .room')).toHaveCount(1);
+  await marker(kitchen(page, 'finished_sf'))
+    .getByRole('button', { name: 'Undo', exact: true })
+    .click();
+  await expect(kitchen(page, 'finished_sf')).toHaveValue('0');
+  await expect(page.locator('#rooms .room')).toHaveCount(2);
+  await expect(kitchen(page, 'waste_percent')).toHaveValue('10');
 });
