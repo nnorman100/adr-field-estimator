@@ -215,6 +215,7 @@ async def live(token, iid, uid):
                     token=token,
                     inspection_id=iid,
                     protocol_version=2,
+                    workspace_protocol_version=1,
                     capture_id=capture,
                 )
             )
@@ -270,6 +271,7 @@ async def live(token, iid, uid):
                     token=token,
                     inspection_id=iid,
                     protocol_version=2,
+                    workspace_protocol_version=1,
                     capture_id=capture,
                     resume=True,
                 )

@@ -1,6 +1,6 @@
-﻿# Alert Disaster Restoration field estimator
+﻿# DryScope
 
-An owner-private mobile inspection app for ADR technicians in Bakersfield and Kern County. Open [the dedicated app](https://alert-disaster-field-2026.web.app) and sign in with the approved Google account, initially `nathanaelcnorman@gmail.com`.
+A mobile inspection app serving Alert Disaster Restoration first, and other restoration companies as isolated company workspaces. Open [the dedicated app](https://alert-disaster-field-2026.web.app) and sign in with Google or a verified, invited email/password account.
 
 Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical `alert-disaster-live` site was retired as of 2026-10-12; use this app's address. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md).
 
@@ -35,7 +35,7 @@ The worker caches versioned app assets and public Firebase initialization config
 
 ## Branding
 
-Pre-sign-in screens show only DryScope, with its wordmark in the masthead. Once signed in, the masthead, Account menu and documents take the company name, logo and contact details from the company profile (see [docs/company-workspaces.md](docs/company-workspaces.md)); until ADR's profile stores a logo, ADR alone falls back to the bundled ADR logo. The look follows [ADR's official website](https://alertdisaster.com/): red `#D42B32`, white and gray surfaces, Lato interface typography, and serif document text. EB Garamond supplies the document face as an openly licensed alternative to the site's commercial Garamond Premier Pro. Logo and fonts are hosted locally and included in the offline asset cache; font licenses are in `public/fonts/`. The live site supplied the primary phone `(661) 426-2151`, Bakersfield office address and service locations, verified October 6, 2026.
+Pre-sign-in screens show only DryScope, with its wordmark in the masthead. Once signed in, the masthead, Account menu and documents take the company name, logo and contact details from the company profile (see [docs/company-workspaces.md](docs/company-workspaces.md)); until ADR's profile stores a logo, ADR alone falls back to the bundled ADR logo. The interface uses DryScope's navy `#0B2545` palette (tokens in `public/app.css`); success states use a navy check mark, never green. Interface text uses Lato and document text a serif face. EB Garamond supplies the document face as an openly licensed alternative to the site's commercial Garamond Premier Pro. Logo and fonts are hosted locally and included in the offline asset cache; font licenses are in `public/fonts/`. The live site supplied the primary phone `(661) 426-2151`, Bakersfield office address and service locations, verified October 6, 2026.
 
 The DryScope logo is a water droplet and spore cluster inside an eight-tick moisture-meter ring, in navy `#0B2545`, water blue `#7CC4E8` and mold green `#9ED8A8`. It fills the app icons (`public/icon.svg`, `icon-192.png`, `icon-512.png`, `apple-touch-icon.png`), the signed-out masthead, the homeowner signing page when the company has no logo, and invitation emails for companies other than ADR without a logo (`backend/brand/dryscope-logo.png`). `public/brand/dryscope-*.svg` holds the full-colour, reverse, navy and white versions of the mark and wordmark. A company's own logo always replaces it.
 

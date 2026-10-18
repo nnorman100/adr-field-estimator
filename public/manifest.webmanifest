@@ -1,11 +1,11 @@
 {
-  "name": "Alert Disaster Restoration Field Estimator",
-  "short_name": "ADR Estimator",
+  "name": "DryScope",
+  "short_name": "DryScope",
   "description": "Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FFFFFE",
-  "theme_color": "#D42B32",
+  "background_color": "#F6F8FA",
+  "theme_color": "#0B2545",
   "orientation": "any",
   "categories": ["business", "productivity", "utilities"],
   "icons": [

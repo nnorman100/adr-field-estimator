@@ -174,6 +174,23 @@ for (const width of [320, 390])
       expect(pageErrors.get(page) || [], 'No uncaught browser exceptions').toEqual([]);
     });
 
+    test('primary actions are navy and success messages are navy on paper with a check, never green', async ({
+      page,
+    }) => {
+      const navy = 'rgb(11, 37, 69)';
+      const primary = page.locator('#startWalk');
+      await expect(primary).toHaveCSS('background-color', navy);
+      await expect(primary).toHaveCSS('color', 'rgb(255, 255, 255)');
+      await saveDraft(page);
+      const message = page.locator('#message');
+      await expect(message).toHaveText('Draft saved privately.');
+      await expect(message).toHaveClass('message success');
+      await expect(message).toHaveCSS('color', navy);
+      await expect(message).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+      await expect(message).toHaveCSS('border-left-color', navy);
+      expect(await message.evaluate((el) => getComputedStyle(el, '::before').content)).toBe('"✓ "');
+    });
+
     test('room removal opens a named safe-default modal; cancel and Escape preserve memory and IndexedDB', async ({
       page,
     }) => {

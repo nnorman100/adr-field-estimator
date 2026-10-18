@@ -325,6 +325,7 @@ test('weak uplink: small frames wait behind queued audio, and lagging acks pause
     'Weak signal: video paused, voice may be delayed',
   );
   await expect(page.locator('#liveStatus')).toHaveClass('status weak');
+  await expect(page.locator('#liveStatus')).toHaveCSS('color', 'rgb(138, 90, 0)');
   // A frame tick may land before the lag shows, so the pause is measured from here.
   const paused = await count('video');
   // Acknowledgements resume; real time (not a clock jump) passes, so only genuine lag counts.
