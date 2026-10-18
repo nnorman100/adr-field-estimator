@@ -131,11 +131,13 @@ test.describe('company workspaces', () => {
     expect(await page.evaluate(() => window.noReloadMarker)).toBe(true);
     await expect(page.locator('body')).not.toHaveClass(/company-brand/);
     await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
-    await expect(page.locator('.masthead .brand strong')).toBeVisible();
     await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
-    await expect(page.locator('.masthead .brand img')).toBeHidden();
+    await expect(page.locator('.masthead .brand img')).toBeVisible();
     await expect(page.locator('.masthead .brand img')).toHaveAttribute('alt', 'DryScope');
-    expect(await page.locator('.masthead .brand img').getAttribute('src')).toBeNull();
+    await expect(page.locator('.masthead .brand img')).toHaveAttribute(
+      'src',
+      '/brand/dryscope-wordmark.svg',
+    );
     await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
     await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
     await page.locator('#helpButton').click();

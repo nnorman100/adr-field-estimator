@@ -1627,7 +1627,7 @@ def test_invitation_email_shows_the_company_logo_inline_and_explains_the_app():
     assert 'cid:' not in text and '<' not in text
 
 
-def test_invitation_email_falls_back_to_the_adr_logo():
+def test_invitation_email_falls_back_to_the_dryscope_logo():
     with open('public/brand/adr-logo.jpg', 'rb') as public:
         assert workspaces.ADR_LOGO == public.read()
     oversized = 'data:image/jpeg;base64,' + base64.b64encode(b'x' * 100001).decode()
@@ -1639,14 +1639,18 @@ def test_invitation_email_falls_back_to_the_adr_logo():
     ]:
         message = workspaces.invitation_email(*branded(logo=logo), None)
         assert message['logo'] == dict(
-            data=workspaces.ADR_LOGO, subtype='jpeg', width=131, height=64
+            data=workspaces.DRYSCOPE_LOGO, subtype='png', width=200, height=58
         )
-        assert 'width="131" height="64"' in message['html']
+        assert 'width="200" height="58"' in message['html']
     legacy = {'profile': {'name': 'Company'}}
     assert (
         workspaces.invitation_email(direct_invite(), legacy, None)['logo']['data']
-        == workspaces.ADR_LOGO
+        == workspaces.DRYSCOPE_LOGO
     )
+    # ADR alone keeps its bundled logo until its profile stores one.
+    invite, adr = branded(name='Alert Disaster Restoration')
+    message = workspaces.invitation_email(invite, {**adr, 'company_id': 'adr'}, None)
+    assert message['logo'] == dict(data=workspaces.ADR_LOGO, subtype='jpeg', width=131, height=64)
 
 
 def test_invitation_email_escapes_a_hostile_company_name():

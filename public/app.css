@@ -183,6 +183,13 @@ fieldset:disabled {
   padding-left: 1rem;
   white-space: nowrap;
 }
+/* Signed out, the DryScope wordmark is the brand; the link's label already carries the name. */
+body:not(.company-brand) .brand img:not([hidden]) {
+  width: 150px;
+}
+body:not(.company-brand) .brand img:not([hidden]) + strong {
+  display: none;
+}
 .header-tools {
   display: flex;
   align-items: center;
@@ -846,6 +853,9 @@ footer {
   }
   .brand img {
     width: 96px;
+  }
+  body:not(.company-brand) .brand img:not([hidden]) {
+    width: 120px;
   }
   .brand strong {
     display: block;
@@ -1605,6 +1615,12 @@ footer {
 .sign-header h1 {
   margin: 0.35rem 0;
   font-size: 1.6rem;
+}
+.sign-brand {
+  display: block;
+  width: 120px;
+  height: auto;
+  margin-bottom: 0.75rem;
 }
 .homeowner-signing,
 .homeowner-receipt {

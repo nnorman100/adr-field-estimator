@@ -951,8 +951,8 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   await page.goto('/');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await showUpdateBanner(page);
-  await expect(page.locator('.brand strong')).toBeVisible();
-  await expect(page.locator('.brand strong')).toHaveText('DryScope');
+  await expect(page.locator('.brand img')).toBeVisible();
+  await expect(page.locator('.brand img')).toHaveAttribute('src', '/brand/dryscope-wordmark.svg');
   const boxes = await page.evaluate(() =>
     ['.brand', '#updateBanner', '#accountMenu'].map((s) => {
       const r = document.querySelector(s).getBoundingClientRect();
