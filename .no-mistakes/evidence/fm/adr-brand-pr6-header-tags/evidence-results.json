@@ -1,0 +1,131 @@
+{
+  "login390": {
+    "barBg": "rgb(11, 37, 69)",
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "helpInBar": true,
+    "accountInBar": true,
+    "mastheadVisible": false,
+    "powered": "Powered by DryScope",
+    "footer": "DryScope · Private field inspections\nPowered by DryScope",
+    "pageBg": "rgba(0, 0, 0, 0)"
+  },
+  "accountSignedOut": "DryScope · App version unstamped",
+  "login1280": {
+    "barBg": "rgb(11, 37, 69)",
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "helpInBar": true,
+    "accountInBar": true,
+    "mastheadVisible": false,
+    "powered": "Powered by DryScope",
+    "footer": "DryScope · Private field inspections\nPowered by DryScope",
+    "pageBg": "rgba(0, 0, 0, 0)"
+  },
+  "appShell": {
+    "mastheadVisible": false,
+    "mastheadBrand": "DryScope",
+    "mastheadImg": "/brand/dryscope-wordmark.svg",
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "footer": "DryScope · Private field inspections\nPowered by DryScope"
+  },
+  "roomCards": [
+    {
+      "loss": "water",
+      "tag": "WATER · Cat 1",
+      "cardBg": "rgb(228, 243, 251)",
+      "tagBg": "rgb(124, 196, 232)",
+      "tagColor": "rgb(11, 37, 69)"
+    },
+    {
+      "loss": "mold",
+      "tag": "MOLD · Cat 3",
+      "cardBg": "rgb(231, 246, 234)",
+      "tagBg": "rgb(158, 216, 168)",
+      "tagColor": "rgb(11, 37, 69)"
+    },
+    {
+      "loss": "water",
+      "tag": "WATER · Cat 2",
+      "cardBg": "rgb(228, 243, 251)",
+      "tagBg": "rgb(124, 196, 232)",
+      "tagColor": "rgb(11, 37, 69)"
+    }
+  ],
+  "reviewChips": [
+    {
+      "text": "Kitchen · WATER · Cat 1",
+      "loss": "water",
+      "bg": "rgb(228, 243, 251)",
+      "color": "rgb(26, 106, 150)"
+    },
+    {
+      "text": "Bathroom · MOLD · Cat 3",
+      "loss": "mold",
+      "bg": "rgb(231, 246, 234)",
+      "color": "rgb(44, 122, 71)"
+    },
+    {
+      "text": "Hallway · WATER · Cat 2",
+      "loss": "water",
+      "bg": "rgb(228, 243, 251)",
+      "color": "rgb(26, 106, 150)"
+    }
+  ],
+  "print": {
+    "chipsVisible": false,
+    "productBarVisible": false,
+    "tagsInDocs": 0,
+    "poweredVisible": false
+  },
+  "accountSignedIn": "DryScope · App version unstamped",
+  "afterSignOut": {
+    "chipCount": 0,
+    "reviewRoomsHTML": "",
+    "roomCards": 0
+  },
+  "pageErrors": [],
+  "historicalServerRecordHasInspection": false,
+  "historical": {
+    "rooms": [],
+    "roomCards": 0,
+    "roomTags": 0,
+    "chips": 0,
+    "bodyMentionsWaterCat": false
+  },
+  "adr-owner-shell": {
+    "mastheadVisible": true,
+    "mastheadText": "",
+    "mastheadImg": "/brand/adr-logo.jpg",
+    "mastheadHasDryScope": false,
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "footer": "Alert Disaster Restoration · Private company workspaces\nPowered by DryScope"
+  },
+  "adr-estimator-shell": {
+    "mastheadVisible": true,
+    "mastheadText": "",
+    "mastheadImg": "/brand/adr-logo.jpg",
+    "mastheadHasDryScope": false,
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "footer": "Alert Disaster Restoration · Private company workspaces\nPowered by DryScope"
+  },
+  "other-company-shell": {
+    "mastheadVisible": true,
+    "mastheadText": "Other Restoration",
+    "mastheadImg": null,
+    "mastheadHasDryScope": false,
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "footer": "Other Restoration · Private company workspaces\nPowered by DryScope"
+  },
+  "otherDashboardButtons": [
+    "Open jobs",
+    "New job",
+    "Manage team"
+  ],
+  "signPage": {
+    "barBg": "rgb(11, 37, 69)",
+    "lockup": "/brand/dryscope-wordmark-white.svg",
+    "signCompanyExists": 0,
+    "sentByText": false,
+    "footer": "Other Restoration · Private estimate review\nPowered by DryScope",
+    "lossTagsOnSignPage": 0
+  }
+}
