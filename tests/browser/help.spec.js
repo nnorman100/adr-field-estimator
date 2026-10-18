@@ -41,6 +41,19 @@ const ALL = [
   'Company settings',
   'Companies and the support view',
 ];
+// Signed out, the masthead shows the loaded DryScope wordmark, never a blank brand.
+async function expectWordmark(page) {
+  const wordmark = page.locator('.masthead .brand img');
+  await expect(wordmark).toBeVisible();
+  await expect(wordmark).toHaveAttribute('src', '/brand/dryscope-wordmark.svg');
+  await expect(wordmark).toHaveAttribute('alt', 'DryScope');
+  await expect
+    .poll(() => wordmark.evaluate((img) => img.complete && img.naturalWidth > 0))
+    .toBe(true);
+  expect((await wordmark.boundingBox()).width).toBeGreaterThan(80);
+  await expect(page.locator('.masthead .brand strong')).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+}
 async function openHelp(page) {
   const help = page.getByRole('button', { name: 'Help', exact: true });
   await expect(help).toBeVisible();
@@ -62,9 +75,7 @@ test.describe('signed out', () => {
         await page.goto('/');
         await expect(page.locator('#authPanel')).toBeVisible();
         expect((await page.locator('.masthead').boundingBox()).height).toBeLessThan(85);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
-          false,
-        );
+        await expectWordmark(page);
         const help = page.getByRole('button', { name: 'Help', exact: true });
         await expect(help).toHaveAttribute('aria-haspopup', 'dialog');
         let dialog = await openHelp(page);
@@ -106,11 +117,10 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
   for (const width of [320, 390, 641, 700, 1280]) {
     await page.setViewportSize({ width, height: 844 });
-    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+    await expectWordmark(page);
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
-  await expect(page.locator('.masthead .brand img')).toBeHidden();
   await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
   await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
@@ -238,7 +248,7 @@ test('signed-out offline shell keeps DryScope identity', async ({ page, context 
   await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
   for (const width of [320, 390, 641, 700, 1280]) {
     await page.setViewportSize({ width, height: 844 });
-    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+    await expectWordmark(page);
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');

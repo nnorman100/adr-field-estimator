@@ -3869,8 +3869,8 @@ function resetShellBranding() {
   document.body.classList.remove('company-brand');
   brand.querySelector('strong').textContent = 'DryScope';
   brand.setAttribute('aria-label', 'DryScope');
-  image.hidden = true;
-  image.removeAttribute('src');
+  image.hidden = false;
+  image.src = '/brand/dryscope-wordmark.svg';
   image.alt = 'DryScope';
   $('workspaceAccountDetails').replaceChildren();
   $('dashboardHeading').textContent = 'Dashboard';

@@ -70,6 +70,9 @@ INVITATION_SUBJECT = 'Invitation to join {company} on DryScope'
 # The build context is backend/, so it carries its own copy of public/brand/adr-logo.jpg.
 with open(os.path.join(os.path.dirname(__file__), 'brand', 'adr-logo.jpg'), 'rb') as _logo:
     ADR_LOGO = _logo.read()
+# Invitation logo for a company without one: the DryScope lockup on white.
+with open(os.path.join(os.path.dirname(__file__), 'brand', 'dryscope-logo.png'), 'rb') as _logo:
+    DRYSCOPE_LOGO = _logo.read()
 # Signed records predating workspaces have no identity snapshot. Preserve their historical letterhead.
 LEGACY_IDENTITY = {
     **ADR_PROFILE,
@@ -930,13 +933,15 @@ def password_setup_link(email):
 
 
 def invitation_logo(company):
-    """The company's saved logo (already a capped JPEG from clean_logo), otherwise the ADR logo."""
+    """The company's saved logo (already a capped JPEG from clean_logo), otherwise ADR's bundled logo for ADR and DryScope's for every other company."""
     match = re.fullmatch(
         r'data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)',
         company['profile'].get('logo_data_url') or '',
     )
     candidates = [(match[2], match[1])] if match else []
-    for data, subtype in candidates + [(ADR_LOGO, 'jpeg')]:
+    # Mirrors ADRDocuments.logoFor: until ADR's profile stores its logo, only ADR falls back to it.
+    fallback = (ADR_LOGO, 'jpeg') if company.get('company_id') == ADR_ID else (DRYSCOPE_LOGO, 'png')
+    for data, subtype in candidates + [fallback]:
         try:
             if isinstance(data, str):
                 data = base64.b64decode(data, validate=True)
@@ -954,7 +959,7 @@ def invitation_logo(company):
             )
         except Exception:
             continue
-    raise RuntimeError('The ADR logo could not be read.')
+    raise RuntimeError('The fallback invitation logo could not be read.')
 
 
 def invitation_email(invite, company, setup):

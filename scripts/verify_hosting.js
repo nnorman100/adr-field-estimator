@@ -86,7 +86,19 @@ const unstamp = (text) =>
       'Deployed asset differs: ' + file,
     );
   for (const file of [
+    'icon.svg',
+    'icon-192.png',
+    'icon-512.png',
+    'apple-touch-icon.png',
     'brand/adr-logo.jpg',
+    'brand/dryscope-mark.svg',
+    'brand/dryscope-mark-navy.svg',
+    'brand/dryscope-mark-white.svg',
+    'brand/dryscope-mark-reverse.svg',
+    'brand/dryscope-wordmark.svg',
+    'brand/dryscope-wordmark-white.svg',
+    'brand/dryscope-wordmark-navy.svg',
+    'brand/dryscope-wordmark-mono-white.svg',
     'fonts/lato-400-latin.woff2',
     'fonts/lato-700-latin.woff2',
     'fonts/lato-900-latin.woff2',
@@ -210,6 +222,7 @@ const unstamp = (text) =>
   });
   for (const path of [
     '/brand/adr-logo.jpg',
+    '/brand/dryscope-wordmark.svg',
     '/fonts/lato-400-latin.woff2',
     '/fonts/ebgaramond-400-latin.woff2',
   ])
