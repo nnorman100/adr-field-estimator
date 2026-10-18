@@ -202,3 +202,48 @@ test('a room chosen while its photo uploads or offline is kept and saved', async
   await expect.poll(() => settled(page)).toEqual(['Bathroom']);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 });
+
+test('a recognition reply cannot confirm a room chosen while an older move is in flight', async ({
+  page,
+}) => {
+  await open(page);
+  await chip(page, 'Room 1').click();
+  await rename(page, 'Kitchen');
+  await page.locator('#addRoomChip').click();
+  await rename(page, 'Hallway');
+  await chip(page, 'Kitchen').click();
+  await addImage(page, 'kitchen.png');
+  await expect.poll(() => settled(page)).toEqual(['Kitchen']);
+  // Recognition is answered by the server before the move but reaches the page after the reselection.
+  let deliverOcr, recognised, releaseMove, moveSent;
+  const ocrHeld = new Promise((resolve) => (deliverOcr = resolve));
+  const ocrDone = new Promise((resolve) => (recognised = resolve));
+  const moveHeld = new Promise((resolve) => (releaseMove = resolve));
+  const moving = new Promise((resolve) => (moveSent = resolve));
+  await page.route('**/api/inspections/*/photos/*/ocr', async (route) => {
+    const response = await route.fetch();
+    recognised();
+    await ocrHeld;
+    await route.fulfill({ response });
+  });
+  let held = false;
+  await page.route('**/api/inspections/*/photos/*/room', async (route) => {
+    if (held) return route.continue();
+    held = true;
+    moveSent();
+    await moveHeld;
+    await route.continue();
+  });
+  await page.evaluate(() => startOCR(state.draft.photos[0]));
+  await ocrDone;
+  const select = page.locator('#photoGallery .photo select');
+  await select.selectOption('Hallway');
+  await moving;
+  await select.selectOption('Kitchen');
+  deliverOcr();
+  await expect.poll(() => page.evaluate(() => state.ocr.size)).toBe(0);
+  releaseMove();
+  await expect.poll(() => settled(page)).toEqual(['Kitchen']);
+  await expect(page.locator('#photoGallery .photo strong')).toHaveText(['Kitchen']);
+  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+});

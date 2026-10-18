@@ -558,6 +558,15 @@ async function jsonApi(path, method = 'GET', body) {
     })
   ).json();
 }
+const roomWrites = new Set();
+async function writeRoom(photo, request) {
+  roomWrites.add(photo.id);
+  try {
+    return await request();
+  } finally {
+    roomWrites.delete(photo.id);
+  }
+}
 function absorb(record) {
   if (!state.draft || record.inspection_id !== state.draft.inspection_id) return;
   if (state.record && record.revision < state.record.revision) return;
@@ -578,7 +587,7 @@ function absorb(record) {
     const pending = photo.pending_room;
     Object.assign(photo, remote, { uploaded: true });
     if (pending === undefined) continue;
-    if (remote.room === pending) delete photo.pending_room;
+    if (remote.room === pending && !roomWrites.has(photo.id)) delete photo.pending_room;
     else photo.room = pending;
   }
   renderPhotos();
@@ -808,14 +817,15 @@ async function doSync() {
         captured_at: photo.captured_at,
         data_url: photo.data_url,
       };
+      const upload = () => jsonApi('/api/inspections/' + id + '/photos', 'POST', payload);
       try {
-        absorb(await jsonApi('/api/inspections/' + id + '/photos', 'POST', payload));
+        absorb(await writeRoom(photo, upload));
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
         if (photo.uploaded) continue;
         payload.expected_revision = state.record.revision;
-        absorb(await jsonApi('/api/inspections/' + id + '/photos', 'POST', payload));
+        absorb(await writeRoom(photo, upload));
       }
     }
     for (const photo of state.draft.photos.filter(
@@ -834,11 +844,11 @@ async function doSync() {
           room: photo.pending_room,
         });
       try {
-        absorb(await move());
+        absorb(await writeRoom(photo, move));
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
-        if (photo.pending_room !== undefined) absorb(await move());
+        if (photo.pending_room !== undefined) absorb(await writeRoom(photo, move));
       }
     }
     renderPhotos();
