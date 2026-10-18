@@ -152,8 +152,9 @@ window.WorkspaceUI = (() => {
       title = document.querySelector('.masthead .brand strong');
     title.textContent = profile?.name || 'Company administration';
     document.body.classList.add('company-brand');
-    image.hidden = !profile?.logo_data_url;
-    if (profile?.logo_data_url) image.src = profile.logo_data_url;
+    const logo = ADRDocuments.logoFor(profile && { ...profile, company_id: company.company_id });
+    image.hidden = !logo;
+    if (logo) image.src = logo;
     else image.removeAttribute('src');
     image.alt = profile?.name || '';
     document.querySelector('.masthead .brand').setAttribute('aria-label', title.textContent);

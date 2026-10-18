@@ -425,6 +425,37 @@ test('company profile edits require regenerated documents and render labels safe
   expect(await page.evaluate(() => window.companyInjected)).toBeUndefined();
 });
 
+// Temporary until PR 2 stores ADR's logo in its profile: only 'adr' falls back to the bundled logo.
+test('ADR without a profile logo shows the bundled logo until a saved logo replaces it', async ({
+  page,
+}) => {
+  await start(page, 'owner');
+  await expect(page.locator('.masthead .brand img')).toHaveAttribute('src', '/brand/adr-logo.jpg');
+  await expect(page.locator('.masthead .brand img')).toBeVisible();
+  await page.locator('#dashboardJobs').click();
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  for (const doc of ['#doc-proposal', '#doc-defense'])
+    await expect(page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
+      'src',
+      '/brand/adr-logo.jpg',
+    );
+  await navigate(page, 'dashboardProfile');
+  await page.locator('input[name=logo]').setInputFiles('public/brand/adr-logo.jpg');
+  await page.getByRole('button', { name: 'Save company details' }).click();
+  await expect(page.locator('#message')).toContainText('Company details saved');
+  await expect(page.locator('.masthead .brand img')).toHaveAttribute('src', /^data:image\/jpeg/);
+  await navigate(page, 'dashboardJobs');
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#finishAudit').click();
+  for (const doc of ['#doc-proposal', '#doc-defense'])
+    await expect(page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
+      'src',
+      /^data:image\/jpeg/,
+    );
+});
+
 test('invitation is explicit and bound to the matching Google account', async ({ page }) => {
   const invitation = await (
     await call(page, '/api/companies/adr/invitations', 'POST', {
@@ -939,11 +970,11 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
 test('company without a logo keeps its name visible between phone and tablet widths', async ({
   page,
 }) => {
-  await start(page, 'owner');
+  await start(page, 'other');
   for (const width of [641, 670, 700]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(page.locator('.masthead .brand img')).toBeHidden();
-    await expect(page.locator('.masthead .brand strong')).toHaveText('Alert Disaster Restoration');
+    await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
     await expect(page.locator('.masthead .brand strong')).toBeVisible();
   }
 });

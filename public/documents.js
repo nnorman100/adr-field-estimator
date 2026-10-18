@@ -130,6 +130,12 @@
     $('auditWarnings').textContent = warnings.join(' · ');
     $('auditWarnings').hidden = !warnings.length;
   }
+  // Temporary fallback until ADR's profile stores its logo; PR 2 uploads it and removes this.
+  const ADR_LOGO_FALLBACK = '/brand/adr-logo.jpg';
+  // A saved profile logo always wins; only company 'adr' falls back to the bundled logo.
+  function logoFor(identity) {
+    return identity?.logo_data_url || (identity?.company_id === 'adr' ? ADR_LOGO_FALLBACK : '');
+  }
   // Pre-workspace records use the historical identity supplied by the backend, never a live profile.
   function brand(docs, legacyIdentity) {
     const identity = docs.company_identity || legacyIdentity || {};
@@ -144,13 +150,14 @@
         .filter(Boolean)
         .join(' · ');
       const image = letter.querySelector('img');
-      image.hidden = !identity.logo_data_url;
-      if (identity.logo_data_url) image.src = identity.logo_data_url;
+      const logo = logoFor(identity);
+      image.hidden = !logo;
+      if (logo) image.src = logo;
       else image.removeAttribute('src');
       image.alt = name;
     }
     document.querySelector('[data-tab=proposal]').textContent = 'Proposal';
     return name;
   }
-  root.ADRDocuments = { node, select, render, brand };
+  root.ADRDocuments = { node, select, render, brand, logoFor };
 })(window);
