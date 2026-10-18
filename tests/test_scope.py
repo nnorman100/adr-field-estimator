@@ -223,3 +223,150 @@ def test_scope_extraction_daily_cap_returns_retry_after(context, monkeypatch):
     assert suggest(client).status_code == 200
     response = suggest(client)
     assert response.status_code == 429 and int(response.headers['Retry-After']) > 3600
+
+
+@pytest.mark.parametrize(
+    'transcript,proposed',
+    [
+        (
+            'Office, mold. Drywall, 20 square feet of finished demolition.',
+            [
+                change('category', 3, quote='Office, mold.', room='Office'),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='Drywall, 20 square feet of finished demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office, mold. Drywall, 20 square feet of finished demolition.',
+            [
+                change('category', 'mold', quote='Office, mold.', room='Office'),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='Drywall, 20 square feet of finished demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office is both water and mold, 20 square feet of finished drywall demolition.',
+            [
+                change(
+                    'category',
+                    'water and mold',
+                    quote='Office is both water and mold',
+                    room='Office',
+                ),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='20 square feet of finished drywall demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office: water, mold, or both? Both. 20 square feet of finished drywall demolition.',
+            [
+                change(
+                    'category', 'both', quote='Office: water, mold, or both? Both.', room='Office'
+                ),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='20 square feet of finished drywall demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office, category 1 water and mold. 20 square feet of finished drywall demolition.',
+            [
+                change(
+                    'category',
+                    1,
+                    quote='Office, category 1 water and mold.',
+                    room='Office',
+                ),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='20 square feet of finished drywall demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+        (
+            'Office, water category 1. There is also mold in the Office. 20 square feet of finished drywall demolition.',
+            [
+                change('category', 1, quote='Office, water category 1.', room='Office'),
+                change(
+                    'category',
+                    '3 · Contaminated / mold',
+                    quote='There is also mold in the Office.',
+                    room='Office',
+                ),
+                change(
+                    'finished_sf',
+                    20,
+                    quote='20 square feet of finished drywall demolition.',
+                    room='Office',
+                ),
+            ],
+        ),
+    ],
+)
+def test_scope_maps_mold_alone_or_with_water_to_category_3(
+    context, monkeypatch, transcript, proposed
+):
+    from backend.scope import scope_prompt
+
+    prompt = scope_prompt(InspectionData(technician_transcript=transcript))
+    assert (
+        'When the technician explicitly states a room has mold, or both water and mold, for a room with demolition, map that room category to 3 ("Contaminated / mold")'
+        in prompt
+    )
+    assert 'never diagnose mold' in prompt
+    client, _ = context
+    prepared(client, rooms=[], technician_transcript=transcript)
+    provider(monkeypatch, proposed)
+    response = suggest(client)
+    assert response.status_code == 200, response.text
+    assert {(c['room'], c['field']): c['value'] for c in response.json()['changes']} == {
+        ('Office', 'category'): 3,
+        ('Office', 'finished_sf'): 20,
+    }
+
+
+@pytest.mark.parametrize(
+    'transcript,bad_change',
+    [
+        (
+            'Bathroom has suspected microbial growth and 20 square feet of finished drywall.',
+            change(
+                'category',
+                3,
+                quote='Bathroom has suspected microbial growth',
+                room='Bathroom',
+            ),
+        ),
+        (
+            'Bathroom has suspected mold and 20 square feet of finished drywall.',
+            change('category', 'mold', quote='Bathroom has suspected mold', room='Bathroom'),
+        ),
+        (
+            'Bathroom has no mold and 20 square feet of finished drywall.',
+            change('category', 3, quote='Bathroom has no mold', room='Bathroom'),
+        ),
+    ],
+)
+def test_suspected_or_negated_mold_does_not_map_to_category_3(transcript, bad_change):
+    values = InspectionData(
+        technician_transcript=transcript, rooms=[{'name': 'Bathroom', 'category': 1}]
+    )
+    with pytest.raises(ValueError):
+        validate_suggestions(values, ScopeSuggestions(changes=[bad_change], questions=[]))

@@ -1,5 +1,6 @@
 """Reviewable scope suggestions grounded only in the technician's recorded words."""
 
+import re
 from typing import Literal
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
@@ -30,6 +31,18 @@ JobField = Literal[
 ]
 RoomField = Literal['category', 'unfinished_sf', 'finished_sf', 'custom_cabinetry', 'waste_percent']
 ROOM_FIELDS = set(RoomField.__args__)
+MOLD_CATEGORY_VALUES = {
+    'mold',
+    'both',
+    'water and mold',
+    'mold and water',
+    'contaminated / mold',
+    '3 · contaminated / mold',
+}
+MOLD_QUALIFIER_RE = re.compile(
+    r'\b(?:no|not|without|suspected|possible|potential|unconfirmed)(?:\s+(?:visible|confirmed|active|black|toxic|water\s+or|microbial\s+growth\s+or))*\s+mold\b'
+)
+MOLD_WORD_RE = re.compile(r'\bmold\b')
 
 
 class ScopeChange(StrictModel):
@@ -78,24 +91,71 @@ def normalized(text):
     return ' '.join(text.split()).casefold()
 
 
+def states_mold(quote):
+    cleaned = MOLD_QUALIFIER_RE.sub('', normalized(quote))
+    return bool(MOLD_WORD_RE.search(cleaned))
+
+
+def normalize_category_change(change):
+    if change.field != 'category':
+        return change
+    text = normalized(change.source_quote)
+    quote_has_mold = states_mold(change.source_quote)
+    quote_has_both = bool(re.search(r'\bboth\b', text)) and 'suspect' not in text
+    if isinstance(change.value, str):
+        label = normalized(change.value)
+        if label in MOLD_CATEGORY_VALUES and (
+            quote_has_mold or (label == 'both' and quote_has_both)
+        ):
+            return change.model_copy(update={'value': 3})
+    if type(change.value) is not int:
+        raise ValueError('A water category must be an explicit category number.')
+    if change.value in (1, 2) and quote_has_mold:
+        return change.model_copy(update={'value': 3})
+    if (
+        change.value == 3
+        and ('suspect' in text or MOLD_QUALIFIER_RE.search(text))
+        and not quote_has_mold
+        and not re.search(r'\bcat(?:egory)?\s*(?:3|three)\b', text)
+    ):
+        raise ValueError('Suspected microbial growth does not set a water category.')
+    return change
+
+
 def validate_suggestions(data, suggestions):
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
     candidate = data.model_dump(mode='json')
     known = {}
     for i, room in enumerate(data.rooms):
         known.setdefault(normalized(room.name), []).append(i)
-    seen = set()
-    new_rooms = {}
-    changes = []
+    prepared = []
     for change in suggestions.changes:
         if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
             raise ValueError('A proposed value has no supporting technician quote.')
-        if change.field == 'category' and type(change.value) is not int:
-            raise ValueError('A water category must be an explicit category number.')
         if (change.field in ROOM_FIELDS) != (change.room is not None):
             raise ValueError(
                 'A room value must identify its room; job values cannot target a room.'
             )
+        prepared.append(normalize_category_change(change))
+    mold_rooms = {
+        normalized(c.room)
+        for c in prepared
+        if c.room and c.field == 'category' and c.value == 3 and states_mold(c.source_quote)
+    }
+    prepared = [
+        c
+        for c in prepared
+        if not (
+            c.room
+            and c.field == 'category'
+            and normalized(c.room) in mold_rooms
+            and c.value in (1, 2)
+        )
+    ]
+    seen = set()
+    new_rooms = {}
+    changes = []
+    for change in prepared:
         key = (normalized(change.room) if change.room else None, change.field)
         if key in seen:
             raise ValueError('Conflicting scope suggestions require clarification.')
@@ -150,8 +210,9 @@ def scope_prompt(data):
         'Use the latest explicit correction; if contradictory or uncertain, omit the field and ask a question. '
         'Never treat a hypothetical example, an AI suggestion, a requested calculation, or an estimate from camera imagery as a measurement. '
         'Only explicit demolition areas in square feet can set finished_sf or unfinished_sf; do not use floor area or multiply dimensions. '
-        'Do not infer a water category from the cause. Room values need room set to an exact existing room name or an explicitly spoken new room name; '
-        'job values must use room:null. New rooms require explicit category and at least one measured demolition area; otherwise omit that room and ask. '
+        'Do not infer a water category from the cause. When the technician explicitly states a room has mold, or both water and mold, for a room with demolition, map that room category to 3 ("Contaminated / mold"), even if a water category 1 or 2 was also stated for that room; for water-only rooms require an explicit water category (1, 2, or 3). '
+        'Room values need room set to an exact existing room name or an explicitly spoken new room name; '
+        'job values must use room:null. New rooms require explicit category (including technician-stated mold or water-and-mold mapped to 3) and at least one measured demolition area; otherwise omit that room and ask. '
         'Preserve exact unit-qualified room names. Never merge bathrooms or other matching names across units; if unit identity is ambiguous, omit affected room changes and ask. '
         'Use statements for this inspection only, never linked jobs or a proposed combined schedule/discount. '
         'Third-party reports and owner statements quoted in notes are attributed information, not explicit technician confirmation of form values. '
@@ -164,7 +225,7 @@ def scope_prompt(data):
         'do not add flood-cut heights and linear feet, sum separate materials, or classify flooring/materials into a pricing bucket without an explicit technician classification. '
         'Until dry planks, perimeter flood cuts and overlapping removal segments are not confirmed total demolition SF; ask for a measured non-overlapping total and classification. '
         'Administrative monetary loss categories/budget bands are not water category 1/2/3. Photo filenames, upload dates, readings and general health statements cannot set scope values. '
-        'Dry moisture or suspected microbial growth alone cannot set category. '
+        'Dry moisture or suspected microbial growth alone cannot set category; never diagnose mold, and only map to category 3 when the technician explicitly states category 3 or states the room is mold or both water and mold. '
         'Omit unstated fields; never fill missing values with defaults, zero, or false. Preserve scope not explicitly corrected. '
         'Equipment counts are job totals; do not convert per-room counts into totals or drying recommendations into confirmed quantities. '
         'Map fans to air_movers and dehus to dehumidifiers only when explicitly stated. Do not output money, rates, moisture readings, '
