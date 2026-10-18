@@ -12,6 +12,7 @@ from backend.claims import (
     VALIDITY,
 )
 from backend.contracts import InspectionData, AIResult
+from backend.prompts import audit_prompt
 
 
 def scoped(**kwargs):
@@ -342,6 +343,14 @@ def test_assistant_recap_of_a_technician_fact_keeps_the_technician_turn():
     assert technician_statement(data) == 'One dehumidifier for three days.'
 
 
+def test_greeting_prefixed_technician_fact_is_kept():
+    data = scoped(
+        technician_transcript='Good morning, one dehumidifier for three days.',
+        assistant_transcript='Good morning! One dehumidifier for three days. Which room?',
+    )
+    assert technician_statement(data) == 'Good morning, one dehumidifier for three days.'
+
+
 def test_supporting_photos_are_cited_without_claiming_a_reading():
     ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
     photos = [photo('a' * 32, 'Office'), photo('b' * 32, 'Office')]
@@ -381,52 +390,38 @@ def test_letterhead_heads_the_letter_with_one_separator_and_the_phone():
     assert letter.startswith('Other Co · 1 Main St · Fresno, CA · CSLB #950983\n\nTO: ')
 
 
+ADVICE = 'This home was built in 1978. Lead and asbestos testing may be required before demolition.'
+REPORTS = [
+    'The homeowner supplied an asbestos report; cabinet removal remains conditional on its review.',
+    'The homeowner supplied asbestos test results from 2020; the cabinet-removal plan needs review.',
+]
+
+
 @pytest.mark.parametrize('year', [1960, 1978])
-def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
+def test_ai_testing_advice_follows_the_age_rule_and_text_uses_plain_terms(year):
     ai = AIResult(
-        summary=(
-            'Office has laminate and drywall removal. Lead or asbestos testing may be needed'
-            ' given the 1978 build year. The JSON metadata lists no dehumidifier.'
-        ),
+        summary='Office has laminate and drywall removal. The JSON metadata lists no dehumidifier.',
         suggestions=[
-            'Determine if lead or asbestos testing is required prior to disturbing drywall,'
-            ' given the 1978 build year.',
             'The technician stated one dehumidifier for three days, whereas the JSON metadata'
             ' indicates 0 dehumidifiers and 1 air scrubber.',
             'Confirm laminate square footage; 10 linear feet is not an area.',
-            'Check whether a leak could lead to further damage under the flooring.',
-            'Testing for lead may be needed given the 1978 build year.',
-            'The homeowner supplied an asbestos report; cabinet removal remains conditional on'
-            ' its review.',
-            'The homeowner supplied asbestos test results; the cabinet-removal plan needs review.',
+            *REPORTS,
         ],
         unpriced_work=['Office: one dehumidifier for three days is absent from priced_scope.'],
+        testing_advice=[ADVICE],
     )
     docs = make_documents(acme(year_built=year), [], ai)
     assert docs['ai_suggestions'] == [
         'The technician stated one dehumidifier for three days, whereas the saved inspection'
         ' indicates 0 dehumidifiers and 1 air scrubber.',
         'Confirm laminate square footage; 10 linear feet is not an area.',
-        'Check whether a leak could lead to further damage under the flooring.',
-        'The homeowner supplied an asbestos report; cabinet removal remains conditional on'
-        ' its review.',
-        'The homeowner supplied asbestos test results; the cabinet-removal plan needs review.',
-    ]
+        *REPORTS,
+    ] + ([ADVICE] if year < 1978 else [])
     assert docs['ai_summary'] == (
         'Office has laminate and drywall removal. The saved inspection lists no dehumidifier.'
     )
-    lines = AIResult(
-        summary=(
-            'Office: drywall removal\n- Lead testing may be needed for a home this age\n- Laminate removal\n'
-            '- Homeowner shared an asbestos report. Testing for lead may be needed given the'
-            ' 1978 build year.'
-        ),
-        suggestions=[],
-        unpriced_work=[],
-    )
-    assert make_documents(acme(year_built=year), [], lines)['ai_summary'] == (
-        'Office: drywall removal\n- Laminate removal\n- Homeowner shared an asbestos report.'
-    )
+    shown = str(docs)
+    assert ('testing may be required' in shown) == (year < 1978)
     assert docs['unpriced_work'] == [
         'Office: one dehumidifier for three days is absent from priced scope.'
     ]
@@ -435,3 +430,11 @@ def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
         'Due to property age' if year < 1978 else 'The home was built in 1978.'
     )
     assert not docs['signable']
+
+
+@pytest.mark.parametrize(
+    'year, rule', [(1960, 'the app requires'), (1978, 'the app does not require')]
+)
+def test_audit_prompt_gives_the_model_the_app_age_rule(year, rule):
+    prompt = audit_prompt(acme(year_built=year).model_dump(mode='json'), [], [])
+    assert f'the home was built in {year}, so {rule} lead/asbestos testing' in prompt

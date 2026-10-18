@@ -801,11 +801,13 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
         == {'thinking_level': 'LOW'}
     )
     schemas = [body['generationConfig']['responseSchema'] for _, _, body in requests]
-    assert (
-        schemas[0]['required']
-        == schemas[0]['property_ordering']
-        == ['summary', 'suggestions', 'unpriced_work']
-    )
+    assert schemas[0]['required'] == ['summary', 'suggestions', 'unpriced_work']
+    assert schemas[0]['property_ordering'] == [
+        'summary',
+        'suggestions',
+        'unpriced_work',
+        'testing_advice',
+    ]
     assert schemas[0]['properties']['suggestions'] == {
         'type': 'ARRAY',
         'items': {'type': 'STRING', 'max_length': 1000},
