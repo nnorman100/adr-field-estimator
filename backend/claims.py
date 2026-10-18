@@ -162,6 +162,10 @@ def proposal_range(data: InspectionData, items):
     return amount(job + equipment + low_labor), amount(job + equipment + high_labor)
 
 
+def proposal_date():
+    return datetime.now(ZoneInfo('America/Los_Angeles')).strftime('%m-%d-%Y')
+
+
 def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, customer_name=''):
     company_name = identity['name'] if identity else 'Alert Disaster Restoration'
     company_address = identity['address'] if identity else 'Bakersfield, CA'
@@ -244,7 +248,7 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
         adr_estimate=dict(
             property_address=data.address,
             customer_name=customer,
-            date=datetime.now(ZoneInfo('America/Los_Angeles')).strftime('%m-%d-%Y'),
+            date=proposal_date(),
             proposed_cost=float(estimate_high),
             proposed_cost_low=float(estimate_low),
             lead_notice_required=before,

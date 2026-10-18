@@ -6,6 +6,7 @@ import time
 from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
+import backend.claims as claims
 import backend.main as bm
 from tests.test_backend import context, inspect, ID
 from tests.test_logging import entries
@@ -167,3 +168,36 @@ def test_provider_errors_are_not_retried(context, budget, monkeypatch):
     )
     response, _ = post_audit(client, record)
     assert response.status_code == 502 and len(calls) == 1
+
+
+def test_unchanged_revision_reuses_the_saved_audit(context, budget, monkeypatch):
+    client, store = context
+    record = inspect(client)
+    calls = provider(monkeypatch, [0, 0])
+    saves = counted_saves(monkeypatch, store)
+    first, _ = post_audit(client, record)
+    again, _ = post_audit(client, record)
+    assert first.status_code == again.status_code == 200, again.text
+    # A second Finish & review on the same revision returns the saved audit without the model.
+    assert again.json()['audit'] == first.json()['audit'] and len(calls) == 1
+    assert saves == [record['revision']]
+    # Any input edit clears the audit, so the next Finish & review runs the model again.
+    edited = dict(record['data'], technician_notes='Edited notes.')
+    saved = client.put(
+        '/api/inspections/' + ID, json={'expected_revision': record['revision'], 'data': edited}
+    ).json()
+    rerun, _ = post_audit(client, saved)
+    assert rerun.status_code == 200 and len(calls) == 2
+    assert saves == [record['revision'], saved['revision']]
+
+
+def test_a_new_proposal_date_regenerates_the_saved_audit(context, budget, monkeypatch):
+    client, _ = context
+    record = inspect(client)
+    calls = provider(monkeypatch, [0, 0])
+    post_audit(client, record)
+    for module in (bm, claims):
+        monkeypatch.setattr(module, 'proposal_date', lambda: '01-01-2099')
+    dated, _ = post_audit(client, record)
+    assert dated.json()['audit']['documents']['adr_estimate']['date'] == '01-01-2099'
+    assert len(calls) == 2

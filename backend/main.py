@@ -59,7 +59,7 @@ try:
         TranscriptionResult,
     )
     from . import signing_links
-    from .claims import make_documents, price_scope
+    from .claims import make_documents, price_scope, proposal_date
     from .prompts import (
         live_prompt,
         audit_prompt,
@@ -97,7 +97,7 @@ except ImportError:
         TranscriptionResult,
     )
     import signing_links
-    from claims import make_documents, price_scope
+    from claims import make_documents, price_scope, proposal_date
     from prompts import (
         live_prompt,
         audit_prompt,
@@ -467,6 +467,21 @@ async def stored(method, *args):
             outcome=type(error).__name__,
         )
         raise HTTPException(503, 'Changes could not be saved. Your local draft can be retried.')
+
+
+def reusable_audit(record, revision, identity, customer):
+    """The saved audit still matches this revision, company profile, customer and proposal date."""
+    audit = record.get('audit')
+    if not audit or audit['revision'] != revision:
+        return False
+    saved, current = audit['documents'].get('company_identity') or {}, identity or {}
+    proposal = audit['documents']['adr_estimate']
+    return (
+        (saved.get('company_id'), saved.get('version'))
+        == (current.get('company_id'), current.get('version'))
+        and proposal.get('customer_name', '') == customer
+        and proposal['date'] == proposal_date()
+    )
 
 
 def public_record(record):
@@ -955,6 +970,9 @@ async def audit_inspection(
     revision = record['revision']
     identity = await stored(store.workspaces.snapshot, staff['uid']) if WORKSPACES_ENABLED else None
     customer = await stored(store.workspaces.customer_name, record) if WORKSPACES_ENABLED else ''
+    if reusable_audit(record, revision, identity, customer):
+        # Every input edit clears the audit, so a second Finish & review returns the saved result.
+        return public_record(record)
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
     contents = [prompt]
     for photo in record['photos']:
