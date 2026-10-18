@@ -338,7 +338,7 @@ for (const width of [320, 390])
       await clearOfChrome(page, '#documentsConfirmedError');
       await expect(page.locator('#authorizationStatus')).toHaveText('');
       await expect(page.locator('#authorizationStatus')).not.toContainText(
-        /draw a signature|four documents were reviewed/i,
+        /draw a signature|proposal was reviewed/i,
       );
       expect(signingRequests).toHaveLength(0);
       await page.locator('#clearSignature').click();

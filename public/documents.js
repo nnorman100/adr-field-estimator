@@ -12,7 +12,7 @@
   function paragraphs(parent, values) {
     for (const value of Array.isArray(values) ? values : [values]) parent.append(node('p', value));
   }
-  // viewed is the caller's set of opened documents; signing waits until it holds all four.
+  // viewed is the caller's set of opened documents; the homeowner link waits until it holds all four.
   function select(name, viewed) {
     viewed.add(name);
     document.querySelectorAll('[data-tab]').forEach((tab) => {
@@ -48,20 +48,26 @@
     ]);
     body.append(
       node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
-      node('p', 'Itemized charges at base rates: ' + money(docs.xactimate_total)),
+      node('p', 'Itemized scope total: ' + money(docs.xactimate_total)),
     );
     body.append(node('h3', 'Findings'));
     paragraphs(body, p.findings);
     body.append(node('h3', 'Proposed scope'));
     paragraphs(body, p.recommendations);
     paragraphs(body, p.disclaimers || []);
-    if (docs.ai_summary) {
-      body.append(node('h3', 'AI summary · technician review required'));
-      paragraphs(body, docs.ai_summary);
-    }
-    if (docs.ai_suggestions?.length) {
-      body.append(node('h3', 'AI suggestions · outside the authorized scope'));
-      paragraphs(body, docs.ai_suggestions);
+    // AI notes are for the estimator only: the signing page has no #auditNotes and never shows them.
+    const notes = $('auditNotesBody');
+    if (notes) {
+      notes.replaceChildren();
+      if (docs.ai_summary) {
+        notes.append(node('h3', 'AI summary · technician review required'));
+        paragraphs(notes, docs.ai_summary);
+      }
+      if (docs.ai_suggestions?.length) {
+        notes.append(node('h3', 'AI suggestions · outside the authorized scope'));
+        paragraphs(notes, docs.ai_suggestions);
+      }
+      $('auditNotes').hidden = !notes.childElementCount;
     }
     $('claimParty').replaceChildren();
     paragraphs($('claimParty'), [...customer, 'Property: ' + p.property_address]);

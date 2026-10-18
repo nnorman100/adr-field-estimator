@@ -270,6 +270,10 @@ function renderControls() {
 function selectDocument(name) {
   if (!state.documents) return;
   ADRDocuments.select(name, ui.viewed);
+  // The technician signs once the proposal is open; the other three documents are optional here.
+  $('documentProgress').textContent = ui.viewed.has('proposal')
+    ? 'Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.'
+    : 'Open the proposal before signing.';
   if (name === 'proposal') requestAnimationFrame(resizeSignature);
 }
 function say(text, type = '') {
@@ -2104,7 +2108,7 @@ async function finishAudit() {
     renderDocuments();
     say(
       state.documents.signable
-        ? 'Audit ready. Review all four documents before signing.'
+        ? 'Audit ready. Review the proposal before signing.'
         : auditBlockMessage(state.documents, !!window.WorkspaceUI?.can('profile_manage')),
       state.documents.signable ? 'success' : 'error',
     );
@@ -2234,7 +2238,7 @@ async function authorize() {
   if (!$('documentsConfirmed').checked) {
     signingError(
       'documentsConfirmedError',
-      'Confirm all four documents were reviewed with the homeowner or representative before signing.',
+      'Confirm the proposal was reviewed with the homeowner or representative before signing.',
       $('documentsConfirmed'),
     );
     return;

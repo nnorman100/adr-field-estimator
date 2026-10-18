@@ -49,6 +49,7 @@ async function draw(page) {
   await page.mouse.up();
 }
 async function signAsHomeowner(page) {
+  // The homeowner link still requires all four documents; the technician app needs only the proposal.
   await expect(page.locator('#submitSignature')).toBeDisabled();
   for (const name of ['proposal', 'claim', 'defense', 'photos'])
     await page.locator('[data-tab="' + name + '"]').click();
@@ -93,7 +94,10 @@ test('technician sends a link, an unsigned-in homeowner signs it and the technic
       ].map((id) => document.getElementById(id).textContent),
     );
   expect(await text(view)).toEqual(await text(page));
-  await expect(view.locator('#proposalBody')).toContainText('<img src=x');
+  // AI review notes stay with the estimator: neither the homeowner page nor the proposal shows them.
+  await expect(view.locator('#proposalBody')).not.toContainText('technician review required');
+  await expect(view.locator('#proposalBody')).not.toContainText('<img src=x');
+  await expect(view.locator('#auditNotes')).toHaveCount(0);
   expect(await view.evaluate(() => window.reviewInjected)).toBeUndefined();
   await expect(view.locator('#consentReviewedText')).toContainText('I reviewed all four documents');
   await expect(view.locator('#linkExpiry')).toContainText('This link expires');
