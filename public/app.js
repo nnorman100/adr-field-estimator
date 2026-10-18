@@ -1123,30 +1123,19 @@ async function fillScopeFromWalkthrough() {
           name == null ? filled : filled.rooms.find((room) => roomKey(room.name) === roomKey(name));
       const replaced =
           !original && filled.rooms.indexOf(target) === 0 && defaultPhotoRename(before, filled),
-        prior = original || (replaced ? before.rooms[0] : null);
-      if (!prior) {
+        prior = original || (replaced ? before.rooms[0] : null),
+        quotes = group.map((change) => change.source_quote),
+        fields = original ? group : [{ field: 'name', value: target.name }, ...group];
+      for (const change of fields) {
+        if (prior && prior[change.field] === change.value) continue;
         entries.push({
           target,
-          fields: ['name', ...group.map((change) => change.field)],
-          after: stable(target),
-          room: true,
-          quotes: group.map((change) => change.source_quote),
+          field: change.field,
+          before: (prior || emptyData().rooms[0])[change.field],
+          after: change.value,
+          removesRoom: !prior && change.field === 'name',
+          quotes: change.source_quote ? [change.source_quote] : quotes,
         });
-      } else {
-        const fields = replaced
-          ? [{ field: 'name', value: target.name, source_quote: group[0].source_quote }, ...group]
-          : group;
-        for (const change of fields) {
-          if (prior[change.field] === change.value) continue;
-          entries.push({
-            target,
-            fields: [change.field],
-            before: prior[change.field],
-            after: change.value,
-            room: false,
-            quotes: [change.source_quote],
-          });
-        }
       }
     }
     retagDefaultPhotos(before, filled);
@@ -1158,16 +1147,9 @@ async function fillScopeFromWalkthrough() {
       for (const entry of previous.entries) {
         const index = previous.data.rooms.indexOf(entry.target),
           target = entry.target === previous.data ? filled : filled.rooms[index];
-        if (
-          !target ||
-          entries.some(
-            (item) =>
-              item.target === target && item.fields.some((field) => entry.fields.includes(field)),
-          )
-        )
+        if (!target || entries.some((item) => item.target === target && item.field === entry.field))
           continue;
-        if (entry.room ? stable(target) === entry.after : target[entry.fields[0]] === entry.after)
-          entries.push({ ...entry, target });
+        if (target[entry.field] === entry.after) entries.push({ ...entry, target });
       }
     state.scopeEdits = { draft, data: filled, entries };
     fillForm();
@@ -1245,52 +1227,47 @@ function renderWalkthroughEdits() {
   edit.entries = edit.entries.filter(
     (entry) =>
       (entry.target === edit.data || edit.data.rooms.includes(entry.target)) &&
-      (entry.room
-        ? stable(entry.target) === entry.after
-        : entry.target[entry.fields[0]] === entry.after),
+      entry.target[entry.field] === entry.after,
   );
   for (const entry of edit.entries) {
-    for (const field of entry.fields) {
-      const roomIndex = edit.data.rooms.indexOf(entry.target),
-        id =
-          field === 'is_after_hours'
-            ? 'afterHours'
-            : field.replace(/_([a-z])/g, (_, c) => c.toUpperCase()),
-        control =
-          roomIndex < 0
-            ? $(id)
-            : document.querySelector(
-                '[data-room-index="' + roomIndex + '"][data-room-key="' + field + '"]',
-              );
-      if (!control) continue;
-      const badge = node('span', undefined, 'walkthrough-edit'),
-        undo = button('Undo', async () => {
-          if (
-            state.signed ||
-            confirmedAuthorization ||
-            state.draft !== edit.draft ||
-            state.draft.data !== edit.data ||
-            !edit.entries.includes(entry) ||
-            state.conflict
-          )
-            throw Error('The draft changed. Review its current values.');
-          const before = structuredClone(edit.data);
-          if (entry.room) {
-            const index = edit.data.rooms.indexOf(entry.target);
-            edit.data.rooms.splice(index, 1);
-          } else entry.target[entry.fields[0]] = entry.before;
-          retagDefaultPhotos(before, edit.data);
-          edit.entries = edit.entries.filter((item) => item !== entry);
-          changed();
-          fillForm();
-          await persist();
-          say('Walkthrough value undone. Review and confirm scope again.');
-        });
-      badge.title = entry.quotes.join('\n');
-      undo.title = entry.room ? 'Undo this room’s walkthrough values' : 'Restore previous value';
-      badge.append(node('span', 'From walkthrough · '), undo);
-      control.closest('label').append(badge);
-    }
+    const field = entry.field,
+      roomIndex = edit.data.rooms.indexOf(entry.target),
+      id =
+        field === 'is_after_hours'
+          ? 'afterHours'
+          : field.replace(/_([a-z])/g, (_, c) => c.toUpperCase()),
+      control =
+        roomIndex < 0
+          ? $(id)
+          : document.querySelector(
+              '[data-room-index="' + roomIndex + '"][data-room-key="' + field + '"]',
+            );
+    if (!control) continue;
+    const badge = node('span', undefined, 'walkthrough-edit'),
+      undo = button('Undo', async () => {
+        if (
+          state.signed ||
+          confirmedAuthorization ||
+          state.draft !== edit.draft ||
+          state.draft.data !== edit.data ||
+          !edit.entries.includes(entry) ||
+          state.conflict
+        )
+          throw Error('The draft changed. Review its current values.');
+        const before = structuredClone(edit.data);
+        if (entry.removesRoom) edit.data.rooms.splice(edit.data.rooms.indexOf(entry.target), 1);
+        else entry.target[entry.field] = entry.before;
+        retagDefaultPhotos(before, edit.data);
+        edit.entries = edit.entries.filter((item) => item !== entry);
+        changed();
+        fillForm();
+        await persist();
+        say('Walkthrough value undone. Review and confirm scope again.');
+      });
+    badge.title = entry.quotes.join('\n');
+    undo.title = entry.removesRoom ? 'Remove this walkthrough room' : 'Restore previous value';
+    badge.append(node('span', 'From walkthrough · '), undo);
+    control.closest('label').append(badge);
   }
 }
 function collect() {
