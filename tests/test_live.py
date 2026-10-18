@@ -217,3 +217,10 @@ def test_live_prompt_points_to_fill_scope_and_asks_water_mold_or_both_per_room()
             'never diagnose mold yourself: record mold as technician-reported, and record suspected microbial growth as suspected, not confirmed mold'
             in instructions
         )
+
+
+def test_prompt_templates_are_company_neutral_at_source():
+    from backend import prompts
+
+    for template in (prompts.LIVE_INSTRUCTIONS, prompts.AUDIT_INSTRUCTIONS):
+        assert 'ADR' not in template and 'Alert Disaster' not in template
