@@ -602,6 +602,7 @@ function clearDisplayedInspection() {
   for (const id of [
     'rooms',
     'photoRoom',
+    'reviewRooms',
     'proposalBody',
     'claimCards',
     'claimItems',
