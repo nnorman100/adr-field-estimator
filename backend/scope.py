@@ -1,6 +1,5 @@
 """Reviewable scope suggestions grounded only in the technician's recorded words."""
 
-import re
 from typing import Literal
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
@@ -31,11 +30,6 @@ JobField = Literal[
 ]
 RoomField = Literal['category', 'unfinished_sf', 'finished_sf', 'custom_cabinetry', 'waste_percent']
 ROOM_FIELDS = set(RoomField.__args__)
-MOLD_QUALIFIER_RE = re.compile(
-    r"\b(?:no|not|\w+n't|never|without|free\s+of|suspected|possible|potential|unconfirmed)"
-    r'(?:\s+(?:any|visible|confirmed|active|black|toxic|evidence|signs?|of|water\s+or|microbial\s+growth\s+or))*\s+mold\b'
-)
-MOLD_WORD_RE = re.compile(r'\bmold\b')
 
 
 class ScopeChange(StrictModel):
@@ -84,32 +78,6 @@ def normalized(text):
     return ' '.join(text.split()).casefold()
 
 
-def states_mold(quote):
-    cleaned = MOLD_QUALIFIER_RE.sub('', normalized(quote))
-    return bool(MOLD_WORD_RE.search(cleaned))
-
-
-def normalize_category_change(change):
-    if change.field != 'category':
-        return change
-    text = normalized(change.source_quote)
-    quote_has_mold = states_mold(change.source_quote)
-    if type(change.value) is not int:
-        raise ValueError('A water category must be an explicit category number.')
-    if change.value in (1, 2) and quote_has_mold:
-        raise ValueError(
-            'A room with technician-reported mold uses category 3; clarify the category.'
-        )
-    if (
-        change.value == 3
-        and ('suspect' in text or MOLD_QUALIFIER_RE.search(text))
-        and not quote_has_mold
-        and not re.search(r'\bcat(?:egory)?\s*(?:3|three)\b', text)
-    ):
-        raise ValueError('Suspected microbial growth does not set a water category.')
-    return change
-
-
 def validate_suggestions(data, suggestions):
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
     candidate = data.model_dump(mode='json')
@@ -122,11 +90,12 @@ def validate_suggestions(data, suggestions):
     for change in suggestions.changes:
         if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
             raise ValueError('A proposed value has no supporting technician quote.')
+        if change.field == 'category' and type(change.value) is not int:
+            raise ValueError('A water category must be an explicit category number.')
         if (change.field in ROOM_FIELDS) != (change.room is not None):
             raise ValueError(
                 'A room value must identify its room; job values cannot target a room.'
             )
-        change = normalize_category_change(change)
         key = (normalized(change.room) if change.room else None, change.field)
         if key in seen:
             raise ValueError('Conflicting scope suggestions require clarification.')

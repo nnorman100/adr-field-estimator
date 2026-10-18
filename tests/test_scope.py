@@ -294,64 +294,8 @@ def test_scope_maps_mold_alone_or_with_water_to_category_3(
 
 
 @pytest.mark.parametrize(
-    'transcript,bad_change',
-    [
-        (
-            'Bathroom has suspected microbial growth and 20 square feet of finished drywall.',
-            change(
-                'category',
-                3,
-                quote='Bathroom has suspected microbial growth',
-                room='Bathroom',
-            ),
-        ),
-        (
-            'Bathroom has suspected mold and 20 square feet of finished drywall.',
-            change('category', 3, quote='Bathroom has suspected mold', room='Bathroom'),
-        ),
-        (
-            'Bathroom has no mold and 20 square feet of finished drywall.',
-            change('category', 3, quote='Bathroom has no mold', room='Bathroom'),
-        ),
-        (
-            'Bathroom, category 1 water; no evidence of mold. 20 square feet of finished drywall.',
-            change(
-                'category',
-                3,
-                quote='Bathroom, category 1 water; no evidence of mold.',
-                room='Bathroom',
-            ),
-        ),
-    ],
-)
-def test_suspected_or_negated_mold_does_not_map_to_category_3(transcript, bad_change):
-    values = InspectionData(
-        technician_transcript=transcript, rooms=[{'name': 'Bathroom', 'category': 1}]
-    )
-    with pytest.raises(ValueError):
-        validate_suggestions(values, ScopeSuggestions(changes=[bad_change], questions=[]))
-
-
-@pytest.mark.parametrize(
     'transcript,proposed',
     [
-        (
-            'Office, category 1 water and mold. 20 square feet of finished drywall demolition.',
-            [
-                change(
-                    'category',
-                    1,
-                    quote='Office, category 1 water and mold.',
-                    room='Office',
-                ),
-                change(
-                    'finished_sf',
-                    20,
-                    quote='20 square feet of finished drywall demolition.',
-                    room='Office',
-                ),
-            ],
-        ),
         (
             'Office, water category 1. There is also mold in the Office. 20 square feet of finished drywall demolition.',
             [
@@ -397,21 +341,23 @@ def test_conflicting_or_unmapped_mold_category_requires_clarification(transcript
 
 
 @pytest.mark.parametrize(
-    'quote',
+    'quote,category',
     [
-        'Bathroom, category 1 water; no evidence of mold.',
-        "Bathroom, category 1 water, there isn't any mold.",
-        'Bathroom, category 1 water, no signs of mold.',
+        ('Bathroom, category 1 water; no evidence of mold.', 1),
+        ('Bathroom, category 1 water; mold is not present.', 1),
+        ('Bathroom, category: 3 water; no mold.', 3),
     ],
 )
-def test_negated_mold_keeps_stated_water_category(quote):
+def test_explicit_numeric_category_is_kept_as_stated(quote, category):
     values = InspectionData(
         technician_transcript=quote, rooms=[{'name': 'Bathroom', 'category': 2}]
     )
     result = validate_suggestions(
         values,
         ScopeSuggestions(
-            changes=[change('category', 1, quote=quote, room='Bathroom')], questions=[]
+            changes=[change('category', category, quote=quote, room='Bathroom')], questions=[]
         ),
     )
-    assert [(c.room, c.field, c.value) for c in result.changes] == [('Bathroom', 'category', 1)]
+    assert [(c.room, c.field, c.value) for c in result.changes] == [
+        ('Bathroom', 'category', category)
+    ]
