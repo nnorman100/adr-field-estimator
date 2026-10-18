@@ -35,7 +35,7 @@ The worker caches versioned app assets and public Firebase initialization config
 
 ## Branding
 
-Pre-sign-in screens show only DryScope. Once signed in, the masthead, Account menu and documents take the company name, logo and contact details from the company profile (see [docs/company-workspaces.md](docs/company-workspaces.md)). The look follows [ADR's official website](https://alertdisaster.com/): red `#D42B32`, white and gray surfaces, Lato interface typography, and serif document text. EB Garamond supplies the document face as an openly licensed alternative to the site's commercial Garamond Premier Pro. Logo and fonts are hosted locally and included in the offline asset cache; font licenses are in `public/fonts/`. The live site supplied the primary phone `(661) 426-2151`, Bakersfield office address and service locations, verified October 6, 2026.
+Pre-sign-in screens show only DryScope. Once signed in, the masthead, Account menu and documents take the company name, logo and contact details from the company profile (see [docs/company-workspaces.md](docs/company-workspaces.md)); until ADR's profile stores a logo, ADR alone falls back to the bundled ADR logo. The look follows [ADR's official website](https://alertdisaster.com/): red `#D42B32`, white and gray surfaces, Lato interface typography, and serif document text. EB Garamond supplies the document face as an openly licensed alternative to the site's commercial Garamond Premier Pro. Logo and fonts are hosted locally and included in the offline asset cache; font licenses are in `public/fonts/`. The live site supplied the primary phone `(661) 426-2151`, Bakersfield office address and service locations, verified October 6, 2026.
 
 ## Code and verification
 
