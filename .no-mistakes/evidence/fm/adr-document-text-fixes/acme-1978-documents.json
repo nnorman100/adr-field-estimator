@@ -1,0 +1,131 @@
+{
+  "schema_version": 3,
+  "company_setup_missing": [],
+  "adr_estimate": {
+    "property_address": "1234 Acme St 1978",
+    "customer_name": "",
+    "date": "10-17-2026",
+    "proposed_cost": 1221.9,
+    "proposed_cost_low": 1208,
+    "lead_notice_required": false,
+    "findings": [
+      "The home was built in 1978. Therefore, no lead or asbestos testing is required prior to the start of work.",
+      "Technician walkthrough statement: Room 1, clean water, 10 square feet of drywall. The wall is wet to the right of the door.\nTo the right.\nOne dehumidifier for three days.\n右侧墙面潮湿。",
+      "Photo 1 (Room 1) — supporting photo; no verified meter reading.",
+      "Photo 2 (Room 1) — supporting photo; no verified meter reading."
+    ],
+    "recommendations": [
+      "Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.",
+      "Room 1: category 1 finished/drywall/trim demolition",
+      "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."
+    ],
+    "disclaimers": [
+      "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.",
+      "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+      "Estimate is valid for 30 days from date of inspection."
+    ]
+  },
+  "xactimate_scope": [
+    {
+      "code": "ADR-TRIP",
+      "description": "Emergency call / trip charge",
+      "quantity": 1,
+      "unit": "EA",
+      "unit_price": 133.95,
+      "waste_percent": 0,
+      "total": 133.95
+    },
+    {
+      "code": "ADR-MON",
+      "description": "Equipment monitoring",
+      "quantity": 13.25,
+      "unit": "HR",
+      "unit_price": 47.46,
+      "waste_percent": 0,
+      "total": 628.85
+    },
+    {
+      "code": "ADR-HAUL",
+      "description": "Haul debris & disposal",
+      "quantity": 1,
+      "unit": "load",
+      "unit_price": 159.53,
+      "waste_percent": 0,
+      "total": 159.53
+    },
+    {
+      "code": "ADR-SCRUB",
+      "description": "Air scrubber daily rental",
+      "quantity": 1,
+      "unit": "day",
+      "unit_price": 74.75,
+      "waste_percent": 0,
+      "total": 74.75
+    },
+    {
+      "code": "ADR-HEPA",
+      "description": "HEPA replacement filter",
+      "quantity": 1,
+      "unit": "EA",
+      "unit_price": 183.12,
+      "waste_percent": 0,
+      "total": 183.12
+    },
+    {
+      "code": "ADR-DEMO",
+      "description": "Room 1: category 1 finished/drywall/trim demolition",
+      "quantity": 10,
+      "unit": "SF",
+      "unit_price": 2.78,
+      "waste_percent": 0,
+      "total": 27.8
+    }
+  ],
+  "xactimate_total": 1208,
+  "iicrc_defense_letter": "Alert Disaster Restoration · Bakersfield, CA · CSLB #950983\n\nTO: Insurance Claims Examiner / Adjuster\n\nRE: Remediation scope for 1234 Acme St 1978\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.\n\nThe home was built in 1978. Therefore, no lead or asbestos testing is required prior to the start of work.\nTechnician walkthrough statement: Room 1, clean water, 10 square feet of drywall. The wall is wet to the right of the door.\nTo the right.\nOne dehumidifier for three days.\n右侧墙面潮湿。\nPhoto 1 (Room 1) — supporting photo; no verified meter reading.\nPhoto 2 (Room 1) — supporting photo; no verified meter reading.\n\nScope:\nPer IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.\nRoom 1: category 1 finished/drywall/trim demolition\nIf technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.\n\nNOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.\nIf the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.\nEstimate is valid for 30 days from date of inspection.\n\nItemized charges at base rates: $1,208.00. Customer estimate range: $1,208.00 to $1,221.90. The range applies the estimating sheet labor/material allowance to the priced scope.\n\nSincerely,\nMatthew Myers\nAlert Disaster Restoration",
+  "compliance_notes": [
+    "The home was built in 1978. Therefore, no lead or asbestos testing is required prior to the start of work.",
+    "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.",
+    "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+    "Estimate is valid for 30 days from date of inspection."
+  ],
+  "photo_audit_log": [
+    {
+      "id": "b3706eeffa1843fca6c47c60762d388a",
+      "room": "Room 1",
+      "captured_at": "2026-10-18T02:20:59.331000Z",
+      "width": 400,
+      "height": 300,
+      "ocr_status": "no_meter",
+      "ocr": {
+        "meter_detected": false,
+        "meter_type": "Inspection Photo",
+        "value": "",
+        "classification": "Not verified",
+        "notes": "No physical meter in synthetic fixture."
+      }
+    },
+    {
+      "id": "f0b56fae66f740b180382058de428751",
+      "room": "Room 1",
+      "captured_at": "2026-10-18T02:20:59.475000Z",
+      "width": 400,
+      "height": 300,
+      "ocr_status": "no_meter",
+      "ocr": {
+        "meter_detected": false,
+        "meter_type": "Inspection Photo",
+        "value": "",
+        "classification": "Not verified",
+        "notes": "No physical meter in synthetic fixture."
+      }
+    }
+  ],
+  "ai_summary": "The saved inspection shows Room 1 with clean-water drywall damage. Photos are tagged to Room 1 and Hallway.\nThe saved inspection lists photo log entries without meter readings.",
+  "ai_suggestions": [
+    "Confirm the moisture readings recorded in the saved inspection.",
+    "Document drying progress for Room 1."
+  ],
+  "unpriced_work": [],
+  "signable": true
+}

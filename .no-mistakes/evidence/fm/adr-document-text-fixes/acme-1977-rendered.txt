@@ -1,0 +1,49 @@
+1234 Acme St 1977
+
+10-17-2026
+
+Estimator: Matthew Myers · CSLB #950983
+
+Customer estimate range: $1,208.00–$1,221.90
+
+Itemized charges at base rates: $1,208.00
+
+Findings
+
+Due to property age (1977), California State Law requires third-party lead and asbestos testing prior to destructive demolition.
+
+Technician walkthrough statement: Room 1, clean water, 10 square feet of drywall. The wall is wet to the right of the door. To the right. One dehumidifier for three days. 右侧墙面潮湿。
+
+Photo 1 (Room 1) — supporting photo; no verified meter reading.
+
+Photo 2 (Room 1) — supporting photo; no verified meter reading.
+
+Proposed scope
+
+Testing is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly.
+
+Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.
+
+Room 1: category 1 finished/drywall/trim demolition
+
+If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.
+
+(this does not include the pretest for lead/asbestos)
+
+NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.
+
+If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.
+
+Estimate is valid for 30 days from date of inspection.
+
+AI summary · technician review required
+
+The saved inspection shows Room 1 with clean-water drywall damage. Photos are tagged to Room 1 and Hallway. The saved inspection lists photo log entries without meter readings.
+
+AI suggestions · outside the authorized scope
+
+Confirm the moisture readings recorded in the saved inspection.
+
+Document drying progress for Room 1.
+
+Lead or asbestos testing may be needed given the 1978 build year before demolition.

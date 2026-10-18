@@ -1,0 +1,10 @@
+npm notice run pw@1.0.0 npx
+npm notice run 'playwright' test --reporter=list
+
+Running 3 tests using 1 worker
+
+  ✓  1 [chromium] › tests/acme.spec.js:48:1 › 1978 Acme job: clean statement, photos cited, letterhead first, no testing advice or JSON wording (4.6s)
+  ✓  2 [chromium] › tests/acme.spec.js:89:1 › 1977 job: testing advice and pre-1978 notice appear (2.8s)
+  ✓  3 [chromium] › tests/acme.spec.js:99:1 › workspace job: letterhead opens the letter with company phone from company_identity (984ms)
+
+  3 passed (9.0s)
