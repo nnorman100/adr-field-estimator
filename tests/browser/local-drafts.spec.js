@@ -5,7 +5,7 @@ const core = require('../../public/core.js');
 const auth = (uid) => ({ Authorization: 'Bearer ' + uid });
 async function ready(page) {
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await checkScope(page);
 }
 async function controlled(page) {
@@ -88,7 +88,7 @@ test('offline draft with several photos survives reload with images intact and b
     await addImage(page, width, height);
   }
   await expect(page.locator('#photoCount')).toContainText('3 photos');
-  await expect(page.locator('#saveStatus')).toContainText('offline');
+  await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
   await page.reload();
   await page.locator('.task-nav [data-task="walkthrough"]').click();
   await expect(page.locator('#photoGallery img')).toHaveCount(3);
@@ -99,7 +99,7 @@ test('offline draft with several photos survives reload with images intact and b
   expect(photos.filter((p) => p.draft_key === row.key).length).toBe(3);
   await context.setOffline(false);
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   const uid = await page.evaluate(() => sessionStorage.getItem('synthetic-uid')),
     remote = await (
       await page.request.get('/api/inspections/' + row.draft.inspection_id, { headers: auth(uid) })
@@ -132,7 +132,7 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
   ])
     await addImage(page, width, height);
   await expect(page.locator('#photoCount')).toContainText('2 photos');
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.evaluate(async () => {
     await syncChain;
     await Promise.all([...state.ocr.values()]);
@@ -145,7 +145,7 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
   await page
     .locator('#technicianNotes')
     .pressSequentially('Moisture readings along the north wall.', { delay: 10 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.waitForTimeout(600);
   const puts = await page.evaluate(() => window.__storePuts);
   expect(puts.filter((name) => name === 'photos')).toEqual([]);
@@ -172,13 +172,13 @@ test('an immediate save consumes the pending autosave without losing later edits
   });
   await page.locator('#technicianNotes').fill('Saved now');
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.evaluate(() => syncChain);
   // Observe beyond the application's 1500 ms autosave deadline, not a network readiness delay.
   await page.waitForTimeout(1700);
   expect(await page.evaluate(() => window.__syncCalls)).toBe(1);
   await page.locator('#technicianNotes').fill('A later edit still autosaves');
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.evaluate(() => syncChain);
   expect(await page.evaluate(() => window.__syncCalls)).toBe(2);
   await page.reload();
@@ -206,13 +206,13 @@ test('finishing the initial save does not close a Jobs menu opened during startu
     await page.goto('/');
     await page.waitForFunction(() => window.__initialSaveStarted);
     await expect(page.locator('#address')).toBeEnabled();
-    await page.locator('#jobMenu summary').click();
+    await page.locator('#jobMenu > summary').click();
     await expect(page.locator('#openJobs')).toBeVisible();
     await page.evaluate(() => window.__releaseInitialSave());
     await page.waitForFunction(
       () => state.session && !state.workspaceInitializing && !state.syncing,
     );
-    await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
     await expect(page.locator('#openJobs')).toBeVisible();
     await page.locator('#openJobs').click();
     await expect(page.locator('#jobsDialog')).toBeVisible();
@@ -294,7 +294,7 @@ test('version 1 draft rows with embedded photos migrate on upgrade and still syn
   await expect(page.locator('#technicianNotes')).toHaveValue('Written before the storage upgrade');
   await page.locator('.task-nav [data-task="walkthrough"]').click();
   await expect.poll(() => widths(page)).toEqual([200, 300]);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   const remote = async (id) =>
     (
       await (await page.request.get('/api/inspections/' + id, { headers: auth(uid) })).json()

@@ -12,7 +12,7 @@ async function audit(page, address = 'Synthetic signing-link property') {
   await page.locator('[data-room-key="finished_sf"]').fill('10');
   await page.locator('#scopeConfirmed').check();
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
 }
@@ -66,7 +66,7 @@ async function signAsHomeowner(page) {
 async function technician(page) {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }
 
 test('technician sends a link, an unsigned-in homeowner signs it and the technician sees Signed', async ({
@@ -124,7 +124,7 @@ test('technician sends a link, an unsigned-in homeowner signs it and the technic
   }
   expect(home.requests.some((r) => r.url.includes('/vendor/firebase/'))).toBe(false);
   // The technician's Review tab flips to the signed agreement by polling.
-  await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 20000 });
+  await expect(page.locator('#saveStatus')).toHaveText('Signed', { timeout: 20000 });
   await expect(page.locator('#signedEvidenceStatus')).toContainText(
     'Signed through the homeowner link by Synthetic Homeowner (owner).',
   );
@@ -184,7 +184,7 @@ test.describe('page-routed link status', () => {
     const home = await homeowner(browser, url);
     await expect(home.page.locator('#documents')).toBeVisible();
     await signAsHomeowner(home.page);
-    await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 20000 });
+    await expect(page.locator('#saveStatus')).toHaveText('Signed', { timeout: 20000 });
     await expect(page.locator('#homeownerLinkPanel')).toBeHidden();
     await home.context.close();
   });
@@ -202,7 +202,7 @@ test('an edit voids an unused link, and revoked or expired links are refused', a
   await page.locator('#address').fill('Changed after sending the link');
   await expect(page.locator('#documents')).toBeHidden();
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await edited.page.reload();
   await expect(edited.page.locator('#signStatus')).toHaveText(
     'This estimate was updated. Ask your technician for a new link.',
@@ -232,7 +232,7 @@ test('an edit voids an unused link, and revoked or expired links are refused', a
   const broken = await homeowner(browser, new URL('/sign#not-a-link', page.url()).href);
   await expect(broken.page.locator('#signStatus')).toContainText('This signing link is incomplete');
   for (const home of [edited, open, expired, broken]) await home.context.close();
-  await expect(page.locator('#saveStatus')).not.toContainText('signed');
+  await expect(page.locator('#saveStatus')).not.toHaveText('Signed');
 });
 
 async function signAsHomeownerExpectingRefusal(page) {
@@ -289,7 +289,7 @@ test.describe('company workspaces', () => {
     );
     await expect(view.locator('footer .powered')).toHaveText('Powered by DryScope');
     await signAsHomeowner(view);
-    await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 20000 });
+    await expect(page.locator('#saveStatus')).toHaveText('Signed', { timeout: 20000 });
     await page.reload();
     await page.locator('#dashboardJobs').click();
     await expect(

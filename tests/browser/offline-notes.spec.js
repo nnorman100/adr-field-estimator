@@ -49,7 +49,7 @@ async function fakeRecorder(page) {
 }
 async function ready(page) {
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.locator('.task-nav [data-task="property"]').click();
 }
 async function walkthrough(page) {
@@ -174,7 +174,7 @@ test('offline notes record on the phone, survive a reload, then fill the transcr
   for (const item of await page.locator('#voiceNotes li').all())
     await expect(item).toContainText('Added to the walkthrough transcript');
   await expect(page.locator('#notesQueue')).toHaveText('All voice notes and photos are uploaded.');
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   // The server kept the transcript text only; the phone keeps the audio for replay.
   const uid = await page.evaluate(() => sessionStorage.getItem('synthetic-uid'));
   const remote = await (
@@ -380,7 +380,7 @@ test.describe('controlled voice-note uploads', () => {
     await expect(page.locator('#voiceNotes li')).toContainText(
       'Added to the walkthrough transcript',
     );
-    await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
     await expect(page.locator('#conflictActions')).toBeHidden();
     await expect(page.locator('#technicianNotes')).toHaveValue('Room 1: Use 3 fans.');
     await expect(page.locator('#technicianTranscript')).toHaveValue(
@@ -554,7 +554,7 @@ test.describe('controlled voice-note uploads', () => {
     await expect(page.locator('#voiceNotes li')).toContainText(
       'Not uploaded yet: no connection to the server, retrying',
     );
-    await page.locator('#jobMenu summary').click();
+    await page.locator('#jobMenu > summary').click();
     await page.locator('#newInspection').click();
     await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
     await ready(page);
@@ -612,7 +612,7 @@ test.describe('controlled voice-note uploads', () => {
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
     await expect(page.locator('#voiceNotes li')).toContainText('Not uploaded yet');
-    await page.locator('#jobMenu summary').click();
+    await page.locator('#jobMenu > summary').click();
     await page.locator('#newInspection').click();
     await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
     await ready(page);

@@ -11,7 +11,7 @@ const room = (page, index, key) =>
 async function open(page) {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }
 async function addImage(page, name, width = 300, height = 600) {
   const image = await page.evaluate(
@@ -152,7 +152,7 @@ test('a chip rename relabels saved photos through a reload and Escape cancels', 
   await expect(renameBox(page)).toHaveCount(0);
   await expect(chip(page, 'Master bath')).toHaveAttribute('aria-pressed', 'true');
   await expect(room(page, 0, 'name')).toHaveValue('Master bath');
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 });
 
 test('a room chosen while its photo uploads or offline is kept and saved', async ({ page }) => {
@@ -180,15 +180,15 @@ test('a room chosen while its photo uploads or offline is kept and saved', async
   release();
   await expect.poll(() => settled(page)).toEqual(['Hallway']);
   await expect(page.locator('#photoGallery .photo strong')).toHaveText(['Hallway']);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   // An offline reassignment of an uploaded photo is unsynced work until the server stores it.
   await page.context().setOffline(true);
   await page.locator('#photoGallery .photo select').selectOption('Kitchen');
-  await expect(page.locator('#saveStatus')).toContainText('offline');
+  await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
   expect(await page.evaluate(() => openDraftUnsynced())).toBe(true);
   await page.context().setOffline(false);
   await expect.poll(() => settled(page)).toEqual(['Kitchen']);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   expect(await page.evaluate(() => openDraftUnsynced())).toBe(false);
   // Renaming the chosen room on Check Scope before it syncs carries the reassignment along.
   await page.context().setOffline(true);
@@ -200,7 +200,7 @@ test('a room chosen while its photo uploads or offline is kept and saved', async
   ).toHaveText(['Bathroom']);
   await page.context().setOffline(false);
   await expect.poll(() => settled(page)).toEqual(['Bathroom']);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 });
 
 test('a recognition reply cannot confirm a room chosen while an older move is in flight', async ({
@@ -245,5 +245,5 @@ test('a recognition reply cannot confirm a room chosen while an older move is in
   releaseMove();
   await expect.poll(() => settled(page)).toEqual(['Kitchen']);
   await expect(page.locator('#photoGallery .photo strong')).toHaveText(['Kitchen']);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 });

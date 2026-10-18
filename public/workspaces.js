@@ -93,6 +93,7 @@ window.WorkspaceUI = (() => {
     $('dashboardDescription').textContent = description;
     $('dashboardContent').replaceChildren();
     $('jobCoordination').hidden = true;
+    $('dashboardNewJob').hidden = true;
     return viewEpoch;
   }
   // Phones collapse the destinations behind #workspaceMenuToggle; CSS reads aria-expanded.
@@ -218,6 +219,15 @@ window.WorkspaceUI = (() => {
       $('coordinationToggle').addEventListener('click', () =>
         fold($('coordinationToggle').getAttribute('aria-expanded') !== 'true'),
       );
+      // The phone header's More menu opens the folded coordination form.
+      $('moreCoordination').addEventListener('click', () => {
+        closeMenus();
+        fold(true);
+        $('coordinationToggle').focus();
+      });
+      $('dashboardNewJob').addEventListener('click', () =>
+        Promise.resolve(openNew()).catch((e) => say(e.message, 'error')),
+      );
       $('coordinationForm').addEventListener('submit', (event) => {
         event.preventDefault();
         saveCoordination().catch((e) => say(e.message, 'error'));
@@ -298,6 +308,7 @@ window.WorkspaceUI = (() => {
     );
     current('dashboardHome');
     $('dashboardEyebrow').textContent = defaultEyebrow();
+    $('dashboardNewJob').hidden = !can('jobs_create');
     const content = $('dashboardContent'),
       grid = node('div', undefined, 'dashboard-grid');
     content.append(grid);
@@ -309,7 +320,6 @@ window.WorkspaceUI = (() => {
       );
       const actions = node('div', undefined, 'actions');
       actions.append(button('Open jobs', jobs));
-      if (can('jobs_create')) actions.append(button('New job', () => openNew()));
       card.append(actions);
       grid.append(card);
     }
@@ -398,8 +408,8 @@ window.WorkspaceUI = (() => {
       'Draft inspections and saved agreements.',
     );
     current('dashboardJobs');
+    $('dashboardNewJob').hidden = !can('jobs_create');
     const content = $('dashboardContent');
-    if (can('jobs_create')) content.append(button('New job', () => openNew()));
     const list = node('div', undefined, 'dashboard-list');
     content.append(list);
     const seen = new Set();

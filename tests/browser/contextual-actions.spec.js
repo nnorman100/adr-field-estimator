@@ -8,7 +8,7 @@ for (const width of [390, 1280]) {
     test.beforeEach(async ({ page }) => {
       await page.goto('/');
       await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await checkScope(page);
     });
 
@@ -39,7 +39,7 @@ for (const width of [390, 1280]) {
       await page.mouse.move(rect.x + 220, rect.y + 30, { steps: 8 });
       await page.mouse.up();
       await page.locator('#authorizeJob').click();
-      await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+      await expect(page.locator('#saveStatus')).toHaveText('Signed');
       for (const name of ['proposal', 'claim', 'defense', 'photos']) {
         await page.locator('[data-tab="' + name + '"]').click();
         await expect(page.locator('#savedSignature')).toBeVisible();
@@ -80,7 +80,7 @@ for (const width of [390, 1280]) {
       await expect(page.locator('.draft-actions #saveDraft')).toHaveCount(0);
       await page.locator('#technicianNotes').fill('Room 1, category 2, 80 square feet of drywall.');
       await saveDraft(page);
-      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await page.locator('.task-nav [data-task="walkthrough"]').click();
       await expect(page.locator('#finishAudit')).toHaveText('Fill scope from walkthrough');
       await context.setOffline(true);

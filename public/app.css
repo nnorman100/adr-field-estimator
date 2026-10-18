@@ -1992,3 +1992,116 @@ footer {
 .scope-suggestions > h3 {
   margin-top: 0;
 }
+
+/* Phones with a job open: one navy row (← Jobs, job title and save status, More) replaces the
+   product bar, company strip, workspace menu and job bar. app.js sets .compact-job, moves the
+   Update ready prompt into the row and Help and Account into More. */
+.back-to-jobs,
+.compact-label,
+.help-label,
+#moreCoordination {
+  display: none;
+}
+.workspace-dashboard > .section-head {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+#dashboardNewJob {
+  flex: none;
+}
+@media (max-width: 640px) {
+  .compact-job .product-bar,
+  .compact-job .masthead,
+  .compact-job #workspaceNav,
+  .compact-job .job-coordination.collapsed,
+  .compact-job .jobbar .eyebrow,
+  .compact-job .wide-label {
+    display: none;
+  }
+  .compact-job .compact-label,
+  .compact-job .back-to-jobs {
+    display: inline;
+  }
+  .compact-job:has(#jobCoordination:not([hidden])) #moreCoordination {
+    display: block;
+  }
+  .compact-job .jobbar {
+    background: var(--navy);
+    color: #fff;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    padding-top: max(0.25rem, env(safe-area-inset-top));
+  }
+  .compact-job .back-to-jobs,
+  .compact-job #jobMenu > summary {
+    flex: none;
+    min-height: 44px;
+    padding: 0.5rem 0.6rem;
+    background: transparent;
+    color: #fff;
+    border-color: #ffffff99;
+  }
+  .compact-job #jobMenu > summary::after {
+    color: #fff;
+  }
+  .compact-job .job-heading h1,
+  .compact-job .job-heading p {
+    margin: 0;
+    min-height: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compact-job .job-heading h1 {
+    font-size: 1rem;
+  }
+  .compact-job .job-heading p {
+    color: #ffffffcc;
+    font-size: 0.75rem;
+  }
+  .compact-job .task-nav button {
+    padding-block: 0.4rem;
+  }
+  /* Block margins too: an empty .workspace collapses its bottom margin into the Review panel's top. */
+  .compact-job .workspace,
+  .compact-job .review-panel {
+    margin-block: 0.75rem;
+  }
+  .compact-job #jobMenu > .menu-content {
+    color: var(--navy);
+  }
+  .compact-job #jobMenu > .menu-content p {
+    min-height: 0;
+  }
+  .compact-job #jobMenu .header-tools {
+    display: grid;
+    gap: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+  }
+  .compact-job #jobMenu .help-button {
+    width: 100%;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+  }
+  .compact-job #jobMenu .help-mark {
+    display: none;
+  }
+  .compact-job #jobMenu .help-label {
+    display: inline;
+  }
+  .compact-job #jobMenu #accountMenu > summary {
+    justify-content: space-between;
+  }
+  .compact-job #jobMenu #accountMenu > .menu-content {
+    position: static;
+    width: auto;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0 0;
+    border: 0;
+    box-shadow: none;
+  }
+}
