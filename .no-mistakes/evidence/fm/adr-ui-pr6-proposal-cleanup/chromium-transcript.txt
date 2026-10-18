@@ -1,0 +1,63 @@
+PROPOSAL BODY TEXT:
+Synthetic evidence property
+
+10-18-2026
+
+Estimator: Matthew Myers · CSLB #950983
+
+Customer estimate range: $1,208.00–$1,221.90
+
+Itemized scope total: $1,208.00
+
+Findings
+
+Due to property age (1960), California State Law requires third-party lead and asbestos testing prior to destructive demolition.
+
+Proposed scope
+
+Testing is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly.
+
+Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.
+
+Room 1: category 1 finished/drywall/trim demolition
+
+If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.
+
+(this does not include the pretest for lead/asbestos)
+
+NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.
+
+If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.
+
+Estimate is valid for 30 days from date of inspection.
+proposal has "technician review required": false
+proposal has "outside the authorized scope": false
+totals-summary: Customer estimate range | $1,208.00–$1,221.90 | Itemized scope total | $1,208.00
+documentProgress (tech): Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.
+auditNotes visible/open: true/false
+auditNotes text after expand:
+AI review notes · estimator only
+AI summary · technician review required
+
+<img src=x onerror="window.reviewInjected=true"> Confirmed scope summary.
+
+AI suggestions · outside the authorized scope
+
+Document drying progress.
+window.reviewInjected: undefined
+HOMEOWNER auditNotes count: 0
+HOMEOWNER proposal has AI notes: false
+HOMEOWNER totals: Customer estimate range | $1,208.00–$1,221.90 | Itemized scope total | $1,208.00
+HOMEOWNER #signerName disabled after proposal only: true
+HOMEOWNER #consentReviewed disabled after proposal only: true
+HOMEOWNER #consentElectronic disabled after proposal only: true
+HOMEOWNER #submitSignature disabled after proposal only: true
+HOMEOWNER progress after proposal only: 1 of 4 documents opened · Review each before signing.
+HOMEOWNER consent text: I reviewed all four documents, the separate totals and the attached photo evidence.
+HOMEOWNER progress after all four: 4 of 4 documents opened · Review each before signing.
+HOMEOWNER submit enabled after all four: true
+tech tab claim aria-pressed: false
+tech tab defense aria-pressed: false
+tech tab photos aria-pressed: false
+tech error without confirmation: Confirm the proposal was reviewed with the homeowner or representative before signing.
+tech saveStatus after signing with only proposal opened: Saved & signed · ADR-AUTH-6529a7d9-64d6-447b-b290-fc09796bafe0
