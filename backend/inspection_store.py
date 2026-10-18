@@ -173,14 +173,32 @@ class InspectionStore(JobStore):
         return self._atomic(change)
 
     def update_inspection(self, uid, inspection_id, revision, data):
+        changed = []
+
         def update(record):
-            if record['data'] != data:
+            # Recomputed on each transaction attempt; the log line reports the committed one.
+            old = record['data']
+            changed[:] = sorted(
+                key
+                for key in old.keys() | data.keys()
+                if key not in old or key not in data or old[key] != data[key]
+            )
+            if old != data:
                 record.update(
                     data=data, revision=record['revision'] + 1, audit=None, status='draft'
                 )
             return record
 
-        return self._change(uid, inspection_id, revision, update)
+        record = self._change(uid, inspection_id, revision, update)
+        # Field names from the fixed inspection schema only, never their values.
+        event(
+            'Inspection saved',
+            operation='save',
+            inspection_id=inspection_id,
+            revision=record['revision'],
+            changed_fields=changed,
+        )
+        return record
 
     def add_photo(self, uid, inspection_id, upload):
         record = self.get_inspection(uid, inspection_id)

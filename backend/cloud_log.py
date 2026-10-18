@@ -20,6 +20,9 @@ LOG_FIELDS = frozenset(
         'inspection_id',
         'method',
         'route',
+        # Draft saves: the stored revision and the names of changed data fields, never values.
+        'revision',
+        'changed_fields',
         # Live session counters: numbers only (backend/live_support.py LiveCounters).
         'mic_seconds',
         'mic_gap_max_ms',
