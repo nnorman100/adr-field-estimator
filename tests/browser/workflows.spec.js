@@ -849,7 +849,7 @@ for (const failure of ['evidence', 'record'])
     expect(references).toHaveLength(1);
   });
 
-test('walkthrough form fill requires review, supports selection and invalidates old documents', async ({
+test('walkthrough form fill auto-applies quoted values, supports Undo and invalidates old documents', async ({
   page,
 }) => {
   await audit(page);
@@ -860,22 +860,16 @@ test('walkthrough form fill requires review, supports selection and invalidates 
     .fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
   await page.locator('#fillScope').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
-  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('10');
-  await expect(page.locator('#airMovers')).toHaveValue('0');
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
+  await expect(page.locator('#airMovers')).toHaveValue('3');
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  await page.screenshot({
-    path: test.info().outputPath('voice-scope-mobile-suggestions.png'),
-    fullPage: true,
-  });
-  await expect(page.locator('#scopeSuggestionList')).toContainText('10 → 80');
   await expect(page.locator('#scopeQuestions')).toContainText('Confirm any additional labor.');
   await page
-    .locator('.scope-suggestion')
-    .filter({ hasText: 'Air movers' })
-    .locator('input')
-    .uncheck();
-  await page.locator('#applyScopeSuggestions').click();
+    .locator('#airMovers')
+    .locator('..')
+    .getByRole('button', { name: 'Undo', exact: true })
+    .click();
   await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
   await expect(page.locator('[data-room-key="category"]')).toHaveValue('2');
   await expect(page.locator('#airMovers')).toHaveValue('0');
@@ -897,7 +891,7 @@ test('scope suggestions dismiss and manual edits preserve user values', async ({
   await page.locator('#fillScopeProperty').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await page.locator('#dismissScopeSuggestions').click();
-  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('0');
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
   await page.locator('#fillScopeProperty').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await page.locator('#airMovers').fill('6');
@@ -1043,7 +1037,7 @@ test.describe('controlled scope requests', () => {
     ).toBe(true);
     expect(await page.locator('#cameraVideo').evaluate((el) => el.srcObject === null)).toBe(true);
     await expect(page.locator('#liveStatus')).toHaveText('Not connected');
-    await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('0');
+    await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
     await page.evaluate(() => window.syntheticInputAudio.close());
   });
 

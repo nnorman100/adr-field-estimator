@@ -11,6 +11,7 @@ const {
   scopeRoomLabels,
   roomKey,
   applyScopeChanges,
+  defaultPhotoRename,
   ingestTranscript,
   closeTranscript,
   authStage,
@@ -250,6 +251,12 @@ function renderControls() {
   $('thermalToggle').disabled = !active;
   $('photoRoom').disabled = !editable;
   $('saveDraft').disabled = !editable;
+  $('confirmFilledScope').disabled =
+    !editable ||
+    ui.fillingScope ||
+    ui.auditing ||
+    state.conflict ||
+    (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope'));
   $('finishAudit').disabled = !editable || !navigator.onLine || ui.auditing || ui.fillingScope;
   renderDraftActions();
   for (const id of ['fillScope', 'fillScopeProperty']) {
@@ -578,6 +585,8 @@ function invalidate() {
   clearSigningError('documentsConfirmedError');
 }
 function clearDisplayedInspection() {
+  state.scopeEdits = null;
+  renderWalkthroughEdits();
   stopHomeownerLink();
   roomRemoval = null;
   $('removeRoomDialog').close();
@@ -643,6 +652,7 @@ function changed(resetConfirmation = true) {
   }
   invalidate();
   renderDraftActions();
+  renderWalkthroughEdits();
   renderSaveStatus();
   schedulePersist();
   clearTimeout(saveTimer);
@@ -1068,118 +1078,215 @@ async function fillScopeFromWalkthrough() {
       throw Error('Scope suggestions belong to a different draft. Retry.');
     for (const note of read) await saveNote({ ...note, scoped: true });
     renderNotes();
-    state.scopePreview = { draft, uid, version, revision, groups: [] };
-    const groups = new Map();
+    if (state.draft !== draft || state.user?.uid !== uid || state.signed || confirmedAuthorization)
+      return;
+    if (state.localVersion !== version || state.record?.revision !== revision || state.conflict)
+      throw Error('The draft changed while reading the walkthrough. Retry.');
+    // The server has already validated these quotes. Also refuse missing/unmatched quotes here
+    // so malformed or older responses cannot silently fill the form.
+    const normalize = (text) => text.trim().replace(/\s+/g, ' ').toLowerCase(),
+      source = normalize(draft.data.technician_transcript + '\n' + draft.data.technician_notes),
+      groups = new Map(),
+      questions = [...result.questions];
     for (const change of result.changes) {
       const key = change.room == null ? 'job:' + change.field : 'room:' + roomKey(change.room);
-      if (!groups.has(key)) groups.set(key, { room: change.room, changes: [] });
-      groups.get(key).changes.push(change);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(change);
     }
-    const list = $('scopeSuggestionList');
-    list.replaceChildren();
-    const display = (value) =>
-      value == null
-        ? 'Not entered'
-        : typeof value === 'boolean'
-          ? value
-            ? 'Yes'
-            : 'No'
-          : String(value);
+    const changes = [];
     for (const group of groups.values()) {
-      const row = node('div', undefined, 'scope-suggestion'),
-        label = node('label', undefined, 'check'),
-        input = node('input');
-      input.type = 'checkbox';
-      input.checked = true;
-      const existing =
-        group.room == null
-          ? draft.data
-          : draft.data.rooms.find((room) => roomKey(room.name) === roomKey(group.room));
-      label.append(
-        input,
-        node(
-          'strong',
-          group.room == null
-            ? scopeJobLabels[group.changes[0].field]
-            : group.room + (existing ? '' : ' · New room'),
-        ),
-      );
-      row.append(label);
-      if (group.room != null && !existing)
-        row.append(
-          node(
-            'p',
-            'Unstated room fields retain the form defaults. Confirm every field before generating documents.',
-            'hint',
-          ),
+      if (
+        group.every(
+          (change) =>
+            typeof change.source_quote === 'string' &&
+            normalize(change.source_quote) &&
+            source.includes(normalize(change.source_quote)),
+        )
+      )
+        changes.push(...group);
+      else
+        questions.push(
+          'Clarify ' +
+            (group[0].room || scopeJobLabels[group[0].field]) +
+            ': no supporting technician statement was returned.',
         );
-      for (const change of group.changes) {
-        row.append(
-          node(
-            'p',
-            (group.room == null ? '' : scopeRoomLabels[change.field] + ': ') +
-              display(existing?.[change.field]) +
-              ' → ' +
-              display(change.value),
-          ),
-        );
-        row.append(node('blockquote', change.source_quote));
-      }
-      list.append(row);
-      state.scopePreview.groups.push({ ...group, input });
     }
-    $('scopeQuestions').replaceChildren(
-      ...result.questions.map((question) => node('li', question)),
-    );
-    let proposed = draft.data;
-    try {
-      proposed = applyScopeChanges(draft.data, result.changes);
-    } catch {}
-    const missing = missingItems(proposed, draft.photos);
+    const before = structuredClone(draft.data),
+      filled = applyScopeChanges(before, changes),
+      entries = [];
+    for (const group of groups.values()) {
+      if (!changes.includes(group[0])) continue;
+      const name = group[0].room,
+        original =
+          name == null ? before : before.rooms.find((room) => roomKey(room.name) === roomKey(name)),
+        target =
+          name == null ? filled : filled.rooms.find((room) => roomKey(room.name) === roomKey(name));
+      const replaced =
+          !original && filled.rooms.indexOf(target) === 0 && defaultPhotoRename(before, filled),
+        prior = original || (replaced ? before.rooms[0] : null),
+        quotes = group.map((change) => change.source_quote),
+        fields = original ? group : [{ field: 'name', value: target.name }, ...group];
+      for (const change of fields) {
+        if (prior && prior[change.field] === change.value) continue;
+        entries.push({
+          target,
+          field: change.field,
+          before: (prior || emptyData().rooms[0])[change.field],
+          after: change.value,
+          removesRoom: !prior && change.field === 'name',
+          snapshot: stable(target),
+          quotes: change.source_quote ? [change.source_quote] : quotes,
+        });
+      }
+    }
+    const effective =
+        stable({ ...filled, scope_confirmed: before.scope_confirmed }) !== stable(before),
+      previous = state.scopeEdits;
+    if (effective) {
+      retagDefaultPhotos(before, filled);
+      draft.data = filled;
+      changed();
+      // Re-reading a walkthrough must not erase Undo for values that remain unchanged.
+      if (previous?.draft === draft)
+        for (const entry of previous.entries) {
+          const index = previous.data.rooms.indexOf(entry.target),
+            target = entry.target === previous.data ? filled : filled.rooms[index];
+          if (
+            !target ||
+            entries.some((item) => item.target === target && item.field === entry.field)
+          )
+            continue;
+          if (
+            entry.removesRoom
+              ? stable(before.rooms[index]) === entry.snapshot
+              : target[entry.field] === entry.after
+          )
+            entries.push({ ...entry, target, snapshot: stable(target) });
+        }
+      state.scopeEdits = { draft, data: filled, entries };
+      fillForm();
+    }
+    const applied = draft.data;
+    const appliedVersion = state.localVersion;
+    await persist();
+    if (
+      state.draft !== draft ||
+      state.user?.uid !== uid ||
+      state.signed ||
+      confirmedAuthorization ||
+      state.draft.data !== applied ||
+      state.localVersion !== appliedVersion
+    )
+      return;
+    $('scopeQuestions').replaceChildren(...questions.map((question) => node('li', question)));
+    const missing = missingItems(filled, draft.photos);
     $('scopeMissing').replaceChildren(...missing.map((item) => node('li', item)));
-    $('scopeGapsHeading').hidden = !missing.length && !result.questions.length;
-    $('scopeSuggestionStatus').textContent = result.changes.length
-      ? 'Review the proposed changes and their source statements. Uncheck any you want to keep as entered.'
+    $('scopeGapsHeading').hidden = !missing.length && !questions.length;
+    $('scopeSuggestionList').replaceChildren(
+      ...changes.map((change) => {
+        const row = node('div', undefined, 'scope-suggestion');
+        row.append(
+          node(
+            'p',
+            (change.room
+              ? change.room + ' · ' + scopeRoomLabels[change.field]
+              : scopeJobLabels[change.field]) +
+              ': ' +
+              String(change.value),
+          ),
+          node('blockquote', change.source_quote),
+        );
+        return row;
+      }),
+    );
+    $('scopeSuggestionStatus').textContent = effective
+      ? 'Walkthrough values filled. Review the marked fields; Undo restores what was entered before. Confirm scope when everything is right.'
       : 'No explicit changes found. Add or clarify technician observations and try again.';
-    $('applyScopeSuggestions').hidden = !result.changes.length;
     $('scopeSuggestionPanel').hidden = false;
     showTask('property');
     say(
-      result.changes.length
-        ? 'Review the proposed scope values before applying.'
+      effective
+        ? 'Walkthrough values filled. Review and confirm the scope.'
         : 'No explicit changes found. Clarify your observations and retry.',
     );
+    // First bring the panel to the viewport; then measure the now-sticky header's bounds.
+    const panel = $('scopeSuggestionPanel');
+    panel.scrollIntoView({ block: 'start', behavior: 'instant' });
+    window.scrollBy({
+      top: panel.getBoundingClientRect().top - visibleBounds().top,
+      behavior: 'instant',
+    });
   } finally {
     ui.fillingScope = false;
     renderControls();
   }
 }
-async function applyScopeSuggestions() {
-  const preview = state.scopePreview;
+function retagDefaultPhotos(before, after) {
+  const rename = defaultPhotoRename(before, after);
+  if (rename)
+    for (const photo of state.draft.photos) if (photo.room === rename.from) photo.room = rename.to;
+}
+function renderWalkthroughEdits() {
+  document.querySelectorAll('.walkthrough-edit').forEach((badge) => badge.remove());
+  const edit = state.scopeEdits;
   if (
-    !preview ||
-    state.draft !== preview.draft ||
-    state.user?.uid !== preview.uid ||
-    state.localVersion !== preview.version ||
-    state.record?.revision !== preview.revision ||
+    !edit ||
+    edit.draft !== state.draft ||
+    edit.data !== state.draft?.data ||
     state.signed ||
     confirmedAuthorization ||
-    state.conflict
+    !state.session
   )
-    throw Error('The draft changed. Read the walkthrough again before applying suggestions.');
-  const changes = preview.groups
-    .filter((group) => group.input.checked)
-    .flatMap((group) => group.changes);
-  if (!changes.length)
-    throw Error('Select at least one change to apply, or dismiss the suggestions.');
-  state.draft.data = applyScopeChanges(state.draft.data, changes);
-  changed();
-  fillForm();
-  await persist();
-  say(
-    'Selected values filled. Review all Property & scope fields and confirm the scope before generating documents.',
-    'success',
+    return;
+  edit.entries = edit.entries.filter(
+    (entry) =>
+      (entry.target === edit.data || edit.data.rooms.includes(entry.target)) &&
+      (entry.removesRoom
+        ? stable(entry.target) === entry.snapshot
+        : entry.target[entry.field] === entry.after),
   );
+  for (const entry of edit.entries) {
+    const field = entry.field,
+      roomIndex = edit.data.rooms.indexOf(entry.target),
+      id =
+        field === 'is_after_hours'
+          ? 'afterHours'
+          : field.replace(/_([a-z])/g, (_, c) => c.toUpperCase()),
+      control =
+        roomIndex < 0
+          ? $(id)
+          : document.querySelector(
+              '[data-room-index="' + roomIndex + '"][data-room-key="' + field + '"]',
+            );
+    if (!control) continue;
+    const badge = node('span', undefined, 'walkthrough-edit'),
+      undo = button('Undo', async () => {
+        if (
+          state.signed ||
+          confirmedAuthorization ||
+          state.draft !== edit.draft ||
+          state.draft.data !== edit.data ||
+          !edit.entries.includes(entry) ||
+          state.conflict
+        )
+          throw Error('The draft changed. Review its current values.');
+        const before = structuredClone(edit.data);
+        if (entry.removesRoom) edit.data.rooms.splice(edit.data.rooms.indexOf(entry.target), 1);
+        else entry.target[entry.field] = entry.before;
+        retagDefaultPhotos(before, edit.data);
+        edit.entries = edit.entries.filter((item) => item !== entry);
+        for (const item of edit.entries)
+          if (item.removesRoom && item.target === entry.target) item.snapshot = stable(item.target);
+        changed();
+        fillForm();
+        await persist();
+        say('Walkthrough value undone. Review and confirm scope again.');
+      });
+    badge.title = entry.quotes.join('\n');
+    undo.title = entry.removesRoom ? 'Remove this walkthrough room' : 'Restore previous value';
+    badge.append(node('span', 'From walkthrough · '), undo);
+    control.closest('label').append(badge);
+  }
 }
 function collect() {
   if (!state.draft) return;
@@ -1262,6 +1369,7 @@ function fillForm() {
   $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
   renderRooms();
+  renderWalkthroughEdits();
   renderPhotos();
   renderSaveStatus();
   renderControls();
@@ -1327,6 +1435,8 @@ function renderRooms() {
       input = node('input');
     input.type = 'checkbox';
     input.checked = room.custom_cabinetry;
+    input.dataset.roomIndex = i;
+    input.dataset.roomKey = 'custom_cabinetry';
     input.disabled = !!state.signed;
     input.addEventListener('change', () => {
       room.custom_cabinetry = input.checked;
@@ -1337,6 +1447,7 @@ function renderRooms() {
     $('rooms').append(card);
   });
   updateRoomPicker();
+  renderWalkthroughEdits();
 }
 function requestRoomRemoval(room, trigger) {
   if (
@@ -3570,7 +3681,22 @@ async function initialize() {
   };
   click('notesFillScope', fillFromNotes);
   click('notesFillScopeWalk', fillFromNotes);
-  click('applyScopeSuggestions', applyScopeSuggestions);
+  click('confirmFilledScope', () => {
+    if (
+      !state.draft ||
+      state.signed ||
+      confirmedAuthorization ||
+      state.conflict ||
+      !state.session ||
+      (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope'))
+    )
+      throw Error('Open an editable inspection first.');
+    $('scopeConfirmed').checked = true;
+    collect();
+    changed(false);
+    $('scopeConfirmNotice').hidden = true;
+    say('Scope confirmed. Tap Finish & review to generate documents.', 'success');
+  });
   click('dismissScopeSuggestions', clearScopePreview);
   click('startWalk', startWalk);
   click('stopWalk', () => stopWalk());

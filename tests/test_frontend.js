@@ -70,12 +70,64 @@ const newRoom = core.applyScopeChanges(original, [
   { field: 'category', room: 'Bathroom', value: 2 },
   { field: 'finished_sf', room: 'bathroom', value: 80 },
 ]);
-assert.equal(newRoom.rooms.length, 2);
-assert.equal(newRoom.rooms[1].name, 'Bathroom');
-assert.equal(newRoom.rooms[1].category, 2);
+assert.equal(newRoom.rooms.length, 1);
+assert.equal(newRoom.rooms[0].name, 'Bathroom');
+assert.equal(newRoom.rooms[0].category, 2);
 console.log(
   'PASS: selective scope application preserves manual values and sheet defaults; resets confirmation and requires complete new-room measurements',
 );
+
+{
+  const fresh = core.emptyData(),
+    changes = [
+      { room: 'Kitchen', field: 'category', value: 2 },
+      { room: 'Kitchen', field: 'finished_sf', value: 80 },
+    ],
+    kitchen = core.applyScopeChanges(fresh, changes);
+  assert.equal(kitchen.rooms.length, 1);
+  assert.deepEqual(kitchen.rooms[0], {
+    ...fresh.rooms[0],
+    name: 'Kitchen',
+    category: 2,
+    finished_sf: 80,
+  });
+  assert.deepEqual(core.defaultPhotoRename(fresh, kitchen), { from: 'Room 1', to: 'Kitchen' });
+  assert.deepEqual(core.defaultPhotoRename(kitchen, fresh), { from: 'Kitchen', to: 'Room 1' });
+  for (const patch of [{ name: 'Office' }, { finished_sf: 5 }, { custom_cabinetry: true }]) {
+    const manual = core.emptyData();
+    Object.assign(manual.rooms[0], patch);
+    const applied = core.applyScopeChanges(manual, changes);
+    assert.equal(applied.rooms.length, 2);
+    assert.deepEqual(applied.rooms[0], manual.rooms[0]);
+    assert.equal(core.defaultPhotoRename(manual, applied), null);
+  }
+  const withWaste = core.emptyData();
+  withWaste.rooms[0].waste_percent = 15;
+  withWaste.rooms[0].category = 3;
+  const preserved = core.applyScopeChanges(withWaste, changes);
+  assert.equal(preserved.rooms.length, 1);
+  assert.equal(preserved.rooms[0].waste_percent, 15);
+  assert.equal(preserved.rooms[0].category, 2);
+  const both = core.applyScopeChanges(fresh, [
+    ...changes,
+    { room: 'Room 1', field: 'finished_sf', value: 5 },
+  ]);
+  assert.equal(both.rooms.length, 2);
+  assert.equal(both.rooms[0].name, 'Room 1');
+  assert.equal(core.defaultPhotoRename(fresh, both), null);
+  const multiple = core.applyScopeChanges(fresh, [
+    ...changes,
+    { room: 'Hall', field: 'category', value: 1 },
+    { room: 'Hall', field: 'unfinished_sf', value: 20 },
+  ]);
+  assert.deepEqual(
+    multiple.rooms.map((room) => room.name),
+    ['Kitchen', 'Hall'],
+  );
+  assert.throws(() => core.applyScopeChanges(fresh, changes.slice(1)));
+  assert.deepEqual(core.defaultPhotoRename(multiple, fresh), { from: 'Kitchen', to: 'Room 1' });
+  assert.equal(core.defaultPhotoRename({ rooms: [kitchen.rooms[0], fresh.rooms[0]] }, fresh), null);
+}
 
 {
   const core = require('../public/core.js'),

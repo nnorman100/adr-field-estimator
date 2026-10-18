@@ -127,7 +127,7 @@ test('protocol 2 preserves fragments, deduplicates delivery and flushes before f
   expect(
     await page.evaluate(() => window.liveTracks.every((track) => track.readyState === 'ended')),
   ).toBe(true);
-  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('0');
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
   await cleanup(page);
 });
 test('offline requires explicit Resume and stale callbacks cannot edit a new inspection', async ({

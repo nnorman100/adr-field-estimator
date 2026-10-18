@@ -1761,3 +1761,20 @@ footer {
   font-size: 0.9375rem;
   font-weight: 400;
 }
+
+/* Walkthrough provenance stays beside the field it changed. */
+.walkthrough-edit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+.walkthrough-edit button {
+  min-height: 44px;
+  padding: 0.25rem 0.5rem;
+  text-decoration: underline;
+}
+.scope-suggestions > h3 {
+  margin-top: 0;
+}

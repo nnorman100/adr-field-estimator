@@ -361,3 +361,96 @@ def test_explicit_numeric_category_is_kept_as_stated(quote, category):
     assert [(c.room, c.field, c.value) for c in result.changes] == [
         ('Bathroom', 'category', category)
     ]
+
+
+def test_kitchen_replaces_placeholder_in_validation_and_saved_photo_labels(context, monkeypatch):
+    from backend.contracts import Room
+    from tests.fakes import png
+    from copy import deepcopy
+
+    client, store = context
+    words = 'Kitchen, category 2, 80 SF drywall'
+    initial = prepared(
+        client,
+        rooms=[Room(name='Room 1').model_dump(mode='json')],
+        technician_transcript=words,
+        scope_confirmed=False,
+    )
+    upload = dict(
+        photo_id='b' * 32,
+        expected_revision=initial['revision'],
+        room='Room 1',
+        captured_at='2026-10-17T19:00:00Z',
+        data_url=png(),
+    )
+    photo_record = store.add_photo('owner', ID, upload)
+    provider(
+        monkeypatch,
+        [
+            change('category', 2, quote=words, room='Kitchen'),
+            change('finished_sf', 80, quote=words, room='Kitchen'),
+        ],
+    )
+    result = suggest(client, photo_record['revision'])
+    assert result.status_code == 200, result.text
+    assert [(c['room'], c['field'], c['value']) for c in result.json()['changes']] == [
+        ('Kitchen', 'category', 2),
+        ('Kitchen', 'finished_sf', 80),
+    ]
+    # Suggestions remain read-only; the client explicitly saves the autofilled draft.
+    assert store.get_inspection('owner', ID)['data'] == initial['data']
+    filled = deepcopy(initial['data'])
+    filled['rooms'][0].update(name='Kitchen', category=2, finished_sf=80)
+    saved = store.update_inspection('owner', ID, photo_record['revision'], filled)
+    assert saved['data']['rooms'] == filled['rooms']
+    assert saved['photos'][0]['room'] == 'Kitchen'
+    assert saved['photos'][0]['file'] == photo_record['photos'][0]['file']
+    assert saved['data']['scope_confirmed'] is False
+    # Undo restores the placeholder and its photo labels through the same revisioned save.
+    renamed = deepcopy(filled)
+    renamed['rooms'][0]['name'] = 'Room 1'
+    undone = store.update_inspection('owner', ID, saved['revision'], renamed)
+    assert undone['data']['rooms'][0]['finished_sf'] == 80
+    assert undone['photos'][0]['room'] == 'Room 1'
+    assert undone['photos'][0]['file'] == photo_record['photos'][0]['file']
+
+
+def test_default_photo_rename_follows_name_undo_combined_with_room_removal():
+    from backend.scope import default_photo_rename
+
+    kitchen = {'name': 'Kitchen', 'unfinished_sf': 0, 'finished_sf': 80, 'custom_cabinetry': False}
+    hall = {'name': 'Hall', 'unfinished_sf': 20, 'finished_sf': 0, 'custom_cabinetry': False}
+    undone = {**kitchen, 'name': 'Room 1'}
+    assert default_photo_rename({'rooms': [kitchen, hall]}, {'rooms': [undone]}) == (
+        'Kitchen',
+        'Room 1',
+    )
+    assert default_photo_rename({'rooms': [kitchen, undone]}, {'rooms': [undone]}) is None
+
+
+def test_default_replacement_still_requires_category_and_area_and_validates_room_limit():
+    from backend.contracts import Room
+
+    words = 'Kitchen, category 2, 80 SF drywall'
+    values = InspectionData(rooms=[Room(name='Room 1')], technician_transcript=words)
+    with pytest.raises(ValueError, match='water category'):
+        validate_suggestions(
+            values,
+            ScopeSuggestions(
+                changes=[change('finished_sf', 80, quote=words, room='Kitchen')], questions=[]
+            ),
+        )
+    changes = []
+    for i in range(30):
+        name = f'Kitchen {i}'
+        values.technician_transcript += f' {name} category 2, 80 SF drywall.'
+        changes.extend(
+            [
+                change('category', 2, quote=name, room=name),
+                change('finished_sf', 80, quote=name, room=name),
+            ]
+        )
+    assert (
+        len(validate_suggestions(values, ScopeSuggestions(changes=changes, questions=[])).changes)
+        == 60
+    )

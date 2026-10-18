@@ -94,9 +94,37 @@
     waste_percent: 'Waste %',
   };
   const roomKey = (name) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+  const untouchedDefaultRoom = (room) =>
+    room.name === 'Room 1' &&
+    room.unfinished_sf === 0 &&
+    room.finished_sf === 0 &&
+    room.custom_cabinetry === false;
+  function defaultRoomReplacement(data, changes) {
+    if (data.rooms.length !== 1 || !untouchedDefaultRoom(data.rooms[0])) return null;
+    if (changes.some((change) => change.room != null && roomKey(change.room) === 'room 1'))
+      return null;
+    return changes.find((change) => change.room != null)?.room || null;
+  }
+  // Only the initial placeholder transition (and its Undo) changes existing photo labels.
+  function defaultPhotoRename(before, after) {
+    const oldRooms = before.rooms,
+      newRooms = after.rooms;
+    if (!oldRooms.length || !newRooms.length || oldRooms[0].name === newRooms[0].name) return null;
+    if (
+      (oldRooms.length === 1 &&
+        untouchedDefaultRoom(oldRooms[0]) &&
+        !newRooms.some((room) => roomKey(room.name) === 'room 1')) ||
+      (newRooms[0].name === 'Room 1' &&
+        !oldRooms.some((room) => roomKey(room.name) === 'room 1') &&
+        !newRooms.some((room) => roomKey(room.name) === roomKey(oldRooms[0].name)))
+    )
+      return { from: oldRooms[0].name, to: newRooms[0].name };
+    return null;
+  }
   function applyScopeChanges(data, changes) {
     const result = structuredClone(data),
-      newRooms = new Map();
+      newRooms = new Map(),
+      replacement = defaultRoomReplacement(data, changes);
     for (const change of changes) {
       if (change.room == null) {
         if (!Object.hasOwn(scopeJobLabels, change.field)) throw Error('Unsupported scope field.');
@@ -121,7 +149,12 @@
         (!Object.hasOwn(room, 'finished_sf') && !Object.hasOwn(room, 'unfinished_sf'))
       )
         throw Error('A new room needs a stated water category and demolition area.');
-      result.rooms.push({ ...emptyData().rooms[0], ...room });
+      const filled = {
+        ...(room.name === replacement ? data.rooms[0] : emptyData().rooms[0]),
+        ...room,
+      };
+      if (room.name === replacement) result.rooms[0] = filled;
+      else result.rooms.push(filled);
     }
     if (result.rooms.length > 30) throw Error('At most 30 rooms are supported.');
     result.scope_confirmed = false;
@@ -307,6 +340,7 @@
     scopeRoomLabels,
     roomKey,
     applyScopeChanges,
+    defaultPhotoRename,
     ingestTranscript,
     closeTranscript,
     authStage,
