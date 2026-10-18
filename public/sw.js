@@ -1,7 +1,7 @@
 // prettier-ignore
 const VERSION='unstamped';
 // prettier-ignore
-const CACHE='alert-disaster-'+VERSION;
+const CACHE='dryscope-'+VERSION;
 const ASSETS = [
   '/',
   '/index.html',
@@ -37,7 +37,8 @@ self.addEventListener('activate', (event) =>
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys())
-        if (name.startsWith('alert-disaster-') && name !== CACHE) await caches.delete(name);
+        if ((name.startsWith('dryscope-') || name.startsWith('alert-disaster-')) && name !== CACHE)
+          await caches.delete(name);
       await self.clients.claim();
     })(),
   ),

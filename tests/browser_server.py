@@ -255,8 +255,8 @@ def worker():
         (ROOT / 'public/sw.js')
         .read_text()
         .replace(
-            "const CACHE='alert-disaster-'+VERSION;",
-            "const CACHE='alert-disaster-'+VERSION+'" + worker_suffix + "';",
+            "const CACHE='dryscope-'+VERSION;",
+            "const CACHE='dryscope-'+VERSION+'" + worker_suffix + "';",
         ),
         media_type='text/javascript',
         headers={'Cache-Control': 'no-store'},

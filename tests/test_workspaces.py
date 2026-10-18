@@ -650,6 +650,48 @@ def test_live_denial_precedes_vertex(store, monkeypatch, role):
     assert not any(k.startswith('_live_sessions/') for k in store.db.records)
 
 
+@pytest.mark.parametrize('uid', ['owner', 'other-owner'])
+@pytest.mark.parametrize('workspace_protocol', [None, 0, 2])
+def test_live_requires_workspace_protocol_for_every_company(
+    store, monkeypatch, uid, workspace_protocol
+):
+    from starlette.websockets import WebSocketDisconnect
+
+    store.create_inspection(uid, ID, data())
+
+    async def verified(token, **_):
+        return {**identity(uid), 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'WORKSPACES_ENABLED', True)
+    monkeypatch.setattr(bm, 'verify_staff', verified)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+
+    def forbidden(**kwargs):
+        pytest.fail('An outdated workspace client must not connect to Vertex')
+
+    monkeypatch.setattr(bm.genai, 'Client', forbidden)
+    auth = {
+        'type': 'authenticate',
+        'token': 'synthetic',
+        'inspection_id': ID,
+        'protocol_version': 2,
+        'capture_id': 'f' * 32,
+    }
+    if workspace_protocol is not None:
+        auth['workspace_protocol_version'] = workspace_protocol
+    with TestClient(bm.app) as client:
+        with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+            socket.send_json(auth)
+            assert socket.receive_json() == {
+                'type': 'error',
+                'status': 409,
+                'message': 'Update the app before a company walkthrough.',
+            }
+            with pytest.raises(WebSocketDisconnect):
+                socket.receive_json()
+    assert not any(k.startswith('_live_sessions/') for k in store.db.records)
+
+
 def test_live_resume_fallback_keeps_company_identity(store, monkeypatch):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace as NS
@@ -770,6 +812,7 @@ def test_live_rechecks_workspace_permission_and_deletes_checkpoint(store, monkey
                     'token': 'synthetic',
                     'inspection_id': ID,
                     'protocol_version': 2,
+                    'workspace_protocol_version': 1,
                     'capture_id': 'f' * 32,
                 }
             )

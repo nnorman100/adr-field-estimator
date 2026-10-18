@@ -6,10 +6,10 @@ This document specifies the operational protocols, business rules, architectural
 
 ## 1. Project Mission & Identity
 
-- **Company**: **Alert Disaster Restoration**
-- **Location**: Bakersfield, CA (Serving Kern County and surrounding areas)
-- **License**: California State License Board (CSLB) **#950983**
-- **Estimator Sign-off**: Matthew Myers
+- **Product**: **DryScope**, serving **Alert Disaster Restoration** first and other restoration companies as isolated company workspaces.
+- **ADR Location**: Bakersfield, CA (Serving Kern County and surrounding areas)
+- **ADR License**: California State License Board (CSLB) **#950983**
+- **ADR Estimator Sign-off**: Matthew Myers
 - **Core Purpose**: Provide field technicians with a multimodal AI assistant that conducts real-time video/voice walkthroughs on iPhones and instantly synthesizes complete, adjuster-ready claims and client-facing proposals.
 
 ---

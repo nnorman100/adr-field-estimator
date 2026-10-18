@@ -3,6 +3,58 @@ const assert = require('node:assert/strict'),
   vm = require('node:vm');
 const core = require('../public/core.js');
 assert.deepEqual(fs.readFileSync('index.html'), fs.readFileSync('public/index.html'));
+{
+  const manifest = JSON.parse(fs.readFileSync('public/manifest.webmanifest', 'utf8'));
+  assert.equal(manifest.name, 'DryScope');
+  assert.equal(manifest.short_name, 'DryScope');
+  assert.equal(manifest.theme_color, '#0B2545');
+  assert.equal(manifest.background_color, '#F6F8FA');
+  const css = fs.readFileSync('public/app.css', 'utf8');
+  assert.doesNotMatch(css, /#d42b32|#b9232a|--green|--adr\b/i);
+
+  const listeners = {},
+    deleted = [];
+  let precached;
+  const worker = vm.runInNewContext(
+    fs.readFileSync('public/sw.js', 'utf8') + '\n({ version: VERSION, cache: CACHE });',
+    {
+      self: {
+        addEventListener: (event, listener) => (listeners[event] = listener),
+        clients: { claim: async () => {} },
+      },
+      caches: {
+        open: async (name) => {
+          assert.equal(name, 'dryscope-' + worker.version);
+          return { addAll: async (assets) => (precached = Array.from(assets)) };
+        },
+        keys: async () => ['alert-disaster-old', 'dryscope-old', worker.cache, 'unrelated'],
+        delete: async (name) => deleted.push(name),
+      },
+    },
+  );
+  (async () => {
+    let work;
+    const event = { waitUntil: (promise) => (work = promise) };
+    listeners.install(event);
+    await work;
+    // The field shell must cold-load offline; signing links remain an online-only page.
+    const html = fs.readFileSync('public/index.html', 'utf8');
+    const assets = [...html.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)];
+    assert.ok(assets.length > 0);
+    for (const [, asset] of assets) {
+      assert.ok(precached.includes(asset), `HTML asset missing from precache: ${asset}`);
+    }
+    listeners.activate(event);
+    await work;
+    assert.deepEqual(deleted, ['alert-disaster-old', 'dryscope-old']);
+    console.log(
+      'PASS: DryScope install identity, palette, complete shell precache and cache rotation',
+    );
+  })().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
 assert.equal(core.money(2049.99), '$2,049.99');
 assert.equal(core.estimateLabel({ proposed_cost: 1788.9 }), '$1,788.90');
 assert.equal(

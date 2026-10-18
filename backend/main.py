@@ -190,7 +190,7 @@ def read_source_commit(
 
 
 SOURCE_COMMIT = read_source_commit()
-app = FastAPI(title='Alert Disaster Restoration Field Estimator', version='2.0')
+app = FastAPI(title='DryScope', version='2.0')
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGINS,
@@ -1396,11 +1396,7 @@ async def live_walkthrough(socket: WebSocket):
         record = await stored(store.get_inspection, uid, inspection_id)
         await stored(store._access, uid, record, 'live')
         identity = await stored(store.workspaces.snapshot, uid) if WORKSPACES_ENABLED else None
-        if (
-            identity
-            and identity['company_id'] != 'adr'
-            and auth.get('workspace_protocol_version') != 1
-        ):
+        if identity and auth.get('workspace_protocol_version') != 1:
             raise HTTPException(409, 'Update the app before a company walkthrough.')
         if record['status'] == 'signed':
             raise ValueError('Start a new inspection for live coaching.')
