@@ -202,14 +202,17 @@ async def workspaces_fixture(request: Request):
         )
     store.db.records['_platform_admins/test-owner-ws-owner'] = {'active': True}
     store.db.records['_platform_admins/test-owner-ws-admin'] = {'active': True}
-    data = InspectionData(
-        address='Assigned bathroom',
-        year_built=2000,
-        rooms=[dict(name='Bathroom', category=1, finished_sf=10)],
-        air_movers=3,
-        dehumidifiers=1,
-        scope_confirmed=True,
-    ).model_dump(mode='json')
+    # Stored in the shape the inspections API saves, so a later client save compares equal.
+    data = bm.inspection_payload(
+        InspectionData(
+            address='Assigned bathroom',
+            year_built=2000,
+            rooms=[dict(name='Bathroom', category=1, finished_sf=10)],
+            air_movers=3,
+            dehumidifiers=1,
+            scope_confirmed=True,
+        )
+    )
     store.create_inspection('test-owner-ws-estimator', 'ADR-INS-' + 'c' * 32, data)
     if body.get('send_fail'):
 

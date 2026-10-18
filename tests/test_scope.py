@@ -374,9 +374,10 @@ def test_scope_records_the_loss_type_answer_as_a_label_beside_the_category(
 
     quote = 'Office: water, mold, or both? ' + answer
     transcript = quote + f' Category {category}. 20 square feet of finished drywall demolition.'
-    assert 'loss' in scope_response_schema()['properties']['changes']['items']['properties'][
-        'field'
-    ]['enum']
+    assert (
+        'loss'
+        in scope_response_schema()['properties']['changes']['items']['properties']['field']['enum']
+    )
     client, _ = context
     prepared(client, rooms=[], technician_transcript=transcript)
     provider(
@@ -408,13 +409,17 @@ def test_loss_type_must_be_water_mold_or_both(proposed):
     with pytest.raises(ValueError, match='water, mold or both'):
         validate_suggestions(
             values,
-            ScopeSuggestions(changes=[change('loss', proposed, quote=quote, room='Office')], questions=[]),
+            ScopeSuggestions(
+                changes=[change('loss', proposed, quote=quote, room='Office')], questions=[]
+            ),
         )
     # A loss type alone does not make a new room; the category and area rule is unchanged.
     with pytest.raises(ValueError, match='water category'):
         validate_suggestions(
             InspectionData(technician_transcript=quote, rooms=[]),
-            ScopeSuggestions(changes=[change('loss', 'mold', quote=quote, room='Office')], questions=[]),
+            ScopeSuggestions(
+                changes=[change('loss', 'mold', quote=quote, room='Office')], questions=[]
+            ),
         )
 
 
