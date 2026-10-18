@@ -55,9 +55,6 @@
     );
     const company = ADRDocuments.brand(docs, view.legacy_identity);
     $('signFooter').textContent = company + ' · Private estimate review';
-    // The sender is named above the documents; DryScope stays in the bar and the footer line.
-    $('signCompany').textContent = company ? 'Sent by ' + company : '';
-    $('signCompany').hidden = !company;
     const signed = view.status === 'signed';
     $('homeownerSigning').hidden = signed;
     $('signedReceipt').hidden = !signed;

@@ -124,7 +124,7 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
   await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
-  await expect(page.locator('footer .powered')).toBeHidden();
+  await expect(page.locator('footer .powered')).toHaveText('Powered by DryScope');
   await expect(page.locator('#accountMenu')).toContainText('DryScope · App version');
   await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();

@@ -922,9 +922,6 @@ footer {
   font-size: 0.8125rem;
 }
 /* Before sign-in the whole page is DryScope; the attribution line only frames a company. */
-.login-page .powered {
-  display: none;
-}
 .audit-photo {
   display: grid;
   grid-template-columns: 160px 1fr;
@@ -1724,10 +1721,6 @@ footer {
 .sign-header h1 {
   margin: 0.35rem 0;
   font-size: 1.6rem;
-}
-.sign-company {
-  margin: 0 0 0.5rem;
-  font-weight: 700;
 }
 .homeowner-signing,
 .homeowner-receipt {

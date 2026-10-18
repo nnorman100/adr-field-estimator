@@ -1958,7 +1958,7 @@ async function restoreSigned(id) {
   confirmedAuthorization = id;
   state.draft = {
     inspection_id: record.inspection_id || '',
-    data: { ...emptyData(), ...record.inspection, address: record.address },
+    data: { ...emptyData(), rooms: [], ...record.inspection, address: record.address },
     photos: record.photos.map((p, i) => ({
       ...p,
       id: p.id || String(i),
