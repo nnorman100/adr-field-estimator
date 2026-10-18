@@ -1,0 +1,21 @@
+G focus scrollBy calls: 0
+G2 validation: focused= address scrollBy= 1 feedback= Please fill out this field.
+E bottom-bar saveDraft count: 0
+E after save: message= Draft saved privately. | menuOpen= false
+C empty walkthrough label: Finish & review
+C with transcript label: Fill scope from walkthrough
+C debug message: Review the proposed scope values before applying. | reqs: PUT /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc, POST /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc/scope-suggestions
+C requests: PUT /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc, POST /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc/scope-suggestions
+C scopeConfirmed checked: false | label now: Finish & review
+D confirmed walkthrough label: Finish & review
+D requests: PUT /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc, GET /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc, POST /api/audit, GET /api/inspections/ADR-INS-8dfd57cdba6a42469970a0f74c8695fc/signing-links
+B review bar visible: false
+A tab proposal signingArea visible: true bar visible: false
+A tab claim signingArea visible: true bar visible: false
+A tab defense signingArea visible: true bar visible: false
+A tab photos signingArea visible: true bar visible: false
+F signed tab photos savedSignature visible: true | evidence: Signed agreement and evidence restored.
+F signed tab proposal savedSignature visible: true | evidence: Signed agreement and evidence restored.
+F signed task property bar visible: false
+F signed task walkthrough bar visible: false
+F signed task evidence bar visible: false
