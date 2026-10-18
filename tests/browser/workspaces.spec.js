@@ -467,6 +467,18 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand strong')).toBeVisible();
   await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
+  await expect(page.locator('.masthead .brand img')).toBeHidden();
+  await expect(page.locator('body')).toHaveClass(/company-brand/);
+  await expect(page.locator('#workspaceAccountDetails')).toContainText('Other Restoration');
+  await expect(page.locator('footer')).toHaveText('Other Restoration · Private company workspaces');
+  await page.locator('#helpButton').click();
+  await expect(page.locator('#helpContact')).toContainText('Other Restoration');
+  for (const selector of ['#accountMenu', '#helpDialog', 'footer'])
+    await expect(page.locator(selector)).not.toContainText(
+      /Alert Disaster|950983|Matthew Myers|661|ADR/,
+    );
+  await page.locator('#closeHelp').click();
+
   await page.getByRole('button', { name: 'New job', exact: true }).click();
   await page.locator('#address').fill('Other company synthetic property');
   await page.locator('#yearBuilt').fill('2000');
@@ -481,7 +493,9 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.locator('#scopeConfirmed').check();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
-  await expect(page.locator('#doc-proposal > h2')).toContainText('Other Restoration');
+  await expect(page.locator('#doc-proposal > h2')).toHaveText(
+    'Other Restoration · Official proposal',
+  );
   await expect(page.locator('#proposalBody')).toContainText('Other Estimator · CSLB #123456');
   await expect(page.locator('#proposalBody p').first()).toHaveText('Customer: Synthetic Homeowner');
   await expect(page.locator('#claimParty')).toHaveText(
@@ -495,6 +509,7 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
     await expect(page.locator(doc + ' .document-letterhead p')).toContainText('CSLB #123456');
   }
   await expect(page.locator('#defenseBody')).not.toContainText('Matthew Myers');
+  await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|Matthew Myers|661/);
   if (browserName === 'chromium')
     await page.screenshot({
       path: test.info().outputPath('other-company-proposal-mobile.png'),

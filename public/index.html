@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#D42B32"><meta name="description" content="Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log. Alert Disaster Restoration.">
-  <title>Field Estimator · Water &amp; mold loss estimates | Alert Disaster Restoration</title>
+  <meta name="theme-color" content="#D42B32"><meta name="description" content="Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.">
+  <title>DryScope · Water &amp; mold loss estimates</title>
   <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg">
   <link rel="stylesheet" href="/app.css?v=unstamped">
   <link rel="modulepreload" href="/vendor/firebase/13.0.0/firebase-app.js"><link rel="modulepreload" href="/vendor/firebase/13.0.0/firebase-auth.js">
@@ -12,9 +12,9 @@
 </head>
 <body>
   <header class="masthead">
-    <a class="brand" href="/" aria-label="Alert Disaster Restoration home"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><strong>Field Estimator</strong></a>
+    <a class="brand" href="/" aria-label="DryScope"><img width="225" height="110" alt="DryScope" hidden><strong>DryScope</strong></a>
     <div id="updateBanner" class="notice" hidden><span class="update-text">Update ready.</span> <button id="applyUpdate">Save &amp; update</button></div>
-    <div class="header-tools"><button id="helpButton" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="helpDialog">?</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><strong>Alert Disaster Restoration</strong><p>CSLB #950983<br>3300 Patton Way<br>Bakersfield, CA 93308</p><a href="tel:+16614262151">(661) 426-2151</a><a href="https://alertdisaster.com/" target="_blank" rel="noopener noreferrer">Company website</a><small>App version unstamped</small></div></details></div>
+    <div class="header-tools"><button id="helpButton" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="helpDialog">?</button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><div id="workspaceAccountDetails"></div><small>App version unstamped</small></div></details></div>
   </header>
   <div id="offlineBanner" class="notice" hidden>You are offline. Changes stay on this device until synced. AI and signing need a connection.</div>
   <div id="hostSyncNotice" class="notice" role="status" hidden>Drafts on this device are still syncing. Sign in with email and keep this Home Screen icon until they finish.</div>
@@ -87,11 +87,11 @@
     <div class="totals-summary"><div><span>Customer estimate range</span><strong id="estimateRange"></strong></div><div><span>Itemized charges at base rates</span><strong id="itemizedTotal"></strong></div></div>
     <p id="documentProgress" class="review-progress" role="status">Open all four documents before signing.</p>
     <div id="auditWarnings" class="notice" hidden></div>
-    <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">ADR proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
-    <article id="doc-proposal" class="doc"><div class="document-letterhead"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><p>3300 Patton Way · Bakersfield, CA 93308<br>(661) 426-2151 · CSLB #950983</p></div><h2>Alert Disaster Restoration · Official ADR Proposal</h2><div id="proposalBody"></div>
+    <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">Proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
+    <article id="doc-proposal" class="doc"><div class="document-letterhead"><img width="225" height="110" alt="" hidden><p></p></div><h2></h2><div id="proposalBody"></div>
     </article>
-    <article id="doc-claim" class="doc" hidden><h2>Itemized carrier claim</h2><div id="claimParty"></div><p class="hint">ADR internal scope codes. JSON export does not guarantee Xactimate import compatibility.</p><div id="claimCards" class="claim-cards"></div><div class="table-scroll"><table><thead><tr><th>Code / description</th><th>Quantity</th><th>Rate</th><th>Waste</th><th>Total</th></tr></thead><tbody id="claimItems"></tbody></table></div><p id="claimTotal" class="money"></p></article>
-    <article id="doc-defense" class="doc" hidden><div class="document-letterhead"><img src="/brand/adr-logo.jpg" width="225" height="110" alt="Alert Disaster Restoration"><p>3300 Patton Way · Bakersfield, CA 93308<br>(661) 426-2151 · CSLB #950983</p></div><h2>IICRC scope defense letter</h2><div id="defenseBody" class="letter"></div></article>
+    <article id="doc-claim" class="doc" hidden><h2>Itemized carrier claim</h2><div id="claimParty"></div><p class="hint">Internal scope codes (not Xactimate codes). JSON export does not guarantee Xactimate import compatibility.</p><div id="claimCards" class="claim-cards"></div><div class="table-scroll"><table><thead><tr><th>Code / description</th><th>Quantity</th><th>Rate</th><th>Waste</th><th>Total</th></tr></thead><tbody id="claimItems"></tbody></table></div><p id="claimTotal" class="money"></p></article>
+    <article id="doc-defense" class="doc" hidden><div class="document-letterhead"><img width="225" height="110" alt="" hidden><p></p></div><h2>IICRC scope defense letter</h2><div id="defenseBody" class="letter"></div></article>
     <article id="doc-photos" class="doc" hidden><h2>Photo moisture audit log</h2><div id="photoAuditLog"></div></article>
       <div class="signing" id="signingArea">
         <label class="confirmation"><input id="documentsConfirmed" type="checkbox" aria-describedby="documentsConfirmedError"> I reviewed all four documents, the separate totals, and the attached evidence with the homeowner or representative.</label>
@@ -151,7 +151,7 @@
         <ul><li>Open <strong>Companies</strong>. Under <strong>Create a company</strong>, enter the name and owner's email and tap <strong>Create &amp; invite owner</strong>.</li><li><strong>Manage company</strong> suspends or reactivates a company and invites or replaces its owner.</li><li><strong>Open read-only support view</strong> shows the company's jobs, documents, photos, team and invitations. Nothing there can be edited.</li><li>The support view allows only a few fixes: change a member between estimator and office staff, re-enable access, and resend or cancel an invitation. Every view and action is recorded in the audit log.</li></ul>
       </details>
     </section>
-    <p id="helpContact" class="help-contact">Need help with a job? Call Alert Disaster Restoration at <a href="tel:+16614262151">(661) 426-2151</a>.</p>
+    <p id="helpContact" class="help-contact">For company access, ask your company owner.</p>
   </dialog>
-<footer>Alert Disaster Restoration &middot; Private field inspections</footer>
+<footer>DryScope &middot; Private field inspections</footer>
 </body></html>

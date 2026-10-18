@@ -151,12 +151,12 @@ window.WorkspaceUI = (() => {
     const image = document.querySelector('.masthead .brand img'),
       title = document.querySelector('.masthead .brand strong');
     title.textContent = profile?.name || 'Company administration';
-    document.body.classList.toggle('company-brand', !!company && company.company_id !== 'adr');
-    image.hidden = !profile || (!profile.logo_data_url && company.company_id !== 'adr');
-    if (profile) {
-      image.src = profile.logo_data_url || '/brand/adr-logo.jpg';
-      image.alt = profile.name;
-    }
+    document.body.classList.add('company-brand');
+    image.hidden = !profile?.logo_data_url;
+    if (profile?.logo_data_url) image.src = profile.logo_data_url;
+    else image.removeAttribute('src');
+    image.alt = profile?.name || '';
+    document.querySelector('.masthead .brand').setAttribute('aria-label', title.textContent);
     const menu = $('accountMenu').querySelector('.menu-content');
     if (!menu.querySelector('#workspaceAccountDetails')) {
       const start = menu.querySelector('hr');
@@ -1010,7 +1010,7 @@ window.WorkspaceUI = (() => {
   }
   function documentBranding() {
     if (!state.documents) return;
-    ADRDocuments.brand(state.documents);
+    ADRDocuments.brand(state.documents, state.session?.legacy_identity);
     policy();
   }
   return {

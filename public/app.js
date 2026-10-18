@@ -1669,12 +1669,11 @@ function helpRoles() {
   if (!session.workspaces_enabled) return ['estimator'];
   return [session.role, session.superadmin && 'superadmin'].filter((role) => HELP_ROLES[role]);
 }
-let helpContactDefault;
 function helpContact() {
   const line = $('helpContact');
-  helpContactDefault ??= [...line.childNodes].map((child) => child.cloneNode(true));
   line.hidden = false;
-  if (!state.session?.workspaces_enabled) return line.replaceChildren(...helpContactDefault);
+  if (!state.session?.workspaces_enabled)
+    return line.replaceChildren('For company access, ask your company owner.');
   // The same company details the Account menu shows once a workspace session loads.
   const profile = state.session.company?.profile;
   // A superadmin without a company membership is the platform contact; there is no one to name.
@@ -1993,7 +1992,7 @@ function renderDocuments() {
     ui.viewed.clear();
     selectDocument('proposal');
   }
-  ADRDocuments.render(docs, state.draft.photos, photoUrl);
+  ADRDocuments.render(docs, state.draft.photos, photoUrl, state.session?.legacy_identity);
   $('signingArea').hidden = !!state.signed || !!confirmedAuthorization;
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;
   $('sendHomeownerLink').disabled = $('authorizeJob').disabled;

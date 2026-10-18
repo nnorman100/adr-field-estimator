@@ -72,7 +72,9 @@ test.describe('signed out', () => {
         await expect(page.locator('#helpOtherHeading')).toHaveText('App features');
         expect(await topics(page, 'helpOther')).toEqual(ALL);
         await expect(dialog.locator('[data-help-topic="start"]')).toHaveAttribute('open', '');
-        await expect(dialog.locator('#helpContact')).toContainText('(661) 426-2151');
+        await expect(dialog.locator('#helpContact')).toHaveText(
+          'For company access, ask your company owner.',
+        );
         await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
         await page.keyboard.press('Escape');
         await expect(dialog).toBeHidden();
@@ -91,9 +93,7 @@ test.describe('signed out', () => {
 test('signed-out screen says what the app is for before sign-in', async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   await page.goto('/');
-  await expect(page).toHaveTitle(
-    'Field Estimator · Water & mold loss estimates | Alert Disaster Restoration',
-  );
+  await expect(page).toHaveTitle('DryScope · Water & mold loss estimates');
   for (const hidden of [
     '.inspection-shell',
     '.workspace',
@@ -102,6 +102,11 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
     '.draft-actions',
   ])
     await expect(page.locator(hidden).first()).toBeHidden();
+  await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
+  await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
+  await expect(page.locator('.masthead .brand img')).toBeHidden();
+  await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
+  await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
   await expect(page.getByRole('button', { name: /google/i })).toHaveCount(1);
   await expect(page.locator('#emailAuthForm')).toBeVisible();
@@ -204,5 +209,26 @@ test('help without company workspaces lists the field workflow first', async ({ 
   await openHelp(page);
   await expect(page.locator('#helpYoursHeading')).toHaveText('For you: Estimator');
   expect(await topics(page, 'helpYours')).toEqual(FIELD);
-  await expect(page.locator('#helpContact')).toContainText('(661) 426-2151');
+  await expect(page.locator('#helpContact')).toHaveText(
+    'For company access, ask your company owner.',
+  );
+});
+
+// The cached navigation shell must be as neutral as the online sign-in page.
+test('signed-out offline shell keeps DryScope identity', async ({ page, context }) => {
+  await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
+  await page.goto('/');
+  await expect(page.locator('#authPanel')).toBeVisible();
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller)
+      await new Promise((resolve) =>
+        navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }),
+      );
+  });
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
+  await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
+  await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|661/);
 });

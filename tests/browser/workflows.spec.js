@@ -390,6 +390,9 @@ test('permission denial, portrait evidence, clipboard denial and print document 
   await page.emulateMedia({ media: 'print' });
   for (const id of ['doc-proposal', 'doc-claim', 'doc-defense', 'doc-photos'])
     await expect(page.locator('#' + id)).toBeVisible();
+  await expect(page.locator('#doc-proposal > h2')).toHaveText(
+    'Alert Disaster Restoration · Official proposal',
+  );
   await expect(page.locator('#doc-defense .document-letterhead img')).toBeVisible();
   await expect(page.locator('#doc-defense .document-letterhead p')).toHaveText(
     '3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983',

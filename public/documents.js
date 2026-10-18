@@ -32,7 +32,8 @@
       .sort((a, b) => position(a) - position(b))
       .map((photo, i) => ({ photo, label: 'Photo ' + (i + 1) + ' (' + photo.room + ')' }));
   }
-  function render(docs, photos, photoUrl) {
+  function render(docs, photos, photoUrl, legacyIdentity) {
+    const identity = docs.company_identity || legacyIdentity || {};
     $('estimateRange').textContent = estimateLabel(docs.adr_estimate);
     $('itemizedTotal').textContent = money(docs.xactimate_total);
     const p = docs.adr_estimate,
@@ -43,10 +44,7 @@
       ...customer,
       p.property_address,
       p.date || '',
-      'Estimator: ' +
-        (docs.company_identity?.signoff || 'Matthew Myers') +
-        ' · CSLB #' +
-        (docs.company_identity?.license || '950983'),
+      'Estimator: ' + (identity.signoff || '') + ' · CSLB #' + (identity.license || ''),
     ]);
     body.append(
       node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
@@ -132,33 +130,26 @@
     $('auditWarnings').textContent = warnings.join(' · ');
     $('auditWarnings').hidden = !warnings.length;
   }
-  // The issuing company's letterhead; documents without an identity keep the ADR default.
-  function brand(docs) {
-    const identity = docs.company_identity;
-    const name = identity?.name || 'Alert Disaster Restoration';
-    document.querySelector('#doc-proposal > h2').textContent =
-      name +
-      (identity && identity.company_id !== 'adr'
-        ? ' · Official proposal'
-        : ' · Official ADR Proposal');
-    // The proposal and the defense letter carry the same letterhead.
+  // Pre-workspace records use the historical identity supplied by the backend, never a live profile.
+  function brand(docs, legacyIdentity) {
+    const identity = docs.company_identity || legacyIdentity || {};
+    const name = identity.name || '';
+    document.querySelector('#doc-proposal > h2').textContent = name + ' · Official proposal';
     for (const letter of document.querySelectorAll('.document-letterhead')) {
-      letter.querySelector('p').textContent = identity
-        ? [
-            identity.address,
-            identity.phone,
-            identity.license ? 'CSLB #' + identity.license : 'License not provided',
-          ]
-            .filter(Boolean)
-            .join(' · ')
-        : '3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983';
+      letter.querySelector('p').textContent = [
+        identity.address,
+        identity.phone,
+        identity.license ? 'CSLB #' + identity.license : 'License not provided',
+      ]
+        .filter(Boolean)
+        .join(' · ');
       const image = letter.querySelector('img');
-      image.hidden = !!identity && !identity.logo_data_url && identity.company_id !== 'adr';
-      image.src = identity?.logo_data_url || '/brand/adr-logo.jpg';
+      image.hidden = !identity.logo_data_url;
+      if (identity.logo_data_url) image.src = identity.logo_data_url;
+      else image.removeAttribute('src');
       image.alt = name;
     }
-    document.querySelector('[data-tab=proposal]').textContent =
-      identity?.company_id && identity.company_id !== 'adr' ? 'Proposal' : 'ADR proposal';
+    document.querySelector('[data-tab=proposal]').textContent = 'Proposal';
     return name;
   }
   root.ADRDocuments = { node, select, render, brand };

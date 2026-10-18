@@ -166,6 +166,8 @@ async def workspaces_fixture(request: Request):
             profile.update(
                 name='Other Restoration',
                 address='Other office',
+                phone='(555) 123-4567',
+                email='other@example.invalid',
                 license='123456',
                 signoff='Other Estimator',
                 water_heater_notice='Other company trade coordination.',
