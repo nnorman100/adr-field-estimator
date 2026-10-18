@@ -184,7 +184,7 @@ def proposal_date():
 
 
 def words(text):
-    return re.findall(r"[a-z0-9']+", text.lower())
+    return re.findall(r"[\w']+", text.casefold())
 
 
 def sentences(text):
@@ -199,7 +199,7 @@ def technician_statement(data: InspectionData):
         text = ' '.join(
             sentence
             for sentence in sentences(turn)
-            if words(sentence) and not CHATTER.fullmatch(' '.join(words(sentence)))
+            if not CHATTER.fullmatch(' '.join(words(sentence)))
         )
         if text:
             kept.append(text)

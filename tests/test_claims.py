@@ -327,6 +327,9 @@ def test_documents_use_the_technician_statement_without_echo_or_chatter():
         'Okay, the bathroom vanity is wet.',
         'To the right.',
         'Right side.',
+        '右侧墙面潮湿。',
+        'Okay, 好的.',
+        'Thanks, la pared está mojada.',
     ],
 )
 def test_technician_facts_survive_cleaning(turn):
