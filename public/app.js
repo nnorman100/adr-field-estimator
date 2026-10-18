@@ -138,24 +138,6 @@ function initFocusVisibility() {
       (constrained ? 0 : headerHeight) + 'px',
     );
     document.documentElement.style.setProperty('--overlay-bottom', footerHeight + 'px');
-    const active = document.activeElement;
-    if (
-      active?.matches(
-        '#inspectionForm input,#inspectionForm select,#inspectionForm textarea,#signingArea button,#signingArea input',
-      )
-    ) {
-      const feedback =
-        validationControl === active
-          ? $('validationFeedback')
-          : active.id === 'documentsConfirmed'
-            ? $('documentsConfirmedError')
-            : active.id === 'clearSignature'
-              ? $('signatureError')
-              : active.id === 'authorizeJob'
-                ? $('authorizationStatus')
-                : null;
-      requestAnimationFrame(() => revealControl(active, feedback));
-    }
   };
   const observer = new ResizeObserver(update);
   observer.observe(header);
@@ -199,6 +181,7 @@ function closeMenus() {
 }
 function showTask(task, focus = true) {
   ui.task = task;
+  renderDraftActions();
   document
     .querySelectorAll('[data-panel]')
     .forEach((panel) => (panel.hidden = panel.dataset.panel !== task));
@@ -217,6 +200,25 @@ function showTask(task, focus = true) {
     requestAnimationFrame(resizeSignature);
     restoreHomeownerLink().catch(() => {});
   }
+}
+function walkthroughNeedsScope() {
+  const data = state.draft?.data;
+  return (
+    ui.task === 'walkthrough' &&
+    !!data &&
+    !data.scope_confirmed &&
+    (!!state.media || !!data.technician_transcript.trim() || !!data.technician_notes.trim())
+  );
+}
+function renderDraftActions() {
+  $('draftActions').hidden = ui.task === 'review' || !!state.signed || !!confirmedAuthorization;
+  $('finishAudit').textContent = ui.fillingScope
+    ? 'Reading walkthrough…'
+    : ui.auditing
+      ? 'Generating…'
+      : walkthroughNeedsScope()
+        ? 'Fill scope from walkthrough'
+        : 'Finish & review';
 }
 function renderControls() {
   const editable = !!state.session && !!state.draft && !state.signed && !confirmedAuthorization,
@@ -249,7 +251,7 @@ function renderControls() {
   $('photoRoom').disabled = !editable;
   $('saveDraft').disabled = !editable;
   $('finishAudit').disabled = !editable || !navigator.onLine || ui.auditing || ui.fillingScope;
-  $('finishAudit').textContent = ui.auditing ? 'Generating…' : 'Finish & review';
+  renderDraftActions();
   for (const id of ['fillScope', 'fillScopeProperty']) {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
     $(id).textContent = ui.fillingScope ? 'Reading walkthrough…' : 'Fill scope from walkthrough';
@@ -640,6 +642,7 @@ function changed(resetConfirmation = true) {
     $('scopeConfirmed').checked = false;
   }
   invalidate();
+  renderDraftActions();
   renderSaveStatus();
   schedulePersist();
   clearTimeout(saveTimer);
@@ -3549,13 +3552,16 @@ async function initialize() {
     changed();
   });
   click('saveDraft', async () => {
+    closeMenus();
     if (!state.session || !state.draft) throw Error('Sign in and open a draft first.');
     collect();
     await syncDraft();
     if (state.conflict) throw Error('Choose a recovery action before cloud saving.');
     say(navigator.onLine ? 'Draft saved privately.' : 'Draft saved on this device.', 'success');
   });
-  click('finishAudit', finishAudit);
+  click('finishAudit', () =>
+    walkthroughNeedsScope() ? fillScopeFromWalkthrough() : finishAudit(),
+  );
   click('fillScope', fillScopeFromWalkthrough);
   click('fillScopeProperty', fillScopeFromWalkthrough);
   const fillFromNotes = () => {

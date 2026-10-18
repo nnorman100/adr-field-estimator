@@ -1,3 +1,4 @@
+const { saveDraft } = require('./actions');
 const { test, expect } = require('@playwright/test');
 
 test.beforeEach(async ({ page }) => {
@@ -48,7 +49,7 @@ test('first worker claiming the page does not offer an update or reload the draf
   await page.locator('#address').fill('First installation draft');
   await page.evaluate(() => window.__installWorker({ existingController: false }));
   await expect(page.locator('#updateBanner')).toBeHidden();
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await expect(page.locator('#address')).toHaveValue('First installation draft');
   expect(await page.evaluate(() => sessionStorage.getItem('worker-lifecycle-loads'))).toBe('1');

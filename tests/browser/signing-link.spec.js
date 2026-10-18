@@ -1,3 +1,4 @@
+const { saveDraft } = require('./actions');
 const { test, expect } = require('@playwright/test');
 // Two browser contexts: the signed-in technician, and a homeowner context with no sign-in at all.
 test.setTimeout(90000);
@@ -10,7 +11,7 @@ async function audit(page, address = 'Synthetic signing-link property') {
   await page.locator('#yearBuilt').fill('1960');
   await page.locator('[data-room-key="finished_sf"]').fill('10');
   await page.locator('#scopeConfirmed').check();
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
@@ -196,7 +197,7 @@ test('an edit voids an unused link, and revoked or expired links are refused', a
   await task(page, 'property');
   await page.locator('#address').fill('Changed after sending the link');
   await expect(page.locator('#documents')).toBeHidden();
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await edited.page.reload();
   await expect(edited.page.locator('#signStatus')).toHaveText(

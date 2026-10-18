@@ -1,3 +1,4 @@
+const { saveDraft } = require('./actions');
 const { test, expect } = require('@playwright/test');
 const { randomUUID } = require('node:crypto');
 const core = require('../../public/core.js');
@@ -96,7 +97,7 @@ test('offline draft with several photos survives reload with images intact and b
   expect(row.draft.photos.some((p) => 'data_url' in p)).toBe(false);
   expect(photos.filter((p) => p.draft_key === row.key).length).toBe(3);
   await context.setOffline(false);
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   const uid = await page.evaluate(() => sessionStorage.getItem('synthetic-uid')),
     remote = await (
@@ -135,7 +136,7 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
     await syncChain;
     await Promise.all([...state.ocr.values()]);
   });
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await page.evaluate(() => syncChain);
   await page.evaluate(() => {
     window.__storePuts = [];
@@ -169,7 +170,7 @@ test('an immediate save consumes the pending autosave without losing later edits
     };
   });
   await page.locator('#technicianNotes').fill('Saved now');
-  await page.locator('#saveDraft').click();
+  await saveDraft(page);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await page.evaluate(() => syncChain);
   // Observe beyond the application's 1500 ms autosave deadline, not a network readiness delay.
