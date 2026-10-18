@@ -584,6 +584,7 @@ function clearDisplayedInspection() {
   clearSigningError('documentsConfirmedError');
   $('inspectionForm').before($('validationFeedback'));
   $('inspectionForm').reset();
+  $('scopeConfirmNotice').hidden = true;
   $('coordinationForm').reset();
   $('jobsDialog').close();
   for (const id of ['technicianTranscript', 'assistantTranscript']) $(id).value = '';
@@ -633,6 +634,8 @@ function changed(resetConfirmation = true) {
   if (!state.draft || state.signed || confirmedAuthorization) return;
   state.localVersion++;
   if (resetConfirmation) {
+    // Say so, because a silent un-tick hid that the confirmed scope had moved.
+    if ($('scopeConfirmed').checked) $('scopeConfirmNotice').hidden = false;
     state.draft.data.scope_confirmed = false;
     $('scopeConfirmed').checked = false;
   }
@@ -1253,6 +1256,7 @@ function fillForm() {
     scopeConfirmed: 'scope_confirmed',
   }))
     $(id).checked = !!data[key];
+  $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
   renderRooms();
   renderPhotos();
@@ -1301,6 +1305,7 @@ function renderRooms() {
           input.min = 0;
           input.max = key === 'waste_percent' ? 100 : 100000;
           input.step = 0.01;
+          input.inputMode = 'decimal';
         } else input.maxLength = 100;
         input.required = true;
       }
@@ -3520,9 +3525,20 @@ async function initialize() {
     renderRooms();
   });
   $('inspectionForm').addEventListener('submit', (e) => e.preventDefault());
+  // A tap leaves the caret after a prefilled "0", so typing 1 showed "01". Selecting the value on
+  // focus lets the first keystroke replace it; the tap's mouseup would otherwise drop the selection.
+  $('inspectionForm').addEventListener('focusin', (e) => {
+    const box = e.target;
+    if (box.type !== 'number') return;
+    box.select();
+    const keep = (up) => up.preventDefault();
+    box.addEventListener('mouseup', keep, { once: true });
+    box.addEventListener('blur', () => box.removeEventListener('mouseup', keep), { once: true });
+  });
   $('inspectionForm').addEventListener('input', (e) => {
     if (e.target === validationControl && e.target.validity.valid) clearValidationFeedback();
     if (e.target.dataset.roomKey) return;
+    if (e.target.id === 'scopeConfirmed') $('scopeConfirmNotice').hidden = true;
     collect();
     changed(e.target.id !== 'scopeConfirmed');
   });

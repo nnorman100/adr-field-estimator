@@ -904,6 +904,60 @@ test('scope suggestions dismiss and manual edits preserve user values', async ({
   await expect(page.locator('#airMovers')).toHaveValue('6');
 });
 
+test('a dehumidifier typed after a blocked audit and walkthrough detour replaces the 0 and is priced', async ({
+  page,
+}) => {
+  // The 2026-10-17 phone test: a prefilled 0 left the caret after it, so typing 1 showed "01".
+  await page.setViewportSize({ width: 390, height: 844 });
+  await task(page, 'walkthrough');
+  await page.locator('details:has(#technicianTranscript) summary').click();
+  await page
+    .locator('#technicianTranscript')
+    .fill('Room 1, clean water. Set one dehumidifier for 3 days.');
+  await scope(page);
+  const blocked = page.waitForResponse((r) => r.url().endsWith('/api/audit'));
+  await page.locator('#finishAudit').click();
+  const first = (await (await blocked).json()).audit.documents;
+  expect(first.signable).toBe(false);
+  expect(first.unpriced_work).toHaveLength(1);
+  await task(page, 'property');
+  await page.locator('#panel-property .section-head [data-task="walkthrough"]').click();
+  await expect(page.locator('#panel-walkthrough')).toBeVisible();
+  await task(page, 'property');
+  const box = page.locator('#dehumidifiers');
+  await expect(box).toHaveValue('0');
+  await expect(box).toHaveAttribute('inputmode', 'numeric');
+  await expect(page.locator('#laborHours')).toHaveAttribute('inputmode', 'decimal');
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveAttribute(
+    'inputmode',
+    'decimal',
+  );
+  const saves = [];
+  page.on('request', (r) => {
+    if (r.method() === 'PUT' && r.url().includes('/api/inspections/')) saves.push(r.postDataJSON());
+  });
+  await expect(page.locator('#scopeConfirmNotice')).toBeHidden();
+  await box.click();
+  await page.keyboard.type('1');
+  await expect(box).toHaveValue('1');
+  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+  await expect(page.locator('#scopeConfirmNotice')).toHaveText('Scope changed · confirm again.');
+  await page.locator('#scopeConfirmed').check();
+  await expect(page.locator('#scopeConfirmNotice')).toBeHidden();
+  const audited = page.waitForResponse((r) => r.url().endsWith('/api/audit'));
+  // Inside the 1.5 s save debounce: Finish & review must flush the pending save itself.
+  expect(saves).toHaveLength(0);
+  await page.locator('#finishAudit').click();
+  const documents = (await (await audited).json()).audit.documents;
+  expect(saves.length).toBeGreaterThan(0);
+  expect(saves.map((body) => body.data.dehumidifiers)).toEqual(saves.map(() => 1));
+  expect(documents.unpriced_work).toEqual([]);
+  expect(documents.signable).toBe(true);
+  expect(documents.xactimate_scope.find((item) => item.code === 'ADR-DEHU')).toMatchObject({
+    quantity: 3,
+  });
+});
+
 test.describe('controlled scope requests', () => {
   test.use({ serviceWorkers: 'block' });
 

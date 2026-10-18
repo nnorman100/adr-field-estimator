@@ -94,6 +94,99 @@ def test_successful_audit_logs_model_operation_and_inspection(context, capsys):
     )
 
 
+def test_draft_save_logs_revision_and_changed_field_names_never_values(context, capsys):
+    client, _ = context
+    record = inspect(client)
+    secrets = [
+        'Synthetic 4417 Larkspur Ct',
+        'Homeowner Quill reported a burst supply line',
+        'Zephyr den',
+    ]
+    changed = {
+        **data(),
+        'address': secrets[0],
+        'technician_notes': secrets[1],
+        'rooms': [{'name': secrets[2], 'category': 2, 'finished_sf': 10}],
+        'dehumidifiers': 7,
+        'scope_confirmed': False,
+    }
+    capsys.readouterr()
+    for body in (changed, changed):
+        r = client.put(
+            '/api/inspections/' + ID,
+            json={'expected_revision': record['revision'], 'data': body},
+        )
+        assert r.status_code == 200, r.text
+        record = r.json()
+    output = capsys.readouterr().out
+    first, repeat = [
+        e
+        for e in map(json.loads, filter(lambda line: line.startswith('{'), output.splitlines()))
+        if e['message'] == 'Inspection saved'
+    ]
+    assert first == {
+        'severity': 'INFO',
+        'message': 'Inspection saved',
+        'operation': 'save',
+        'inspection_id': ID,
+        'revision': 2,
+        'changed_fields': [
+            'address',
+            'dehumidifiers',
+            'rooms',
+            'scope_confirmed',
+            'technician_notes',
+        ],
+    }
+    # An unchanged save keeps its revision and names no field.
+    assert repeat['revision'] == 2 and repeat['changed_fields'] == []
+    for secret in secrets + ['Larkspur', 'Quill', 'Zephyr', 'owner']:
+        assert secret not in output
+    assert '7' not in json.dumps({k: v for k, v in first.items() if k != 'inspection_id'})
+
+
+def test_creation_logs_fields_set_from_empty_default_never_values(context, capsys):
+    client, _ = context
+    secrets = [
+        'Synthetic 9083 Wrenfield Way',
+        'Owner Thistle saw water under the sink',
+        'Juniper nook',
+    ]
+    body = {
+        'inspection_id': ID,
+        'data': {
+            'address': secrets[0],
+            'technician_notes': secrets[1],
+            'rooms': [{'name': secrets[2], 'category': 2, 'finished_sf': 10}],
+            'dehumidifiers': 7,
+            'drying_days': 3,
+        },
+    }
+    capsys.readouterr()
+    for _ in range(2):
+        r = client.post('/api/inspections', json=body)
+        assert r.status_code == 200, r.text
+    output = capsys.readouterr().out
+    created, replay = [
+        e
+        for e in map(json.loads, filter(lambda line: line.startswith('{'), output.splitlines()))
+        if e['message'] == 'Inspection saved'
+    ]
+    assert created == {
+        'severity': 'INFO',
+        'message': 'Inspection saved',
+        'operation': 'save',
+        'inspection_id': ID,
+        'revision': 1,
+        'changed_fields': ['address', 'dehumidifiers', 'rooms', 'technician_notes'],
+    }
+    # A retried creation of the same draft commits nothing new.
+    assert replay['revision'] == 1 and replay['changed_fields'] == []
+    for secret in secrets + ['Wrenfield', 'Thistle', 'Juniper', 'owner']:
+        assert secret not in output
+    assert '7' not in json.dumps({k: v for k, v in created.items() if k != 'inspection_id'})
+
+
 def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch, capsys):
     store = FakeStore()
     store.create_inspection('owner', ID, InspectionData().model_dump())

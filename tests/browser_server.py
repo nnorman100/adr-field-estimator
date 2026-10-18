@@ -105,11 +105,22 @@ async def generate(**kwargs):
         return SimpleNamespace(
             text=json.dumps({'text': 'Room 1, category 2, 80 square feet of drywall.'})
         )
+    if schema is bm.AIResult:
+        # Like the real audit, flag a dehumidifier the walkthrough mentions but the form omits.
+        inspection = json.loads(kwargs['contents'][0].split('(JSON):\n', 1)[1])['inspection']
+        omitted = (
+            'dehumidifier' in inspection['technician_transcript'].lower()
+            and not inspection['dehumidifiers']
+        )
     result = (
         {
             'summary': '<img src=x onerror="window.reviewInjected=true"> Confirmed scope summary.',
             'suggestions': ['Document drying progress.'],
-            'unpriced_work': [],
+            'unpriced_work': (
+                ['One dehumidifier rental for 3 days was described but omitted from the form.']
+                if omitted
+                else []
+            ),
         }
         if schema is bm.AIResult
         else {
