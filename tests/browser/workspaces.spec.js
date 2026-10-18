@@ -425,6 +425,37 @@ test('company profile edits require regenerated documents and render labels safe
   expect(await page.evaluate(() => window.companyInjected)).toBeUndefined();
 });
 
+// Temporary until PR 2 stores ADR's logo in its profile: only 'adr' falls back to the bundled logo.
+test('ADR without a profile logo shows the bundled logo until a saved logo replaces it', async ({
+  page,
+}) => {
+  await start(page, 'owner');
+  await expect(page.locator('.masthead .brand img')).toHaveAttribute('src', '/brand/adr-logo.jpg');
+  await expect(page.locator('.masthead .brand img')).toBeVisible();
+  await page.locator('#dashboardJobs').click();
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  for (const doc of ['#doc-proposal', '#doc-defense'])
+    await expect(page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
+      'src',
+      '/brand/adr-logo.jpg',
+    );
+  await navigate(page, 'dashboardProfile');
+  await page.locator('input[name=logo]').setInputFiles('public/brand/adr-logo.jpg');
+  await page.getByRole('button', { name: 'Save company details' }).click();
+  await expect(page.locator('#message')).toContainText('Company details saved');
+  await expect(page.locator('.masthead .brand img')).toHaveAttribute('src', /^data:image\/jpeg/);
+  await navigate(page, 'dashboardJobs');
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#finishAudit').click();
+  for (const doc of ['#doc-proposal', '#doc-defense'])
+    await expect(page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
+      'src',
+      /^data:image\/jpeg/,
+    );
+});
+
 test('invitation is explicit and bound to the matching Google account', async ({ page }) => {
   const invitation = await (
     await call(page, '/api/companies/adr/invitations', 'POST', {
@@ -467,6 +498,18 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand strong')).toBeVisible();
   await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
+  await expect(page.locator('.masthead .brand img')).toBeHidden();
+  await expect(page.locator('body')).toHaveClass(/company-brand/);
+  await expect(page.locator('#workspaceAccountDetails')).toContainText('Other Restoration');
+  await expect(page.locator('footer')).toHaveText('Other Restoration · Private company workspaces');
+  await page.locator('#helpButton').click();
+  await expect(page.locator('#helpContact')).toContainText('Other Restoration');
+  for (const selector of ['#accountMenu', '#helpDialog', 'footer'])
+    await expect(page.locator(selector)).not.toContainText(
+      /Alert Disaster|950983|Matthew Myers|661|ADR/,
+    );
+  await page.locator('#closeHelp').click();
+
   await page.getByRole('button', { name: 'New job', exact: true }).click();
   await page.locator('#address').fill('Other company synthetic property');
   await page.locator('#yearBuilt').fill('2000');
@@ -481,7 +524,9 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.locator('#scopeConfirmed').check();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
-  await expect(page.locator('#doc-proposal > h2')).toContainText('Other Restoration');
+  await expect(page.locator('#doc-proposal > h2')).toHaveText(
+    'Other Restoration · Official proposal',
+  );
   await expect(page.locator('#proposalBody')).toContainText('Other Estimator · CSLB #123456');
   await expect(page.locator('#proposalBody p').first()).toHaveText('Customer: Synthetic Homeowner');
   await expect(page.locator('#claimParty')).toHaveText(
@@ -495,6 +540,7 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
     await expect(page.locator(doc + ' .document-letterhead p')).toContainText('CSLB #123456');
   }
   await expect(page.locator('#defenseBody')).not.toContainText('Matthew Myers');
+  await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|Matthew Myers|661/);
   if (browserName === 'chromium')
     await page.screenshot({
       path: test.info().outputPath('other-company-proposal-mobile.png'),
@@ -905,8 +951,10 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   await page.goto('/');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await showUpdateBanner(page);
+  await expect(page.locator('.brand strong')).toBeVisible();
+  await expect(page.locator('.brand strong')).toHaveText('DryScope');
   const boxes = await page.evaluate(() =>
-    ['.brand img', '#updateBanner', '#accountMenu'].map((s) => {
+    ['.brand', '#updateBanner', '#accountMenu'].map((s) => {
       const r = document.querySelector(s).getBoundingClientRect();
       return [r.left, r.right];
     }),
@@ -917,4 +965,16 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   expect(boxes[2][1]).toBeLessThanOrEqual(320);
   expect(await bannerUsable(page)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('company without a logo keeps its name visible between phone and tablet widths', async ({
+  page,
+}) => {
+  await start(page, 'other');
+  for (const width of [641, 670, 700]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator('.masthead .brand img')).toBeHidden();
+    await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
+    await expect(page.locator('.masthead .brand strong')).toBeVisible();
+  }
 });

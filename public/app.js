@@ -1780,12 +1780,11 @@ function helpRoles() {
   if (!session.workspaces_enabled) return ['estimator'];
   return [session.role, session.superadmin && 'superadmin'].filter((role) => HELP_ROLES[role]);
 }
-let helpContactDefault;
 function helpContact() {
   const line = $('helpContact');
-  helpContactDefault ??= [...line.childNodes].map((child) => child.cloneNode(true));
   line.hidden = false;
-  if (!state.session?.workspaces_enabled) return line.replaceChildren(...helpContactDefault);
+  if (!state.session?.workspaces_enabled)
+    return line.replaceChildren('For company access, ask your company owner.');
   // The same company details the Account menu shows once a workspace session loads.
   const profile = state.session.company?.profile;
   // A superadmin without a company membership is the platform contact; there is no one to name.
@@ -2104,7 +2103,7 @@ function renderDocuments() {
     ui.viewed.clear();
     selectDocument('proposal');
   }
-  ADRDocuments.render(docs, state.draft.photos, photoUrl);
+  ADRDocuments.render(docs, state.draft.photos, photoUrl, state.session?.legacy_identity);
   $('signingArea').hidden = !!state.signed || !!confirmedAuthorization;
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;
   $('sendHomeownerLink').disabled = $('authorizeJob').disabled;
@@ -3864,6 +3863,32 @@ async function initialize() {
   });
   sdk.onAuthStateChanged(auth, applyUser);
 }
+function resetShellBranding() {
+  const brand = document.querySelector('.masthead .brand'),
+    image = brand.querySelector('img');
+  document.body.classList.remove('company-brand');
+  brand.querySelector('strong').textContent = 'DryScope';
+  brand.setAttribute('aria-label', 'DryScope');
+  image.hidden = true;
+  image.removeAttribute('src');
+  image.alt = 'DryScope';
+  $('workspaceAccountDetails').replaceChildren();
+  $('dashboardHeading').textContent = 'Dashboard';
+  $('dashboardEyebrow').textContent = 'LOSS ESTIMATES';
+  $('dashboardDescription').replaceChildren();
+  document.querySelector('footer').textContent = 'DryScope · Private field inspections';
+  $('helpContact').replaceChildren('For company access, ask your company owner.');
+  $('helpContact').hidden = false;
+  // Rendered document identity must not survive an auth callback either.
+  document.querySelector('#doc-proposal > h2').replaceChildren();
+  for (const letterhead of document.querySelectorAll('.document-letterhead')) {
+    letterhead.querySelector('p').replaceChildren();
+    const logo = letterhead.querySelector('img');
+    logo.hidden = true;
+    logo.removeAttribute('src');
+    logo.alt = '';
+  }
+}
 async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,
@@ -3894,6 +3919,7 @@ async function applyUser(user) {
   const stage = authStage(user);
   state.user = user;
   state.session = null;
+  if (!user) resetShellBranding();
   state.workspaceInitializing = true;
   document.body.classList.remove('dashboard-open', 'office-view');
   $('workspaceNav').hidden = true;

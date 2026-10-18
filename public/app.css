@@ -848,7 +848,13 @@ footer {
     width: 96px;
   }
   .brand strong {
-    display: none;
+    display: block;
+    font-size: 0.875rem;
+    border-left: 0;
+    padding-left: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
   }
   .header-tools {
     gap: 0.4rem;
@@ -1503,13 +1509,17 @@ footer {
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 700px) {
   .company-brand .brand strong {
     display: block;
     font-size: 0.875rem;
     max-width: 180px;
     overflow-wrap: anywhere;
     line-height: 1.25;
+  }
+  /* A phone row has no room for both; the logo carries the brand and the link keeps the name. */
+  .company-brand .brand img:not([hidden]) + strong {
+    display: none;
   }
   .company-brand .brand img {
     max-width: 72px;

@@ -70,6 +70,11 @@ INVITATION_SUBJECT = 'Invitation to join {company} on DryScope'
 # The build context is backend/, so it carries its own copy of public/brand/adr-logo.jpg.
 with open(os.path.join(os.path.dirname(__file__), 'brand', 'adr-logo.jpg'), 'rb') as _logo:
     ADR_LOGO = _logo.read()
+# Signed records predating workspaces have no identity snapshot. Preserve their historical letterhead.
+LEGACY_IDENTITY = {
+    **ADR_PROFILE,
+    'logo_data_url': 'data:image/jpeg;base64,' + base64.b64encode(ADR_LOGO).decode('ascii'),
+}
 LOGO_CID = 'invitation-logo@dryscope'
 
 

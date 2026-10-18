@@ -31,7 +31,7 @@ This document specifies the operational protocols, business rules, architectural
 - **Transport**: Cloud Run REST microservice (`POST /api/audit`).
 - **Input**: Walkthrough transcript, timestamped photos, property address, year built, and equipment counts.
 - **Output**: Structured JSON strictly conforming to the 4-document claims hub schema:
-  1. Official ADR Proposal (sheet-derived low–high estimate + e-signature).
+  1. Official proposal, headed "[Company] · Official proposal" ("Proposal" tab; sheet-derived low–high estimate + e-signature).
   2. Itemized Xactimate Line Items with waste factors.
   3. Formal IICRC S500 / S520 insurance claim defense letter.
   4. Photo Moisture Audit Log.

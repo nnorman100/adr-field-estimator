@@ -276,6 +276,7 @@ test.describe('company workspaces', () => {
     await expect(view.locator('#proposalBody')).toContainText('Other Estimator · CSLB #123456');
     await expect(view.locator('[data-tab=proposal]')).toHaveText('Proposal');
     await expect(view.locator('#signFooter')).toContainText('Other Restoration');
+    await expect(view.locator('#doc-proposal .document-letterhead img')).toBeHidden();
     await signAsHomeowner(view);
     await expect(page.locator('#saveStatus')).toContainText('Saved & signed', { timeout: 20000 });
     await page.reload();
@@ -283,6 +284,30 @@ test.describe('company workspaces', () => {
     await expect(
       page.getByRole('button', { name: /Other company signing-link property.*Signed/s }),
     ).toBeVisible();
+    await home.context.close();
+  });
+
+  // Temporary until PR 2 stores ADR's logo in its profile.
+  test('an ADR job without a profile logo shows the bundled logo on the signing page', async ({
+    page,
+    browser,
+  }) => {
+    await page.addInitScript(() => sessionStorage.setItem('synthetic-uid', 'test-owner-ws-owner'));
+    await page.goto('/');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await page.locator('#address').fill('ADR signing-link property');
+    await page.locator('#yearBuilt').fill('2000');
+    await page.locator('[data-room-key=finished_sf]').fill('10');
+    await page.locator('#scopeConfirmed').check();
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('#documents')).toBeVisible();
+    const home = await homeowner(browser, await sendLink(page));
+    for (const doc of ['#doc-proposal', '#doc-defense'])
+      await expect(home.page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
+        'src',
+        '/brand/adr-logo.jpg',
+      );
     await home.context.close();
   });
 });

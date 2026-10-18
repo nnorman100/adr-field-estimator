@@ -3285,3 +3285,13 @@ def test_live_permission_change_that_keeps_access_keeps_the_session(store, monke
             assert socket.receive_json() == {'type': 'finished', 'complete': True}
     assert 'refused' not in harness.log and harness.connects == 1
     assert store.db.records['_live_resume/estimator']['handle'] == 'synthetic-private'
+
+
+def test_session_supplies_historical_identity_without_mutating_current_profile(api):
+    client, current, store = api
+    store.db.records['_companies/adr']['profile']['signoff'] = 'New Estimator'
+    session = client.get('/api/session').json()
+    assert session['legacy_identity'] == workspaces.LEGACY_IDENTITY
+    assert session['legacy_identity']['signoff'] == ADR_PROFILE['signoff']
+    assert session['legacy_identity']['logo_data_url'].startswith('data:image/jpeg;base64,')
+    assert session['company']['profile']['signoff'] == 'New Estimator'
