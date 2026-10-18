@@ -181,4 +181,15 @@ test('a room chosen while its photo uploads or offline is kept and saved', async
   await expect.poll(() => settled(page)).toEqual(['Kitchen']);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   expect(await page.evaluate(() => openDraftUnsynced())).toBe(false);
+  // Renaming the chosen room on Check Scope before it syncs carries the reassignment along.
+  await page.context().setOffline(true);
+  await page.locator('#photoGallery .photo select').selectOption('Hallway');
+  await page.locator('.task-nav [data-task="property"]').click();
+  await room(page, 1, 'name').fill('Bathroom');
+  await expect(
+    page.locator('#rooms .room').nth(1).locator('.room-photos .photo strong'),
+  ).toHaveText(['Bathroom']);
+  await page.context().setOffline(false);
+  await expect.poll(() => settled(page)).toEqual(['Bathroom']);
+  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
 });

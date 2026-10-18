@@ -246,7 +246,6 @@ function renderControls() {
   $('typedNote').disabled = !editable;
   $('addTypedNote').disabled = !editable;
   $('takePhoto').disabled = !editable;
-  $('takePhoto').hidden = ui.notesMode;
   $('uploadPhoto').disabled = !editable;
   $('thermalToggle').disabled = !active;
   $('photoRoom').disabled = !editable;
@@ -813,6 +812,7 @@ async function doSync() {
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
+        if (photo.uploaded) continue;
         payload.expected_revision = state.record.revision;
         absorb(await jsonApi('/api/inspections/' + id + '/photos', 'POST', payload));
       }
@@ -1500,10 +1500,16 @@ function renderRooms() {
       }
       input.value = room[key];
       input.disabled = !!state.signed;
+      let photos = [];
+      if (key === 'name') input.addEventListener('focus', () => (photos = roomPhotos(room.name)));
       input.addEventListener('input', () => {
         room[key] = type === 'text' ? input.value : Number(input.value);
+        if (key === 'name') retagPhotos(photos, input.value);
         changed();
-        if (key === 'name') updateRoomPicker();
+        if (key === 'name') {
+          updateRoomPicker();
+          renderPhotos();
+        }
         if (key === 'category') tagRoom();
       });
       wrap.append(input);
@@ -1688,22 +1694,24 @@ function beginRoomRename(index) {
   input.select();
 }
 function renameRoom(room, name) {
-  const previous = room.name;
+  const photos = roomPhotos(room.name);
   room.name = name;
-  retagPhotos(previous, name);
+  retagPhotos(photos, name);
   changed();
   renderRooms();
   $('photoRoom').value = name;
   renderRoomChips();
   renderPhotos();
 }
+function roomPhotos(name) {
+  return state.draft.photos.filter((photo) => roomKey(photo.room) === roomKey(name));
+}
 // Photos follow their room's new name and are relabelled on the next sync.
-function retagPhotos(from, to) {
-  for (const photo of state.draft.photos)
-    if (roomKey(photo.room) === roomKey(from)) {
-      photo.room = to;
-      photo.pending_room = to;
-    }
+function retagPhotos(photos, to) {
+  for (const photo of photos) {
+    photo.room = to;
+    photo.pending_room = to;
+  }
 }
 function reassignPhoto(photo, room) {
   if (!canEditDraft('photos') || !state.draft.photos.includes(photo)) return;
@@ -1756,7 +1764,7 @@ function renderRoomPhotos() {
     const room = state.draft.data.rooms[index],
       strip = card.querySelector('.room-photos');
     if (!room || !strip) return;
-    const photos = state.draft.photos.filter((p) => roomKey(p.room) === roomKey(room.name));
+    const photos = roomPhotos(room.name);
     strip.replaceChildren(...photos.map(photoCard));
     if (!photos.length)
       strip.append(node('p', 'No photo of this room yet. Capture one on Walk & Photo.', 'hint'));
