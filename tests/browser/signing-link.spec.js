@@ -49,8 +49,11 @@ async function draw(page) {
   await page.mouse.up();
 }
 async function signAsHomeowner(page) {
-  // The proposal opens with the page; the other three documents are optional.
-  await expect(page.locator('#documentProgress')).toContainText('Proposal opened');
+  // The homeowner link still requires all four documents; the technician app needs only the proposal.
+  await expect(page.locator('#submitSignature')).toBeDisabled();
+  for (const name of ['proposal', 'claim', 'defense', 'photos'])
+    await page.locator('[data-tab="' + name + '"]').click();
+  await expect(page.locator('#documentProgress')).toContainText('4 of 4');
   await expect(page.locator('#submitSignature')).toBeEnabled();
   await page.locator('#signerName').fill('Synthetic Homeowner');
   await page.locator('input[name=signerRole][value=owner]').check();
@@ -102,7 +105,7 @@ test('technician sends a link, an unsigned-in homeowner signs it and the technic
   if (browserName === 'chromium')
     await view.screenshot({ path: test.info().outputPath('homeowner-review.png'), fullPage: true });
   await view.locator('#submitSignature').evaluate((button) => button.form.requestSubmit());
-  await expect(view.locator('#signError')).toHaveText('Type your full name.');
+  await expect(view.locator('#signError')).toHaveText('Open all four documents before signing.');
   await signAsHomeowner(view);
   await expect(view.locator('#receiptText')).toContainText(
     'Signed by Synthetic Homeowner, property owner',

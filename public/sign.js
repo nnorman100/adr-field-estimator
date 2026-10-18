@@ -94,12 +94,11 @@
     }
   }
   function gate() {
-    // Only the proposal must be opened; the other three documents are optional supporting documents.
-    const ready = page.viewed.has('proposal');
+    const ready = page.viewed.size === 4;
     $('signFields').disabled = !ready;
     $('signGate').textContent = ready
-      ? 'Proposal opened. Complete the details below to sign.'
-      : 'Open the proposal above before signing.';
+      ? 'All four documents opened. Complete the details below to sign.'
+      : 'Open all four documents above before signing (' + page.viewed.size + ' of 4 opened).';
     if (ready) requestAnimationFrame(resizeSignature);
   }
   function select(name) {
@@ -207,7 +206,7 @@
   }
   function missing() {
     const role = document.querySelector('input[name=signerRole]:checked');
-    if (!page.viewed.has('proposal')) return ['Open the proposal before signing.', $('signGate')];
+    if (page.viewed.size !== 4) return ['Open all four documents before signing.', $('signGate')];
     if (!$('signerName').value.trim()) return ['Type your full name.', $('signerName')];
     if (!role)
       return [

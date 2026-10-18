@@ -12,7 +12,7 @@
   function paragraphs(parent, values) {
     for (const value of Array.isArray(values) ? values : [values]) parent.append(node('p', value));
   }
-  // viewed is the caller's set of opened documents; signing waits until it holds the proposal.
+  // viewed is the caller's set of opened documents; the homeowner link waits until it holds all four.
   function select(name, viewed) {
     viewed.add(name);
     document.querySelectorAll('[data-tab]').forEach((tab) => {
@@ -21,9 +21,8 @@
       tab.setAttribute('aria-pressed', String(selected));
     });
     document.querySelectorAll('.doc').forEach((doc) => (doc.hidden = doc.id !== 'doc-' + name));
-    $('documentProgress').textContent = viewed.has('proposal')
-      ? 'Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.'
-      : 'Open the proposal before signing.';
+    $('documentProgress').textContent =
+      viewed.size + ' of 4 documents opened · Review each before signing.';
   }
   // Photos in photo-log order, each labelled "Photo N (Room)" as the findings cite them.
   function numbered(docs, photos) {

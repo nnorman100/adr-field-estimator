@@ -10,13 +10,13 @@
 </head>
 <body class="homeowner-page">
   <header class="product-bar"><span class="lockup"><img src="/brand/dryscope-wordmark-white.svg" width="1754" height="512" alt="DryScope"></span></header>
-  <header class="sign-header"><span class="eyebrow">ESTIMATE REVIEW</span><h1>Review and sign your estimate</h1><p class="hint">Your restoration company sent you this private link. Read the proposal, then sign below. The other three documents are optional supporting documents. No account or password is needed.</p></header>
+  <header class="sign-header"><span class="eyebrow">ESTIMATE REVIEW</span><h1>Review and sign your estimate</h1><p class="hint">Your restoration company sent you this private link. Read all four documents, then sign below. No account or password is needed.</p></header>
   <p id="signStatus" class="message" role="status" aria-live="polite">Loading your estimate…</p>
   <main id="signMain" class="review-panel" hidden>
   <section id="documents" class="documents" aria-label="Estimate documents">
-    <div class="section-head"><div><span class="eyebrow">YOUR ESTIMATE</span><h2>Proposal and supporting documents</h2></div><button id="printDocuments">Print or save a copy</button></div>
+    <div class="section-head"><div><span class="eyebrow">YOUR ESTIMATE</span><h2>Four documents to review</h2></div><button id="printDocuments">Print or save a copy</button></div>
     <div class="totals-summary"><div><span>Customer estimate range</span><strong id="estimateRange"></strong></div><div><span>Itemized scope total</span><strong id="itemizedTotal"></strong></div></div>
-    <p id="documentProgress" class="review-progress" role="status">Open the proposal before signing.</p>
+    <p id="documentProgress" class="review-progress" role="status">Open all four documents before signing.</p>
     <div id="auditWarnings" class="notice" hidden></div>
     <nav class="doc-tabs" aria-label="Claim documents"><button data-tab="proposal" class="selected" aria-pressed="true">Proposal</button><button data-tab="claim" aria-pressed="false">Itemized claim</button><button data-tab="defense" aria-pressed="false">Defense letter</button><button data-tab="photos" aria-pressed="false">Photo audit log</button></nav>
     <article id="doc-proposal" class="doc"><div class="document-letterhead"><img width="225" height="110" alt="" hidden><p></p></div><h2></h2><div id="proposalBody"></div>
@@ -27,7 +27,7 @@
   </section>
   <section id="homeownerSigning" class="documents signing homeowner-signing" aria-labelledby="signHeading" hidden>
     <h2 id="signHeading">Sign the proposal</h2>
-    <p id="signGate" class="hint" role="status">Open the proposal above before signing.</p>
+    <p id="signGate" class="hint" role="status">Open all four documents above before signing.</p>
     <p id="linkExpiry" class="hint"></p>
     <form id="signForm" novalidate>
       <fieldset id="signFields" disabled>

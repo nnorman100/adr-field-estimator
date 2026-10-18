@@ -270,6 +270,10 @@ function renderControls() {
 function selectDocument(name) {
   if (!state.documents) return;
   ADRDocuments.select(name, ui.viewed);
+  // The technician signs once the proposal is open; the other three documents are optional here.
+  $('documentProgress').textContent = ui.viewed.has('proposal')
+    ? 'Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.'
+    : 'Open the proposal before signing.';
   if (name === 'proposal') requestAnimationFrame(resizeSignature);
 }
 function say(text, type = '') {
