@@ -1834,11 +1834,11 @@ async function captureStill() {
       await addPhoto(await new ImageCapture(track).takePhoto());
       return;
     } catch (e) {
-      say('Native still capture unavailable: ' + e.message + ' You can use Camera / upload.');
+      say('Native still capture unavailable: ' + e.message + ' You can use Upload file.');
     }
   }
   const video = $('cameraVideo');
-  if (!video.videoWidth) throw Error('The camera is not ready. Retry or use Camera / upload.');
+  if (!video.videoWidth) throw Error('The camera is not ready. Retry or use Upload file.');
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
@@ -2974,7 +2974,7 @@ async function startWalk() {
             say(
               'Camera preview could not start: ' +
                 e.message +
-                ' Live voice guidance continues; use Camera / upload for photos.',
+                ' Live voice guidance continues; use Upload file for photos.',
               'error',
             );
         },
@@ -3049,7 +3049,7 @@ async function startWalk() {
     throw Error(
       'Camera / microphone could not start: ' +
         e.message +
-        ' Retry permissions or use Camera / upload.',
+        ' Retry permissions or use Upload file.',
     );
   } finally {
     ui.starting = false;
