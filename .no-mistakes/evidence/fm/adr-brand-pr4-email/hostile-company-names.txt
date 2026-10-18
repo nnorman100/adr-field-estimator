@@ -1,0 +1,5 @@
+'Evil Co\r\nBcc: victim@example.test' -> rejected: Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.
+'<img src=x onerror=alert(1)>' -> rejected: Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.
+'Visit www.evil.test' -> rejected: Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.
+'Acme {company} Co' -> rejected: Company name must be up to 80 letters, numbers, spaces or . , & ' ( ) - characters, with no web address.
+"O'Brien & Sons (Kern) Restoration" -> accepted -> Invitation to join O'Brien & Sons (Kern) Restoration on DryScope

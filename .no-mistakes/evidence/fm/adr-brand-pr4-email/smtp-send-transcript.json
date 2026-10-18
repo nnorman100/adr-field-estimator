@@ -1,0 +1,82 @@
+Session.login_data is deprecated and will be removed in version 2.0
+Session.login_data is deprecated and will be removed in version 2.0
+{
+ "acme": {
+  "message_id": "<invitation-inv-acme-1-1@example.test>",
+  "subject": "Invitation to join Acme Water & Mold (Kern) Co. on DryScope",
+  "structure": [
+   [
+    "multipart/alternative",
+    null,
+    null
+   ],
+   [
+    "text/plain",
+    null,
+    null
+   ],
+   [
+    "multipart/related",
+    null,
+    null
+   ],
+   [
+    "text/html",
+    null,
+    null
+   ],
+   [
+    "image/jpeg",
+    "<invitation-logo@dryscope>",
+    "inline"
+   ]
+  ],
+  "html_has_cid": true,
+  "dryscope_in_text": 4,
+  "dryscope_in_html": 6,
+  "adr_field_app_anywhere": false,
+  "old_reds": [],
+  "navy_count": 7,
+  "set_password_link_in_text": true,
+  "text": "Acme Water & Mold (Kern) Co. has invited you to join their team on DryScope as an estimator.\r\n\r\nDryScope is what Acme Water & Mold (Kern) Co. uses for water and mold loss inspections, estimates and homeowner signatures.\r\n\r\n1. Set your password for DryScope: http://127.0.0.1:9399/emulator/action?mode=resetPassword&lang=en&oobCode=H9g5qdjvg7YVP1F4lEW7epWLtMRePkBiBmjgKm0CWZjYx0jbPHy886&apiKey=fake-api-key&continueUrl=https%3A%2F%2Falert-disaster-field-2026.web.app%2F\r\nIf that link has expired, use Forgot password on the sign-in page.\r\n\r\n2. Accept the invitation. Then sign in with tech@example.test and that password.\r\n\r\nAccept the invitation: https://alert-disaster-field-2026.web.app/?invite=inv-acme-1\r\n\r\nThis invitation expires in seven days.\r\n\r\nSent by Acme Water & Mold (Kern) Co. through DryScope. If you weren't expecting this, you can ignore this email.\r\n"
+ },
+ "adr-fallback-logo": {
+  "message_id": "<invitation-inv-adr-1-1@example.test>",
+  "subject": "Invitation to join Alert Disaster Restoration on DryScope",
+  "structure": [
+   [
+    "multipart/alternative",
+    null,
+    null
+   ],
+   [
+    "text/plain",
+    null,
+    null
+   ],
+   [
+    "multipart/related",
+    null,
+    null
+   ],
+   [
+    "text/html",
+    null,
+    null
+   ],
+   [
+    "image/jpeg",
+    "<invitation-logo@dryscope>",
+    "inline"
+   ]
+  ],
+  "html_has_cid": true,
+  "dryscope_in_text": 4,
+  "dryscope_in_html": 6,
+  "adr_field_app_anywhere": false,
+  "old_reds": [],
+  "navy_count": 7,
+  "set_password_link_in_text": true,
+  "text": "Alert Disaster Restoration has invited you to join their team on DryScope as office staff.\r\n\r\nDryScope is what Alert Disaster Restoration uses for water and mold loss inspections, estimates and homeowner signatures.\r\n\r\n1. Set your password for DryScope: http://127.0.0.1:9399/emulator/action?mode=resetPassword&lang=en&oobCode=BM86jmX7ZVgAeWW0KbZ0F9uZzfdjSg_PIzAsUmCo036zmAvJPO5YPp&apiKey=fake-api-key&continueUrl=https%3A%2F%2Falert-disaster-field-2026.web.app%2F\r\nIf that link has expired, use Forgot password on the sign-in page.\r\n\r\n2. Accept the invitation. Then sign in with office@example.test and that password.\r\n\r\nAccept the invitation: https://alert-disaster-field-2026.web.app/?invite=inv-adr-1\r\n\r\nThis invitation expires in seven days.\r\n\r\nSent by Alert Disaster Restoration through DryScope. If you weren't expecting this, you can ignore this email.\r\n"
+ }
+}
