@@ -501,7 +501,10 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await expect(page.locator('.masthead .brand img')).toBeHidden();
   await expect(page.locator('body')).toHaveClass(/company-brand/);
   await expect(page.locator('#workspaceAccountDetails')).toContainText('Other Restoration');
-  await expect(page.locator('footer')).toHaveText('Other Restoration · Private company workspaces');
+  await expect(page.locator('#footerText')).toHaveText(
+    'Other Restoration · Private company workspaces',
+  );
+  await expect(page.locator('footer .powered')).toHaveText('Powered by DryScope');
   await page.locator('#helpButton').click();
   await expect(page.locator('#helpContact')).toContainText('Other Restoration');
   for (const selector of ['#accountMenu', '#helpDialog', 'footer'])
@@ -849,7 +852,11 @@ async function brandReadable(page) {
       banner = document.getElementById('updateBanner').getBoundingClientRect();
     return {
       unclipped: el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth,
-      clear: r.right <= banner.left,
+      clear:
+        r.right <= banner.left ||
+        r.left >= banner.right ||
+        r.bottom <= banner.top ||
+        r.top >= banner.bottom,
     };
   });
 }
@@ -891,7 +898,7 @@ for (const mode of [
           page.locator('#startWalk').evaluate((el) => el.getBoundingClientRect().top);
         const before = await startTop();
         await showUpdateBanner(page);
-        // The banner shares the masthead row, so it must not push Start walkthrough down.
+        // The banner shares the navy bar row, so it must not push Start walkthrough down.
         expect(Math.abs((await startTop()) - before)).toBeLessThan(1);
         if (browserName === 'chromium')
           await page.screenshot({
@@ -913,7 +920,7 @@ for (const mode of [
       },
     );
 
-test('long company name keeps its phone rendering until the Update ready banner shows', async ({
+test('long company name keeps its phone rendering when the Update ready banner shows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 844 });
@@ -931,13 +938,14 @@ test('long company name keeps its phone rendering until the Update ready banner 
         box: [r.left, r.top, r.width, r.height],
         overflow: style.overflow,
         clamp: style.webkitLineClamp,
-        clear: r.right <= document.getElementById('updateBanner').getBoundingClientRect().left,
       };
     });
   const before = await render();
   expect(before).toMatchObject({ overflow: 'visible', clamp: 'none' });
+  // The banner lives in the navy bar above, so the company strip never reflows for it.
   await page.evaluate(() => (document.getElementById('updateBanner').hidden = false));
-  expect(await render()).toMatchObject({ overflow: 'hidden', clamp: '2', clear: true });
+  expect(await render()).toEqual(before);
+  expect(await brandReadable(page)).toEqual({ unclipped: true, clear: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.evaluate(() => (document.getElementById('updateBanner').hidden = true));
   expect(await render()).toEqual(before);
@@ -951,10 +959,13 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
   await page.goto('/');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await showUpdateBanner(page);
-  await expect(page.locator('.brand img')).toBeVisible();
-  await expect(page.locator('.brand img')).toHaveAttribute('src', '/brand/dryscope-wordmark.svg');
+  await expect(page.locator('.lockup img')).toBeVisible();
+  await expect(page.locator('.lockup img')).toHaveAttribute(
+    'src',
+    '/brand/dryscope-wordmark-white.svg',
+  );
   const boxes = await page.evaluate(() =>
-    ['.brand', '#updateBanner', '#accountMenu'].map((s) => {
+    ['.lockup', '#updateBanner', '#accountMenu'].map((s) => {
       const r = document.querySelector(s).getBoundingClientRect();
       return [r.left, r.right];
     }),

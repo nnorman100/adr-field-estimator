@@ -47,7 +47,7 @@ test('mobile task layout exposes capture immediately with readable idle controls
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await task(page, 'walkthrough');
-    expect((await page.locator('.masthead').boundingBox()).height).toBeLessThan(85);
+    expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
     const start = await page.locator('#startWalk').boundingBox();
     expect(start.y + start.height).toBeLessThan(844);
     expect(start.height).toBeGreaterThanOrEqual(48);

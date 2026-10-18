@@ -132,14 +132,16 @@ test.describe('company workspaces', () => {
     await expect(page.locator('body')).not.toHaveClass(/company-brand/);
     await expect(page.locator('.masthead .brand strong')).toHaveText('DryScope');
     await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
-    await expect(page.locator('.masthead .brand img')).toBeVisible();
+    // Signed out there is no company strip; DryScope lives in the navy bar.
+    await expect(page.locator('.masthead')).toBeHidden();
+    await expect(page.locator('.product-bar .lockup img')).toBeVisible();
     await expect(page.locator('.masthead .brand img')).toHaveAttribute('alt', 'DryScope');
     await expect(page.locator('.masthead .brand img')).toHaveAttribute(
       'src',
       '/brand/dryscope-wordmark.svg',
     );
     await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
-    await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
+    await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
     await page.locator('#helpButton').click();
     await expect(page.locator('#helpContact')).toHaveText(
       'For company access, ask your company owner.',

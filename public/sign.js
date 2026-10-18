@@ -53,10 +53,11 @@
       (photo) => page.photoUrls.get(photo.id) || '',
       view.legacy_identity,
     );
-    $('signFooter').textContent =
-      ADRDocuments.brand(docs, view.legacy_identity) + ' · Private estimate review';
-    // The company's letterhead logo identifies the sender; without one, the page shows DryScope's wordmark.
-    $('signBrand').hidden = !!ADRDocuments.logoFor(docs.company_identity || view.legacy_identity);
+    const company = ADRDocuments.brand(docs, view.legacy_identity);
+    $('signFooter').textContent = company + ' · Private estimate review';
+    // The sender is named above the documents; DryScope stays in the bar and the footer line.
+    $('signCompany').textContent = company ? 'Sent by ' + company : '';
+    $('signCompany').hidden = !company;
     const signed = view.status === 'signed';
     $('homeownerSigning').hidden = signed;
     $('signedReceipt').hidden = !signed;

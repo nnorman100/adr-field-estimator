@@ -162,6 +162,44 @@ fieldset {
 fieldset:disabled {
   opacity: 0.6;
 }
+/* DryScope frames every page: the navy bar carries the white lockup and the Help and Account controls. */
+.product-bar {
+  background: var(--navy);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem max(1.5rem, calc((100vw - 1120px) / 2));
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+.lockup {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.lockup img {
+  display: block;
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+.product-bar > .header-tools > .help-button,
+.product-bar .menu > summary {
+  background: transparent;
+  color: #fff;
+  border-color: #ffffff99;
+}
+.product-bar > .header-tools > .help-button:hover,
+.product-bar .menu > summary:hover,
+.product-bar .menu[open] > summary {
+  border-color: #fff;
+}
+.product-bar .menu-content {
+  color: var(--navy);
+}
+/* The white strip below the bar belongs to the signed-in company; before sign-in there is none. */
 .masthead {
   background: var(--paper);
   border-bottom: 1px solid var(--line);
@@ -170,6 +208,9 @@ fieldset:disabled {
   justify-content: space-between;
   padding: 0.65rem max(1.5rem, calc((100vw - 1120px) / 2));
   gap: 1rem;
+}
+body:not(.company-brand) .masthead {
+  display: none;
 }
 .brand {
   display: flex;
@@ -188,13 +229,6 @@ fieldset:disabled {
   border-left: 1px solid var(--line);
   padding-left: 1rem;
   white-space: nowrap;
-}
-/* Signed out, the DryScope wordmark is the brand; the link's label already carries the name. */
-body:not(.company-brand) .brand img:not([hidden]) {
-  width: 150px;
-}
-body:not(.company-brand) .brand img:not([hidden]) + strong {
-  display: none;
 }
 .header-tools {
   display: flex;
@@ -408,6 +442,59 @@ h3 {
   padding: 1.25rem;
   margin-bottom: 1.25rem;
   border-radius: 8px;
+  border-left: 4px solid var(--line);
+}
+.room[data-loss='water'] {
+  background: var(--water-tint);
+  border-left-color: var(--water);
+}
+.room[data-loss='mold'] {
+  background: var(--mold-tint);
+  border-left-color: var(--mold);
+}
+/* Water and mold tags always carry the word; the colour only repeats it. Deep text stays bold and 15 px or larger. */
+.loss-tag {
+  display: inline-block;
+  font-size: 0.9375rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  color: var(--navy);
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+.room .loss-tag {
+  margin-bottom: 0.75rem;
+}
+.room[data-loss='water'] .loss-tag {
+  background: var(--water);
+  border-color: var(--water);
+}
+.room[data-loss='mold'] .loss-tag {
+  background: var(--mold);
+  border-color: var(--mold);
+}
+.loss-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  font-family: Lato, Arial, sans-serif;
+}
+.loss-chips:empty {
+  display: none;
+}
+.loss-chips .loss-tag[data-loss='water'] {
+  color: var(--water-deep);
+  background: var(--water-tint);
+  border-color: var(--water);
+}
+.loss-chips .loss-tag[data-loss='mold'] {
+  color: var(--mold-deep);
+  background: var(--mold-tint);
+  border-color: var(--mold);
 }
 .room .section-head {
   margin-bottom: 0.5rem;
@@ -829,6 +916,15 @@ footer {
   font-size: 0.875rem;
   padding: 1rem;
 }
+.powered {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+}
+/* Before sign-in the whole page is DryScope; the attribution line only frames a company. */
+.login-page .powered {
+  display: none;
+}
 .audit-photo {
   display: grid;
   grid-template-columns: 160px 1fr;
@@ -858,15 +954,28 @@ footer {
   body {
     padding-bottom: calc(var(--overlay-bottom, 90px) + 24px);
   }
+  /* The bar and the company strip stay slim so Start walkthrough still lands on the first screen at 320 px. */
+  .product-bar,
   .masthead {
-    padding: 0.5rem 1rem;
+    padding: 0.25rem 1rem;
     gap: 0.5rem;
+  }
+  .product-bar {
+    padding-top: max(0.25rem, env(safe-area-inset-top));
+  }
+  .product-bar > .header-tools > .help-button {
+    width: 44px;
+    min-height: 44px;
+  }
+  .product-bar .menu > summary {
+    min-height: 44px;
+    padding: 0.5rem 0.75rem;
+  }
+  .lockup img {
+    width: 120px;
   }
   .brand img {
     width: 96px;
-  }
-  body:not(.company-brand) .brand img:not([hidden]) {
-    width: 120px;
   }
   .brand strong {
     display: block;
@@ -880,10 +989,12 @@ footer {
   .header-tools {
     gap: 0.4rem;
   }
-  /* On phones the update prompt joins the masthead row, so it never covers or displaces page content. */
+  /* On phones the update prompt joins the header bar row, so it never covers or displaces page content. */
   #updateBanner {
     position: static;
     flex: none;
+    height: 44px;
+    justify-content: center;
     max-width: 4.5rem;
     flex-direction: column;
     align-items: stretch;
@@ -897,11 +1008,11 @@ footer {
     line-height: 1.1;
     text-align: center;
   }
-  .masthead:has(> #updateBanner:not([hidden])) .brand img {
-    min-width: 0;
+  .product-bar:has(> #updateBanner:not([hidden])) .lockup img {
+    width: 96px;
   }
   #updateBanner button {
-    min-height: 2.125rem;
+    min-height: 1.875rem;
     padding: 0.15rem 0.35rem;
     font-size: 0.75rem;
     line-height: 1.1;
@@ -1115,6 +1226,7 @@ footer {
     font-size: 11pt;
     padding: 0;
   }
+  .product-bar,
   .masthead,
   .inspection-shell,
   .workspace,
@@ -1123,6 +1235,7 @@ footer {
   .doc-tabs,
   .documents > .section-head,
   .totals-summary,
+  .loss-chips,
   .review-progress,
   .signing,
   .draft-actions,
@@ -1543,25 +1656,10 @@ footer {
     display: none;
   }
   .company-brand .brand img {
-    max-width: 72px;
-    max-height: 45px;
+    max-width: 64px;
+    max-height: 36px;
     width: auto;
     height: auto;
-  }
-  .company-brand .masthead:has(> #updateBanner:not([hidden])) .brand {
-    gap: 0.5rem;
-  }
-  .company-brand .masthead:has(> #updateBanner:not([hidden])) .brand strong {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    overflow: hidden;
-    white-space: normal;
-    padding-left: 0;
-    border-left: 0;
-  }
-  .company-brand .masthead:has(> #updateBanner:not([hidden])) .brand img {
-    display: none;
   }
 }
 .auth-panel {
@@ -1627,11 +1725,9 @@ footer {
   margin: 0.35rem 0;
   font-size: 1.6rem;
 }
-.sign-brand {
-  display: block;
-  width: 120px;
-  height: auto;
-  margin-bottom: 0.75rem;
+.sign-company {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
 }
 .homeowner-signing,
 .homeowner-receipt {
@@ -1732,9 +1828,9 @@ footer {
   color: var(--navy);
   font-weight: 700;
 }
-/* Below 390px the Help button leaves no room for the brand beside the Update ready banner. */
+/* Below 390px the Help button leaves no room for the lockup beside the Update ready banner. */
 @media (max-width: 389px) {
-  .masthead:has(> #updateBanner:not([hidden])) .help-button {
+  .product-bar:has(> #updateBanner:not([hidden])) .help-button {
     display: none;
   }
 }

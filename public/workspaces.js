@@ -185,7 +185,7 @@ window.WorkspaceUI = (() => {
             .join(' · '),
         ),
       );
-    document.querySelector('footer').textContent =
+    $('footerText').textContent =
       (profile?.name || 'Restoration Field Estimator') + ' · Private company workspaces';
   }
   async function ready() {

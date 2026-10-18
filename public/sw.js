@@ -22,6 +22,7 @@ const ASSETS = [
   '/apple-touch-icon.png',
   '/brand/adr-logo.jpg',
   '/brand/dryscope-wordmark.svg',
+  '/brand/dryscope-wordmark-white.svg',
   '/fonts/lato-400-latin.woff2',
   '/fonts/lato-700-latin.woff2',
   '/fonts/lato-900-latin.woff2',
