@@ -1,0 +1,262 @@
+{
+  "inspection_id": "ADR-INS-5d5d7d38b8144750b598f96693fc1445",
+  "schema_version": 3,
+  "revision": 6,
+  "data": {
+    "address": "1234 Acme St",
+    "year_built": 1977,
+    "has_crawl_space": false,
+    "granite_removal": false,
+    "water_heater_loss": false,
+    "work_performed": false,
+    "rooms": [
+      {
+        "name": "Kitchen",
+        "category": 1,
+        "unfinished_sf": 0.0,
+        "finished_sf": 20.0,
+        "custom_cabinetry": false,
+        "waste_percent": 0.0
+      }
+    ],
+    "air_movers": 3,
+    "dehumidifiers": 1,
+    "drying_days": 3,
+    "labor_hours": 0.0,
+    "is_after_hours": false,
+    "emergency_calls": 1,
+    "monitoring_hours": 13.25,
+    "haul_loads": 1,
+    "air_scrubbers": 1,
+    "hepa_filters": 1,
+    "matterport_scans": 0,
+    "dump_truck_loads": 0,
+    "equipment_decon": 0,
+    "power_distribution": 0,
+    "wood_floor_systems": 0,
+    "wood_floor_days": 7,
+    "package_price": null,
+    "technician_notes": "",
+    "technician_transcript": "Welcome to the\nKitchen, category one. I measured twenty square feet of finished drywall demolition along the sink wall.\nCan I add a picture?\nBut you get it?\nTo the right.\nOne dehumidifier for three days.\nAll right, thanks.\n\u53f3\u4fa7\u5899\u9762\u6f6e\u6e7f\u3002\nGood morning, one dehumidifier for three days.\nThank you. Right side.\nOkay \u53f3\u4fa7\u3002",
+    "assistant_transcript": "Good morning! One dehumidifier for three days. Which side?",
+    "scope_confirmed": true
+  },
+  "photos": [
+    {
+      "id": "592be7e2bf1549869ecd4d3ccf5b44f2",
+      "room": "Kitchen",
+      "captured_at": "2026-10-18T01:43:27.834207Z",
+      "width": 64,
+      "height": 48,
+      "ocr_status": "no_meter",
+      "ocr": {
+        "meter_detected": false,
+        "meter_type": "Inspection Photo",
+        "value": "",
+        "classification": "Not verified",
+        "notes": "No meter."
+      },
+      "file": {
+        "path": "users/test-owner-ws-estimator/inspections/ADR-INS-5d5d7d38b8144750b598f96693fc1445/592be7e2bf1549869ecd4d3ccf5b44f2/a2e979f981c6409dbc7c715344e4fafd-ea0c64165b1f5cd9d39da10fe254db3ba60a1031cea9ae9b6b14a8b1822c4263.jpeg",
+        "content_type": "image/jpeg",
+        "sha256": "ea0c64165b1f5cd9d39da10fe254db3ba60a1031cea9ae9b6b14a8b1822c4263"
+      }
+    },
+    {
+      "id": "663874b000f64fc3a10d5a7e7106d991",
+      "room": "Kitchen",
+      "captured_at": "2026-10-18T01:43:27.851745Z",
+      "width": 64,
+      "height": 48,
+      "ocr_status": "no_meter",
+      "ocr": {
+        "meter_detected": false,
+        "meter_type": "Inspection Photo",
+        "value": "",
+        "classification": "Not verified",
+        "notes": "No meter."
+      },
+      "file": {
+        "path": "users/test-owner-ws-estimator/inspections/ADR-INS-5d5d7d38b8144750b598f96693fc1445/663874b000f64fc3a10d5a7e7106d991/18f44be76b3c4bce81d313342f7a9b34-f9af4c7d2bba9a8820a419fee9a11d26ce806b3ef365c16ddfe4200b02551624.jpeg",
+        "content_type": "image/jpeg",
+        "sha256": "f9af4c7d2bba9a8820a419fee9a11d26ce806b3ef365c16ddfe4200b02551624"
+      }
+    }
+  ],
+  "audit": {
+    "revision": 6,
+    "proposal_hash": "bd0eb9bf0fdcddb0e9254705134245713cedd05f9bc6110aca381960773d8a0b",
+    "documents": {
+      "schema_version": 3,
+      "company_identity": {
+        "company_id": "adr",
+        "version": 1,
+        "name": "Alert Disaster Restoration",
+        "address": "3300 Patton Way \u00b7 Bakersfield, CA 93308",
+        "phone": "(661) 426-2151",
+        "email": "",
+        "license": "950983",
+        "signoff": "Matthew Myers",
+        "logo_data_url": "",
+        "water_heater_notice": ""
+      },
+      "company_setup_missing": [],
+      "adr_estimate": {
+        "property_address": "1234 Acme St",
+        "customer_name": "",
+        "date": "10-17-2026",
+        "proposed_cost": 1830.6,
+        "proposed_cost_low": 1802.8,
+        "lead_notice_required": true,
+        "findings": [
+          "Due to property age (1977), California State Law requires third-party lead and asbestos testing prior to destructive demolition.",
+          "Technician walkthrough statement: Kitchen, category one. I measured twenty square feet of finished drywall demolition along the sink wall.\nTo the right.\nOne dehumidifier for three days.\n\u53f3\u4fa7\u5899\u9762\u6f6e\u6e7f\u3002\nGood morning, one dehumidifier for three days.\nRight side.\nOkay \u53f3\u4fa7\u3002",
+          "Photo 1 (Kitchen) \u2014 supporting photo; no verified meter reading.",
+          "Photo 2 (Kitchen) \u2014 supporting photo; no verified meter reading."
+        ],
+        "recommendations": [
+          "Testing is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly.",
+          "Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.",
+          "Kitchen: category 1 finished/drywall/trim demolition",
+          "Axial air movers",
+          "Commercial LGR dehumidifiers",
+          "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."
+        ],
+        "disclaimers": [
+          "(this does not include the pretest for lead/asbestos)",
+          "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.",
+          "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+          "Estimate is valid for 30 days from date of inspection."
+        ]
+      },
+      "xactimate_scope": [
+        {
+          "code": "ADR-TRIP",
+          "description": "Emergency call / trip charge",
+          "quantity": 1.0,
+          "unit": "EA",
+          "unit_price": 133.95,
+          "waste_percent": 0.0,
+          "total": 133.95
+        },
+        {
+          "code": "ADR-MON",
+          "description": "Equipment monitoring",
+          "quantity": 13.25,
+          "unit": "HR",
+          "unit_price": 47.46,
+          "waste_percent": 0.0,
+          "total": 628.85
+        },
+        {
+          "code": "ADR-HAUL",
+          "description": "Haul debris & disposal",
+          "quantity": 1.0,
+          "unit": "load",
+          "unit_price": 159.53,
+          "waste_percent": 0.0,
+          "total": 159.53
+        },
+        {
+          "code": "ADR-SCRUB",
+          "description": "Air scrubber daily rental",
+          "quantity": 1.0,
+          "unit": "day",
+          "unit_price": 74.75,
+          "waste_percent": 0.0,
+          "total": 74.75
+        },
+        {
+          "code": "ADR-HEPA",
+          "description": "HEPA replacement filter",
+          "quantity": 1.0,
+          "unit": "EA",
+          "unit_price": 183.12,
+          "waste_percent": 0.0,
+          "total": 183.12
+        },
+        {
+          "code": "ADR-DEMO",
+          "description": "Kitchen: category 1 finished/drywall/trim demolition",
+          "quantity": 20.0,
+          "unit": "SF",
+          "unit_price": 2.78,
+          "waste_percent": 0.0,
+          "total": 55.6
+        },
+        {
+          "code": "ADR-FAN",
+          "description": "Axial air movers",
+          "quantity": 9.0,
+          "unit": "unit-day",
+          "unit_price": 29.25,
+          "waste_percent": 0.0,
+          "total": 263.25
+        },
+        {
+          "code": "ADR-DEHU",
+          "description": "Commercial LGR dehumidifiers",
+          "quantity": 3.0,
+          "unit": "unit-day",
+          "unit_price": 101.25,
+          "waste_percent": 0.0,
+          "total": 303.75
+        }
+      ],
+      "xactimate_total": 1802.8,
+      "iicrc_defense_letter": "Alert Disaster Restoration \u00b7 3300 Patton Way \u00b7 Bakersfield, CA 93308 \u00b7 (661) 426-2151 \u00b7 CSLB #950983\n\nTO: Insurance Claims Examiner / Adjuster\n\nRE: Remediation scope for 1234 Acme St\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.\n\nDue to property age (1977), California State Law requires third-party lead and asbestos testing prior to destructive demolition.\nTechnician walkthrough statement: Kitchen, category one. I measured twenty square feet of finished drywall demolition along the sink wall.\nTo the right.\nOne dehumidifier for three days.\n\u53f3\u4fa7\u5899\u9762\u6f6e\u6e7f\u3002\nGood morning, one dehumidifier for three days.\nRight side.\nOkay \u53f3\u4fa7\u3002\nPhoto 1 (Kitchen) \u2014 supporting photo; no verified meter reading.\nPhoto 2 (Kitchen) \u2014 supporting photo; no verified meter reading.\n\nScope:\nTesting is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly.\nPer IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.\nKitchen: category 1 finished/drywall/trim demolition\nAxial air movers\nCommercial LGR dehumidifiers\nIf technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.\n\n(this does not include the pretest for lead/asbestos)\nNOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.\nIf the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.\nEstimate is valid for 30 days from date of inspection.\n\nItemized charges at base rates: $1,802.80. Customer estimate range: $1,802.80 to $1,830.60. The range applies the estimating sheet labor/material allowance to the priced scope.\n\nSincerely,\nMatthew Myers\nAlert Disaster Restoration",
+      "compliance_notes": [
+        "Due to property age (1977), California State Law requires third-party lead and asbestos testing prior to destructive demolition.",
+        "(this does not include the pretest for lead/asbestos)",
+        "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.",
+        "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+        "Estimate is valid for 30 days from date of inspection."
+      ],
+      "photo_audit_log": [
+        {
+          "id": "592be7e2bf1549869ecd4d3ccf5b44f2",
+          "room": "Kitchen",
+          "captured_at": "2026-10-18T01:43:27.834207Z",
+          "width": 64,
+          "height": 48,
+          "ocr_status": "no_meter",
+          "ocr": {
+            "meter_detected": false,
+            "meter_type": "Inspection Photo",
+            "value": "",
+            "classification": "Not verified",
+            "notes": "No meter."
+          }
+        },
+        {
+          "id": "663874b000f64fc3a10d5a7e7106d991",
+          "room": "Kitchen",
+          "captured_at": "2026-10-18T01:43:27.851745Z",
+          "width": 64,
+          "height": 48,
+          "ocr_status": "no_meter",
+          "ocr": {
+            "meter_detected": false,
+            "meter_type": "Inspection Photo",
+            "value": "",
+            "classification": "Not verified",
+            "notes": "No meter."
+          }
+        }
+      ],
+      "ai_summary": "Kitchen: category 1 loss along the sink wall. The saved inspection lists two photos; see photo count.",
+      "ai_suggestions": [
+        "Confirm the cabinet removal decision after drying.",
+        "Review the saved inspection for the remaining room.",
+        "Lead or asbestos testing may be needed for this older home."
+      ],
+      "unpriced_work": [
+        "Clean the toe kick area under the sink."
+      ],
+      "signable": false
+    }
+  },
+  "status": "audited",
+  "created_at": "2026-10-18T01:43:27.833167+00:00",
+  "updated_at": "2026-10-18T01:43:27.868116+00:00"
+}
