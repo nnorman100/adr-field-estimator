@@ -31,14 +31,6 @@ JobField = Literal[
 ]
 RoomField = Literal['category', 'unfinished_sf', 'finished_sf', 'custom_cabinetry', 'waste_percent']
 ROOM_FIELDS = set(RoomField.__args__)
-MOLD_CATEGORY_VALUES = {
-    'mold',
-    'both',
-    'water and mold',
-    'mold and water',
-    'contaminated / mold',
-    '3 · contaminated / mold',
-}
 MOLD_QUALIFIER_RE = re.compile(
     r"\b(?:no|not|\w+n't|never|without|free\s+of|suspected|possible|potential|unconfirmed)"
     r'(?:\s+(?:any|visible|confirmed|active|black|toxic|evidence|signs?|of|water\s+or|microbial\s+growth\s+or))*\s+mold\b'
@@ -102,12 +94,6 @@ def normalize_category_change(change):
         return change
     text = normalized(change.source_quote)
     quote_has_mold = states_mold(change.source_quote)
-    if (
-        isinstance(change.value, str)
-        and normalized(change.value) in MOLD_CATEGORY_VALUES
-        and quote_has_mold
-    ):
-        return change.model_copy(update={'value': 3})
     if type(change.value) is not int:
         raise ValueError('A water category must be an explicit category number.')
     if change.value in (1, 2) and quote_has_mold:

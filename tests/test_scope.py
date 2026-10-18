@@ -241,23 +241,11 @@ def test_scope_extraction_daily_cap_returns_retry_after(context, monkeypatch):
             ],
         ),
         (
-            'Office, mold. Drywall, 20 square feet of finished demolition.',
-            [
-                change('category', 'mold', quote='Office, mold.', room='Office'),
-                change(
-                    'finished_sf',
-                    20,
-                    quote='Drywall, 20 square feet of finished demolition.',
-                    room='Office',
-                ),
-            ],
-        ),
-        (
             'Office is both water and mold, 20 square feet of finished drywall demolition.',
             [
                 change(
                     'category',
-                    'water and mold',
+                    3,
                     quote='Office is both water and mold',
                     room='Office',
                 ),
@@ -272,9 +260,7 @@ def test_scope_extraction_daily_cap_returns_retry_after(context, monkeypatch):
         (
             'Office: water, mold, or both? Both. 20 square feet of finished drywall demolition.',
             [
-                change(
-                    'category', 'both', quote='Office: water, mold, or both? Both.', room='Office'
-                ),
+                change('category', 3, quote='Office: water, mold, or both? Both.', room='Office'),
                 change(
                     'finished_sf',
                     20,
@@ -321,7 +307,7 @@ def test_scope_maps_mold_alone_or_with_water_to_category_3(
         ),
         (
             'Bathroom has suspected mold and 20 square feet of finished drywall.',
-            change('category', 'mold', quote='Bathroom has suspected mold', room='Bathroom'),
+            change('category', 3, quote='Bathroom has suspected mold', room='Bathroom'),
         ),
         (
             'Bathroom has no mold and 20 square feet of finished drywall.',
@@ -372,7 +358,7 @@ def test_suspected_or_negated_mold_does_not_map_to_category_3(transcript, bad_ch
                 change('category', 1, quote='Office, water category 1.', room='Office'),
                 change(
                     'category',
-                    '3 · Contaminated / mold',
+                    3,
                     quote='There is also mold in the Office.',
                     room='Office',
                 ),
@@ -395,6 +381,10 @@ def test_suspected_or_negated_mold_does_not_map_to_category_3(transcript, bad_ch
                     room='Office',
                 ),
             ],
+        ),
+        (
+            'Office, mold. 20 square feet of finished drywall demolition.',
+            [change('category', 'mold', quote='Office, mold.', room='Office')],
         ),
     ],
 )
