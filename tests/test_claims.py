@@ -334,6 +334,14 @@ def test_technician_facts_survive_cleaning(turn):
     assert technician_statement(data) == turn
 
 
+def test_assistant_recap_of_a_technician_fact_keeps_the_technician_turn():
+    data = scoped(
+        technician_transcript='Welcome to the\nOne dehumidifier for three days.',
+        assistant_transcript='Welcome to the walkthrough.\nOne dehumidifier for three days.',
+    )
+    assert technician_statement(data) == 'One dehumidifier for three days.'
+
+
 def test_supporting_photos_are_cited_without_claiming_a_reading():
     ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
     photos = [photo('a' * 32, 'Office'), photo('b' * 32, 'Office')]
@@ -390,6 +398,7 @@ def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
             'Testing for lead may be needed given the 1978 build year.',
             'The homeowner supplied an asbestos report; cabinet removal remains conditional on'
             ' its review.',
+            'The homeowner supplied asbestos test results; the cabinet-removal plan needs review.',
         ],
         unpriced_work=['Office: one dehumidifier for three days is absent from priced_scope.'],
     )
@@ -401,13 +410,14 @@ def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
         'Check whether a leak could lead to further damage under the flooring.',
         'The homeowner supplied an asbestos report; cabinet removal remains conditional on'
         ' its review.',
+        'The homeowner supplied asbestos test results; the cabinet-removal plan needs review.',
     ]
     assert docs['ai_summary'] == (
         'Office has laminate and drywall removal. The saved inspection lists no dehumidifier.'
     )
     lines = AIResult(
         summary=(
-            'Office: drywall removal\n- Lead testing may be needed\n- Laminate removal\n'
+            'Office: drywall removal\n- Lead testing may be needed for a home this age\n- Laminate removal\n'
             '- Homeowner shared an asbestos report. Testing for lead may be needed given the'
             ' 1978 build year.'
         ),

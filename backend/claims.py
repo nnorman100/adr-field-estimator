@@ -49,7 +49,8 @@ APP_QUESTION = re.compile(
     r'(can|could|may|should) (i|we) (add|take|attach|send|upload) (a |an |another |the |this |more )?'
     r'(picture|photo|image)s?|can you hear me|are you (there|listening)|did you (get|catch) (that|it)'
 )
-# The age finding is the app's lead/asbestos testing rule, so AI text may not claim testing is needed.
+GREETING = re.compile(r'(welcome|hello|hi|hey|good (morning|afternoon|evening))\b')
+# The age finding is the app's lead/asbestos testing rule, so AI text may not tie testing to the home's age.
 HAZARD = re.compile(
     r'asbestos|\b(for|of)\s+lead\b|\blead\b(?=[\s/-]*(and|or|&|based|paint|test|pre-?test|sampl))',
     re.IGNORECASE,
@@ -59,10 +60,13 @@ REQUIREMENT = re.compile(
     r'\b(requir\w*|need\w*|necessary|must|should|recommend\w*|advis\w*|determin\w*|mandat\w*)\b',
     re.IGNORECASE,
 )
+HOME_AGE = re.compile(
+    r'\b(built|build|year|age|older|vintage|era|construct\w*|pre-?1978|19\d\d|20\d\d)\b', re.IGNORECASE
+)
 
 
 def testing_claim(text):
-    return bool(HAZARD.search(text) and HAZARD_TEST.search(text) and REQUIREMENT.search(text))
+    return all(p.search(text) for p in (HAZARD, HAZARD_TEST, REQUIREMENT, HOME_AGE))
 
 
 JSON_TERM = re.compile(
@@ -206,17 +210,13 @@ def sentences(text):
 
 
 def technician_statement(data: InspectionData):
-    """The walkthrough transcript without speaker echo of the assistant or conversational filler."""
-    # A microphone that hears the phone speaker records the assistant's words as technician turns.
+    """The walkthrough transcript without speaker echo of the assistant's greeting or conversational filler."""
+    # A microphone that hears the phone speaker records the assistant's greeting as a technician turn.
     spoken = [' ' + ' '.join(words(turn)) + ' ' for turn in data.assistant_transcript.splitlines()]
     kept = []
     for turn in data.technician_transcript.splitlines():
-        heard = words(turn)
-        if (
-            len(heard) >= 3
-            and not any(char.isdigit() for char in turn)
-            and any(' ' + ' '.join(heard) + ' ' in text for text in spoken)
-        ):
+        heard = ' '.join(words(turn))
+        if GREETING.match(heard) and any(' ' + heard + ' ' in text for text in spoken):
             continue
         text = ' '.join(
             sentence
