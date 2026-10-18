@@ -1108,6 +1108,29 @@ def test_company_names_reject_links_markup_and_long_text(api, name):
     assert store.db.records['_companies/adr']['profile']['name'] == 'Alert Disaster Restoration'
 
 
+def test_company_settings_change_regenerates_documents_on_the_same_revision(api, monkeypatch):
+    client, current, store = api
+    calls = []
+
+    async def generate(schema, *args, **kwargs):
+        calls.append(schema)
+        return AIResult(summary='Confirmed scope.', suggestions=[], unpriced_work=[])
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    store.create_inspection('estimator', ID, data())
+    current['uid'] = 'estimator'
+    audit = lambda: client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audit().status_code == 200 and audit().status_code == 200 and len(calls) == 1
+    current['uid'] = 'owner'
+    profile = {**ADR_PROFILE, 'signoff': 'Synthetic Estimator'}
+    response = client.put('/api/companies/adr', json={'expected_version': 1, 'profile': profile})
+    assert response.status_code == 200, response.text
+    current['uid'] = 'estimator'
+    identity = audit().json()['audit']['documents']['company_identity']
+    assert identity['signoff'] == 'Synthetic Estimator' and identity['version'] == 2
+    assert len(calls) == 2
+
+
 def test_older_profile_with_retired_heater_notice_still_saves(api):
     client, current, store = api
     profile = {**ADR_PROFILE, 'water_heater_notice': 'Retired coordination wording.'}

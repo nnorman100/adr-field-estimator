@@ -251,6 +251,42 @@
       items.push('No drying equipment counts');
     return items;
   }
+  // Why the audit blocks signing, built from the audit's own lists so it names only real causes.
+  // Photos are numbered in photo-log order, as the documents cite them.
+  function auditBlockMessage(docs) {
+    const setup = docs.company_setup_missing || [],
+      unpriced = docs.unpriced_work || [],
+      pending = (docs.photo_audit_log || []).flatMap((photo, i) =>
+        photo.ocr_status === 'pending' ? ['Photo ' + (i + 1) + ' (' + photo.room + ')'] : [],
+      ),
+      list = (items) =>
+        items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' and ' + items.at(-1),
+      count = setup.length + unpriced.length + pending.length;
+    if (!count)
+      return "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 01 Property, then Finish & review again.";
+    const lines = ["Can't sign yet: " + count + (count === 1 ? ' item' : ' items') + ' to fix.'];
+    if (unpriced.length)
+      lines.push(
+        ...unpriced.map(
+          (text) => 'Unpriced work: ' + text.trim() + (/[.!?]$/.test(text.trim()) ? '' : '.'),
+        ),
+        (unpriced.length === 1 ? 'Add it' : 'Add them') +
+          ' on 01 Property (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again.',
+      );
+    if (setup.length)
+      lines.push(
+        'Company settings are missing the ' +
+          list(setup) +
+          '. Complete them in Company settings, then Finish & review again.',
+      );
+    if (pending.length)
+      lines.push(
+        'Photo recognition is still running for ' +
+          list(pending) +
+          '. Wait a moment, then Finish & review again.',
+      );
+    return lines.join(' ');
+  }
   // Voice-note formats in preference order: iPhone Safari and Home Screen apps record MP4 (AAC);
   // Chrome and Firefox record WebM or Ogg Opus. The upload type drops the codec parameter.
   const NOTE_TYPES = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
@@ -277,6 +313,7 @@
     canonicalUrl,
     splitPhotos,
     missingItems,
+    auditBlockMessage,
     noteFormat,
   };
   if (typeof module !== 'undefined') module.exports = api;

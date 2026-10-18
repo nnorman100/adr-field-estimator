@@ -337,3 +337,56 @@ console.log(
   );
   console.log('PASS: offline notes list missing scope and pick a recordable audio format');
 }
+{
+  // The audit-block banner names only the causes the audit actually lists.
+  const core = require('../public/core.js'),
+    photo = (room, ocr_status) => ({ id: room + ocr_status, room, ocr_status }),
+    dehumidifier =
+      'Office: One dehumidifier rental for 3 days requested by technician is omitted from the priced scope.';
+  // The 1234 Acme St test job: one unpriced item, both photos read as no_meter.
+  const unpriced = core.auditBlockMessage({
+    unpriced_work: [dehumidifier],
+    company_setup_missing: [],
+    photo_audit_log: [photo('Office', 'no_meter'), photo('Office', 'no_meter')],
+  });
+  assert.equal(
+    unpriced,
+    "Can't sign yet: 1 item to fix. Unpriced work: " +
+      dehumidifier +
+      ' Add it on 01 Property (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again.',
+  );
+  assert.doesNotMatch(unpriced, /evidence|Photo recognition/);
+  assert.equal(
+    core.auditBlockMessage({
+      unpriced_work: [],
+      photo_audit_log: [photo('Office', 'verified'), photo('Office', 'pending')],
+    }),
+    "Can't sign yet: 1 item to fix. Photo recognition is still running for Photo 2 (Office). Wait a moment, then Finish & review again.",
+  );
+  assert.equal(
+    core.auditBlockMessage({
+      company_setup_missing: ['CSLB license', 'Document sign-off'],
+      unpriced_work: [],
+      photo_audit_log: [],
+    }),
+    "Can't sign yet: 2 items to fix. Company settings are missing the CSLB license and Document sign-off. Complete them in Company settings, then Finish & review again.",
+  );
+  assert.equal(
+    core.auditBlockMessage({
+      unpriced_work: ['Kitchen: Plumbing reset lacks an ADR rate.', 'Hall: Baseboard removal.'],
+      photo_audit_log: [
+        photo('Kitchen', 'pending'),
+        photo('Hall', 'no_meter'),
+        photo('Hall', 'pending'),
+        photo('Bath', 'pending'),
+      ],
+    }),
+    "Can't sign yet: 5 items to fix. Unpriced work: Kitchen: Plumbing reset lacks an ADR rate. Unpriced work: Hall: Baseboard removal. Add them on 01 Property (Rooms & demolition or Equipment & additional labor), or tap Fill scope from walkthrough, then Finish & review again. Photo recognition is still running for Photo 1 (Kitchen), Photo 3 (Hall) and Photo 4 (Bath). Wait a moment, then Finish & review again.",
+  );
+  // Only job charges, with no measured work, equipment or labor: the server lists nothing else.
+  assert.equal(
+    core.auditBlockMessage({ unpriced_work: [], company_setup_missing: [], photo_audit_log: [] }),
+    "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 01 Property, then Finish & review again.",
+  );
+  console.log('PASS: the audit-block banner lists each unpriced item, setup gap and pending photo');
+}

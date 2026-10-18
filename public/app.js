@@ -19,6 +19,7 @@ const {
   canonicalUrl,
   splitPhotos,
   missingItems,
+  auditBlockMessage,
   noteFormat,
 } = ADRCore;
 const state = {
@@ -1961,7 +1962,7 @@ async function finishAudit() {
     say(
       state.documents.signable
         ? 'Audit ready. Review all four documents before signing.'
-        : 'Audit requires correction: unresolved evidence or unpriced work remains.',
+        : auditBlockMessage(state.documents),
       state.documents.signable ? 'success' : 'error',
     );
     showTask('review');
