@@ -2070,6 +2070,9 @@ footer {
   }
   .compact-job #jobMenu > .menu-content {
     color: var(--navy);
+    max-height: calc(100dvh - 4.5rem - env(safe-area-inset-top));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .compact-job #jobMenu > .menu-content p {
     min-height: 0;

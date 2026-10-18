@@ -94,4 +94,26 @@ test.describe('compact phone header', () => {
           await expect(newJob).toBeVisible();
         },
       );
+
+  test('More scrolls to the end of Account on a 320×568 phone', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('owner'),
+    );
+    await page.goto('/');
+    await page.locator('#dashboardNewJob').click();
+    await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+    const more = page.locator('#jobMenu');
+    await more.locator(':scope > summary').click();
+    await more.locator('#accountMenu > summary').click();
+    const panel = more.locator(':scope > .menu-content');
+    const bounds = await panel.boundingBox();
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(568);
+    const version = more.locator('#accountMenu small');
+    await version.scrollIntoViewIfNeeded();
+    await expect(version).toBeInViewport();
+    const box = await version.boundingBox();
+    expect(box.y + box.height).toBeLessThanOrEqual(568);
+  });
 });
