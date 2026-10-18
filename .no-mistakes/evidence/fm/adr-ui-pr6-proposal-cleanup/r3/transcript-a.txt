@@ -1,0 +1,11 @@
+proposalBody has "technician review required": false
+proposalBody has "outside the authorized scope": false
+proposalBody has "Itemized scope total": true
+proposalBody has "Itemized charges at base rates": false
+estimate range: $1,208.00–$1,221.90
+auditNotes: AI review notes · estimator only AI summary · technician review required <img src=x onerror="window.reviewInjected=true"> Confirmed scope summary. AI suggestions · outside the authorized scope Document drying progress.
+homeowner hint: The homeowner opens all four documents and signs on their own phone. The link works once, expires in 7 days and stops working if anything here changes.
+homeowner after proposal only: progress=1 of 4 documents opened · Review each before signing. submitDisabled=true
+homeowner after four: progress=4 of 4 documents opened · Review each before signing. submitDisabled=false
+homeowner consent: I reviewed all four documents, the separate totals and the attached photo evidence.
+homeowner signed receipt visible: true

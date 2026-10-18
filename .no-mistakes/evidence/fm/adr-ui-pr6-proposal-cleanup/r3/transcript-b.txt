@@ -1,0 +1,5 @@
+progress: Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.
+claim aria-pressed=false
+defense aria-pressed=false
+photos aria-pressed=false
+saveStatus: Saved & signed · ADR-AUTH-1de2fcaf-d645-404d-b214-8fa031c63d65

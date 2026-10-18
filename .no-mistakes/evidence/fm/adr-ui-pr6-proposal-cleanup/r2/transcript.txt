@@ -1,0 +1,28 @@
+TECH proposalBody contains "technician review required": false
+TECH proposalBody contains "outside the authorized scope": false
+TECH proposalBody contains "Itemized charges at base rates": false
+TECH proposalBody money lines: Customer estimate range: $1,208.00–$1,221.90 | Itemized scope total: $1,208.00
+TECH totals-summary: Customer estimate range | $1,208.00–$1,221.90 | Itemized scope total | $1,208.00
+TECH documentProgress: Proposal opened · The itemized claim, defense letter and photo audit log are optional supporting documents.
+TECH #auditNotes visible: true, open: false
+TECH #auditNotes above tabs: true
+TECH #auditNotes expanded text: AI review notes · estimator only | AI summary · technician review required | <img src=x onerror="window.reviewInjected=true"> Confirmed scope summary. | AI suggestions · outside the authorized scope | Document drying progress.
+TECH window.reviewInjected: undefined
+TECH print media #auditNotes visible: false
+TECH sign without checkbox -> error: Confirm the proposal was reviewed with the homeowner or representative before signing.
+TECH tab claim aria-pressed: false
+TECH tab defense aria-pressed: false
+TECH tab photos aria-pressed: false
+TECH confirmation label: I reviewed the proposal, the separate totals, and the attached evidence with the homeowner or representative.
+TECH saveStatus after proposal-only sign: Saved & signed · ADR-AUTH-22218ac2-8f9c-44f1-9ed3-63eddb6fd113
+TECH homeowner-link hint: The homeowner reviews the proposal, with the other three documents available, and signs on their own phone. The link works once, expires in 7 days and stops working if anything here changes.
+HOME #auditNotes count: 0
+HOME proposal contains AI notes: false
+HOME totals-summary: Customer estimate range | $1,208.00–$1,221.90 | Itemized scope total | $1,208.00
+HOME consent text: I reviewed all four documents, the separate totals and the attached photo evidence.
+HOME progress after proposal only: 1 of 4 documents opened · Review each before signing.
+HOME submit disabled after proposal only: true
+HOME forced submit after proposal only -> Open all four documents before signing.
+HOME progress after all four: 4 of 4 documents opened · Review each before signing.
+HOME submit enabled after all four: true
+HOME receipt: Signed by Synthetic Homeowner, property owner, on 10/18/2026, 1:56:50 PM. Reference ADR-AUTH-link-bf8df689d3055fbcc53a908cd549382a.
