@@ -1,14 +1,20 @@
-Workspaces enabled; ADR estimator test-owner-ws-estimator owns ADR-INS-cccccccccccccccccccccccccccccccc
-[1] Old ADR client (no workspace_protocol_version) - previously waived
-  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff"}
-  got:  {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
-[2] ADR client claiming workspace_protocol_version=0
-  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff", "workspace_protocol_version": 0}
-  got:  {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
-[3] ADR client sending workspace_protocol_version="1" (string)
-  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff", "workspace_protocol_version": "1"}
-  got:  {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
-[4] Current ADR client (workspace_protocol_version=1)
-  sent: {"type": "authenticate", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "protocol_version": 2, "capture_id": "ffffffffffffffffffffffffffffffff", "workspace_protocol_version": 1}
-  got:  {"type": "error", "message": "Live coaching disconnected. Your draft is preserved; reconnect to continue."}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "revision": 1, "changed_fields": ["address", "air_movers", "dehumidifiers", "rooms", "scope_confirmed", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+GET /api/health -> {"status":"healthy","schema_version":3,"source_commit":"unknown"}
+OpenAPI title -> DryScope
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "duration_ms": 2, "outcome": "HTTPException", "status": 409, "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
+Old ADR client (no workspace protocol): sent workspace_protocol_version=<absent>
+   reply: {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
+   reached Vertex: False
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "duration_ms": 1, "outcome": "HTTPException", "status": 409, "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
+Old ADR client (workspace protocol 0): sent workspace_protocol_version=0
+   reply: {"type": "error", "message": "Update the app before a company walkthrough.", "status": 409}
+   reached Vertex: False
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+Current ADR client: sent workspace_protocol_version=1
+   reply: {"type": "error", "message": "Live coaching disconnected. Your draft is preserved; reconnect to continue."}
+   reached Vertex: True
 RESULT: PASS
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "duration_ms": 4, "outcome": "RuntimeError", "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}

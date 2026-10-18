@@ -1,0 +1,10 @@
+{
+  "name": "DryScope",
+  "short_name": "DryScope",
+  "theme_color": "#0B2545",
+  "background_color": "#F6F8FA",
+  "index_theme_color": "#0B2545",
+  "sign_theme_color": "#0B2545",
+  "sw_cache_line": "const CACHE='dryscope-'+VERSION+'';",
+  "title": "DryScope · Water & mold loss estimates"
+}
