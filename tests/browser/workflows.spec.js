@@ -156,7 +156,7 @@ test('AI notes stay out of the proposal and the technician signs after the propo
   await page.locator('#documentsConfirmed').check();
   await draw(page);
   await page.locator('#authorizeJob').click();
-  await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+  await expect(page.locator('#saveStatus')).toHaveText('Signed');
 });
 
 test('optional sheet charges appear in the calculated estimate range', async ({ page }) => {
