@@ -245,11 +245,14 @@ function renderControls() {
   $('backToLive').disabled = !editable || !navigator.onLine || ui.starting;
   $('typedNote').disabled = !editable;
   $('addTypedNote').disabled = !editable;
-  $('takePhoto').disabled = !editable || !active;
+  $('takePhoto').disabled = !editable;
   $('takePhoto').hidden = ui.notesMode;
   $('uploadPhoto').disabled = !editable;
   $('thermalToggle').disabled = !active;
   $('photoRoom').disabled = !editable;
+  if (state.draft)
+    for (const chip of $('roomChips').querySelectorAll('button'))
+      chip.disabled = !canEditDraft('scope');
   $('saveDraft').disabled = !editable;
   $('confirmFilledScope').disabled =
     !editable ||
@@ -567,8 +570,16 @@ function absorb(record) {
   state.record = record;
   for (const remote of record.photos) {
     const photo = state.draft.photos.find((p) => p.id === remote.id);
-    if (photo) Object.assign(photo, remote, { uploaded: true });
-    else state.draft.photos.push({ ...remote, uploaded: true });
+    if (!photo) {
+      state.draft.photos.push({ ...remote, uploaded: true });
+      continue;
+    }
+    // A room chosen here keeps showing until the server stores it.
+    const pending = photo.pending_room;
+    Object.assign(photo, remote, { uploaded: true });
+    if (pending === undefined) continue;
+    if (remote.room === pending) delete photo.pending_room;
+    else photo.room = pending;
   }
   renderPhotos();
   renderSaveStatus();
@@ -607,6 +618,7 @@ function clearDisplayedInspection() {
     'rooms',
     'photoRoom',
     'reviewRooms',
+    'roomChips',
     'proposalBody',
     'claimCards',
     'claimItems',
@@ -801,6 +813,30 @@ async function doSync() {
         absorb(await jsonApi('/api/inspections/' + id + '/photos', 'POST', payload));
       }
     }
+    for (const photo of state.draft.photos.filter(
+      (p) => p.uploaded && p.pending_room !== undefined,
+    )) {
+      if (!state.draft.data.rooms.some((room) => room.name === photo.pending_room)) {
+        // The chosen room was removed before saving; show the stored room again.
+        const saved = state.record.photos.find((p) => p.id === photo.id);
+        if (saved) photo.room = saved.room;
+        delete photo.pending_room;
+        continue;
+      }
+      const move = () =>
+        jsonApi('/api/inspections/' + id + '/photos/' + photo.id + '/room', 'PUT', {
+          expected_revision: state.record.revision,
+          room: photo.pending_room,
+        });
+      try {
+        absorb(await move());
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        await reconcile();
+        absorb(await move());
+      }
+    }
+    renderPhotos();
     for (const photo of state.draft.photos.filter((p) => p.uploaded && p.ocr_status === 'pending'))
       startOCR(photo);
     await loadPhotoUrls('/api/inspections/' + id + '/photos/');
@@ -916,6 +952,15 @@ async function drainQueue() {
             data_url: bytes.get(photo.id),
           });
         }
+        if (
+          photo.pending_room !== undefined &&
+          record.data.rooms.some((room) => room.name === photo.pending_room)
+        )
+          record = await request(path + '/photos/' + photo.id + '/room', 'PUT', {
+            expected_revision: record.revision,
+            room: photo.pending_room,
+          });
+        delete photo.pending_room;
         Object.assign(
           photo,
           record.photos.find((p) => p.id === photo.id),
@@ -1472,10 +1517,11 @@ function renderRooms() {
       changed();
     });
     check.append(input, node('span', 'Custom cabinetry · category 3 finished rate ×2'));
-    card.append(check);
+    card.append(check, node('div', undefined, 'room-photos photo-gallery'));
     $('rooms').append(card);
   });
   updateRoomPicker();
+  renderRoomPhotos();
   renderWalkthroughEdits();
 }
 function requestRoomRemoval(room, trigger) {
@@ -1541,9 +1587,175 @@ function updateRoomPicker() {
     $('photoRoom').append(opt);
   }
   if (state.draft.data.rooms.some((r) => r.name === value)) $('photoRoom').value = value;
+  renderRoomChips();
+}
+function canEditDraft(capability) {
+  return (
+    !!state.session &&
+    !!state.draft &&
+    !state.signed &&
+    !confirmedAuthorization &&
+    !(window.WorkspaceUI?.enabled() && !WorkspaceUI.can(capability))
+  );
+}
+function addRoomEntry() {
+  if (state.draft.data.rooms.length >= 30) throw Error('At most 30 rooms are supported.');
+  const room = {
+    name: 'Room ' + (state.draft.data.rooms.length + 1),
+    category: 1,
+    unfinished_sf: 0,
+    finished_sf: 0,
+    custom_cabinetry: false,
+    waste_percent: 0,
+  };
+  state.draft.data.rooms.push(room);
+  changed();
+  renderRooms();
+  return room;
+}
+// Walk & Photo: one chip per room; tap to select, tap the selected chip to rename, + Room adds.
+function renderRoomChips() {
+  const list = $('roomChips');
+  list.replaceChildren();
+  if (!state.draft) return;
+  const editable = canEditDraft('scope'),
+    current = $('photoRoom').value;
+  state.draft.data.rooms.forEach((room, index) => {
+    const selected = room.name === current,
+      chip = button(room.name.trim() || 'Unnamed room', () => {
+        if (selected) beginRoomRename(index);
+        else {
+          $('photoRoom').value = room.name;
+          renderRoomChips();
+        }
+      });
+    chip.className = 'room-chip';
+    chip.dataset.roomChip = index;
+    chip.setAttribute('aria-pressed', String(selected));
+    chip.disabled = !editable;
+    if (selected) {
+      chip.title = 'Rename this room';
+      const edit = node('span', ' ✎', 'chip-edit');
+      edit.setAttribute('aria-hidden', 'true');
+      chip.append(edit);
+    }
+    list.append(chip);
+  });
+  const add = button('+ Room', () =>
+    beginRoomRename(state.draft.data.rooms.indexOf(addRoomEntry())),
+  );
+  add.id = 'addRoomChip';
+  add.className = 'room-chip room-chip-add';
+  add.disabled = !editable;
+  list.append(add);
+}
+function beginRoomRename(index) {
+  const room = state.draft?.data.rooms[index];
+  if (!room || !canEditDraft('scope')) return;
+  $('photoRoom').value = room.name;
+  renderRoomChips();
+  const chip = $('roomChips').querySelector('[data-room-chip="' + index + '"]'),
+    input = node('input', undefined, 'room-chip-input');
+  input.type = 'text';
+  input.maxLength = 100;
+  input.value = room.name;
+  input.setAttribute('aria-label', 'Room name');
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (commit && name && name !== room.name) renameRoom(room, name);
+    else renderRoomChips();
+    $('roomChips')
+      .querySelector('[data-room-chip="' + index + '"]')
+      ?.focus();
+  };
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === 'Escape') {
+      event.preventDefault();
+      finish(event.key === 'Enter');
+    }
+  });
+  input.addEventListener('blur', () => finish(true));
+  chip.replaceWith(input);
+  input.focus();
+  input.select();
+}
+function renameRoom(room, name) {
+  const previous = room.name;
+  room.name = name;
+  retagPhotos(previous, name);
+  changed();
+  renderRooms();
+  $('photoRoom').value = name;
+  renderRoomChips();
+  renderPhotos();
+}
+// Photos follow their room's new name; uploaded ones are relabelled on the next sync.
+function retagPhotos(from, to) {
+  for (const photo of state.draft.photos)
+    if (roomKey(photo.room) === roomKey(from)) {
+      photo.room = to;
+      if (photo.uploaded) photo.pending_room = to;
+    }
+}
+function reassignPhoto(photo, room) {
+  if (!canEditDraft('photos') || !state.draft.photos.includes(photo)) return;
+  photo.room = room;
+  if (photo.uploaded) photo.pending_room = room;
+  changed();
+  renderPhotos();
 }
 function photoUrl(photo) {
   return photo.data_url || state.photoUrls.get(photo.id) || '';
+}
+function photoCard(p) {
+  const figure = node('figure', undefined, 'photo'),
+    image = node('img');
+  image.alt = p.room + ' inspection photo';
+  image.src = photoUrl(p);
+  figure.append(image);
+  const caption = node('figcaption'),
+    status = node('div', p.width && p.height ? p.width + ' × ' + p.height + ' · ' : '');
+  status.append(node('span', p.ocr_status.replaceAll('_', ' '), 'ocr-badge ocr-' + p.ocr_status));
+  caption.append(
+    node('strong', p.room),
+    node('div', new Date(p.captured_at).toLocaleString()),
+    status,
+  );
+  if (p.ocr_status === 'verified')
+    caption.append(node('div', p.ocr.meter_type + ': ' + p.ocr.value));
+  if (!state.signed && p.uploaded && ['failed', 'pending', 'no_meter'].includes(p.ocr_status))
+    caption.append(button('Retry recognition', () => startOCR(p)));
+  if (canEditDraft('photos')) {
+    const select = node('select', undefined, 'photo-room'),
+      names = state.draft.data.rooms.map((room) => room.name);
+    select.setAttribute('aria-label', 'Room for this photo');
+    if (!names.includes(p.room)) names.unshift(p.room);
+    for (const name of names) {
+      const option = node('option', name);
+      option.value = name;
+      select.append(option);
+    }
+    select.value = p.room;
+    select.addEventListener('change', () => reassignPhoto(p, select.value));
+    caption.append(select);
+  }
+  figure.append(caption);
+  return figure;
+}
+function renderRoomPhotos() {
+  if (!state.draft) return;
+  document.querySelectorAll('#rooms .room').forEach((card, index) => {
+    const room = state.draft.data.rooms[index],
+      strip = card.querySelector('.room-photos');
+    if (!room || !strip) return;
+    const photos = state.draft.photos.filter((p) => roomKey(p.room) === roomKey(room.name));
+    strip.replaceChildren(...photos.map(photoCard));
+    if (!photos.length)
+      strip.append(node('p', 'No photo of this room yet. Capture one on Walk & Photo.', 'hint'));
+  });
 }
 function renderPhotos() {
   const photos = state.draft?.photos || [];
@@ -1552,32 +1764,12 @@ function renderPhotos() {
     ' photos · ' +
     photos.filter((p) => p.ocr_status === 'verified').length +
     ' verified';
-  $('photoGallery').replaceChildren();
+  $('photoGallery').replaceChildren(...photos.map(photoCard));
   if (!photos.length)
-    $('photoGallery').append(node('p', 'Capture or upload evidence and choose its room.', 'empty'));
-  for (const p of photos) {
-    const figure = node('figure', undefined, 'photo'),
-      image = node('img');
-    image.alt = p.room + ' inspection photo';
-    image.src = photoUrl(p);
-    figure.append(image);
-    const caption = node('figcaption');
-    caption.append(
-      node('strong', p.room),
-      node('div', new Date(p.captured_at).toLocaleString()),
-      node(
-        'div',
-        (p.width && p.height ? p.width + ' × ' + p.height + ' · ' : '') +
-          p.ocr_status.replaceAll('_', ' '),
-      ),
+    $('photoGallery').append(
+      node('p', 'Capture or upload evidence for the current room.', 'empty'),
     );
-    if (p.ocr_status === 'verified')
-      caption.append(node('div', p.ocr.meter_type + ': ' + p.ocr.value));
-    if (!state.signed && p.uploaded && ['failed', 'pending', 'no_meter'].includes(p.ocr_status))
-      caption.append(button('Retry recognition', () => startOCR(p)));
-    figure.append(caption);
-    $('photoGallery').append(figure);
-  }
+  renderRoomPhotos();
   const verified = photos.filter((p) => p.ocr_status === 'verified').at(-1);
   $('captureStatus').textContent = verified
     ? verified.room + ' · ' + verified.ocr.meter_type + ': ' + verified.ocr.value
@@ -1640,9 +1832,12 @@ async function captureStill() {
   canvas.getContext('2d').drawImage(video, 0, 0);
   await addPhoto(await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.94)));
 }
-async function openNew(data = emptyData(), photos = []) {
+async function openNew(data = null, photos = []) {
   if (!state.session || !window.WorkspaceUI?.can('jobs_create'))
     throw Error('Company access is required before starting an inspection.');
+  // A blank job starts on Walk & Photo; forks and office intake open on Check Scope.
+  const walkFirst = !data && state.session.role !== 'office';
+  data = data || emptyData();
   if (state.session?.workspaces_enabled && state.session.role === 'office') {
     data = { ...emptyData(), address: data.address, rooms: [] };
     photos = [];
@@ -1675,7 +1870,7 @@ async function openNew(data = emptyData(), photos = []) {
   $('signingArea').hidden = false;
   invalidate();
   fillForm();
-  showTask('property', false);
+  showTask(walkFirst ? 'walkthrough' : 'property', false);
   await persist();
   await syncDraft();
   await window.WorkspaceUI?.editor();
@@ -3654,19 +3849,7 @@ async function initialize() {
       first.focus();
     }
   });
-  click('addRoom', () => {
-    if (state.draft.data.rooms.length >= 30) throw Error('At most 30 rooms are supported.');
-    state.draft.data.rooms.push({
-      name: 'Room ' + (state.draft.data.rooms.length + 1),
-      category: 1,
-      unfinished_sf: 0,
-      finished_sf: 0,
-      custom_cabinetry: false,
-      waste_percent: 0,
-    });
-    changed();
-    renderRooms();
-  });
+  click('addRoom', addRoomEntry);
   $('inspectionForm').addEventListener('submit', (e) => e.preventDefault());
   // A tap leaves the caret after a prefilled "0", so typing 1 showed "01". Selecting the value on
   // focus lets the first keystroke replace it; the tap's mouseup would otherwise drop the selection.

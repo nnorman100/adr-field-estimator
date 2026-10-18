@@ -41,6 +41,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await page.waitForFunction(() => state.session && !state.workspaceInitializing);
+  await page.locator('.task-nav [data-task="property"]').click();
 });
 
 test('first worker claiming the page does not offer an update or reload the draft', async ({

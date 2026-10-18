@@ -1,4 +1,4 @@
-const { saveDraft } = require('./actions');
+const { saveDraft, checkScope } = require('./actions');
 const { test, expect } = require('@playwright/test');
 const { randomUUID } = require('node:crypto');
 const core = require('../../public/core.js');
@@ -6,6 +6,7 @@ const auth = (uid) => ({ Authorization: 'Bearer ' + uid });
 async function ready(page) {
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await checkScope(page);
 }
 async function controlled(page) {
   await page.evaluate(async () => {
@@ -89,7 +90,7 @@ test('offline draft with several photos survives reload with images intact and b
   await expect(page.locator('#photoCount')).toContainText('3 photos');
   await expect(page.locator('#saveStatus')).toContainText('offline');
   await page.reload();
-  await page.locator('.task-nav [data-task="evidence"]').click();
+  await page.locator('.task-nav [data-task="walkthrough"]').click();
   await expect(page.locator('#photoGallery img')).toHaveCount(3);
   await expect.poll(() => widths(page)).toEqual([120, 200, 300]);
   const { drafts, photos } = await storage(page),
@@ -291,7 +292,7 @@ test('version 1 draft rows with embedded photos migrate on upgrade and still syn
   await page.goto('/');
   await expect(page.locator('#address')).toHaveValue('Migrated open property', { timeout: 15000 });
   await expect(page.locator('#technicianNotes')).toHaveValue('Written before the storage upgrade');
-  await page.locator('.task-nav [data-task="evidence"]').click();
+  await page.locator('.task-nav [data-task="walkthrough"]').click();
   await expect.poll(() => widths(page)).toEqual([200, 300]);
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   const remote = async (id) =>

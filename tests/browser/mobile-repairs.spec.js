@@ -1,4 +1,4 @@
-const { saveDraft } = require('./actions');
+const { saveDraft, checkScope } = require('./actions');
 const { test, expect } = require('@playwright/test');
 const pageErrors = new WeakMap();
 
@@ -169,6 +169,7 @@ for (const width of [320, 390])
       await page.goto('/');
       await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
       await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await checkScope(page);
     });
     test.afterEach(async ({ page }) => {
       expect(pageErrors.get(page) || [], 'No uncaught browser exceptions').toEqual([]);
@@ -416,8 +417,9 @@ for (const width of [320, 390])
           page.on('request', (request) => {
             if (request.url().endsWith('/api/audit')) auditRequests.push(request);
           });
-          for (const start of ['evidence', 'walkthrough']) {
-            await task(page, start);
+          // Twice from Walk & Photo: the second attempt must re-focus the same field.
+          for (let attempt = 0; attempt < 2; attempt++) {
+            await task(page, 'walkthrough');
             await page.locator('#finishAudit').click();
             await expect(page.locator('#panel-property')).toBeVisible();
             await expect(page.locator(selector)).toBeFocused();
@@ -446,7 +448,7 @@ for (const width of [320, 390])
       await longShell(page);
       for (const nextWidth of [width, width === 320 ? 390 : 320]) {
         await page.setViewportSize({ width: nextWidth, height: 844 });
-        await task(page, 'evidence');
+        await task(page, 'walkthrough');
         await page.locator('#finishAudit').click();
         await expect(roomName(page, 1)).toBeFocused();
         await clearOfChrome(page, '[data-room-index="1"][data-room-key="name"]');
@@ -518,7 +520,7 @@ for (const width of [320, 390])
       await longShell(page);
       const selector = '[data-room-index="1"][data-room-key="name"]';
       await page.setViewportSize({ width, height: 450 });
-      await task(page, 'evidence');
+      await task(page, 'walkthrough');
       await page.locator('#finishAudit').click();
       await expect(roomName(page, 1)).toBeFocused();
       await clearOfChrome(page, selector);

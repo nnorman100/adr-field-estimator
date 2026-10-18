@@ -49,6 +49,7 @@ try:
         UpdateInspection,
         InspectionData,
         PhotoUpload,
+        PhotoRoomUpdate,
         OcrResult,
         AIResult,
         AuditRequest,
@@ -87,6 +88,7 @@ except ImportError:
         UpdateInspection,
         InspectionData,
         PhotoUpload,
+        PhotoRoomUpdate,
         OcrResult,
         AIResult,
         AuditRequest,
@@ -758,6 +760,27 @@ async def upload_photo(
     await stored(store.quota, staff['uid'], 'draft', 60)
     record = await stored(store.add_photo, staff['uid'], inspection_id, req.model_dump(mode='json'))
     return public_record(record)
+
+
+@app.put('/api/inspections/{inspection_id}/photos/{photo_id}/room')
+async def move_photo(
+    inspection_id: str,
+    photo_id: str,
+    req: PhotoRoomUpdate,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    return public_record(
+        await stored(
+            store.move_photo,
+            staff['uid'],
+            inspection_id,
+            req.expected_revision,
+            photo_id,
+            req.room,
+        )
+    )
 
 
 @app.get('/api/inspections/{inspection_id}/photos/{photo_id}')

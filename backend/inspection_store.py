@@ -174,11 +174,11 @@ class InspectionStore(JobStore):
 
         return saved(inspection_id, self._atomic(create), changed)
 
-    def _change(self, uid, inspection_id, revision, transform):
+    def _change(self, uid, inspection_id, revision, transform, action='scope'):
         ref = self._ref(inspection_id)
 
         def change(tx):
-            record = self._owned(ref.get(transaction=tx), uid, 'scope', tx)
+            record = self._owned(ref.get(transaction=tx), uid, action, tx)
             if record['status'] == 'signed':
                 raise Conflict('Signed inspections are immutable. Start a new inspection.')
             if record['revision'] != revision:
@@ -264,6 +264,24 @@ class InspectionStore(JobStore):
         except Exception:
             self._discard_unreferenced(blob, self._ref(inspection_id))
             raise
+
+    def move_photo(self, uid, inspection_id, revision, photo_id, room):
+        """Relabels one uploaded photo with another room of the draft. The evidence itself is
+        immutable; only its room tag moves, and a moved photo invalidates the audit like any
+        other draft change."""
+
+        def update(record):
+            photo = next((p for p in record['photos'] if p['id'] == photo_id), None)
+            if photo is None:
+                raise LookupError('Photo not found.')
+            if room not in {r['name'] for r in record['data']['rooms']}:
+                raise ValueError('Choose a room from this inspection for the photo.')
+            if photo['room'] != room:
+                photo['room'] = room
+                record.update(revision=record['revision'] + 1, audit=None, status='draft')
+            return record
+
+        return self._change(uid, inspection_id, revision, update, 'photos')
 
     def append_transcript(self, uid, inspection_id, marker, block):
         """Appends a transcribed offline voice note once; a retried note whose marker is already

@@ -514,6 +514,7 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.locator('#closeHelp').click();
 
   await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await page.locator('.task-nav [data-task="property"]').click();
   await page.locator('#address').fill('Other company synthetic property');
   await page.locator('#yearBuilt').fill('2000');
   await expect(page.locator('#coordAddress')).toHaveValue('Other company synthetic property');

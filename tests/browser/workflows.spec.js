@@ -1,9 +1,10 @@
-const { saveDraft } = require('./actions');
+const { saveDraft, checkScope } = require('./actions');
 const { test, expect } = require('@playwright/test');
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await checkScope(page);
 });
 async function task(page, name) {
   await page.locator('.task-nav [data-task="' + name + '"]').click();
@@ -56,7 +57,7 @@ test('mobile task layout exposes capture immediately with readable idle controls
     ).toBeGreaterThanOrEqual(14);
     await expect(page.locator('#stopWalk')).toBeHidden();
     await expect(page.locator('#muteMic')).toBeHidden();
-    await expect(page.locator('#takePhoto')).toBeDisabled();
+    await expect(page.locator('#takePhoto')).toBeEnabled();
     await expect(page.locator('#uploadPhoto')).toBeEnabled();
     expect((await page.locator('.viewfinder').boundingBox()).height).toBeLessThan(200);
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
@@ -67,7 +68,7 @@ test('mobile task layout exposes capture immediately with readable idle controls
         path: test.info().outputPath('redesigned-walkthrough-' + width + '.png'),
         fullPage: true,
       });
-    await task(page, 'evidence');
+    await task(page, 'walkthrough');
     await expect(page.locator('#photoGallery')).toBeVisible();
     await task(page, 'review');
     await expect(page.locator('#reviewEmpty')).toBeVisible();
@@ -270,7 +271,7 @@ test('active capture controls expand and Stop tears down the synthetic stream', 
   await expect(page.locator('#startWalk')).toBeVisible();
   await expect(page.locator('#stopWalk')).toBeHidden();
   await expect(page.locator('#thermalBadge')).toBeHidden();
-  await expect(page.locator('#takePhoto')).toBeDisabled();
+  await expect(page.locator('#takePhoto')).toBeEnabled();
   expect(
     await page.evaluate(() =>
       window.syntheticTracks.every((track) => track.readyState === 'ended'),
@@ -608,6 +609,7 @@ test('reconnection synchronizes an older queued inspection as well as the open d
   await menu(page, 'jobMenu');
   await page.locator('#newInspection').click();
   await expect(page.locator('#address')).toHaveValue('');
+  await task(page, 'property');
   await page.locator('#address').fill('Second local draft');
   await saveDraft(page);
   await context.setOffline(false);
@@ -757,7 +759,7 @@ async function restoreCloudOnly(page, id) {
   await menu(page, 'jobMenu');
   await page.locator('#openJobs').click();
   await page.locator('.job-link').filter({ hasText: 'Synthetic browser property' }).click();
-  await task(page, 'evidence');
+  await task(page, 'walkthrough');
   await expect(page.locator('#photoGallery img')).toHaveCount(1);
   await expect
     .poll(() => page.locator('#photoGallery img').evaluate((el) => el.naturalWidth))
@@ -787,7 +789,7 @@ test('cloud-restored originals survive photo-backed conflict fork', async ({ pag
   await expect(page.locator('#conflictActions')).toBeHidden();
   await expect(page.locator('#saveStatus')).toContainText('Saved privately');
   await expect(page.locator('#technicianNotes')).toHaveValue('Keep this device work and photo');
-  await task(page, 'evidence');
+  await task(page, 'walkthrough');
   await expect
     .poll(() => page.locator('#photoGallery img').evaluate((el) => el.naturalWidth))
     .toBe(300);
@@ -822,7 +824,7 @@ test('reopened local draft merges photos added by another device', async ({ page
     { id, image },
   );
   await page.reload();
-  await task(page, 'evidence');
+  await task(page, 'walkthrough');
   await expect(page.locator('#photoGallery img')).toHaveCount(2);
   await expect
     .poll(() =>
@@ -852,7 +854,7 @@ test('cloud-restored photos remain visible after offline reload', async ({
   });
   await context.setOffline(true);
   await page.reload();
-  await task(page, 'evidence');
+  await task(page, 'walkthrough');
   await expect
     .poll(() => page.locator('#photoGallery img').evaluate((el) => el.naturalWidth))
     .toBe(300);

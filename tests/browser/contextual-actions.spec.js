@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { saveDraft } = require('./actions');
+const { saveDraft, checkScope } = require('./actions');
 
 // Synthetic backend and emulated layouts; physical iPhone keyboard acceptance stays separate.
 for (const width of [390, 1280]) {
@@ -9,6 +9,7 @@ for (const width of [390, 1280]) {
       await page.goto('/');
       await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
       await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await checkScope(page);
     });
 
     test('signing stays available across document tabs and the draft bar stays out of review and signed jobs', async ({

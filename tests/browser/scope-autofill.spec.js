@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { saveDraft } = require('./actions');
+const { saveDraft, checkScope } = require('./actions');
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
 
@@ -8,6 +8,7 @@ const room = (page, key) => page.locator('[data-room-index="0"][data-room-key="'
 async function ready(page) {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled();
+  await checkScope(page);
   await page.locator('#address').fill('Synthetic scope autofill property');
   await page.locator('#yearBuilt').fill('1998');
   await page.locator('#technicianNotes').fill(words);
