@@ -1,0 +1,14 @@
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "revision": 1, "changed_fields": ["address", "air_movers", "dehumidifiers", "rooms", "scope_confirmed", "year_built"]}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "revision": 1, "changed_fields": ["address", "air_movers", "dehumidifiers", "rooms", "scope_confirmed", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "duration_ms": 8, "outcome": "HTTPException", "status": 409, "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "duration_ms": 2, "outcome": "HTTPException", "status": 409, "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "duration_ms": 1, "outcome": "HTTPException", "status": 409, "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+PROVIDER_CONNECT_REACHED
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "duration_ms": 3, "outcome": "RuntimeError", "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "WEBSOCKET", "route": "/api/live"}
+PROVIDER_CONNECT_REACHED
+{"severity": "WARNING", "message": "Live session ended", "model": "gemini-3.8-live", "operation": "live", "inspection_id": "ADR-INS-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "duration_ms": 2, "outcome": "RuntimeError", "mic_seconds": 0.0, "mic_gap_max_ms": 0, "video_frames": 0, "turns": 0, "interruptions": 0, "model_audio_seconds": 0.0}
