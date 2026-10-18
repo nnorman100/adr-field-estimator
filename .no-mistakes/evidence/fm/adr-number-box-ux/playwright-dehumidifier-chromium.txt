@@ -1,0 +1,4 @@
+Running 1 test using 1 worker
+
+[1/1] [chromium] › tests/browser/workflows.spec.js:907:1 › a dehumidifier typed after a blocked audit and walkthrough detour replaces the 0 and is priced
+  1 passed (4.7s)

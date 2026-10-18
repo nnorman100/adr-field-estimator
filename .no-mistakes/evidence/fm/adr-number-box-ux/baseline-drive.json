@@ -1,0 +1,17 @@
+{
+ "label": "baseline",
+ "inputmode": null,
+ "laborInputmode": null,
+ "roomInputmode": null,
+ "before": "0",
+ "afterTyping1": "01",
+ "confirmedAfterEdit": false,
+ "noticeVisible": false,
+ "noticeText": null,
+ "savedValue": 1,
+ "putDehumidifierValues": [
+  0,
+  1
+ ],
+ "createPosts": 1
+}

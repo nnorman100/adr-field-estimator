@@ -1,0 +1,2 @@
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3120c6076e9648ae8e31361ad3404265", "revision": 1, "changed_fields": ["address", "dehumidifiers", "rooms"]}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3120c6076e9648ae8e31361ad3404265", "revision": 1, "changed_fields": []}

@@ -1,0 +1,22 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-06c4efea1ed84da6b112bd0b2a79789a", "revision": 1, "changed_fields": ["rooms"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-06c4efea1ed84da6b112bd0b2a79789a", "revision": 2, "changed_fields": ["address", "rooms", "scope_confirmed", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-06c4efea1ed84da6b112bd0b2a79789a", "revision": 3, "changed_fields": ["air_movers", "dehumidifiers", "labor_hours", "scope_confirmed"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3df3dff499884fddae7360e102378bfb", "revision": 1, "changed_fields": ["rooms"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3df3dff499884fddae7360e102378bfb", "revision": 2, "changed_fields": ["address", "rooms", "scope_confirmed", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3df3dff499884fddae7360e102378bfb", "revision": 3, "changed_fields": ["dehumidifiers", "scope_confirmed"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3df3dff499884fddae7360e102378bfb", "revision": 4, "changed_fields": ["air_movers", "dehumidifiers", "labor_hours"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3120c6076e9648ae8e31361ad3404265", "revision": 1, "changed_fields": ["address", "dehumidifiers", "rooms"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-3120c6076e9648ae8e31361ad3404265", "revision": 1, "changed_fields": []}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}

@@ -1,0 +1,29 @@
+{
+ "label": "after",
+ "inputmode": "numeric",
+ "laborInputmode": "decimal",
+ "roomInputmode": "decimal",
+ "before": "0",
+ "afterTyping1": "1",
+ "confirmedAfterEdit": false,
+ "noticeVisible": true,
+ "noticeText": "Scope changed · confirm again.",
+ "savedValue": 1,
+ "retype2": "2",
+ "labor": "2.5",
+ "noticeAfterRetick": false,
+ "noticeAfterManualUntick": false,
+ "airMovers": "3",
+ "noticeAfterEditWhileUnticked": false,
+ "finalData": {
+  "d": 2,
+  "l": 2.5,
+  "a": 3
+ },
+ "putDehumidifierValues": [
+  0,
+  1,
+  2
+ ],
+ "createPosts": 1
+}
