@@ -1,5 +1,6 @@
 """ADR rate book and document construction, independent of model-supplied prices."""
 
+import re
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
@@ -39,6 +40,25 @@ ADDITIONAL = 'If technicians encounter additional affected building materials be
 EXCLUSIONS = 'NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of {company}. This estimate does not include testing of any kind.'
 REPRICE = 'If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.'
 VALIDITY = 'Estimate is valid for 30 days from date of inspection.'
+# Walkthrough sentences made only of these words are conversation, not technician evidence.
+FILLER_WORDS = set(
+    'ok okay alright all right thanks thank you very much so um uh hmm got it but get cool great'
+    ' perfect hello hi hey bye goodbye sounds good'.split()
+)
+APP_QUESTION = re.compile(
+    r'(can|could|may|should) (i|we) (add|take|attach|send|upload) (a |an |another |the |this |more )?'
+    r'(picture|photo|image)s?|can you hear me|are you (there|listening)|did you (get|catch) (that|it)'
+)
+# The age finding is the app's lead/asbestos rule, so AI text may not restate or contradict it.
+TESTING_TOPIC = re.compile(
+    r'asbestos|\blead\b[\s/-]*(and\b|or\b|&)?[\s/-]*(based|paint|test|pre-?test|abatement|hazard|exposure)',
+    re.IGNORECASE,
+)
+JSON_TERM = re.compile(
+    r'\b(the\s+)?(inspection\s+)?JSON(\s+(metadata|data|payload|record|evidence|input|object))?\b',
+    re.IGNORECASE,
+)
+FIELD_NAME = re.compile(r'\b[a-z]+(?:_[a-z]+)+\b')
 
 
 def amount(value):
@@ -166,10 +186,66 @@ def proposal_date():
     return datetime.now(ZoneInfo('America/Los_Angeles')).strftime('%m-%d-%Y')
 
 
+def words(text):
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def sentences(text):
+    return [part for part in re.split(r'(?<=[.?!])\s+', text.strip()) if part]
+
+
+def technician_statement(data: InspectionData):
+    """The walkthrough transcript without speaker echo of the assistant or conversational filler."""
+    # A microphone that hears the phone speaker records the assistant's words as technician turns.
+    spoken = [' ' + ' '.join(words(turn)) + ' ' for turn in data.assistant_transcript.splitlines()]
+    kept = []
+    for turn in data.technician_transcript.splitlines():
+        heard = words(turn)
+        if (
+            len(heard) >= 3
+            and not any(char.isdigit() for char in turn)
+            and any(' ' + ' '.join(heard) + ' ' in text for text in spoken)
+        ):
+            continue
+        text = ' '.join(
+            sentence
+            for sentence in sentences(turn)
+            if not set(words(sentence)) <= FILLER_WORDS
+            and not APP_QUESTION.fullmatch(' '.join(words(sentence)))
+        )
+        if text:
+            kept.append(text)
+    return '\n'.join(kept)
+
+
+def plain(text):
+    """Model text in customer words: no data-format or field names from the audit prompt."""
+    text = JSON_TERM.sub(
+        lambda m: (
+            'The saved inspection'
+            if m.group()[0].isupper() and m.start() == 0
+            else 'the saved inspection'
+        ),
+        text,
+    )
+    text = re.sub(r'\bmetadata\b', 'record', text, flags=re.IGNORECASE)
+    return FIELD_NAME.sub(lambda m: m.group().replace('_', ' '), text)
+
+
+def customer_text(summary):
+    """The AI summary in plain words, without sentences about the app's testing rule."""
+    lines = (
+        ' '.join(plain(text) for text in sentences(line) if not TESTING_TOPIC.search(text))
+        for line in summary.splitlines()
+    )
+    return '\n'.join(line for line in lines if line)
+
+
 def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, customer_name=''):
     company_name = identity['name'] if identity else 'Alert Disaster Restoration'
     company_address = identity['address'] if identity else 'Bakersfield, CA'
     company_license = identity['license'] if identity else '950983'
+    company_phone = identity.get('phone', '') if identity else ''
     signoff = identity['signoff'] if identity else 'Matthew Myers'
     setup = []
     if identity:
@@ -204,13 +280,15 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
     observations = [age]
     if data.technician_notes.strip():
         observations.append('Technician observations: ' + data.technician_notes.strip())
-    if data.technician_transcript.strip():
-        observations.append('Technician transcript: ' + data.technician_transcript.strip())
+    statement = technician_statement(data)
+    if statement:
+        observations.append('Technician walkthrough statement: ' + statement)
     # Photos are numbered in photo-log order, so an adjuster can match a finding to its picture.
     observations.extend(
         f'Photo {number} ({p["room"]}) — {p["ocr"]["meter_type"]}: {p["ocr"]["value"]}'
-        for number, p in enumerate(photos, 1)
         if p.get('ocr_status') == 'verified'
+        else f'Photo {number} ({p["room"]}) — supporting photo; no verified meter reading.'
+        for number, p in enumerate(photos, 1)
     )
     recommendations = (
         ([TESTING] if before else [])
@@ -219,12 +297,17 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
         + [ADDITIONAL]
     )
     customer = customer_name.strip()
+    letterhead = ' · '.join(
+        ' '.join(part.replace('•', '·').split())
+        for part in (company_name, company_address, company_phone, f'CSLB #{company_license}')
+        if part.strip()
+    )
     letter = '\n\n'.join(
         [
+            letterhead,
             'TO: Insurance Claims Examiner / Adjuster',
             f'RE: Remediation scope for {data.address}'
             + (f'\nCustomer: {customer}' if customer else ''),
-            f'{company_name} • {company_address} • CSLB #{company_license}',
             'This scope describes proposed work; completion has not been recorded.',
             'The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.',
             '\n'.join(observations),
@@ -267,9 +350,9 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
             }
             for p in photos
         ],
-        ai_summary=ai.summary,
-        ai_suggestions=ai.suggestions,
-        unpriced_work=ai.unpriced_work,
+        ai_summary=customer_text(ai.summary),
+        ai_suggestions=[plain(text) for text in ai.suggestions if not TESTING_TOPIC.search(text)],
+        unpriced_work=[plain(text) for text in ai.unpriced_work],
         signable=bool(
             not setup
             and data.scope_confirmed

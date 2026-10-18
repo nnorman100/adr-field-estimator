@@ -3,6 +3,7 @@ import pytest
 from pydantic import ValidationError
 from backend.claims import (
     price_scope,
+    technician_statement,
     make_documents,
     ADDITIONAL,
     PRETEST,
@@ -234,6 +235,7 @@ def test_findings_cite_photos_by_their_photo_log_number():
     docs = make_documents(scoped(), photos, ai)
     cited = [text for text in docs['adr_estimate']['findings'] if text.startswith('Photo ')]
     assert cited == [
+        'Photo 1 (Hallway) — supporting photo; no verified meter reading.',
         'Photo 2 (Kitchen) — Extech MO290: 31.4% WME',
         'Photo 3 (Bathroom) — Extech MO290: 18.0% WME',
     ]
@@ -258,3 +260,159 @@ def test_documents_without_a_customer_name_omit_it(name):
         'RE: Remediation scope for Synthetic\nCustomer: Pat Example\n\n'
         in named['iicrc_defense_letter']
     )
+
+
+# Modeled on the 2026-10-17 "1234 Acme St" phone test: speaker echo of the greeting, chatter,
+# two Office photos without a meter, a 1978 home and model text with internal terms.
+ACME_TECHNICIAN = '\n'.join(
+    [
+        'Welcome to the',
+        'Office, category 1.',
+        'The corner, southwest corner of the office.',
+        'Can I add a picture?',
+        'Laminate flooring, 10 linear feet, remove. Drywall, 20 square feet, remove.',
+        'But you get it?',
+        "I'll be using a dryer.",
+        'One dehumidifier for three days. All right, thanks.',
+    ]
+)
+ACME_ASSISTANT = '\n'.join(
+    [
+        'Welcome to the walkthrough. What is the year built?',
+        'Got it. Which room are we in, and do you have a water category for it?',
+        'Do you mean a dehumidifier? How many, and for how many days?',
+    ]
+)
+
+
+def acme(**kwargs):
+    values = dict(
+        address='1234 Acme St',
+        year_built=1978,
+        rooms=[{'name': 'Office', 'unfinished_sf': 20, 'finished_sf': 20, 'waste_percent': 10}],
+        technician_transcript=ACME_TECHNICIAN,
+        assistant_transcript=ACME_ASSISTANT,
+    )
+    return scoped(**{**values, **kwargs})
+
+
+def test_documents_use_the_technician_statement_without_echo_or_chatter():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    docs = make_documents(acme(), [], ai)
+    statement = (
+        'Office, category 1.\n'
+        'The corner, southwest corner of the office.\n'
+        'Laminate flooring, 10 linear feet, remove. Drywall, 20 square feet, remove.\n'
+        "I'll be using a dryer.\n"
+        'One dehumidifier for three days.'
+    )
+    assert technician_statement(acme()) == statement
+    finding = 'Technician walkthrough statement: ' + statement
+    assert finding in docs['adr_estimate']['findings']
+    assert finding in docs['iicrc_defense_letter']
+    for text in [str(docs['adr_estimate']), docs['iicrc_defense_letter']]:
+        for chatter in ['Welcome to the', 'Can I add', 'you get it', 'All right', 'transcript']:
+            assert chatter not in text
+
+
+@pytest.mark.parametrize(
+    'turn',
+    [
+        # A short confirmation, a number or a fact the assistant never said stays technician evidence.
+        'Category 1.',
+        'Finished drywall.',
+        'Water category for it is 2.',
+        'Yes.',
+        'Okay, the bathroom vanity is wet.',
+    ],
+)
+def test_technician_facts_survive_cleaning(turn):
+    data = scoped(
+        technician_transcript=turn,
+        assistant_transcript='Is it finished drywall? What water category for it, 1 or 2?',
+    )
+    assert technician_statement(data) == turn
+
+
+def test_supporting_photos_are_cited_without_claiming_a_reading():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    photos = [photo('a' * 32, 'Office'), photo('b' * 32, 'Office')]
+    photos[1]['ocr_status'] = 'pending'
+    docs = make_documents(acme(), photos, ai)
+    cited = [
+        'Photo 1 (Office) — supporting photo; no verified meter reading.',
+        'Photo 2 (Office) — supporting photo; no verified meter reading.',
+    ]
+    assert [t for t in docs['adr_estimate']['findings'] if t.startswith('Photo ')] == cited
+    assert all(text in docs['iicrc_defense_letter'] for text in cited)
+    # Pending recognition still blocks signing; citing the photo does not verify it.
+    assert [p['ocr_status'] for p in docs['photo_audit_log']] == ['no_meter', 'pending']
+    assert not docs['signable']
+
+
+def test_letterhead_heads_the_letter_with_one_separator_and_the_phone():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    identity = dict(
+        company_id='adr',
+        version=1,
+        name='Alert Disaster Restoration',
+        address='3300 Patton Way · Bakersfield, CA 93308',
+        phone='(661) 426-2151',
+        email='',
+        license='950983',
+        signoff='Matthew Myers',
+    )
+    letter = make_documents(acme(), [], ai, identity)['iicrc_defense_letter']
+    assert letter.startswith(
+        'Alert Disaster Restoration · 3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151'
+        ' · CSLB #950983\n\nTO: Insurance Claims Examiner / Adjuster\n\nRE: '
+    )
+    assert '•' not in letter
+    other = dict(identity, name='Other Co', address='1 Main St •\n Fresno, CA', phone='')
+    letter = make_documents(acme(), [], ai, other)['iicrc_defense_letter']
+    assert letter.startswith('Other Co · 1 Main St · Fresno, CA · CSLB #950983\n\nTO: ')
+
+
+@pytest.mark.parametrize('year', [1960, 1978])
+def test_ai_text_never_restates_the_testing_rule_or_internal_terms(year):
+    ai = AIResult(
+        summary=(
+            'Office has laminate and drywall removal. Lead or asbestos testing may be needed'
+            ' given the 1978 build year. The JSON metadata lists no dehumidifier.'
+        ),
+        suggestions=[
+            'Determine if lead or asbestos testing is required prior to disturbing drywall,'
+            ' given the 1978 build year.',
+            'The technician stated one dehumidifier for three days, whereas the JSON metadata'
+            ' indicates 0 dehumidifiers and 1 air scrubber.',
+            'Confirm laminate square footage; 10 linear feet is not an area.',
+            'Check whether a leak could lead to further damage under the flooring.',
+        ],
+        unpriced_work=['Office: one dehumidifier for three days is absent from priced_scope.'],
+    )
+    docs = make_documents(acme(year_built=year), [], ai)
+    assert docs['ai_suggestions'] == [
+        'The technician stated one dehumidifier for three days, whereas the saved inspection'
+        ' indicates 0 dehumidifiers and 1 air scrubber.',
+        'Confirm laminate square footage; 10 linear feet is not an area.',
+        'Check whether a leak could lead to further damage under the flooring.',
+    ]
+    assert docs['ai_summary'] == (
+        'Office has laminate and drywall removal. The saved inspection lists no dehumidifier.'
+    )
+    lines = AIResult(
+        summary='Office: drywall removal\n- Lead testing may be needed\n- Laminate removal',
+        suggestions=[],
+        unpriced_work=[],
+    )
+    assert make_documents(acme(year_built=year), [], lines)['ai_summary'] == (
+        'Office: drywall removal\n- Laminate removal'
+    )
+    assert docs['unpriced_work'] == [
+        'Office: one dehumidifier for three days is absent from priced scope.'
+    ]
+    # The app's own age finding still prints, and unpriced work still blocks signing.
+    assert docs['adr_estimate']['findings'][0].startswith(
+        'Due to property age' if year < 1978 else 'The home was built in 1978.'
+    )
+    assert not docs['signable']
