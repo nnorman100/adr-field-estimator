@@ -1,0 +1,15 @@
+owner: dashboardNewJob visible=true y=256 newJobButtons=1
+owner: on Company/My jobs, dashboardNewJob visible=true
+estimator: dashboardNewJob visible=true y=184 newJobButtons=1
+estimator: on Company/My jobs, dashboardNewJob visible=true
+office: dashboardNewJob visible=true y=184 newJobButtons=1
+office: on Company/My jobs, dashboardNewJob visible=true
+320: jobbar y=0 h=52; title "1234 Very Long Street Name Avenue, Bakersfield, CA 93301" height=20 lineHeight=20 overflow=ellipsis; status="Saved" title="Saved privately · revision 2"; property panel top=117.265625
+320: Jobs back -> dashboard visible; product-bar help visible=true
+390: jobbar y=0 h=52; title "1234 Very Long Street Name Avenue, Bakersfield, CA 93301" height=20 lineHeight=20 overflow=ellipsis; status="Saved" title="Saved privately · revision 2"; property panel top=117.265625
+390: Jobs back -> dashboard visible; product-bar help visible=true
+offline: status="Offline · saved on phone" title="Offline · saved on phone" offlineBanner visible=true
+back online: status="Saved" title="Saved privately · revision 2"
+update: banner in jobbar=true applyUpdate visible=true box={"x":153.625,"y":18.046875,"width":72,"height":30} scrollWidth>innerWidth=false
+1280: compact-job=false product-bar visible=true jobMenu label="Jobs" backToJobs visible=false helpInProductBar=1
+signed-out 320: compact-job=false body=company-brand dashboard-open product-bar visible=true overflow=false
