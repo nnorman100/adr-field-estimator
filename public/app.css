@@ -476,22 +476,12 @@ h3 {
   background: var(--mold);
   border-color: var(--mold);
 }
-/* The room name takes its own row; the loss pills and the water category share the next one. */
-.room .form-grid > label:first-child,
-.loss-row {
-  grid-column: 1/-1;
-}
-.loss-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 0 1.25rem;
-}
-.loss-row > label {
-  flex: 1 1 14rem;
+/* The room name and water category share a row; the loss pills take the next one. */
+.property-grid {
+  grid-template-columns: 2fr 1fr;
 }
 .loss-pills {
-  flex: 1 1 18rem;
+  grid-column: 1/-1;
   margin-bottom: 1.15rem;
 }
 .loss-pills legend {
@@ -556,7 +546,7 @@ h3 {
   opacity: 0.6;
 }
 /* Waste % (and cabinetry below category 3) wait in a drawer inside the card. */
-.room-more {
+.room > .room-more {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
@@ -1271,6 +1261,104 @@ footer {
   .room .form-grid {
     grid-template-columns: 1fr 1fr;
     gap: 0 0.75rem;
+  }
+  /* Check Scope packs one or two rooms, the charges and the confirmation into two phone screens. */
+  #panel-property > .section-head {
+    align-items: center;
+    margin-bottom: 0.25rem;
+  }
+  #panel-property > .section-head .text-action {
+    width: auto;
+    min-height: 44px;
+    padding: 0.25rem 0;
+  }
+  #panel-property {
+    padding: 0.9rem;
+  }
+  #panel-property .hint {
+    margin: 0.25rem 0 0.5rem;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+  #panel-property label {
+    margin-bottom: 0.5rem;
+    line-height: 1.3;
+    min-width: 0;
+  }
+  #panel-property input:not([type='checkbox'], [type='radio']),
+  #panel-property select,
+  #panel-property textarea {
+    min-height: 44px;
+    margin-top: 0.2rem;
+    padding: 0.55rem 0.7rem;
+  }
+  #panel-property h3 {
+    margin: 0.5rem 0;
+  }
+  #panel-property .section-head {
+    margin-bottom: 0.5rem;
+  }
+  #panel-property .section-head > button {
+    min-height: 44px;
+    padding: 0.4rem 0.75rem;
+  }
+  #panel-property details:not(.menu, .room-more) {
+    margin-top: 0.25rem;
+    padding-top: 0.25rem;
+  }
+  #inspectionFields > .form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr));
+    gap: 0 0.75rem;
+    align-items: end;
+  }
+  #inspectionFields > .property-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+  #technicianNotes {
+    height: 4.25rem;
+  }
+  #panel-property .confirmation {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    margin-bottom: 0.5rem;
+  }
+  #rooms .room {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 0.5rem;
+    padding: 0.5rem 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+  #rooms .room > * {
+    flex: 1 0 100%;
+  }
+  #rooms .room > .loss-tag {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0.3rem 0.55rem;
+  }
+  #rooms .room > .section-head {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    margin-bottom: 0.25rem;
+  }
+  #rooms .room .form-grid {
+    align-items: end;
+  }
+  #rooms .loss-pills {
+    margin-bottom: 0.5rem;
+  }
+  #rooms .loss-pills legend {
+    margin-bottom: 0.2rem;
+  }
+  #rooms .room-photos {
+    margin-top: 0.25rem;
+  }
+  #rooms .room-photos .hint {
+    margin: 0;
   }
   .draft-actions {
     padding: 0.65rem 1rem;

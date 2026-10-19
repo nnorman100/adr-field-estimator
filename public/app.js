@@ -1513,7 +1513,6 @@ function renderRooms() {
     head.append(remove);
     card.append(head);
     const grid = node('div', undefined, 'form-grid'),
-      lossRow = node('div', undefined, 'loss-row'),
       more = node('details', undefined, 'room-more'),
       moreBody = node('div', undefined, 'form-grid'),
       cabinetry = node('label', undefined, 'check');
@@ -1554,10 +1553,9 @@ function renderRooms() {
       pill.append(radio, node('span', text));
       pillList.append(pill);
     }
-    lossRow.append(pills);
     const definitions = [
       ['Room name', 'name', 'text', grid],
-      ['Water category', 'category', 'select', lossRow],
+      ['Water category', 'category', 'select', grid],
       ['Unfinished / subfloor SF', 'unfinished_sf', 'number', grid],
       ['Finished / drywall / trim SF', 'finished_sf', 'number', grid],
       ['Waste %', 'waste_percent', 'number', moreBody],
@@ -1605,8 +1603,8 @@ function renderRooms() {
         }
       });
       wrap.append(input);
-      if (key === 'category') grid.append(lossRow);
       parent.append(wrap);
+      if (key === 'category') grid.append(pills);
     }
     card.append(grid, more, node('div', undefined, 'room-photos photo-gallery'));
     const input = node('input');

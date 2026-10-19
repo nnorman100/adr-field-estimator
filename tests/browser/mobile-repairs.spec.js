@@ -677,7 +677,7 @@ for (const width of [320, 390])
       await expect(category).toHaveValue('3');
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 3', 'MOLD · Cat 3']);
       await expect(cards.nth(1)).toHaveAttribute('data-loss', 'both');
-      // The pills keep their words above the full-width category select; at 390 px they share a row.
+      // The room name and category select share a row above the pills; at 390 px the pills share one too.
       const [nameBox, categoryBox, ...pillBoxes] = await Promise.all(
         [
           roomName(page, 1),
@@ -687,8 +687,9 @@ for (const width of [320, 390])
       );
       for (const box of pillBoxes) {
         expect(box.height).toBeGreaterThanOrEqual(44);
-        expect(categoryBox.y).toBeGreaterThan(box.y + box.height - 1);
+        expect(box.y).toBeGreaterThan(categoryBox.y + categoryBox.height - 1);
       }
+      expect(Math.abs(categoryBox.y - nameBox.y)).toBeLessThan(2);
       if (width === 390)
         for (const box of pillBoxes) expect(Math.abs(box.y - pillBoxes[0].y)).toBeLessThan(2);
       expect(Math.abs(categoryBox.width - nameBox.width)).toBeLessThan(2);
@@ -792,18 +793,18 @@ for (const width of [320, 390])
     test('one-tap pills price exactly like the category select and keep scope within reach', async ({
       page,
     }) => {
-      // Rooms-to-confirmation heights measured on master before the drawers: 1564 / 2322 px at 390,
-      // 1657 / 2458 px at 320. The bounds hold the shorter form.
-      const limits = { 390: [1480, 2240], 320: [1570, 2410] }[width];
-      const span = () =>
-        page.evaluate(() => {
-          const top = document.getElementById('rooms').getBoundingClientRect().top + scrollY;
-          const confirm =
-            document.getElementById('scopeConfirmed').getBoundingClientRect().bottom + scrollY;
-          return Math.round(confirm - top);
-        });
+      // At 390×844 the whole Check Scope panel, drawers closed, fits in at most one scroll: two
+      // viewport heights. Narrower phones may scroll further but never sideways.
+      const fits = async () => {
+        const { panel, overflow } = await page.evaluate(() => ({
+          panel: document.getElementById('panel-property').scrollHeight,
+          overflow: document.documentElement.scrollWidth - innerWidth,
+        }));
+        expect(overflow).toBeLessThanOrEqual(0);
+        if (width === 390) expect(panel).toBeLessThanOrEqual(2 * 844);
+      };
       await scope(page, ['Bathroom']);
-      expect(await span()).toBeLessThanOrEqual(limits[0]);
+      await fits();
       // Job A: a category 3 room chosen with the select, loss still water.
       await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('3');
       await page.locator('#scopeConfirmed').check();
@@ -824,7 +825,7 @@ for (const width of [320, 390])
       await page.locator('#newInspection').click();
       await expect(page.locator('#rooms .room')).toHaveCount(1);
       await scope(page, ['Bathroom', 'Hall']);
-      expect(await span()).toBeLessThanOrEqual(limits[1]);
+      await fits();
       await removeButton(page, 1).click();
       await page.locator('#confirmRoomRemoval').click();
       await lossPill(page, 0, 'mold').check();
