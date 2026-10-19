@@ -125,6 +125,20 @@ const newRoom = core.applyScopeChanges(original, [
 assert.equal(newRoom.rooms.length, 1);
 assert.equal(newRoom.rooms[0].name, 'Bathroom');
 assert.equal(newRoom.rooms[0].category, 2);
+// The loss type is a label beside the category: new rooms start as water, the walkthrough answer
+// sets it, and a category-3 room may stay water.
+assert.equal(original.rooms[0].loss, 'water');
+assert.equal(newRoom.rooms[0].loss, 'water');
+const labelled = core.applyScopeChanges(original, [
+  { field: 'category', room: 'Room 1', value: 3 },
+  { field: 'loss', room: 'Room 1', value: 'both' },
+]);
+assert.deepEqual([labelled.rooms[0].category, labelled.rooms[0].loss], [3, 'both']);
+assert.equal(core.scopeRoomLabels.loss, 'Loss type');
+// A room saved before the label existed reads as the tag it showed then; an explicit label wins.
+assert.equal(core.roomLoss({ category: 1 }), 'water');
+assert.equal(core.roomLoss({ category: 3 }), 'mold');
+assert.equal(core.roomLoss({ category: 3, loss: 'water' }), 'water');
 console.log(
   'PASS: selective scope application preserves manual values and sheet defaults; resets confirmation and requires complete new-room measurements',
 );

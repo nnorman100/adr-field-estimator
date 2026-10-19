@@ -192,6 +192,37 @@ def test_stale_revision_changed_scope_and_forged_prices(context):
     )
 
 
+def test_room_loss_type_is_saved_only_when_set_and_old_rooms_keep_their_shape(context):
+    client, _ = context
+    legacy = data()
+    legacy.pop('capture_metadata')
+    for room in legacy['rooms']:
+        room.pop('loss', None)
+    assert 'loss' not in legacy['rooms'][0]
+    record = client.post('/api/inspections', json={'inspection_id': ID, 'data': legacy}).json()
+    assert record['data'] == legacy and 'loss' not in record['data']['rooms'][0]
+    # An older app that never sends the field saves the same shape it loaded; nothing is re-shaped.
+    labelled = json.loads(json.dumps(legacy))
+    labelled['rooms'][0]['loss'] = 'both'
+    saved = client.put(
+        '/api/inspections/' + ID, json={'expected_revision': record['revision'], 'data': labelled}
+    ).json()
+    assert saved['data']['rooms'][0]['loss'] == 'both' and saved['revision'] == 2
+    cleared = json.loads(json.dumps(labelled))
+    cleared['rooms'][0]['loss'] = None
+    saved = client.put(
+        '/api/inspections/' + ID, json={'expected_revision': 2, 'data': cleared}
+    ).json()
+    assert 'loss' not in saved['data']['rooms'][0] and saved['revision'] == 3
+    cleared['rooms'][0]['loss'] = 'fire'
+    assert (
+        client.put(
+            '/api/inspections/' + ID, json={'expected_revision': 3, 'data': cleared}
+        ).status_code
+        == 422
+    )
+
+
 def test_old_package_selection_requires_app_update(context):
     client, _ = context
     record = client.post(

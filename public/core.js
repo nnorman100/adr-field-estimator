@@ -12,6 +12,7 @@
       {
         name: 'Room 1',
         category: 1,
+        loss: 'water',
         unfinished_sf: 0,
         finished_sf: 0,
         custom_cabinetry: false,
@@ -88,6 +89,7 @@
   };
   const scopeRoomLabels = {
     category: 'Water category',
+    loss: 'Loss type',
     unfinished_sf: 'Unfinished / subfloor SF',
     finished_sf: 'Finished / drywall / trim SF',
     custom_cabinetry: 'Custom cabinetry',
@@ -120,6 +122,12 @@
     )
       return { from: oldRooms[0].name, to: newRooms[0].name };
     return null;
+  }
+  // The loss type is a label chosen beside the category; pricing still reads the category. A room
+  // saved before the label existed reads as the tag it showed then: category 3 as mold, otherwise
+  // water. Editable drafts take that value as their loss type when they open.
+  function roomLoss(room) {
+    return room.loss || (Number(room.category) === 3 ? 'mold' : 'water');
   }
   function applyScopeChanges(data, changes) {
     const result = structuredClone(data),
@@ -339,6 +347,7 @@
     scopeJobLabels,
     scopeRoomLabels,
     roomKey,
+    roomLoss,
     applyScopeChanges,
     defaultPhotoRename,
     ingestTranscript,

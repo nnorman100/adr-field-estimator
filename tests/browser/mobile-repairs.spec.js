@@ -645,31 +645,109 @@ for (const width of [320, 390])
     });
 
     // The word is what the test asserts; the tint and chip colour only repeat it.
-    test('room cards and the review say WATER or MOLD from the water category', async ({
+    test('room cards and the review say WATER, MOLD or both from the loss type beside the category', async ({
       page,
     }) => {
       await scope(page, ['Kitchen', 'Bathroom']);
-      const cards = page.locator('#rooms .room');
+      const cards = page.locator('#rooms .room'),
+        category = page.locator('[data-room-index="1"][data-room-key="category"]'),
+        loss = page.locator('[data-room-index="1"][data-room-key="loss"]');
       await expect(cards.locator('.loss-tag')).toHaveText(['WATER · Cat 1', 'WATER · Cat 1']);
-      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('3');
-      await expect(cards.nth(1).locator('.loss-tag')).toHaveText('MOLD · Cat 3');
+      await expect(loss).toHaveValue('water');
+      // A category-3 black-water room without mold stays a water loss; the label is explicit.
+      await category.selectOption('3');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 3']);
+      await expect(cards.nth(1)).toHaveAttribute('data-loss', 'water');
+      await loss.selectOption('mold');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 3']);
       await expect(cards.nth(1)).toHaveAttribute('data-loss', 'mold');
       await expect(cards.nth(0)).toHaveAttribute('data-loss', 'water');
-      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('2');
-      await expect(cards.nth(1).locator('.loss-tag')).toHaveText('WATER · Cat 2');
-      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('3');
+      await loss.selectOption('both');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 3', 'MOLD · Cat 3']);
+      await expect(cards.nth(1)).toHaveAttribute('data-loss', 'both');
+      // On a phone each select keeps its words on a full-width row, loss type directly under category.
+      const [nameBox, categoryBox, lossBox] = await Promise.all(
+        [roomName(page, 1), category, loss].map((control) => control.boundingBox()),
+      );
+      expect(lossBox.y).toBeGreaterThan(categoryBox.y + categoryBox.height - 1);
+      expect(Math.abs(lossBox.x - categoryBox.x)).toBeLessThan(2);
+      expect(Math.abs(lossBox.width - nameBox.width)).toBeLessThan(2);
+      expect(await page.evaluate(() => state.draft.data.rooms[1].loss)).toBe('both');
+      await page.locator('[data-room-index="1"][data-room-key="finished_sf"]').fill('10');
       await page.locator('#scopeConfirmed').check();
       await page.locator('#finishAudit').click();
       await expect(page.locator('#documents')).toBeVisible();
       await expect(page.locator('#reviewRooms .loss-tag')).toHaveText([
         'Kitchen · WATER · Cat 1',
+        'Bathroom · WATER · Cat 3',
         'Bathroom · MOLD · Cat 3',
       ]);
+      // The printed documents keep the category words; the label prices nothing and is not printed.
+      const printed = await page.locator('#documents').evaluate((panel) => {
+        const copy = panel.cloneNode(true);
+        copy.querySelectorAll('.loss-chips').forEach((chips) => chips.remove());
+        document.body.append(copy);
+        const text = copy.innerText;
+        copy.remove();
+        return text;
+      });
+      expect(printed).toContain('Bathroom: category 3 finished/drywall/trim demolition');
+      expect(printed).not.toMatch(/MOLD · Cat|WATER · Cat/);
       expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
       await expect(page.locator('.product-bar #helpButton')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
         false,
       );
+    });
+
+    test('a draft saved before the loss type existed seeds the tag it showed when it opens', async ({
+      page,
+    }) => {
+      await scope(page, ['Kitchen', 'Bathroom']);
+      await idle(page);
+      // Older rooms have no loss key, and the server keeps an absent loss absent.
+      await page.evaluate(() => {
+        delete state.draft.data.rooms[0].loss;
+        delete state.draft.data.rooms[1].loss;
+        state.draft.data.rooms[1].category = 3;
+        fillForm();
+      });
+      await saveDraft(page);
+      await idle(page);
+      const remoteRooms = () =>
+        page.evaluate(async () =>
+          (await jsonApi('/api/inspections/' + state.draft.inspection_id)).data.rooms.map(
+            (room) => room.loss,
+          ),
+        );
+      expect(await remoteRooms()).toEqual([undefined, undefined]);
+      // Opening the editable draft seeds each loss type once: category 3 as mold, otherwise water.
+      await page.evaluate(() => restoreDraft(state.draft.inspection_id));
+      const cards = page.locator('#rooms .room');
+      await expect(cards.nth(0).locator('.loss-tag')).toHaveText(['WATER · Cat 1']);
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 3']);
+      await expect(page.locator('[data-room-index="1"][data-room-key="loss"]')).toHaveValue('mold');
+      expect(await page.evaluate(() => state.draft.data.rooms.map((room) => room.loss))).toEqual([
+        'water',
+        'mold',
+      ]);
+      await idle(page);
+      expect(await remoteRooms()).toEqual(['water', 'mold']);
+      expect(await page.evaluate(() => state.conflict)).toBe(false);
+      // Once seeded, the tag follows the selector, not the category.
+      await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('3');
+      await expect(cards.nth(0).locator('.loss-tag')).toHaveText(['WATER · Cat 3']);
+      await expect(page.locator('[data-room-index="0"][data-room-key="loss"]')).toHaveValue(
+        'water',
+      );
+      await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('1');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 1']);
+      await page.locator('[data-room-index="1"][data-room-key="loss"]').selectOption('water');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 1']);
+      expect(await page.evaluate(() => state.draft.data.rooms.map((room) => room.loss))).toEqual([
+        'water',
+        'water',
+      ]);
     });
 
     test('a later signing error replaces an earlier save-not-confirmed status', async ({

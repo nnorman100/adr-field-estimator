@@ -10,6 +10,7 @@ const {
   scopeJobLabels,
   scopeRoomLabels,
   roomKey,
+  roomLoss,
   applyScopeChanges,
   defaultPhotoRename,
   ingestTranscript,
@@ -1440,21 +1441,27 @@ function fillForm() {
   renderSaveStatus();
   renderControls();
 }
-// Category 1 and 2 are water losses; category 3 is contaminated water or mold. The word is the signal, the colour repeats it.
-function lossTag(room, prefix) {
-  const category = Number(room.category),
-    loss = category === 3 ? 'mold' : 'water';
-  const tag = node(
-    'span',
-    (prefix ? prefix + ' · ' : '') + loss.toUpperCase() + ' · Cat ' + category,
-    'loss-tag',
-  );
-  tag.dataset.loss = loss;
-  return tag;
+function seedRoomLoss(record, data) {
+  if (record?.status === 'signed' || (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope')))
+    return;
+  for (const room of data.rooms) room.loss = roomLoss(room);
+}
+// The word is the signal, the colour repeats it. A room with both losses gets both tags.
+function lossTags(room, prefix) {
+  const loss = roomLoss(room);
+  return (loss === 'both' ? ['water', 'mold'] : [loss]).map((word) => {
+    const tag = node(
+      'span',
+      (prefix ? prefix + ' · ' : '') + word.toUpperCase() + ' · Cat ' + Number(room.category),
+      'loss-tag',
+    );
+    tag.dataset.loss = word;
+    return tag;
+  });
 }
 function renderRoomChips() {
   $('reviewRooms').replaceChildren(
-    ...state.draft.data.rooms.map((room) => lossTag(room, room.name.trim() || 'Unnamed room')),
+    ...state.draft.data.rooms.flatMap((room) => lossTags(room, room.name.trim() || 'Unnamed room')),
   );
 }
 function renderRooms() {
@@ -1466,9 +1473,9 @@ function renderRooms() {
     const card = node('div', undefined, 'room'),
       head = node('div', undefined, 'section-head');
     const tagRoom = () => {
-      card.querySelector('.loss-tag')?.remove();
-      card.prepend(lossTag(room));
-      card.dataset.loss = card.querySelector('.loss-tag').dataset.loss;
+      card.querySelectorAll('.loss-tag').forEach((tag) => tag.remove());
+      card.prepend(...lossTags(room));
+      card.dataset.loss = roomLoss(room);
     };
     tagRoom();
     head.append(node('h3', 'Room ' + (i + 1)));
@@ -1480,6 +1487,7 @@ function renderRooms() {
     const definitions = [
       ['Room name', 'name', 'text'],
       ['Water category', 'category', 'select'],
+      ['Loss type', 'loss', 'select'],
       ['Unfinished / subfloor SF', 'unfinished_sf', 'number'],
       ['Finished / drywall / trim SF', 'finished_sf', 'number'],
       ['Waste %', 'waste_percent', 'number'],
@@ -1490,11 +1498,18 @@ function renderRooms() {
       input.dataset.roomIndex = i;
       input.dataset.roomKey = key;
       if (type === 'select') {
-        [
-          [1, '1 · Clean water'],
-          [2, '2 · Gray water'],
-          [3, '3 · Contaminated / mold'],
-        ].forEach(([value, text]) => {
+        (key === 'loss'
+          ? [
+              ['water', 'Water'],
+              ['mold', 'Mold'],
+              ['both', 'Water and mold'],
+            ]
+          : [
+              [1, '1 · Clean water'],
+              [2, '2 · Gray water'],
+              [3, '3 · Contaminated / mold'],
+            ]
+        ).forEach(([value, text]) => {
           const opt = node('option', text);
           opt.value = value;
           input.append(opt);
@@ -1509,19 +1524,19 @@ function renderRooms() {
         } else input.maxLength = 100;
         input.required = true;
       }
-      input.value = room[key];
+      input.value = key === 'loss' ? roomLoss(room) : room[key];
       input.disabled = !!state.signed;
       let photos = [];
       if (key === 'name') input.addEventListener('focus', () => (photos = roomPhotos(room.name)));
       input.addEventListener('input', () => {
-        room[key] = type === 'text' ? input.value : Number(input.value);
+        room[key] = type === 'text' || key === 'loss' ? input.value : Number(input.value);
         if (key === 'name') retagPhotos(photos, input.value);
         changed();
         if (key === 'name') {
           updateRoomPicker();
           renderPhotos();
         }
-        if (key === 'category') tagRoom();
+        if (key === 'category' || key === 'loss') tagRoom();
       });
       wrap.append(input);
       grid.append(wrap);
@@ -1625,6 +1640,7 @@ function addRoomEntry() {
   const room = {
     name: 'Room ' + (state.draft.data.rooms.length + 1),
     category: 1,
+    loss: 'water',
     unfinished_sf: 0,
     finished_sf: 0,
     custom_cabinetry: false,
@@ -1969,6 +1985,7 @@ async function restoreDraft(id) {
     }
     $('conflictActions').hidden = true;
   }
+  seedRoomLoss(state.record, state.draft.data);
   state.documents = state.record?.audit?.documents || null;
   if (stable(state.draft.data) !== state.ack) state.documents = null;
   fillForm();
@@ -4000,6 +4017,7 @@ async function initialize() {
     state.record = record;
     state.ack = stable(record.data);
     state.conflict = false;
+    seedRoomLoss(record, state.draft.data);
     $('conflictActions').hidden = true;
     invalidate();
     fillForm();
