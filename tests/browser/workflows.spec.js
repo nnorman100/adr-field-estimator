@@ -163,6 +163,7 @@ test('optional sheet charges appear in the calculated estimate range', async ({ 
   await scope(page);
   await page.locator('.sheet-charges summary').click();
   await page.locator('#matterportScans').fill('1');
+  await page.locator('.more-equipment summary').click();
   await page.locator('#woodFloorSystems').fill('1');
   await page.locator('#scopeConfirmed').check();
   await page.locator('#finishAudit').click();

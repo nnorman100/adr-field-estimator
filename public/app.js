@@ -1364,8 +1364,23 @@ function renderWalkthroughEdits() {
     badge.title = entry.quotes.join('\n');
     undo.title = entry.removesRoom ? 'Remove this walkthrough room' : 'Restore previous value';
     badge.append(node('span', 'From walkthrough · '), undo);
-    control.closest('label').append(badge);
+    (control.type === 'radio' ? control.closest('fieldset') : control.closest('label')).append(
+      badge,
+    );
   }
+}
+// The sheet's five standard charges total $1,180.20 at its populated quantities (docs/pricing-source.md);
+// the summary says whether this job still uses them. The server prices every charge.
+function renderJobChargesSummary() {
+  const data = state.draft?.data,
+    defaults = emptyData();
+  $('jobChargesSummary').textContent =
+    data &&
+    ['emergency_calls', 'monitoring_hours', 'haul_loads', 'air_scrubbers', 'hepa_filters'].every(
+      (key) => Number(data[key]) === defaults[key],
+    )
+      ? '· $1,180.20 at sheet quantities'
+      : "· adjusted from the sheet's $1,180.20";
 }
 function collect() {
   if (!state.draft) return;
@@ -1401,6 +1416,7 @@ function collect() {
     scopeConfirmed: 'scope_confirmed',
   }))
     data[key] = $(id).checked;
+  renderJobChargesSummary();
   window.WorkspaceUI?.scopeAddressChanged();
 }
 function fillForm() {
@@ -1445,6 +1461,7 @@ function fillForm() {
     scopeConfirmed: 'scope_confirmed',
   }))
     $(id).checked = !!data[key];
+  renderJobChargesSummary();
   $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
   renderRooms();
@@ -1495,33 +1512,67 @@ function renderRooms() {
     remove.disabled = !!state.signed || !!confirmedAuthorization;
     head.append(remove);
     card.append(head);
-    const grid = node('div', undefined, 'form-grid');
+    const grid = node('div', undefined, 'form-grid'),
+      lossRow = node('div', undefined, 'loss-row'),
+      more = node('details', undefined, 'room-more'),
+      moreBody = node('div', undefined, 'form-grid'),
+      cabinetry = node('label', undefined, 'check');
+    more.append(node('summary', 'More room options'), moreBody);
+    // Cabinetry only doubles the category 3 finished rate, so it sits on the card for a category 3
+    // room and waits under More room options otherwise.
+    const placeCabinetry = () =>
+      Number(room.category) === 3 ? more.before(cabinetry) : more.append(cabinetry);
+    // One tap answers the walkthrough's "water, mold, or both?". Mold and Water + Mold price at the
+    // sheet's category 3 / mold rates; Water keeps whichever category the select shows.
+    const pills = node('fieldset', undefined, 'loss-pills'),
+      pillList = node('div', undefined, 'loss-pill-list');
+    pills.append(node('legend', 'Loss type'), pillList);
+    for (const [value, text] of [
+      ['water', 'Water'],
+      ['mold', 'Mold'],
+      ['both', 'Water + Mold'],
+    ]) {
+      const pill = node('label', undefined, 'loss-pill'),
+        radio = node('input');
+      radio.type = 'radio';
+      radio.name = 'room-loss-' + i;
+      radio.value = value;
+      radio.dataset.roomIndex = i;
+      radio.dataset.roomKey = 'loss';
+      radio.checked = roomLoss(room) === value;
+      radio.disabled = !!state.signed;
+      radio.addEventListener('change', () => {
+        room.loss = value;
+        if (value !== 'water') {
+          room.category = 3;
+          card.querySelector('[data-room-key="category"]').value = 3;
+          placeCabinetry();
+        }
+        changed();
+        tagRoom();
+      });
+      pill.append(radio, node('span', text));
+      pillList.append(pill);
+    }
+    lossRow.append(pills);
     const definitions = [
-      ['Room name', 'name', 'text'],
-      ['Water category', 'category', 'select'],
-      ['Loss type', 'loss', 'select'],
-      ['Unfinished / subfloor SF', 'unfinished_sf', 'number'],
-      ['Finished / drywall / trim SF', 'finished_sf', 'number'],
-      ['Waste %', 'waste_percent', 'number'],
+      ['Room name', 'name', 'text', grid],
+      ['Water category', 'category', 'select', lossRow],
+      ['Unfinished / subfloor SF', 'unfinished_sf', 'number', grid],
+      ['Finished / drywall / trim SF', 'finished_sf', 'number', grid],
+      ['Waste %', 'waste_percent', 'number', moreBody],
     ];
-    for (const [label, key, type] of definitions) {
+    for (const [label, key, type, parent] of definitions) {
       const wrap = node('label', label),
         input = node(type === 'select' ? 'select' : 'input');
       input.dataset.roomIndex = i;
       input.dataset.roomKey = key;
       if (type === 'select') {
-        (key === 'loss'
-          ? [
-              ['water', 'Water'],
-              ['mold', 'Mold'],
-              ['both', 'Water and mold'],
-            ]
-          : [
-              [1, '1 · Clean water'],
-              [2, '2 · Gray water'],
-              [3, '3 · Contaminated / mold'],
-            ]
-        ).forEach(([value, text]) => {
+        [
+          [1, '1 · Clean water'],
+          [2, '2 · Gray water'],
+          [3, '3 · Contaminated / mold'],
+        ].forEach(([value, text]) => {
           const opt = node('option', text);
           opt.value = value;
           input.append(opt);
@@ -1536,26 +1587,29 @@ function renderRooms() {
         } else input.maxLength = 100;
         input.required = true;
       }
-      input.value = key === 'loss' ? roomLoss(room) : room[key];
+      input.value = room[key];
       input.disabled = !!state.signed;
       let photos = [];
       if (key === 'name') input.addEventListener('focus', () => (photos = roomPhotos(room.name)));
       input.addEventListener('input', () => {
-        room[key] = type === 'text' || key === 'loss' ? input.value : Number(input.value);
+        room[key] = type === 'text' ? input.value : Number(input.value);
         if (key === 'name') retagPhotos(photos, input.value);
         changed();
         if (key === 'name') {
           updateRoomPicker();
           renderPhotos();
         }
-        if (key === 'category' || key === 'loss') tagRoom();
+        if (key === 'category') {
+          tagRoom();
+          placeCabinetry();
+        }
       });
       wrap.append(input);
-      grid.append(wrap);
+      if (key === 'category') grid.append(lossRow);
+      parent.append(wrap);
     }
-    card.append(grid);
-    const check = node('label', undefined, 'check'),
-      input = node('input');
+    card.append(grid, more, node('div', undefined, 'room-photos photo-gallery'));
+    const input = node('input');
     input.type = 'checkbox';
     input.checked = room.custom_cabinetry;
     input.dataset.roomIndex = i;
@@ -1565,8 +1619,8 @@ function renderRooms() {
       room.custom_cabinetry = input.checked;
       changed();
     });
-    check.append(input, node('span', 'Custom cabinetry · category 3 finished rate ×2'));
-    card.append(check, node('div', undefined, 'room-photos photo-gallery'));
+    cabinetry.append(input, node('span', 'Custom cabinetry · category 3 finished rate ×2'));
+    placeCabinetry();
     $('rooms').append(card);
   });
   updateRoomPicker();

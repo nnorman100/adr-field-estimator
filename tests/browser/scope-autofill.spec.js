@@ -221,6 +221,7 @@ test('a repeated fill keeps unchanged field Undos but no room removal after a ma
   page,
 }) => {
   await fillBesideOffice(page);
+  await page.locator('#rooms .room').nth(1).locator('.room-more summary').click();
   await kitchen(page, 'waste_percent').fill('10');
   await expect(marker(kitchen(page, 'name'))).toHaveCount(0);
   await expect(marker(kitchen(page, 'finished_sf'))).toHaveCount(1);
