@@ -3,6 +3,7 @@ import pytest
 from pydantic import ValidationError
 from backend.claims import (
     price_scope,
+    proposal_range,
     technician_statement,
     make_documents,
     ADDITIONAL,
@@ -125,6 +126,8 @@ def test_loss_type_is_a_label_that_never_changes_pricing_or_documents(category):
         labelled = scoped(rooms=[{**room, 'loss': loss}])
         assert labelled.rooms[0].loss == loss
         assert price_scope(labelled) == price_scope(scoped(rooms=[room]))
+        items, _ = price_scope(labelled)
+        assert proposal_range(labelled, items) == proposal_range(scoped(rooms=[room]), items)
         assert make_documents(labelled, [], ai) == legacy
     assert f'category {category}' in str(legacy)
     assert scoped(rooms=[room]).rooms[0].loss is None

@@ -9,6 +9,11 @@ async function task(page, name) {
 function roomName(page, index) {
   return page.locator('[data-room-index="' + index + '"][data-room-key="name"]');
 }
+function lossPill(page, index, value) {
+  return page.locator(
+    '[data-room-index="' + index + '"][data-room-key="loss"][value="' + value + '"]',
+  );
+}
 function removeButton(page, index) {
   return page
     .locator('#rooms .room')
@@ -642,34 +647,52 @@ for (const width of [320, 390])
       await expect(roomName(page, 0)).toHaveValue('Kitchen');
     });
 
-    // The word is what the test asserts; the tint and chip colour only repeat it.
-    test('room cards and the review say WATER, MOLD or both from the loss type beside the category', async ({
+    // The word is what the test asserts; the tint and pill colour only repeat it.
+    test('room cards and the review say WATER, MOLD or both from one-tap pills that keep the category in step', async ({
       page,
     }) => {
       await scope(page, ['Kitchen', 'Bathroom']);
       const cards = page.locator('#rooms .room'),
-        category = page.locator('[data-room-index="1"][data-room-key="category"]'),
-        loss = page.locator('[data-room-index="1"][data-room-key="loss"]');
+        category = page.locator('[data-room-index="1"][data-room-key="category"]');
       await expect(cards.locator('.loss-tag')).toHaveText(['WATER · Cat 1', 'WATER · Cat 1']);
-      await expect(loss).toHaveValue('water');
+      await expect(lossPill(page, 1, 'water')).toBeChecked();
       // A category-3 black-water room without mold stays a water loss; the label is explicit.
       await category.selectOption('3');
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 3']);
       await expect(cards.nth(1)).toHaveAttribute('data-loss', 'water');
-      await loss.selectOption('mold');
+      await expect(lossPill(page, 1, 'water')).toBeChecked();
+      // Mold prices at the sheet's category 3 / mold rates, so the Mold pill moves the select too.
+      await category.selectOption('2');
+      await lossPill(page, 1, 'mold').check();
+      await expect(category).toHaveValue('3');
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 3']);
       await expect(cards.nth(1)).toHaveAttribute('data-loss', 'mold');
       await expect(cards.nth(0)).toHaveAttribute('data-loss', 'water');
-      await loss.selectOption('both');
+      // Water keeps whichever category the select shows; Water + Mold is category 3 again.
+      await lossPill(page, 1, 'water').check();
+      await expect(category).toHaveValue('3');
+      await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 3']);
+      await category.selectOption('1');
+      await lossPill(page, 1, 'both').check();
+      await expect(category).toHaveValue('3');
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 3', 'MOLD · Cat 3']);
       await expect(cards.nth(1)).toHaveAttribute('data-loss', 'both');
-      // On a phone each select keeps its words on a full-width row, loss type directly under category.
-      const [nameBox, categoryBox, lossBox] = await Promise.all(
-        [roomName(page, 1), category, loss].map((control) => control.boundingBox()),
+      // The room name and category select share a row above the pills; at 390 px the pills share one too.
+      const [nameBox, categoryBox, ...pillBoxes] = await Promise.all(
+        [
+          roomName(page, 1),
+          category,
+          ...['water', 'mold', 'both'].map((v) => lossPill(page, 1, v)),
+        ].map((control) => control.boundingBox()),
       );
-      expect(lossBox.y).toBeGreaterThan(categoryBox.y + categoryBox.height - 1);
-      expect(Math.abs(lossBox.x - categoryBox.x)).toBeLessThan(2);
-      expect(Math.abs(lossBox.width - nameBox.width)).toBeLessThan(2);
+      for (const box of pillBoxes) {
+        expect(box.height).toBeGreaterThanOrEqual(44);
+        expect(box.y).toBeGreaterThan(categoryBox.y + categoryBox.height - 1);
+      }
+      expect(Math.abs(categoryBox.y - nameBox.y)).toBeLessThan(2);
+      if (width === 390)
+        for (const box of pillBoxes) expect(Math.abs(box.y - pillBoxes[0].y)).toBeLessThan(2);
+      expect(Math.abs(categoryBox.width - nameBox.width)).toBeLessThan(2);
       expect(await page.evaluate(() => state.draft.data.rooms[1].loss)).toBe('both');
       await page.locator('[data-room-index="1"][data-room-key="finished_sf"]').fill('10');
       await page.locator('#scopeConfirmed').check();
@@ -700,6 +723,122 @@ for (const width of [320, 390])
       );
     });
 
+    test('rarely changed fields wait behind More drawers that validation and category 3 open', async ({
+      page,
+    }) => {
+      await scope(page, ['Kitchen']);
+      const card = page.locator('#rooms .room').first(),
+        waste = page.locator('[data-room-index="0"][data-room-key="waste_percent"]'),
+        cabinetry = page.locator('[data-room-index="0"][data-room-key="custom_cabinetry"]'),
+        roomMore = card.locator('details.room-more'),
+        equipmentMore = page.locator('details.more-equipment');
+      // Waste % and, below category 3, cabinetry sit inside the room's drawer.
+      await expect(waste).toBeHidden();
+      await expect(cabinetry).toBeHidden();
+      await expect(roomMore.locator('[data-room-key="custom_cabinetry"]')).toHaveCount(1);
+      await roomMore.locator('summary').click();
+      await expect(waste).toBeVisible();
+      await expect(cabinetry).toBeVisible();
+      await roomMore.locator('summary').click();
+      // The Mold pill makes the room category 3, so cabinetry moves onto the card itself.
+      await lossPill(page, 0, 'mold').check();
+      await expect(cabinetry).toBeVisible();
+      await expect(roomMore.locator('[data-room-key="custom_cabinetry"]')).toHaveCount(0);
+      await cabinetry.check();
+      await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('1');
+      await expect(cabinetry).toBeHidden();
+      expect(await page.evaluate(() => state.draft.data.rooms[0].custom_cabinetry)).toBe(true);
+      // Wood-floor drying, added labor and after-hours wait behind More equipment & labor.
+      for (const id of ['woodFloorSystems', 'woodFloorDays', 'laborHours', 'afterHours'])
+        await expect(page.locator('#' + id)).toBeHidden();
+      await expect(equipmentMore).not.toHaveAttribute('open', '');
+      await equipmentMore.locator('summary').click();
+      for (const id of ['woodFloorSystems', 'woodFloorDays', 'laborHours', 'afterHours'])
+        await expect(page.locator('#' + id)).toBeVisible();
+      // The job-charges summary names the sheet bundle until one of its five quantities changes.
+      const summary = page.locator('details.sheet-charges summary');
+      await expect(summary).toHaveText('Standard job charges · $1,180.20 at sheet quantities');
+      await expect(page.locator('details.sheet-charges')).not.toHaveAttribute('open', '');
+      await summary.click();
+      await page.locator('#monitoringHours').fill('10');
+      await expect(summary).toHaveText(
+        "Standard job charges · adjusted from the sheet's $1,180.20",
+      );
+      await page.locator('#matterportScans').fill('1');
+      await page.locator('#monitoringHours').fill('13.25');
+      await expect(summary).toHaveText('Standard job charges · $1,180.20 at sheet quantities');
+      await saveDraft(page);
+      await idle(page);
+      await page.reload();
+      await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+      await checkScope(page);
+      await expect(summary).toHaveText('Standard job charges · $1,180.20 at sheet quantities');
+      await expect(page.locator('#matterportScans')).toHaveValue('1');
+      // An invalid waste value opens the closed room drawer and focuses the field.
+      await page.evaluate(() => {
+        const input = document.querySelector(
+          '[data-room-index="0"][data-room-key="waste_percent"]',
+        );
+        input.value = '500';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await expect(waste).toBeHidden();
+      await page.locator('#scopeConfirmed').check();
+      await page.locator('#finishAudit').click();
+      await expect(page.locator('#rooms details.room-more').first()).toHaveAttribute('open', '');
+      await expect(waste).toBeFocused();
+      await expect(page.locator('#validationFeedback')).toBeVisible();
+    });
+
+    test('one-tap pills price exactly like the category select and keep scope within reach', async ({
+      page,
+    }) => {
+      // At 390×844 the whole Check Scope panel, drawers closed, fits in at most one scroll: two
+      // viewport heights. Narrower phones may scroll further but never sideways.
+      const fits = async () => {
+        const { panel, overflow } = await page.evaluate(() => ({
+          panel: document.getElementById('panel-property').scrollHeight,
+          overflow: document.documentElement.scrollWidth - innerWidth,
+        }));
+        expect(overflow).toBeLessThanOrEqual(0);
+        if (width === 390) expect(panel).toBeLessThanOrEqual(2 * 844);
+      };
+      await scope(page, ['Bathroom']);
+      await fits();
+      // Job A: a category 3 room chosen with the select, loss still water.
+      await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('3');
+      await page.locator('#scopeConfirmed').check();
+      await page.locator('#finishAudit').click();
+      await expect(page.locator('#documents')).toBeVisible();
+      const totals = async () => ({
+        range: await page.locator('#estimateRange').textContent(),
+        total: await page.locator('#itemizedTotal').textContent(),
+        items: await page.evaluate(() =>
+          state.documents.xactimate_scope.map((item) => [item.code, item.total]),
+        ),
+      });
+      const selected = await totals();
+      expect(selected.items.some(([code]) => code === 'ADR-DEMO')).toBe(true);
+      // Job B: the same room answered with the Mold pill.
+      const menu = page.locator('#jobMenu');
+      if (!(await menu.evaluate((el) => el.open))) await menu.locator(':scope > summary').click();
+      await page.locator('#newInspection').click();
+      await expect(page.locator('#rooms .room')).toHaveCount(1);
+      await scope(page, ['Bathroom', 'Hall']);
+      await fits();
+      await removeButton(page, 1).click();
+      await page.locator('#confirmRoomRemoval').click();
+      await lossPill(page, 0, 'mold').check();
+      await expect(page.locator('[data-room-index="0"][data-room-key="category"]')).toHaveValue(
+        '3',
+      );
+      await page.locator('#scopeConfirmed').check();
+      await page.locator('#finishAudit').click();
+      await expect(page.locator('#documents')).toBeVisible();
+      expect(await totals()).toEqual(selected);
+      await expect(page.locator('#reviewRooms .loss-tag')).toHaveText(['Bathroom · MOLD · Cat 3']);
+    });
+
     test('a draft saved before the loss type existed seeds the tag it showed when it opens', async ({
       page,
     }) => {
@@ -726,7 +865,7 @@ for (const width of [320, 390])
       const cards = page.locator('#rooms .room');
       await expect(cards.nth(0).locator('.loss-tag')).toHaveText(['WATER · Cat 1']);
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 3']);
-      await expect(page.locator('[data-room-index="1"][data-room-key="loss"]')).toHaveValue('mold');
+      await expect(lossPill(page, 1, 'mold')).toBeChecked();
       expect(await page.evaluate(() => state.draft.data.rooms.map((room) => room.loss))).toEqual([
         'water',
         'mold',
@@ -737,12 +876,10 @@ for (const width of [320, 390])
       // Once seeded, the tag follows the selector, not the category.
       await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('3');
       await expect(cards.nth(0).locator('.loss-tag')).toHaveText(['WATER · Cat 3']);
-      await expect(page.locator('[data-room-index="0"][data-room-key="loss"]')).toHaveValue(
-        'water',
-      );
+      await expect(lossPill(page, 0, 'water')).toBeChecked();
       await page.locator('[data-room-index="1"][data-room-key="category"]').selectOption('1');
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['MOLD · Cat 1']);
-      await page.locator('[data-room-index="1"][data-room-key="loss"]').selectOption('water');
+      await lossPill(page, 1, 'water').check();
       await expect(cards.nth(1).locator('.loss-tag')).toHaveText(['WATER · Cat 1']);
       expect(await page.evaluate(() => state.draft.data.rooms.map((room) => room.loss))).toEqual([
         'water',
