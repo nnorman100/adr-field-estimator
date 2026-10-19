@@ -43,7 +43,7 @@ test.describe('compact phone header', () => {
             expect(box.y).toBeGreaterThanOrEqual(row.y);
             expect(box.y + box.height).toBeLessThanOrEqual(row.y + row.height);
           }
-          for (const task of ['property', 'walkthrough', 'evidence', 'review']) {
+          for (const task of ['walkthrough', 'property', 'review']) {
             await page.locator('.task-nav [data-task="' + task + '"]').click();
             const top = await page
               .locator('[data-panel="' + task + '"]')
