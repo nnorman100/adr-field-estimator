@@ -1,0 +1,72 @@
+{
+  "range": "$4,014.70–$4,418.46",
+  "itemized": "$3,880.12",
+  "items": [
+    [
+      "ADR-TRIP",
+      "Emergency call / trip charge",
+      1,
+      133.95
+    ],
+    [
+      "ADR-MON",
+      "Equipment monitoring",
+      13.25,
+      628.85
+    ],
+    [
+      "ADR-HAUL",
+      "Haul debris & disposal",
+      1,
+      159.53
+    ],
+    [
+      "ADR-SCRUB",
+      "Air scrubber daily rental",
+      1,
+      74.75
+    ],
+    [
+      "ADR-HEPA",
+      "HEPA replacement filter",
+      1,
+      183.12
+    ],
+    [
+      "ADR-AFTER",
+      "After-hours job charge",
+      1,
+      200
+    ],
+    [
+      "ADR-DEMO",
+      "Living: category 2 finished/drywall/trim demolition",
+      200,
+      578
+    ],
+    [
+      "ADR-FAN",
+      "Axial air movers",
+      9,
+      263.25
+    ],
+    [
+      "ADR-DEHU",
+      "Commercial LGR dehumidifiers",
+      3,
+      303.75
+    ],
+    [
+      "ADR-WOOD",
+      "Wood-floor drying system / heater",
+      7,
+      1260
+    ],
+    [
+      "ADR-LABOR",
+      "Content manipulation / additional labor",
+      2,
+      94.92
+    ]
+  ]
+}

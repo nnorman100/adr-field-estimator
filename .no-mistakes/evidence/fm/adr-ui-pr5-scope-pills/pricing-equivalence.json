@@ -1,0 +1,182 @@
+{
+  "selectCat3": {
+    "range": "$2,562.90–$2,970.75",
+    "itemized": "$2,562.90",
+    "items": [
+      [
+        "ADR-TRIP",
+        "Emergency call / trip charge",
+        1,
+        133.95
+      ],
+      [
+        "ADR-MON",
+        "Equipment monitoring",
+        13.25,
+        628.85
+      ],
+      [
+        "ADR-HAUL",
+        "Haul debris & disposal",
+        1,
+        159.53
+      ],
+      [
+        "ADR-SCRUB",
+        "Air scrubber daily rental",
+        1,
+        74.75
+      ],
+      [
+        "ADR-HEPA",
+        "HEPA replacement filter",
+        1,
+        183.12
+      ],
+      [
+        "ADR-DEMO",
+        "Bath: category 3 finished/drywall/trim demolition",
+        80,
+        671.2
+      ],
+      [
+        "ADR-DEMO",
+        "Hall: category 2 finished/drywall/trim demolition",
+        50,
+        144.5
+      ],
+      [
+        "ADR-FAN",
+        "Axial air movers",
+        9,
+        263.25
+      ],
+      [
+        "ADR-DEHU",
+        "Commercial LGR dehumidifiers",
+        3,
+        303.75
+      ]
+    ]
+  },
+  "moldPill": {
+    "range": "$2,562.90–$2,970.75",
+    "itemized": "$2,562.90",
+    "items": [
+      [
+        "ADR-TRIP",
+        "Emergency call / trip charge",
+        1,
+        133.95
+      ],
+      [
+        "ADR-MON",
+        "Equipment monitoring",
+        13.25,
+        628.85
+      ],
+      [
+        "ADR-HAUL",
+        "Haul debris & disposal",
+        1,
+        159.53
+      ],
+      [
+        "ADR-SCRUB",
+        "Air scrubber daily rental",
+        1,
+        74.75
+      ],
+      [
+        "ADR-HEPA",
+        "HEPA replacement filter",
+        1,
+        183.12
+      ],
+      [
+        "ADR-DEMO",
+        "Bath: category 3 finished/drywall/trim demolition",
+        80,
+        671.2
+      ],
+      [
+        "ADR-DEMO",
+        "Hall: category 2 finished/drywall/trim demolition",
+        50,
+        144.5
+      ],
+      [
+        "ADR-FAN",
+        "Axial air movers",
+        9,
+        263.25
+      ],
+      [
+        "ADR-DEHU",
+        "Commercial LGR dehumidifiers",
+        3,
+        303.75
+      ]
+    ]
+  },
+  "bothPill": {
+    "range": "$2,562.90–$2,970.75",
+    "itemized": "$2,562.90",
+    "items": [
+      [
+        "ADR-TRIP",
+        "Emergency call / trip charge",
+        1,
+        133.95
+      ],
+      [
+        "ADR-MON",
+        "Equipment monitoring",
+        13.25,
+        628.85
+      ],
+      [
+        "ADR-HAUL",
+        "Haul debris & disposal",
+        1,
+        159.53
+      ],
+      [
+        "ADR-SCRUB",
+        "Air scrubber daily rental",
+        1,
+        74.75
+      ],
+      [
+        "ADR-HEPA",
+        "HEPA replacement filter",
+        1,
+        183.12
+      ],
+      [
+        "ADR-DEMO",
+        "Bath: category 3 finished/drywall/trim demolition",
+        80,
+        671.2
+      ],
+      [
+        "ADR-DEMO",
+        "Hall: category 2 finished/drywall/trim demolition",
+        50,
+        144.5
+      ],
+      [
+        "ADR-FAN",
+        "Axial air movers",
+        9,
+        263.25
+      ],
+      [
+        "ADR-DEHU",
+        "Commercial LGR dehumidifiers",
+        3,
+        303.75
+      ]
+    ]
+  }
+}
