@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.locator('.task-nav [data-task="property"]').click();
 });
 async function setup(page) {
@@ -160,7 +160,7 @@ test('offline requires explicit Resume and stale callbacks cannot edit a new ins
       () => window.livePackets.filter((packet) => packet.type === 'authenticate').at(-1).resume,
     ),
   ).toBe(true);
-  await page.locator('#jobMenu summary').click();
+  await page.locator('#jobMenu > summary').click();
   await page.locator('#newInspection').click();
   await expect(page.locator('#technicianTranscript')).toHaveValue('');
   await page.evaluate(() =>

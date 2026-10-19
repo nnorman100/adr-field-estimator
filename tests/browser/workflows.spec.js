@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await checkScope(page);
 });
 async function task(page, name) {
@@ -12,7 +12,7 @@ async function task(page, name) {
 async function menu(page, id) {
   await page.waitForFunction(() => state.session && !state.workspaceInitializing);
   const m = page.locator('#' + id);
-  if (!(await m.evaluate((el) => el.open))) await m.locator('summary').click();
+  if (!(await m.evaluate((el) => el.open))) await m.locator(':scope > summary').click();
 }
 async function scope(page) {
   await task(page, 'property');
@@ -21,7 +21,7 @@ async function scope(page) {
   await page.locator('[data-room-key="finished_sf"]').fill('10');
   await page.locator('#scopeConfirmed').check();
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }
 async function audit(page) {
   await scope(page);
@@ -48,7 +48,9 @@ test('mobile task layout exposes capture immediately with readable idle controls
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await task(page, 'walkthrough');
-    expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
+    // With a job open the navy job bar is the only header row.
+    await expect(page.locator('.product-bar')).toBeHidden();
+    expect((await page.locator('.jobbar').boundingBox()).height).toBeLessThan(85);
     const start = await page.locator('#startWalk').boundingBox();
     expect(start.y + start.height).toBeLessThan(844);
     expect(start.height).toBeGreaterThanOrEqual(48);
@@ -154,7 +156,7 @@ test('AI notes stay out of the proposal and the technician signs after the propo
   await page.locator('#documentsConfirmed').check();
   await draw(page);
   await page.locator('#authorizeJob').click();
-  await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+  await expect(page.locator('#saveStatus')).toHaveText('Signed');
 });
 
 test('optional sheet charges appear in the calculated estimate range', async ({ page }) => {
@@ -291,7 +293,7 @@ test('safe four-document render, separate currency, signed recovery and invalida
   await page.locator('#documentsConfirmed').check();
   await draw(page);
   await page.locator('#authorizeJob').click();
-  await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+  await expect(page.locator('#saveStatus')).toHaveText('Signed');
   await expect(page.locator('#savedSignature')).toBeVisible();
   await page.reload();
   await expect(page.locator('#address')).toBeEnabled();
@@ -327,7 +329,7 @@ test('failed audit stays unsigned and failed save keeps retry reference', async 
   await page.locator('#authorizeJob').click();
   await expect(page.locator('#authorizationStatus')).toContainText('Save not confirmed');
   await page.locator('#authorizeJob').click();
-  await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+  await expect(page.locator('#saveStatus')).toHaveText('Signed');
   const { references } = await fault(page, {});
   expect(references[0]).toBe(references[1]);
 });
@@ -363,14 +365,14 @@ test('offline draft reload and reconnection preserve local work', async ({
   });
   await context.setOffline(true);
   await page.locator('#technicianNotes').fill('Local observations while offline');
-  await expect(page.locator('#saveStatus')).toContainText('offline');
+  await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
   await page.waitForTimeout(1700);
   await page.reload();
   await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
   await expect(page.locator('#finishAudit')).toBeDisabled();
   await context.setOffline(false);
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.reload();
   await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
 });
@@ -564,7 +566,7 @@ test('sign out keeps an unsynced offline draft until the user discards it', asyn
   });
   await context.setOffline(true);
   await page.locator('#technicianNotes').fill('Unsynced offline observations');
-  await expect(page.locator('#saveStatus')).toContainText('offline');
+  await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
   await menu(page, 'accountMenu');
   await page.locator('#signOutButton').click();
   await expect(page.locator('#unsyncedActions')).toBeVisible();
@@ -673,7 +675,7 @@ test('reopening a draft after a signed job releases the signed photo object URLs
 }) => {
   await page.locator('#address').fill('Draft to reopen');
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await menu(page, 'jobMenu');
   await page.locator('#newInspection').click();
   await expect(page.locator('#address')).toHaveValue('');
@@ -693,7 +695,7 @@ test('reopening a draft after a signed job releases the signed photo object URLs
   await page.locator('#documentsConfirmed').check();
   await draw(page);
   await page.locator('#authorizeJob').click();
-  await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+  await expect(page.locator('#saveStatus')).toHaveText('Signed');
   await expect.poll(() => page.evaluate(() => state.photoUrls.size)).toBe(1);
   const urls = await page.evaluate(() => {
     window.revokedUrls = [];
@@ -787,7 +789,7 @@ test('cloud-restored originals survive photo-backed conflict fork', async ({ pag
   await expect(page.locator('#conflictActions')).toBeVisible();
   await page.locator('#forkLocal').click();
   await expect(page.locator('#conflictActions')).toBeHidden();
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(page.locator('#technicianNotes')).toHaveValue('Keep this device work and photo');
   await task(page, 'walkthrough');
   await expect
@@ -887,7 +889,7 @@ for (const failure of ['evidence', 'record'])
     await draw(page);
     await fault(page, { [failure]: 1 });
     await page.locator('#authorizeJob').click();
-    await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+    await expect(page.locator('#saveStatus')).toHaveText('Signed');
     await expect(page.locator('#retrySavedEvidence')).toBeVisible();
     await expect(page.locator('#message')).toContainText('saved');
     await expect(page.locator('#address')).toBeDisabled();

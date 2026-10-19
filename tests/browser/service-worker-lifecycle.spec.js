@@ -39,7 +39,7 @@ test.beforeEach(async ({ page }) => {
     };
   });
   await page.goto('/');
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.waitForFunction(() => state.session && !state.workspaceInitializing);
   await page.locator('.task-nav [data-task="property"]').click();
 });
@@ -51,7 +51,7 @@ test('first worker claiming the page does not offer an update or reload the draf
   await page.evaluate(() => window.__installWorker({ existingController: false }));
   await expect(page.locator('#updateBanner')).toBeHidden();
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(page.locator('#address')).toHaveValue('First installation draft');
   expect(await page.evaluate(() => sessionStorage.getItem('worker-lifecycle-loads'))).toBe('1');
 });
@@ -65,7 +65,7 @@ test('a replacement worker still waits for Save & update and restores the saved 
   expect(await page.evaluate(() => sessionStorage.getItem('worker-lifecycle-loads'))).toBe('1');
   await page.locator('#applyUpdate').click();
   await page.waitForFunction(() => sessionStorage.getItem('worker-lifecycle-loads') === '2');
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(page.locator('#address')).toHaveValue('Approved update draft');
   expect(await page.evaluate(() => sessionStorage.getItem('worker-update-approved'))).toBe('yes');
 });

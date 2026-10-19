@@ -112,17 +112,19 @@ for (const role of ['owner', 'estimator'])
         await navigate(page, 'dashboardJobs');
         await page.getByRole('button', { name: /Assigned bathroom/ }).click();
         await expect(page.locator('#address')).toBeEnabled();
-        const expand = page.locator('#coordinationToggle');
-        if (role === 'owner') {
-          await expect(page.locator('#jobCoordination')).toBeVisible();
-          await expect(expand).toHaveAttribute('aria-expanded', 'false');
-          await expect(page.locator('#coordinationForm')).toBeHidden();
-        } else await expect(page.locator('#jobCoordination')).toBeHidden();
+        // The folded coordination card, Help and Account live in the one-row header's More menu.
+        const expand = page.locator('#coordinationToggle'),
+          more = page.locator('#jobMenu > summary');
+        await expect(page.locator('#coordinationForm')).toBeHidden();
+        await expect(expand).toBeHidden();
         await page.locator('.task-nav [data-task="walkthrough"]').click();
         await expect(page.locator('#startWalk')).toBeVisible();
+        await more.click();
         const help = page.getByRole('button', { name: 'Help', exact: true });
         await expect(help).toBeVisible();
         expect(await firstScreen(page, '.help-button')).toMatchObject({ inside: true, hit: true });
+        await expect(page.locator('#moreCoordination')).toBeVisible({ visible: role === 'owner' });
+        await page.keyboard.press('Escape');
         expect(await firstScreen(page, '#startWalk')).toEqual({
           scrolled: 0,
           inside: true,
@@ -136,7 +138,8 @@ for (const role of ['owner', 'estimator'])
             path: test.info().outputPath('workspace-' + role + '-walkthrough-' + width + '.png'),
           });
         if (role === 'owner') {
-          await expand.click();
+          await more.click();
+          await page.locator('#moreCoordination').click();
           await expect(expand).toHaveAttribute('aria-expanded', 'true');
           for (const id of ['coordAddress', 'coordEstimator', 'coordName', 'coordNotes'])
             await expect(page.locator('#' + id)).toBeVisible();
@@ -518,7 +521,8 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.locator('#address').fill('Other company synthetic property');
   await page.locator('#yearBuilt').fill('2000');
   await expect(page.locator('#coordAddress')).toHaveValue('Other company synthetic property');
-  await page.locator('#coordinationToggle').click();
+  await page.locator('#jobMenu > summary').click();
+  await page.locator('#moreCoordination').click();
   await page.locator('#coordNotes').fill('Office note retains the measured property address');
   await page.locator('#coordName').fill('Synthetic Homeowner');
   await page.locator('#saveCoordination').click();
@@ -876,7 +880,7 @@ for (const mode of [
         if (mode === 'legacy owner-only') {
           await request.post('/__test/workspaces', { data: { enabled: false } });
           await page.goto('/');
-          await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+          await expect(page.locator('#saveStatus')).toHaveText('Saved');
         } else if (mode.startsWith('other company')) {
           await start(page, 'other');
           await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
@@ -899,7 +903,7 @@ for (const mode of [
           page.locator('#startWalk').evaluate((el) => el.getBoundingClientRect().top);
         const before = await startTop();
         await showUpdateBanner(page);
-        // The banner shares the navy bar row, so it must not push Start walkthrough down.
+        // The banner shares the navy job bar row, so it must not push Start walkthrough down.
         expect(Math.abs((await startTop()) - before)).toBeLessThan(1);
         if (browserName === 'chromium')
           await page.screenshot({
@@ -913,8 +917,8 @@ for (const mode of [
           hit: true,
         });
         expect(await bannerUsable(page)).toBe(true);
-        if (mode.startsWith('other company'))
-          expect(await brandReadable(page)).toEqual({ unclipped: true, clear: true });
+        // With a job open the company strip folds away; the dashboard keeps the brand.
+        await expect(page.locator('.masthead')).toBeHidden();
         expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
           false,
         );

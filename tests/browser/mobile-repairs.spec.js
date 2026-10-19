@@ -48,7 +48,7 @@ async function scope(page, names = ['Kitchen']) {
   }
   await page.locator('#scopeConfirmed').check();
   await saveDraft(page);
-  await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }
 async function audit(page, names) {
   await scope(page, names);
@@ -168,7 +168,7 @@ for (const width of [320, 390])
       page.on('pageerror', (error) => errors.push(error.stack || error.message));
       await page.goto('/');
       await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await checkScope(page);
     });
     test.afterEach(async ({ page }) => {
@@ -369,15 +369,15 @@ for (const width of [320, 390])
       const pending = await page.evaluate(() => structuredClone(state.pendingAuthorization));
       expect(pending.auth_id).toMatch(/^ADR-AUTH-/);
       await page.locator('#authorizeJob').click();
-      await expect(page.locator('#saveStatus')).toContainText('Saved & signed');
+      await expect(page.locator('#saveStatus')).toHaveText('Signed');
       await expect(page.locator('#savedSignature')).toBeVisible();
       const { references } = await fault(page, {});
       expect(references).toEqual([pending.auth_id, pending.auth_id]);
       await page.reload();
       await expect(page.locator('#address')).toBeEnabled();
-      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await task(page, 'property');
-      await page.locator('#jobMenu summary').click();
+      await page.locator('#jobMenu > summary').click();
       await page.locator('#openJobs').click();
       await page.locator('.job-link').filter({ hasText: 'Signed ·' }).click();
       await expect(page.locator('#savedSignature')).toBeVisible();
@@ -438,7 +438,7 @@ for (const width of [320, 390])
         },
       );
 
-    test('wrapped heading and save status and viewport resize do not hide validation', async ({
+    test('long heading and save status and viewport resize do not hide validation', async ({
       page,
     }) => {
       await scope(page, ['Kitchen', 'Bathroom']);
@@ -456,16 +456,20 @@ for (const width of [320, 390])
         expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
           false,
         );
-        expect(
-          await page
-            .locator('#saveStatus')
-            .evaluate(
-              (el) =>
-                el.getBoundingClientRect().height > parseFloat(getComputedStyle(el).lineHeight),
-            ),
-        ).toBe(true);
+        // The one-row phone header truncates a long title and status instead of wrapping them.
+        for (const id of ['#jobTitle', '#saveStatus'])
+          expect(
+            await page
+              .locator(id)
+              .evaluate(
+                (el) =>
+                  el.getBoundingClientRect().height <=
+                    Math.ceil(parseFloat(getComputedStyle(el).lineHeight)) &&
+                  el.scrollWidth > el.clientWidth,
+              ),
+          ).toBe(true);
       }
-      await capture(page, 'wrapped-shell-validation.png');
+      await capture(page, 'long-shell-validation.png');
     });
 
     test('save-status changes never resize the sticky shell, and a later good save clears a rejected save', async ({
@@ -474,7 +478,7 @@ for (const width of [320, 390])
       // The page bounced after a Live walkthrough: each save state swapped a one-line status for
       // a two-line one, resizing the sticky shell and moving everything below it.
       await page.route('**/api/inspections/*', async (route) => {
-        // Hold each save long enough for "Saving changes…" to render.
+        // Hold each save long enough for "Saving…" to render.
         if (route.request().method() === 'PUT') await new Promise((r) => setTimeout(r, 600));
         await route.continue();
       });
@@ -493,19 +497,13 @@ for (const width of [320, 390])
       // An emptied required count is rejected by the server (422).
       await page.locator('#dryingDays').fill('');
       await expect(page.locator('#message')).toHaveText('Input should be a valid integer');
-      await expect(page.locator('#saveStatus')).toHaveText(
-        'Changes saved on this device · cloud sync pending',
-      );
+      await expect(page.locator('#saveStatus')).toHaveText('Saved on phone · sync pending');
       await page.locator('#dryingDays').fill('3');
-      await expect(page.locator('#saveStatus')).toContainText('Saved privately');
+      await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await expect(page.locator('#message')).toBeHidden();
       const seen = await page.evaluate(() => [...window.statuses]);
       expect(seen).toEqual(
-        expect.arrayContaining([
-          'Changes saved on this device · cloud sync pending',
-          'Saving changes…',
-          expect.stringMatching(/^Saved privately · revision \d+$/),
-        ]),
+        expect.arrayContaining(['Saved on phone · sync pending', 'Saving…', 'Saved']),
       );
       expect(await page.evaluate(() => [...window.shellHeights])).toHaveLength(1);
     });
@@ -693,8 +691,10 @@ for (const width of [320, 390])
       });
       expect(printed).toContain('Bathroom: category 3 finished/drywall/trim demolition');
       expect(printed).not.toMatch(/MOLD · Cat|WATER · Cat/);
-      expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
-      await expect(page.locator('.product-bar #helpButton')).toBeVisible();
+      // With a job open the navy job bar is the only header row; Help sits in its More menu.
+      expect((await page.locator('.jobbar').boundingBox()).height).toBeLessThan(85);
+      await page.locator('#jobMenu > summary').click();
+      await expect(page.locator('#jobMenu #helpButton')).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
         false,
       );

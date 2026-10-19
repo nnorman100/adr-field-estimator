@@ -126,6 +126,23 @@ function focusAndReveal(control, feedback) {
     }),
   );
 }
+// Phones with a job open keep one header row: the job bar takes the navy bar's place, an Update
+// ready prompt joins it, and Help and Account move into its More menu until the dashboard, sign-in
+// or a wider screen returns.
+function placeHeaderTools() {
+  const compact =
+    matchMedia('(max-width: 640px)').matches &&
+    !document.body.matches('.dashboard-open, .login-page');
+  if (document.body.classList.contains('compact-job') !== compact)
+    document.body.classList.toggle('compact-job', compact);
+  const tools = document.querySelector('.header-tools'),
+    banner = $('updateBanner');
+  if (compact === document.querySelector('.product-bar').contains(tools))
+    if (compact) {
+      $('jobMenu').before(banner);
+      $('jobMenu').querySelector('.menu-content').append(tools);
+    } else document.querySelector('.product-bar').append(banner, tools);
+}
 function initFocusVisibility() {
   const header = document.querySelector('.inspection-shell'),
     footer = document.querySelector('.draft-actions');
@@ -699,33 +716,28 @@ function changed(resetConfirmation = true) {
 function photoUnsynced(photo) {
   return !photo.uploaded || photo.pending_room !== undefined;
 }
+
+// Concise status for the one-line phone header; the title keeps the revision or authorization ID.
 function renderSaveStatus() {
   $('jobTitle').textContent = state.draft?.data.address || 'New inspection';
-  if (confirmedAuthorization) {
-    $('saveStatus').textContent = 'Saved & signed · ' + confirmedAuthorization;
-    return;
-  }
-  if (state.signed) {
-    $('saveStatus').textContent = 'Saved & signed · ' + state.signed.auth_id;
-    return;
-  }
-  if (!state.draft) {
-    $('saveStatus').textContent = 'No customer information loaded.';
-    return;
-  }
+  const status = $('saveStatus'),
+    show = (text, detail = text) => {
+      status.textContent = text;
+      status.title = detail;
+    };
+  const authorization = confirmedAuthorization || state.signed?.auth_id;
+  if (authorization) return show('Signed', 'Saved & signed · ' + authorization);
+  if (!state.draft) return show('No customer information loaded.');
   const synced =
     state.record &&
     stable(state.draft.data) === state.ack &&
     !state.draft.photos.some(photoUnsynced);
-  $('saveStatus').textContent = state.conflict
-    ? 'Revision conflict · local draft preserved'
-    : state.syncing
-      ? 'Saving changes…'
-      : synced
-        ? 'Saved privately · revision ' + state.record.revision
-        : navigator.onLine
-          ? 'Changes saved on this device · cloud sync pending'
-          : 'Saved on this device · offline';
+  if (state.conflict) show('Revision conflict', 'Revision conflict · local draft preserved');
+  else if (state.syncing) show('Saving…');
+  else if (synced) show('Saved', 'Saved privately · revision ' + state.record.revision);
+  else if (navigator.onLine)
+    show('Saved on phone · sync pending', 'Changes saved on this device · cloud sync pending');
+  else show('Offline · saved on phone');
 }
 // A voice note whose response was lost still committed its transcript block on the server. When
 // that is the only difference from the acknowledged data, takes the server's transcript plus the
@@ -3731,6 +3743,12 @@ async function initialize() {
   }
   initSignature();
   initFocusVisibility();
+  placeHeaderTools();
+  matchMedia('(max-width: 640px)').addEventListener('change', placeHeaderTools);
+  new MutationObserver(placeHeaderTools).observe(document.body, {
+    attributes: true,
+    attributeFilter: ['class'],
+  });
   renderControls();
   document
     .querySelectorAll('[data-task]')
@@ -3870,11 +3888,18 @@ async function initialize() {
   click('verifySignOut', signOut);
   click('discardSignOut', discardAndSignOut);
   click('newInspection', () => openNew());
-  click('openJobs', () => (window.WorkspaceUI?.enabled() ? WorkspaceUI.jobs() : showJobs()));
+  const jobs = () => (window.WorkspaceUI?.enabled() ? WorkspaceUI.jobs() : showJobs());
+  click('openJobs', jobs);
+  click('backToJobs', jobs);
   click('closeJobs', () => $('jobsDialog').close());
   click('helpButton', openHelp);
   click('closeHelp', () => $('helpDialog').close());
-  $('helpDialog').addEventListener('close', () => $('helpButton').focus());
+  // On a phone with a job open, Help sits in the closed More menu, so focus returns to its summary.
+  $('helpDialog').addEventListener('close', () =>
+    (
+      $('helpButton').closest('details:not([open])')?.querySelector('summary') || $('helpButton')
+    ).focus(),
+  );
   click('cancelRoomRemoval', () => $('removeRoomDialog').close());
   click('confirmRoomRemoval', confirmRoomRemoval);
   $('removeRoomDialog').addEventListener('close', closeRoomRemoval);
