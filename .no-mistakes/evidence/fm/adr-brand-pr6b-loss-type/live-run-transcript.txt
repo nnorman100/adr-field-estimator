@@ -1,0 +1,38 @@
+  loss options: ["Water","Mold","Water and mold"]
+  hit at checkbox: <input id="scopeConfirmed" type="checkbox" style=""> checked false
+  saved rooms: [["Kitchen",1,"water"],["Laundry",3,"both"]]
+PASS S1 manual loss selector beside category, cat-3 water stays WATER (desktop)
+  loss options: ["Water","Mold","Water and mold"]
+  hit at checkbox: <input id="scopeConfirmed" type="checkbox" style=""> checked false
+  saved rooms: [["Kitchen",1,"water"],["Laundry",3,"both"]]
+PASS S1 manual loss selector beside category, cat-3 water stays WATER (phone390)
+  rooms after fill: [["Laundry",3,"water"],["Closet",3,"mold"]]
+  after undo: [["Laundry",3,"water"],["Closet",3,"water"]]
+PASS S2 Fill scope sets loss from walkthrough answer; cat-3 no-mold room tagged WATER
+  resp PUT /api/inspections/ADR-INS-478ac26b58fd49fc9c519c4ba01119fc 200
+  resp POST /api/inspections/ADR-INS-478ac26b58fd49fc9c519c4ba01119fc/scope-suggestions 502
+  status text:  | message: Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.
+  resp PUT /api/inspections/ADR-INS-478ac26b58fd49fc9c519c4ba01119fc 422
+  PUT loss=fire -> 422
+PASS S3 adversarial: model loss "fire" is rejected and no scope is applied
+  ranges: {"water":["$1,515.80–$1,683.60",1515.8],"mold":["$1,515.80–$1,683.60",1515.8],"both":["$1,515.80–$1,683.60",1515.8]}
+PASS S4 pricing comes from category only: cat-3 room priced the same as water, mold or both
+  stored before reopen: [null,null]
+  stored after reopen: ["water","mold"]
+PASS S5 legacy unsigned draft (no loss) seeds once on open, then tag follows selector not category
+  estimator API audit 200
+  office local loss: [null] documents: true
+  server loss after office open: [null] revision 1
+PASS S6 office (read-only) opens audited legacy draft: no seeding, documents stay
+  signed record loss: null status signed
+PASS S7 signed legacy record keeps its old tag and is never re-saved with a loss
+{
+ "S1 manual loss selector beside category, cat-3 water stays WATER (desktop)": "PASS",
+ "S1 manual loss selector beside category, cat-3 water stays WATER (phone390)": "PASS",
+ "S2 Fill scope sets loss from walkthrough answer; cat-3 no-mold room tagged WATER": "PASS",
+ "S3 adversarial: model loss \"fire\" is rejected and no scope is applied": "PASS",
+ "S4 pricing comes from category only: cat-3 room priced the same as water, mold or both": "PASS",
+ "S5 legacy unsigned draft (no loss) seeds once on open, then tag follows selector not category": "PASS",
+ "S6 office (read-only) opens audited legacy draft: no seeding, documents stay": "PASS",
+ "S7 signed legacy record keeps its old tag and is never re-saved with a loss": "PASS"
+}
