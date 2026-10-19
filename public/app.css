@@ -1292,6 +1292,11 @@ footer {
     margin-top: 0.2rem;
     padding: 0.55rem 0.7rem;
   }
+  /* WebKit sizes a select taller than a text field, so fixed heights keep shared rows level. */
+  #panel-property input:not([type='checkbox'], [type='radio']),
+  #panel-property select {
+    height: 44px;
+  }
   #panel-property h3 {
     margin: 0.5rem 0;
   }

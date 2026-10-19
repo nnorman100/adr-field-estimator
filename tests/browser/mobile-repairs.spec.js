@@ -821,7 +821,7 @@ for (const width of [320, 390])
       expect(selected.items.some(([code]) => code === 'ADR-DEMO')).toBe(true);
       // Job B: the same room answered with the Mold pill.
       const menu = page.locator('#jobMenu');
-      if (!(await menu.evaluate((el) => el.open))) await menu.locator('summary').click();
+      if (!(await menu.evaluate((el) => el.open))) await menu.locator(':scope > summary').click();
       await page.locator('#newInspection').click();
       await expect(page.locator('#rooms .room')).toHaveCount(1);
       await scope(page, ['Bathroom', 'Hall']);
