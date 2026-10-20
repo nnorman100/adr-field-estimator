@@ -3612,6 +3612,90 @@ def test_owner_login_and_invitation_acceptance_for_one_account_cannot_both_win(m
     assert accounts.users['second-owner@example.invalid'].password is None
 
 
+def test_reservation_is_not_reusable_while_the_bounded_password_write_can_run(mail, monkeypatch):
+    """Even at the latest moment the bounded Firebase calls can still be running, the account stays held."""
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    accounts.add('invited-owner@example.invalid')
+    start = time.time()
+    clock = SimpleNamespace(time=lambda: start, sleep=time.sleep, monotonic=time.monotonic)
+    monkeypatch.setattr(workspaces, 'time', clock)
+    provision = workspaces.set_temporary_password
+
+    def slowest(*args):
+        clock.time = lambda: start + 24 * workspaces.LOGIN_HTTP_SECONDS
+        with pytest.raises(Conflict, match='in progress'):
+            w.owner_login(
+                'admin',
+                None,
+                'invited-owner@example.invalid',
+                'synthetic-rival-00001',
+                None,
+                'Rival',
+            )
+        return provision(*args)
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', slowest)
+    current['uid'] = 'admin'
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    assert accounts.users['invited-owner@example.invalid'].password == TEMPORARY
+    assert workspaces.LOGIN_RESERVATION_SECONDS >= 2 * 24 * workspaces.LOGIN_HTTP_SECONDS
+
+
+@pytest.mark.parametrize('delay, status', [(0, 503), (3, 200)], ids=['retry-after', 'stalled'])
+def test_owner_login_firebase_writes_neither_retry_nor_outlast_their_bound(
+    monkeypatch, delay, status
+):
+    """Against a local Auth endpoint: a 503 asking for an hour's wait and a stalled reply each end the
+    write after one request, within the configured timeout."""
+    import threading
+    import firebase_admin
+    from firebase_admin import exceptions
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            time.sleep(delay)
+            body = b'{}'
+            self.send_response(status)
+            self.send_header('Retry-After', '3600')
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    def forget_app():
+        try:
+            firebase_admin.delete_app(firebase_admin.get_app('adr-owner-login'))
+        except ValueError:
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv('FIREBASE_AUTH_EMULATOR_HOST', '127.0.0.1:%d' % server.server_port)
+    monkeypatch.setattr(workspaces, 'LOGIN_HTTP_SECONDS', 0.5)
+    forget_app()
+    try:
+        started = time.monotonic()
+        with pytest.raises(exceptions.FirebaseError):
+            workspaces.set_temporary_password(
+                SimpleNamespace(uid='owner', custom_claims=None), 'owner@example.invalid', TEMPORARY
+            )
+        assert time.monotonic() - started < 2.5
+        assert len(hits) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        forget_app()
+
+
 def test_failed_password_write_releases_the_account_for_a_retry(mail, monkeypatch):
     client, current, store, accounts, sent, _ = mail
     provision = workspaces.set_temporary_password

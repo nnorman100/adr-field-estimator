@@ -592,6 +592,17 @@ window.WorkspaceUI = (() => {
     card.children[3].append(code);
     $('dashboardContent').prepend(card);
   }
+  // Only the account that submitted sees the credentials; if the sign-in changed meanwhile, nothing shows.
+  // The refresh replaces this view; the credentials show whether or not it succeeds.
+  async function ownerLoginCreated(signedIn, cid, result, password, message) {
+    if (context() !== signedIn) return;
+    try {
+      await companyAdmin(cid);
+    } finally {
+      if (context() === signedIn) loginCreated(result.owner.email, password);
+    }
+    if (context() === signedIn) say(message, 'success');
+  }
   function ownerLoginForm(container, company) {
     const cid = company.company_id,
       form = node('form', undefined, 'dashboard-form');
@@ -608,18 +619,19 @@ window.WorkspaceUI = (() => {
     formField(form, 'Owner’s email', 'email', '', 'email').required = true;
     temporaryPassword(form);
     submit(form, 'Create login', async (values) => {
-      const result = await jsonApi('/api/admin/companies/' + cid + '/owner-login', 'POST', {
-        email: values.get('email'),
-        password: values.get('password'),
-        expected_version: company.version,
-      });
-      // The refresh replaces this view; the credentials show whether or not it succeeds.
-      try {
-        await companyAdmin(cid);
-      } finally {
-        loginCreated(result.owner.email, values.get('password'));
-      }
-      say('Owner login created.', 'success');
+      const signedIn = context(),
+        result = await jsonApi('/api/admin/companies/' + cid + '/owner-login', 'POST', {
+          email: values.get('email'),
+          password: values.get('password'),
+          expected_version: company.version,
+        });
+      await ownerLoginCreated(
+        signedIn,
+        cid,
+        result,
+        values.get('password'),
+        'Owner login created.',
+      );
     });
     container.append(form);
   }
@@ -759,17 +771,19 @@ window.WorkspaceUI = (() => {
     };
     submit(form, 'Create & invite owner', async (values) => {
       if (values.get('owner_signin') === 'password') {
-        const result = await jsonApi('/api/admin/companies', 'POST', {
-          name: values.get('name'),
-          owner_email: values.get('owner_email'),
-          owner_password: values.get('password'),
-        });
-        try {
-          await companyAdmin(result.company.company_id);
-        } finally {
-          loginCreated(result.owner.email, values.get('password'));
-        }
-        say('Company created with an owner login.', 'success');
+        const signedIn = context(),
+          result = await jsonApi('/api/admin/companies', 'POST', {
+            name: values.get('name'),
+            owner_email: values.get('owner_email'),
+            owner_password: values.get('password'),
+          });
+        await ownerLoginCreated(
+          signedIn,
+          result.company.company_id,
+          result,
+          values.get('password'),
+          'Company created with an owner login.',
+        );
         return;
       }
       const result = await jsonApi('/api/admin/companies', 'POST', {

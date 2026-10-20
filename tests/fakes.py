@@ -202,6 +202,13 @@ class FakeAuth:
             raise self.UserNotFoundError('No user record found.')
         return self.users[email]
 
+    def Client(self, app):
+        # Stands in for the owner-login client too; it has no HTTP adapters to bound.
+        self._user_manager = SimpleNamespace(
+            http_client=SimpleNamespace(session=SimpleNamespace(adapters={}))
+        )
+        return self
+
     def get_user(self, uid, app=None):
         for user in self.users.values():
             if user.uid == uid:

@@ -87,7 +87,13 @@ PASSWORD_CHANGE_REQUIRED = 'Set your own password before using DryScope.'
 PASSWORD_LENGTH = (12, 128)
 # Holds an account for one owner login from before its password is written until its membership commits.
 LOGIN_RESERVATIONS = '_owner_login_reservations'
-LOGIN_RESERVATION_SECONDS = 120
+# The reservation must outlive the request's Firebase writes, or a slow write could land after another
+# owner login reused the account. Those writes use login_client: no SDK retries (urllib3 honors
+# Retry-After for up to six hours) and LOGIN_HTTP_SECONDS for each connect and read wait. A call is at
+# most three rounds (google-auth's two 401 token refreshes) of a token fetch and the request, each a
+# connect and a read, so 12 waits; an owner login makes at most two calls: 24 waits, 240 seconds.
+LOGIN_HTTP_SECONDS = 10
+LOGIN_RESERVATION_SECONDS = 600
 
 
 class AccessDenied(PermissionError):
@@ -1178,28 +1184,42 @@ def login_account(email):
     return user
 
 
+def login_client():
+    """Firebase Authentication with the bounded calls LOGIN_RESERVATION_SECONDS relies on."""
+    try:
+        app = firebase_admin.get_app('adr-owner-login')
+    except ValueError:
+        app = firebase_admin.initialize_app(
+            options={
+                'projectId': os.getenv('GOOGLE_CLOUD_PROJECT', 'alert-disaster-field-2026'),
+                'httpTimeout': LOGIN_HTTP_SECONDS,
+            },
+            name='adr-owner-login',
+        )
+    client = firebase_auth.Client(app)
+    # The SDK exposes no retry option, so this client's own session adapters stop retrying.
+    for adapter in client._user_manager.http_client.session.adapters.values():
+        adapter.max_retries = adapter.max_retries.new(total=0)
+    return client
+
+
 def set_temporary_password(user, email, password):
     """Creates the email/password account, or sets the password on an existing one, verified because the
     superadmin vouches for the address. Changing a password ends the account's other sessions."""
-    app = auth_app()
+    client = login_client()
     if user is None:
         try:
             # Unverified until the claim is set, so a failed second step leaves a login that can do nothing.
-            user = firebase_auth.create_user(
-                email=email, email_verified=False, password=password, app=app
-            )
+            user = client.create_user(email=email, email_verified=False, password=password)
         except firebase_auth.EmailAlreadyExistsError:
             raise Conflict('This email was registered moments ago. Try again.')
-        firebase_auth.update_user(
-            user.uid, email_verified=True, custom_claims={PASSWORD_CHANGE: True}, app=app
-        )
+        client.update_user(user.uid, email_verified=True, custom_claims={PASSWORD_CHANGE: True})
     else:
-        firebase_auth.update_user(
+        client.update_user(
             user.uid,
             password=password,
             email_verified=True,
             custom_claims={**(user.custom_claims or {}), PASSWORD_CHANGE: True},
-            app=app,
         )
     return user.uid
 
