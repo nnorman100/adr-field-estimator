@@ -79,7 +79,7 @@ try:
     )
     from .company_store import CompanyInspectionStore
     from .workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
-    from .workspace_api import register_workspace_routes
+    from .workspace_api import FAILURE_SCOPE, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
@@ -118,7 +118,7 @@ except ImportError:
     )
     from company_store import CompanyInspectionStore
     from workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
-    from workspace_api import register_workspace_routes
+    from workspace_api import FAILURE_SCOPE, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from job_store import BUCKET, decode_image, IMAGE_WORKER
@@ -476,9 +476,10 @@ async def monitor_app_check(request: Request, call_next):
         )
 
 
-async def stored(
-    method, *args, failure='Changes could not be saved. Your local draft can be retried.'
-):
+STORED_FAILURE = 'Changes could not be saved. Your local draft can be retried.'
+
+
+async def stored(method, *args, failure=STORED_FAILURE):
     """failure is the 503 message for an unexpected error; account routes name their own action."""
     try:
         return await run_in_threadpool(method, *args)
@@ -692,7 +693,11 @@ async def current_identity(
     scopes: SecurityScopes, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
     claims = unlocked(await account_identity(scopes, credentials))
-    await stored(get_job_store().workspaces.unlocked, claims['uid'])
+    failure = next(
+        (s[len(FAILURE_SCOPE) :] for s in scopes.scopes if s.startswith(FAILURE_SCOPE)),
+        STORED_FAILURE,
+    )
+    await stored(get_job_store().workspaces.unlocked, claims['uid'], failure=failure)
     return claims
 
 

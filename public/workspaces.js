@@ -776,7 +776,7 @@ window.WorkspaceUI = (() => {
     const choose = () => {
       const direct = method.value === 'password';
       password.closest('.temporary-password').hidden = !direct;
-      password.required = direct;
+      password.disabled = !direct;
       control.textContent = direct ? 'Create company & owner login' : 'Create & invite owner';
     };
     submit(form, 'Create & invite owner', async (values) => {

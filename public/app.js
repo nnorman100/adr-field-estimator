@@ -73,7 +73,8 @@ let syncChain = Promise.resolve(),
   authSdk = null,
   waitingWorker = null;
 let confirmedAuthorization = null,
-  authEpoch = 0;
+  authEpoch = 0,
+  passwordFormUid = '';
 const newId = () => crypto.randomUUID().replaceAll('-', '');
 const ui = {
   task: 'property',
@@ -4319,6 +4320,11 @@ async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,
     stale = () => epoch !== authEpoch;
+  // A chosen password belongs to the account it was typed for, never to the next one.
+  if (passwordFormUid !== (user?.uid || '')) {
+    passwordFormUid = user?.uid || '';
+    $('newPassword').value = $('confirmPassword').value = '';
+  }
   if (state.user && state.user.uid !== user?.uid) {
     state.queuePaused = true;
     await leaveNotes();

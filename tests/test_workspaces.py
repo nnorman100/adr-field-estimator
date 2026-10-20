@@ -3894,6 +3894,65 @@ def test_password_change_keeps_the_gate_when_firebase_fails(mail, monkeypatch):
     assert client.get('/api/session').status_code == 403
 
 
+@pytest.mark.parametrize(
+    'route, message',
+    [
+        ('replace', 'The owner login could not be created. Try again or contact support.'),
+        ('create', 'The owner login could not be created. Try again or contact support.'),
+        ('password', 'Your password could not be changed. Try again.'),
+    ],
+)
+def test_quota_failure_names_the_account_action(mail, monkeypatch, route, message):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    if route == 'password':
+        assert create_owner_login(client).status_code == 200
+        real_verification(monkeypatch, current, accounts)
+        current['uid'] = 'new-owner'
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('Synthetic Firestore outage')
+
+    monkeypatch.setattr(store, 'quota', unavailable)
+    if route == 'replace':
+        response = create_owner_login(client)
+    elif route == 'create':
+        response = client.post(
+            '/api/admin/companies',
+            json={
+                'name': 'Valley Dry',
+                'owner_email': 'valley@example.invalid',
+                'owner_password': TEMPORARY,
+            },
+        )
+    else:
+        response = client.post('/api/account/password', json={'password': CHOSEN})
+    assert response.status_code == 503
+    assert response.json() == {'detail': message}
+
+
+def test_owner_login_membership_lookup_failure_names_the_action(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    real_verification(monkeypatch, current, accounts)
+    monkeypatch.setattr(
+        bm.firebase_auth, 'verify_id_token', lambda *args, **kwargs: identity('admin')
+    )
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('Synthetic Firestore outage')
+
+    monkeypatch.setattr(store.workspaces, 'unlocked', unavailable)
+    response = create_owner_login(client)
+    assert response.status_code == 503
+    assert response.json() == {
+        'detail': 'The owner login could not be created. Try again or contact support.'
+    }
+    assert client.get('/api/admin/companies').json() == {
+        'detail': 'Changes could not be saved. Your local draft can be retried.'
+    }
+
+
 def test_password_change_recovers_a_claim_left_without_a_membership(mail, monkeypatch):
     """If the membership step failed after Firebase took the temporary password, the claim still lets
     the account choose its own password instead of staying on the change screen."""
