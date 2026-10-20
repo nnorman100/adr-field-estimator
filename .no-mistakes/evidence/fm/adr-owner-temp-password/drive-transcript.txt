@@ -1,0 +1,17 @@
+S1 password input type (masked): password
+S1 after Show type: text
+S4 create-company-with-login failure message: The owner login could not be created. Try again or contact support.
+S1 message: Company created with an owner login.
+S1 card: Owner login created |  | Send this sign-in to the owner from your own email. DryScope sends nothing and shows this password only now. At first sign-in the owner sets their own password. |  | Email: test-owner-ws-probe@example.invalid |  | Temporary password: Probe-Temp-Pass-2026 |  | Copy password
+S1 copy message: Password copied. clipboard=Probe-Temp-Pass-2026
+S2 manage-company input type: password
+S2 message: Owner login created.
+S2 card: Owner login created |  | Send this sign-in to the owner from your own email. DryScope sends nothing and shows this password only now. At first sign-in the owner sets their own password. |  | Email: test-owner-ws-second@example.invalid |  | Temporary password: Second-Temp-Pass-2026 |  | Copy password
+S3 set-password visible: true, dashboard visible: false
+S5 locked GET /api/access status: 403 {"detail":"Set your own password before using DryScope."}
+S5 locked GET /api/admin/companies status: 403
+S4 password change failure: Your password could not be changed. Try again.
+S3 after save: dashboard visible=true heading=Probe Restoration
+S3 temp password sign-in status: 401; chosen password sign-in status: 200
+S3 unlocked GET /api/access: 200 {"uid":"test-owner-ws-second","superadmin":false,"company_id":"ee8db185deb4433b9e729d5d21734fb7","role":"owner","capabilities":["jobs_read","jobs_create","coord
+S3 re-sign-in with chosen password: dashboard=true setPassword=false
