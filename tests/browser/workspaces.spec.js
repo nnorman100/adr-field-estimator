@@ -216,6 +216,12 @@ test('superadmin manages companies and cannot use member job routes', async ({ p
   await expect(page.locator('#dashboardHeading')).toHaveText('Companies');
   await page.locator('input[name=name]').fill('New California Restoration');
   await page.locator('input[name=owner_email]').fill('new-owner@example.invalid');
+  // A short password typed in login mode cannot block the invitation, even after a policy refresh.
+  const signin = page.locator('select[name=owner_signin]');
+  await signin.selectOption('password');
+  await page.locator('input[name=password]').fill('short');
+  await signin.selectOption('invite');
+  await page.evaluate(() => WorkspaceUI.policy());
   await page.getByRole('button', { name: 'Create & invite owner' }).click();
   await expect(page.locator('#dashboardHeading')).toHaveText('New California Restoration');
   await expect(page.locator('#dashboardContent')).toContainText('new-owner@example.invalid');
