@@ -223,9 +223,7 @@ async def check():
 
 async def main():
     try:
-        await asyncio.wait_for(
-            attic_extraction() if '--attic-only' in sys.argv else check(), REST_DEADLINE_SECONDS
-        )
+        await (attic_extraction() if '--attic-only' in sys.argv else check())
     finally:
         await get_ai_client().aio.aclose()
 
