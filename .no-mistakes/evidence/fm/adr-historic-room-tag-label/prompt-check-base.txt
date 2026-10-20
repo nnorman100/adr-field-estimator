@@ -1,0 +1,5 @@
+### BASE script (418247699ab3), same harness, full and --attic-only
+HARNESS: client closed
+HARNESS: status = raised TypeError:  generate() missing 2 required positional arguments: 'operation' and 'inspection_id' | elapsed 0.0 s
+HARNESS: client closed
+HARNESS: status = raised TypeError:  generate() missing 2 required positional arguments: 'operation' and 'inspection_id' | elapsed 0.0 s

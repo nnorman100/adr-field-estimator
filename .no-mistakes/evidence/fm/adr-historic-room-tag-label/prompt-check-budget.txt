@@ -1,0 +1,21 @@
+### TARGET --attic-only, real 55 s budget, fake model takes 50 s (within budget)
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "scope", "elapsed_ms": 50058, "outcome": "ok", "inspection_id": "synthetic-check"}
+PASS: attic spot cleaning does not create demolition, water category, filter/equipment or labor counts
+HARNESS: client closed
+HARNESS: status = completed | elapsed 50.06 s
+HARNESS call: {'key': 'up to six attic spots', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+### TARGET --attic-only, real 55 s budget, fake model never answers
+{"severity": "ERROR", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "scope", "elapsed_ms": 55066, "outcome": "timeout", "inspection_id": "synthetic-check"}
+HARNESS: client closed
+HARNESS: status = raised HTTPException: 504 AI generation timed out. Retry; no document or reading was verified. | elapsed 55.07 s
+HARNESS call: {'key': 'up to six attic spots', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+### TARGET full check(), real 55 s budget, all 8 calls take 20 s concurrently (audit attempts get 25 s)
+PASS: flood-cut dimensions are not priced square feet
+PASS: measured ceiling removal is extracted
+PASS: conditional cabinets and equipment do not set form values
+PASS: mixed completed/proposed work, suspected growth and unpriced toilet task; cabinet possibility remains conditional
+PASS: unit-qualified rooms retain separate measurements; inspected-only room is not priced
+PASS: ambiguous bathroom/unit, full-height wall and other-inspection equipment require clarification
+PASS: attic spot cleaning does not create demolition, water category, filter/equipment or labor counts
+PASS: cleaning-only services remain unpriced despite generic labor/filter charges; third-party findings stay attributed
+HARNESS: status = completed | elapsed 20.03 s

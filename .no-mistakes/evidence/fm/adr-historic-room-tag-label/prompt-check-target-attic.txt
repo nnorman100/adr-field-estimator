@@ -1,0 +1,5 @@
+### TARGET script --attic-only
+PASS: attic spot cleaning does not create demolition, water category, filter/equipment or labor counts
+HARNESS: client closed
+HARNESS: status = completed | elapsed 0.01 s
+HARNESS call: {'key': 'up to six attic spots', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}

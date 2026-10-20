@@ -1,0 +1,21 @@
+### TARGET script, full check(), fake model answers instantly
+PASS: flood-cut dimensions are not priced square feet
+PASS: measured ceiling removal is extracted
+PASS: conditional cabinets and equipment do not set form values
+PASS: mixed completed/proposed work, suspected growth and unpriced toilet task; cabinet possibility remains conditional
+PASS: unit-qualified rooms retain separate measurements; inspected-only room is not priced
+PASS: ambiguous bathroom/unit, full-height wall and other-inspection equipment require clarification
+PASS: attic spot cleaning does not create demolition, water category, filter/equipment or labor counts
+PASS: cleaning-only services remain unpriced despite generic labor/filter charges; third-party findings stay attributed
+Project: alert-disaster-field-2026 model: gemini-3.8-flash
+Synthetic prompt behavior only. No customer documents sent; no inspections, evidence, signatures or IAM changes.
+HARNESS: client closed
+HARNESS: status = completed | elapsed 0.01 s
+HARNESS call: {'key': 'Proposed two-foot flood cut', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'I measured eight square feet', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'Kitchen has a granite', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'resetting the toilet', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'Suite A Walkway was inspected', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'not specified which suite', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'up to six attic spots', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}
+HARNESS call: {'key': 'home inspection report', 'model': 'gemini-3.8-flash', 'thinking': 'ThinkingLevel.LOW', 't': 0.01}

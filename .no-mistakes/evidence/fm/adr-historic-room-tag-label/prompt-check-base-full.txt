@@ -1,0 +1,3 @@
+### BASE script (418247699ab3), same harness
+HARNESS: client closed
+HARNESS: status = raised TypeError:  generate() missing 2 required positional arguments: 'operation' and 'inspection_id' | elapsed 0.0 s
