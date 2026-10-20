@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const {
   emptyData,
+  signedDraftData,
   stable,
   estimateLabel,
   pcmToFloat,
@@ -2265,7 +2266,7 @@ async function restoreSigned(id) {
   confirmedAuthorization = id;
   state.draft = {
     inspection_id: record.inspection_id || '',
-    data: { ...emptyData(), rooms: [], ...record.inspection, address: record.address },
+    data: signedDraftData(record),
     photos: record.photos.map((p, i) => ({
       ...p,
       id: p.id || String(i),

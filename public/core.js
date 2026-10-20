@@ -337,8 +337,14 @@
     const type = NOTE_TYPES.find((candidate) => isSupported(candidate));
     return type ? { recorder: type, upload: type.split(';')[0] } : null;
   }
+  // A signed record keeps only what it saved. Rooms it never stored stay absent, so no default
+  // room or loss tag is invented for it; a new job starts from emptyData() instead.
+  function signedDraftData(record) {
+    return { ...emptyData(), rooms: [], ...record.inspection, address: record.address };
+  }
   const api = {
     emptyData,
+    signedDraftData,
     stable,
     money,
     estimateLabel,

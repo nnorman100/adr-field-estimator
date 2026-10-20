@@ -2,13 +2,22 @@
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from backend.contracts import AIResult, InspectionData
+from backend.contracts import InspectionData
 from backend.claims import price_scope, make_documents
-from backend.main import generate, get_ai_client, AUDIT_MODEL, PROJECT_ID
+from backend.main import (
+    generate,
+    generate_audit,
+    get_ai_client,
+    AUDIT_MODEL,
+    PROJECT_ID,
+    REST_DEADLINE_SECONDS,
+    SCOPE_THINKING_LEVEL,
+)
 from backend.prompts import audit_prompt
 from backend.scope import (
     ScopeSuggestions,
@@ -20,7 +29,14 @@ from backend.scope import (
 
 async def extract(label, data, expected, forbidden):
     result = await generate(
-        ScopeSuggestions, [scope_prompt(data)], AUDIT_MODEL, wire_schema=scope_response_schema()
+        ScopeSuggestions,
+        [scope_prompt(data)],
+        AUDIT_MODEL,
+        'scope',
+        'synthetic-check',
+        wire_schema=scope_response_schema(),
+        thinking_level=SCOPE_THINKING_LEVEL,
+        timeout=REST_DEADLINE_SECONDS,
     )
     result = validate_suggestions(data, result)
     actual = {(c.room, c.field): c.value for c in result.changes}
@@ -44,10 +60,10 @@ async def audit_specialty():
             'it is not included in the requested work.'
         ),
     )
-    result = await generate(
-        AIResult,
+    result = await generate_audit(
         [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
-        AUDIT_MODEL,
+        'synthetic-check',
+        time.monotonic(),
     )
     assert any('toilet' in task.casefold() for task in result.unpriced_work), result
     assert not any('cabinet' in task.casefold() for task in result.unpriced_work), result
@@ -73,10 +89,10 @@ async def audit_cleaning_only():
             'No demolition or drying equipment is requested.'
         ),
     )
-    result = await generate(
-        AIResult,
+    result = await generate_audit(
         [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
-        AUDIT_MODEL,
+        'synthetic-check',
+        time.monotonic(),
     )
     unpriced = ' '.join(result.unpriced_work).casefold()
     assert 'hepa' in unpriced and ('clean' in unpriced or 'scrub' in unpriced), result
@@ -207,7 +223,9 @@ async def check():
 
 async def main():
     try:
-        await asyncio.wait_for(attic_extraction() if '--attic-only' in sys.argv else check(), 55)
+        await asyncio.wait_for(
+            attic_extraction() if '--attic-only' in sys.argv else check(), REST_DEADLINE_SECONDS
+        )
     finally:
         await get_ai_client().aio.aclose()
 

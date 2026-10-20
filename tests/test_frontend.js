@@ -65,6 +65,22 @@ assert.deepEqual(core.aspect(1080, 1920, 1280), [720, 1280]);
 assert.equal(core.stable({ b: 2, a: 1 }), core.stable({ a: 1, b: 2 }));
 assert.equal(core.emptyData().year_built, null);
 assert.equal(core.emptyData().package_price, null);
+{
+  // A historical agreement with no saved rooms shows no default room or water tag.
+  for (const record of [
+    { address: '1 Old St' },
+    { address: '1 Old St', inspection: {} },
+    { address: '1 Old St', inspection: { rooms: [] } },
+  ]) {
+    const data = core.signedDraftData(record);
+    assert.deepEqual(data.rooms, [], JSON.stringify(record));
+    assert.equal(data.address, '1 Old St');
+  }
+  const saved = { name: 'Kitchen', category: 3, unfinished_sf: 0, finished_sf: 9 };
+  const kept = core.signedDraftData({ address: 'x', inspection: { rooms: [saved] } });
+  assert.deepEqual(kept.rooms, [saved]);
+  assert.equal(core.emptyData().rooms.length, 1, 'new jobs keep the default room');
+}
 const bytes = new Uint8Array([0, 128, 0, 0, 255, 127]);
 assert.deepEqual([...core.pcmToFloat(bytes)], [-1, 0, 32767 / 32768]);
 assert.throws(() => core.pcmToFloat(new Uint8Array([0])));
