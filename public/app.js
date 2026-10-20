@@ -74,6 +74,7 @@ let syncChain = Promise.resolve(),
   waitingWorker = null;
 let confirmedAuthorization = null,
   authEpoch = 0,
+  appliedEpoch = 0,
   passwordFormUid = '';
 const newId = () => crypto.randomUUID().replaceAll('-', '');
 const ui = {
@@ -4316,10 +4317,11 @@ function reauthenticate(user, password) {
 function signInMark() {
   return (auth?.currentUser?.uid || '') + ':' + authEpoch;
 }
-// A request's token and later disclosure belong to one account: the live, applied and session users agree.
+// A request's token and later disclosure belong to one account: the latest sign-in has finished applying
+// and the live, applied and session users agree.
 function submissionMark() {
   const uid = auth?.currentUser?.uid;
-  if (!uid || uid !== state.user?.uid || uid !== state.session?.uid)
+  if (appliedEpoch !== authEpoch || !uid || uid !== state.user?.uid || uid !== state.session?.uid)
     throw Error('Your sign-in changed. Reload and try again.');
   return signInMark();
 }
@@ -4327,6 +4329,10 @@ async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,
     stale = () => epoch !== authEpoch;
+  // Owner credentials typed or shown for one sign-in never survive into the next.
+  for (const card of $('dashboardContent').querySelectorAll('.login-created')) card.remove();
+  for (const input of $('dashboardContent').querySelectorAll('.temporary-password input'))
+    input.value = '';
   // A chosen password belongs to the account it was typed for, never to the next one.
   if (passwordFormUid !== (user?.uid || '')) {
     passwordFormUid = user?.uid || '';
@@ -4442,6 +4448,7 @@ async function applyUser(user) {
     if (!stale()) say(e.message, 'error');
   } finally {
     if (!stale()) {
+      appliedEpoch = epoch;
       state.workspaceInitializing = false;
       for (const control of $('workspaceNav').querySelectorAll('button')) control.disabled = false;
     }

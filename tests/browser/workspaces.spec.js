@@ -1138,6 +1138,40 @@ async function signInWithTemporary(page, email, before) {
   await page.locator('#authPassword').fill(TEMPORARY);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 }
+test('owner login waits for a pending sign-in to finish applying, even for the same account', async ({
+  page,
+}) => {
+  await start(page, 'admin');
+  await navigate(page, 'dashboardAdmin');
+  await expect(page.locator('#dashboardHeading')).toHaveText('Companies');
+  const sent = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/api/admin/companies'))
+      sent.push(request.url());
+  });
+  // A to B and back to A: the latest callback for A is still applying.
+  await page.evaluate(() => {
+    const user = auth.currentUser;
+    user.getIdTokenResult = () =>
+      new Promise((resolve) => {
+        window.finishApplying = () => {
+          delete user.getIdTokenResult;
+          resolve({ claims: {} });
+        };
+      });
+    applyUser(user);
+  });
+  const form = page.locator('#dashboardContent form').first();
+  await form.locator('input[name=name]').fill('Pending Sign-in Restoration');
+  await form.locator('input[name=owner_email]').fill('test-owner-ws-pending@example.invalid');
+  await form.locator('select[name=owner_signin]').selectOption('password');
+  await form.locator('input[name=password]').fill(TEMPORARY);
+  await form.getByRole('button', { name: 'Create company & owner login' }).click();
+  await expect(page.locator('#message')).toHaveText('Your sign-in changed. Reload and try again.');
+  expect(sent).toEqual([]);
+  await page.evaluate(() => window.finishApplying());
+  await expect(page.locator('#workspaceNav')).toBeVisible();
+});
 for (const width of [320, 390])
   test(`temporary password allows only the set-password step until replaced at ${width}×844`, async ({
     page,
