@@ -3880,6 +3880,7 @@ async function initialize() {
       return;
     }
     const user = auth.currentUser,
+      mark = signInMark(),
       headers = {
         ...(await appCheckHeaders()),
         Authorization: 'Bearer ' + (await user.getIdToken()),
@@ -3894,6 +3895,10 @@ async function initialize() {
         body: JSON.stringify({ password }),
       });
     } catch {}
+    if (signInMark() !== mark) {
+      $('newPassword').value = $('confirmPassword').value = '';
+      return;
+    }
     if (!response?.ok) {
       // Firebase may have taken the new password before the request failed, which ends this sign-in.
       if (!response || response.status >= 500) {
@@ -4296,6 +4301,10 @@ function showAuthStage(user, stage) {
   $('setPassword').hidden = stage !== 'changePassword';
   $('setPasswordAddress').textContent = user?.email || '';
   $('setPasswordUsername').value = user?.email || '';
+}
+// The live sign-in and auth-callback epoch, so a continuation can tell whether the account changed under it.
+function signInMark() {
+  return (auth?.currentUser?.uid || '') + ':' + authEpoch;
 }
 async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.

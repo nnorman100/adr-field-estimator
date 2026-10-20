@@ -595,13 +595,13 @@ window.WorkspaceUI = (() => {
   // Only the account that submitted sees the credentials; if the sign-in changed meanwhile, nothing shows.
   // The refresh replaces this view; the credentials show whether or not it succeeds.
   async function ownerLoginCreated(signedIn, cid, result, password, message) {
-    if (context() !== signedIn) return;
+    if (signInMark() !== signedIn) return;
     try {
       await companyAdmin(cid);
     } finally {
-      if (context() === signedIn) loginCreated(result.owner.email, password);
+      if (signInMark() === signedIn) loginCreated(result.owner.email, password);
     }
-    if (context() === signedIn) say(message, 'success');
+    if (signInMark() === signedIn) say(message, 'success');
   }
   function ownerLoginForm(container, company) {
     const cid = company.company_id,
@@ -619,7 +619,7 @@ window.WorkspaceUI = (() => {
     formField(form, 'Owner’s email', 'email', '', 'email').required = true;
     temporaryPassword(form);
     submit(form, 'Create login', async (values) => {
-      const signedIn = context(),
+      const signedIn = signInMark(),
         result = await jsonApi('/api/admin/companies/' + cid + '/owner-login', 'POST', {
           email: values.get('email'),
           password: values.get('password'),
@@ -771,7 +771,7 @@ window.WorkspaceUI = (() => {
     };
     submit(form, 'Create & invite owner', async (values) => {
       if (values.get('owner_signin') === 'password') {
-        const signedIn = context(),
+        const signedIn = signInMark(),
           result = await jsonApi('/api/admin/companies', 'POST', {
             name: values.get('name'),
             owner_email: values.get('owner_email'),
