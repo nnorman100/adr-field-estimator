@@ -104,6 +104,20 @@ export const signInWithEmailAndPassword = async (target, email, password) => {
   if (account.password !== password) throw fail('auth/wrong-password');
   return change(passwordUser(email));
 };
+export const EmailAuthProvider = {
+  credential: (email, password) => ({ email, password }),
+};
+// Like Firebase: checks the password for that user only; it never changes currentUser.
+export const reauthenticateWithCredential = async (user, credential) => {
+  const response = await fetch('/__test/auth/sign-in', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credential),
+  });
+  if (!response.ok || (await response.json()).uid !== user.uid)
+    throw fail('auth/invalid-credential');
+  return { user };
+};
 export const sendPasswordResetEmail = async (target, email) => {
   window.__testEmails.push({ type: 'reset', email });
 };

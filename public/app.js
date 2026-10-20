@@ -3902,12 +3902,13 @@ async function initialize() {
     if (!response?.ok) {
       // Firebase may have taken the new password before the request failed, which ends this sign-in.
       if (!response || response.status >= 500) {
-        const saved = await authSdk.signInWithEmailAndPassword(auth, user.email, password).then(
+        const saved = await reauthenticate(user, password).then(
           () => true,
           () => false,
         );
         if (saved) {
           $('newPassword').value = $('confirmPassword').value = '';
+          if (auth.currentUser?.uid !== user.uid) return;
           await applyUser(auth.currentUser);
           if (!$('setPassword').hidden)
             authSay('Your new password is saved. Enter it again to finish setup.', 'error');
@@ -3925,7 +3926,8 @@ async function initialize() {
     }
     $('newPassword').value = $('confirmPassword').value = '';
     // A new password ends this sign-in, so sign in again with it.
-    await authSdk.signInWithEmailAndPassword(auth, user.email, password);
+    await reauthenticate(user, password);
+    if (auth.currentUser?.uid !== user.uid) return;
     await applyUser(auth.currentUser);
   });
   authClick('confirmVerified', async () => {
@@ -4301,6 +4303,13 @@ function showAuthStage(user, stage) {
   $('setPassword').hidden = stage !== 'changePassword';
   $('setPasswordAddress').textContent = user?.email || '';
   $('setPasswordUsername').value = user?.email || '';
+}
+// Bound to that user, so it never replaces an account signed in meanwhile.
+function reauthenticate(user, password) {
+  return authSdk.reauthenticateWithCredential(
+    user,
+    authSdk.EmailAuthProvider.credential(user.email, password),
+  );
 }
 // The live sign-in and auth-callback epoch, so a continuation can tell whether the account changed under it.
 function signInMark() {
