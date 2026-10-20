@@ -1097,6 +1097,23 @@ for (const width of [320, 390])
     const second = 'synthetic-typed-second-02';
     await expect(replace.locator('input[name=password]')).toHaveAttribute('type', 'password');
     await replace.locator('input[name=password]').fill(second);
+    // Another tab's sign-in that this page has not applied yet sends nothing.
+    const sent = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/owner-login')) sent.push(request.url());
+    });
+    await page.evaluate(() => {
+      window.appliedUser = auth.currentUser;
+      auth.currentUser = { uid: 'switched-account' };
+    });
+    await replace.getByRole('button', { name: 'Create login' }).click();
+    await expect(page.locator('#message')).toHaveText(
+      'Your sign-in changed. Reload and try again.',
+    );
+    expect(sent).toEqual([]);
+    await page.evaluate(() => {
+      auth.currentUser = window.appliedUser;
+    });
     await replace.getByRole('button', { name: 'Create login' }).click();
     await expect(page.locator('#message')).toHaveText('Owner login created.');
     await expect(page.locator('.login-created code')).toHaveText(second);

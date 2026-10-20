@@ -4316,6 +4316,13 @@ function reauthenticate(user, password) {
 function signInMark() {
   return (auth?.currentUser?.uid || '') + ':' + authEpoch;
 }
+// A request's token and later disclosure belong to one account: the live, applied and session users agree.
+function submissionMark() {
+  const uid = auth?.currentUser?.uid;
+  if (!uid || uid !== state.user?.uid || uid !== state.session?.uid)
+    throw Error('Your sign-in changed. Reload and try again.');
+  return signInMark();
+}
 async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,

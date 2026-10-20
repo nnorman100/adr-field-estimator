@@ -629,7 +629,7 @@ window.WorkspaceUI = (() => {
     formField(form, 'Owner’s email', 'email', '', 'email').required = true;
     temporaryPassword(form);
     submit(form, 'Create login', async (values) => {
-      const signedIn = signInMark(),
+      const signedIn = submissionMark(),
         result = await jsonApi('/api/admin/companies/' + cid + '/owner-login', 'POST', {
           email: values.get('email'),
           password: values.get('password'),
@@ -782,7 +782,7 @@ window.WorkspaceUI = (() => {
     };
     submit(form, 'Create & invite owner', async (values) => {
       if (values.get('owner_signin') === 'password') {
-        const signedIn = signInMark(),
+        const signedIn = submissionMark(),
           result = await jsonApi('/api/admin/companies', 'POST', {
             name: values.get('name'),
             owner_email: values.get('owner_email'),
