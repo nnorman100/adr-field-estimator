@@ -3880,18 +3880,36 @@ async function initialize() {
       return;
     }
     const user = auth.currentUser,
+      headers = {
+        ...(await appCheckHeaders()),
+        Authorization: 'Bearer ' + (await user.getIdToken()),
+        'Content-Type': 'application/json',
+      };
+    let response = null;
+    try {
       response = await fetch('/api/account/password', {
         method: 'POST',
         cache: 'no-store',
-        headers: {
-          ...(await appCheckHeaders()),
-          Authorization: 'Bearer ' + (await user.getIdToken()),
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({ password }),
       });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
+    } catch {}
+    if (!response?.ok) {
+      // Firebase may have taken the new password before the request failed, which ends this sign-in.
+      if (!response || response.status >= 500) {
+        const saved = await authSdk.signInWithEmailAndPassword(auth, user.email, password).then(
+          () => true,
+          () => false,
+        );
+        if (saved) {
+          $('newPassword').value = $('confirmPassword').value = '';
+          await applyUser(auth.currentUser);
+          if (!$('setPassword').hidden)
+            authSay('Your new password is saved. Enter it again to finish setup.', 'error');
+          return;
+        }
+      }
+      const payload = response ? await response.json().catch(() => ({})) : {};
       authSay(
         typeof payload.detail === 'string'
           ? payload.detail

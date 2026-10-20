@@ -3545,6 +3545,113 @@ def test_owner_login_refuses_when_the_owner_changes_after_the_account_step(mail,
     assert records['_companies/other']['owner_uid'] == 'new-owner'
 
 
+def test_concurrent_owner_logins_for_one_account_leave_the_winners_password(mail, monkeypatch):
+    """A second owner login for the same account while the first holds it changes no password."""
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    accounts.add('invited-owner@example.invalid')
+    provision = workspaces.set_temporary_password
+    rivals = []
+
+    def raced(*args):
+        with pytest.raises(Conflict, match='in progress'):
+            w.owner_login(
+                'admin',
+                None,
+                'invited-owner@example.invalid',
+                'synthetic-rival-00001',
+                None,
+                'Rival',
+            )
+        rivals.append(len(accounts.updated))
+        return provision(*args)
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', raced)
+    current['uid'] = 'admin'
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    assert rivals == [0]
+    account = accounts.users['invited-owner@example.invalid']
+    assert account.password == TEMPORARY
+    assert store.db.records['_companies/other']['owner_uid'] == 'invited-owner'
+    assert not [k for k in store.db.records if k.startswith(workspaces.LOGIN_RESERVATIONS)]
+    # Once the first commits, a later attempt is refused before touching the password.
+    monkeypatch.setattr(workspaces, 'set_temporary_password', provision)
+    later = create_owner_login(client, 'invited-owner@example.invalid', expected_version=2)
+    assert later.status_code == 409 and 'already has company access' in later.json()['detail']
+    assert account.password == TEMPORARY and len(accounts.updated) == 1
+
+
+def test_owner_login_and_invitation_acceptance_for_one_account_cannot_both_win(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    accounts.add('invited-owner@example.invalid')
+    invitation = w.invite('admin', 'adr', 'invited-owner@example.invalid', 'owner')
+    provision = workspaces.set_temporary_password
+
+    def accepted_meanwhile(*args):
+        with pytest.raises(Conflict, match='owner login is being created'):
+            w.accept(identity('invited-owner'), invitation['invitation_id'])
+        return provision(*args)
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', accepted_meanwhile)
+    current['uid'] = 'admin'
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    records = store.db.records
+    assert records['_memberships/invited-owner']['company_id'] == 'other'
+    assert records['_companies/adr']['owner_uid'] == 'owner'
+    assert accounts.users['invited-owner@example.invalid'].password == TEMPORARY
+    # Acceptance that commits first wins; the owner login then changes no password.
+    accounts.add('second-owner@example.invalid')
+    second = w.invite('admin', 'adr', 'second-owner@example.invalid', 'owner')
+    w.accept(identity('second-owner'), second['invitation_id'])
+    monkeypatch.setattr(workspaces, 'set_temporary_password', provision)
+    refused = create_owner_login(client, 'second-owner@example.invalid', expected_version=2)
+    assert refused.status_code == 409 and 'already has company access' in refused.json()['detail']
+    assert accounts.users['second-owner@example.invalid'].password is None
+
+
+def test_failed_password_write_releases_the_account_for_a_retry(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    provision = workspaces.set_temporary_password
+
+    def unavailable(*args):
+        raise RuntimeError('Synthetic Firebase outage')
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', unavailable)
+    current['uid'] = 'admin'
+    before = unrestricted(store)
+    assert create_owner_login(client).status_code == 503
+    assert unrestricted(store) == before
+    monkeypatch.setattr(workspaces, 'set_temporary_password', provision)
+    assert create_owner_login(client).status_code == 200
+
+
+def test_a_temporary_password_claim_without_a_membership_cannot_accept_an_invitation(
+    mail, monkeypatch
+):
+    """If the membership step failed after Firebase took the temporary password, the claim alone
+    still refuses every route, so the account cannot accept a pending owner invitation unchanged."""
+    client, current, store, accounts, sent, _ = mail
+    invitation = store.workspaces.invite('admin', 'other', 'stranded@example.invalid', 'owner')
+    accounts.add('stranded@example.invalid', 'password')
+    accounts.users['stranded@example.invalid'].custom_claims = {'password_change_required': True}
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'stranded'
+    before = unrestricted(store)
+    for method, path in (
+        ('GET', '/api/invitations/' + invitation['invitation_id']),
+        ('POST', '/api/invitations/' + invitation['invitation_id'] + '/accept'),
+        ('GET', '/api/access'),
+        ('GET', '/api/session'),
+    ):
+        response = client.request(method, path)
+        assert response.status_code == 403, (path, response.text)
+        assert response.json() == {'detail': workspaces.PASSWORD_CHANGE_REQUIRED}
+    assert unrestricted(store) == before
+
+
 def locked_identity(accounts, uid):
     """Claims as Firebase would issue them now: the account's current custom claims at top level."""
     user = accounts.get_user(uid)

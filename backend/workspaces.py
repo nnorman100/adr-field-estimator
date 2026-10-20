@@ -85,6 +85,9 @@ LOGO_CID = 'invitation-logo@dryscope'
 PASSWORD_CHANGE = 'password_change_required'
 PASSWORD_CHANGE_REQUIRED = 'Set your own password before using DryScope.'
 PASSWORD_LENGTH = (12, 128)
+# Holds an account for one owner login from before its password is written until its membership commits.
+LOGIN_RESERVATIONS = '_owner_login_reservations'
+LOGIN_RESERVATION_SECONDS = 120
 
 
 class AccessDenied(PermissionError):
@@ -185,6 +188,10 @@ def check_password(value):
     if not low <= len(value) <= high:
         raise ValueError(f'Use a password of {low} to {high} characters.')
     return value
+
+
+def login_key(email):
+    return hashlib.sha256(email.encode()).hexdigest()
 
 
 def masked_email(email):
@@ -417,12 +424,12 @@ class WorkspaceStore:
         else:
             self.replaceable(self.read('_companies', company_id), expected_version)
         user = login_account(email)
-        if user and self.read('_memberships', user.uid):
-            raise Conflict('This email already has company access. Choose a different email.')
-        owner_uid = set_temporary_password(user, email, password)
+        key, claim = self.reserve_login(email, user)
 
         def create(tx):
             self.admin(uid, tx)
+            if (self.read(LOGIN_RESERVATIONS, key, tx) or {}).get('claim') != claim:
+                raise Conflict('This owner login took too long. Try again.')
             company = (
                 created
                 if company_id is None
@@ -489,10 +496,46 @@ class WorkspaceStore:
                 },
                 'member/' + owner_uid,
             )
+            tx.delete(self.ref(LOGIN_RESERVATIONS, key))
             return company
 
-        company = self._run(create)
+        # The password changes only while this request holds the account; any failure frees it.
+        try:
+            owner_uid = set_temporary_password(user, email, password)
+            company = self._run(create)
+        except Exception:
+            self.release_login(key, claim)
+            raise
         return {'company': company, 'owner': {'uid': owner_uid, 'email': email}}
+
+    def reserve_login(self, email, user):
+        """Claims the account before its password changes, so a competing owner login or invitation
+        acceptance cannot take it between the password write and the membership commit."""
+        key = login_key(email)
+        claim = uuid4().hex
+
+        def reserve(tx):
+            held = self.read(LOGIN_RESERVATIONS, key, tx)
+            if user and self.read('_memberships', user.uid, tx):
+                raise Conflict('This email already has company access. Choose a different email.')
+            if held and held['expires_at'] > time.time():
+                raise Conflict(
+                    'Another owner login for this email is in progress. Try again in a few minutes.'
+                )
+            tx.set(
+                self.ref(LOGIN_RESERVATIONS, key),
+                {'claim': claim, 'expires_at': time.time() + LOGIN_RESERVATION_SECONDS},
+            )
+
+        self._run(reserve)
+        return key, claim
+
+    def release_login(self, key, claim):
+        def release(tx):
+            if (self.read(LOGIN_RESERVATIONS, key, tx) or {}).get('claim') == claim:
+                tx.delete(self.ref(LOGIN_RESERVATIONS, key))
+
+        self._run(release)
 
     @staticmethod
     def replaceable(company, expected_version):
@@ -779,6 +822,11 @@ class WorkspaceStore:
             member = self.read('_memberships', uid, tx)
             if (member or {}).get(PASSWORD_CHANGE):
                 raise PasswordChangeRequired()
+            held = self.read(LOGIN_RESERVATIONS, login_key(email), tx)
+            if held and held['expires_at'] > time.time():
+                raise Conflict(
+                    'An owner login is being created for this account. Try again shortly.'
+                )
             company = self.read('_companies', invite['company_id'], tx)
             if not company or company['status'] != 'active':
                 raise AccessDenied('Company access is unavailable.')
@@ -1136,12 +1184,15 @@ def set_temporary_password(user, email, password):
     app = auth_app()
     if user is None:
         try:
+            # Unverified until the claim is set, so a failed second step leaves a login that can do nothing.
             user = firebase_auth.create_user(
-                email=email, email_verified=True, password=password, app=app
+                email=email, email_verified=False, password=password, app=app
             )
         except firebase_auth.EmailAlreadyExistsError:
             raise Conflict('This email was registered moments ago. Try again.')
-        firebase_auth.update_user(user.uid, custom_claims={PASSWORD_CHANGE: True}, app=app)
+        firebase_auth.update_user(
+            user.uid, email_verified=True, custom_claims={PASSWORD_CHANGE: True}, app=app
+        )
     else:
         firebase_auth.update_user(
             user.uid,

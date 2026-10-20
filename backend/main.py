@@ -78,7 +78,7 @@ try:
         AUDIO_ACK_EVERY,
     )
     from .company_store import CompanyInspectionStore
-    from .workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE_REQUIRED
+    from .workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
@@ -117,7 +117,7 @@ except ImportError:
         AUDIO_ACK_EVERY,
     )
     from company_store import CompanyInspectionStore
-    from workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE_REQUIRED
+    from workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
@@ -292,6 +292,13 @@ async def verify_identity(token, live=False):
     return claims
 
 
+def unlocked(claims):
+    """The claim refuses even without a membership marker, such as after a failed membership step."""
+    if claims.get(PASSWORD_CHANGE):
+        raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
+    return claims
+
+
 async def app_check_outcome(token):
     """Classifies a request's App Check token; monitor mode records the result and never rejects on it."""
     if not token:
@@ -318,6 +325,7 @@ def record_app_check(outcome, method, route, status=None):
 async def verify_staff(token, live=False):
     claims = await verify_identity(token, live)
     if WORKSPACES_ENABLED:
+        unlocked(claims)
         actor = await stored(get_job_store().workspaces.principal, claims['uid'])
         if actor['password_change_required']:
             raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
@@ -680,7 +688,7 @@ async def account_identity(
 async def current_identity(
     scopes: SecurityScopes, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
-    claims = await account_identity(scopes, credentials)
+    claims = unlocked(await account_identity(scopes, credentials))
     await stored(get_job_store().workspaces.unlocked, claims['uid'])
     return claims
 

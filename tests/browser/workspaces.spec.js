@@ -1038,11 +1038,9 @@ for (const width of [320, 390])
     await expect(password).toBeVisible();
     const create = form.getByRole('button', { name: 'Create company & owner login' });
     await expect(create).toBeVisible();
-    await form.getByRole('button', { name: 'Generate' }).click();
-    const generated = await password.inputValue();
-    expect(generated).toMatch(/^[A-Za-z0-9_-]{20}$/);
-    await form.getByRole('button', { name: 'Generate' }).click();
-    expect(await password.inputValue()).not.toBe(generated);
+    await expect(form.getByRole('button', { name: 'Generate' })).toHaveCount(0);
+    const chosen = 'synthetic-typed-first-01';
+    await password.fill(chosen);
     await fitsWidth(page);
     // Server refusals show their own message and create nothing.
     for (const [email, message] of [
@@ -1062,7 +1060,6 @@ for (const width of [320, 390])
     }
     const email = 'test-owner-ws-direct@example.invalid';
     await form.locator('input[name=owner_email]').fill(email);
-    const chosen = await password.inputValue();
     await create.click();
     await expect(page.locator('#dashboardHeading')).toHaveText('Direct Login Restoration');
     await expect(page.locator('#message')).toHaveText('Company created with an owner login.');
@@ -1080,8 +1077,8 @@ for (const width of [320, 390])
     const replace = page.locator('form', { hasText: 'Create login with temporary password' });
     await expect(replace).toContainText('Replaces the current owner now');
     await replace.locator('input[name=email]').fill('test-owner-ws-second@example.invalid');
-    await replace.getByRole('button', { name: 'Generate' }).click();
-    const second = await replace.locator('input[name=password]').inputValue();
+    const second = 'synthetic-typed-second-02';
+    await replace.locator('input[name=password]').fill(second);
     await replace.getByRole('button', { name: 'Create login' }).click();
     await expect(page.locator('#message')).toHaveText('Owner login created.');
     await expect(page.locator('.login-created code')).toHaveText(second);

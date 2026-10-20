@@ -551,15 +551,8 @@ window.WorkspaceUI = (() => {
     });
     container.append(form);
   }
-  // 64 characters, so each random byte maps to one without bias: 20 characters carry 120 bits.
-  const PASSWORD_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  const generatedPassword = () =>
-    Array.from(crypto.getRandomValues(new Uint8Array(20)), (v) => PASSWORD_ALPHABET[v & 63]).join(
-      '',
-    );
   function temporaryPassword(form) {
-    const input = formField(form, 'Temporary password', 'password'),
-      generate = node('button', 'Generate');
+    const input = formField(form, 'Temporary password', 'password');
     Object.assign(input, {
       required: true,
       minLength: 12,
@@ -568,12 +561,8 @@ window.WorkspaceUI = (() => {
       spellcheck: false,
       autocapitalize: 'off',
     });
-    generate.type = 'button';
-    generate.addEventListener('click', () => {
-      input.value = generatedPassword();
-    });
     const row = node('div', undefined, 'temporary-password');
-    row.append(input.closest('label'), generate, node('p', 'At least 12 characters.', 'hint'));
+    row.append(input.closest('label'), node('p', 'At least 12 characters.', 'hint'));
     form.append(row);
     return input;
   }
@@ -624,8 +613,12 @@ window.WorkspaceUI = (() => {
         password: values.get('password'),
         expected_version: company.version,
       });
-      await companyAdmin(cid);
-      loginCreated(result.owner.email, values.get('password'));
+      // The refresh replaces this view; the credentials show whether or not it succeeds.
+      try {
+        await companyAdmin(cid);
+      } finally {
+        loginCreated(result.owner.email, values.get('password'));
+      }
       say('Owner login created.', 'success');
     });
     container.append(form);
@@ -771,8 +764,11 @@ window.WorkspaceUI = (() => {
           owner_email: values.get('owner_email'),
           owner_password: values.get('password'),
         });
-        await companyAdmin(result.company.company_id);
-        loginCreated(result.owner.email, values.get('password'));
+        try {
+          await companyAdmin(result.company.company_id);
+        } finally {
+          loginCreated(result.owner.email, values.get('password'));
+        }
         say('Company created with an owner login.', 'success');
         return;
       }
