@@ -4,6 +4,7 @@ import asyncio
 import base64
 import html
 import json
+import re
 import logging
 import smtplib
 import socket
@@ -35,6 +36,9 @@ from tests.test_voice_notes import note as voice_note
 
 ID = 'ADR-INS-' + 'a' * 32
 OTHER = 'ADR-INS-' + 'b' * 32
+# Synthetic passwords, traced to show where they may and may not go.
+TEMPORARY = 'synthetic-temporary-0001'
+CHOSEN = 'synthetic-chosen-0002'
 
 
 def seed(store):
@@ -111,7 +115,7 @@ def api(store, monkeypatch):
     current = {'uid': 'owner'}
     monkeypatch.setattr(bm, 'WORKSPACES_ENABLED', True)
     monkeypatch.setattr(bm, 'get_job_store', lambda: store)
-    for endpoint in (bm.current_staff, bm.current_identity):
+    for endpoint in (bm.current_staff, bm.current_identity, bm.account_identity):
         bm.app.dependency_overrides[endpoint] = lambda: identity(current['uid'])
     # Depends captured the original function before the module attribute was patched.
     for route in bm.app.routes:
@@ -2523,6 +2527,13 @@ def superadmin_tools(invites):
             200,
         ),
         (
+            'create owner login',
+            'POST',
+            support + 'paused/owner-login',
+            {'email': 'paused-owner@example.invalid', 'password': TEMPORARY, 'expected_version': 2},
+            200,
+        ),
+        (
             'suspend company',
             'PUT',
             support + 'other/status',
@@ -2541,6 +2552,17 @@ def superadmin_tools(invites):
             'POST',
             '/api/admin/companies',
             {'name': 'Forged Restoration', 'owner_email': 'forged-owner@example.invalid'},
+            200,
+        ),
+        (
+            'create company with owner login',
+            'POST',
+            '/api/admin/companies',
+            {
+                'name': 'Login Restoration',
+                'owner_email': 'login-owner@example.invalid',
+                'owner_password': TEMPORARY,
+            },
             200,
         ),
     ]
@@ -2568,7 +2590,7 @@ def test_superadmin_tools_refuse_every_non_superadmin(mail, uid):
     assert not client.get('/api/access').json()['superadmin']
     assert_refused(client, superadmin_tools(invites))
     assert unrestricted(store) == before
-    assert not sent and not accounts.created
+    assert not sent and not accounts.created and not accounts.updated
 
 
 def test_superadmin_tools_succeed_for_an_active_superadmin(mail):
@@ -2631,6 +2653,8 @@ def revoked(records):
         'suspend company',
         'reactivate suspended company',
         'create company',
+        'create owner login',
+        'create company with owner login',
     ],
 )
 def test_superadmin_revoked_before_a_write_is_refused_without_changes(mail, monkeypatch, name):
@@ -2649,7 +2673,7 @@ def test_superadmin_revoked_before_a_write_is_refused_without_changes(mail, monk
     current['uid'] = 'admin'
     assert_refused(client, [tool])
     assert unrestricted(store) == revoked(before)
-    assert not sent and not accounts.created
+    assert not sent and not accounts.created and not accounts.updated
 
 
 @pytest.mark.parametrize(
@@ -3346,3 +3370,690 @@ def test_session_supplies_historical_identity_without_mutating_current_profile(a
     assert session['legacy_identity']['signoff'] == ADR_PROFILE['signoff']
     assert session['legacy_identity']['logo_data_url'].startswith('data:image/jpeg;base64,')
     assert session['company']['profile']['signoff'] == 'New Estimator'
+
+
+# Owner logins with a temporary password: the superadmin alternative to an owner invitation.
+def owner_events(store, action='owner_login_created'):
+    return [
+        v
+        for k, v in store.db.records.items()
+        if k.startswith('_admin_events/') and v['action'] == action
+    ]
+
+
+def create_owner_login(client, email='new-owner@example.invalid', company='other', **changes):
+    body = {'email': email, 'password': TEMPORARY, 'expected_version': 1, **changes}
+    return client.post('/api/admin/companies/' + company + '/owner-login', json=body)
+
+
+def test_owner_login_replaces_the_owner_like_an_accepted_owner_invitation(mail):
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    pending = w.invite('admin', 'other', 'invited-owner@example.invalid', 'owner')
+    staff = w.invite('other-owner', 'other', 'other-office@example.invalid', 'office')
+    current['uid'] = 'admin'
+    response = create_owner_login(client)
+    assert response.status_code == 200, response.text
+    assert TEMPORARY not in response.text
+    result = response.json()
+    assert result['owner'] == {'uid': 'new-owner', 'email': 'new-owner@example.invalid'}
+    records = store.db.records
+    account = accounts.users['new-owner@example.invalid']
+    assert account.password == TEMPORARY and account.email_verified
+    assert account.custom_claims == {'password_change_required': True}
+    assert records['_memberships/new-owner'] == {
+        'uid': 'new-owner',
+        'email': 'new-owner@example.invalid',
+        'company_id': 'other',
+        'role': 'owner',
+        'status': 'active',
+        'version': 1,
+        'updated_at': records['_memberships/new-owner']['updated_at'],
+        'password_change_required': True,
+    }
+    assert records['_memberships/other-owner']['status'] == 'disabled'
+    assert records['_memberships/other-owner']['version'] == 2
+    company = records['_companies/other']
+    assert company['owner_uid'] == 'new-owner' and company['version'] == 2
+    assert result['company']['owner_uid'] == 'new-owner'
+    # Pending owner invitations end; staff invitations from before stay.
+    assert records['_invitations/' + pending['invitation_id']]['status'] == 'cancelled'
+    assert records['_invitations/' + staff['invitation_id']]['status'] == 'pending'
+    [event] = owner_events(store)
+    assert event['actor_uid'] == 'admin' and event['company_id'] == 'other'
+    assert event['target'] == 'member/new-owner'
+    assert event['details'] == {
+        'email': 'n***@example.invalid',
+        'replacement': True,
+        'previous_owner_uid': 'other-owner',
+        'cancelled_invitations': 1,
+    }
+    assert not sent and not accounts.links
+
+
+def test_owner_login_creates_a_company_without_an_invitation(mail):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    response = client.post(
+        '/api/admin/companies',
+        json={
+            'name': 'Valley Dry',
+            'owner_email': 'Valley-Owner@Example.invalid',
+            'owner_password': TEMPORARY,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert TEMPORARY not in response.text
+    company = response.json()['company']
+    cid = company['company_id']
+    assert company['profile']['name'] == 'Valley Dry'
+    assert company['owner_uid'] == 'valley-owner' and company['version'] == 1
+    assert store.db.records['_companies/' + cid] == company
+    assert store.db.records['_memberships/valley-owner']['company_id'] == cid
+    assert not [k for k in store.db.records if k.startswith('_invitations/')]
+    [event] = owner_events(store)
+    assert event['details']['replacement'] is False and event['company_id'] == cid
+    assert not sent
+    current['uid'] = 'valley-owner'
+    session = client.get('/api/session')
+    assert session.status_code == 403
+    assert session.json() == {'detail': workspaces.PASSWORD_CHANGE_REQUIRED}
+
+
+def test_owner_login_sets_the_password_on_an_invited_account_and_ends_its_invitation(mail):
+    """The account an owner invitation provisioned, without a password yet, takes the temporary one."""
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    invited = client.post(
+        '/api/companies/other/invitations',
+        json={'email': 'invited-owner@example.invalid', 'role': 'owner'},
+    ).json()
+    assert accounts.users['invited-owner@example.invalid'].provider_data == []
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    account = accounts.users['invited-owner@example.invalid']
+    assert account.password == TEMPORARY and account.email_verified
+    assert account.custom_claims == {'password_change_required': True}
+    invitation = store.db.records['_invitations/' + invited['invitation_id']]
+    assert invitation['status'] == 'cancelled'
+    current['uid'] = 'invited-owner'
+    assert (
+        client.post('/api/invitations/' + invited['invitation_id'] + '/accept').status_code == 403
+    )
+
+
+REFUSED_LOGINS = {
+    'member email': ('estimator@example.invalid', {}, 409, 'already has company access'),
+    'Google account': ('google-owner@example.invalid', {}, 409, 'signs in with Google'),
+    'Google and password': ('both-owner@example.invalid', {}, 409, 'signs in with Google'),
+    'disabled account': ('disabled-owner@example.invalid', {}, 409, 'disabled'),
+    'short password': ('new-owner@example.invalid', {'password': 'x' * 11}, 400, '12 to 128'),
+    'long password': ('new-owner@example.invalid', {'password': 'x' * 129}, 400, '12 to 128'),
+    'invalid email': ('not-an-email', {}, 400, 'valid email'),
+    'stale version': ('new-owner@example.invalid', {'expected_version': 2}, 409, 'Reload'),
+    'suspended company': ('new-owner@example.invalid', {'company': 'paused'}, 403, 'active'),
+    'unknown company': ('new-owner@example.invalid', {'company': 'missing'}, 404, 'not found'),
+}
+
+
+@pytest.mark.parametrize('case', REFUSED_LOGINS)
+def test_owner_login_refusals_change_no_account_or_record(mail, case):
+    client, current, store, accounts, sent, _ = mail
+    store.db.records['_companies/paused'] = {
+        **deepcopy(store.db.records['_companies/other']),
+        'company_id': 'paused',
+        'status': 'suspended',
+    }
+    accounts.add('estimator@example.invalid', 'password')
+    accounts.add('google-owner@example.invalid', 'google.com')
+    accounts.add('both-owner@example.invalid', 'password', 'google.com')
+    accounts.add('disabled-owner@example.invalid', 'password', disabled=True)
+    email, changes, status, message = REFUSED_LOGINS[case]
+    current['uid'] = 'admin'
+    before = unrestricted(store)
+    response = create_owner_login(client, email, **changes)
+    assert response.status_code == status, response.text
+    assert message in response.json()['detail']
+    assert 'x' * 11 not in response.text and TEMPORARY not in response.text
+    assert unrestricted(store) == before
+    assert not accounts.created and not accounts.updated and not sent
+
+
+def test_owner_login_refuses_when_the_owner_changes_after_the_account_step(mail, monkeypatch):
+    """An owner invitation accepted between the checks and the commit wins; nothing else changes."""
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    invitation = w.invite('admin', 'other', 'rival@example.invalid', 'owner')
+    provision = workspaces.set_temporary_password
+
+    def accepted_meanwhile(*args):
+        uid = provision(*args)
+        w.accept(identity('rival'), invitation['invitation_id'])
+        return uid
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', accepted_meanwhile)
+    current['uid'] = 'admin'
+    response = create_owner_login(client)
+    assert response.status_code == 409 and 'Reload' in response.json()['detail']
+    records = store.db.records
+    assert records['_companies/other']['owner_uid'] == 'rival'
+    assert '_memberships/new-owner' not in records and not owner_events(store)
+    # The account holds the password but grants nothing; a retry updates the same account.
+    assert accounts.users['new-owner@example.invalid'].password == TEMPORARY
+    assert create_owner_login(client, expected_version=2).status_code == 200
+    assert records['_memberships/rival']['status'] == 'disabled'
+    assert records['_companies/other']['owner_uid'] == 'new-owner'
+
+
+def test_concurrent_owner_logins_for_one_account_leave_the_winners_password(mail, monkeypatch):
+    """A second owner login for the same account while the first holds it changes no password."""
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    accounts.add('invited-owner@example.invalid')
+    provision = workspaces.set_temporary_password
+    rivals = []
+
+    def raced(*args):
+        with pytest.raises(Conflict, match='in progress'):
+            w.owner_login(
+                'admin',
+                None,
+                'invited-owner@example.invalid',
+                'synthetic-rival-00001',
+                None,
+                'Rival',
+            )
+        rivals.append(len(accounts.updated))
+        return provision(*args)
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', raced)
+    current['uid'] = 'admin'
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    assert rivals == [0]
+    account = accounts.users['invited-owner@example.invalid']
+    assert account.password == TEMPORARY
+    assert store.db.records['_companies/other']['owner_uid'] == 'invited-owner'
+    assert not [k for k in store.db.records if k.startswith(workspaces.LOGIN_RESERVATIONS)]
+    # Once the first commits, a later attempt is refused before touching the password.
+    monkeypatch.setattr(workspaces, 'set_temporary_password', provision)
+    later = create_owner_login(client, 'invited-owner@example.invalid', expected_version=2)
+    assert later.status_code == 409 and 'already has company access' in later.json()['detail']
+    assert account.password == TEMPORARY and len(accounts.updated) == 1
+
+
+def test_owner_login_and_invitation_acceptance_for_one_account_cannot_both_win(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    accounts.add('invited-owner@example.invalid')
+    invitation = w.invite('admin', 'adr', 'invited-owner@example.invalid', 'owner')
+    provision = workspaces.set_temporary_password
+
+    def accepted_meanwhile(*args):
+        with pytest.raises(Conflict, match='owner login is being created'):
+            w.accept(identity('invited-owner'), invitation['invitation_id'])
+        return provision(*args)
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', accepted_meanwhile)
+    current['uid'] = 'admin'
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    records = store.db.records
+    assert records['_memberships/invited-owner']['company_id'] == 'other'
+    assert records['_companies/adr']['owner_uid'] == 'owner'
+    assert accounts.users['invited-owner@example.invalid'].password == TEMPORARY
+    # Acceptance that commits first wins; the owner login then changes no password.
+    accounts.add('second-owner@example.invalid')
+    second = w.invite('admin', 'adr', 'second-owner@example.invalid', 'owner')
+    w.accept(identity('second-owner'), second['invitation_id'])
+    monkeypatch.setattr(workspaces, 'set_temporary_password', provision)
+    refused = create_owner_login(client, 'second-owner@example.invalid', expected_version=2)
+    assert refused.status_code == 409 and 'already has company access' in refused.json()['detail']
+    assert accounts.users['second-owner@example.invalid'].password is None
+
+
+def test_reservation_is_not_reusable_while_the_bounded_password_write_can_run(mail, monkeypatch):
+    """Even at the latest moment the bounded Firebase calls can still be running, the account stays held."""
+    client, current, store, accounts, sent, _ = mail
+    w = store.workspaces
+    accounts.add('invited-owner@example.invalid')
+    start = time.time()
+    clock = SimpleNamespace(time=lambda: start, sleep=time.sleep, monotonic=time.monotonic)
+    monkeypatch.setattr(workspaces, 'time', clock)
+    provision = workspaces.set_temporary_password
+
+    def slowest(*args):
+        clock.time = lambda: start + 24 * workspaces.LOGIN_HTTP_SECONDS
+        with pytest.raises(Conflict, match='in progress'):
+            w.owner_login(
+                'admin',
+                None,
+                'invited-owner@example.invalid',
+                'synthetic-rival-00001',
+                None,
+                'Rival',
+            )
+        return provision(*args)
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', slowest)
+    current['uid'] = 'admin'
+    response = create_owner_login(client, 'invited-owner@example.invalid')
+    assert response.status_code == 200, response.text
+    assert accounts.users['invited-owner@example.invalid'].password == TEMPORARY
+    assert workspaces.LOGIN_RESERVATION_SECONDS >= 2 * 24 * workspaces.LOGIN_HTTP_SECONDS
+
+
+@pytest.mark.parametrize('delay, status', [(0, 503), (3, 200)], ids=['retry-after', 'stalled'])
+def test_owner_login_firebase_writes_neither_retry_nor_outlast_their_bound(
+    monkeypatch, delay, status
+):
+    """Against a local Auth endpoint: a 503 asking for an hour's wait and a stalled reply each end the
+    write after one request, within the configured timeout."""
+    import threading
+    import firebase_admin
+    from firebase_admin import exceptions
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            hits.append(self.path)
+            time.sleep(delay)
+            body = b'{}'
+            self.send_response(status)
+            self.send_header('Retry-After', '3600')
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    def forget_app():
+        try:
+            firebase_admin.delete_app(firebase_admin.get_app('adr-owner-login'))
+        except ValueError:
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv('FIREBASE_AUTH_EMULATOR_HOST', '127.0.0.1:%d' % server.server_port)
+    monkeypatch.setattr(workspaces, 'LOGIN_HTTP_SECONDS', 0.5)
+    forget_app()
+    try:
+        started = time.monotonic()
+        with pytest.raises(exceptions.FirebaseError):
+            workspaces.set_temporary_password(
+                SimpleNamespace(uid='owner', custom_claims=None), 'owner@example.invalid', TEMPORARY
+            )
+        assert time.monotonic() - started < 2.5
+        assert len(hits) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        forget_app()
+
+
+def test_failed_password_write_releases_the_account_for_a_retry(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    provision = workspaces.set_temporary_password
+
+    def unavailable(*args):
+        raise RuntimeError('Synthetic Firebase outage')
+
+    monkeypatch.setattr(workspaces, 'set_temporary_password', unavailable)
+    current['uid'] = 'admin'
+    before = unrestricted(store)
+    assert create_owner_login(client).status_code == 503
+    assert unrestricted(store) == before
+    monkeypatch.setattr(workspaces, 'set_temporary_password', provision)
+    assert create_owner_login(client).status_code == 200
+
+
+def test_a_temporary_password_claim_without_a_membership_cannot_accept_an_invitation(
+    mail, monkeypatch
+):
+    """If the membership step failed after Firebase took the temporary password, the claim alone
+    still refuses every route, so the account cannot accept a pending owner invitation unchanged."""
+    client, current, store, accounts, sent, _ = mail
+    invitation = store.workspaces.invite('admin', 'other', 'stranded@example.invalid', 'owner')
+    accounts.add('stranded@example.invalid', 'password')
+    accounts.users['stranded@example.invalid'].custom_claims = {'password_change_required': True}
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'stranded'
+    before = unrestricted(store)
+    for method, path in (
+        ('GET', '/api/invitations/' + invitation['invitation_id']),
+        ('POST', '/api/invitations/' + invitation['invitation_id'] + '/accept'),
+        ('GET', '/api/access'),
+        ('GET', '/api/session'),
+    ):
+        response = client.request(method, path)
+        assert response.status_code == 403, (path, response.text)
+        assert response.json() == {'detail': workspaces.PASSWORD_CHANGE_REQUIRED}
+    assert unrestricted(store) == before
+
+
+def locked_identity(accounts, uid):
+    """Claims as Firebase would issue them now: the account's current custom claims at top level."""
+    user = accounts.get_user(uid)
+    return {
+        **identity(uid),
+        'firebase': {'sign_in_provider': 'password'},
+        **(user.custom_claims or {}),
+    }
+
+
+def real_verification(monkeypatch, current, accounts):
+    for endpoint in (bm.current_staff, bm.current_identity, bm.account_identity):
+        bm.app.dependency_overrides.pop(endpoint)
+    monkeypatch.setattr(bm, 'revocation_checked', type(bm.revocation_checked)())
+    monkeypatch.setattr(bm.firebase_admin, 'get_app', lambda name: object())
+    monkeypatch.setattr(
+        bm.firebase_auth,
+        'verify_id_token',
+        lambda *args, **kwargs: locked_identity(accounts, current['uid']),
+    )
+
+
+def member_routes():
+    """Every authenticated HTTP route except the password change itself."""
+    for route in bm.app.routes:
+        path = getattr(route, 'path', '')
+        if (
+            not path.startswith('/api/')
+            or not getattr(route, 'methods', None)
+            or path in ('/api/health', '/api/sign', '/api/account/password')
+            or path.startswith('/api/sign/')
+        ):
+            continue
+        for method in route.methods - {'HEAD'}:
+            yield method, re.sub(r'\{[^}]+\}', 'x', path)
+
+
+def test_temporary_password_refuses_every_member_route_until_replaced(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    assert create_owner_login(client).status_code == 200
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'new-owner'
+    before = unrestricted(store)
+    routes = list(member_routes())
+    assert len(routes) > 40
+    for method, path in routes:
+        response = client.request(method, path, json={} if method in ('POST', 'PUT') else None)
+        assert response.status_code == 403, (method, path, response.text)
+        assert response.json() == {'detail': workspaces.PASSWORD_CHANGE_REQUIRED}, (method, path)
+    assert unrestricted(store) == before
+    # Store checks refuse too, for callers that skip the request gate.
+    w = store.workspaces
+    actor = w.principal('new-owner')
+    assert actor['password_change_required'] and not actor['role'] and not actor['capabilities']
+    for check in (lambda: w.company_actor('new-owner'), lambda: w.admin('new-owner')):
+        with pytest.raises(workspaces.PasswordChangeRequired):
+            check()
+    changed = client.post('/api/account/password', json={'password': CHOSEN})
+    assert changed.status_code == 200 and changed.json() == {'password_changed': True}
+    session = client.get('/api/session')
+    assert session.status_code == 200, session.text
+    assert session.json()['role'] == 'owner' and session.json()['company_id'] == 'other'
+    assert not session.json()['password_change_required']
+
+
+def test_superadmin_given_a_temporary_password_loses_support_access_until_replaced(mail):
+    client, current, store, accounts, sent, _ = mail
+    store.db.records['_platform_admins/new-owner'] = {'active': True}
+    current['uid'] = 'admin'
+    assert create_owner_login(client).status_code == 200
+    current['uid'] = 'new-owner'
+    for path in ('/api/admin/companies', '/api/companies/adr', '/api/admin/companies/adr/jobs'):
+        response = client.get(path)
+        assert response.status_code == 403
+        assert response.json()['detail'] == workspaces.PASSWORD_CHANGE_REQUIRED
+
+
+def test_live_refuses_a_temporary_password_before_vertex(mail, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    assert create_owner_login(client).status_code == 200
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'new-owner'
+    monkeypatch.setattr(
+        bm.genai, 'Client', lambda **kwargs: pytest.fail('Locked Live must not reach Vertex')
+    )
+    with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+        socket.send_json(
+            {
+                'type': 'authenticate',
+                'token': 'synthetic',
+                'inspection_id': OTHER,
+                'protocol_version': 2,
+                'capture_id': 'f' * 32,
+                'workspace_protocol_version': 1,
+            }
+        )
+        assert socket.receive_json()['type'] == 'error'
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_json()
+    assert not any(k.startswith('_live_sessions/') for k in store.db.records)
+
+
+def test_password_change_replaces_the_temporary_password_and_lifts_the_gate(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    assert create_owner_login(client).status_code == 200
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'new-owner'
+    short = client.post('/api/account/password', json={'password': 'x' * 11})
+    assert short.status_code == 400 and 'x' * 11 not in short.text
+    account = accounts.users['new-owner@example.invalid']
+    assert account.password == TEMPORARY
+    assert client.post('/api/account/password', json={'password': CHOSEN}).status_code == 200
+    assert account.password == CHOSEN and account.custom_claims == {}
+    assert 'password_change_required' not in store.db.records['_memberships/new-owner']
+    [event] = owner_events(store, 'temporary_password_replaced')
+    assert event['actor_uid'] == 'new-owner' and event['company_id'] == 'other'
+    assert event['details'] == {} and event['target'] == 'member/new-owner'
+    # Once set, the password changes only through Forgot password.
+    again = client.post('/api/account/password', json={'password': 'synthetic-another-0003'})
+    assert again.status_code == 409 and 'Forgot password' in again.json()['detail']
+    assert account.password == CHOSEN
+
+
+def test_password_change_requires_a_password_sign_in(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    assert create_owner_login(client).status_code == 200
+    current['uid'] = 'new-owner'
+    # The api fixture signs everyone in with Google.
+    response = client.post('/api/account/password', json={'password': CHOSEN})
+    assert response.status_code == 403
+    assert accounts.users['new-owner@example.invalid'].password == TEMPORARY
+
+
+def test_password_change_keeps_the_gate_when_firebase_fails(mail, monkeypatch):
+    """Firebase changes first, so a failure leaves the temporary password locked, never usable."""
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    assert create_owner_login(client).status_code == 200
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'new-owner'
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('Synthetic Firebase outage')
+
+    monkeypatch.setattr(accounts, 'update_user', unavailable)
+    response = client.post('/api/account/password', json={'password': CHOSEN})
+    assert response.status_code == 503
+    assert response.json() == {'detail': 'Your password could not be changed. Try again.'}
+    assert store.db.records['_memberships/new-owner']['password_change_required']
+    assert client.get('/api/session').status_code == 403
+
+
+@pytest.mark.parametrize(
+    'route, message',
+    [
+        ('replace', 'The owner login could not be created. Try again or contact support.'),
+        ('create', 'The owner login could not be created. Try again or contact support.'),
+        ('password', 'Your password could not be changed. Try again.'),
+    ],
+)
+def test_quota_failure_names_the_account_action(mail, monkeypatch, route, message):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    if route == 'password':
+        assert create_owner_login(client).status_code == 200
+        real_verification(monkeypatch, current, accounts)
+        current['uid'] = 'new-owner'
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('Synthetic Firestore outage')
+
+    monkeypatch.setattr(store, 'quota', unavailable)
+    if route == 'replace':
+        response = create_owner_login(client)
+    elif route == 'create':
+        response = client.post(
+            '/api/admin/companies',
+            json={
+                'name': 'Valley Dry',
+                'owner_email': 'valley@example.invalid',
+                'owner_password': TEMPORARY,
+            },
+        )
+    else:
+        response = client.post('/api/account/password', json={'password': CHOSEN})
+    assert response.status_code == 503
+    assert response.json() == {'detail': message}
+
+
+def test_owner_login_membership_lookup_failure_names_the_action(mail, monkeypatch):
+    client, current, store, accounts, sent, _ = mail
+    current['uid'] = 'admin'
+    real_verification(monkeypatch, current, accounts)
+    monkeypatch.setattr(
+        bm.firebase_auth, 'verify_id_token', lambda *args, **kwargs: identity('admin')
+    )
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('Synthetic Firestore outage')
+
+    monkeypatch.setattr(store.workspaces, 'unlocked', unavailable)
+    company = {'name': 'Valley Dry', 'owner_email': 'valley@example.invalid'}
+    owner_login = 'The owner login could not be created. Try again or contact support.'
+    generic = 'Changes could not be saved. Your local draft can be retried.'
+    for response, message in (
+        (create_owner_login(client), owner_login),
+        (
+            client.post('/api/admin/companies', json={**company, 'owner_password': TEMPORARY}),
+            owner_login,
+        ),
+        (client.post('/api/admin/companies', json=company), generic),
+        (client.get('/api/admin/companies'), generic),
+    ):
+        assert response.status_code == 503
+        assert response.json() == {'detail': message}
+
+
+def test_password_change_recovers_a_claim_left_without_a_membership(mail, monkeypatch):
+    """If the membership step failed after Firebase took the temporary password, the claim still lets
+    the account choose its own password instead of staying on the change screen."""
+    client, current, store, accounts, sent, _ = mail
+    accounts.add('stranded@example.invalid', 'password')
+    accounts.users['stranded@example.invalid'].custom_claims = {'password_change_required': True}
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'stranded'
+    assert client.post('/api/account/password', json={'password': CHOSEN}).status_code == 200
+    assert accounts.users['stranded@example.invalid'].custom_claims == {}
+    assert '_memberships/stranded' not in store.db.records
+
+
+def test_temporary_and_chosen_passwords_never_reach_logs_records_or_responses(
+    mail, monkeypatch, caplog, capsys
+):
+    client, current, store, accounts, sent, writes = mail
+    caplog.set_level(logging.DEBUG)
+    current['uid'] = 'admin'
+    responses = [
+        create_owner_login(client),
+        client.post(
+            '/api/admin/companies',
+            json={
+                'name': 'Valley Dry',
+                'owner_email': 'valley@example.invalid',
+                'owner_password': TEMPORARY,
+            },
+        ),
+        create_owner_login(client, 'x@example.invalid', password='short'),
+    ]
+    real_verification(monkeypatch, current, accounts)
+    current['uid'] = 'new-owner'
+    responses.append(client.post('/api/account/password', json={'password': CHOSEN}))
+    responses.append(client.get('/api/session'))
+    traced = '\n'.join(
+        [r.text for r in responses]
+        + writes
+        + [json.dumps(store.db.records, default=str), caplog.text, *capsys.readouterr()]
+    )
+    for secret in (TEMPORARY, CHOSEN, 'short'):
+        assert secret not in traced
+    assert 'new-owner@example.invalid' not in json.dumps(
+        [e['details'] for e in owner_events(store)]
+    )
+
+
+@pytest.mark.parametrize(
+    'path, body',
+    [
+        (
+            '/api/admin/companies/other/owner-login',
+            {'email': 'n@example.invalid', 'password': TEMPORARY},
+        ),
+        ('/api/admin/companies', {'owner_email': 'n@example.invalid', 'owner_password': TEMPORARY}),
+        (
+            '/api/admin/companies/other/owner-login',
+            {'password': TEMPORARY, 'expected_version': 'one'},
+        ),
+        ('/api/account/password', {'password': TEMPORARY, 'extra': True}),
+    ],
+)
+def test_validation_errors_never_echo_a_password(api, path, body):
+    client, current, store = api
+    current['uid'] = 'admin'
+    response = client.post(path, json=body)
+    assert response.status_code == 422
+    assert TEMPORARY not in response.text
+    assert all('msg' in error and 'loc' in error for error in response.json()['detail'])
+
+
+@pytest.mark.parametrize('route', ['replace', 'create'])
+def test_owner_login_failure_names_the_action_instead_of_a_draft_retry(mail, monkeypatch, route):
+    """A Firebase or database failure (such as a missing permission) says the login was not created."""
+    client, current, store, accounts, sent, _ = mail
+
+    def denied(*args, **kwargs):
+        raise RuntimeError('Synthetic permission denied')
+
+    monkeypatch.setattr(accounts, 'create_user', denied)
+    current['uid'] = 'admin'
+    response = (
+        create_owner_login(client)
+        if route == 'replace'
+        else client.post(
+            '/api/admin/companies',
+            json={
+                'name': 'Valley Dry',
+                'owner_email': 'valley@example.invalid',
+                'owner_password': TEMPORARY,
+            },
+        )
+    )
+    assert response.status_code == 503
+    assert response.json() == {
+        'detail': 'The owner login could not be created. Try again or contact support.'
+    }
+    assert not owner_events(store)

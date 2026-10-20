@@ -73,7 +73,9 @@ let syncChain = Promise.resolve(),
   authSdk = null,
   waitingWorker = null;
 let confirmedAuthorization = null,
-  authEpoch = 0;
+  authEpoch = 0,
+  appliedEpoch = 0,
+  passwordFormUid = '';
 const newId = () => crypto.randomUUID().replaceAll('-', '');
 const ui = {
   task: 'property',
@@ -3870,6 +3872,66 @@ async function initialize() {
     await authSdk.sendEmailVerification(auth.currentUser);
     authSay('Verification email sent to ' + auth.currentUser.email + '.', 'success');
   });
+  // A superadmin-created login: the backend sets the owner's own password and lifts its gate.
+  $('setPassword').addEventListener('submit', (e) => e.preventDefault());
+  authClick('savePassword', async () => {
+    if (!$('setPassword').reportValidity()) return;
+    const password = $('newPassword').value;
+    if (password !== $('confirmPassword').value) {
+      authSay('The two passwords do not match.', 'error');
+      return;
+    }
+    const user = auth.currentUser,
+      mark = signInMark(),
+      headers = {
+        ...(await appCheckHeaders()),
+        Authorization: 'Bearer ' + (await user.getIdToken()),
+        'Content-Type': 'application/json',
+      };
+    let response = null;
+    try {
+      response = await fetch('/api/account/password', {
+        method: 'POST',
+        cache: 'no-store',
+        headers,
+        body: JSON.stringify({ password }),
+      });
+    } catch {}
+    if (signInMark() !== mark) {
+      $('newPassword').value = $('confirmPassword').value = '';
+      return;
+    }
+    if (!response?.ok) {
+      // Firebase may have taken the new password before the request failed, which ends this sign-in.
+      if (!response || response.status >= 500) {
+        const saved = await reauthenticate(user, password).then(
+          () => true,
+          () => false,
+        );
+        if (saved) {
+          $('newPassword').value = $('confirmPassword').value = '';
+          if (auth.currentUser?.uid !== user.uid) return;
+          await applyUser(auth.currentUser);
+          if (!$('setPassword').hidden)
+            authSay('Your new password is saved. Enter it again to finish setup.', 'error');
+          return;
+        }
+      }
+      const payload = response ? await response.json().catch(() => ({})) : {};
+      authSay(
+        typeof payload.detail === 'string'
+          ? payload.detail
+          : 'Your password could not be saved. Check your connection and try again.',
+        'error',
+      );
+      return;
+    }
+    $('newPassword').value = $('confirmPassword').value = '';
+    // A new password ends this sign-in, so sign in again with it.
+    await reauthenticate(user, password);
+    if (auth.currentUser?.uid !== user.uid) return;
+    await applyUser(auth.currentUser);
+  });
   authClick('confirmVerified', async () => {
     const user = auth.currentUser;
     await user.reload();
@@ -3938,6 +4000,7 @@ async function initialize() {
   };
   click('signOutButton', signOut);
   click('verifySignOut', signOut);
+  click('setPasswordSignOut', signOut);
   click('discardSignOut', discardAndSignOut);
   click('newInspection', () => openNew());
   const jobs = () => (window.WorkspaceUI?.enabled() ? WorkspaceUI.jobs() : showJobs());
@@ -4221,10 +4284,60 @@ function resetShellBranding() {
     logo.alt = '';
   }
 }
+// Must match backend/workspaces.py PASSWORD_CHANGE_REQUIRED.
+const PASSWORD_CHANGE_REQUIRED = 'Set your own password before using DryScope.';
+async function passwordChangeRequired(user) {
+  try {
+    return (await user.getIdTokenResult()).claims.password_change_required === true;
+  } catch {
+    // The server gate still refuses; the session check below shows the step then.
+    return false;
+  }
+}
+function showAuthStage(user, stage) {
+  $('authPanel').hidden = stage === 'ready';
+  $('googleSignIn').hidden = stage !== 'signedOut';
+  // Signed out, unverified or on a temporary password: only the login page shows, never the inspection workspace.
+  document.body.classList.toggle('login-page', stage !== 'ready');
+  $('emailAuthForm').hidden = stage !== 'signedOut';
+  $('verifyEmail').hidden = stage !== 'unverified';
+  $('verifyAddress').textContent = user?.email || '';
+  $('setPassword').hidden = stage !== 'changePassword';
+  $('setPasswordAddress').textContent = user?.email || '';
+  $('setPasswordUsername').value = user?.email || '';
+}
+// Bound to that user, so it never replaces an account signed in meanwhile.
+function reauthenticate(user, password) {
+  return authSdk.reauthenticateWithCredential(
+    user,
+    authSdk.EmailAuthProvider.credential(user.email, password),
+  );
+}
+// The live sign-in and auth-callback epoch, so a continuation can tell whether the account changed under it.
+function signInMark() {
+  return (auth?.currentUser?.uid || '') + ':' + authEpoch;
+}
+// A request's token and later disclosure belong to one account: the latest sign-in has finished applying
+// and the live, applied and session users agree.
+function submissionMark() {
+  const uid = auth?.currentUser?.uid;
+  if (appliedEpoch !== authEpoch || !uid || uid !== state.user?.uid || uid !== state.session?.uid)
+    throw Error('Your sign-in changed. Reload and try again.');
+  return signInMark();
+}
 async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,
     stale = () => epoch !== authEpoch;
+  // Owner credentials typed or shown for one sign-in never survive into the next.
+  for (const card of $('dashboardContent').querySelectorAll('.login-created')) card.remove();
+  for (const input of $('dashboardContent').querySelectorAll('.temporary-password input'))
+    input.value = '';
+  // A chosen password belongs to the account it was typed for, never to the next one.
+  if (passwordFormUid !== (user?.uid || '')) {
+    passwordFormUid = user?.uid || '';
+    $('newPassword').value = $('confirmPassword').value = '';
+  }
   if (state.user && state.user.uid !== user?.uid) {
     state.queuePaused = true;
     await leaveNotes();
@@ -4248,7 +4361,9 @@ async function applyUser(user) {
     if (!user) await clearLocal();
     if (stale()) return;
   }
-  const stage = authStage(user);
+  let stage = authStage(user);
+  if (stage === 'ready' && (await passwordChangeRequired(user))) stage = 'changePassword';
+  if (stale()) return;
   state.user = user;
   state.session = null;
   if (!user) resetShellBranding();
@@ -4261,15 +4376,9 @@ async function applyUser(user) {
   $('signOutButton').hidden = !user;
   $('inspectionFields').disabled = true;
   $('accountStatus').textContent = user ? user.email : 'Sign in to start an inspection';
-  $('authPanel').hidden = stage === 'ready';
-  $('googleSignIn').hidden = stage !== 'signedOut';
-  // Signed out or unverified: only the login page shows, never the inspection workspace.
-  document.body.classList.toggle('login-page', stage !== 'ready');
-  $('emailAuthForm').hidden = stage !== 'signedOut';
-  $('verifyEmail').hidden = stage !== 'unverified';
-  $('verifyAddress').textContent = user?.email || '';
+  showAuthStage(user, stage);
   renderControls();
-  // Unverified accounts stay on the verification step: no drafts, sessions or authenticated API calls.
+  // Unverified accounts and temporary passwords stay on their step: no drafts, sessions or authenticated API calls.
   if (stage !== 'ready') {
     state.workspaceInitializing = false;
     showTask('property', false);
@@ -4287,6 +4396,21 @@ async function applyUser(user) {
         headers: { ...(await appCheckHeaders()), Authorization: 'Bearer ' + token },
       });
       if (stale()) return;
+      if (
+        response.status === 403 &&
+        (
+          await response
+            .clone()
+            .json()
+            .catch(() => ({}))
+        ).detail === PASSWORD_CHANGE_REQUIRED
+      ) {
+        // The server still holds the temporary-password gate, whatever this token's claims say.
+        if (stale()) return;
+        showAuthStage(user, 'changePassword');
+        showTask('property', false);
+        return;
+      }
       if (response.status === 403) {
         response = await fetch('/api/access', {
           cache: 'no-store',
@@ -4324,6 +4448,7 @@ async function applyUser(user) {
     if (!stale()) say(e.message, 'error');
   } finally {
     if (!stale()) {
+      appliedEpoch = epoch;
       state.workspaceInitializing = false;
       for (const control of $('workspaceNav').querySelectorAll('button')) control.disabled = false;
     }

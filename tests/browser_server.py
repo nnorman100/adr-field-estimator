@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 import backend.main as bm
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
-from tests.fakes import FakeStore, FakeCompanyStore
+from tests.fakes import FakeAuth, FakeStore, FakeCompanyStore
 from backend.workspaces import ADR_PROFILE
 import backend.workspaces as wm
 from backend.contracts import InspectionData
@@ -30,6 +30,9 @@ from copy import deepcopy
 store = FakeStore()
 legacy_store = store
 original_sender = wm.send_invitation
+original_auth = (wm.firebase_auth, wm.auth_app)
+# Firebase accounts the backend creates, such as superadmin-created owner logins; reset with each fixture.
+accounts = FakeAuth()
 faults = {}
 authorization_refs = {}
 worker_suffix = ''
@@ -56,15 +59,27 @@ async def identity(request: Request):
         if fault.get('authorize'):
             fault['authorize'] -= 1
             raise HTTPException(503, 'Synthetic save failure')
+    email = uid + '@example.invalid' if bm.WORKSPACES_ENABLED else 'synthetic@example.invalid'
+    account = accounts.users.get(email) if bm.WORKSPACES_ENABLED else None
+    if account and account.password:
+        # A backend-created password login: its token carries the account's current custom claims.
+        return {
+            'uid': uid,
+            'email': email,
+            'email_verified': True,
+            'firebase': {'sign_in_provider': 'password'},
+            **(account.custom_claims or {}),
+        }
     return {
         'uid': uid,
-        'email': uid + '@example.invalid' if bm.WORKSPACES_ENABLED else 'synthetic@example.invalid',
+        'email': email,
         'email_verified': True,
         'firebase': {'sign_in_provider': 'google.com'},
     }
 
 
 bm.app.dependency_overrides[bm.current_identity] = identity
+bm.app.dependency_overrides[bm.account_identity] = identity
 bm.app.dependency_overrides[bm.current_staff] = identity
 bm.app.dependency_overrides[bm.get_job_store] = lambda: store
 bm.get_job_store = lambda: store
@@ -156,16 +171,36 @@ async def fault(request: Request):
     return {'references': authorization_refs.get(body['uid'], [])}
 
 
+@bm.app.post('/__test/auth/sign-in')
+async def password_sign_in(request: Request):
+    # Stands in for Firebase's password check on accounts the backend created.
+    body = await request.json()
+    account = accounts.users.get(body.get('email'))
+    if not account or not account.password or account.password != body.get('password'):
+        raise HTTPException(401, 'Synthetic wrong password')
+    return {'uid': account.uid}
+
+
+@bm.app.get('/__test/auth/claims')
+async def password_claims(uid: str):
+    return accounts.get_user(uid).custom_claims or {}
+
+
 @bm.app.post('/__test/workspaces')
 async def workspaces_fixture(request: Request):
-    global store
+    global store, accounts
     body = await request.json()
     if not body.get('enabled'):
         store = legacy_store
         bm.WORKSPACES_ENABLED = False
         wm.send_invitation = original_sender
+        wm.firebase_auth, wm.auth_app = original_auth
         return {'enabled': False}
     store = FakeCompanyStore()
+    accounts = FakeAuth()
+    accounts.add('test-owner-ws-google@example.invalid', 'google.com')
+    accounts.add('test-owner-ws-estimator@example.invalid', 'password')
+    wm.firebase_auth, wm.auth_app = accounts, lambda: None
     bm.WORKSPACES_ENABLED = True
     for cid in ('adr', 'other'):
         profile = deepcopy(ADR_PROFILE)

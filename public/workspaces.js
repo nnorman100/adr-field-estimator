@@ -551,6 +551,100 @@ window.WorkspaceUI = (() => {
     });
     container.append(form);
   }
+  function temporaryPassword(form) {
+    const input = formField(form, 'Temporary password', 'password', '', 'password');
+    Object.assign(input, {
+      required: true,
+      minLength: 12,
+      maxLength: 128,
+      autocomplete: 'new-password',
+      spellcheck: false,
+      autocapitalize: 'off',
+    });
+    // Hidden while typed; Show lets the superadmin check it before creating the login.
+    const show = node('button', 'Show');
+    show.type = 'button';
+    show.setAttribute('aria-pressed', 'false');
+    show.addEventListener('click', () => {
+      const shown = input.type === 'password';
+      input.type = shown ? 'text' : 'password';
+      show.textContent = shown ? 'Hide' : 'Show';
+      show.setAttribute('aria-pressed', String(shown));
+    });
+    const row = node('div', undefined, 'temporary-password');
+    row.append(input.closest('label'), show, node('p', 'At least 12 characters.', 'hint'));
+    form.append(row);
+    return input;
+  }
+  // The password exists only here and in the superadmin's own email; the server never returns it.
+  function loginCreated(email, password) {
+    const card = node('section', undefined, 'dashboard-card login-created'),
+      code = node('code', password);
+    card.setAttribute('role', 'status');
+    card.append(
+      node('h2', 'Owner login created'),
+      node(
+        'p',
+        'Send this sign-in to the owner from your own email. DryScope sends nothing and shows this password only now. At first sign-in the owner sets their own password.',
+      ),
+      node('p', 'Email: ' + email),
+      node('p', 'Temporary password: '),
+      button('Copy password', async () => {
+        try {
+          await navigator.clipboard.writeText(password);
+          say('Password copied.', 'success');
+        } catch {
+          getSelection().selectAllChildren(code);
+          say('Copying is blocked here. The password is selected; copy it yourself.', 'error');
+        }
+      }),
+    );
+    card.children[3].append(code);
+    $('dashboardContent').prepend(card);
+  }
+  // Only the account that submitted sees the credentials; if the sign-in changed meanwhile, nothing shows.
+  // The refresh replaces this view; the credentials show whether or not it succeeds.
+  async function ownerLoginCreated(signedIn, cid, result, password, message) {
+    if (signInMark() !== signedIn) return;
+    try {
+      await companyAdmin(cid);
+    } finally {
+      if (signInMark() === signedIn) loginCreated(result.owner.email, password);
+    }
+    if (signInMark() === signedIn) say(message, 'success');
+  }
+  function ownerLoginForm(container, company) {
+    const cid = company.company_id,
+      form = node('form', undefined, 'dashboard-form');
+    form.append(
+      node('h2', 'Create login with temporary password'),
+      node(
+        'p',
+        (company.owner_uid
+          ? 'Replaces the current owner now and disables their company access. '
+          : 'Makes this login the owner now and cancels pending owner invitations. ') +
+          'No email is sent: you send the email address and password yourself.',
+      ),
+    );
+    formField(form, 'Owner’s email', 'email', '', 'email').required = true;
+    temporaryPassword(form);
+    submit(form, 'Create login', async (values) => {
+      const signedIn = submissionMark(),
+        result = await jsonApi('/api/admin/companies/' + cid + '/owner-login', 'POST', {
+          email: values.get('email'),
+          password: values.get('password'),
+          expected_version: company.version,
+        });
+      await ownerLoginCreated(
+        signedIn,
+        cid,
+        result,
+        values.get('password'),
+        'Owner login created.',
+      );
+    });
+    container.append(form);
+  }
   async function team() {
     const cid = state.session.company_id,
       epoch = show('Team & invitations', 'Add staff and manage their company access.');
@@ -668,7 +762,41 @@ window.WorkspaceUI = (() => {
     form.append(node('h2', 'Create a company'));
     formField(form, 'Company name', 'name').required = true;
     formField(form, 'Owner’s email', 'owner_email', '', 'email').required = true;
+    const method = selectField(
+        form,
+        'Owner sign-in',
+        'owner_signin',
+        [
+          ['invite', 'Email an invitation'],
+          ['password', 'Create login with temporary password'],
+        ],
+        'invite',
+      ),
+      password = temporaryPassword(form);
+    const choose = () => {
+      const direct = method.value === 'password';
+      password.closest('.temporary-password').hidden = !direct;
+      password.required = direct;
+      if (!direct) password.value = '';
+      control.textContent = direct ? 'Create company & owner login' : 'Create & invite owner';
+    };
     submit(form, 'Create & invite owner', async (values) => {
+      if (values.get('owner_signin') === 'password') {
+        const signedIn = submissionMark(),
+          result = await jsonApi('/api/admin/companies', 'POST', {
+            name: values.get('name'),
+            owner_email: values.get('owner_email'),
+            owner_password: values.get('password'),
+          });
+        await ownerLoginCreated(
+          signedIn,
+          result.company.company_id,
+          result,
+          values.get('password'),
+          'Company created with an owner login.',
+        );
+        return;
+      }
       const result = await jsonApi('/api/admin/companies', 'POST', {
         name: values.get('name'),
         owner_email: values.get('owner_email'),
@@ -681,6 +809,9 @@ window.WorkspaceUI = (() => {
         result.invitation.delivery_status === 'failed' ? 'error' : 'success',
       );
     });
+    const control = form.querySelector('button[type=submit]');
+    method.addEventListener('change', choose);
+    choose();
     content.append(form);
     const grid = node('div', undefined, 'dashboard-grid');
     content.append(grid);
@@ -720,7 +851,10 @@ window.WorkspaceUI = (() => {
         await companyAdmin(cid);
       }),
     );
-    if (company.status === 'active') inviteForm(content, cid, true);
+    if (company.status === 'active') {
+      inviteForm(content, cid, true);
+      ownerLoginForm(content, company);
+    }
     content.append(node('h2', 'Invitations'));
     invitationList(content, invites.invitations, cid);
   }

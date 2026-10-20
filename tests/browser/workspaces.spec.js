@@ -216,6 +216,12 @@ test('superadmin manages companies and cannot use member job routes', async ({ p
   await expect(page.locator('#dashboardHeading')).toHaveText('Companies');
   await page.locator('input[name=name]').fill('New California Restoration');
   await page.locator('input[name=owner_email]').fill('new-owner@example.invalid');
+  // A short password typed in login mode cannot block the invitation, even after a policy refresh.
+  const signin = page.locator('select[name=owner_signin]');
+  await signin.selectOption('password');
+  await page.locator('input[name=password]').fill('short');
+  await signin.selectOption('invite');
+  await page.evaluate(() => WorkspaceUI.policy());
   await page.getByRole('button', { name: 'Create & invite owner' }).click();
   await expect(page.locator('#dashboardHeading')).toHaveText('New California Restoration');
   await expect(page.locator('#dashboardContent')).toContainText('new-owner@example.invalid');
@@ -812,6 +818,15 @@ for (const role of ['estimator', 'office', 'other', 'outsider']) {
         'POST',
         { email: 'forged-owner@example.invalid', role: 'owner' },
       ],
+      [
+        '/api/admin/companies/' + target + '/owner-login',
+        'POST',
+        {
+          email: 'forged-owner@example.invalid',
+          password: 'synthetic-temporary-0001',
+          expected_version: 1,
+        },
+      ],
     ])
       expect((await call(page, path, method, body, role)).status(), method + ' ' + path).toBe(403);
     const companies = await (
@@ -993,4 +1008,247 @@ test('company without a logo keeps its name visible between phone and tablet wid
     await expect(page.locator('.masthead .brand strong')).toHaveText('Other Restoration');
     await expect(page.locator('.masthead .brand strong')).toBeVisible();
   }
+});
+
+// Superadmin-created owner logins: the superadmin emails the temporary password; the owner replaces it.
+const TEMPORARY = 'synthetic-temporary-0001',
+  CHOSEN = 'synthetic-chosen-0002';
+async function fitsWidth(page) {
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    'no horizontal scroll',
+  ).toBe(true);
+}
+for (const width of [320, 390])
+  test(`superadmin creates and replaces an owner login with a temporary password at ${width}×844`, async ({
+    page,
+    context,
+    browserName,
+  }) => {
+    if (browserName === 'chromium')
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.setViewportSize({ width, height: 844 });
+    const bodies = [];
+    page.on('response', async (response) => {
+      if (new URL(response.url()).pathname.startsWith('/api/'))
+        bodies.push(await response.text().catch(() => ''));
+    });
+    await start(page, 'admin');
+    await navigate(page, 'dashboardAdmin');
+    await expect(page.locator('#dashboardHeading')).toHaveText('Companies');
+    const form = page.locator('#dashboardContent form').first(),
+      password = form.locator('input[name=password]');
+    await expect(password).toBeHidden();
+    await form.locator('input[name=name]').fill('Direct Login Restoration');
+    await form.locator('select[name=owner_signin]').selectOption('password');
+    await expect(password).toBeVisible();
+    const create = form.getByRole('button', { name: 'Create company & owner login' });
+    await expect(create).toBeVisible();
+    await expect(form.getByRole('button', { name: 'Generate' })).toHaveCount(0);
+    const chosen = 'synthetic-typed-first-01';
+    await password.fill(chosen);
+    // Typed masked; Show and Hide switch it without changing what was typed.
+    await expect(password).toHaveAttribute('type', 'password');
+    const show = form.getByRole('button', { name: 'Show' });
+    await expect(show).toHaveAttribute('aria-pressed', 'false');
+    await show.click();
+    await expect(password).toHaveAttribute('type', 'text');
+    const hide = form.getByRole('button', { name: 'Hide' });
+    await expect(hide).toHaveAttribute('aria-pressed', 'true');
+    await hide.click();
+    await expect(password).toHaveAttribute('type', 'password');
+    await expect(password).toHaveValue(chosen);
+    await fitsWidth(page);
+    // Server refusals show their own message and create nothing.
+    for (const [email, message] of [
+      [
+        'test-owner-ws-google@example.invalid',
+        'This email signs in with Google. Send an owner invitation instead.',
+      ],
+      [
+        'test-owner-ws-estimator@example.invalid',
+        'This email already has company access. Choose a different email.',
+      ],
+    ]) {
+      await form.locator('input[name=owner_email]').fill(email);
+      await create.click();
+      await expect(page.locator('#message')).toHaveText(message);
+      await expect(page.locator('#dashboardHeading')).toHaveText('Companies');
+    }
+    const email = 'test-owner-ws-direct@example.invalid';
+    await form.locator('input[name=owner_email]').fill(email);
+    await create.click();
+    await expect(page.locator('#dashboardHeading')).toHaveText('Direct Login Restoration');
+    await expect(page.locator('#message')).toHaveText('Company created with an owner login.');
+    const card = page.locator('.login-created');
+    await expect(card).toContainText('Owner login created');
+    await expect(card).toContainText('Email: ' + email);
+    await expect(card.locator('code')).toHaveText(chosen);
+    await card.getByRole('button', { name: 'Copy password' }).click();
+    if (browserName === 'chromium') {
+      await expect(page.locator('#message')).toHaveText('Password copied.');
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(chosen);
+    } else await expect(page.locator('#message')).toContainText(/Password copied|copy it yourself/);
+    await fitsWidth(page);
+    // Manage company: replace that owner with a second login.
+    const replace = page.locator('form', { hasText: 'Create login with temporary password' });
+    await expect(replace).toContainText('Replaces the current owner now');
+    await replace.locator('input[name=email]').fill('test-owner-ws-second@example.invalid');
+    const second = 'synthetic-typed-second-02';
+    await expect(replace.locator('input[name=password]')).toHaveAttribute('type', 'password');
+    await replace.locator('input[name=password]').fill(second);
+    // Another tab's sign-in that this page has not applied yet sends nothing.
+    const sent = [];
+    page.on('request', (request) => {
+      if (request.url().endsWith('/owner-login')) sent.push(request.url());
+    });
+    await page.evaluate(() => {
+      window.appliedUser = auth.currentUser;
+      auth.currentUser = { uid: 'switched-account' };
+    });
+    await replace.getByRole('button', { name: 'Create login' }).click();
+    await expect(page.locator('#message')).toHaveText(
+      'Your sign-in changed. Reload and try again.',
+    );
+    expect(sent).toEqual([]);
+    await page.evaluate(() => {
+      auth.currentUser = window.appliedUser;
+    });
+    await replace.getByRole('button', { name: 'Create login' }).click();
+    await expect(page.locator('#message')).toHaveText('Owner login created.');
+    await expect(page.locator('.login-created code')).toHaveText(second);
+    await fitsWidth(page);
+    // The page is the only place the passwords appear; no response carries them back.
+    expect(bodies.length).toBeGreaterThan(3);
+    for (const body of bodies) {
+      expect(body).not.toContain(chosen);
+      expect(body).not.toContain(second);
+    }
+  });
+
+async function signInWithTemporary(page, email, before) {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('synthetic-uid'))
+      sessionStorage.setItem('synthetic-signed-out', '1');
+  });
+  if (before) await page.addInitScript(before);
+  await page.goto('/');
+  await expect(page.locator('#emailAuthForm')).toBeVisible();
+  await page.locator('#authEmail').fill(email);
+  await page.locator('#authPassword').fill(TEMPORARY);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+}
+test('owner login waits for a pending sign-in to finish applying, even for the same account', async ({
+  page,
+}) => {
+  await start(page, 'admin');
+  await navigate(page, 'dashboardAdmin');
+  await expect(page.locator('#dashboardHeading')).toHaveText('Companies');
+  const sent = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/api/admin/companies'))
+      sent.push(request.url());
+  });
+  // A to B and back to A: the latest callback for A is still applying.
+  await page.evaluate(() => {
+    const user = auth.currentUser;
+    user.getIdTokenResult = () =>
+      new Promise((resolve) => {
+        window.finishApplying = () => {
+          delete user.getIdTokenResult;
+          resolve({ claims: {} });
+        };
+      });
+    applyUser(user);
+  });
+  const form = page.locator('#dashboardContent form').first();
+  await form.locator('input[name=name]').fill('Pending Sign-in Restoration');
+  await form.locator('input[name=owner_email]').fill('test-owner-ws-pending@example.invalid');
+  await form.locator('select[name=owner_signin]').selectOption('password');
+  await form.locator('input[name=password]').fill(TEMPORARY);
+  await form.getByRole('button', { name: 'Create company & owner login' }).click();
+  await expect(page.locator('#message')).toHaveText('Your sign-in changed. Reload and try again.');
+  expect(sent).toEqual([]);
+  await page.evaluate(() => window.finishApplying());
+  await expect(page.locator('#workspaceNav')).toBeVisible();
+});
+for (const width of [320, 390])
+  test(`temporary password allows only the set-password step until replaced at ${width}×844`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const email = 'test-owner-ws-direct@example.invalid';
+    const created = await call(
+      page,
+      '/api/admin/companies/other/owner-login',
+      'POST',
+      { email, password: TEMPORARY, expected_version: 1 },
+      'admin',
+    );
+    expect(created.status()).toBe(200);
+    const authenticated = [];
+    page.on('request', (request) => {
+      if (request.headers().authorization) authenticated.push(new URL(request.url()).pathname);
+    });
+    await signInWithTemporary(page, email);
+    const step = page.locator('#setPassword');
+    await expect(step).toBeVisible();
+    await expect(step).toContainText('Set your own password');
+    await expect(page.locator('#setPasswordAddress')).toHaveText(email);
+    await expect(page.locator('#emailAuthForm')).toBeHidden();
+    await expect(page.locator('#workspaceDashboard')).toBeHidden();
+    await expect(page.locator('#address')).toBeDisabled();
+    for (const id of ['newPassword', 'confirmPassword', 'savePassword', 'setPasswordSignOut']) {
+      const box = await page.locator('#' + id).boundingBox();
+      expect(box.x >= 0 && box.x + box.width <= width, id + ' fits').toBe(true);
+    }
+    await fitsWidth(page);
+    // A reload keeps the step; nothing calls the session, job or workspace routes.
+    await page.reload();
+    await expect(step).toBeVisible();
+    expect(authenticated).toEqual([]);
+    await page.locator('#newPassword').fill(CHOSEN);
+    await page.locator('#confirmPassword').fill(CHOSEN + 'x');
+    await page.getByRole('button', { name: 'Save password' }).click();
+    await expect(page.locator('#authStatus')).toHaveText('The two passwords do not match.');
+    expect(authenticated).toEqual([]);
+    await page.locator('#confirmPassword').fill(CHOSEN);
+    await page.getByRole('button', { name: 'Save password' }).click();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await expect(page.locator('#authPanel')).toBeHidden();
+    await expect(page.locator('#dashboardTeam')).toBeAttached();
+    expect(authenticated[0]).toBe('/api/account/password');
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await expect(step).toBeHidden();
+    // The temporary password no longer signs in; the chosen one does.
+    expect(
+      (
+        await page.request.post('/__test/auth/sign-in', { data: { email, password: TEMPORARY } })
+      ).status(),
+    ).toBe(401);
+  });
+
+test('a token without the claim still lands on the set-password step from the server gate', async ({
+  page,
+}) => {
+  const email = 'test-owner-ws-direct@example.invalid';
+  await call(
+    page,
+    '/api/admin/companies/other/owner-login',
+    'POST',
+    { email, password: TEMPORARY, expected_version: 1 },
+    'admin',
+  );
+  await signInWithTemporary(page, email, () => (window.__testStaleClaims = true));
+  await expect(page.locator('#setPassword')).toBeVisible();
+  await expect(page.locator('#workspaceDashboard')).toBeHidden();
+  // Forgot password still works from the sign-in page.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.locator('#emailAuthForm')).toBeVisible();
+  await page.locator('#authEmail').fill(email);
+  await page.getByRole('button', { name: 'Forgot password' }).click();
+  await page.getByRole('button', { name: 'Send reset link' }).click();
+  await expect(page.locator('#authStatus')).toContainText('a password reset email is on its way');
+  expect(await page.evaluate(() => window.__testEmails)).toEqual([{ type: 'reset', email }]);
 });

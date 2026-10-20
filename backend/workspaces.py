@@ -1,4 +1,5 @@
-"""Private company membership and job-access policy. Invitation delivery provisions the invitee's Firebase account."""
+"""Private company membership and job-access policy. Invitation delivery provisions the invitee's Firebase account;
+a superadmin can instead create an owner's email/password login with a temporary password."""
 
 import base64
 import hashlib
@@ -21,7 +22,7 @@ import firebase_admin
 from firebase_admin import auth as firebase_auth
 from PIL import Image, ImageOps
 from google.cloud import firestore
-from pydantic import AfterValidator, Field, field_validator
+from pydantic import AfterValidator, Field, SecretStr, field_validator
 from typing import Annotated, Literal
 
 try:
@@ -79,10 +80,29 @@ LEGACY_IDENTITY = {
     'logo_data_url': 'data:image/jpeg;base64,' + base64.b64encode(ADR_LOGO).decode('ascii'),
 }
 LOGO_CID = 'invitation-logo@dryscope'
+# Set on the membership (the server's gate) and as a Firebase custom claim (the client's cue) when a
+# superadmin creates an owner login; cleared when the owner sets their own password.
+PASSWORD_CHANGE = 'password_change_required'
+PASSWORD_CHANGE_REQUIRED = 'Set your own password before using DryScope.'
+PASSWORD_LENGTH = (12, 128)
+# Holds an account for one owner login from before its password is written until its membership commits.
+LOGIN_RESERVATIONS = '_owner_login_reservations'
+# The reservation must outlive the request's Firebase writes, or a slow write could land after another
+# owner login reused the account. Those writes use login_client: no SDK retries (urllib3 honors
+# Retry-After for up to six hours) and LOGIN_HTTP_SECONDS for each connect and read wait. A call is at
+# most three rounds (google-auth's two 401 token refreshes) of a token fetch and the request, each a
+# connect and a read, so 12 waits; an owner login makes at most two calls: 24 waits, 240 seconds.
+LOGIN_HTTP_SECONDS = 10
+LOGIN_RESERVATION_SECONDS = 600
 
 
 class AccessDenied(PermissionError):
     pass
+
+
+class PasswordChangeRequired(AccessDenied):
+    def __init__(self):
+        super().__init__(PASSWORD_CHANGE_REQUIRED)
 
 
 def company_name(value):
@@ -116,6 +136,19 @@ class CompanyProfile(StrictModel):
 class CompanyCreate(StrictModel):
     name: CompanyName
     owner_email: str = Field(max_length=254)
+    # Present: create the owner's login with this temporary password instead of inviting them.
+    # SecretStr keeps the value out of reprs; check_password applies the rule with a fixed message.
+    owner_password: SecretStr | None = None
+
+
+class OwnerLogin(StrictModel):
+    email: str = Field(max_length=254)
+    password: SecretStr
+    expected_version: int = Field(ge=1)
+
+
+class PasswordChange(StrictModel):
+    password: SecretStr
 
 
 class ProfileUpdate(StrictModel):
@@ -154,6 +187,22 @@ def email_address(value):
     if len(value) > 254 or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', value):
         raise ValueError('Enter a valid email address.')
     return value
+
+
+def check_password(value):
+    low, high = PASSWORD_LENGTH
+    if not low <= len(value) <= high:
+        raise ValueError(f'Use a password of {low} to {high} characters.')
+    return value
+
+
+def login_key(email):
+    return hashlib.sha256(email.encode()).hexdigest()
+
+
+def masked_email(email):
+    local, _, domain = email.partition('@')
+    return local[:1] + '***@' + domain
 
 
 def safe_id(value):
@@ -207,8 +256,11 @@ class WorkspaceStore:
         member = self.read('_memberships', uid, tx)
         company = self.read('_companies', member['company_id'], tx) if member else None
         admin = self.read('_platform_admins', uid, tx)
+        # A temporary password grants nothing, superadmin included, until the owner replaces it.
+        locked = bool(member and member.get(PASSWORD_CHANGE))
         active = bool(
-            member
+            not locked
+            and member
             and member.get('status') == 'active'
             and company
             and company.get('status') == 'active'
@@ -216,16 +268,19 @@ class WorkspaceStore:
         role = member['role'] if active else None
         return dict(
             uid=uid,
-            superadmin=bool(admin and admin.get('active')),
+            superadmin=bool(not locked and admin and admin.get('active')),
             company_id=member['company_id'] if member else None,
             role=role,
             capabilities=CAPABILITIES.get(role, []),
             company=company if active else None,
             membership_version=member.get('version') if member else None,
+            password_change_required=locked,
         )
 
     def company_actor(self, uid, company_id=None, manage=False, tx=None):
         actor = self.principal(uid, tx)
+        if actor['password_change_required']:
+            raise PasswordChangeRequired()
         if not actor['role'] or (company_id and company_id != actor['company_id']):
             raise AccessDenied('Your company access is unavailable.')
         if manage and actor['role'] != 'owner':
@@ -233,8 +288,15 @@ class WorkspaceStore:
         return actor
 
     def admin(self, uid, tx=None):
-        if not self.principal(uid, tx)['superadmin']:
+        actor = self.principal(uid, tx)
+        if actor['password_change_required']:
+            raise PasswordChangeRequired()
+        if not actor['superadmin']:
             raise AccessDenied('Superadmin access is required.')
+
+    def unlocked(self, uid, tx=None):
+        if (self.read('_memberships', uid, tx) or {}).get(PASSWORD_CHANGE):
+            raise PasswordChangeRequired()
 
     def support_company(self, uid, company_id, tx=None):
         """Superadmin support: read-only access to any company plus a few audited team fixes.
@@ -308,8 +370,8 @@ class WorkspaceStore:
             .stream()
         ]
 
-    def create_company(self, uid, name, owner_email):
-        owner_email = email_address(owner_email)
+    @staticmethod
+    def new_company(name):
         identifier = uuid4().hex
         profile = {
             **ADR_PROFILE,
@@ -334,6 +396,12 @@ class WorkspaceStore:
             created_at=now(),
             updated_at=now(),
         )
+        return company
+
+    def create_company(self, uid, name, owner_email):
+        owner_email = email_address(owner_email)
+        company = self.new_company(name)
+        identifier = company['company_id']
         invite = self.new_invite(identifier, owner_email, 'owner', uid)
         invite['expected_owner_uid'] = None
 
@@ -347,6 +415,177 @@ class WorkspaceStore:
 
         self._run(create)
         return company, invite
+
+    def owner_login(self, uid, company_id, email, password, expected_version=None, name=None):
+        """Superadmin alternative to an owner invitation: creates or updates the owner's email/password
+        login with a temporary password, then makes it the company's owner as an accepted owner
+        invitation would. company_id None creates the company named name. The password goes only
+        to Firebase Authentication, never to Firestore, the audit log, logs or the response."""
+        # Authorize before any lookup so a refused caller learns nothing and changes no account.
+        self.admin(uid)
+        email = email_address(email)
+        check_password(password)
+        if company_id is None:
+            created = self.new_company(name)
+        else:
+            self.replaceable(self.read('_companies', company_id), expected_version)
+        user = login_account(email)
+        key, claim = self.reserve_login(email, user)
+
+        def create(tx):
+            self.admin(uid, tx)
+            if (self.read(LOGIN_RESERVATIONS, key, tx) or {}).get('claim') != claim:
+                raise Conflict('This owner login took too long. Try again.')
+            company = (
+                created
+                if company_id is None
+                else self.replaceable(self.read('_companies', company_id, tx), expected_version)
+            )
+            if self.read('_memberships', owner_uid, tx):
+                raise Conflict('This email already has company access. Choose a different email.')
+            old_owner = company.get('owner_uid')
+            old_member = self.read('_memberships', old_owner, tx) if old_owner else None
+            invitations = (
+                []
+                if company_id is None
+                else [
+                    s.to_dict()
+                    for s in self.db.collection('_invitations')
+                    .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+                    .stream(transaction=tx)
+                ]
+            )
+            # All reads are done. Pending owner invitations, and any left for either owner, end here.
+            emails = {email, (old_member or {}).get('email')}
+            cancelled = [
+                i
+                for i in invitations
+                if i['status'] == 'pending' and (i['role'] == 'owner' or i['email'] in emails)
+            ]
+            for invitation in cancelled:
+                invitation['status'] = 'cancelled'
+                tx.set(self.ref('_invitations', invitation['invitation_id']), invitation)
+            if old_member:
+                old_member.update(
+                    status='disabled', version=old_member['version'] + 1, updated_at=now()
+                )
+                tx.set(self.ref('_memberships', old_owner), old_member)
+            company = {**company, 'owner_uid': owner_uid, 'updated_at': now()}
+            if company_id is None:
+                tx.create(self.ref('_companies', company['company_id']), company)
+            else:
+                company['version'] += 1
+                tx.set(self.ref('_companies', company_id), company)
+            tx.create(
+                self.ref('_memberships', owner_uid),
+                dict(
+                    uid=owner_uid,
+                    email=email,
+                    company_id=company['company_id'],
+                    role='owner',
+                    status='active',
+                    version=1,
+                    updated_at=now(),
+                    **{PASSWORD_CHANGE: True},
+                ),
+            )
+            self.event(
+                tx,
+                uid,
+                'owner_login_created',
+                company['company_id'],
+                {
+                    'email': masked_email(email),
+                    'replacement': bool(old_owner),
+                    'previous_owner_uid': old_owner,
+                    'cancelled_invitations': len(cancelled),
+                },
+                'member/' + owner_uid,
+            )
+            tx.delete(self.ref(LOGIN_RESERVATIONS, key))
+            return company
+
+        # The password changes only while this request holds the account; any failure frees it.
+        try:
+            owner_uid = set_temporary_password(user, email, password)
+            company = self._run(create)
+        except Exception:
+            self.release_login(key, claim)
+            raise
+        return {'company': company, 'owner': {'uid': owner_uid, 'email': email}}
+
+    def reserve_login(self, email, user):
+        """Claims the account before its password changes, so a competing owner login or invitation
+        acceptance cannot take it between the password write and the membership commit."""
+        key = login_key(email)
+        claim = uuid4().hex
+
+        def reserve(tx):
+            held = self.read(LOGIN_RESERVATIONS, key, tx)
+            if user and self.read('_memberships', user.uid, tx):
+                raise Conflict('This email already has company access. Choose a different email.')
+            if held and held['expires_at'] > time.time():
+                raise Conflict(
+                    'Another owner login for this email is in progress. Try again in a few minutes.'
+                )
+            tx.set(
+                self.ref(LOGIN_RESERVATIONS, key),
+                {'claim': claim, 'expires_at': time.time() + LOGIN_RESERVATION_SECONDS},
+            )
+
+        self._run(reserve)
+        return key, claim
+
+    def release_login(self, key, claim):
+        def release(tx):
+            if (self.read(LOGIN_RESERVATIONS, key, tx) or {}).get('claim') == claim:
+                tx.delete(self.ref(LOGIN_RESERVATIONS, key))
+
+        self._run(release)
+
+    @staticmethod
+    def replaceable(company, expected_version):
+        if not company:
+            raise LookupError('Company not found.')
+        if company['status'] != 'active':
+            raise AccessDenied('The company must be active to change its owner.')
+        if company['version'] != expected_version:
+            raise Conflict('Company details changed. Reload before changing the owner.')
+        return company
+
+    def change_password(self, claims, password):
+        """Replaces a temporary password with the owner's own, then lifts the gate. The backend sets the
+        password itself, so a modified client cannot clear the marker without changing it."""
+        uid = claims['uid']
+        if claims.get('firebase', {}).get('sign_in_provider') != 'password':
+            raise AccessDenied('Sign in with your email and temporary password first.')
+        check_password(password)
+        member = self.read('_memberships', uid) or {}
+        # The claim also counts, so an account whose membership step failed is not stuck.
+        if not (member.get(PASSWORD_CHANGE) or claims.get(PASSWORD_CHANGE)):
+            raise Conflict(
+                'Your password is already set. Use Forgot password on the sign-in page to change it.'
+            )
+        # Firebase first: clearing the gate before the password changed would let the temporary one stand.
+        replace_temporary_password(uid, password)
+
+        def clear(tx):
+            member = self.read('_memberships', uid, tx)
+            if member and member.get(PASSWORD_CHANGE):
+                member = {k: v for k, v in member.items() if k != PASSWORD_CHANGE}
+                member['updated_at'] = now()
+                tx.set(self.ref('_memberships', uid), member)
+                self.event(
+                    tx,
+                    uid,
+                    'temporary_password_replaced',
+                    member['company_id'],
+                    {},
+                    'member/' + uid,
+                )
+
+        self._run(clear)
+        return {'password_changed': True}
 
     def update_company(self, uid, company_id, req):
         def update(tx):
@@ -569,6 +808,7 @@ class WorkspaceStore:
         ]
 
     def invitation(self, claims, identifier):
+        self.unlocked(claims['uid'])
         invite = self.read('_invitations', identifier)
         if not invite or invite['email'] != email_address(claims['email']):
             raise LookupError('Invitation not found for this account.')
@@ -586,6 +826,13 @@ class WorkspaceStore:
             if not invite or invite['email'] != email:
                 raise LookupError('Invitation not found for this account.')
             member = self.read('_memberships', uid, tx)
+            if (member or {}).get(PASSWORD_CHANGE):
+                raise PasswordChangeRequired()
+            held = self.read(LOGIN_RESERVATIONS, login_key(email), tx)
+            if held and held['expires_at'] > time.time():
+                raise Conflict(
+                    'An owner login is being created for this account. Try again shortly.'
+                )
             company = self.read('_companies', invite['company_id'], tx)
             if not company or company['status'] != 'active':
                 raise AccessDenied('Company access is unavailable.')
@@ -908,15 +1155,89 @@ class WorkspaceStore:
         return self._run(update)
 
 
-def password_setup_link(email):
-    """Create the invitee's account if needed so nobody else can pre-register the address. None means a Google account."""
+def auth_app():
     try:
-        app = firebase_admin.get_app('adr')
+        return firebase_admin.get_app('adr')
     except ValueError:
-        app = firebase_admin.initialize_app(
+        return firebase_admin.initialize_app(
             options={'projectId': os.getenv('GOOGLE_CLOUD_PROJECT', 'alert-disaster-field-2026')},
             name='adr',
         )
+
+
+def google_account(user):
+    return any(info.provider_id == 'google.com' for info in user.provider_data)
+
+
+def login_account(email):
+    """The existing Firebase account for an owner login, or None. Read-only; refuses accounts a temporary password must not take over."""
+    try:
+        user = firebase_auth.get_user_by_email(email, app=auth_app())
+    except firebase_auth.UserNotFoundError:
+        return None
+    if user.disabled:
+        raise Conflict(
+            "This email's sign-in is disabled in Firebase Authentication. Choose a different email."
+        )
+    if google_account(user):
+        raise Conflict('This email signs in with Google. Send an owner invitation instead.')
+    return user
+
+
+def login_client():
+    """Firebase Authentication with the bounded calls LOGIN_RESERVATION_SECONDS relies on."""
+    try:
+        app = firebase_admin.get_app('adr-owner-login')
+    except ValueError:
+        app = firebase_admin.initialize_app(
+            options={
+                'projectId': os.getenv('GOOGLE_CLOUD_PROJECT', 'alert-disaster-field-2026'),
+                'httpTimeout': LOGIN_HTTP_SECONDS,
+            },
+            name='adr-owner-login',
+        )
+    client = firebase_auth.Client(app)
+    # The SDK exposes no retry option, so this client's own session adapters stop retrying.
+    for adapter in client._user_manager.http_client.session.adapters.values():
+        adapter.max_retries = adapter.max_retries.new(total=0)
+    return client
+
+
+def set_temporary_password(user, email, password):
+    """Creates the email/password account, or sets the password on an existing one, verified because the
+    superadmin vouches for the address. Changing a password ends the account's other sessions."""
+    client = login_client()
+    if user is None:
+        try:
+            # Unverified until the claim is set, so a failed second step leaves a login that can do nothing.
+            user = client.create_user(email=email, email_verified=False, password=password)
+        except firebase_auth.EmailAlreadyExistsError:
+            raise Conflict('This email was registered moments ago. Try again.')
+        client.update_user(user.uid, email_verified=True, custom_claims={PASSWORD_CHANGE: True})
+    else:
+        client.update_user(
+            user.uid,
+            password=password,
+            email_verified=True,
+            custom_claims={**(user.custom_claims or {}), PASSWORD_CHANGE: True},
+        )
+    return user.uid
+
+
+def replace_temporary_password(uid, password):
+    app = auth_app()
+    claims = firebase_auth.get_user(uid, app=app).custom_claims or {}
+    firebase_auth.update_user(
+        uid,
+        password=password,
+        custom_claims={k: v for k, v in claims.items() if k != PASSWORD_CHANGE},
+        app=app,
+    )
+
+
+def password_setup_link(email):
+    """Create the invitee's account if needed so nobody else can pre-register the address. None means a Google account."""
+    app = auth_app()
     try:
         user = firebase_auth.get_user_by_email(email, app=app)
     except firebase_auth.UserNotFoundError:
@@ -924,7 +1245,7 @@ def password_setup_link(email):
             user = firebase_auth.create_user(email=email, email_verified=False, app=app)
         except firebase_auth.EmailAlreadyExistsError:
             user = firebase_auth.get_user_by_email(email, app=app)
-    if any(info.provider_id == 'google.com' for info in user.provider_data):
+    if google_account(user):
         return None
     # The link is a credential: it goes only into the outgoing email, never Firestore or logs.
     return firebase_auth.generate_password_reset_link(
