@@ -1041,6 +1041,17 @@ for (const width of [320, 390])
     await expect(form.getByRole('button', { name: 'Generate' })).toHaveCount(0);
     const chosen = 'synthetic-typed-first-01';
     await password.fill(chosen);
+    // Typed masked; Show and Hide switch it without changing what was typed.
+    await expect(password).toHaveAttribute('type', 'password');
+    const show = form.getByRole('button', { name: 'Show' });
+    await expect(show).toHaveAttribute('aria-pressed', 'false');
+    await show.click();
+    await expect(password).toHaveAttribute('type', 'text');
+    const hide = form.getByRole('button', { name: 'Hide' });
+    await expect(hide).toHaveAttribute('aria-pressed', 'true');
+    await hide.click();
+    await expect(password).toHaveAttribute('type', 'password');
+    await expect(password).toHaveValue(chosen);
     await fitsWidth(page);
     // Server refusals show their own message and create nothing.
     for (const [email, message] of [
@@ -1078,6 +1089,7 @@ for (const width of [320, 390])
     await expect(replace).toContainText('Replaces the current owner now');
     await replace.locator('input[name=email]').fill('test-owner-ws-second@example.invalid');
     const second = 'synthetic-typed-second-02';
+    await expect(replace.locator('input[name=password]')).toHaveAttribute('type', 'password');
     await replace.locator('input[name=password]').fill(second);
     await replace.getByRole('button', { name: 'Create login' }).click();
     await expect(page.locator('#message')).toHaveText('Owner login created.');

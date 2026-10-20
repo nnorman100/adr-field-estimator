@@ -28,6 +28,10 @@ except ImportError:
     )
 
 
+# An unexpected Firebase or database failure; refusals keep their own messages.
+OWNER_LOGIN_FAILED = 'The owner login could not be created. Try again or contact support.'
+
+
 def register_workspace_routes(app, identity, get_store, stored, live, account):
     def workspace(store):
         return store.workspaces
@@ -74,6 +78,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
                 req.owner_password.get_secret_value(),
                 None,
                 req.name,
+                failure=OWNER_LOGIN_FAILED,
             )
         company, invitation = await stored(
             workspace(store).create_company, claims['uid'], req.name, req.owner_email
@@ -95,13 +100,17 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             req.email,
             req.password.get_secret_value(),
             req.expected_version,
+            failure=OWNER_LOGIN_FAILED,
         )
 
     @app.post('/api/account/password')
     async def change_password(req: PasswordChange, claims=live_account, store=Depends(get_store)):
         await stored(store.quota, claims['uid'], 'account', 10)
         return await stored(
-            workspace(store).change_password, claims, req.password.get_secret_value()
+            workspace(store).change_password,
+            claims,
+            req.password.get_secret_value(),
+            failure='Your password could not be changed. Try again.',
         )
 
     @app.get('/api/companies/{company_id}')

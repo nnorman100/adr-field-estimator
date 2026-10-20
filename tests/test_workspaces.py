@@ -3887,7 +3887,9 @@ def test_password_change_keeps_the_gate_when_firebase_fails(mail, monkeypatch):
         raise RuntimeError('Synthetic Firebase outage')
 
     monkeypatch.setattr(accounts, 'update_user', unavailable)
-    assert client.post('/api/account/password', json={'password': CHOSEN}).status_code == 503
+    response = client.post('/api/account/password', json={'password': CHOSEN})
+    assert response.status_code == 503
+    assert response.json() == {'detail': 'Your password could not be changed. Try again.'}
     assert store.db.records['_memberships/new-owner']['password_change_required']
     assert client.get('/api/session').status_code == 403
 
@@ -3961,3 +3963,32 @@ def test_validation_errors_never_echo_a_password(api, path, body):
     assert response.status_code == 422
     assert TEMPORARY not in response.text
     assert all('msg' in error and 'loc' in error for error in response.json()['detail'])
+
+
+@pytest.mark.parametrize('route', ['replace', 'create'])
+def test_owner_login_failure_names_the_action_instead_of_a_draft_retry(mail, monkeypatch, route):
+    """A Firebase or database failure (such as a missing permission) says the login was not created."""
+    client, current, store, accounts, sent, _ = mail
+
+    def denied(*args, **kwargs):
+        raise RuntimeError('Synthetic permission denied')
+
+    monkeypatch.setattr(accounts, 'create_user', denied)
+    current['uid'] = 'admin'
+    response = (
+        create_owner_login(client)
+        if route == 'replace'
+        else client.post(
+            '/api/admin/companies',
+            json={
+                'name': 'Valley Dry',
+                'owner_email': 'valley@example.invalid',
+                'owner_password': TEMPORARY,
+            },
+        )
+    )
+    assert response.status_code == 503
+    assert response.json() == {
+        'detail': 'The owner login could not be created. Try again or contact support.'
+    }
+    assert not owner_events(store)

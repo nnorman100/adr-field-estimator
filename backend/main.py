@@ -476,7 +476,10 @@ async def monitor_app_check(request: Request, call_next):
         )
 
 
-async def stored(method, *args):
+async def stored(
+    method, *args, failure='Changes could not be saved. Your local draft can be retried.'
+):
+    """failure is the 503 message for an unexpected error; account routes name their own action."""
     try:
         return await run_in_threadpool(method, *args)
     except Limited as error:
@@ -496,7 +499,7 @@ async def stored(method, *args):
             operation=getattr(method, '__name__', None),
             outcome=type(error).__name__,
         )
-        raise HTTPException(503, 'Changes could not be saved. Your local draft can be retried.')
+        raise HTTPException(503, failure)
 
 
 def reusable_audit(record, revision, identity, customer):

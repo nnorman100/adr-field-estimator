@@ -552,17 +552,27 @@ window.WorkspaceUI = (() => {
     container.append(form);
   }
   function temporaryPassword(form) {
-    const input = formField(form, 'Temporary password', 'password');
+    const input = formField(form, 'Temporary password', 'password', '', 'password');
     Object.assign(input, {
       required: true,
       minLength: 12,
       maxLength: 128,
-      autocomplete: 'off',
+      autocomplete: 'new-password',
       spellcheck: false,
       autocapitalize: 'off',
     });
+    // Hidden while typed; Show lets the superadmin check it before creating the login.
+    const show = node('button', 'Show');
+    show.type = 'button';
+    show.setAttribute('aria-pressed', 'false');
+    show.addEventListener('click', () => {
+      const shown = input.type === 'password';
+      input.type = shown ? 'text' : 'password';
+      show.textContent = shown ? 'Hide' : 'Show';
+      show.setAttribute('aria-pressed', String(shown));
+    });
     const row = node('div', undefined, 'temporary-password');
-    row.append(input.closest('label'), node('p', 'At least 12 characters.', 'hint'));
+    row.append(input.closest('label'), show, node('p', 'At least 12 characters.', 'hint'));
     form.append(row);
     return input;
   }
