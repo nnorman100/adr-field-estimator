@@ -1,37 +1,47 @@
-"""Authenticated workspace administration. Invitations do not require membership."""
+"""Authenticated workspace administration. Invitations and the temporary-password change do not require membership."""
 
 from fastapi import Depends, HTTPException, Security
 
 try:
     from .workspaces import (
         CompanyCreate,
+        OwnerLogin,
+        PasswordChange,
         ProfileUpdate,
         StatusUpdate,
         InviteCreate,
         MemberUpdate,
         CoordinationUpdate,
+        PASSWORD_CHANGE_REQUIRED,
     )
 except ImportError:
     from workspaces import (
         CompanyCreate,
+        OwnerLogin,
+        PasswordChange,
         ProfileUpdate,
         StatusUpdate,
         InviteCreate,
         MemberUpdate,
         CoordinationUpdate,
+        PASSWORD_CHANGE_REQUIRED,
     )
 
 
-def register_workspace_routes(app, identity, get_store, stored, live):
+def register_workspace_routes(app, identity, get_store, stored, live, account):
     def workspace(store):
         return store.workspaces
 
     # Administration and access changes always repeat the revoked/disabled-user lookup.
     live_identity = Security(identity, scopes=live)
+    # The temporary-password change is the one route a locked account can use.
+    live_account = Security(account, scopes=live)
 
     @app.get('/api/access')
     async def access(claims=Depends(identity), store=Depends(get_store)):
         actor = await stored(workspace(store).principal, claims['uid'])
+        if actor['password_change_required']:
+            raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
         invitations = await stored(workspace(store).pending, claims)
         return dict(
             **actor,
@@ -55,6 +65,16 @@ def register_workspace_routes(app, identity, get_store, stored, live):
     @app.post('/api/admin/companies')
     async def create_company(req: CompanyCreate, claims=live_identity, store=Depends(get_store)):
         await stored(store.quota, claims['uid'], 'admin', 10)
+        if req.owner_password is not None:
+            return await stored(
+                workspace(store).owner_login,
+                claims['uid'],
+                None,
+                req.owner_email,
+                req.owner_password.get_secret_value(),
+                None,
+                req.name,
+            )
         company, invitation = await stored(
             workspace(store).create_company, claims['uid'], req.name, req.owner_email
         )
@@ -62,6 +82,27 @@ def register_workspace_routes(app, identity, get_store, stored, live):
             workspace(store).deliver, claims['uid'], invitation['invitation_id']
         )
         return {'company': company, 'invitation': invitation}
+
+    @app.post('/api/admin/companies/{company_id}/owner-login')
+    async def owner_login(
+        company_id: str, req: OwnerLogin, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(store.quota, claims['uid'], 'admin', 10)
+        return await stored(
+            workspace(store).owner_login,
+            claims['uid'],
+            company_id,
+            req.email,
+            req.password.get_secret_value(),
+            req.expected_version,
+        )
+
+    @app.post('/api/account/password')
+    async def change_password(req: PasswordChange, claims=live_account, store=Depends(get_store)):
+        await stored(store.quota, claims['uid'], 'account', 10)
+        return await stored(
+            workspace(store).change_password, claims, req.password.get_secret_value()
+        )
 
     @app.get('/api/companies/{company_id}')
     async def company(company_id: str, claims=live_identity, store=Depends(get_store)):

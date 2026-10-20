@@ -30,6 +30,8 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.concurrency import run_in_threadpool
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, SecurityScopes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -76,7 +78,7 @@ try:
         AUDIO_ACK_EVERY,
     )
     from .company_store import CompanyInspectionStore
-    from .workspaces import AccessDenied, LEGACY_IDENTITY
+    from .workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
@@ -115,7 +117,7 @@ except ImportError:
         AUDIO_ACK_EVERY,
     )
     from company_store import CompanyInspectionStore
-    from workspaces import AccessDenied, LEGACY_IDENTITY
+    from workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE_REQUIRED
     from workspace_api import register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
@@ -206,6 +208,22 @@ app.add_middleware(
     ],
 )
 security = HTTPBearer(auto_error=False)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, error: RequestValidationError):
+    # FastAPI's default echoes the submitted value, for a missing field the whole body, and a
+    # body can carry a temporary password; the message and location are enough.
+    return JSONResponse(
+        {
+            'detail': jsonable_encoder(
+                [{k: v for k, v in e.items() if k != 'input'} for e in error.errors()]
+            )
+        },
+        status_code=422,
+    )
+
+
 _job_store = None
 genai_client = None
 
@@ -301,6 +319,8 @@ async def verify_staff(token, live=False):
     claims = await verify_identity(token, live)
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, claims['uid'])
+        if actor['password_change_required']:
+            raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
         if not actor['role'] and not actor['superadmin']:
             raise HTTPException(403, 'Accept a company invitation before using this app.')
     elif claims.get('email', '').lower() not in STAFF_EMAILS:
@@ -646,14 +666,23 @@ def health_details(staff=Depends(current_staff)):
     )
 
 
-async def current_identity(
+async def account_identity(
     scopes: SecurityScopes, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ):
+    """A verified identity without membership; only the temporary-password change uses it directly."""
     if not WORKSPACES_ENABLED:
         raise HTTPException(503, 'Company dashboards are not enabled yet.')
     if not credentials or credentials.scheme.lower() != 'bearer':
         raise HTTPException(401, 'Sign in to continue.')
     return await verify_identity(credentials.credentials, live=LIVE_REVOCATION[0] in scopes.scopes)
+
+
+async def current_identity(
+    scopes: SecurityScopes, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+):
+    claims = await account_identity(scopes, credentials)
+    await stored(get_job_store().workspaces.unlocked, claims['uid'])
+    return claims
 
 
 @app.get('/api/session')
@@ -671,11 +700,16 @@ async def session_info(staff=Depends(current_staff)):
         legacy_identity=LEGACY_IDENTITY,
     )
     if WORKSPACES_ENABLED:
-        result.update(await stored(get_job_store().workspaces.principal, staff['uid']))
+        actor = await stored(get_job_store().workspaces.principal, staff['uid'])
+        if actor['password_change_required']:
+            raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
+        result.update(actor)
     return result
 
 
-register_workspace_routes(app, current_identity, get_job_store, stored, LIVE_REVOCATION)
+register_workspace_routes(
+    app, current_identity, get_job_store, stored, LIVE_REVOCATION, account_identity
+)
 
 
 def workspace_client(request):

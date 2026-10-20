@@ -3870,6 +3870,41 @@ async function initialize() {
     await authSdk.sendEmailVerification(auth.currentUser);
     authSay('Verification email sent to ' + auth.currentUser.email + '.', 'success');
   });
+  // A superadmin-created login: the backend sets the owner's own password and lifts its gate.
+  $('setPassword').addEventListener('submit', (e) => e.preventDefault());
+  authClick('savePassword', async () => {
+    if (!$('setPassword').reportValidity()) return;
+    const password = $('newPassword').value;
+    if (password !== $('confirmPassword').value) {
+      authSay('The two passwords do not match.', 'error');
+      return;
+    }
+    const user = auth.currentUser,
+      response = await fetch('/api/account/password', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: {
+          ...(await appCheckHeaders()),
+          Authorization: 'Bearer ' + (await user.getIdToken()),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password }),
+      });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      authSay(
+        typeof payload.detail === 'string'
+          ? payload.detail
+          : 'Your password could not be saved. Check your connection and try again.',
+        'error',
+      );
+      return;
+    }
+    $('newPassword').value = $('confirmPassword').value = '';
+    // A new password ends this sign-in, so sign in again with it.
+    await authSdk.signInWithEmailAndPassword(auth, user.email, password);
+    await applyUser(auth.currentUser);
+  });
   authClick('confirmVerified', async () => {
     const user = auth.currentUser;
     await user.reload();
@@ -3938,6 +3973,7 @@ async function initialize() {
   };
   click('signOutButton', signOut);
   click('verifySignOut', signOut);
+  click('setPasswordSignOut', signOut);
   click('discardSignOut', discardAndSignOut);
   click('newInspection', () => openNew());
   const jobs = () => (window.WorkspaceUI?.enabled() ? WorkspaceUI.jobs() : showJobs());
@@ -4221,6 +4257,28 @@ function resetShellBranding() {
     logo.alt = '';
   }
 }
+// Must match backend/workspaces.py PASSWORD_CHANGE_REQUIRED.
+const PASSWORD_CHANGE_REQUIRED = 'Set your own password before using DryScope.';
+async function passwordChangeRequired(user) {
+  try {
+    return (await user.getIdTokenResult()).claims.password_change_required === true;
+  } catch {
+    // The server gate still refuses; the session check below shows the step then.
+    return false;
+  }
+}
+function showAuthStage(user, stage) {
+  $('authPanel').hidden = stage === 'ready';
+  $('googleSignIn').hidden = stage !== 'signedOut';
+  // Signed out, unverified or on a temporary password: only the login page shows, never the inspection workspace.
+  document.body.classList.toggle('login-page', stage !== 'ready');
+  $('emailAuthForm').hidden = stage !== 'signedOut';
+  $('verifyEmail').hidden = stage !== 'unverified';
+  $('verifyAddress').textContent = user?.email || '';
+  $('setPassword').hidden = stage !== 'changePassword';
+  $('setPasswordAddress').textContent = user?.email || '';
+  $('setPasswordUsername').value = user?.email || '';
+}
 async function applyUser(user) {
   // Auth callbacks overlap; only the newest one may write state after an await.
   const epoch = ++authEpoch,
@@ -4248,7 +4306,9 @@ async function applyUser(user) {
     if (!user) await clearLocal();
     if (stale()) return;
   }
-  const stage = authStage(user);
+  let stage = authStage(user);
+  if (stage === 'ready' && (await passwordChangeRequired(user))) stage = 'changePassword';
+  if (stale()) return;
   state.user = user;
   state.session = null;
   if (!user) resetShellBranding();
@@ -4261,15 +4321,9 @@ async function applyUser(user) {
   $('signOutButton').hidden = !user;
   $('inspectionFields').disabled = true;
   $('accountStatus').textContent = user ? user.email : 'Sign in to start an inspection';
-  $('authPanel').hidden = stage === 'ready';
-  $('googleSignIn').hidden = stage !== 'signedOut';
-  // Signed out or unverified: only the login page shows, never the inspection workspace.
-  document.body.classList.toggle('login-page', stage !== 'ready');
-  $('emailAuthForm').hidden = stage !== 'signedOut';
-  $('verifyEmail').hidden = stage !== 'unverified';
-  $('verifyAddress').textContent = user?.email || '';
+  showAuthStage(user, stage);
   renderControls();
-  // Unverified accounts stay on the verification step: no drafts, sessions or authenticated API calls.
+  // Unverified accounts and temporary passwords stay on their step: no drafts, sessions or authenticated API calls.
   if (stage !== 'ready') {
     state.workspaceInitializing = false;
     showTask('property', false);
@@ -4287,6 +4341,21 @@ async function applyUser(user) {
         headers: { ...(await appCheckHeaders()), Authorization: 'Bearer ' + token },
       });
       if (stale()) return;
+      if (
+        response.status === 403 &&
+        (
+          await response
+            .clone()
+            .json()
+            .catch(() => ({}))
+        ).detail === PASSWORD_CHANGE_REQUIRED
+      ) {
+        // The server still holds the temporary-password gate, whatever this token's claims say.
+        if (stale()) return;
+        showAuthStage(user, 'changePassword');
+        showTask('property', false);
+        return;
+      }
       if (response.status === 403) {
         response = await fetch('/api/access', {
           cache: 'no-store',

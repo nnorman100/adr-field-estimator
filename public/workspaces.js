@@ -551,6 +551,85 @@ window.WorkspaceUI = (() => {
     });
     container.append(form);
   }
+  // 64 characters, so each random byte maps to one without bias: 20 characters carry 120 bits.
+  const PASSWORD_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const generatedPassword = () =>
+    Array.from(crypto.getRandomValues(new Uint8Array(20)), (v) => PASSWORD_ALPHABET[v & 63]).join(
+      '',
+    );
+  function temporaryPassword(form) {
+    const input = formField(form, 'Temporary password', 'password'),
+      generate = node('button', 'Generate');
+    Object.assign(input, {
+      required: true,
+      minLength: 12,
+      maxLength: 128,
+      autocomplete: 'off',
+      spellcheck: false,
+      autocapitalize: 'off',
+    });
+    generate.type = 'button';
+    generate.addEventListener('click', () => {
+      input.value = generatedPassword();
+    });
+    const row = node('div', undefined, 'temporary-password');
+    row.append(input.closest('label'), generate, node('p', 'At least 12 characters.', 'hint'));
+    form.append(row);
+    return input;
+  }
+  // The password exists only here and in the superadmin's own email; the server never returns it.
+  function loginCreated(email, password) {
+    const card = node('section', undefined, 'dashboard-card login-created'),
+      code = node('code', password);
+    card.setAttribute('role', 'status');
+    card.append(
+      node('h2', 'Owner login created'),
+      node(
+        'p',
+        'Send this sign-in to the owner from your own email. DryScope sends nothing and shows this password only now. At first sign-in the owner sets their own password.',
+      ),
+      node('p', 'Email: ' + email),
+      node('p', 'Temporary password: '),
+      button('Copy password', async () => {
+        try {
+          await navigator.clipboard.writeText(password);
+          say('Password copied.', 'success');
+        } catch {
+          getSelection().selectAllChildren(code);
+          say('Copying is blocked here. The password is selected; copy it yourself.', 'error');
+        }
+      }),
+    );
+    card.children[3].append(code);
+    $('dashboardContent').prepend(card);
+  }
+  function ownerLoginForm(container, company) {
+    const cid = company.company_id,
+      form = node('form', undefined, 'dashboard-form');
+    form.append(
+      node('h2', 'Create login with temporary password'),
+      node(
+        'p',
+        (company.owner_uid
+          ? 'Replaces the current owner now and disables their company access. '
+          : 'Makes this login the owner now and cancels pending owner invitations. ') +
+          'No email is sent: you send the email address and password yourself.',
+      ),
+    );
+    formField(form, 'Owner’s email', 'email', '', 'email').required = true;
+    temporaryPassword(form);
+    submit(form, 'Create login', async (values) => {
+      const result = await jsonApi('/api/admin/companies/' + cid + '/owner-login', 'POST', {
+        email: values.get('email'),
+        password: values.get('password'),
+        expected_version: company.version,
+      });
+      await companyAdmin(cid);
+      loginCreated(result.owner.email, values.get('password'));
+      say('Owner login created.', 'success');
+    });
+    container.append(form);
+  }
   async function team() {
     const cid = state.session.company_id,
       epoch = show('Team & invitations', 'Add staff and manage their company access.');
@@ -668,7 +747,35 @@ window.WorkspaceUI = (() => {
     form.append(node('h2', 'Create a company'));
     formField(form, 'Company name', 'name').required = true;
     formField(form, 'Owner’s email', 'owner_email', '', 'email').required = true;
+    const method = selectField(
+        form,
+        'Owner sign-in',
+        'owner_signin',
+        [
+          ['invite', 'Email an invitation'],
+          ['password', 'Create login with temporary password'],
+        ],
+        'invite',
+      ),
+      password = temporaryPassword(form);
+    const choose = () => {
+      const direct = method.value === 'password';
+      password.closest('.temporary-password').hidden = !direct;
+      password.required = direct;
+      control.textContent = direct ? 'Create company & owner login' : 'Create & invite owner';
+    };
     submit(form, 'Create & invite owner', async (values) => {
+      if (values.get('owner_signin') === 'password') {
+        const result = await jsonApi('/api/admin/companies', 'POST', {
+          name: values.get('name'),
+          owner_email: values.get('owner_email'),
+          owner_password: values.get('password'),
+        });
+        await companyAdmin(result.company.company_id);
+        loginCreated(result.owner.email, values.get('password'));
+        say('Company created with an owner login.', 'success');
+        return;
+      }
       const result = await jsonApi('/api/admin/companies', 'POST', {
         name: values.get('name'),
         owner_email: values.get('owner_email'),
@@ -681,6 +788,9 @@ window.WorkspaceUI = (() => {
         result.invitation.delivery_status === 'failed' ? 'error' : 'success',
       );
     });
+    const control = form.querySelector('button[type=submit]');
+    method.addEventListener('change', choose);
+    choose();
     content.append(form);
     const grid = node('div', undefined, 'dashboard-grid');
     content.append(grid);
@@ -720,7 +830,10 @@ window.WorkspaceUI = (() => {
         await companyAdmin(cid);
       }),
     );
-    if (company.status === 'active') inviteForm(content, cid, true);
+    if (company.status === 'active') {
+      inviteForm(content, cid, true);
+      ownerLoginForm(content, company);
+    }
     content.append(node('h2', 'Invitations'));
     invitationList(content, invites.invitations, cid);
   }

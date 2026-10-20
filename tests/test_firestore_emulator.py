@@ -595,6 +595,67 @@ def test_owner_transfer_switches_atomically_and_leaves_one_owner(monkeypatch):
     ]
 
 
+def test_owner_login_replaces_the_owner_atomically_and_competes_with_acceptance(monkeypatch):
+    """A superadmin-created owner login commits in one transaction: a failure before commit leaves
+    the company, both memberships and the pending invitation untouched, and racing an owner
+    invitation's acceptance on another instance leaves exactly one active owner."""
+    import backend.workspaces as workspaces
+    from tests.fakes import FakeAuth
+
+    monkeypatch.setattr(workspaces, 'firebase_auth', FakeAuth())
+    monkeypatch.setattr(workspaces.firebase_admin, 'get_app', lambda name: object())
+    stores = instances(CompanyInspectionStore)
+    db = stores[0].db
+    seed_company(db)
+    db.document('_platform_admins/admin').set({'active': True})
+    invitation = stores[0].workspaces.invite('admin', 'adr', 'invited@example.invalid', 'owner')
+    paths = [
+        '_companies/adr',
+        '_memberships/owner',
+        '_memberships/direct',
+        '_invitations/' + invitation['invitation_id'],
+    ]
+    before = {path: stored(db, path) for path in paths}
+    event = WorkspaceStore.event
+
+    def failing(self, tx, uid, action, *args):
+        if action == 'owner_login_created':
+            raise RuntimeError('Synthetic failure after the switch was staged')
+        return event(self, tx, uid, action, *args)
+
+    def login(store):
+        return lambda: store.workspaces.owner_login(
+            'admin', 'adr', 'direct@example.invalid', 'synthetic-temporary-0001', 1
+        )
+
+    monkeypatch.setattr(WorkspaceStore, 'event', failing)
+    with pytest.raises(RuntimeError):
+        login(stores[0])()
+    assert {path: stored(db, path) for path in paths} == before
+    monkeypatch.setattr(WorkspaceStore, 'event', event)
+
+    def accept():
+        return stores[1].workspaces.accept(verified('invited'), invitation['invitation_id'])
+
+    if not outcomes(concurrently([login(stores[0]), accept]), refused=Conflict):
+        login(stores[0])()
+    owners = [
+        s.to_dict()['uid']
+        for s in db.collection('_memberships').stream()
+        if s.to_dict()['role'] == 'owner' and s.to_dict()['status'] == 'active'
+    ]
+    assert len(owners) == 1 and stored(db, '_companies/adr')['owner_uid'] == owners[0]
+    assert stored(db, '_memberships/owner')['status'] == 'disabled'
+    if owners == ['direct']:
+        assert stored(db, '_memberships/direct')['password_change_required'] is True
+        assert stored(db, '_invitations/' + invitation['invitation_id'])['status'] == 'cancelled'
+        assert stored(db, '_memberships/invited') is None
+    else:
+        assert stored(db, '_memberships/direct') is None
+    password = json.dumps([s.to_dict() for s in db.collection('_admin_events').stream()])
+    assert 'synthetic-temporary-0001' not in password
+
+
 def browser_token(uid, **claims):
     """An unsigned Firebase ID token, as the emulator accepts, carrying forged custom claims."""
 

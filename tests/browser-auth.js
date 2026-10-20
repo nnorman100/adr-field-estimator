@@ -11,15 +11,27 @@ window.__testVerify = (email) => {
   accounts[email].verified = true;
   write('synthetic-accounts', accounts);
 };
+// Accounts the backend created (superadmin owner logins) live on the test server, which checks their
+// passwords and serves their current custom claims; their addresses are verified.
+const serverAccount = (email) => read('synthetic-server-accounts', []).includes(email);
 const passwordUser = (email) => {
+  const server = serverAccount(email);
+  const verified = () => server || !!read('synthetic-accounts', {})[email]?.verified;
   const user = {
     uid: email.split('@')[0],
     email,
     providerData: [{ providerId: 'password' }],
-    emailVerified: !!read('synthetic-accounts', {})[email]?.verified,
+    emailVerified: verified(),
     getIdToken: async () => user.uid,
+    // window.__testStaleClaims stands for a token issued before the backend set the claim.
+    getIdTokenResult: async () => ({
+      claims:
+        server && !window.__testStaleClaims
+          ? await (await fetch('/__test/auth/claims?uid=' + encodeURIComponent(user.uid))).json()
+          : {},
+    }),
     reload: async () => {
-      user.emailVerified = !!read('synthetic-accounts', {})[email]?.verified;
+      user.emailVerified = verified();
     },
   };
   return user;
@@ -28,9 +40,10 @@ const initial = () => {
   if (sessionStorage.getItem('synthetic-signed-out')) return null;
   const uid = sessionStorage.getItem('synthetic-uid') || 'test-owner-' + crypto.randomUUID();
   sessionStorage.setItem('synthetic-uid', uid);
-  const email = Object.keys(read('synthetic-accounts', {})).find(
-    (address) => address.split('@')[0] === uid,
-  );
+  const email = [
+    ...Object.keys(read('synthetic-accounts', {})),
+    ...read('synthetic-server-accounts', []),
+  ].find((address) => address.split('@')[0] === uid);
   return email
     ? passwordUser(email)
     : {
@@ -76,7 +89,18 @@ export const signInWithPopup = async () => {};
 export const signOut = (target) => target.signOut();
 export const signInWithEmailAndPassword = async (target, email, password) => {
   const account = read('synthetic-accounts', {})[email];
-  if (!account) throw fail('auth/user-not-found');
+  if (!account) {
+    const response = await fetch('/__test/auth/sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!response.ok) throw fail('auth/invalid-credential');
+    write('synthetic-server-accounts', [
+      ...new Set([...read('synthetic-server-accounts', []), email]),
+    ]);
+    return change(passwordUser(email));
+  }
   if (account.password !== password) throw fail('auth/wrong-password');
   return change(passwordUser(email));
 };

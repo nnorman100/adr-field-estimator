@@ -173,7 +173,8 @@ from firebase_admin import auth as firebase_auth
 
 
 class FakeAuth:
-    """Firebase Admin auth keyed by email. Reset links carry a recognizable secret so tests can trace where they go."""
+    """Firebase Admin auth keyed by email. Reset links carry a recognizable secret so tests can trace where they go.
+    A user's uid is its email's local part; passwords are kept only to check where they went."""
 
     UserNotFoundError = firebase_auth.UserNotFoundError
     EmailAlreadyExistsError = firebase_auth.EmailAlreadyExistsError
@@ -182,12 +183,17 @@ class FakeAuth:
     def __init__(self):
         self.users = {}
         self.created = []
+        self.updated = []
         self.links = []
 
-    def add(self, email, *providers):
+    def add(self, email, *providers, disabled=False):
         self.users[email] = SimpleNamespace(
+            uid=email.split('@')[0],
             email=email,
             email_verified=True,
+            disabled=disabled,
+            custom_claims=None,
+            password=None,
             provider_data=[SimpleNamespace(provider_id=p) for p in providers],
         )
 
@@ -196,16 +202,33 @@ class FakeAuth:
             raise self.UserNotFoundError('No user record found.')
         return self.users[email]
 
-    def create_user(self, email, email_verified, app=None):
+    def get_user(self, uid, app=None):
+        for user in self.users.values():
+            if user.uid == uid:
+                return user
+        raise self.UserNotFoundError('No user record found.')
+
+    def create_user(self, email, email_verified, password=None, app=None):
         if email in self.users:
             raise self.EmailAlreadyExistsError(
                 'The user with the provided email already exists.', None, None
             )
         self.created.append(dict(email=email, email_verified=email_verified))
-        self.users[email] = SimpleNamespace(
-            email=email, email_verified=email_verified, provider_data=[]
-        )
+        self.add(email, *(['password'] if password else []))
+        self.users[email].email_verified = email_verified
+        self.users[email].password = password
         return self.users[email]
+
+    def update_user(self, uid, app=None, **changes):
+        user = self.get_user(uid)
+        self.updated.append(dict(uid=uid, fields=sorted(changes)))
+        if 'password' in changes and not any(
+            p.provider_id == 'password' for p in user.provider_data
+        ):
+            user.provider_data.append(SimpleNamespace(provider_id='password'))
+        for name, value in changes.items():
+            setattr(user, name, value)
+        return user
 
     def generate_password_reset_link(self, email, action_code_settings, app=None):
         link = (

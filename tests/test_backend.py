@@ -1012,6 +1012,8 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('GET', '/api/admin/companies'),
         ('POST', '/api/admin/companies'),
         ('PUT', '/api/admin/companies/{company_id}/status'),
+        ('POST', '/api/admin/companies/{company_id}/owner-login'),
+        ('POST', '/api/account/password'),
         ('GET', '/api/admin/companies/{company_id}/jobs'),
         ('GET', '/api/admin/companies/{company_id}/jobs/{inspection_id}'),
         ('GET', '/api/admin/companies/{company_id}/jobs/{inspection_id}/photos/{photo_id}'),

@@ -1759,6 +1759,12 @@ footer {
 .dashboard-form button {
   margin-right: 0.5rem;
 }
+/* Superadmin owner login: the temporary password is shown once to copy into an email. */
+.login-created code {
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 .dashboard-form legend {
   font-size: 1.2rem;
   font-weight: 900;
