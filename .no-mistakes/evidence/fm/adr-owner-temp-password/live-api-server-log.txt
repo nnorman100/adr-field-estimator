@@ -1,0 +1,13 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/admin/companies", "status": 403}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/admin/companies", "status": 400}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/admin/companies", "status": 409}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/admin/companies", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 403}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/access", "status": 403}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections", "status": 403}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/account/password", "status": 400}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/account/password", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/access", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/admin/companies", "status": 409}

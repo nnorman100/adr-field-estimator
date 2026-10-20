@@ -1,0 +1,70 @@
+### 1. Non-superadmin (office) cannot create an owner login
+> POST /api/admin/companies (as tok-office)
+{"detail":"Superadmin access is required."}
+< HTTP 403
+
+### 2. Superadmin: password shorter than 12 chars is refused
+> POST /api/admin/companies (as tok-admin)
+{"detail":"Use a password of 12 to 128 characters."}
+< HTTP 400
+
+### 3. Superadmin: Google-only email is refused
+> POST /api/admin/companies (as tok-admin)
+{"detail":"This email signs in with Google. Send an owner invitation instead."}
+< HTTP 409
+
+### 4. Superadmin creates company + owner login with chosen temporary password
+> POST /api/admin/companies (as tok-admin)
+{"company":{"company_id":"755ee12f5d9b43efbc20d083be28a95c","profile":{"name":"Kern Dry Co","address":"","phone":"","email":"","license":"","signoff":"","logo_data_url":""},"version":1,"status":"active","owner_uid":"new-owner","region":"CA","pricing_version":"adr-workbook-v1","created_at":"2026-10-20T01:23:51.881634+00:00","updated_at":"2026-10-20T01:23:51.881721+00:00"},"owner":{"uid":"new-owner","email":"new-owner@example.invalid"}}
+< HTTP 200
+
+### 5. Owner signs in with the emailed temporary password
+{"token":"tok-new-owner"}
+
+### 6. Temp-password session is locked out of the session route
+> GET /api/session (as tok-new-owner)
+{"detail":"Set your own password before using DryScope."}
+< HTTP 403
+
+### 7. Temp-password session is locked out of workspace access
+> GET /api/access (as tok-new-owner)
+{"detail":"Set your own password before using DryScope."}
+< HTTP 403
+
+### 8. Temp-password session is locked out of jobs
+> GET /api/inspections (as tok-new-owner)
+{"detail":"Set your own password before using DryScope."}
+< HTTP 403
+
+### 9. Owner: new password too short is refused
+> POST /api/account/password (as tok-new-owner)
+{"detail":"Use a password of 12 to 128 characters."}
+< HTTP 400
+
+### 10. Owner replaces the temporary password
+> POST /api/account/password (as tok-new-owner)
+{"password_changed":true}
+< HTTP 200
+
+### 11. Temporary password no longer signs in
+{"detail":"wrong password"}
+< HTTP 401
+
+### 12. Chosen password signs in
+{"token":"tok-new-owner"}
+
+### 13. Owner session now opens
+> GET /api/session (as tok-new-owner)
+{"uid":"new-owner","email":"new-owner@example.invalid","project":"alert-disaster-field-2026","live_url":"wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live","schema_version":3,"live_protocol_version":2,"live_voice":"Charon","workspaces_enabled":true,"workspace_protocol_version":1,"legacy_identity":{"name":"Alert Disaster Restoration","address":"3300 Patton Way · Bakersfield, CA 93308","phone":"(661) 426-2151","email":"","license":"950983","signoff":"Matthew Myers","logo_data_url":"<ADR logo data URL trimmed>"},"superadmin":false,"company_id":"755ee12f5d9b43efbc20d083be28a95c","role":"owner","capabilities":["jobs_read","jobs_create","coordination","assignment","scope","photos","ocr","audit","sign","live","team_manage","profile_manage"],"company":{"company_id":"755ee12f5d9b43efbc20d083be28a95c","profile":{"name":"Kern Dry Co","address":"","phone":"","email":"","license":"","signoff":"","logo_data_url":""},"version":1,"status":"active","owner_uid":"new-owner","region":"CA","pricing_version":"adr-workbook-v1","created_at":"2026-10-20T01:23:51.881634+00:00","updated_at":"2026-10-20T01:23:51.881721+00:00"},"membership_version":1,"password_change_required":false}
+< HTTP 200
+
+### 14. Owner workspace access now opens
+> GET /api/access (as tok-new-owner)
+{"uid":"new-owner","superadmin":false,"company_id":"755ee12f5d9b43efbc20d083be28a95c","role":"owner","capabilities":["jobs_read","jobs_create","coordination","assignment","scope","photos","ocr","audit","sign","live","team_manage","profile_manage"],"company":{"company_id":"755ee12f5d9b43efbc20d083be28a95c","profile":{"name":"Kern Dry Co","address":"","phone":"","email":"","license":"","signoff":"","logo_data_url":""},"version":1,"status":"active","owner_uid":"new-owner","region":"CA","pricing_version":"adr-workbook-v1","created_at":"2026-10-20T01:23:51.881634+00:00","updated_at":"2026-10-20T01:23:51.881721+00:00"},"membership_version":1,"password_change_required":false,"email":"new-owner@example.invalid","project":"alert-disaster-field-2026","workspaces_enabled":true,"invitations":[]}
+< HTTP 200
+
+### 15. Second owner-login for the same (now member) account is refused
+> POST /api/admin/companies (as tok-admin)
+{"detail":"This email already has company access. Choose a different email."}
+< HTTP 409
+
