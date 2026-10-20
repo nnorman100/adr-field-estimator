@@ -1,6 +1,6 @@
 """Authenticated workspace administration. Invitations and the temporary-password change do not require membership."""
 
-from fastapi import Depends, HTTPException, Security
+from fastapi import Depends, HTTPException, Request, Security
 
 try:
     from .workspaces import (
@@ -28,11 +28,28 @@ except ImportError:
     )
 
 
-# An unexpected Firebase or database failure; refusals keep their own messages.
 OWNER_LOGIN_FAILED = 'The owner login could not be created. Try again or contact support.'
 PASSWORD_CHANGE_FAILED = 'Your password could not be changed. Try again.'
-# A scope carrying the identity dependency's 503 message for its membership lookup.
-FAILURE_SCOPE = 'failure:'
+
+
+async def failure_for(request: Request):
+    """The 503 message for an unexpected Firebase or database failure on this request, from identity
+    through the final write; None keeps the generic message. Refusals keep their own messages."""
+    if request.method != 'POST':
+        return None
+    path = getattr(request.scope.get('route'), 'path', None)
+    if path == '/api/account/password':
+        return PASSWORD_CHANGE_FAILED
+    if path == '/api/admin/companies/{company_id}/owner-login':
+        return OWNER_LOGIN_FAILED
+    if path == '/api/admin/companies':
+        try:
+            body = await request.json()
+        except ValueError:
+            return None
+        if isinstance(body, dict) and body.get('owner_password') is not None:
+            return OWNER_LOGIN_FAILED
+    return None
 
 
 def register_workspace_routes(app, identity, get_store, stored, live, account):
@@ -43,7 +60,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     live_identity = Security(identity, scopes=live)
     # The temporary-password change is the one route a locked account can use.
     live_account = Security(account, scopes=live)
-    owner_login_identity = Security(identity, scopes=[*live, FAILURE_SCOPE + OWNER_LOGIN_FAILED])
+    failure_message = Depends(failure_for)
 
     @app.get('/api/access')
     async def access(claims=Depends(identity), store=Depends(get_store)):
@@ -71,9 +88,14 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         return {'companies': await stored(workspace(store).companies, claims['uid'])}
 
     @app.post('/api/admin/companies')
-    async def create_company(req: CompanyCreate, claims=live_identity, store=Depends(get_store)):
+    async def create_company(
+        req: CompanyCreate,
+        claims=live_identity,
+        store=Depends(get_store),
+        failure=failure_message,
+    ):
+        await stored(store.quota, claims['uid'], 'admin', 10, failure=failure)
         if req.owner_password is not None:
-            await stored(store.quota, claims['uid'], 'admin', 10, failure=OWNER_LOGIN_FAILED)
             return await stored(
                 workspace(store).owner_login,
                 claims['uid'],
@@ -82,9 +104,8 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
                 req.owner_password.get_secret_value(),
                 None,
                 req.name,
-                failure=OWNER_LOGIN_FAILED,
+                failure=failure,
             )
-        await stored(store.quota, claims['uid'], 'admin', 10)
         company, invitation = await stored(
             workspace(store).create_company, claims['uid'], req.name, req.owner_email
         )
@@ -95,9 +116,13 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
 
     @app.post('/api/admin/companies/{company_id}/owner-login')
     async def owner_login(
-        company_id: str, req: OwnerLogin, claims=owner_login_identity, store=Depends(get_store)
+        company_id: str,
+        req: OwnerLogin,
+        claims=live_identity,
+        store=Depends(get_store),
+        failure=failure_message,
     ):
-        await stored(store.quota, claims['uid'], 'admin', 10, failure=OWNER_LOGIN_FAILED)
+        await stored(store.quota, claims['uid'], 'admin', 10, failure=failure)
         return await stored(
             workspace(store).owner_login,
             claims['uid'],
@@ -105,17 +130,19 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             req.email,
             req.password.get_secret_value(),
             req.expected_version,
-            failure=OWNER_LOGIN_FAILED,
+            failure=failure,
         )
 
     @app.post('/api/account/password')
-    async def change_password(req: PasswordChange, claims=live_account, store=Depends(get_store)):
-        await stored(store.quota, claims['uid'], 'account', 10, failure=PASSWORD_CHANGE_FAILED)
+    async def change_password(
+        req: PasswordChange, claims=live_account, store=Depends(get_store), failure=failure_message
+    ):
+        await stored(store.quota, claims['uid'], 'account', 10, failure=failure)
         return await stored(
             workspace(store).change_password,
             claims,
             req.password.get_secret_value(),
-            failure=PASSWORD_CHANGE_FAILED,
+            failure=failure,
         )
 
     @app.get('/api/companies/{company_id}')

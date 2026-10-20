@@ -3943,14 +3943,20 @@ def test_owner_login_membership_lookup_failure_names_the_action(mail, monkeypatc
         raise RuntimeError('Synthetic Firestore outage')
 
     monkeypatch.setattr(store.workspaces, 'unlocked', unavailable)
-    response = create_owner_login(client)
-    assert response.status_code == 503
-    assert response.json() == {
-        'detail': 'The owner login could not be created. Try again or contact support.'
-    }
-    assert client.get('/api/admin/companies').json() == {
-        'detail': 'Changes could not be saved. Your local draft can be retried.'
-    }
+    company = {'name': 'Valley Dry', 'owner_email': 'valley@example.invalid'}
+    owner_login = 'The owner login could not be created. Try again or contact support.'
+    generic = 'Changes could not be saved. Your local draft can be retried.'
+    for response, message in (
+        (create_owner_login(client), owner_login),
+        (
+            client.post('/api/admin/companies', json={**company, 'owner_password': TEMPORARY}),
+            owner_login,
+        ),
+        (client.post('/api/admin/companies', json=company), generic),
+        (client.get('/api/admin/companies'), generic),
+    ):
+        assert response.status_code == 503
+        assert response.json() == {'detail': message}
 
 
 def test_password_change_recovers_a_claim_left_without_a_membership(mail, monkeypatch):

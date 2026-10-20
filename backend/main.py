@@ -79,7 +79,7 @@ try:
     )
     from .company_store import CompanyInspectionStore
     from .workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
-    from .workspace_api import FAILURE_SCOPE, register_workspace_routes
+    from .workspace_api import failure_for, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
@@ -118,7 +118,7 @@ except ImportError:
     )
     from company_store import CompanyInspectionStore
     from workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
-    from workspace_api import FAILURE_SCOPE, register_workspace_routes
+    from workspace_api import failure_for, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
     from job_store import BUCKET, decode_image, IMAGE_WORKER
@@ -479,8 +479,8 @@ async def monitor_app_check(request: Request, call_next):
 STORED_FAILURE = 'Changes could not be saved. Your local draft can be retried.'
 
 
-async def stored(method, *args, failure=STORED_FAILURE):
-    """failure is the 503 message for an unexpected error; account routes name their own action."""
+async def stored(method, *args, failure=None):
+    """failure is the 503 message for an unexpected error (see failure_for); None is the generic one."""
     try:
         return await run_in_threadpool(method, *args)
     except Limited as error:
@@ -500,7 +500,7 @@ async def stored(method, *args, failure=STORED_FAILURE):
             operation=getattr(method, '__name__', None),
             outcome=type(error).__name__,
         )
-        raise HTTPException(503, failure)
+        raise HTTPException(503, failure or STORED_FAILURE)
 
 
 def reusable_audit(record, revision, identity, customer):
@@ -690,13 +690,11 @@ async def account_identity(
 
 
 async def current_identity(
-    scopes: SecurityScopes, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+    scopes: SecurityScopes,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    failure: Optional[str] = Depends(failure_for),
 ):
     claims = unlocked(await account_identity(scopes, credentials))
-    failure = next(
-        (s[len(FAILURE_SCOPE) :] for s in scopes.scopes if s.startswith(FAILURE_SCOPE)),
-        STORED_FAILURE,
-    )
     await stored(get_job_store().workspaces.unlocked, claims['uid'], failure=failure)
     return claims
 
