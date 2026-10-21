@@ -147,6 +147,50 @@ class PhotoRoomUpdate(RevisionRequest):
     room: str = Field(min_length=1, max_length=100)
 
 
+class ReadingBase(StrictModel):
+    """One drying-log entry. Readings sit beside the inspection, never inside its priced
+    revision, so a monitoring visit after signing records nothing that pricing or documents read."""
+
+    # A saved room name, or '' for outside air and whole-job entries.
+    room: str = Field(default='', max_length=100)
+    # When the technician took the reading; the server stamps who saved it and when.
+    taken_at: datetime
+    note: str = Field(default='', max_length=500)
+
+
+class AirReading(ReadingBase):
+    kind: Literal['air']
+    zone: Literal['outside', 'unaffected', 'affected', 'dehu_inlet', 'dehu_outlet'] = 'affected'
+    temperature_f: float = Field(ge=-40, le=150)
+    relative_humidity: float = Field(ge=1, le=100)
+
+
+class MaterialReading(ReadingBase):
+    kind: Literal['material']
+    material: str = Field(min_length=1, max_length=100)
+    moisture: float = Field(ge=0, le=1000)
+    # Meters report different scales (%MC, %WME, relative pinless); the unit is the technician's.
+    unit: str = Field(min_length=1, max_length=20)
+    dry_standard: float | None = Field(default=None, ge=0, le=1000)
+    affected: bool = True
+
+
+class ThermalReading(ReadingBase):
+    kind: Literal['thermal']
+    delta_t_f: float = Field(ge=-200, le=200)
+    pattern: Literal['cold_anomaly', 'thermal_bridge', 'evaporative_cooling'] = 'cold_anomaly'
+    boundary: str = Field(default='', max_length=300)
+
+
+DryingReading = Annotated[
+    AirReading | MaterialReading | ThermalReading, Field(discriminator='kind')
+]
+
+
+class ReadingUpload(StrictModel):
+    reading: DryingReading
+
+
 class VoiceNoteUpload(StrictModel):
     """One offline voice note recorded on the phone; the audio is transcribed and never stored."""
 

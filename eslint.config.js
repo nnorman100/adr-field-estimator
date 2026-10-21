@@ -24,7 +24,12 @@ module.exports = [
     files: ['public/**/*.js'],
     languageOptions: {
       sourceType: 'script',
-      globals: { ...globals.browser, ADRCore: 'readonly', ADRDocuments: 'readonly' },
+      globals: {
+        ...globals.browser,
+        ADRCore: 'readonly',
+        ADRDocuments: 'readonly',
+        ADRPsychro: 'readonly',
+      },
     },
   },
   {

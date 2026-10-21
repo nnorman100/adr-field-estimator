@@ -22,6 +22,7 @@ from fastapi import (
     FastAPI,
     Depends,
     HTTPException,
+    Path,
     Query,
     Request,
     Response,
@@ -60,6 +61,7 @@ try:
         HomeownerSignature,
         VoiceNoteUpload,
         TranscriptionResult,
+        ReadingUpload,
     )
     from . import signing_links
     from .claims import make_documents, price_scope, proposal_date
@@ -99,6 +101,7 @@ except ImportError:
         HomeownerSignature,
         VoiceNoteUpload,
         TranscriptionResult,
+        ReadingUpload,
     )
     import signing_links
     from claims import make_documents, price_scope, proposal_date
@@ -834,6 +837,43 @@ async def move_photo(
             req.room,
         )
     )
+
+
+# The drying log is a sidecar: readings never touch the priced revision, its audit or its
+# signature, and a signed job keeps accepting monitoring-visit readings.
+@app.get('/api/inspections/{inspection_id}/readings')
+async def drying_log(
+    inspection_id: str, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    return await stored(store.drying_log, staff['uid'], inspection_id)
+
+
+@app.post('/api/inspections/{inspection_id}/readings')
+async def add_reading(
+    inspection_id: str,
+    req: ReadingUpload,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    return await stored(
+        store.add_reading,
+        staff['uid'],
+        staff.get('email', ''),
+        inspection_id,
+        req.reading.model_dump(mode='json'),
+    )
+
+
+@app.delete('/api/inspections/{inspection_id}/readings/{reading_id}')
+async def remove_reading(
+    inspection_id: str,
+    reading_id: str = Path(max_length=32, pattern=r'^[a-f0-9]{32}$'),
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    return await stored(store.remove_reading, staff['uid'], inspection_id, reading_id)
 
 
 @app.get('/api/inspections/{inspection_id}/photos/{photo_id}')

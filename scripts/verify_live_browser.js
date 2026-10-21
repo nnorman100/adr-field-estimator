@@ -326,6 +326,8 @@ async function main(args = process.argv.slice(2)) {
           'sign.html',
           'app.js',
           'workspaces.js',
+          'psychrometrics.js',
+          'drying.js',
           'core.js',
           'documents.js',
           'sign.js',

@@ -4057,3 +4057,54 @@ def test_owner_login_failure_names_the_action_instead_of_a_draft_retry(mail, mon
         'detail': 'The owner login could not be created. Try again or contact support.'
     }
     assert not owner_events(store)
+
+
+def test_drying_readings_follow_job_access_and_the_scope_capability(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    assert (
+        client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code
+        == 200
+    )
+    body = {
+        'reading': {
+            'kind': 'air',
+            'room': 'Bathroom',
+            'zone': 'affected',
+            'temperature_f': 74,
+            'relative_humidity': 72,
+            'taken_at': '2026-10-21T15:00:00Z',
+        }
+    }
+    saved = client.post('/api/inspections/' + ID + '/readings', json=body)
+    assert saved.status_code == 200, saved.text
+    [air] = saved.json()['readings']
+    assert air['recorded_by'] == 'estimator@example.invalid' and air['gpp'] == 91
+    # The owner records and removes readings on any company job.
+    current['uid'] = 'owner'
+    assert client.post('/api/inspections/' + ID + '/readings', json=body).status_code == 200
+    assert client.delete('/api/inspections/' + ID + '/readings/' + air['id']).status_code == 200
+    # Office staff read the log but cannot change it; the capability is the scope one.
+    current['uid'] = 'office'
+    log = client.get('/api/inspections/' + ID + '/readings')
+    assert log.status_code == 200 and len(log.json()['readings']) == 1
+    [kept] = log.json()['readings']
+    assert client.post('/api/inspections/' + ID + '/readings', json=body).status_code == 403
+    assert client.delete('/api/inspections/' + ID + '/readings/' + kept['id']).status_code == 403
+    # An unassigned estimator, another company and a superadmin without membership see no job.
+    for uid in ('estimator2', 'other-owner', 'admin'):
+        current['uid'] = uid
+        responses = [
+            client.get('/api/inspections/' + ID + '/readings'),
+            client.post('/api/inspections/' + ID + '/readings', json=body),
+            client.delete('/api/inspections/' + ID + '/readings/' + kept['id']),
+        ]
+        assert all(r.status_code in (403, 404) for r in responses), [
+            (uid, r.status_code, r.text) for r in responses
+        ]
+    current['uid'] = 'estimator'
+    assert len(client.get('/api/inspections/' + ID + '/readings').json()['readings']) == 1
+    # Readings are a sidecar: the job summary, revision and audit state are untouched.
+    record = client.get('/api/inspections/' + ID).json()
+    assert record['revision'] == 1 and record['audit'] is None
+    assert 'readings' not in record and 'readings' not in store.db.records['_workspace_jobs/' + ID]

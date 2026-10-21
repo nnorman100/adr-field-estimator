@@ -1030,3 +1030,83 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('POST', '/api/invitations/{invitation_id}/accept'),
         ('PUT', '/api/jobs/{inspection_id}/coordination'),
     }
+
+
+def reading(**changes):
+    return {
+        'reading': {
+            'kind': 'air',
+            'room': 'Bathroom',
+            'zone': 'affected',
+            'temperature_f': 74,
+            'relative_humidity': 72,
+            'taken_at': '2026-10-21T15:00:00Z',
+            **changes,
+        }
+    }
+
+
+def test_drying_readings_sit_beside_the_revision_and_outlive_signing(context):
+    client, store = context
+    record = audit(client, inspect(client))
+    assert client.get('/api/inspections/' + ID + '/readings').json() == {
+        'inspection_id': ID,
+        'readings': [],
+        'updated_at': None,
+    }
+    saved = client.post('/api/inspections/' + ID + '/readings', json=reading())
+    assert saved.status_code == 200, saved.text
+    [air] = saved.json()['readings']
+    assert air['recorded_by'] == 'owner@example.invalid' and len(air['id']) == 32
+    assert (air['gpp'], air['dew_point_f'], air['vapor_pressure_inhg']) == (91, 64, 0.609)
+    assert air['taken_at'] == '2026-10-21T15:00:00Z' and air['recorded_at'] > '2026'
+    # The reading changed nothing the proposal hash or signature binds to.
+    current = client.get('/api/inspections/' + ID).json()
+    assert current['revision'] == record['revision'] and current['audit'] == record['audit']
+    assert client.post('/api/authorize', json=sign_payload(record)).status_code == 200
+    # Monitoring visits continue after signing; material and thermal readings carry no computed values.
+    material = reading(
+        kind='material', material='Drywall', moisture=28, unit='%MC', dry_standard=12, zone=None
+    )
+    del material['reading']['zone'], material['reading']['temperature_f']
+    del material['reading']['relative_humidity']
+    thermal = reading(kind='thermal', delta_t_f=-6.4, boundary='Up 3 ft of exterior wall')
+    for key in ('zone', 'temperature_f', 'relative_humidity'):
+        del thermal['reading'][key]
+    for body in (material, thermal):
+        response = client.post('/api/inspections/' + ID + '/readings', json=body)
+        assert response.status_code == 200, response.text
+    log = client.get('/api/inspections/' + ID + '/readings').json()
+    assert [r['kind'] for r in log['readings']] == ['air', 'material', 'thermal']
+    assert 'gpp' not in log['readings'][1] and log['readings'][2]['pattern'] == 'cold_anomaly'
+    assert client.get('/api/inspections/' + ID).json()['status'] == 'signed'
+    removed = client.delete('/api/inspections/' + ID + '/readings/' + air['id'])
+    assert removed.status_code == 200 and len(removed.json()['readings']) == 2
+    assert client.delete('/api/inspections/' + ID + '/readings/' + air['id']).status_code == 404
+    assert store.db.records['inspections/' + ID]['status'] == 'signed'
+
+
+def test_drying_readings_reject_bad_values_and_other_users(context):
+    client, _ = context
+    inspect(client)
+    bad = [
+        reading(relative_humidity=0),
+        reading(temperature_f=200),
+        reading(kind='bogus'),
+        reading(extra='field'),
+        {'reading': {'kind': 'material', 'room': 'Bathroom', 'taken_at': '2026-10-21T15:00:00Z'}},
+        {'reading': {'kind': 'thermal', 'delta_t_f': 500, 'taken_at': '2026-10-21T15:00:00Z'}},
+        reading(taken_at='yesterday'),
+    ]
+    for body in bad:
+        assert client.post('/api/inspections/' + ID + '/readings', json=body).status_code == 422
+    assert client.delete('/api/inspections/' + ID + '/readings/not-hex').status_code == 422
+    as_user('other')
+    assert client.get('/api/inspections/' + ID + '/readings').status_code == 404
+    assert client.post('/api/inspections/' + ID + '/readings', json=reading()).status_code == 404
+    assert client.delete('/api/inspections/' + ID + '/readings/' + 'f' * 32).status_code == 404
+    as_user('owner')
+    assert client.get('/api/inspections/' + ID + '/readings').json()['readings'] == []
+    missing = 'ADR-INS-' + 'e' * 32
+    assert client.get('/api/inspections/' + missing + '/readings').status_code == 404
+    assert client.get('/api/inspections/not-an-id/readings').status_code == 404
