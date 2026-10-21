@@ -7,6 +7,7 @@ window.DryingLog = (() => {
     logFor = null,
     epoch = 0,
     trigger = null,
+    dialogGen = 0,
     queue = Promise.resolve();
   const KINDS = ['air', 'material', 'thermal'];
   const dialog = () => $('readingDialog');
@@ -26,18 +27,20 @@ window.DryingLog = (() => {
   const shownLog = () => (logFor === (state.draft?.inspection_id ?? null) ? log : null);
   const shownStatus = () => (logFor === (state.draft?.inspection_id ?? null) ? status : '');
   /* Loads and changes run one at a time, so each response is the server's newest log when it
-     arrives. A response is kept only while its inspection is still open and the log has not been
-     cleared since the request was queued; otherwise it resolves to null. */
+     arrives. A request still runs for its own inspection after the technician opens another job,
+     but only the open inspection's log is shown. Clearing the log (sign-out or access change)
+     cancels queued requests and resolves them to null. */
   function ordered(id, request) {
-    const queued = epoch,
-      live = () => queued === epoch && id === state.draft?.inspection_id;
+    const queued = epoch;
     const run = queue.then(async () => {
-      if (!live()) return null;
+      if (queued !== epoch) return null;
       const result = await request();
-      if (!result || !live()) return null;
-      log = result;
-      status = '';
-      logFor = id;
+      if (queued !== epoch) return null;
+      if (result && id === state.draft?.inspection_id) {
+        log = result;
+        status = '';
+        logFor = id;
+      }
       return result;
     });
     queue = run.catch(() => {});
@@ -304,6 +307,7 @@ window.DryingLog = (() => {
     trigger = control;
     const form = $('readingForm');
     form.reset();
+    $('saveReading').disabled = false;
     $('readingError').hidden = true;
     $('readingError').textContent = '';
     const select = $('readingRoom');
@@ -368,25 +372,27 @@ window.DryingLog = (() => {
   async function saveReading(event) {
     event.preventDefault();
     if (!$('readingForm').reportValidity()) return;
-    const id = state.draft?.inspection_id;
+    const id = state.draft?.inspection_id,
+      sync = !state.signed && !confirmedAuthorization,
+      gen = dialogGen;
     $('saveReading').disabled = true;
     try {
       const body = { reading: payload() };
       const result = await ordered(id, async () => {
         // The inspection must exist on the server before a reading can sit beside it.
-        if (!state.signed && !confirmedAuthorization) await syncDraft();
-        if (id !== state.draft?.inspection_id) return null;
+        if (sync && id === state.draft?.inspection_id) await syncDraft();
         return jsonApi('/api/inspections/' + id + '/readings', 'POST', body);
       });
       if (!result) return;
-      closeDialog();
+      if (gen === dialogGen) closeDialog();
       render();
       say('Reading saved.', 'success');
     } catch (e) {
+      if (gen !== dialogGen) return say(e.message, 'error');
       $('readingError').textContent = e.message;
       $('readingError').hidden = false;
     } finally {
-      $('saveReading').disabled = false;
+      if (gen === dialogGen) $('saveReading').disabled = false;
     }
   }
   async function removeReading(reading, control) {
@@ -399,6 +405,8 @@ window.DryingLog = (() => {
       if (!result) return;
       render();
       say('Reading removed.', 'success');
+    } catch (e) {
+      say(e.message, 'error');
     } finally {
       control.disabled = false;
     }
@@ -406,6 +414,7 @@ window.DryingLog = (() => {
   function init() {
     $('readingForm').addEventListener('submit', saveReading);
     $('cancelReading').addEventListener('click', closeDialog);
+    dialog().addEventListener('close', () => ++dialogGen);
     dialog().addEventListener('cancel', (event) => {
       event.preventDefault();
       closeDialog();

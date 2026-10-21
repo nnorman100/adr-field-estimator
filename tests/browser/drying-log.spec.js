@@ -210,6 +210,75 @@ test('an offline log reloads on reconnect and overlapping loads and removals kee
   await expect(page.locator('#dryingLogStatus')).toHaveText('No readings yet');
 });
 
+test('queued changes reach their own job after another opens, and a late save leaves a reopened dialog alone', async ({
+  page,
+}) => {
+  await open(page);
+  await checkScope(page);
+  const dialog = page.locator('#readingDialog');
+  for (const [time, temp] of [
+    ['2026-10-21T09:30', '74'],
+    ['2026-10-21T09:40', '75'],
+    ['2026-10-21T09:50', '76'],
+  ]) {
+    await card(page, 'Room 1').getByRole('button', { name: 'Add reading' }).click();
+    await page.locator('#readingTemp').fill(temp);
+    await page.locator('#readingRh').fill('72');
+    await page.locator('#readingTakenAt').fill(time);
+    await page.locator('#saveReading').click();
+    await expect(dialog).toBeHidden();
+  }
+  await expect(rows(page)).toHaveCount(3);
+  const own = await page.evaluate(() => state.draft.inspection_id);
+
+  // Two removals are queued behind a slow first one; another job opens before either is sent.
+  const deletes = [];
+  await page.route('**/readings/*', async (route) => {
+    if (route.request().method() !== 'DELETE') return route.continue();
+    deletes.push(route.request().url());
+    if (deletes.length === 1) await new Promise((resolve) => setTimeout(resolve, 800));
+    return route.continue();
+  });
+  await rows(page).nth(0).getByRole('button', { name: 'Remove' }).click();
+  await rows(page).nth(1).getByRole('button', { name: 'Remove' }).click();
+  await page.evaluate(() => {
+    state.draft.inspection_id = 'f'.repeat(32);
+    DryingLog.render();
+  });
+  await expect.poll(() => deletes.length).toBe(2);
+  await expect(rows(page)).toHaveCount(0);
+  await page.evaluate((id) => {
+    state.draft.inspection_id = id;
+    return DryingLog.load();
+  }, own);
+  await expect(rows(page)).toHaveCount(1);
+  await expect(rows(page).first()).toContainText('76°F');
+  await page.unroute('**/readings/*');
+
+  // A slow save is cancelled and the dialog reopened; its response leaves the new entry open.
+  await page.route('**/readings', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.fulfill({ response });
+  });
+  await page.locator('#addReading').click();
+  await page.locator('#readingTemp').fill('70');
+  await page.locator('#readingRh').fill('50');
+  await page.locator('#saveReading').click();
+  await expect(page.locator('#saveReading')).toBeDisabled();
+  await page.locator('#cancelReading').click();
+  await expect(dialog).toBeHidden();
+  await page.locator('#addReading').click();
+  await expect(page.locator('#saveReading')).toBeEnabled();
+  await page.locator('#readingTemp').fill('81');
+  await expect(page.locator('#message')).toHaveText('Reading saved.');
+  await expect(rows(page)).toHaveCount(2);
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('#readingTemp')).toHaveValue('81');
+  await expect(page.locator('#saveReading')).toBeEnabled();
+});
+
 test('office staff read the drying log without recording controls', async ({ page, request }) => {
   const fixture = await (
     await request.post('/__test/workspaces', { data: { enabled: true } })
