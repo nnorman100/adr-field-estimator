@@ -375,6 +375,27 @@
     }
     return { type: 'unknown', code };
   }
+  // Rooms whose names match once normalised share one tag code, so scanning and printing refuse
+  // them until they are renamed. Returns the refusal when any of the chosen rooms clashes, else ''.
+  function roomNameClash(rooms, chosen = rooms) {
+    const groups = new Map();
+    for (const room of rooms) {
+      const key = roomKey(room.name);
+      if (key) groups.set(key, [...(groups.get(key) || []), room]);
+    }
+    const clashing = [...groups.values()].filter(
+      (group) => group.length > 1 && group.some((room) => chosen.includes(room)),
+    );
+    if (!clashing.length) return '';
+    return (
+      'Rooms ' +
+      clashing
+        .flat()
+        .map((room) => '"' + room.name + '"')
+        .join(', ') +
+      ' have the same name. Give each room a distinct name, then try again; nothing was changed.'
+    );
+  }
   const sameAsset = (a, b) => a.kind === b.kind && a.asset_id === b.asset_id;
   // What a scanned code means for the open draft. A room tag names the current room; an equipment
   // tag records that asset in the current room at the scan time, replacing its earlier placement.
@@ -393,6 +414,8 @@
           'Room tags read DS1-RM-… and equipment tags DS1-EQ-…; nothing was recorded.',
       };
     }
+    const clash = roomNameClash(data.rooms);
+    if (clash) return { ok: false, type: parsed.type, message: clash };
     if (parsed.type === 'room') {
       if (parsed.job !== jobTag(draft.inspection_id))
         return {
@@ -520,6 +543,7 @@
     roomTagCode,
     equipmentTagCode,
     parseTag,
+    roomNameClash,
     applyTag,
     removeScan,
     placementsByRoom,

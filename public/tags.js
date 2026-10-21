@@ -12,6 +12,7 @@ window.TagsUI = (() => {
     equipmentLabel,
     roomTagCode,
     equipmentTagCode,
+    roomNameClash,
   } = ADRCore;
   const JSQR_PATH = '/vendor/jsqr/1.4.0/jsQR.js',
     ASSET_ID = /^[A-Z0-9][A-Z0-9._/-]{0,31}$/,
@@ -19,6 +20,7 @@ window.TagsUI = (() => {
   const scanner = {
     stream: null,
     timer: null,
+    session: 0,
     lastCode: '',
     lastAt: 0,
   };
@@ -174,7 +176,9 @@ window.TagsUI = (() => {
   }
   async function startCamera() {
     stopCamera();
-    const video = $('tagVideo');
+    const session = scanner.session,
+      current = () => session === scanner.session && $('tagScanDialog').open,
+      video = $('tagVideo');
     $('retryTagCamera').hidden = true;
     $('tagCameraEmpty').textContent = 'Starting the camera…';
     if (state.media) {
@@ -195,6 +199,7 @@ window.TagsUI = (() => {
           audio: false,
         });
       } catch (error) {
+        if (!current()) return;
         cameraUnavailable(
           error.name === 'NotAllowedError' || error.name === 'SecurityError'
             ? 'Camera permission was denied. Allow the camera in your browser settings, or type the code printed on the tag.'
@@ -206,7 +211,7 @@ window.TagsUI = (() => {
         );
         return;
       }
-      if (!$('tagScanDialog').open) {
+      if (!current()) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
@@ -214,17 +219,20 @@ window.TagsUI = (() => {
       video.srcObject = stream;
     }
     await video.play().catch(() => {});
+    if (!current()) return;
     $('tagScanDialog').classList.add('scanning');
     try {
       await loadDecoder();
     } catch (error) {
-      cameraUnavailable(error.message);
+      if (current()) cameraUnavailable(error.message);
       return;
     }
+    if (!current()) return;
     $('tagCameraEmpty').textContent = '';
     if (!scanner.timer) scanner.timer = setTimeout(tick, 150);
   }
   function stopCamera() {
+    scanner.session++;
     clearTimeout(scanner.timer);
     scanner.timer = null;
     scanner.stream?.getTracks().forEach((track) => track.stop());
@@ -338,6 +346,8 @@ window.TagsUI = (() => {
         })),
       ];
     if (!wanted.length) throw Error('Choose at least one room or add an equipment tag.');
+    const clash = roomNameClash(data.rooms, rooms);
+    if (clash) throw Error(clash);
     const run = sheet.run;
     if (wanted.length > 60) throw Error('Make at most 60 tags per sheet.');
     if (!navigator.onLine)

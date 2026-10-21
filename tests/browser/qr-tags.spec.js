@@ -302,3 +302,54 @@ test('leaving the job clears the tag sheet and drops a tag response that arrives
     0,
   );
 });
+
+test('a camera that answers after the scanner was closed and reopened is stopped, not kept', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName === 'webkit',
+    'Playwright WebKit never starts the synthetic camera stream; physical iPhone acceptance remains open.',
+  );
+  await page.addInitScript(() => {
+    // Each camera request waits until the test answers it, so two starts can overlap.
+    window.__cameraRequests = [];
+    window.__streams = [];
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          new Promise((resolve) =>
+            window.__cameraRequests.push(() => {
+              const canvas = document.createElement('canvas');
+              canvas.width = 320;
+              canvas.height = 240;
+              canvas.getContext('2d').fillRect(0, 0, 320, 240);
+              const stream = canvas.captureStream(10);
+              window.__streams.push(stream);
+              resolve(stream);
+            }),
+          ),
+      },
+    });
+  });
+  await open(page);
+  await twoRooms(page);
+  await page.locator('#scanTag').click();
+  await page.locator('#closeTagScan').click();
+  await page.locator('#scanTag').click();
+  await expect.poll(() => page.evaluate(() => window.__cameraRequests.length)).toBe(2);
+  await page.evaluate(() => window.__cameraRequests.forEach((answer) => answer()));
+  await expect(page.locator('#tagScanDialog')).toHaveClass(/scanning/);
+  expect(
+    await page.evaluate(() =>
+      window.__streams.map((stream) => stream.getVideoTracks()[0].readyState),
+    ),
+  ).toEqual(['ended', 'live']);
+  await page.locator('#closeTagScan').click();
+  expect(
+    await page.evaluate(() =>
+      window.__streams.map((stream) => stream.getVideoTracks()[0].readyState),
+    ),
+  ).toEqual(['ended', 'ended']);
+});

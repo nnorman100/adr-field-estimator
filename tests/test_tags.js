@@ -149,6 +149,27 @@ for (const code of [
   assert.equal(core.applyTag(core.parseTag('DS1-EQ-AM-AM-7'), open, 'Kitchen', AT).ok, true);
   assert.equal(open.data.equipment_scans.length, 200);
 }
+{
+  // Rooms whose names match once normalised share a tag code: scans and printing refuse them.
+  const open = draft();
+  open.data.rooms.push({ ...core.emptyData().rooms[0], name: ' kitchen ' });
+  const clash =
+    'Rooms "Kitchen", " kitchen " have the same name. Give each room a distinct name, then try again; nothing was changed.';
+  const room = core.applyTag(core.parseTag('DS1-RM-' + JOB + '-Hallway'), open, 'Hallway', AT);
+  assert.deepEqual(room, { ok: false, type: 'room', message: clash });
+  const unit = core.applyTag(core.parseTag('DS1-EQ-AM-AM-1'), open, 'Hallway', AT);
+  assert.deepEqual(unit, { ok: false, type: 'equipment', message: clash });
+  assert.equal(open.data.equipment_scans, undefined);
+  assert.match(core.applyTag(core.parseTag('nope'), open, 'Hallway', AT).message, /Not a DryScope/);
+  const [kitchen, hallway, copy] = open.data.rooms;
+  assert.equal(core.roomNameClash(open.data.rooms, [hallway]), '');
+  assert.equal(core.roomNameClash(open.data.rooms, [hallway, copy]), clash);
+  assert.equal(core.roomNameClash(open.data.rooms, [kitchen]), clash);
+  // Blank names are not tag codes, and a distinct name clears the refusal.
+  assert.equal(core.roomNameClash([{ name: '' }, { name: ' ' }]), '');
+  copy.name = 'Pantry';
+  assert.equal(core.applyTag(core.parseTag('DS1-EQ-AM-AM-1'), open, 'Hallway', AT).ok, true);
+}
 assert.equal(core.equipmentLabel('air_scrubber'), 'Air scrubber');
 assert.equal(core.equipmentLabel('air_scrubber', 2), 'Air scrubbers');
 console.log('PASS: QR tag codes, room picks, equipment placement records and their limits');
