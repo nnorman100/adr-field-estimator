@@ -1188,9 +1188,10 @@ window.WorkspaceUI = (() => {
       Object.entries(CLAIM_INPUTS).map(([field, id]) => [field, $(id).value.trim()]),
     );
   }
-  function showClaim(view) {
+  function showClaim(view, shown) {
     claim = view;
-    for (const [field, id] of Object.entries(CLAIM_INPUTS)) $(id).value = view.claim[field];
+    for (const [field, id] of Object.entries(CLAIM_INPUTS))
+      if (!shown || $(id).value.trim() === shown[field]) $(id).value = view.claim[field];
     const recorded = Object.values(view.claim).filter(Boolean).length;
     $('claimSummary').textContent = view.claim.claim_number
       ? '· Claim ' + view.claim.claim_number
@@ -1227,25 +1228,32 @@ window.WorkspaceUI = (() => {
     if (view) showClaim(view);
     else $('claimStatus').textContent = 'Claim details can be added once this job saves online.';
   }
-  // Saves the given values (the form's by default) to the job; documents need regenerating after.
+  // Saves the values to the job, keeping fields typed meanwhile; false if the job or account changed.
   async function putClaim(values) {
-    const id = state.draft.inspection_id;
+    const id = state.draft.inspection_id,
+      key = context(),
+      shown = claimValues(),
+      current = () => id === state.draft?.inspection_id && key === context();
     if (!claim || claim.job_id !== id) throw Error('Reload the job before saving claim details.');
-    showClaim(
-      await jsonApi('/api/jobs/' + id + '/claim', 'PUT', {
-        expected_version: claim.claim_version,
-        claim: values,
-      }),
-    );
+    const view = await jsonApi('/api/jobs/' + id + '/claim', 'PUT', {
+      expected_version: claim.claim_version,
+      claim: values,
+    });
+    if (!current()) return false;
+    showClaim(view, shown);
     // A change clears unsigned documents on the server; pick that up so stale ones cannot be signed.
-    if (!state.signed && state.record?.audit) absorb(await jsonApi('/api/inspections/' + id));
+    if (!state.signed && state.record?.audit) {
+      const record = await jsonApi('/api/inspections/' + id);
+      if (!current()) return false;
+      absorb(record);
+    }
+    return true;
   }
   async function saveClaim() {
     if (!$('claimForm').reportValidity()) return;
     $('saveClaim').disabled = true;
     try {
-      await putClaim(claimValues());
-      $('claimStatus').textContent = 'Claim details saved.';
+      if (await putClaim(claimValues())) $('claimStatus').textContent = 'Claim details saved.';
     } finally {
       policy();
     }
@@ -1258,10 +1266,10 @@ window.WorkspaceUI = (() => {
       return [
         'Claim details from the walkthrough were not saved. Enter them under Claim & loss details.',
       ];
-    const before = { ...claim.claim },
+    const before = claimValues(),
       values = { ...before };
     for (const change of changes) values[change.field] = change.value;
-    await putClaim(values);
+    if (!(await putClaim(values))) return [];
     claimEdits = [
       ...claimEdits.filter((edit) => !changes.some((change) => change.field === edit.field)),
       ...changes.map((change) => ({
@@ -1284,8 +1292,9 @@ window.WorkspaceUI = (() => {
       undo.type = 'button';
       undo.title = 'Restore previous value';
       undo.addEventListener('click', () =>
-        putClaim({ ...claim.claim, [edit.field]: edit.before })
-          .then(() => {
+        putClaim({ ...claimValues(), [edit.field]: edit.before })
+          .then((applied) => {
+            if (!applied) return;
             claimEdits = claimEdits.filter((item) => item !== edit);
             renderClaimEdits();
             $('claimStatus').textContent = 'Walkthrough value undone.';

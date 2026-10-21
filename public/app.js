@@ -1351,7 +1351,9 @@ function retagDefaultPhotos(before, after) {
   retagScans(roomScans(after, rename.from), rename.to);
 }
 function renderWalkthroughEdits() {
-  document.querySelectorAll('.walkthrough-edit').forEach((badge) => badge.remove());
+  $('inspectionForm')
+    .querySelectorAll('.walkthrough-edit')
+    .forEach((badge) => badge.remove());
   const edit = state.scopeEdits;
   if (
     !edit ||

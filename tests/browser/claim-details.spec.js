@@ -115,3 +115,54 @@ test('office staff enter claim details; invalid values stay on the form', async 
   // The card fits a phone without horizontal scrolling.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test('a walkthrough fill keeps unsaved claim entries and its markers survive scope edits', async ({
+  page,
+}) => {
+  await newJob(page, 'estimator');
+  await openClaim(page);
+  await page.locator('#claimPolicy').fill('POL-77');
+  await page.locator('#address').fill('Synthetic claim property');
+  await page.locator('#yearBuilt').fill('1998');
+  await page.locator('#technicianNotes').fill(words);
+  await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#claimCarrier')).toHaveValue('Synthetic Mutual');
+  await expect(page.locator('#claimPolicy')).toHaveValue('POL-77');
+  await page.locator('#claimDeductible').fill('$500');
+  await label(page, 'claimCarrier').getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.locator('#claimStatus')).toHaveText('Walkthrough value undone.');
+  await expect(page.locator('#claimCarrier')).toHaveValue('');
+  await expect(page.locator('#claimPolicy')).toHaveValue('POL-77');
+  await expect(page.locator('#claimDeductible')).toHaveValue('$500');
+  await page.locator('#confirmFilledScope').click();
+  await expect(label(page, 'claimNumber')).toContainText('From walkthrough · Undo');
+});
+
+test('a claim save that finishes after another job opens leaves that job untouched', async ({
+  page,
+}) => {
+  await newJob(page, 'office');
+  await openClaim(page);
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/api/jobs/*/claim', async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    const response = await route.fetch();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.locator('#claimCarrier').fill('Job A Mutual');
+  await page.locator('#saveClaim').click();
+  const first = await page.evaluate(() => state.draft.inspection_id);
+  await page.locator('#jobMenu > summary').click();
+  await page.locator('#newInspection').click();
+  await page.waitForFunction(
+    (id) => state.draft?.inspection_id && state.draft.inspection_id !== id,
+    first,
+  );
+  release();
+  await openClaim(page);
+  await page.waitForTimeout(500);
+  await expect(page.locator('#claimCarrier')).toHaveValue('');
+  await expect(page.locator('#claimStatus')).not.toHaveText('Claim details saved.');
+});
