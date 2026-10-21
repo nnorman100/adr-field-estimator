@@ -545,14 +545,88 @@ h3 {
 .loss-pill input:disabled + span {
   opacity: 0.6;
 }
+/* Photo shot list: the room's three answers as pills, then each required shot tagged or missing. */
+.shot-panel {
+  margin: 1rem 0;
+}
+.shot-list .shot-flags {
+  margin-bottom: 0.6rem;
+}
+/* Three yes/no answers wrap side by side instead of stretching to one per row. */
+.shot-flags .loss-pill {
+  flex: 0 1 auto;
+}
+.shot-flags .loss-pill span {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+}
+.shot-items {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9375rem;
+}
+.shot-items li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.shot-mark {
+  flex: 0 0 5.5rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-align: center;
+}
+.shot-done .shot-mark {
+  border-color: var(--navy);
+  background: var(--navy);
+  color: var(--paper);
+}
+.shot-missing .shot-mark {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+.shot-list .hint {
+  margin: 0.5rem 0 0;
+}
+.shot-picker {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.shot-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.shot-choice {
+  min-height: 44px;
+  border-radius: 999px;
+}
+.shot-choice.shot-needed {
+  border-color: var(--navy);
+  font-weight: 700;
+}
 /* Waste % (and cabinetry below category 3) wait in a drawer inside the card. */
-.room > .room-more {
+.room > .room-more,
+.room > .shot-drawer {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
 }
-.room-more > summary {
+.room-more > summary,
+.shot-drawer > summary {
   font-size: 0.9375rem;
+}
+.shot-drawer .shot-list {
+  margin-top: 0.75rem;
 }
 .room-more > .form-grid {
   margin-top: 0.75rem;
@@ -1307,7 +1381,7 @@ footer {
     min-height: 44px;
     padding: 0.4rem 0.75rem;
   }
-  #panel-property details:not(.menu, .room-more) {
+  #panel-property details:not(.menu, .room-more, .shot-drawer) {
     margin-top: 0.25rem;
     padding-top: 0.25rem;
   }
@@ -1338,6 +1412,11 @@ footer {
   }
   #rooms .room > * {
     flex: 1 0 100%;
+  }
+  /* Closed, the More and shot-list drawers share one row; an open drawer takes the full width. */
+  #rooms .room > .room-more:not([open]),
+  #rooms .room > .shot-drawer:not([open]) {
+    flex: 1 1 0;
   }
   #rooms .room > .loss-tag {
     flex: 0 0 auto;

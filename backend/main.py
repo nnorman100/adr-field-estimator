@@ -52,6 +52,7 @@ try:
         InspectionData,
         PhotoUpload,
         PhotoRoomUpdate,
+        PhotoShotUpdate,
         OcrResult,
         AIResult,
         AuditRequest,
@@ -69,6 +70,8 @@ try:
         OCR_INSTRUCTIONS,
         TRANSCRIBE_INSTRUCTIONS,
         GREETING_TRIGGER,
+        SHOT_STATUS_UPDATE,
+        shot_status_json,
     )
     from .live_support import (
         live_config,
@@ -91,6 +94,7 @@ except ImportError:
         InspectionData,
         PhotoUpload,
         PhotoRoomUpdate,
+        PhotoShotUpdate,
         OcrResult,
         AIResult,
         AuditRequest,
@@ -108,6 +112,8 @@ except ImportError:
         OCR_INSTRUCTIONS,
         TRANSCRIBE_INSTRUCTIONS,
         GREETING_TRIGGER,
+        SHOT_STATUS_UPDATE,
+        shot_status_json,
     )
     from live_support import (
         live_config,
@@ -740,8 +746,9 @@ def inspection_payload(data):
     # Absent values stay absent so an older draft keeps its stored shape and the client's
     # acknowledged copy; a saved record never gains a key the technician did not set.
     for room in result['rooms']:
-        if room.get('loss') is None:
-            room.pop('loss', None)
+        for key in ('loss', 'source_of_loss', 'contents_present', 'equipment_placed'):
+            if room.get(key) is None:
+                room.pop(key, None)
     return result
 
 
@@ -832,6 +839,27 @@ async def move_photo(
             req.expected_revision,
             photo_id,
             req.room,
+        )
+    )
+
+
+@app.put('/api/inspections/{inspection_id}/photos/{photo_id}/shot')
+async def tag_photo_shot(
+    inspection_id: str,
+    photo_id: str,
+    req: PhotoShotUpdate,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    return public_record(
+        await stored(
+            store.tag_photo_shot,
+            staff['uid'],
+            inspection_id,
+            req.expected_revision,
+            photo_id,
+            req.shot,
         )
     )
 
@@ -1518,7 +1546,9 @@ async def live_walkthrough(socket: WebSocket):
             http_options=types.HttpOptions(timeout=95000),
         )
         async with AsyncExitStack() as stack:
-            config = live_config(live_prompt(record['data'], identity), LIVE_VOICE, handle)
+            config = live_config(
+                live_prompt(record['data'], identity, record['photos']), LIVE_VOICE, handle
+            )
             try:
                 session = await stack.enter_async_context(
                     client.aio.live.connect(model=LIVE_MODEL, config=config)
@@ -1541,7 +1571,9 @@ async def live_walkthrough(socket: WebSocket):
                 session = await stack.enter_async_context(
                     client.aio.live.connect(
                         model=LIVE_MODEL,
-                        config=live_config(live_prompt(record['data'], identity), LIVE_VOICE),
+                        config=live_config(
+                            live_prompt(record['data'], identity, record['photos']), LIVE_VOICE
+                        ),
                     )
                 )
             connection = uuid4().hex
@@ -1558,10 +1590,29 @@ async def live_walkthrough(socket: WebSocket):
                     connection_id=connection,
                     voice=LIVE_VOICE,
                     token_refresh=True,
+                    shot_updates=True,
                     recovery=recovery,
                     audio_ack=AUDIO_ACK_EVERY,
                 )
             await socket.send_json(ready)
+            # Tagged photo changes reach the model as context between its replies, because
+            # client content sent while it speaks would cut the reply off.
+            shots = {'wanted': False, 'speaking': False, 'sent_at': 0.0}
+
+            async def send_shot_status():
+                shots['wanted'] = False
+                shots['sent_at'] = time.monotonic()
+                # Read from the store, with the same access check, so only saved tags are reported.
+                current = await stored(store.get_inspection, uid, inspection_id)
+                await stored(store._access, uid, current, 'live')
+                status = shot_status_json(current['data'], current['photos'])
+                await session.send_client_content(
+                    turns=types.Content(
+                        role='user', parts=[types.Part(text=SHOT_STATUS_UPDATE + status)]
+                    ),
+                    turn_complete=False,
+                )
+
             if recovery == 'new':
                 # The Live API waits for input, so only a brand-new walkthrough asks the model to speak first.
                 await session.send_client_content(
@@ -1623,6 +1674,14 @@ async def live_walkthrough(socket: WebSocket):
                     elif kind == 'pause' and protocol == 2:
                         counters.pause()
                         await session.send_realtime_input(audio_stream_end=True)
+                    elif kind == 'shots' and protocol == 2:
+                        shots['wanted'] = True
+                        if (
+                            not shots['speaking']
+                            and not finishing
+                            and moment - shots['sent_at'] >= 1
+                        ):
+                            await send_shot_status()
                     elif kind == 'refresh':
                         # A renewed ID token extends the session only for the same verified user.
                         refreshed = await verify_staff(data.get('token', ''))
@@ -1681,6 +1740,7 @@ async def live_walkthrough(socket: WebSocket):
                         content = getattr(response, 'server_content', None)
                         if content:
                             if content.interrupted:
+                                shots['speaking'] = False
                                 counters.end_reply(interrupted=True)
                                 await socket.send_json({'type': 'interrupted'})
                             for side, value in [
@@ -1707,6 +1767,7 @@ async def live_walkthrough(socket: WebSocket):
                             if content.model_turn:
                                 for part in content.model_turn.parts:
                                     if part.inline_data and part.inline_data.data:
+                                        shots['speaking'] = True
                                         counters.model_audio(
                                             len(part.inline_data.data), time.monotonic()
                                         )
@@ -1728,6 +1789,9 @@ async def live_walkthrough(socket: WebSocket):
                                     pending = False
                                     final_text.set()
                                 await socket.send_json({'type': 'turn_complete'})
+                                shots['speaking'] = False
+                            if shots['wanted'] and not shots['speaking'] and not finishing:
+                                await send_shot_status()
                         if away:
                             outcome = 'rollover'
                             if protocol == 2:

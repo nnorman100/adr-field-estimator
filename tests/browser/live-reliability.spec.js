@@ -65,6 +65,7 @@ async function setup(page) {
                 connection_id: 'synthetic-' + window.liveSockets.length,
                 recovery: packet.resume ? 'resumed' : 'new',
                 ...(window.liveAck ? { audio_ack: 10 } : {}),
+                ...(window.shotUpdates ? { shot_updates: true } : {}),
               }),
             0,
           );
@@ -391,5 +392,48 @@ test('muting after congestion clears the weak-signal status once nothing is bein
   await page.evaluate(() => (window.liveSockets[0].bufferedAmount = 0));
   await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
   await page.locator('#stopWalk').click();
+  await cleanup(page);
+});
+
+async function tagNewPhoto(page) {
+  const image = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 40;
+    canvas.getContext('2d').fillRect(0, 0, 20, 20);
+    return canvas.toDataURL('image/png');
+  });
+  await page.locator('#photoFileInput').setInputFiles({
+    name: 'room.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image.split(',')[1], 'base64'),
+  });
+  const synced = () =>
+    page.evaluate(async () => {
+      await syncChain.catch(() => {});
+      return state.record.photos.map((photo) => photo.shot || null);
+    });
+  await expect.poll(synced).toEqual([null]);
+  await page.locator('#shotPickerChoices').getByRole('button', { name: 'Room overview' }).click();
+  await expect.poll(synced).toEqual(['overview']);
+}
+const shotPackets = (page) =>
+  page.evaluate(() => window.livePackets.filter((packet) => packet.type === 'shots').length);
+
+test('a saved shot tag is announced to a relay that offers shot updates', async ({ page }) => {
+  await page.evaluate(() => (window.shotUpdates = true));
+  await setup(page);
+  await tagNewPhoto(page);
+  // Only the saved tag counts, after a short pause that gathers a burst of tags into one update.
+  await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(1);
+  await page.locator('#shotList [data-shot-flag="equipment_placed"]').check();
+  await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(2);
+  await cleanup(page);
+});
+
+test('an older relay without shot updates never receives a shot packet', async ({ page }) => {
+  await setup(page);
+  await tagNewPhoto(page);
+  await page.waitForTimeout(3500);
+  expect(await shotPackets(page)).toBe(0);
   await cleanup(page);
 });

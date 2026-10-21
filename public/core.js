@@ -96,6 +96,35 @@
     waste_percent: 'Waste %',
   };
   const roomKey = (name) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+  // The photos an adjuster expects per room, as data; backend/shot_list.py holds the same list.
+  // 'when' names the room flag that makes a shot required; null means every room needs it.
+  const SHOT_LIST = [
+    { id: 'overview', label: 'Room overview', when: null },
+    { id: 'source', label: 'Source of loss', when: 'source_of_loss' },
+    { id: 'surface', label: 'Affected wall or floor', when: null },
+    { id: 'meter', label: 'Meter reading', when: null },
+    { id: 'contents', label: 'Contents before moving', when: 'contents_present' },
+    { id: 'equipment', label: 'Equipment as placed', when: 'equipment_placed' },
+  ];
+  const ROOM_SHOT_FLAGS = {
+    source_of_loss: 'Source of loss is here',
+    contents_present: 'Contents in room',
+    equipment_placed: 'Equipment placed here',
+  };
+  const shotLabel = (id) => SHOT_LIST.find((shot) => shot.id === id)?.label;
+  const requiredShots = (room) => SHOT_LIST.filter((shot) => !shot.when || room[shot.when]);
+  // Only a photo tagged with a shot type counts toward it; untagged photos are counted apart.
+  function roomShotStatus(room, photos = []) {
+    const mine = photos.filter((photo) => roomKey(photo.room) === roomKey(room.name)),
+      tagged = new Set(mine.map((photo) => photo.shot).filter(Boolean)),
+      required = requiredShots(room);
+    return {
+      required,
+      missing: required.filter((shot) => !tagged.has(shot.id)),
+      tagged,
+      untagged: mine.filter((photo) => !photo.shot).length,
+    };
+  }
   const untouchedDefaultRoom = (room) =>
     room.name === 'Room 1' &&
     room.unfinished_sf === 0 &&
@@ -285,8 +314,23 @@
       const name = room.name.trim() || 'Unnamed room';
       if (!(room.finished_sf > 0) && !(room.unfinished_sf > 0))
         items.push('No measured demolition area for ' + name);
-      if (!photos.some((photo) => roomKey(photo.room) === roomKey(room.name)))
-        items.push('No photo of ' + name);
+      const shots = roomShotStatus(room, photos),
+        count = shots.missing.length;
+      if (count)
+        items.push(
+          name +
+            ': ' +
+            count +
+            (count === 1 ? ' photo shot' : ' photo shots') +
+            ' missing (' +
+            shots.missing.map((shot) => shot.label).join(', ') +
+            ')' +
+            (shots.untagged
+              ? ' · ' +
+                shots.untagged +
+                (shots.untagged === 1 ? ' untagged photo' : ' untagged photos')
+              : ''),
+        );
     }
     if (!(data.air_movers > 0) && !(data.dehumidifiers > 0) && !(data.wood_floor_systems > 0))
       items.push('No drying equipment counts');
@@ -354,6 +398,11 @@
     scopeRoomLabels,
     roomKey,
     roomLoss,
+    SHOT_LIST,
+    ROOM_SHOT_FLAGS,
+    shotLabel,
+    requiredShots,
+    roomShotStatus,
     applyScopeChanges,
     defaultPhotoRename,
     ingestTranscript,

@@ -89,10 +89,10 @@ test('a new job opens on Walk & Photo and a two-room walkthrough never leaves it
   await page.screenshot({ path: test.info().outputPath('walk-first-two-rooms.png') });
   // Each photo card can move the photo to another room; the server record follows.
   const hallwayPhoto = page.locator('#photoGallery .photo').nth(1);
-  await hallwayPhoto.locator('select').selectOption('Kitchen');
+  await hallwayPhoto.locator('.photo-room').selectOption('Kitchen');
   await expect(hallwayPhoto.locator('strong')).toHaveText('Kitchen');
   await expect.poll(() => settled(page)).toEqual(['Kitchen', 'Kitchen']);
-  await hallwayPhoto.locator('select').selectOption('Hallway');
+  await hallwayPhoto.locator('.photo-room').selectOption('Hallway');
   await expect.poll(() => settled(page)).toEqual(['Kitchen', 'Hallway']);
   // Still on Walk & Photo: the transcript sits behind More walkthrough options and fills from here.
   expect(await page.evaluate(() => ui.task)).toBe('walkthrough');
@@ -114,7 +114,7 @@ test('a new job opens on Walk & Photo and a two-room walkthrough never leaves it
   const cards = page.locator('#rooms .room');
   await expect(cards.nth(0).locator('.room-photos .photo strong')).toHaveText(['Kitchen']);
   await expect(cards.nth(1).locator('.room-photos .photo strong')).toHaveText(['Hallway']);
-  await expect(cards.nth(1).locator('.room-photos select')).toHaveValue('Hallway');
+  await expect(cards.nth(1).locator('.room-photos .photo-room')).toHaveValue('Hallway');
   // The former Evidence step now opens Walk & Photo with its photo strip.
   await page.evaluate(() => showTask('evidence'));
   await expect(page.locator('#panel-walkthrough')).toBeVisible();
@@ -176,14 +176,14 @@ test('a room chosen while its photo uploads or offline is kept and saved', async
   });
   await addImage(page, 'in-flight.png');
   await sent;
-  await page.locator('#photoGallery .photo select').selectOption('Hallway');
+  await page.locator('#photoGallery .photo .photo-room').selectOption('Hallway');
   release();
   await expect.poll(() => settled(page)).toEqual(['Hallway']);
   await expect(page.locator('#photoGallery .photo strong')).toHaveText(['Hallway']);
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   // An offline reassignment of an uploaded photo is unsynced work until the server stores it.
   await page.context().setOffline(true);
-  await page.locator('#photoGallery .photo select').selectOption('Kitchen');
+  await page.locator('#photoGallery .photo .photo-room').selectOption('Kitchen');
   await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
   expect(await page.evaluate(() => openDraftUnsynced())).toBe(true);
   await page.context().setOffline(false);
@@ -192,7 +192,7 @@ test('a room chosen while its photo uploads or offline is kept and saved', async
   expect(await page.evaluate(() => openDraftUnsynced())).toBe(false);
   // Renaming the chosen room on Check Scope before it syncs carries the reassignment along.
   await page.context().setOffline(true);
-  await page.locator('#photoGallery .photo select').selectOption('Hallway');
+  await page.locator('#photoGallery .photo .photo-room').selectOption('Hallway');
   await page.locator('.task-nav [data-task="property"]').click();
   await room(page, 1, 'name').fill('Bathroom');
   await expect(
@@ -236,7 +236,7 @@ test('a recognition reply cannot confirm a room chosen while an older move is in
   });
   await page.evaluate(() => startOCR(state.draft.photos[0]));
   await ocrDone;
-  const select = page.locator('#photoGallery .photo select');
+  const select = page.locator('#photoGallery .photo .photo-room');
   await select.selectOption('Hallway');
   await moving;
   await select.selectOption('Kitchen');

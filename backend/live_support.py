@@ -113,6 +113,11 @@ def is_speech(pcm):
     return bool(samples) and sum(s * s for s in samples) > SPEECH_RMS * SPEECH_RMS * len(samples)
 
 
+# Room answers that only change the photo shot list; Live receives them in shot status updates,
+# so setting one during a walkthrough does not restart it.
+SHOT_FLAGS = ('source_of_loss', 'contents_present', 'equipment_placed')
+
+
 def scope_fingerprint(data):
     fields = {
         k: v
@@ -125,6 +130,10 @@ def scope_fingerprint(data):
             'scope_confirmed',
         )
     }
+    if 'rooms' in fields:
+        fields['rooms'] = [
+            {k: v for k, v in room.items() if k not in SHOT_FLAGS} for room in fields['rooms']
+        ]
     return hashlib.sha256(
         json.dumps(fields, sort_keys=True, separators=(',', ':')).encode()
     ).hexdigest()

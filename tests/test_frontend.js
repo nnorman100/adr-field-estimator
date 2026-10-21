@@ -442,7 +442,7 @@ console.log(
     'No property address',
     'No year built',
     'No measured demolition area for Room 1',
-    'No photo of Room 1',
+    'Room 1: 3 photo shots missing (Room overview, Affected wall or floor, Meter reading)',
     'No drying equipment counts',
   ]);
   Object.assign(data, { address: '1 Test Way', year_built: 1990, air_movers: 3 });
@@ -450,10 +450,41 @@ console.log(
     { ...data.rooms[0], name: 'Bedroom 2', finished_sf: 120 },
     { ...data.rooms[0], name: 'Hall', unfinished_sf: 0 },
   ];
+  // An untagged photo counts toward no shot; it is counted as untagged instead.
   assert.deepEqual(core.missingItems(data, [{ room: ' bedroom  2 ' }]), [
+    'Bedroom 2: 3 photo shots missing (Room overview, Affected wall or floor, Meter reading) · 1 untagged photo',
     'No measured demolition area for Hall',
-    'No photo of Hall',
+    'Hall: 3 photo shots missing (Room overview, Affected wall or floor, Meter reading)',
   ]);
+  // The room's answers add their shots; only photos tagged with a shot type in that room count.
+  Object.assign(data.rooms[0], { source_of_loss: true, contents_present: true });
+  data.rooms[1].equipment_placed = true;
+  const photos = [
+    { room: 'Bedroom 2', shot: 'overview' },
+    { room: 'Bedroom 2', shot: 'surface' },
+    { room: 'Bedroom 2', shot: 'meter' },
+    { room: 'Bedroom 2', shot: 'contents' },
+    { room: 'Hall', shot: 'source' },
+    { room: 'Hall', shot: 'overview' },
+    { room: 'Hall' },
+    { room: 'Hall' },
+  ];
+  assert.deepEqual(core.missingItems(data, photos), [
+    'Bedroom 2: 1 photo shot missing (Source of loss)',
+    'No measured demolition area for Hall',
+    'Hall: 3 photo shots missing (Affected wall or floor, Meter reading, Equipment as placed) · 2 untagged photos',
+  ]);
+  photos.push({ room: 'Bedroom 2', shot: 'source' });
+  data.rooms[1].equipment_placed = false;
+  photos.push({ room: 'Hall', shot: 'surface' }, { room: 'Hall', shot: 'meter' });
+  assert.deepEqual(core.missingItems(data, photos), ['No measured demolition area for Hall']);
+  const status = core.roomShotStatus(data.rooms[1], photos);
+  assert.deepEqual(
+    status.required.map((shot) => shot.id),
+    ['overview', 'surface', 'meter'],
+  );
+  assert.equal(status.untagged, 2);
+  assert.equal(core.shotLabel('equipment'), 'Equipment as placed');
   data.rooms = [];
   assert.deepEqual(core.missingItems(data), ['No affected rooms']);
   // iPhone Safari records MP4; Chrome falls back to WebM Opus; nothing supported means typing only.

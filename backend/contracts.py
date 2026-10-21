@@ -4,6 +4,11 @@ from datetime import datetime
 from typing import Literal, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+try:
+    from .shot_list import known_shot
+except ImportError:
+    from shot_list import known_shot
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -24,6 +29,11 @@ class Room(StrictModel):
     finished_sf: float = Field(default=0, ge=0, le=100000)
     custom_cabinetry: bool = False
     waste_percent: float = Field(default=0, ge=0, le=100)
+    # Technician answers that add shots to the room's photo shot list (backend/shot_list.py).
+    # Absent until set, so rooms saved before them keep their stored shape.
+    source_of_loss: bool | None = None
+    contents_present: bool | None = None
+    equipment_placed: bool | None = None
 
 
 class TranscriptSegment(StrictModel):
@@ -147,6 +157,13 @@ class PhotoRoomUpdate(RevisionRequest):
     room: str = Field(min_length=1, max_length=100)
 
 
+class PhotoShotUpdate(RevisionRequest):
+    """Tags an uploaded photo of an unsigned draft with a shot type, or clears the tag (null).
+    Photos upload untagged and are tagged here, so an older backend still accepts every upload."""
+
+    shot: Annotated[str, AfterValidator(known_shot)] | None
+
+
 class VoiceNoteUpload(StrictModel):
     """One offline voice note recorded on the phone; the audio is transcribed and never stored."""
 
@@ -190,6 +207,9 @@ class PhotoLog(StrictModel):
     height: int
     ocr_status: Literal['pending', 'verified', 'no_meter', 'failed']
     ocr: OcrResult | None
+    # Tagged photos only; the label is kept so the log reads the same if the list changes later.
+    shot: str | None = None
+    shot_label: str | None = None
 
 
 class LineItem(StrictModel):

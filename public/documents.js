@@ -1,7 +1,8 @@
 /* The four claim documents, built from text nodes only; shared by the app and the homeowner signing page. */
 'use strict';
 (function (root) {
-  const { money, estimateLabel } = root.ADRCore;
+  const { money, estimateLabel, SHOT_LIST } = root.ADRCore;
+  const UNTAGGED = 'Untagged photos';
   const $ = (id) => document.getElementById(id);
   function node(tag, text, className) {
     const el = document.createElement(tag);
@@ -107,7 +108,7 @@
     $('defenseBody').textContent = docs.iicrc_defense_letter;
     $('photoAuditLog').replaceChildren();
     const log = numbered(docs, photos);
-    for (const { photo, label } of log) {
+    function photoEntry({ photo, label }) {
       const entry = node('div', undefined, 'audit-photo'),
         img = node('img');
       img.src = photoUrl(photo);
@@ -122,7 +123,27 @@
           : 'Unverified: ' + photo.ocr_status.replaceAll('_', ' '),
       ]);
       entry.append(img, detail);
-      $('photoAuditLog').append(entry);
+      return entry;
+    }
+    // Tagged photos are grouped under the shot type saved in the log, in shot-list order with
+    // untagged photos last; numbers stay as the findings cite them. A log without any tagged
+    // photo reads as before, without headings.
+    const shots = new Map(
+      (docs.photo_audit_log || []).filter((p) => p.shot_label).map((p) => [p.id, p.shot_label]),
+    );
+    if (!shots.size) $('photoAuditLog').append(...log.map(photoEntry));
+    else {
+      const groups = new Map(),
+        rank = (heading) => {
+          const index = SHOT_LIST.findIndex((shot) => shot.label === heading);
+          return heading === UNTAGGED ? Infinity : index < 0 ? SHOT_LIST.length : index;
+        };
+      for (const item of log) {
+        const heading = shots.get(item.photo.id) || UNTAGGED;
+        groups.set(heading, [...(groups.get(heading) || []), item]);
+      }
+      for (const [heading, items] of [...groups].sort((a, b) => rank(a[0]) - rank(b[0])))
+        $('photoAuditLog').append(node('h3', heading), ...items.map(photoEntry));
     }
     if (!photos.length)
       $('photoAuditLog').append(node('p', 'No photographs were attached to this inspection.'));

@@ -197,7 +197,8 @@ def test_room_loss_type_is_saved_only_when_set_and_old_rooms_keep_their_shape(co
     legacy = data()
     legacy.pop('capture_metadata')
     for room in legacy['rooms']:
-        room.pop('loss', None)
+        for key in ('loss', 'source_of_loss', 'contents_present', 'equipment_placed'):
+            room.pop(key, None)
     assert 'loss' not in legacy['rooms'][0]
     record = client.post('/api/inspections', json={'inspection_id': ID, 'data': legacy}).json()
     assert record['data'] == legacy and 'loss' not in record['data']['rooms'][0]

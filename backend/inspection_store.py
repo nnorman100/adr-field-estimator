@@ -283,6 +283,26 @@ class InspectionStore(JobStore):
 
         return self._change(uid, inspection_id, revision, update, 'photos')
 
+    def tag_photo_shot(self, uid, inspection_id, revision, photo_id, shot):
+        """Tags one uploaded photo with a shot type from the shot list, or clears the tag (None).
+        Like a room move, only the tag changes; it invalidates the audit because the photo log
+        groups photos by shot type."""
+
+        def update(record):
+            photo = next((p for p in record['photos'] if p['id'] == photo_id), None)
+            if photo is None:
+                raise LookupError('Photo not found.')
+            if photo.get('shot') != shot:
+                # Untagged photos keep no key, matching photos saved before the shot list existed.
+                if shot:
+                    photo['shot'] = shot
+                else:
+                    photo.pop('shot', None)
+                record.update(revision=record['revision'] + 1, audit=None, status='draft')
+            return record
+
+        return self._change(uid, inspection_id, revision, update, 'photos')
+
     def append_transcript(self, uid, inspection_id, marker, block):
         """Appends a transcribed offline voice note once; a retried note whose marker is already
         in the transcript returns the record unchanged. It is an append, so a revision that moved
