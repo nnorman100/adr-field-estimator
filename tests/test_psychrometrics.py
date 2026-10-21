@@ -49,4 +49,3 @@ def test_monotonic_in_temperature_and_humidity():
     assert psychrometrics(80, 50)['gpp'] > psychrometrics(70, 50)['gpp']
     assert psychrometrics(70, 60)['gpp'] > psychrometrics(70, 50)['gpp']
     assert psychrometrics(70, 60)['dew_point_f'] > psychrometrics(70, 50)['dew_point_f']
-
