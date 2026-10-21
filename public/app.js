@@ -11,6 +11,7 @@ const {
   scopeJobLabels,
   scopeRoomLabels,
   roomKey,
+  roomScans,
   roomLoss,
   applyScopeChanges,
   defaultPhotoRename,
@@ -1308,8 +1309,9 @@ async function fillScopeFromWalkthrough() {
 }
 function retagDefaultPhotos(before, after) {
   const rename = defaultPhotoRename(before, after);
-  if (rename)
-    for (const photo of state.draft.photos) if (photo.room === rename.from) photo.room = rename.to;
+  if (!rename) return;
+  for (const photo of state.draft.photos) if (photo.room === rename.from) photo.room = rename.to;
+  retagScans(roomScans(after, rename.from), rename.to);
 }
 function renderWalkthroughEdits() {
   document.querySelectorAll('.walkthrough-edit').forEach((badge) => badge.remove());
@@ -1593,15 +1595,24 @@ function renderRooms() {
       }
       input.value = room[key];
       input.disabled = !!state.signed;
-      let photos = [];
-      if (key === 'name') input.addEventListener('focus', () => (photos = roomPhotos(room.name)));
+      let photos = [],
+        scans = [];
+      if (key === 'name')
+        input.addEventListener('focus', () => {
+          photos = roomPhotos(room.name);
+          scans = roomScans(state.draft.data, room.name);
+        });
       input.addEventListener('input', () => {
         room[key] = type === 'text' ? input.value : Number(input.value);
-        if (key === 'name') retagPhotos(photos, input.value);
+        if (key === 'name') {
+          retagPhotos(photos, input.value);
+          retagScans(scans, input.value);
+        }
         changed();
         if (key === 'name') {
           updateRoomPicker();
           renderPhotos();
+          window.TagsUI?.render();
         }
         if (key === 'category') {
           tagRoom();
@@ -1792,9 +1803,11 @@ function beginRoomRename(index) {
   input.select();
 }
 function renameRoom(room, name) {
-  const photos = roomPhotos(room.name);
+  const photos = roomPhotos(room.name),
+    scans = roomScans(state.draft.data, room.name);
   room.name = name;
   retagPhotos(photos, name);
+  retagScans(scans, name);
   changed();
   renderRooms();
   $('photoRoom').value = name;
@@ -1810,6 +1823,10 @@ function retagPhotos(photos, to) {
     photo.room = to;
     photo.pending_room = to;
   }
+}
+// Equipment placements follow their room's new name.
+function retagScans(scans, to) {
+  for (const scan of scans) scan.room = to;
 }
 function reassignPhoto(photo, room) {
   if (!canEditDraft('photos') || !state.draft.photos.includes(photo)) return;

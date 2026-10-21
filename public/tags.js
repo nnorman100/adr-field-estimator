@@ -19,12 +19,10 @@ window.TagsUI = (() => {
   const scanner = {
     stream: null,
     timer: null,
-    detector: null,
-    decoder: null,
     lastCode: '',
     lastAt: 0,
   };
-  const sheet = { equipment: [], tags: null };
+  const sheet = { equipment: [], tags: null, run: 0 };
   const editable = () => canEditDraft('scope');
   const currentRoom = () => $('photoRoom').value;
   const time = (iso) =>
@@ -141,56 +139,34 @@ window.TagsUI = (() => {
     $('tagCodeInput').focus();
   }
   async function loadDecoder() {
-    if (scanner.decoder) return;
-    if ('BarcodeDetector' in window) {
-      try {
-        if ((await BarcodeDetector.getSupportedFormats()).includes('qr_code')) {
-          scanner.detector = new BarcodeDetector({ formats: ['qr_code'] });
-          scanner.decoder = 'native';
-          return;
-        }
-      } catch {}
-    }
-    if (typeof jsQR !== 'function')
-      await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = JSQR_PATH;
-        script.onload = resolve;
-        script.onerror = () =>
-          reject(Error('The QR reader could not load. Type the code printed on the tag.'));
-        document.head.append(script);
-      });
-    scanner.decoder = 'jsqr';
+    if (typeof jsQR === 'function') return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = JSQR_PATH;
+      script.onload = resolve;
+      script.onerror = () =>
+        reject(Error('The QR reader could not load. Type the code printed on the tag.'));
+      document.head.append(script);
+    });
   }
-  async function decodeFrame(video) {
+  function decodeFrame(video) {
     const canvas = $('tagCanvas'),
       [width, height] = aspect(video.videoWidth, video.videoHeight, 640);
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d', { willReadFrequently: true });
     context.drawImage(video, 0, 0, width, height);
-    if (scanner.detector) {
-      try {
-        return (await scanner.detector.detect(canvas))[0]?.rawValue || null;
-      } catch {
-        // A detector that cannot read canvases here falls back to the vendored reader.
-        scanner.detector = null;
-        scanner.decoder = null;
-        await loadDecoder();
-      }
-    }
-    if (typeof jsQR !== 'function') return null;
     const image = context.getImageData(0, 0, width, height);
     return jsQR(image.data, width, height, { inversionAttempts: 'dontInvert' })?.data || null;
   }
-  async function tick() {
+  function tick() {
     scanner.timer = null;
     const dialog = $('tagScanDialog'),
       video = $('tagVideo');
     if (!dialog.open) return;
     try {
       if (video.readyState >= 2 && video.videoWidth) {
-        const code = await decodeFrame(video);
+        const code = decodeFrame(video);
         if (code) handleCode(code, 'camera');
       }
     } catch {}
@@ -362,6 +338,7 @@ window.TagsUI = (() => {
         })),
       ];
     if (!wanted.length) throw Error('Choose at least one room or add an equipment tag.');
+    const run = sheet.run;
     if (wanted.length > 60) throw Error('Make at most 60 tags per sheet.');
     if (!navigator.onLine)
       throw Error('Making tags needs a connection: the QR images come from the server.');
@@ -371,6 +348,7 @@ window.TagsUI = (() => {
       const { tags } = await jsonApi('/api/qr-tags', 'POST', {
         codes: wanted.map((tag) => tag.code),
       });
+      if (run !== sheet.run || !$('tagSheetDialog').open) return;
       sheet.tags = wanted.map((tag, index) => ({ ...tag, qr_svg: tags[index].qr_svg }));
     } finally {
       $('makeTags').disabled = false;
@@ -398,6 +376,7 @@ window.TagsUI = (() => {
   }
   function openSheet() {
     if (!state.session || !state.draft) throw Error('Open a job first.');
+    sheet.run++;
     sheet.tags = null;
     $('tagPreview').replaceChildren();
     $('tagSheet').replaceChildren();
@@ -409,6 +388,13 @@ window.TagsUI = (() => {
   }
   function closeDialogs() {
     for (const id of ['tagScanDialog', 'tagSheetDialog']) if ($(id).open) $(id).close();
+    sheet.run++;
+    sheet.equipment = [];
+    sheet.tags = null;
+    for (const id of ['tagPreview', 'tagSheet', 'equipmentTagList', 'tagScanLog'])
+      $(id).replaceChildren();
+    $('equipmentTagAsset').value = '';
+    $('tagCodeInput').value = '';
   }
 
   document.addEventListener('DOMContentLoaded', () => {

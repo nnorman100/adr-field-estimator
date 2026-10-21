@@ -137,15 +137,8 @@ test('a camera frame that decodes to a tag is applied once while it stays in vie
     'Playwright WebKit never starts the synthetic camera stream; physical iPhone acceptance remains open.',
   );
   await page.addInitScript(() => {
-    // A synthetic camera (a redrawn canvas) and a QR detector that reports the code the test sets.
-    window.BarcodeDetector = class {
-      static async getSupportedFormats() {
-        return ['qr_code'];
-      }
-      async detect() {
-        return window.__tagInView ? [{ rawValue: window.__tagInView }] : [];
-      }
-    };
+    // A synthetic camera (a redrawn canvas) and a jsQR reader that reports the code the test sets.
+    window.jsQR = () => (window.__tagInView ? { data: window.__tagInView } : null);
     const canvas = document.createElement('canvas');
     canvas.width = 320;
     canvas.height = 240;
@@ -251,4 +244,61 @@ test('room and equipment tags are rendered by the server and printed as a sheet'
   await page.locator('#scanTag').click();
   await typeCode(page, 'DS1-EQ-DH-DH-0042');
   await expect(status(page)).toHaveText(/^LGR dehumidifier DH-0042 placed in Kitchen · \d/);
+});
+
+test('equipment placements follow their room when it is renamed on Walk & Photo or Check Scope', async ({
+  page,
+}) => {
+  await open(page);
+  await twoRooms(page);
+  await chip(page, 'Kitchen').click();
+  await page.locator('#scanTag').click();
+  await typeCode(page, 'DS1-EQ-AM-AM-1');
+  await expect(status(page)).toHaveText(/^Air mover AM-1 placed in Kitchen · \d/);
+  await page.locator('#closeTagScan').click();
+  await chip(page, 'Kitchen').click();
+  await rename(page, 'Utility');
+  await expect(page.locator('#equipmentPlacements h4')).toHaveText(['Utility']);
+  await checkScope(page);
+  const name = page.locator('[data-room-index="0"][data-room-key="name"]');
+  await name.focus();
+  await name.fill('Laundry');
+  await expect(page.locator('#rooms .room').nth(0).locator('.room-equipment')).toContainText(
+    '1 air mover',
+  );
+  await expect(page.locator('#equipmentPlacements h4')).toHaveText(['Laundry']);
+  await saveDraft(page);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  expect(await savedScans(page)).toEqual([['air_mover', 'AM-1', 'Laundry']]);
+});
+
+test('leaving the job clears the tag sheet and drops a tag response that arrives afterwards', async ({
+  page,
+}) => {
+  await open(page);
+  await page.locator('#printTags').click();
+  const dialog = page.locator('#tagSheetDialog');
+  await dialog.locator('#equipmentTagAsset').fill('AM-1');
+  await dialog.locator('#addEquipmentTag').click();
+  await expect(dialog.locator('#equipmentTagList li')).toHaveCount(1);
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/api/qr-tags', async (route) => {
+    await held;
+    await route.continue();
+  });
+  const answered = page.waitForResponse('**/api/qr-tags');
+  await dialog.locator('#makeTags').click();
+  await expect(dialog.locator('#tagSheetStatus')).toHaveText(/^Making \d+ tags…$/);
+  await page.evaluate(() => TagsUI.closeDialogs());
+  await expect(dialog).toBeHidden();
+  release();
+  await answered;
+  await page.locator('#printTags').click();
+  await expect(dialog.locator('#equipmentTagList li')).toHaveCount(0);
+  await expect(dialog.locator('#tagPreview .tag-card')).toHaveCount(0);
+  await expect(dialog.locator('#printTagSheet')).toBeHidden();
+  expect(await page.evaluate(() => document.querySelectorAll('#tagSheet .tag-card').length)).toBe(
+    0,
+  );
 });

@@ -20,7 +20,7 @@ The release is part of the path, so an upgrade gets new URLs and installed apps 
 
 # Vendored jsQR
 
-`jsqr/1.4.0/jsQR.js` is the unmodified UMD build of [jsQR](https://github.com/cozmo/jsQR) 1.4.0 (Apache-2.0, license beside it). `tags.js` loads it with a same-origin `<script>` the first time a technician scans a QR tag and the browser has no native `BarcodeDetector` for QR codes; Safari on iPhone ships that API only behind a flag, so the file is in the offline precache. Rebuild only from the same release's package files and update the hashes here:
+`jsqr/1.4.0/jsQR.js` is the unmodified UMD build of [jsQR](https://github.com/cozmo/jsQR) 1.4.0 (Apache-2.0, license beside it). `tags.js` loads it with a same-origin `<script>` the first time a technician scans a QR tag, and the file is in the offline precache so scanning works offline. Rebuild only from the same release's package files and update the hashes here:
 
 ```sh
 curl -sSfL https://unpkg.com/jsqr@1.4.0/dist/jsQR.js > jsqr/1.4.0/jsQR.js

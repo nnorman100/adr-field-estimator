@@ -333,6 +333,7 @@ async function main(args = process.argv.slice(2)) {
           'app.css',
           'audio-worklet.js',
           'sw.js',
+          'vendor/jsqr/1.4.0/jsQR.js',
         ].includes(file) ||
           /^vendor\/firebase\/[^/]+\/firebase-[a-z-]+\.js$/.test(file))
       ) {
