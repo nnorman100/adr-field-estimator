@@ -192,19 +192,21 @@ def words(text):
 
 # Words that may sit beside a spoken claim or policy number without being part of it.
 IDENTIFIER_BOUNDARIES = set(
-    'a an and at by claim for from id is it its my no num number of on or our policy s the their to '
-    'was with your'.split()
+    'an and at by claim for from id is it its my no num number of on or our policy the their to was '
+    'with your'.split()
 )
 
 
 def in_quote(target, quote, kind=None):
     """Whether target equals a run of the quote's words, ignoring case, spacing and punctuation.
 
-    kind 'identifier' needs the run to be a whole identifier: bounded by the quote's ends, sentence
-    punctuation or connecting words. kind 'phone' needs a whole run of numbers.
+    kind 'identifier' needs the run to be a whole identifier: no neighbouring word that could belong
+    to it, and bounded by the quote's ends, sentence punctuation or connecting words. kind 'phone'
+    needs a whole run of numbers.
     """
     found = list(re.finditer(r'[^\W_]+', quote))
-    tokens = [m.group().casefold() for m in found]
+    original = [m.group() for m in found]
+    tokens = [t.casefold() for t in original]
     gaps = (
         [quote[: found[0].start()] if found else quote]
         + [quote[a.end() : b.start()] for a, b in zip(found, found[1:])]
@@ -214,11 +216,12 @@ def in_quote(target, quote, kind=None):
     def edge(k, gap):
         if kind == 'phone':
             return not (0 <= k < len(tokens)) or not tokens[k].isdigit()
-        return (
-            not (0 <= k < len(tokens))
-            or tokens[k] in IDENTIFIER_BOUNDARIES
-            or bool(re.search(r'[,;:!?()]|\.(\s|$)', gap))
-        )
+        if not (0 <= k < len(tokens)):
+            return True
+        word = original[k]
+        if re.search(r'\d', word) or len(word) == 1 or word.isupper():
+            return False
+        return tokens[k] in IDENTIFIER_BOUNDARIES or bool(re.search(r'[,;:!?()]|\.(\s|$)', gap))
 
     for i in range(len(tokens)):
         run = ''
@@ -238,7 +241,7 @@ def in_quote(target, quote, kind=None):
 
 def quoted_emails(quote):
     return {
-        e.rstrip('.').casefold()
+        e.rstrip('.!?').casefold()
         for e in re.findall(r'[^\s@<>()\[\]"\',;:]+@[^\s@<>()\[\]"\',;:]+', quote)
     }
 
@@ -392,7 +395,7 @@ def validate_suggestions(data, suggestions, claim=None):
     return ScopeSuggestions(
         changes=changes,
         claim_changes=claim_changes,
-        questions=(suggestions.questions + claim_questions)[:20],
+        questions=(claim_questions + suggestions.questions)[:20],
     )
 
 

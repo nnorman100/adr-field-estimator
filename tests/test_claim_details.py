@@ -264,9 +264,9 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
         ('deductible', '$1,000'),
     ]
     assert result.questions == [
-        'Which room is next?',
         'Confirm the policy number; the walkthrough value does not match what was said.',
         'Confirm the adjuster phone; the walkthrough value does not match what was said.',
+        'Which room is next?',
     ]
     bad_date = ScopeSuggestions(
         changes=[], claim_changes=[claim_change('date_of_loss', 'October 12')], questions=[]
@@ -296,6 +296,8 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
         ('adjuster_email', 'Avery@Example.invalid', 'Adjuster email is avery@example.invalid.'),
         ('claim_number', 'CLM-0042-77', 'Claim number is CLM 0042 77.'),
         ('claim_number', 'CLM-0042-77', 'Claim number is clm 0042 77'),
+        ('claim_number', 'A-0042-77', 'Claim number is A 0042 77.'),
+        ('claim_number', '0042-77-A', 'Claim number is 0042-77-A.'),
         ('adjuster_email', 'avery@example.com.au', 'Email avery@example.com.au.'),
         ('policy_number', 'POL12345', 'Policy POL-12345, renewed in 2025.'),
         ('adjuster_phone', '(661) 555-0100', 'Call the adjuster at 661.555.0100 today.'),
@@ -326,6 +328,8 @@ def test_walkthrough_claim_values_match_their_quote(field, value, quote):
         ('claim_number', 'CLM 0042', 'Claim number is CLM 0042 77.'),
         ('policy_number', '12345', 'Policy POL 12345.'),
         ('claim_number', '0042-77', 'Claim number is clm 0042 77'),
+        ('claim_number', '0042-77', 'Claim number is A 0042 77'),
+        ('claim_number', '0042-77', 'Claim number is 0042-77-A'),
         ('adjuster_email', 'avery@example.com', 'Adjuster email is avery@example.com.au'),
         ('adjuster_email', 'avery@example.com', 'Adjuster email is mavery@example.com'),
         ('policy_number', 'POL-1234', 'Policy POL-12345.'),
@@ -348,6 +352,22 @@ def test_walkthrough_claim_values_not_in_their_quote_are_asked_about(field, valu
     assert result.questions == [
         f'Confirm the {CLAIM_LABELS[field]}; the walkthrough value does not match what was said.'
     ]
+
+
+def test_claim_questions_survive_a_full_list_of_model_questions():
+    quote = 'Adjuster email is avery@example.invalid.'
+    suggestions = ScopeSuggestions(
+        changes=[],
+        claim_changes=[claim_change('adjuster_email', 'avery@example.com', quote)],
+        questions=[f'Model question {i}?' for i in range(20)],
+    )
+    inspection = InspectionData.model_validate({**data(), 'technician_transcript': quote})
+    result = validate_suggestions(inspection, suggestions, EMPTY)
+    assert result.claim_changes == []
+    assert len(result.questions) == 20
+    assert result.questions[0] == (
+        'Confirm the adjuster email; the walkthrough value does not match what was said.'
+    )
 
 
 def test_scope_prompt_includes_claim_details_only_with_a_sidecar():
