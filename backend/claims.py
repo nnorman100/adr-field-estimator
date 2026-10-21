@@ -257,8 +257,7 @@ def addressee(claim):
     return '\n'.join(
         value
         for value in (
-            'TO: '
-            + (f'{name}, Insurance Adjuster' if name else 'Insurance Claims Examiner / Adjuster'),
+            'TO: ' + (f'{name}, Adjuster' if name else 'Insurance Claims Examiner / Adjuster'),
             carrier,
             contact,
         )

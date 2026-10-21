@@ -56,7 +56,7 @@ test('walkthrough claim details fill with Undo, save to the job and head every d
   // Typing over a filled value keeps the typed value and drops its marker.
   await page.locator('#claimNumber').fill('CLM-0042-77');
   await expect(label(page, 'claimNumber')).not.toContainText('From walkthrough');
-  await page.locator('#claimAdjusterName').fill('Avery Adjuster');
+  await page.locator('#claimAdjusterName').fill('Avery Quinn');
   await page.locator('#claimDate').fill('2026-10-12');
   await page.locator('#claimCause').fill('Supply line under kitchen sink');
   await page.locator('#saveClaim').click();
@@ -70,7 +70,7 @@ test('walkthrough claim details fill with Undo, save to the job and head every d
   expect(saved.claim).toMatchObject({
     carrier: '',
     claim_number: 'CLM-0042-77',
-    adjuster_name: 'Avery Adjuster',
+    adjuster_name: 'Avery Quinn',
     date_of_loss: '2026-10-12',
     loss_cause: 'Supply line under kitchen sink',
   });
@@ -83,10 +83,8 @@ test('walkthrough claim details fill with Undo, save to the job and head every d
   await expect(page.locator('#claimParty')).toContainText(
     'Cause and source of loss: Supply line under kitchen sink',
   );
-  await expect(page.locator('#photoParty')).toContainText('Adjuster: Avery Adjuster');
-  await expect(page.locator('#defenseBody')).toContainText(
-    'TO: Avery Adjuster, Insurance Adjuster',
-  );
+  await expect(page.locator('#photoParty')).toContainText('Adjuster: Avery Quinn');
+  await expect(page.locator('#defenseBody')).toContainText('TO: Avery Quinn, Adjuster');
   await expect(page.locator('#defenseBody')).toContainText('Claim number: CLM-0042-77');
   await page.locator('#doc-proposal');
   // A claim change clears the unsigned documents so they cannot be signed stale.

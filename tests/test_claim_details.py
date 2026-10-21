@@ -19,7 +19,7 @@ CLAIM = dict(
     policy_number='POL 991',
     date_of_loss='2026-10-12',
     loss_cause='Supply line under kitchen sink',
-    adjuster_name='Avery Adjuster',
+    adjuster_name='Avery Quinn',
     adjuster_email='Avery@Example.invalid',
     adjuster_phone='(555) 010-0199',
     deductible='$1,000',
@@ -120,7 +120,7 @@ def test_documents_print_the_claim_snapshot_and_address_the_adjuster(api):
     letter = documents['iicrc_defense_letter']
     assert GENERIC not in letter
     assert (
-        'TO: Avery Adjuster, Insurance Adjuster\nSynthetic Mutual\n'
+        'TO: Avery Quinn, Adjuster\nSynthetic Mutual\n'
         'avery@example.invalid · (555) 010-0199\n\n'
         'RE: Remediation scope for Test property\n'
         'Claim number: CLM-0042-77\nPolicy number: POL 991\nDate of loss: 10-12-2026\n'

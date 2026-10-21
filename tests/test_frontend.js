@@ -880,7 +880,7 @@ console.log(
       policy_number: '',
       date_of_loss: '2026-10-12',
       loss_cause: 'Supply line under kitchen sink',
-      adjuster_name: 'Avery Adjuster',
+      adjuster_name: 'Avery Quinn',
       adjuster_email: '',
       adjuster_phone: '555-0100',
       deductible: '$1,000',
@@ -890,7 +890,7 @@ console.log(
       'Claim number: CLM-1',
       'Date of loss: 10-12-2026',
       'Cause and source of loss: Supply line under kitchen sink',
-      'Adjuster: Avery Adjuster · 555-0100',
+      'Adjuster: Avery Quinn · 555-0100',
       'Deductible: $1,000',
     ],
   );
