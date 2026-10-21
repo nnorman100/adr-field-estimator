@@ -1,0 +1,72 @@
+const { test, expect } = require('@playwright/test');
+const { checkScope } = require('./actions');
+test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
+const room = (page, key) => page.locator('[data-room-index="0"][data-room-key="' + key + '"]');
+const row = (page, label) => page.locator('#sizingResult .sizing-row').filter({ hasText: label });
+const EV = process.env.NM_EVIDENCE;
+test('wet floor area drives air movers; dehumidification stays on room volume; pricing unchanged', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium');
+  await page.goto('/');
+  await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+  await checkScope(page);
+  await page.locator('#address').fill('Synthetic wet-floor property');
+  await page.locator('#yearBuilt').fill('1998');
+  await room(page, 'finished_sf').fill('40');
+  await page.locator('#airMovers').fill('3');
+  await page.locator('#dehumidifiers').fill('1');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  // Baseline documents without sizing inputs, for a pricing comparison.
+  await page.locator('#scopeConfirmed').check();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  const before = await page.evaluate(() => state.documents);
+  const letterBefore = before.iicrc_defense_letter;
+  expect(letterBefore).not.toContain('Equipment sizing check');
+  await checkScope(page);
+  const drawer = page.locator('#rooms .room-sizing').first();
+  await page.locator('#rooms .room-more summary').first().click();
+  await room(page, 'floor_sf').fill('600');
+  await room(page, 'ceiling_height_ft').fill('8');
+  await room(page, 'water_class').selectOption('2');
+  await room(page, 'wet_floor_sf').fill('50');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  // 50 SF wet: 1 + ceil(50/70)=2 to 1 + ceil(50/50)=2; dehu 600*8/50 = 96 ppd.
+  await expect(drawer.locator('.summary-note')).toHaveText('· 2 air movers · 96 pints/day');
+  await page.locator('details.more-equipment summary').click();
+  await expect(row(page, 'Air movers')).toContainText('Recommended 2 · Entered 3');
+  await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Above');
+  await page.screenshot({ path: EV + '/wet50-check-scope.png', fullPage: false });
+  await page.locator('details.more-equipment').screenshot({ path: EV + '/wet50-equipment.png' });
+  // Whole floor wet: clear the override -> 1+ceil(600/70)=10 to 1+600/50=13.
+  await room(page, 'wet_floor_sf').fill('');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(drawer.locator('.summary-note')).toHaveText('· 10–13 air movers · 96 pints/day');
+  await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');
+  await expect(page.locator('#airMovers')).toHaveValue('3');
+  await page.locator('details.more-equipment').screenshot({ path: EV + '/wholefloor-equipment.png' });
+  // Partial wet area 140 SF -> 3–4; dehumidifier unchanged (room volume).
+  await room(page, 'wet_floor_sf').fill('140');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(drawer.locator('.summary-note')).toHaveText('· 3–4 air movers · 96 pints/day');
+  await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Within range');
+  await page.locator('#rooms .room').first().screenshot({ path: EV + '/wet140-room.png' });
+  await page.locator('#scopeConfirmed').check();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  const after = await page.evaluate(() => state.documents);
+  const letter = after.iicrc_defense_letter;
+  require('fs').writeFileSync(EV + '/defense-letter-wet140.txt', letter);
+  require('fs').writeFileSync(EV + '/defense-letter-baseline.txt', letterBefore);
+  expect(letter).toContain('Room 1: 600 SF floor × 8 ft ceiling = 4,800 cu ft, water class 2.');
+  expect(letter).toContain('Air movers for 140 SF of wet floor: 1 + 140 ÷ 70 to 1 + 140 ÷ 50, rounded up = 3 to 4.');
+  expect(letter).toContain('4,800 ÷ 50 = 96 pints/day (AHAM)');
+  expect(letter).toContain('Entered for this proposal: 3 air movers and 1 LGR dehumidifier.');
+  // Pricing reads only the entered counts: totals and itemized lines are identical.
+  const money = (d) => JSON.stringify({ x: d.xactimate_scope, t: d.xactimate_total, p: d.proposal?.estimate_low, h: d.proposal?.estimate_high });
+  expect(money(after)).toBe(money(before));
+  const line = (l) => l.split('\n').find((s) => s.startsWith('Itemized charges at base rates'));
+  expect(line(letter)).toBe(line(letterBefore));
+  require('fs').writeFileSync(EV + '/pricing-compare.txt', 'before: ' + line(letterBefore) + '\nafter:  ' + line(letter) + '\n');
+});

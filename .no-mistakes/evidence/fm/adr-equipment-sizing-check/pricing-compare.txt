@@ -1,0 +1,2 @@
+before: Itemized charges at base rates: $1,858.40. Customer estimate range: $1,858.40 to $1,914.00. The range applies the estimating sheet labor/material allowance to the priced scope.
+after:  Itemized charges at base rates: $1,858.40. Customer estimate range: $1,858.40 to $1,914.00. The range applies the estimating sheet labor/material allowance to the priced scope.
