@@ -12,6 +12,7 @@ try:
         InviteCreate,
         MemberUpdate,
         CoordinationUpdate,
+        ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
     )
 except ImportError:
@@ -24,6 +25,7 @@ except ImportError:
         InviteCreate,
         MemberUpdate,
         CoordinationUpdate,
+        ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
     )
 
@@ -235,3 +237,14 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     ):
         await stored(store.quota, claims['uid'], 'draft', 60)
         return await stored(workspace(store).coordination, claims['uid'], inspection_id, req)
+
+    @app.get('/api/jobs/{inspection_id}/claim')
+    async def get_claim(inspection_id: str, claims=Depends(identity), store=Depends(get_store)):
+        return await stored(workspace(store).claim, claims['uid'], inspection_id)
+
+    @app.put('/api/jobs/{inspection_id}/claim')
+    async def claim(
+        inspection_id: str, req: ClaimUpdate, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(store.quota, claims['uid'], 'draft', 60)
+        return await stored(workspace(store).update_claim, claims['uid'], inspection_id, req)

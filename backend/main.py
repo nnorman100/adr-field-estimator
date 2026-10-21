@@ -50,6 +50,7 @@ try:
     from .contracts import (
         CreateInspection,
         UpdateInspection,
+        ClaimDetails,
         InspectionData,
         PhotoUpload,
         PhotoRoomUpdate,
@@ -93,6 +94,7 @@ except ImportError:
     from contracts import (
         CreateInspection,
         UpdateInspection,
+        ClaimDetails,
         InspectionData,
         PhotoUpload,
         PhotoRoomUpdate,
@@ -512,8 +514,12 @@ async def stored(method, *args, failure=None):
         raise HTTPException(503, failure or STORED_FAILURE)
 
 
-def reusable_audit(record, revision, identity, customer):
-    """The saved audit still matches this revision, company profile, customer and proposal date."""
+NO_CLAIM = ClaimDetails().model_dump()
+
+
+def reusable_audit(record, revision, identity, customer, claim=None):
+    """The saved audit still matches this revision, company profile, customer, claim details and
+    proposal date."""
     audit = record.get('audit')
     if not audit or audit['revision'] != revision:
         return False
@@ -523,6 +529,8 @@ def reusable_audit(record, revision, identity, customer):
         (saved.get('company_id'), saved.get('version'))
         == (current.get('company_id'), current.get('version'))
         and proposal.get('customer_name', '') == customer
+        # Audits saved before claim details match a job that has none recorded.
+        and (audit['documents'].get('claim') or NO_CLAIM) == (claim or NO_CLAIM)
         and proposal['date'] == proposal_date()
     )
 
@@ -962,9 +970,10 @@ async def suggest_scope(
             400, 'Record technician observations in the walkthrough or notes first.'
         )
     await stored(store.quota, staff['uid'], 'scope', 6)
+    claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
     result = await generate(
         ScopeSuggestions,
-        [scope_prompt(data)],
+        [scope_prompt(data, claim)],
         AUDIT_MODEL,
         'scope',
         inspection_id,
@@ -972,7 +981,7 @@ async def suggest_scope(
         thinking_level=SCOPE_THINKING_LEVEL,
     )
     try:
-        result = validate_suggestions(data, result)
+        result = validate_suggestions(data, result, claim)
     except (ValueError, ValidationError):
         raise HTTPException(
             502,
@@ -1107,7 +1116,8 @@ async def audit_inspection(
     revision = record['revision']
     identity = await stored(store.workspaces.snapshot, staff['uid']) if WORKSPACES_ENABLED else None
     customer = await stored(store.workspaces.customer_name, record) if WORKSPACES_ENABLED else ''
-    if reusable_audit(record, revision, identity, customer):
+    claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
+    if reusable_audit(record, revision, identity, customer, claim):
         # Every input edit clears the audit, so a second Finish & review returns the saved result.
         return public_record(record)
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
@@ -1117,7 +1127,7 @@ async def audit_inspection(
         contents.append(await run_in_threadpool(model_image, raw))
     ai = await generate_audit(contents, req.inspection_id, started)
     try:
-        documents = make_documents(data, record['photos'], ai, identity, customer)
+        documents = make_documents(data, record['photos'], ai, identity, customer, claim)
     except (ValueError, ValidationError):
         raise HTTPException(
             400, 'The scope could not be priced. Review the inspection inputs and retry.'
@@ -1546,6 +1556,7 @@ async def live_walkthrough(socket: WebSocket):
         record = await stored(store.get_inspection, uid, inspection_id)
         await stored(store._access, uid, record, 'live')
         identity = await stored(store.workspaces.snapshot, uid) if WORKSPACES_ENABLED else None
+        claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
         if identity and auth.get('workspace_protocol_version') != 1:
             raise HTTPException(409, 'Update the app before a company walkthrough.')
         if record['status'] == 'signed':
@@ -1592,7 +1603,7 @@ async def live_walkthrough(socket: WebSocket):
             http_options=types.HttpOptions(timeout=95000),
         )
         async with AsyncExitStack() as stack:
-            config = live_config(live_prompt(record['data'], identity), LIVE_VOICE, handle)
+            config = live_config(live_prompt(record['data'], identity, claim), LIVE_VOICE, handle)
             try:
                 session = await stack.enter_async_context(
                     client.aio.live.connect(model=LIVE_MODEL, config=config)
@@ -1615,7 +1626,9 @@ async def live_walkthrough(socket: WebSocket):
                 session = await stack.enter_async_context(
                     client.aio.live.connect(
                         model=LIVE_MODEL,
-                        config=live_config(live_prompt(record['data'], identity), LIVE_VOICE),
+                        config=live_config(
+                            live_prompt(record['data'], identity, claim), LIVE_VOICE
+                        ),
                     )
                 )
             connection = uuid4().hex

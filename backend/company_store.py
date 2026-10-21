@@ -34,6 +34,7 @@ class CompanyInspectionStore(InspectionStore):
             documents = record['audit']['documents']
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
             self.workspaces.check_customer(record, documents['adr_estimate'], tx)
+            self.workspaces.check_claim(record, documents, tx)
 
     def _company_id(self, uid, record, tx=None):
         return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']

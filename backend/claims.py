@@ -228,7 +228,47 @@ def customer_text(summary):
     return '\n'.join(line for line in lines if line)
 
 
-def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, customer_name=''):
+def claim_reference(claim):
+    """The recorded claim reference lines, in document order; unrecorded fields are omitted."""
+    loss = claim.get('date_of_loss', '')
+    if loss:
+        loss = datetime.strptime(loss, '%Y-%m-%d').strftime('%m-%d-%Y')
+    return [
+        f'{label}: {value}'
+        for label, value in [
+            ('Claim number', claim.get('claim_number', '')),
+            ('Policy number', claim.get('policy_number', '')),
+            ('Date of loss', loss),
+            ('Cause and source of loss', claim.get('loss_cause', '')),
+            ('Deductible', claim.get('deductible', '')),
+        ]
+        if value
+    ]
+
+
+def addressee(claim):
+    """The letter's TO block: the recorded adjuster and carrier, or the generic examiner."""
+    name, carrier = claim.get('adjuster_name', ''), claim.get('carrier', '')
+    contact = ' · '.join(
+        value
+        for value in (claim.get('adjuster_email', ''), claim.get('adjuster_phone', ''))
+        if value
+    )
+    return '\n'.join(
+        value
+        for value in (
+            'TO: '
+            + (f'{name}, Insurance Adjuster' if name else 'Insurance Claims Examiner / Adjuster'),
+            carrier,
+            contact,
+        )
+        if value
+    )
+
+
+def make_documents(
+    data: InspectionData, photos, ai: AIResult, identity=None, customer_name='', claim=None
+):
     company_name = identity['name'] if identity else 'Alert Disaster Restoration'
     company_address = identity['address'] if identity else 'Bakersfield, CA'
     company_license = identity['license'] if identity else '950983'
@@ -294,9 +334,12 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
     letter = '\n\n'.join(
         [
             letterhead,
-            'TO: Insurance Claims Examiner / Adjuster',
-            f'RE: Remediation scope for {data.address}'
-            + (f'\nCustomer: {customer}' if customer else ''),
+            addressee(claim or {}),
+            '\n'.join(
+                [f'RE: Remediation scope for {data.address}']
+                + ([f'Customer: {customer}'] if customer else [])
+                + claim_reference(claim or {})
+            ),
             'This scope describes proposed work; completion has not been recorded.',
             'The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.',
             '\n'.join(observations),
@@ -320,6 +363,7 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
     documents = AuditDocuments(
         company_identity=identity,
         company_setup_missing=setup,
+        claim=claim,
         adr_estimate=dict(
             property_address=data.address,
             customer_name=customer,

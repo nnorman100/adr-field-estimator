@@ -1,6 +1,7 @@
 """Validated inspection inputs; money is calculated exclusively by the rate book."""
 
-from datetime import datetime
+import re
+from datetime import date, datetime, timedelta
 from typing import Literal, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
@@ -294,6 +295,45 @@ class Proposal(StrictModel):
     disclaimers: list[str]
 
 
+def one_line(value):
+    # Claim values print inside document headers and the letter; a line break cannot add a line.
+    return ' '.join(value.split())
+
+
+def loss_date(value):
+    value = value.strip()
+    if value and date.fromisoformat(value) > date.today() + timedelta(days=1):
+        raise ValueError('Date of loss cannot be in the future.')
+    return value
+
+
+def claim_email(value):
+    value = value.strip().lower()
+    if value and not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', value):
+        raise ValueError('Enter a valid adjuster email address.')
+    return value
+
+
+def claim_text(size):
+    return Annotated[str, Field(max_length=size), AfterValidator(one_line)]
+
+
+class ClaimDetails(StrictModel):
+    """Insurance claim and loss details from the job sidecar; every field is optional."""
+
+    carrier: claim_text(150) = ''
+    claim_number: claim_text(80) = ''
+    policy_number: claim_text(80) = ''
+    date_of_loss: Annotated[
+        str, Field(max_length=10, pattern=r'^(\d{4}-\d{2}-\d{2})?$'), AfterValidator(loss_date)
+    ] = ''
+    loss_cause: claim_text(500) = ''
+    adjuster_name: claim_text(150) = ''
+    adjuster_email: Annotated[str, Field(max_length=254), AfterValidator(claim_email)] = ''
+    adjuster_phone: claim_text(80) = ''
+    deductible: claim_text(40) = ''
+
+
 class CompanyIdentity(StrictModel):
     company_id: str
     version: int = Field(ge=1)
@@ -312,6 +352,8 @@ class AuditDocuments(StrictModel):
     schema_version: Literal[3] = 3
     company_identity: CompanyIdentity | None = None
     company_setup_missing: list[str] = Field(default_factory=list)
+    # The job's claim details when the audit ran; absent before claim details and without workspaces.
+    claim: ClaimDetails | None = None
     adr_estimate: Proposal
     xactimate_scope: list[LineItem]
     xactimate_total: float = Field(gt=0)

@@ -1,12 +1,13 @@
 """Reviewable scope suggestions grounded only in the technician's recorded words."""
 
+import re
 from typing import Literal
-from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
+from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr, ValidationError
 
 try:
-    from .contracts import StrictModel, InspectionData, Room, LossType
+    from .contracts import ClaimDetails, StrictModel, InspectionData, Room, LossType
 except ImportError:
-    from contracts import StrictModel, InspectionData, Room, LossType
+    from contracts import ClaimDetails, StrictModel, InspectionData, Room, LossType
 
 JobField = Literal[
     'address',
@@ -41,10 +42,35 @@ RoomField = Literal[
     'ceiling_height_ft',
     'water_class',
 ]
+ClaimField = Literal[
+    'carrier',
+    'claim_number',
+    'policy_number',
+    'date_of_loss',
+    'loss_cause',
+    'adjuster_name',
+    'adjuster_email',
+    'adjuster_phone',
+    'deductible',
+]
 ROOM_FIELDS = set(RoomField.__args__)
 # A room with any confirmed sizing input is the technician's room, not the untouched placeholder.
 SIZING_FIELDS = ('floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class')
 LOSS_TYPES = set(LossType.__args__)
+CLAIM_LABELS = {
+    'carrier': 'insurance carrier',
+    'claim_number': 'claim number',
+    'policy_number': 'policy number',
+    'date_of_loss': 'date of loss',
+    'loss_cause': 'cause and source of loss',
+    'adjuster_name': 'adjuster name',
+    'adjuster_email': 'adjuster email',
+    'adjuster_phone': 'adjuster phone',
+    'deductible': 'deductible',
+}
+# Identifiers must appear in their quote, ignoring spacing and punctuation, so a model cannot
+# complete or invent them.
+QUOTED_IDENTIFIERS = {'claim_number', 'policy_number', 'adjuster_phone'}
 
 
 class ScopeChange(StrictModel):
@@ -54,8 +80,16 @@ class ScopeChange(StrictModel):
     source_quote: str = Field(min_length=1, max_length=2000)
 
 
+class ClaimChange(StrictModel):
+    field: ClaimField
+    value: StrictStr = Field(min_length=1, max_length=500)
+    source_quote: str = Field(min_length=1, max_length=2000)
+
+
 class ScopeSuggestions(StrictModel):
     changes: list[ScopeChange] = Field(max_length=100)
+    # Claim details for the job sidecar, kept apart from the inspection form's values.
+    claim_changes: list[ClaimChange] = Field(default_factory=list, max_length=20)
     questions: list[str] = Field(max_length=20)
 
 
@@ -81,6 +115,18 @@ def scope_response_schema():
                         'source_quote': {'type': 'STRING'},
                     },
                     'required': ['field', 'room', 'value', 'source_quote'],
+                },
+            },
+            'claim_changes': {
+                'type': 'ARRAY',
+                'items': {
+                    'type': 'OBJECT',
+                    'properties': {
+                        'field': {'type': 'STRING', 'enum': list(ClaimField.__args__)},
+                        'value': {'type': 'STRING'},
+                        'source_quote': {'type': 'STRING'},
+                    },
+                    'required': ['field', 'value', 'source_quote'],
                 },
             },
             'questions': {'type': 'ARRAY', 'items': {'type': 'STRING'}},
@@ -120,7 +166,41 @@ def default_photo_rename(before, after):
     return (old_rooms[0]['name'], new_rooms[0]['name']) if forward or undo else None
 
 
-def validate_suggestions(data, suggestions):
+def alphanumeric(text):
+    return re.sub(r'[\W_]', '', text).casefold()
+
+
+def validate_claim(source, claim, suggestions):
+    """Quote-backed claim changes and questions for claim values that cannot be used."""
+    if claim is None:
+        return [], []
+    current = ClaimDetails.model_validate(claim).model_dump()
+    seen = set()
+    changes, questions = [], []
+    for change in suggestions.claim_changes:
+        if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
+            raise ValueError('A proposed value has no supporting technician quote.')
+        if change.field in seen:
+            raise ValueError('Conflicting claim details require clarification.')
+        seen.add(change.field)
+        label = CLAIM_LABELS[change.field]
+        try:
+            value = getattr(ClaimDetails.model_validate({change.field: change.value}), change.field)
+        except ValidationError:
+            questions.append(f'Confirm the {label}; the walkthrough value could not be used.')
+            continue
+        if change.field in QUOTED_IDENTIFIERS and alphanumeric(value) not in alphanumeric(
+            change.source_quote
+        ):
+            questions.append(f'Confirm the {label} exactly as written on the claim.')
+            continue
+        if value != current[change.field]:
+            changes.append(change.model_copy(update={'value': value}))
+    return changes, questions
+
+
+def validate_suggestions(data, suggestions, claim=None):
+    """claim is the job's saved claim details; None when claim details cannot be stored."""
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
     candidate = data.model_dump(mode='json')
     known = {}
@@ -194,10 +274,27 @@ def validate_suggestions(data, suggestions):
     InspectionData.model_validate(candidate, strict=True)
     if any(len(q) > 1000 for q in suggestions.questions):
         raise ValueError('Clarification is too long.')
-    return ScopeSuggestions(changes=changes, questions=suggestions.questions)
+    claim_changes, claim_questions = validate_claim(source, claim, suggestions)
+    return ScopeSuggestions(
+        changes=changes,
+        claim_changes=claim_changes,
+        questions=(suggestions.questions + claim_questions)[:20],
+    )
 
 
-def scope_prompt(data):
+CLAIM_PROMPT = (
+    'Also return insurance claim details in claim_changes, never in changes, ONLY when the technician transcript or notes state them '
+    '(including what the homeowner is recorded saying): carrier, claim_number, policy_number, date_of_loss, loss_cause, adjuster_name, '
+    'adjuster_email, adjuster_phone and deductible. Copy names, numbers, emails, phone numbers and amounts exactly as stated; never guess, '
+    'complete, correct or look them up. Set date_of_loss as YYYY-MM-DD only when month, day and year were all stated; ask about a relative '
+    "or partial date instead. loss_cause is the stated cause and source of loss in the speaker's words, for example "
+    '"supply line under the kitchen sink"; never infer it from damage, photos or the water category. Each claim change needs an exact '
+    'source_quote. Omit unstated claim fields and fields that already match current_claim; ask about conflicting claim values. '
+)
+
+
+def scope_prompt(data, claim=None):
+    """claim is the job's saved claim details; None leaves claim details out of the extraction."""
     import json
 
     return (
@@ -235,6 +332,7 @@ def scope_prompt(data):
         'Do not output money, rates, moisture readings, '
         'notes, transcript changes, signatures, or scope confirmation. Never propose replacing or deleting the rooms list. '
         'Ask concise questions about ambiguous quantities or room identity.\n'
+        + (CLAIM_PROMPT + '\n' if claim is not None else '')
         + json.dumps(
             {
                 'current_form': data.model_dump(
@@ -246,6 +344,7 @@ def scope_prompt(data):
                         'equipment_scans',
                     }
                 ),
+                **({'current_claim': claim} if claim is not None else {}),
                 'technician_transcript': data.technician_transcript,
                 'technician_notes': data.technician_notes,
             }
