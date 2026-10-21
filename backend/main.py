@@ -746,7 +746,14 @@ def inspection_payload(data):
     # Absent values stay absent so an older draft keeps its stored shape and the client's
     # acknowledged copy; a saved record never gains a key the technician did not set.
     for room in result['rooms']:
-        for key in ('loss', 'source_of_loss', 'contents_present', 'equipment_placed'):
+        for key in (
+            'loss',
+            'source_of_loss',
+            'contents_present',
+            'equipment_placed',
+            'affected_surfaces',
+            'wet_materials',
+        ):
             if room.get(key) is None:
                 room.pop(key, None)
     return result

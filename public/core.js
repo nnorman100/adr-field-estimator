@@ -98,30 +98,43 @@
   const roomKey = (name) => name.trim().replace(/\s+/g, ' ').toLowerCase();
   // The photos an adjuster expects per room, as data; backend/shot_list.py holds the same list.
   // 'when' names the room flag that makes a shot required; null means every room needs it.
+  // 'per' names the room count of photos a shot needs; null means one photo covers it.
   const SHOT_LIST = [
-    { id: 'overview', label: 'Room overview', when: null },
-    { id: 'source', label: 'Source of loss', when: 'source_of_loss' },
-    { id: 'surface', label: 'Affected wall or floor', when: null },
-    { id: 'meter', label: 'Meter reading', when: null },
-    { id: 'contents', label: 'Contents before moving', when: 'contents_present' },
-    { id: 'equipment', label: 'Equipment as placed', when: 'equipment_placed' },
+    { id: 'overview', label: 'Room overview', when: null, per: null },
+    { id: 'source', label: 'Source of loss', when: 'source_of_loss', per: null },
+    { id: 'surface', label: 'Affected wall or floor', when: null, per: 'affected_surfaces' },
+    { id: 'meter', label: 'Meter reading', when: null, per: 'wet_materials' },
+    { id: 'contents', label: 'Contents before moving', when: 'contents_present', per: null },
+    { id: 'equipment', label: 'Equipment as placed', when: 'equipment_placed', per: null },
   ];
   const ROOM_SHOT_FLAGS = {
     source_of_loss: 'Source of loss is here',
     contents_present: 'Contents in room',
     equipment_placed: 'Equipment placed here',
   };
+  const ROOM_SHOT_COUNTS = {
+    affected_surfaces: 'Affected walls or floors',
+    wet_materials: 'Wet materials',
+  };
   const shotLabel = (id) => SHOT_LIST.find((shot) => shot.id === id)?.label;
-  const requiredShots = (room) => SHOT_LIST.filter((shot) => !shot.when || room[shot.when]);
+  // A count the technician has not set still needs one photo; the status names the unset count.
+  const photosNeeded = (shot, room) => (shot.per && room[shot.per] != null ? room[shot.per] : 1);
+  const requiredShots = (room) =>
+    SHOT_LIST.filter((shot) => (!shot.when || room[shot.when]) && photosNeeded(shot, room) > 0);
   // Only a photo tagged with a shot type counts toward it; untagged photos are counted apart.
   function roomShotStatus(room, photos = []) {
     const mine = photos.filter((photo) => roomKey(photo.room) === roomKey(room.name)),
-      tagged = new Set(mine.map((photo) => photo.shot).filter(Boolean)),
-      required = requiredShots(room);
+      required = requiredShots(room).map((shot) => ({
+        ...shot,
+        needed: photosNeeded(shot, room),
+        tagged: mine.filter((photo) => photo.shot === shot.id).length,
+      })),
+      missing = required.filter((shot) => shot.tagged < shot.needed);
     return {
       required,
-      missing: required.filter((shot) => !tagged.has(shot.id)),
-      tagged,
+      missing,
+      missingPhotos: missing.reduce((sum, shot) => sum + shot.needed - shot.tagged, 0),
+      unsetCounts: required.filter((shot) => shot.per && room[shot.per] == null).map((s) => s.per),
       untagged: mine.filter((photo) => !photo.shot).length,
     };
   }
@@ -314,16 +327,23 @@
       const name = room.name.trim() || 'Unnamed room';
       if (!(room.finished_sf > 0) && !(room.unfinished_sf > 0))
         items.push('No measured demolition area for ' + name);
+      // Missing shots, then the counts still to set: a shot counted per surface or material is
+      // only covered once the technician says how many there are.
       const shots = roomShotStatus(room, photos),
-        count = shots.missing.length;
+        count = shots.missingPhotos,
+        gaps = [];
       if (count)
-        items.push(
-          name +
-            ': ' +
-            count +
+        gaps.push(
+          count +
             (count === 1 ? ' photo shot' : ' photo shots') +
             ' missing (' +
-            shots.missing.map((shot) => shot.label).join(', ') +
+            shots.missing
+              .map(
+                (shot) =>
+                  shot.label +
+                  (shot.needed - shot.tagged > 1 ? ' ×' + (shot.needed - shot.tagged) : ''),
+              )
+              .join(', ') +
             ')' +
             (shots.untagged
               ? ' · ' +
@@ -331,6 +351,12 @@
                 (shots.untagged === 1 ? ' untagged photo' : ' untagged photos')
               : ''),
         );
+      if (shots.unsetCounts.length)
+        gaps.push(
+          'set how many: ' +
+            shots.unsetCounts.map((key) => ROOM_SHOT_COUNTS[key].toLowerCase()).join(', '),
+        );
+      if (gaps.length) items.push(name + ': ' + gaps.join(' · '));
     }
     if (!(data.air_movers > 0) && !(data.dehumidifiers > 0) && !(data.wood_floor_systems > 0))
       items.push('No drying equipment counts');
@@ -400,6 +426,7 @@
     roomLoss,
     SHOT_LIST,
     ROOM_SHOT_FLAGS,
+    ROOM_SHOT_COUNTS,
     shotLabel,
     requiredShots,
     roomShotStatus,

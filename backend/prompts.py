@@ -3,9 +3,9 @@
 import json
 
 try:
-    from .shot_list import ROOM_FLAGS, SHOT_LIST, room_shot_status
+    from .shot_list import ROOM_COUNTS, ROOM_FLAGS, SHOT_LIST, room_shot_status
 except ImportError:
-    from shot_list import ROOM_FLAGS, SHOT_LIST, room_shot_status
+    from shot_list import ROOM_COUNTS, ROOM_FLAGS, SHOT_LIST, room_shot_status
 
 LIVE_INSTRUCTIONS = """You are a restoration field walkthrough assistant helping a technician prepare a room-by-room remediation estimate.
 
@@ -50,8 +50,11 @@ def shot_list_instructions():
         'Adjusters can only price what was photographed. Each room needs these photos, each tagged with its shot type in the app:\n'
         + '\n'.join(lines)
         + "\nWhether a room is the source of loss, holds contents or has drying equipment placed is the technician's answer, set with the room's toggles in the app; ask, and never assume it from video. "
-        'The photo shot status from the application lists, per room, the required shots, the tagged ones and the missing ones. Before the technician leaves a room, ask for each missing shot by name, one at a time. '
-        'A photo counts toward a shot only when it is tagged with that shot type; untagged photos count toward no shot. One tagged photo marks a shot as tagged; for shots that say each, still ask whether every affected surface or wet material has its own photo. Never say a shot is taken, tagged or complete unless the latest photo shot status lists it as tagged for that room, and do not describe a photo you have not been shown as evidence. '
+        + 'Shots that say each need one tagged photo per affected wall or floor, or per wet material, counted by the numbers the technician sets on the room ('
+        + ', '.join(f'"{label}"' for label in ROOM_COUNTS.values())
+        + '). When the status lists a count under counts_not_set, ask the technician how many there are and to set it in the app; never count surfaces or materials from video. '
+        'The photo shot status from the application lists, per room, each required shot with the tagged photos it needs, the tagged photos per shot type and the shots still missing photos. Before the technician leaves a room, ask for each missing shot by name, one at a time, saying how many photos it still needs. '
+        'A photo counts toward a shot only when it is tagged with that shot type; untagged photos count toward no shot. Never say a photo is taken or tagged unless the latest photo shot status counts a tagged photo of that shot type for that room, never call a shot complete while that status lists it as missing, and do not describe a photo you have not been shown as evidence. '
         'When the technician takes a photo, you may suggest which shot type to tag it as; the technician confirms by tapping the tag in the app. You cannot tag photos yourself. Missing shots do not block signing; never tell the technician they do.'
     )
 

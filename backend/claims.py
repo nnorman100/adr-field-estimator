@@ -7,10 +7,8 @@ from zoneinfo import ZoneInfo
 
 try:
     from .contracts import InspectionData, AIResult, AuditDocuments
-    from .shot_list import SHOT_LABELS
 except ImportError:
     from contracts import InspectionData, AIResult, AuditDocuments
-    from shot_list import SHOT_LABELS
 
 CENT = Decimal('0.01')
 RATES = {1: ('1.21', '2.78'), 2: ('1.52', '2.89'), 3: ('2.48', '8.39')}
@@ -332,12 +330,8 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
         compliance_notes=[age] + clauses,
         photo_audit_log=[
             {
-                **{
-                    k: p.get(k)
-                    for k in ('id', 'room', 'captured_at', 'width', 'height', 'ocr_status', 'ocr')
-                },
-                'shot': p.get('shot'),
-                'shot_label': SHOT_LABELS.get(p.get('shot')),
+                k: p.get(k)
+                for k in ('id', 'room', 'captured_at', 'width', 'height', 'ocr_status', 'ocr')
             }
             for p in photos
         ],

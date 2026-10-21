@@ -560,6 +560,21 @@ h3 {
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
 }
+/* The wall/floor and wet-material counts sit side by side, inputs aligned when a label wraps. */
+.shot-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.shot-counts label {
+  margin: 0;
+  font-size: 0.875rem;
+}
+.shot-counts input {
+  margin-top: 0.25rem;
+}
 .shot-items {
   display: grid;
   gap: 0.35rem;

@@ -14,6 +14,7 @@ const {
   roomLoss,
   SHOT_LIST,
   ROOM_SHOT_FLAGS,
+  ROOM_SHOT_COUNTS,
   shotLabel,
   roomShotStatus,
   applyScopeChanges,
@@ -1867,7 +1868,7 @@ function tagPhoto(photo, shot) {
   changed(false);
   renderPhotos();
 }
-// The room's shot list: its three answers, then each required shot as tagged or missing.
+// The room's shot list: its answers and counts, then each required shot as tagged or missing.
 function shotChecklist(room) {
   const wrap = node('div', undefined, 'shot-list'),
     flags = node('fieldset', undefined, 'loss-pills shot-flags'),
@@ -1891,14 +1892,58 @@ function shotChecklist(room) {
     pill.append(box, node('span', text));
     flagList.append(pill);
   }
+  // How many walls or floors are affected and materials are wet; empty until the technician says.
+  const counts = node('div', undefined, 'shot-counts');
+  for (const [key, text] of Object.entries(ROOM_SHOT_COUNTS)) {
+    const field = node('label', text),
+      input = node('input');
+    input.type = 'number';
+    input.min = 0;
+    input.max = 50;
+    input.step = 1;
+    input.inputMode = 'numeric';
+    input.placeholder = 'Not set';
+    input.value = room[key] ?? '';
+    input.dataset.shotCount = key;
+    input.disabled = !canEditDraft('scope');
+    input.addEventListener('change', () => {
+      const value = input.value.trim() === '' ? null : Number(input.value);
+      if (value === null) delete room[key];
+      else if (Number.isInteger(value) && value >= 0 && value <= 50) room[key] = value;
+      else {
+        input.value = room[key] ?? '';
+        return;
+      }
+      changed(false);
+      renderShotLists();
+    });
+    field.append(input);
+    counts.append(field);
+  }
   for (const shot of status.required) {
-    const done = status.tagged.has(shot.id),
-      item = node('li', undefined, done ? 'shot-done' : 'shot-missing');
+    const done = shot.tagged >= shot.needed,
+      item = node('li', undefined, done ? 'shot-done' : 'shot-missing'),
+      mark =
+        shot.needed > 1
+          ? (done ? '✓ ' : '') + Math.min(shot.tagged, shot.needed) + ' of ' + shot.needed
+          : done
+            ? '✓ Tagged'
+            : 'Missing';
     item.dataset.shot = shot.id;
-    item.append(node('span', done ? '✓ Tagged' : 'Missing', 'shot-mark'), node('span', shot.label));
+    item.append(node('span', mark, 'shot-mark'), node('span', shot.label));
     list.append(item);
   }
-  wrap.append(flags, list);
+  wrap.append(flags, counts, list);
+  if (status.unsetCounts.length)
+    wrap.append(
+      node(
+        'p',
+        'Set how many ' +
+          status.unsetCounts.map((key) => ROOM_SHOT_COUNTS[key].toLowerCase()).join(' and ') +
+          ' so each one gets its photo.',
+        'hint shot-unset',
+      ),
+    );
   if (status.untagged)
     wrap.append(
       node(
@@ -1918,9 +1963,14 @@ function renderShotLists() {
     const target = card.querySelector('.room-shots'),
       saved = state.draft?.data.rooms[index];
     if (!target || !saved) return;
-    const missing = roomShotStatus(saved, state.draft.photos).missing.length;
+    const status = roomShotStatus(saved, state.draft.photos);
     card.querySelector('.shot-drawer > summary').textContent =
-      'Photo shots · ' + (missing ? missing + ' missing' : 'all tagged');
+      'Photo shots · ' +
+      (status.missingPhotos
+        ? status.missingPhotos + ' missing'
+        : status.unsetCounts.length
+          ? 'counts not set'
+          : 'all tagged');
     target.replaceChildren(shotChecklist(saved));
   });
   renderShotPicker();
@@ -2992,12 +3042,13 @@ async function refreshLiveToken(socket, uid) {
       socket.send(JSON.stringify({ type: 'refresh', token }));
   } catch {}
 }
-// What Live's photo shot status is built from: the server's room answers and photo tags.
+// What Live's photo shot status is built from: the server's room answers, counts and photo tags.
 function shotSignature(record) {
   return stable([
     record.data.rooms.map((room) => [
       room.name,
       ...Object.keys(ROOM_SHOT_FLAGS).map((key) => !!room[key]),
+      ...Object.keys(ROOM_SHOT_COUNTS).map((key) => room[key] ?? null),
     ]),
     record.photos.filter((photo) => photo.shot).map((photo) => [photo.room, photo.shot]),
   ]);
@@ -3070,10 +3121,10 @@ async function connectLive() {
       clearInterval(state.tokenTimer);
       if (msg.token_refresh)
         state.tokenTimer = setInterval(() => refreshLiveToken(socket, uid), LIVE_TOKEN_REFRESH_MS);
-      // A new session's instructions already hold the saved shot status; a resumed one is updated.
+      // The relay built its instructions from the record it read while connecting, which a tag
+      // saved during the handshake may postdate, so every session hears the saved status again.
       state.shotUpdates = !!msg.shot_updates;
-      state.liveShotSignature =
-        msg.recovery === 'new' && state.record ? shotSignature(state.record) : null;
+      state.liveShotSignature = null;
       notifyLiveShots();
       state.liveStatusText =
         msg.recovery === 'resumed'
@@ -4221,7 +4272,8 @@ async function initialize() {
   });
   $('inspectionForm').addEventListener('input', (e) => {
     if (e.target === validationControl && e.target.validity.valid) clearValidationFeedback();
-    if (e.target.dataset.roomKey) return;
+    // Room fields and shot-list answers save through their own handlers.
+    if (e.target.dataset.roomKey || e.target.closest('.shot-list')) return;
     if (e.target.id === 'scopeConfirmed') $('scopeConfirmNotice').hidden = true;
     collect();
     changed(e.target.id !== 'scopeConfirmed');
@@ -4352,6 +4404,8 @@ async function initialize() {
         ...p,
         id: newId(),
         uploaded: false,
+        // Copies upload untagged, so a saved tag follows each as a pending tag.
+        ...(p.shot ? { pending_shot: p.shot } : {}),
         ocr_status: 'pending',
         ocr: null,
         file: undefined,

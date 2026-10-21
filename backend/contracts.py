@@ -34,6 +34,10 @@ class Room(StrictModel):
     source_of_loss: bool | None = None
     contents_present: bool | None = None
     equipment_placed: bool | None = None
+    # How many walls or floors are affected and how many materials are wet: the shot list needs one
+    # tagged photo of each. Absent until the technician sets them, like the answers above.
+    affected_surfaces: int | None = Field(default=None, ge=0, le=50)
+    wet_materials: int | None = Field(default=None, ge=0, le=50)
 
 
 class TranscriptSegment(StrictModel):
@@ -207,9 +211,6 @@ class PhotoLog(StrictModel):
     height: int
     ocr_status: Literal['pending', 'verified', 'no_meter', 'failed']
     ocr: OcrResult | None
-    # Tagged photos only; the label is kept so the log reads the same if the list changes later.
-    shot: str | None = None
-    shot_label: str | None = None
 
 
 class LineItem(StrictModel):

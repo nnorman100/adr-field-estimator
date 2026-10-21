@@ -7,10 +7,10 @@ from backend.claims import make_documents
 from backend.contracts import AIResult, InspectionData, Room
 from backend.live_support import scope_fingerprint
 from backend.prompts import SHOT_STATUS_UPDATE, audit_prompt, live_prompt
-from backend.shot_list import ROOM_FLAGS, SHOT_LIST, room_shot_status
+from backend.shot_list import ROOM_COUNTS, ROOM_FIELDS, ROOM_FLAGS, SHOT_LIST, room_shot_status
 from tests.fakes import FakeStore, FakeVertexLive, client_content, png
 from tests.test_backend import context, data, inspect, audit, photo, sign_payload, ID
-from tests.test_claims import photo as log_photo, scoped
+from tests.test_claims import scoped
 from tests.test_live_reliability import pcm, wire_audio
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,23 +21,33 @@ PHOTO = 'b' * 32
 def test_app_and_server_carry_the_same_shot_list():
     script = (
         "const c = require('./public/core.js');"
-        'console.log(JSON.stringify({list: c.SHOT_LIST, flags: c.ROOM_SHOT_FLAGS}))'
+        'console.log(JSON.stringify('
+        '{list: c.SHOT_LIST, flags: c.ROOM_SHOT_FLAGS, counts: c.ROOM_SHOT_COUNTS}))'
     )
     shown = json.loads(
         subprocess.run(
             ['node', '-e', script], cwd=ROOT, capture_output=True, text=True, check=True
         ).stdout
     )
-    assert shown['list'] == [{k: shot[k] for k in ('id', 'label', 'when')} for shot in SHOT_LIST]
-    assert shown['flags'] == ROOM_FLAGS
-    # Every conditional shot names a room answer the app can set.
+    assert shown['list'] == [
+        {k: shot[k] for k in ('id', 'label', 'when', 'per')} for shot in SHOT_LIST
+    ]
+    assert shown['flags'] == ROOM_FLAGS and shown['counts'] == ROOM_COUNTS
+    # Every conditional or counted shot names a room answer the app can set.
     assert {shot['when'] for shot in SHOT_LIST} - {None} == set(ROOM_FLAGS)
-    assert set(ROOM_FLAGS) <= set(Room.model_fields)
+    assert {shot['per'] for shot in SHOT_LIST} - {None} == set(ROOM_COUNTS)
+    assert set(ROOM_FIELDS) <= set(Room.model_fields)
 
 
 def test_shot_status_counts_only_tagged_photos_for_the_shots_each_room_needs():
     rooms = [
-        {'name': 'Kitchen', 'source_of_loss': True, 'contents_present': False},
+        {
+            'name': 'Kitchen',
+            'source_of_loss': True,
+            'contents_present': False,
+            'affected_surfaces': 1,
+            'wet_materials': 1,
+        },
         {'name': 'Hall Bath', 'equipment_placed': True},
     ]
     photos = [
@@ -48,17 +58,50 @@ def test_shot_status_counts_only_tagged_photos_for_the_shots_each_room_needs():
         {'room': 'hall  bath', 'shot': 'equipment'},
     ]
     kitchen, hall = room_shot_status({'rooms': rooms}, photos)
+    one = lambda *labels: [{'shot': label, 'photos_needed': 1} for label in labels]
     assert kitchen == {
         'room': 'Kitchen',
-        'required': ['Room overview', 'Source of loss', 'Affected wall or floor', 'Meter reading'],
-        'tagged': ['Room overview', 'Source of loss', 'Contents before moving'],
-        'missing': ['Affected wall or floor', 'Meter reading'],
+        'required': one(
+            'Room overview', 'Source of loss', 'Affected wall or floor', 'Meter reading'
+        ),
+        'tagged': [
+            {'shot': 'Room overview', 'photos': 1},
+            {'shot': 'Source of loss', 'photos': 1},
+            {'shot': 'Contents before moving', 'photos': 1},
+        ],
+        'missing': [
+            {'shot': 'Affected wall or floor', 'photos_missing': 1},
+            {'shot': 'Meter reading', 'photos_missing': 1},
+        ],
+        'counts_not_set': [],
         'untagged_photos': 1,
     }
-    assert hall['missing'] == ['Room overview', 'Affected wall or floor', 'Meter reading']
-    assert hall['tagged'] == ['Equipment as placed'] and hall['untagged_photos'] == 0
+    assert [m['shot'] for m in hall['missing']] == [
+        'Room overview',
+        'Affected wall or floor',
+        'Meter reading',
+    ]
+    assert hall['tagged'] == [{'shot': 'Equipment as placed', 'photos': 1}]
+    assert hall['untagged_photos'] == 0
+    # Unset counts still ask for one photo each and are named so Live asks for them.
+    assert hall['counts_not_set'] == ['Affected walls or floors', 'Wet materials']
     # Photos saved before the shot list existed have no tag and count toward nothing.
     assert room_shot_status({'rooms': rooms[:1]}, [{'room': 'Kitchen'}])[0]['tagged'] == []
+
+
+def test_counted_shots_need_one_tagged_photo_per_surface_or_wet_material():
+    room = {'name': 'Kitchen', 'affected_surfaces': 3, 'wet_materials': 0}
+    photos = [{'room': 'Kitchen', 'shot': 'surface'}, {'room': 'Kitchen', 'shot': 'overview'}]
+    (status,) = room_shot_status({'rooms': [room]}, photos)
+    # One wall photo no longer covers three walls, and no wet material asks for no meter shot.
+    assert status['required'] == [
+        {'shot': 'Room overview', 'photos_needed': 1},
+        {'shot': 'Affected wall or floor', 'photos_needed': 3},
+    ]
+    assert status['missing'] == [{'shot': 'Affected wall or floor', 'photos_missing': 2}]
+    assert status['tagged'][1] == {'shot': 'Affected wall or floor', 'photos': 1}
+    photos += [{'room': 'Kitchen', 'shot': 'surface'}] * 2
+    assert room_shot_status({'rooms': [room]}, photos)[0]['missing'] == []
 
 
 def test_tagging_a_photo_saves_its_shot_type_and_invalidates_the_audit(context):
@@ -89,11 +132,9 @@ def test_tagging_a_photo_saves_its_shot_type_and_invalidates_the_audit(context):
     record = client.put(
         path, json={'expected_revision': cleared.json()['revision'], 'shot': 'overview'}
     ).json()
-    # Missing shots never block signing; the tagged photo log is signed and then immutable.
+    # Missing shots never block signing; once signed, the tag is immutable.
     signed = audit(client, record)
     assert signed['audit']['documents']['signable'] is True
-    log = signed['audit']['documents']['photo_audit_log']
-    assert log[0]['shot'] == 'overview' and log[0]['shot_label'] == 'Room overview'
     assert client.post('/api/authorize', json=sign_payload(signed)).status_code == 200
     after = client.get('/api/inspections/' + ID).json()
     locked = client.put(path, json={'expected_revision': after['revision'], 'shot': 'meter'})
@@ -106,25 +147,43 @@ def test_room_shot_answers_save_only_when_set(context):
     record = inspect(client)
     assert not set(ROOM_FLAGS) & set(record['data']['rooms'][0])
     answered = json.loads(json.dumps(record['data']))
-    answered['rooms'][0].update(source_of_loss=True, contents_present=False)
+    answered['rooms'][0].update(source_of_loss=True, contents_present=False, affected_surfaces=2)
     saved = client.put(
         '/api/inspections/' + ID, json={'expected_revision': record['revision'], 'data': answered}
     ).json()
     # The server echoes exactly what the app sent, so a reload never reads as a conflict.
-    assert saved['data'] == answered and 'equipment_placed' not in saved['data']['rooms'][0]
-    answered['rooms'][0]['contents_present'] = 'maybe'
-    assert (
-        client.put(
-            '/api/inspections/' + ID,
-            json={'expected_revision': saved['revision'], 'data': answered},
-        ).status_code
-        == 422
-    )
+    assert saved['data'] == answered
+    assert not {'equipment_placed', 'wet_materials'} & set(saved['data']['rooms'][0])
+    for key, value in [
+        ('contents_present', 'maybe'),
+        ('wet_materials', -1),
+        ('wet_materials', 51),
+        ('affected_surfaces', 1.5),
+    ]:
+        bad = json.loads(json.dumps(answered))
+        bad['rooms'][0][key] = value
+        assert (
+            client.put(
+                '/api/inspections/' + ID,
+                json={'expected_revision': saved['revision'], 'data': bad},
+            ).status_code
+            == 422
+        ), (key, value)
 
 
 def test_room_shot_answers_change_neither_pricing_nor_the_live_scope():
     plain = scoped()
-    answered = scoped(rooms=[{'name': 'Bathroom', 'finished_sf': 10, 'source_of_loss': True}])
+    answered = scoped(
+        rooms=[
+            {
+                'name': 'Bathroom',
+                'finished_sf': 10,
+                'source_of_loss': True,
+                'affected_surfaces': 2,
+                'wet_materials': 3,
+            }
+        ]
+    )
     ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
     before, after = make_documents(plain, [], ai), make_documents(answered, [], ai)
     for docs in (before, after):
@@ -139,32 +198,10 @@ def test_room_shot_answers_change_neither_pricing_nor_the_live_scope():
     )
 
 
-def test_photo_log_carries_the_shot_type_only_for_tagged_photos():
-    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
-    photos = [
-        {**log_photo('a' * 32, 'Bathroom'), 'shot': 'overview'},
-        log_photo('b' * 32, 'Bathroom', '31.4% WME'),
-        {**log_photo('c' * 32, 'Bathroom', '18.0% WME'), 'shot': 'meter'},
-    ]
-    docs = make_documents(scoped(), photos, ai)
-    log = docs['photo_audit_log']
-    assert [(p.get('shot'), p.get('shot_label')) for p in log] == [
-        ('overview', 'Room overview'),
-        (None, None),
-        ('meter', 'Meter reading'),
-    ]
-    assert 'shot' not in log[1] and 'shot_label' not in log[1]
-    # The log keeps photo order, so the findings' photo numbers are unchanged by tags.
-    assert [p['id'] for p in log] == ['a' * 32, 'b' * 32, 'c' * 32]
-    untagged = make_documents(scoped(), [{**p, 'shot': None} for p in photos], ai)
-    assert docs['adr_estimate']['findings'] == untagged['adr_estimate']['findings']
-    assert docs['iicrc_defense_letter'] == untagged['iicrc_defense_letter']
-
-
 def test_live_prompt_coaches_the_shot_list_from_tagged_photos_only():
-    payload = InspectionData(rooms=[{'name': 'Kitchen', 'source_of_loss': True}]).model_dump(
-        mode='json'
-    )
+    payload = InspectionData(
+        rooms=[{'name': 'Kitchen', 'source_of_loss': True, 'affected_surfaces': 2}]
+    ).model_dump(mode='json')
     photos = [{'room': 'Kitchen', 'shot': 'overview'}, {'room': 'Kitchen'}]
     prompt = live_prompt(payload, None, photos)
     instructions, rest = prompt.split('\nCurrent inspection context (JSON):\n')
@@ -174,10 +211,11 @@ def test_live_prompt_coaches_the_shot_list_from_tagged_photos_only():
     assert 'PHOTO SHOT LIST' in instructions
     for shot in SHOT_LIST:
         assert shot['label'] in instructions and shot['ask'] in instructions
-    assert (
-        'Never say a shot is taken, tagged or complete unless the latest photo shot status lists it as tagged for that room'
-        in instructions
-    )
+    assert 'never call a shot complete while that status lists it as missing' in instructions
+    assert 'one tagged photo per affected wall or floor, or per wet material' in instructions
+    assert '"Affected walls or floors", "Wet materials"' in instructions
+    assert 'never count surfaces or materials from video' in instructions
+    assert json.loads(status)[0]['counts_not_set'] == ['Wet materials']
     assert (
         "Before moving on to another room, ask for that room's missing photo shots" in instructions
     )
@@ -253,8 +291,11 @@ def test_live_relay_reports_saved_shot_tags_between_replies(monkeypatch, tmp_pat
             socket.send_json({'type': 'shots'})
             first = wait_for(connection, 1)
             assert len(first) == 1 and not first[0].get('turnComplete')
-            assert status(first[0])[0]['tagged'] == ['Room overview']
-            assert status(first[0])[0]['missing'] == ['Affected wall or floor', 'Meter reading']
+            assert status(first[0])[0]['tagged'] == [{'shot': 'Room overview', 'photos': 1}]
+            assert [m['shot'] for m in status(first[0])[0]['missing']] == [
+                'Affected wall or floor',
+                'Meter reading',
+            ]
             # While the model speaks, the update waits for its turn to end instead of cutting it off.
             vertex.replies['audio'] = [wire_audio('Now the meter reading, please.')]
             socket.send_json({'type': 'audio', 'data': pcm(3300)})
@@ -269,7 +310,8 @@ def test_live_relay_reports_saved_shot_tags_between_replies(monkeypatch, tmp_pat
             socket.send_json({'type': 'audio', 'data': pcm(0)})
             assert socket.receive_json()['type'] == 'turn_complete'
             second = wait_for(connection, 2)
-            assert len(second) == 2 and status(second[1])[0]['tagged'] == ['Meter reading']
+            assert len(second) == 2
+            assert status(second[1])[0]['tagged'] == [{'shot': 'Meter reading', 'photos': 1}]
             kinds = [
                 'update' if m.get('clientContent', m.get('client_content')) in second else 'other'
                 for m in connection['received']

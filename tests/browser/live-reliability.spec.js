@@ -422,11 +422,17 @@ const shotPackets = (page) =>
 test('a saved shot tag is announced to a relay that offers shot updates', async ({ page }) => {
   await page.evaluate(() => (window.shotUpdates = true));
   await setup(page);
+  // Every ready asks for the saved status, since a tag may land while the relay is connecting.
+  await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(1);
   await tagNewPhoto(page);
   // Only the saved tag counts, after a short pause that gathers a burst of tags into one update.
-  await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(1);
-  await page.locator('#shotList [data-shot-flag="equipment_placed"]').check();
   await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(2);
+  await page.locator('#shotList [data-shot-flag="equipment_placed"]').check();
+  await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(3);
+  const count = page.locator('#shotList [data-shot-count="wet_materials"]');
+  await count.fill('2');
+  await count.blur();
+  await expect.poll(() => shotPackets(page), { timeout: 10000 }).toBe(4);
   await cleanup(page);
 });
 
