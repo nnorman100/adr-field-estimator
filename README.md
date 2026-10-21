@@ -48,7 +48,7 @@ Provenance: the concept was generated on 2026-10-17 by an AI image model (Antigr
 | --- | --- |
 | `public/app.js`, `core.js`, `audio-worklet.js` | Lifecycle, safe DOM, offline recovery, camera and audio |
 | `public/documents.js` | The four documents, rendered with text nodes for both the app and the homeowner page |
-| `public/psychrometrics.js`, `drying.js`, `backend/psychrometrics.py` | Drying-log readings: GPP, dew point and per-room daily summaries in the browser; the server stores readings beside the inspection and computes the same values |
+| `public/psychrometrics.js`, `drying.js`, `backend/psychrometrics.py` | Drying-log readings: GPP, dew point and per-room daily summaries in the browser; the server stores readings beside the inspection and computes the same reading values |
 | `public/sign.html`, `sign.js` | Homeowner signing page reached through a signing link; no sign-in |
 | `public/app.css`, `sw.js` | Responsive/print layout and app updates |
 | `index.html`, `public/index.html` | Identical root and hosting HTML |

@@ -1,5 +1,5 @@
 /* Psychrometric values and drying-log summaries shared by the UI and the node tests.
-   The server computes and stores the same values (backend/psychrometrics.py); this copy only
+   The server computes and stores the same reading values (backend/psychrometrics.py); this copy only
    shows the technician the result while typing and arranges saved readings by room and day. */
 (function (root) {
   // Standard psychrometric equations as ported from DryScope's lib/psychrometrics.ts: Magnus

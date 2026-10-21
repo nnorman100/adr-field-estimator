@@ -50,4 +50,3 @@ def psychrometrics(temp_f, relative_humidity):
         'vapor_pressure_inhg': round(vapor_hpa * HPA_TO_INHG, 3),
         'enthalpy_btu_lb': round(0.24 * temp_f + humidity_ratio * (1061 + 0.444 * temp_f), 1),
     }
-
