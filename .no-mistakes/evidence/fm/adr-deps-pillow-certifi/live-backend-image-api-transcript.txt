@@ -1,0 +1,14 @@
+server-side libs installed in venv: Pillow 13.0.0 certifi 2026.10.19
+fixture 200 ADR-INS-cccccccccccccccccccccccccccccccc
+GET inspection 200 revision 1
+POST photo (EXIF-rotated JPEG 3200x1600) 200
+  saved photo record: {"id": "2f263918b61145b09ce216bfe62b9b26", "room": "Bathroom", "captured_at": "2026-10-21T10:00:00Z", "width": 3200, "height": 1600, "ocr_status": "pending", "ocr": null, "file": {"path": "users/test-owner-ws-estimator/inspections/ADR-INS-cccccccccccccccccccccccccccccccc/2f263918b61145b09ce216bfe62b9b26/bc43da65fd194d2899845b7310ff3ed4-b72c7ee8a311a976287c2507a330876c2c91fb5043594d12c526331fdded44
+GET photo evidence 200 image/jpeg JPEG (3200, 1600) bytes identical to upload: True
+POST photo (transparent PNG) 200
+POST photo (truncated PNG) -> 400 {"detail":"The image is damaged or cannot be decoded."}
+POST photo (JPEG labelled PNG) -> 400 {"detail":"The uploaded image does not match its file type."}
+GET company 200
+PUT company logo (2000x1000 EXIF-rotated JPEG) 200
+  saved logo: data:image/jpeg;base64, JPEG RGB (96, 192) orientation tag: None
+POST photo OCR 200 {"inspection_id":"ADR-INS-cccccccccccccccccccccccccccccccc","schema_version":3,"revision":4,"data":{"address":"Assigned bathroom","year_built":2000,"has_crawl_space":false,"granite_removal":false,"water_heater_loss":fals
+httpx TLS verify with certifi 2026.10.19 bundle -> 200

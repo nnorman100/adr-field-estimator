@@ -1,0 +1,20 @@
+plugins: anyio-4.15.1
+collecting ... collected 9 items
+
+tests/test_image_handling.py::test_photo_uploads_accept_png_jpeg_and_webp_and_report_their_type PASSED [ 11%]
+tests/test_image_handling.py::test_photo_uploads_reject_mismatched_damaged_and_oversized_images PASSED [ 22%]
+tests/test_image_handling.py::test_model_image_applies_exif_orientation_and_fits_a_jpeg_in_1600_pixels PASSED [ 33%]
+tests/test_image_handling.py::test_model_image_flattens_transparent_png_photos_to_rgb_jpeg PASSED [ 44%]
+tests/test_image_handling.py::test_company_logo_is_normalized_to_a_small_upright_jpeg PASSED [ 55%]
+tests/test_image_handling.py::test_company_logo_rejects_other_formats_bombs_and_damaged_data PASSED [ 66%]
+tests/test_image_handling.py::test_invitation_logo_measures_the_saved_image_for_the_email_header PASSED [ 77%]
+tests/test_image_handling.py::test_uploaded_photo_records_its_pixel_dimensions PASSED [ 88%]
+tests/test_image_handling.py::test_signature_ink_is_detected_on_opaque_and_transparent_canvases PASSED [100%]
+
+=============================== warnings summary ===============================
+../../../../../../tmp/adr-deps-venv/lib/python3.14/site-packages/google/genai/types.py:42
+  /tmp/adr-deps-venv/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+========================= 9 passed, 1 warning in 2.02s =========================
