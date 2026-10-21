@@ -1,0 +1,15 @@
+[{"title":"Kitchen","sub":"742 Evergreen Ter, Bakersfield CA","code":"DS1-RM-4498ec46-Kitchen"},{"title":"Hallway","sub":"742 Evergreen Ter, Bakersfield CA","code":"DS1-RM-4498ec46-Hallway"},{"title":"Air mover","sub":"AM-0007","code":"DS1-EQ-AM-AM-0007"},{"title":"LGR dehumidifier","sub":"DH-12","code":"DS1-EQ-DH-DH-12"}]
+PASS: tag sheet shows 4 server-rendered tags (2 rooms, 2 equipment)
+PASS: Print shows only the 4-tag sheet: {"tags":true,"cards":4}
+PASS: camera scan of printed Kitchen room tag selects Kitchen
+status: Air mover AM-0007 placed in Kitchen · 12:33 PM.
+PASS: tag held in view is recorded once (log entries=2)
+PASS: closing the scanner releases the camera
+PASS: Walk & Photo summary: 2 units tagged · 1 room
+PASS: placements survive reload: 2 units tagged · 1 room
+PASS: tag printed for a different job is refused: This room tag was printed for a different job. Nothing was changed.
+chips: [ 'Kitchen', 'kitchen ✎', '+ Room' ]
+dup scan status: Rooms "Kitchen", "kitchen" have the same name. Give each room a distinct name, then try again; nothing was changed.
+PASS: scan refused while two rooms share a name
+dup sheet status: Rooms "Kitchen", "kitchen" have the same name. Give each room a distinct name, then try again; nothing was changed.
+PASS: Make tags refused while two rooms share a name
