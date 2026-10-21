@@ -591,3 +591,45 @@ def test_water_class_must_be_a_stated_class_number(proposed):
                 questions=[],
             ),
         )
+
+
+def test_whole_floor_wet_correction_replaces_a_smaller_wet_floor_override(context, monkeypatch):
+    from backend.contracts import Room
+    from backend.sizing import room_check
+
+    words = 'Correction, the whole Kitchen floor is wet.'
+    kitchen = dict(
+        name='Kitchen',
+        category=1,
+        finished_sf=10,
+        floor_sf=600,
+        wet_floor_sf=50,
+        ceiling_height_ft=8,
+        water_class=2,
+    )
+    client, _ = context
+    prepared(client, rooms=[kitchen], technician_transcript=words)
+    prompts = []
+
+    async def respond(**kwargs):
+        prompts.append(kwargs['contents'])
+        proposed = change(
+            'wet_floor_sf', 600, quote='the whole Kitchen floor is wet', room='Kitchen'
+        )
+        return SimpleNamespace(text=json.dumps(dict(changes=[proposed], questions=[])))
+
+    monkeypatch.setattr(
+        bm,
+        'get_ai_client',
+        lambda: SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
+        ),
+    )
+    response = suggest(client)
+    assert response.status_code == 200, response.text
+    assert 'explicitly states the whole floor of a room is wet' in str(prompts)
+    assert [(c['room'], c['field'], c['value']) for c in response.json()['changes']] == [
+        ('Kitchen', 'wet_floor_sf', 600)
+    ]
+    check = room_check(Room(**{**kitchen, 'wet_floor_sf': 600}))
+    assert (check['air_movers_min'], check['air_movers_max']) == (10, 13)
