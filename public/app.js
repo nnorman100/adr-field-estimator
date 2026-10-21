@@ -289,6 +289,7 @@ function renderControls() {
   }
   for (const id of ['notesFillScope', 'notesFillScopeWalk'])
     $(id).disabled = $('fillScope').disabled;
+  window.TagsUI?.policy();
   window.WorkspaceUI?.policy();
 }
 function selectDocument(name) {
@@ -643,6 +644,7 @@ function clearDisplayedInspection() {
   $('scopeConfirmNotice').hidden = true;
   $('coordinationForm').reset();
   $('jobsDialog').close();
+  window.TagsUI?.closeDialogs();
   for (const id of ['technicianTranscript', 'assistantTranscript']) $(id).value = '';
   for (const id of [
     'rooms',
@@ -685,6 +687,7 @@ function clearDisplayedInspection() {
   $('savedSignature').hidden = true;
   $('retrySavedEvidence').hidden = true;
   renderPhotos();
+  window.TagsUI?.render();
   renderSaveStatus();
   renderControls();
 }
@@ -1627,6 +1630,7 @@ function renderRooms() {
   updateRoomPicker();
   renderRoomPhotos();
   renderWalkthroughEdits();
+  window.TagsUI?.render();
 }
 function requestRoomRemoval(room, trigger) {
   if (

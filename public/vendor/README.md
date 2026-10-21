@@ -17,3 +17,19 @@ curl -sSfL https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js | sed 's#f
 The release is part of the path, so an upgrade gets new URLs and installed apps never mix cached files from two releases. To upgrade, vendor the new release into its own `firebase/<version>/` directory, delete the old one, and change the version in `FIREBASE_SDK` in `app.js`, the `modulepreload` links in both `index.html` copies and `ASSETS` in `sw.js`.
 
 `app.js` loads the App Check build only when `APP_CHECK_SITE_KEY` is set; see [App Check](../../docs/app-check.md).
+
+# Vendored jsQR
+
+`jsqr/1.4.0/jsQR.js` is the unmodified UMD build of [jsQR](https://github.com/cozmo/jsQR) 1.4.0 (Apache-2.0, license beside it). `tags.js` loads it with a same-origin `<script>` the first time a technician scans a QR tag and the browser has no native `BarcodeDetector` for QR codes; Safari on iPhone ships that API only behind a flag, so the file is in the offline precache. Rebuild only from the same release's package files and update the hashes here:
+
+```sh
+curl -sSfL https://unpkg.com/jsqr@1.4.0/dist/jsQR.js > jsqr/1.4.0/jsQR.js
+curl -sSfL https://unpkg.com/jsqr@1.4.0/LICENSE > jsqr/1.4.0/LICENSE
+```
+
+| File | Version | Source | SHA-256 |
+| --- | --- | --- | --- |
+| `jsqr/1.4.0/jsQR.js` | 1.4.0 | https://unpkg.com/jsqr@1.4.0/dist/jsQR.js | `bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859` |
+| `jsqr/1.4.0/LICENSE` | 1.4.0 | https://unpkg.com/jsqr@1.4.0/LICENSE | `c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08` |
+
+To upgrade, vendor the new release into its own `jsqr/<version>/` directory, delete the old one, and change the path in `tags.js` and `ASSETS` in `sw.js`.

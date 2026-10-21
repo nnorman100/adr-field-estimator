@@ -28,8 +28,8 @@ DISPLAY = re.compile(r'(?<=App version )[^<]+(?=</small>)')
 # file: (pattern, exact number of matches, value for the match)
 TARGETS = {
     'public/sw.js': [(WORKER, 1, 'marker')],
-    'public/index.html': [(ASSET, 5, 'marker'), (DISPLAY, 1, 'display')],
-    'index.html': [(ASSET, 5, 'marker'), (DISPLAY, 1, 'display')],
+    'public/index.html': [(ASSET, 6, 'marker'), (DISPLAY, 1, 'display')],
+    'index.html': [(ASSET, 6, 'marker'), (DISPLAY, 1, 'display')],
     'public/app.js': [(ASSET, 1, 'marker')],
     'public/sign.html': [(ASSET, 4, 'marker')],
 }

@@ -26,6 +26,22 @@ class Room(StrictModel):
     waste_percent: float = Field(default=0, ge=0, le=100)
 
 
+EquipmentKind = Literal['air_mover', 'dehumidifier', 'air_scrubber']
+# One asset id per printed tag: letters, digits and the separators a shop's own numbering uses.
+ASSET_ID = r'^[A-Z0-9][A-Z0-9._/-]{0,31}$'
+
+
+class EquipmentScan(StrictModel):
+    """One scanned equipment tag, recorded against the room selected at the time. Placement only:
+    the priced equipment counts stay the technician's entries and never read these records."""
+
+    id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    kind: EquipmentKind
+    asset_id: str = Field(pattern=ASSET_ID)
+    room: str = Field(min_length=1, max_length=100)
+    scanned_at: datetime
+
+
 class TranscriptSegment(StrictModel):
     speaker: Literal['technician', 'assistant']
     connection_id: str = Field(max_length=64)
@@ -86,6 +102,8 @@ class InspectionData(StrictModel):
     assistant_transcript: str = Field(default='', max_length=80000)
     scope_confirmed: bool = False
     capture_metadata: CaptureMetadata | None = None
+    # Added with QR tags; drafts saved before it stay without the key (see inspection_payload).
+    equipment_scans: list[EquipmentScan] = Field(default_factory=list, max_length=200)
 
 
 class CreateInspection(StrictModel):
@@ -145,6 +163,14 @@ class PhotoRoomUpdate(RevisionRequest):
     """Moves an uploaded photo to another room of the same unsigned draft."""
 
     room: str = Field(min_length=1, max_length=100)
+
+
+class QrTagRequest(StrictModel):
+    """Tag codes to render as QR images for a printed sheet; only DryScope tag codes are accepted."""
+
+    codes: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        min_length=1, max_length=60
+    )
 
 
 class VoiceNoteUpload(StrictModel):
