@@ -173,7 +173,10 @@ test('a camera frame that decodes to a tag is applied once while it stays in vie
   await expect(status(page)).toHaveText('Current room: Kitchen.');
   await expect(chip(page, 'Kitchen')).toHaveAttribute('aria-pressed', 'true');
   await dialog.locator('#closeTagScan').click();
-  expect(await page.evaluate(() => document.getElementById('tagVideo').srcObject)).toBeNull();
+  // The dialog's close event, which stops the camera, is dispatched in a later task.
+  await expect
+    .poll(() => page.evaluate(() => document.getElementById('tagVideo').srcObject))
+    .toBeNull();
   await expect(page.locator('#tagCount')).toHaveText('1 unit tagged · 1 room');
   await expect(page.locator('#equipmentPlacements h4')).toHaveText(['Hallway']);
 });
@@ -347,9 +350,9 @@ test('a camera that answers after the scanner was closed and reopened is stopped
     ),
   ).toEqual(['ended', 'live']);
   await page.locator('#closeTagScan').click();
-  expect(
-    await page.evaluate(() =>
-      window.__streams.map((stream) => stream.getVideoTracks()[0].readyState),
-    ),
-  ).toEqual(['ended', 'ended']);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.__streams.map((stream) => stream.getVideoTracks()[0].readyState)),
+    )
+    .toEqual(['ended', 'ended']);
 });
