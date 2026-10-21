@@ -9,6 +9,7 @@ const {
   pcmToFloat,
   aspect,
   scopeJobLabels,
+  claimLabels,
   scopeRoomLabels,
   roomKey,
   roomScans,
@@ -648,6 +649,8 @@ function clearDisplayedInspection() {
   $('inspectionForm').reset();
   $('scopeConfirmNotice').hidden = true;
   $('coordinationForm').reset();
+  $('claimForm').reset();
+  $('claimDetails').hidden = true;
   $('jobsDialog').close();
   window.TagsUI?.closeDialogs();
   for (const id of ['technicianTranscript', 'assistantTranscript']) $(id).value = '';
@@ -661,6 +664,7 @@ function clearDisplayedInspection() {
     'claimItems',
     'claimParty',
     'defenseBody',
+    'photoParty',
     'photoAuditLog',
     'scopeSuggestionList',
     'scopeQuestions',
@@ -1271,6 +1275,23 @@ async function fillScopeFromWalkthrough() {
       state.localVersion !== appliedVersion
     )
       return;
+    // Claim details go to the job's private sidecar, not the draft, under the same quote check.
+    const claimChanges = (result.claim_changes || []).filter(
+        (change) =>
+          typeof change.source_quote === 'string' &&
+          normalize(change.source_quote) &&
+          source.includes(normalize(change.source_quote)),
+      ),
+      claimFilled = [];
+    if (claimChanges.length && window.WorkspaceUI?.fillClaim)
+      try {
+        const unsaved = await WorkspaceUI.fillClaim(claimChanges);
+        questions.push(...unsaved);
+        if (!unsaved.length) claimFilled.push(...claimChanges);
+      } catch (e) {
+        questions.push('Claim details from the walkthrough were not saved: ' + e.message);
+      }
+    if (state.draft !== draft || state.user?.uid !== uid) return;
     $('scopeQuestions').replaceChildren(...questions.map((question) => node('li', question)));
     const missing = missingItems(filled, draft.photos);
     $('scopeMissing').replaceChildren(...missing.map((item) => node('li', item)));
@@ -1291,14 +1312,23 @@ async function fillScopeFromWalkthrough() {
         );
         return row;
       }),
+      ...claimFilled.map((change) => {
+        const row = node('div', undefined, 'scope-suggestion');
+        row.append(
+          node('p', claimLabels[change.field] + ': ' + change.value),
+          node('blockquote', change.source_quote),
+        );
+        return row;
+      }),
     );
-    $('scopeSuggestionStatus').textContent = effective
+    const filledAny = effective || claimFilled.length > 0;
+    $('scopeSuggestionStatus').textContent = filledAny
       ? 'Walkthrough values filled. Review the marked fields; Undo restores what was entered before. Confirm scope when everything is right.'
       : 'No explicit changes found. Add or clarify technician observations and try again.';
     $('scopeSuggestionPanel').hidden = false;
     showTask('property');
     say(
-      effective
+      filledAny
         ? 'Walkthrough values filled. Review and confirm the scope.'
         : 'No explicit changes found. Clarify your observations and retry.',
     );

@@ -85,6 +85,9 @@ bm.app.dependency_overrides[bm.get_job_store] = lambda: store
 bm.get_job_store = lambda: store
 
 
+CLAIM_WORDS = 'Synthetic Mutual claim number CLM 0042 77.'
+
+
 async def generate(**kwargs):
     schema = kwargs['config'].response_schema
     if isinstance(schema, dict) and schema == bm.scope_response_schema():
@@ -118,6 +121,16 @@ async def generate(**kwargs):
                             'source_quote': 'Use 3 fans.',
                         },
                     ],
+                    # Claim details only when the walkthrough states them (tests/browser/claim-details.spec.js).
+                    'claim_changes': [
+                        {'field': field, 'value': value, 'source_quote': CLAIM_WORDS}
+                        for field, value in (
+                            ('carrier', 'Synthetic Mutual'),
+                            ('claim_number', 'CLM 0042 77'),
+                        )
+                    ]
+                    if CLAIM_WORDS in str(kwargs['contents'])
+                    else [],
                     'questions': ['Confirm any additional labor.'],
                 }
             )

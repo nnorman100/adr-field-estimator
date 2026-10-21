@@ -870,3 +870,41 @@ console.log(
   }
   console.log('PASS: the sizing check shows recommended beside entered counts with a worded flag');
 }
+{
+  // Documents print only the recorded claim details, with the date as the proposal prints dates.
+  assert.deepEqual(core.claimLines(undefined), []);
+  assert.deepEqual(
+    core.claimLines({
+      carrier: 'Synthetic Mutual',
+      claim_number: 'CLM-1',
+      policy_number: '',
+      date_of_loss: '2026-10-12',
+      loss_cause: 'Supply line under kitchen sink',
+      adjuster_name: 'Avery Adjuster',
+      adjuster_email: '',
+      adjuster_phone: '555-0100',
+      deductible: '$1,000',
+    }),
+    [
+      'Insurance carrier: Synthetic Mutual',
+      'Claim number: CLM-1',
+      'Date of loss: 10-12-2026',
+      'Cause and source of loss: Supply line under kitchen sink',
+      'Adjuster: Avery Adjuster · 555-0100',
+      'Deductible: $1,000',
+    ],
+  );
+  assert.deepEqual(core.claimLines({ carrier: '', claim_number: '', date_of_loss: '' }), []);
+  assert.deepEqual(Object.keys(core.claimLabels), [
+    'carrier',
+    'claim_number',
+    'policy_number',
+    'date_of_loss',
+    'loss_cause',
+    'adjuster_name',
+    'adjuster_email',
+    'adjuster_phone',
+    'deductible',
+  ]);
+  console.log('PASS: claim details print only recorded values in document headers');
+}

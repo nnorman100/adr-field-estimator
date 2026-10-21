@@ -1,7 +1,7 @@
 /* The four claim documents, built from text nodes only; shared by the app and the homeowner signing page. */
 'use strict';
 (function (root) {
-  const { money, estimateLabel } = root.ADRCore;
+  const { money, estimateLabel, claimLines } = root.ADRCore;
   const $ = (id) => document.getElementById(id);
   function node(tag, text, className) {
     const el = document.createElement(tag);
@@ -38,13 +38,16 @@
     $('itemizedTotal').textContent = money(docs.xactimate_total);
     const p = docs.adr_estimate,
       body = $('proposalBody'),
-      customer = p.customer_name ? ['Customer: ' + p.customer_name] : [];
+      customer = p.customer_name ? ['Customer: ' + p.customer_name] : [],
+      // The claim details saved with the audit; documents from before claim details carry none.
+      claim = claimLines(docs.claim);
     body.replaceChildren();
     paragraphs(body, [
       ...customer,
       p.property_address,
       p.date || '',
       'Estimator: ' + (identity.signoff || '') + ' · CSLB #' + (identity.license || ''),
+      ...claim,
     ]);
     body.append(
       node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
@@ -70,7 +73,7 @@
       $('auditNotes').hidden = !notes.childElementCount;
     }
     $('claimParty').replaceChildren();
-    paragraphs($('claimParty'), [...customer, 'Property: ' + p.property_address]);
+    paragraphs($('claimParty'), [...customer, 'Property: ' + p.property_address, ...claim]);
     $('claimItems').replaceChildren();
     for (const item of docs.xactimate_scope) {
       const row = node('tr');
@@ -105,6 +108,8 @@
     }
     $('claimTotal').textContent = 'Itemized claim total: ' + money(docs.xactimate_total);
     $('defenseBody').textContent = docs.iicrc_defense_letter;
+    $('photoParty').replaceChildren();
+    paragraphs($('photoParty'), claim);
     $('photoAuditLog').replaceChildren();
     const log = numbered(docs, photos);
     for (const { photo, label } of log) {

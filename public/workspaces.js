@@ -3,6 +3,10 @@ window.WorkspaceUI = (() => {
   let viewEpoch = 0,
     coordination = null,
     mirroredAddress = null,
+    // The job's claim and loss details ({job_id, claim_version, claim, editable}) and the fields
+    // the walkthrough last filled, each with the value Undo restores.
+    claim = null,
+    claimEdits = [],
     refreshing = false,
     initialized = false,
     supportUrls = [];
@@ -142,6 +146,10 @@ window.WorkspaceUI = (() => {
       'form input,form select,form textarea,form button',
     ))
       control.disabled = !navigator.onLine;
+    const claimEditable =
+      !!claim?.editable && navigator.onLine && claim.job_id === state.draft?.inspection_id;
+    for (const control of $('claimForm').querySelectorAll('input,button'))
+      control.disabled = !claimEditable;
     $('newInspection').disabled = !can('jobs_create');
     document.body.classList.toggle('office-view', state.session.role === 'office');
   }
@@ -232,6 +240,15 @@ window.WorkspaceUI = (() => {
         event.preventDefault();
         saveCoordination().catch((e) => say(e.message, 'error'));
       });
+      $('claimForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveClaim().catch((e) => {
+          $('claimStatus').textContent = e.message;
+          say(e.message, 'error');
+        });
+      });
+      $('claimForm').addEventListener('input', claimTyped);
+      $('claimDate').max = new Date().toLocaleDateString('en-CA');
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refresh().catch((e) => say(e.message, 'error'));
       });
@@ -293,7 +310,9 @@ window.WorkspaceUI = (() => {
       if (previous !== next) {
         say('Your company access changed. Local drafts are retained for authorized recovery.');
         await landing();
-      }
+      } else if (!claim && state.draft?.inspection_id && !$('claimDetails').hidden)
+        // A job started offline has claim details once its first save reaches the server.
+        await loadClaim();
     } finally {
       refreshing = false;
     }
@@ -1069,7 +1088,7 @@ window.WorkspaceUI = (() => {
     current(null);
     fold(false);
     policy();
-    await loadCoordination();
+    await Promise.all([loadCoordination(), loadClaim()]);
   }
   async function loadCoordination() {
     coordination = null;
@@ -1153,6 +1172,138 @@ window.WorkspaceUI = (() => {
       policy();
     }
   }
+  const CLAIM_INPUTS = {
+    carrier: 'claimCarrier',
+    claim_number: 'claimNumber',
+    policy_number: 'claimPolicy',
+    date_of_loss: 'claimDate',
+    loss_cause: 'claimCause',
+    adjuster_name: 'claimAdjusterName',
+    adjuster_email: 'claimAdjusterEmail',
+    adjuster_phone: 'claimAdjusterPhone',
+    deductible: 'claimDeductible',
+  };
+  function claimValues() {
+    return Object.fromEntries(
+      Object.entries(CLAIM_INPUTS).map(([field, id]) => [field, $(id).value.trim()]),
+    );
+  }
+  function showClaim(view) {
+    claim = view;
+    for (const [field, id] of Object.entries(CLAIM_INPUTS)) $(id).value = view.claim[field];
+    const recorded = Object.values(view.claim).filter(Boolean).length;
+    $('claimSummary').textContent = view.claim.claim_number
+      ? '· Claim ' + view.claim.claim_number
+      : recorded
+        ? '· ' + recorded + ' of 9 recorded'
+        : '· none recorded';
+    claimEdits = claimEdits.filter((edit) => view.claim[edit.field] === edit.after);
+    renderClaimEdits();
+    policy();
+  }
+  async function loadClaim() {
+    claim = null;
+    claimEdits = [];
+    renderClaimEdits();
+    $('claimForm').reset();
+    $('claimStatus').textContent = '';
+    $('claimSummary').textContent = '· none recorded';
+    $('claimDetails').hidden = !enabled() || !state.draft?.inspection_id;
+    policy();
+    if ($('claimDetails').hidden) return;
+    if (!navigator.onLine) {
+      $('claimStatus').textContent = 'Claim details load when this phone is back online.';
+      return;
+    }
+    const id = state.draft.inspection_id,
+      key = context();
+    let view = null;
+    try {
+      view = await jsonApi('/api/jobs/' + id + '/claim');
+    } catch (e) {
+      if (e.status !== 404) throw e;
+    }
+    if (id !== state.draft?.inspection_id || key !== context()) return;
+    if (view) showClaim(view);
+    else $('claimStatus').textContent = 'Claim details can be added once this job saves online.';
+  }
+  // Saves the given values (the form's by default) to the job; documents need regenerating after.
+  async function putClaim(values) {
+    const id = state.draft.inspection_id;
+    if (!claim || claim.job_id !== id) throw Error('Reload the job before saving claim details.');
+    showClaim(
+      await jsonApi('/api/jobs/' + id + '/claim', 'PUT', {
+        expected_version: claim.claim_version,
+        claim: values,
+      }),
+    );
+    // A change clears unsigned documents on the server; pick that up so stale ones cannot be signed.
+    if (!state.signed && state.record?.audit) absorb(await jsonApi('/api/inspections/' + id));
+  }
+  async function saveClaim() {
+    if (!$('claimForm').reportValidity()) return;
+    $('saveClaim').disabled = true;
+    try {
+      await putClaim(claimValues());
+      $('claimStatus').textContent = 'Claim details saved.';
+    } finally {
+      policy();
+    }
+  }
+  // Applies quote-backed walkthrough claim values and saves them, marking each with Undo. Returns
+  // the questions for values that could not be saved.
+  async function fillClaim(changes) {
+    if (!changes.length) return [];
+    if (!claim || claim.job_id !== state.draft?.inspection_id || !claim.editable)
+      return [
+        'Claim details from the walkthrough were not saved. Enter them under Claim & loss details.',
+      ];
+    const before = { ...claim.claim },
+      values = { ...before };
+    for (const change of changes) values[change.field] = change.value;
+    await putClaim(values);
+    claimEdits = [
+      ...claimEdits.filter((edit) => !changes.some((change) => change.field === edit.field)),
+      ...changes.map((change) => ({
+        field: change.field,
+        before: before[change.field],
+        after: claim.claim[change.field],
+        quote: change.source_quote,
+      })),
+    ].filter((edit) => claim.claim[edit.field] === edit.after);
+    $('claimDetails').open = true;
+    $('claimStatus').textContent = 'Claim details filled from the walkthrough. Review them.';
+    renderClaimEdits();
+    return [];
+  }
+  function renderClaimEdits() {
+    for (const badge of $('claimForm').querySelectorAll('.walkthrough-edit')) badge.remove();
+    for (const edit of claimEdits) {
+      const badge = node('span', undefined, 'walkthrough-edit'),
+        undo = node('button', 'Undo');
+      undo.type = 'button';
+      undo.title = 'Restore previous value';
+      undo.addEventListener('click', () =>
+        putClaim({ ...claim.claim, [edit.field]: edit.before })
+          .then(() => {
+            claimEdits = claimEdits.filter((item) => item !== edit);
+            renderClaimEdits();
+            $('claimStatus').textContent = 'Walkthrough value undone.';
+          })
+          .catch((e) => say(e.message, 'error')),
+      );
+      badge.title = edit.quote;
+      badge.append(node('span', 'From walkthrough · '), undo);
+      $(CLAIM_INPUTS[edit.field]).closest('label').append(badge);
+    }
+  }
+  // Typing over a filled value keeps it; the marker only names where the value came from.
+  function claimTyped(event) {
+    const field = Object.keys(CLAIM_INPUTS).find((key) => CLAIM_INPUTS[key] === event.target.id);
+    if (!field || !claimEdits.some((edit) => edit.field === field)) return;
+    claimEdits = claimEdits.filter((edit) => edit.field !== field);
+    renderClaimEdits();
+  }
   function documentBranding() {
     if (!state.documents) return;
     ADRDocuments.brand(state.documents, state.session?.legacy_identity);
@@ -1171,5 +1322,7 @@ window.WorkspaceUI = (() => {
     refresh,
     documentBranding,
     scopeAddressChanged,
+    loadClaim,
+    fillClaim,
   };
 })();
