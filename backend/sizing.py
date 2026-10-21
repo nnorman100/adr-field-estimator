@@ -6,24 +6,27 @@ Sources for the arithmetic (inputs are only technician-confirmed room values; no
 - Air movers, ANSI/IICRC S500 initial air mover placement (2015 edition, section 13.5.6.1, as
   explained by S500 consensus body member Brandon Burton, "ANSI/IICRC S500 Consensus Body member
   explains airmover updates", Cleanfax, 2016; restated in DocuSketch's "How to Perform IICRC Air
-  Mover Calculations Correctly"): one air mover per affected room, plus one per 70 (minimum) to
-  50 (maximum) square feet of affected floor, each fraction rounded up per room. Burton's
-  example: 140 SF of floor gives 2 to 3 more air movers. DocuSketch adds that one air mover may be
-  adequate for a room under 25 SF. The same guidance adds one per 150 to 100 SF of wet wall above
+  Mover Calculations Correctly"; IICRC "US Imperial Airmover and Gallons Calculations Worksheet",
+  7.1.22): one air mover per affected room, plus one per 70 (minimum) to 50 (maximum) square feet
+  of wet floor, each fraction rounded up per room. Burton's example: 140 SF of wet floor gives 2
+  to 3 more air movers. DocuSketch adds that one air mover may be adequate for a room under 25 SF.
+  The wet floor area defaults to the room's floor area until the technician enters a smaller one. The same guidance adds one per 150 to 100 SF of wet wall above
   2 ft and ceiling, and one per wall offset over 18 in; the app does not collect those areas, so
   the range here is floor-based and the reasons say so.
 - Dehumidification, IICRC "Initial Dehumidification Recommendation Factors and Formulas"
   (Imperial, revision 3.1.22): cubic feet / chart factor = total pints per day (AHAM), and total
   pints per day / unit AHAM rating = number of dehumidifiers. The Low Grain Refrigerant (LGR) row
   is used because the sheet prices commercial LGR units: class 1 = 100, class 2 = 50,
-  class 3 = 40, class 4 = 40.
+  class 3 = 40, class 4 = 40. Room demand stays unrounded until the job total, which is rounded
+  up once, so several small rooms do not each add a fraction of a unit.
 """
 
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 
 AIR_MOVER_FLOOR_SF = (Decimal(70), Decimal(50))
 SMALL_ROOM_SF = Decimal(25)
 LGR_FACTORS = {1: 100, 2: 50, 3: 40, 4: 40}
+# Required inputs; the optional wet_floor_sf defaults to floor_sf.
 INPUTS = [
     ('floor_sf', 'floor area'),
     ('ceiling_height_ft', 'ceiling height'),
@@ -37,6 +40,15 @@ WALLS_NOTE = (
 
 def up(value):
     return int(value.to_integral_value(rounding=ROUND_CEILING))
+
+
+def tenths(value):
+    return value.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+
+
+def room_ppd(check):
+    # The exact demand of one room; cubic_feet round-trips through its float unchanged.
+    return Decimal(str(check['cubic_feet'])) / check['lgr_factor']
 
 
 def number(value):
@@ -60,27 +72,38 @@ def room_check(room):
     if missing:
         return dict(name=room.name, status='not_available', missing=missing)
     floor = Decimal(str(room.floor_sf))
+    wet = floor if room.wet_floor_sf is None else Decimal(str(room.wet_floor_sf))
+    if wet > floor:
+        return dict(
+            name=room.name,
+            status='not_available',
+            missing=[],
+            problem='the wet floor area is larger than the floor area',
+        )
     height = Decimal(str(room.ceiling_height_ft))
     cubic = floor * height
     factor = LGR_FACTORS[room.water_class]
-    low = 1 if floor < SMALL_ROOM_SF else 1 + up(floor / AIR_MOVER_FLOOR_SF[0])
+    low = 1 if floor < SMALL_ROOM_SF else 1 + up(wet / AIR_MOVER_FLOOR_SF[0])
     return dict(
         name=room.name,
         status='available',
         floor_sf=room.floor_sf,
+        wet_floor_sf=float(wet),
+        wet_floor_stated=room.wet_floor_sf is not None,
         ceiling_height_ft=room.ceiling_height_ft,
         water_class=room.water_class,
         cubic_feet=float(cubic),
         air_movers_min=low,
-        air_movers_max=1 + up(floor / AIR_MOVER_FLOOR_SF[1]),
+        air_movers_max=1 + up(wet / AIR_MOVER_FLOOR_SF[1]),
         lgr_factor=factor,
-        dehumidifier_ppd=up(cubic / factor),
+        # Shown to a tenth; the job total sums the exact demand (room_ppd) before rounding up.
+        dehumidifier_ppd=float(tenths(cubic / factor)),
     )
 
 
 def air_mover_check(entered, low, high):
     if entered < low:
-        return 'below', f'Fewer than the IICRC minimum of {low} for the entered floor areas.'
+        return 'below', f'Fewer than the IICRC minimum of {low} for the wet floor areas.'
     if entered > high:
         return 'above', (
             f'More than the IICRC floor-based maximum of {high}. Note any wet walls above 2 feet, '
@@ -89,12 +112,13 @@ def air_mover_check(entered, low, high):
     return 'within', f'Within the IICRC range of {low} to {high}.'
 
 
-def dehumidifier_check(entered, ppd, rating):
+def dehumidifier_check(entered, demand, rating):
+    ppd = up(demand)
     if rating is None:
         if not entered:
             return None, 'below', f'No dehumidifier entered; {ppd} pints/day are recommended.'
         return None, None, "Enter the dehumidifier's AHAM pints/day rating to compare."
-    units = up(Decimal(ppd) / Decimal(rating))
+    units = up(demand / rating)
     capacity = entered * rating
     if entered < units:
         return (
@@ -130,10 +154,10 @@ def equipment_sizing(data):
         return dict(status='not_available', rooms=rooms)
     low = sum(room['air_movers_min'] for room in water)
     high = sum(room['air_movers_max'] for room in water)
-    ppd = sum(room['dehumidifier_ppd'] for room in water)
+    demand = sum(room_ppd(room) for room in water)
     flag, reason = air_mover_check(data.air_movers, low, high)
     units, dehu_flag, dehu_reason = dehumidifier_check(
-        data.dehumidifiers, ppd, data.dehumidifier_ppd
+        data.dehumidifiers, demand, data.dehumidifier_ppd
     )
     return dict(
         status='available',
@@ -141,7 +165,7 @@ def equipment_sizing(data):
         air_movers=dict(entered=data.air_movers, min=low, max=high, flag=flag, reason=reason),
         dehumidifiers=dict(
             entered=data.dehumidifiers,
-            recommended_ppd=ppd,
+            recommended_ppd=up(demand),
             unit_ppd=data.dehumidifier_ppd,
             recommended_units=units,
             flag=dehu_flag,
@@ -162,30 +186,36 @@ def letter_paragraph(sizing):
         if room['status'] == 'not_applicable':
             lines.append(f'{room["name"]}: mold only; not part of the drying check.')
             continue
-        floor = number(room['floor_sf'])
+        floor, wet = number(room['floor_sf']), number(room['wet_floor_sf'])
         low = (
             '1 (room under 25 SF)'
             if Decimal(str(room['floor_sf'])) < SMALL_ROOM_SF
-            else f'1 + {floor} ÷ 70'
+            else f'1 + {wet} ÷ 70'
         )
+        source = (
+            '' if room['wet_floor_stated'] else ' (the whole floor; no smaller wet area entered)'
+        )
+        exact = room_ppd(room)
+        equals = '=' if tenths(exact) == exact else '≈'
         lines.append(
             f'{room["name"]}: {floor} SF floor × {number(room["ceiling_height_ft"])} ft ceiling = '
             f'{number(room["cubic_feet"])} cu ft, water class {room["water_class"]}. '
-            f'Air movers: {low} to 1 + {floor} ÷ 50, rounded up = {room["air_movers_min"]} to '
-            f'{room["air_movers_max"]}. LGR dehumidification: {number(room["cubic_feet"])} ÷ '
-            f'{room["lgr_factor"]} = {room["dehumidifier_ppd"]} pints/day (AHAM).'
+            f'Air movers for {wet} SF of wet floor{source}: {low} to 1 + {wet} ÷ 50, rounded up = '
+            f'{room["air_movers_min"]} to {room["air_movers_max"]}. LGR dehumidification: '
+            f'{number(room["cubic_feet"])} ÷ {room["lgr_factor"]} {equals} '
+            f'{number(room["dehumidifier_ppd"])} pints/day (AHAM).'
         )
     movers, dehus = sizing['air_movers'], sizing['dehumidifiers']
     rating = dehus['unit_ppd']
     lines.append(
         f'Recommended: {movers["min"]} to {movers["max"]} air movers and '
-        f'{dehus["recommended_ppd"]} pints/day of LGR dehumidification'
+        f'{dehus["recommended_ppd"]} pints/day of LGR dehumidification (the room total, rounded up'
         + (
-            f' ({count(dehus["recommended_units"], "unit")} at {rating} pints/day each)'
+            f'; {count(dehus["recommended_units"], "unit")} at {rating} pints/day each'
             if rating is not None
             else ''
         )
-        + '.'
+        + ').'
     )
     lines.append(
         f'Entered for this proposal: {count(movers["entered"], "air mover")} and '

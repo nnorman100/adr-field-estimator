@@ -1672,6 +1672,7 @@ function sizingFields(room, i) {
   title.append(note);
   for (const [label, key] of [
     ['Floor area SF', 'floor_sf'],
+    ['Wet floor area SF', 'wet_floor_sf'],
     ['Ceiling height ft', 'ceiling_height_ft'],
     ['Water class', 'water_class'],
   ]) {
@@ -1693,15 +1694,20 @@ function sizingFields(room, i) {
       }
     else {
       input.type = 'number';
-      input.min = 0.01;
-      input.max = key === 'floor_sf' ? 100000 : 60;
+      input.min = key === 'wet_floor_sf' ? 0 : 0.01;
+      input.max = key === 'ceiling_height_ft' ? 60 : 100000;
+      // A blank wet floor area means the whole floor is wet.
+      if (key === 'wet_floor_sf') input.placeholder = 'Whole floor';
       input.step = 0.01;
       input.inputMode = 'decimal';
     }
     input.value = room[key] ?? '';
     input.disabled = !!state.signed;
     input.addEventListener('input', () => {
-      if (input.value === '' || !(Number(input.value) > 0)) delete room[key];
+      // A wet floor area may be 0 when only walls are wet; the other inputs must be above 0.
+      const value = Number(input.value),
+        valid = key === 'wet_floor_sf' ? value >= 0 : value > 0;
+      if (input.value === '' || !valid) delete room[key];
       else room[key] = Number(input.value);
       changed();
     });
@@ -1713,7 +1719,7 @@ function sizingFields(room, i) {
     body,
     node(
       'p',
-      'Enter the room floor area, not the demolition area, and only values confirmed on site.',
+      'Enter the room floor area, not the demolition area, and only values confirmed on site. Leave the wet floor area blank when the whole floor is wet.',
       'hint',
     ),
   );

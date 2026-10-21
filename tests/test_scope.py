@@ -486,6 +486,25 @@ def test_default_photo_rename_follows_name_undo_combined_with_room_removal():
         'Room 1',
     )
     assert default_photo_rename({'rooms': [kitchen, undone]}, {'rooms': [undone]}) is None
+    # A placeholder holding a confirmed sizing input is the technician's room and keeps its photos.
+    placeholder = {
+        'name': 'Room 1',
+        'unfinished_sf': 0,
+        'finished_sf': 0,
+        'custom_cabinetry': False,
+    }
+    for key, value in [
+        ('floor_sf', 140),
+        ('wet_floor_sf', 0),
+        ('ceiling_height_ft', 8),
+        ('water_class', 2),
+    ]:
+        measured = {**placeholder, key: value}
+        assert default_photo_rename({'rooms': [measured]}, {'rooms': [measured, kitchen]}) is None
+        assert default_photo_rename({'rooms': [placeholder]}, {'rooms': [kitchen]}) == (
+            'Room 1',
+            'Kitchen',
+        )
 
 
 def test_default_replacement_still_requires_category_and_area_and_validates_room_limit():
@@ -514,6 +533,10 @@ def test_default_replacement_still_requires_category_and_area_and_validates_room
         len(validate_suggestions(values, ScopeSuggestions(changes=changes, questions=[])).changes)
         == 60
     )
+    # A drying-only Room 1 with confirmed sizing inputs is kept, so 30 new rooms exceed the limit.
+    measured = values.model_copy(update={'rooms': [Room(name='Room 1', floor_sf=140)]})
+    with pytest.raises(ValueError):
+        validate_suggestions(measured, ScopeSuggestions(changes=changes, questions=[]))
 
 
 def test_scope_fills_sizing_inputs_only_from_stated_values(context, monkeypatch):
@@ -522,7 +545,13 @@ def test_scope_fills_sizing_inputs_only_from_stated_values(context, monkeypatch)
     fields = scope_response_schema()['properties']['changes']['items']['properties']['field'][
         'enum'
     ]
-    assert {'floor_sf', 'ceiling_height_ft', 'water_class', 'dehumidifier_ppd'} <= set(fields)
+    assert {
+        'floor_sf',
+        'wet_floor_sf',
+        'ceiling_height_ft',
+        'water_class',
+        'dehumidifier_ppd',
+    } <= set(fields)
     words = (
         'Bathroom floor is 140 square feet, ceilings are 8 and a half feet, class 2 water. '
         'The dehus are rated 70 pints a day.'

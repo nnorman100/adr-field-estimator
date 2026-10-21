@@ -202,7 +202,7 @@ def test_room_loss_type_is_saved_only_when_set_and_old_rooms_keep_their_shape(co
     legacy.pop('capture_metadata')
     legacy.pop('dehumidifier_ppd')
     for room in legacy['rooms']:
-        for key in ('loss', 'floor_sf', 'ceiling_height_ft', 'water_class'):
+        for key in ('loss', 'floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'):
             room.pop(key, None)
     assert 'loss' not in legacy['rooms'][0]
     record = client.post('/api/inspections', json={'inspection_id': ID, 'data': legacy}).json()
@@ -1123,7 +1123,7 @@ def test_draft_records_carry_the_sizing_check_and_its_inputs_stay_absent_until_s
     values = data()
     values.pop('capture_metadata')
     values.pop('dehumidifier_ppd')
-    for key in ('loss', 'floor_sf', 'ceiling_height_ft', 'water_class'):
+    for key in ('loss', 'floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'):
         values['rooms'][0].pop(key)
     record = client.post('/api/inspections', json={'inspection_id': ID, 'data': values}).json()
     assert record['data'] == values

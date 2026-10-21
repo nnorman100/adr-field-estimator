@@ -760,7 +760,7 @@ def inspection_payload(data):
     if result.get('dehumidifier_ppd') is None:
         result.pop('dehumidifier_ppd', None)
     for room in result['rooms']:
-        for key in ('loss', 'floor_sf', 'ceiling_height_ft', 'water_class'):
+        for key in ('loss', 'floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'):
             if room.get(key) is None:
                 room.pop(key, None)
     if not result.get('equipment_scans'):

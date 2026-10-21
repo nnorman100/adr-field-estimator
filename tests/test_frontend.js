@@ -735,6 +735,14 @@ console.log(
   );
   assert.equal(
     core.roomSizingNote({
+      status: 'not_available',
+      missing: [],
+      problem: 'the wet floor area is larger than the floor area',
+    }),
+    'check not available · the wet floor area is larger than the floor area',
+  );
+  assert.equal(
+    core.roomSizingNote({
       status: 'available',
       air_movers_min: 3,
       air_movers_max: 4,
@@ -757,6 +765,19 @@ console.log(
     {
       empty:
         'Check not available. Add the floor area, ceiling height and water class under More room options for Hall and Unnamed room.',
+    },
+  );
+  assert.deepEqual(
+    core.sizingSummary({
+      status: 'not_available',
+      rooms: [
+        { name: 'Hall', status: 'not_available', missing: ['water class'] },
+        { name: 'Den', status: 'not_available', missing: [], problem: 'larger' },
+      ],
+    }),
+    {
+      empty:
+        'Check not available. Add the floor area, ceiling height and water class under More room options for Hall. The wet floor area is larger than the floor area for Den.',
     },
   );
   const sizing = {
@@ -805,5 +826,27 @@ console.log(
     '· no water rooms to size',
   );
   assert.equal(core.scopeRoomLabels.water_class, 'Water class');
+  assert.equal(core.scopeRoomLabels.wet_floor_sf, 'Wet floor area SF');
+  // A Room 1 holding any confirmed sizing input is kept when scope fills a named room.
+  for (const [key, value] of [
+    ['floor_sf', 140],
+    ['wet_floor_sf', 0],
+    ['ceiling_height_ft', 8],
+    ['water_class', 2],
+  ]) {
+    const measured = core.emptyData();
+    measured.rooms[0][key] = value;
+    const applied = core.applyScopeChanges(measured, [
+      { room: 'Kitchen', field: 'category', value: 2 },
+      { room: 'Kitchen', field: 'finished_sf', value: 80 },
+    ]);
+    assert.deepEqual(
+      applied.rooms.map((room) => room.name),
+      ['Room 1', 'Kitchen'],
+    );
+    assert.equal(applied.rooms[0][key], value);
+    assert.equal(applied.rooms[1][key], undefined);
+    assert.equal(core.defaultPhotoRename(measured, applied), null);
+  }
   console.log('PASS: the sizing check shows recommended beside entered counts with a worded flag');
 }

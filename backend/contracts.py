@@ -25,8 +25,10 @@ class Room(StrictModel):
     custom_cabinetry: bool = False
     waste_percent: float = Field(default=0, ge=0, le=100)
     # Technician-confirmed inputs for the IICRC equipment-sizing check (backend/sizing.py). They are
-    # absent until stated; floor area is the room's floor, never the priced demolition area.
+    # absent until stated; floor area is the room's floor, never the priced demolition area. The wet
+    # floor area, which sets the air movers, defaults to the floor area until a smaller one is stated.
     floor_sf: float | None = Field(default=None, gt=0, le=100000)
+    wet_floor_sf: float | None = Field(default=None, ge=0, le=100000)
     ceiling_height_ft: float | None = Field(default=None, gt=0, le=60)
     water_class: Literal[1, 2, 3, 4] | None = None
 

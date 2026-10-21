@@ -41,7 +41,8 @@ test('Check Scope compares entered equipment with the server sizing check and su
   await room(page, 'ceiling_height_ft').fill('8');
   await room(page, 'water_class').selectOption('2');
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
-  await expect(drawer.locator('.summary-note')).toHaveText('· 3–4 air movers · 23 pints/day');
+  await expect(drawer.locator('.summary-note')).toHaveText('· 3–4 air movers · 22.4 pints/day');
+  await expect(room(page, 'wet_floor_sf')).toHaveAttribute('placeholder', 'Whole floor');
   await expect(page.locator('#sizingNote')).toHaveText('· Air movers above');
   await expect(page.locator('#sizingNote')).toHaveAttribute('data-flagged', 'true');
   await equipment.locator('summary').click();
@@ -113,6 +114,16 @@ test('a mold-only room has no drying check and clearing an input makes it unavai
   await room(page, 'water_class').selectOption('3');
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(drawer.locator('.summary-note')).toHaveText('· 3–4 air movers · 28 pints/day');
+  // Only part of the floor is wet: the air movers follow it, and a larger area is not checked.
+  await room(page, 'wet_floor_sf').fill('40');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(drawer.locator('.summary-note')).toHaveText('· 2 air movers · 28 pints/day');
+  await room(page, 'wet_floor_sf').fill('200');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(drawer.locator('.summary-note')).toHaveText(
+    '· check not available · the wet floor area is larger than the floor area',
+  );
+  await room(page, 'wet_floor_sf').fill('');
   await room(page, 'water_class').selectOption('');
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(drawer.locator('.summary-note')).toHaveText(

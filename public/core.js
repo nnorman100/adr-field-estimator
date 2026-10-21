@@ -96,6 +96,7 @@
     custom_cabinetry: 'Custom cabinetry',
     waste_percent: 'Waste %',
     floor_sf: 'Floor area SF',
+    wet_floor_sf: 'Wet floor area SF',
     ceiling_height_ft: 'Ceiling height ft',
     water_class: 'Water class',
   };
@@ -104,7 +105,11 @@
     room.name === 'Room 1' &&
     room.unfinished_sf === 0 &&
     room.finished_sf === 0 &&
-    room.custom_cabinetry === false;
+    room.custom_cabinetry === false &&
+    // A confirmed sizing input makes it the technician's room, not the untouched placeholder.
+    ['floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'].every(
+      (key) => room[key] == null,
+    );
   function defaultRoomReplacement(data, changes) {
     if (data.rooms.length !== 1 || !untouchedDefaultRoom(data.rooms[0])) return null;
     if (changes.some((change) => change.room != null && roomKey(change.room) === 'room 1'))
@@ -351,7 +356,7 @@
     if (!check) return '';
     if (check.status === 'not_applicable') return 'mold only · no drying check';
     if (check.status === 'not_available')
-      return 'check not available · add ' + listed(check.missing);
+      return 'check not available · ' + (check.problem || 'add ' + listed(check.missing));
     return (
       range(check.air_movers_min, check.air_movers_max) +
       ' air movers · ' +
@@ -362,17 +367,25 @@
   function sizingSummary(sizing) {
     if (sizing.status === 'not_applicable')
       return { empty: 'No water rooms. The drying check applies to rooms with water.' };
-    if (sizing.status === 'not_available')
+    if (sizing.status === 'not_available') {
+      const names = (rooms) => listed(rooms.map((room) => room.name.trim() || 'Unnamed room')),
+        unavailable = sizing.rooms.filter((room) => room.status === 'not_available'),
+        missing = unavailable.filter((room) => !room.problem),
+        larger = unavailable.filter((room) => room.problem);
       return {
-        empty:
-          'Check not available. Add the floor area, ceiling height and water class under More room options for ' +
-          listed(
-            sizing.rooms
-              .filter((room) => room.status === 'not_available')
-              .map((room) => room.name.trim() || 'Unnamed room'),
-          ) +
-          '.',
+        empty: [
+          'Check not available.',
+          missing.length &&
+            'Add the floor area, ceiling height and water class under More room options for ' +
+              names(missing) +
+              '.',
+          larger.length &&
+            'The wet floor area is larger than the floor area for ' + names(larger) + '.',
+        ]
+          .filter(Boolean)
+          .join(' '),
       };
+    }
     const movers = sizing.air_movers,
       dehus = sizing.dehumidifiers;
     return {
