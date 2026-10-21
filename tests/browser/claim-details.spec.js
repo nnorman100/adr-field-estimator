@@ -166,3 +166,43 @@ test('a claim save that finishes after another job opens leaves that job untouch
   await expect(page.locator('#claimCarrier')).toHaveValue('');
   await expect(page.locator('#claimStatus')).not.toHaveText('Claim details saved.');
 });
+
+test('edits typed while a claim save is pending stay unsaved and get no Undo', async ({ page }) => {
+  await newJob(page, 'estimator');
+  await openClaim(page);
+  let release, reached;
+  const arrived = new Promise((resolve) => (reached = resolve));
+  await page.route('**/api/jobs/*/claim', async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    const response = await route.fetch();
+    const held = new Promise((resolve) => (release = resolve));
+    reached();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.locator('#claimCarrier').fill('First Mutual');
+  await page.locator('#saveClaim').click();
+  await arrived;
+  await page.locator('#claimCarrier').fill('Second Mutual');
+  release();
+  await expect(page.locator('#claimStatus')).toHaveText(
+    'Edits typed while saving are not saved yet. Save claim details.',
+  );
+  await expect(page.locator('#claimCarrier')).toHaveValue('Second Mutual');
+  // A walkthrough fill whose value is typed over during the save keeps the typed value without a marker.
+  await page.locator('#address').fill('Synthetic claim property');
+  await page.locator('#yearBuilt').fill('1998');
+  await page.locator('#technicianNotes').fill(words);
+  const filled = new Promise((resolve) => (reached = resolve));
+  await page.locator('#fillScopeProperty').click();
+  await filled;
+  await page.locator('#claimNumber').fill('CLM-TYPED');
+  release();
+  await expect(page.locator('#claimStatus')).toHaveText(
+    'Edits typed while saving are not saved yet. Save claim details.',
+  );
+  await expect(page.locator('#claimCarrier')).toHaveValue('Synthetic Mutual');
+  await expect(label(page, 'claimCarrier')).toContainText('From walkthrough · Undo');
+  await expect(page.locator('#claimNumber')).toHaveValue('CLM-TYPED');
+  await expect(label(page, 'claimNumber')).not.toContainText('From walkthrough');
+});

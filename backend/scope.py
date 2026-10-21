@@ -68,9 +68,29 @@ CLAIM_LABELS = {
     'adjuster_phone': 'adjuster phone',
     'deductible': 'deductible',
 }
-# Identifiers must appear in their quote, ignoring spacing and punctuation, so a model cannot
-# complete or invent them.
+# Identifiers must appear whole in their quote: no adjacent number may continue them.
 QUOTED_IDENTIFIERS = {'claim_number', 'policy_number', 'adjuster_phone'}
+MONTHS = {
+    name: i + 1
+    for i, names in enumerate(
+        (
+            ('january', 'jan'),
+            ('february', 'feb'),
+            ('march', 'mar'),
+            ('april', 'apr'),
+            ('may',),
+            ('june', 'jun'),
+            ('july', 'jul'),
+            ('august', 'aug'),
+            ('september', 'sep', 'sept'),
+            ('october', 'oct'),
+            ('november', 'nov'),
+            ('december', 'dec'),
+        )
+    )
+    for name in names
+}
+AMOUNT = r'\d+(?:,\d{3})*(?:\.\d+)?'
 
 
 class ScopeChange(StrictModel):
@@ -166,8 +186,72 @@ def default_photo_rename(before, after):
     return (old_rooms[0]['name'], new_rooms[0]['name']) if forward or undo else None
 
 
-def alphanumeric(text):
-    return re.sub(r'[\W_]', '', text).casefold()
+def words(text):
+    return re.findall(r'[^\W_]+', text.casefold())
+
+
+def identifier_part(token):
+    # A number or an upper-case code such as CLM next to an identifier continues it.
+    return bool(re.search(r'\d', token)) or (len(token) > 1 and token.isupper())
+
+
+def in_quote(target, quote, whole=False, digits=False):
+    """Whether target equals a run of the quote's words, ignoring case, spacing and punctuation."""
+    original = re.findall(r'[^\W_]+', quote)
+    tokens = [t.casefold() for t in original]
+    for i in range(len(tokens)):
+        run = ''
+        for j in range(i, len(tokens)):
+            if digits and not tokens[j].isdigit():
+                break
+            run += tokens[j]
+            if not target.startswith(run):
+                break
+            if run != target:
+                continue
+            neighbours = original[i - 1 : i] + original[j + 1 : j + 2]
+            if not whole or not any(identifier_part(t) for t in neighbours):
+                return True
+            break
+    return False
+
+
+def quoted_dates(quote):
+    text = ' '.join(words(quote))
+    found = set()
+    for y, m, d in re.findall(r'\b(\d{4}) (\d{1,2}) (\d{1,2})\b', text):
+        found.add((int(y), int(m), int(d)))
+    for m, d, y in re.findall(r'\b(\d{1,2}) (\d{1,2}) (\d{4})\b', text):
+        found.add((int(y), int(m), int(d)))
+    day = r'(\d{1,2})(?:st|nd|rd|th)?'
+    for m, d, y in re.findall(rf'\b([a-z]+) {day} (\d{{4}})\b', text):
+        found.add((int(y), MONTHS.get(m, 0), int(d)))
+    for d, m, y in re.findall(rf'\b{day} (?:of )?([a-z]+) (\d{{4}})\b', text):
+        found.add((int(y), MONTHS.get(m, 0), int(d)))
+    return found
+
+
+def amounts(text):
+    return [float(a.replace(',', '')) for a in re.findall(AMOUNT, text)]
+
+
+def grounded(field, value, quote):
+    """Whether the whole claim value is stated in its supporting quote."""
+    if field == 'date_of_loss':
+        return tuple(int(part) for part in value.split('-')) in quoted_dates(quote)
+    if field == 'adjuster_phone':
+        target = re.sub(r'\D', '', value)
+        return bool(target) and in_quote(target, quote, whole=True, digits=True)
+    if field == 'deductible':
+        stated = amounts(value)
+        rest = words(re.sub(AMOUNT, ' ', value))
+        return (
+            len(stated) == 1
+            and stated[0] in amounts(quote)
+            and all(word in words(quote) for word in rest)
+        )
+    target = ''.join(words(value))
+    return bool(target) and in_quote(target, quote, whole=field in QUOTED_IDENTIFIERS)
 
 
 def validate_claim(source, claim, suggestions):
@@ -189,10 +273,10 @@ def validate_claim(source, claim, suggestions):
         except ValidationError:
             questions.append(f'Confirm the {label}; the walkthrough value could not be used.')
             continue
-        if change.field in QUOTED_IDENTIFIERS and alphanumeric(value) not in alphanumeric(
-            change.source_quote
-        ):
-            questions.append(f'Confirm the {label} exactly as written on the claim.')
+        if not value or not grounded(change.field, value, change.source_quote):
+            questions.append(
+                f'Confirm the {label}; the walkthrough value does not match what was said.'
+            )
             continue
         if value != current[change.field]:
             changes.append(change.model_copy(update={'value': value}))

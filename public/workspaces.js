@@ -1188,6 +1188,16 @@ window.WorkspaceUI = (() => {
       Object.entries(CLAIM_INPUTS).map(([field, id]) => [field, $(id).value.trim()]),
     );
   }
+  // Whether the field shows the value saved on the job; edits typed during a save do not.
+  function claimSaved(field) {
+    return $(CLAIM_INPUTS[field]).value.trim() === claim.claim[field];
+  }
+  // Reports the message once every field is saved, otherwise asks for another save.
+  function claimStatus(message) {
+    $('claimStatus').textContent = Object.keys(CLAIM_INPUTS).every(claimSaved)
+      ? message
+      : 'Edits typed while saving are not saved yet. Save claim details.';
+  }
   function showClaim(view, shown) {
     claim = view;
     for (const [field, id] of Object.entries(CLAIM_INPUTS))
@@ -1198,7 +1208,9 @@ window.WorkspaceUI = (() => {
       : recorded
         ? '· ' + recorded + ' of 9 recorded'
         : '· none recorded';
-    claimEdits = claimEdits.filter((edit) => view.claim[edit.field] === edit.after);
+    claimEdits = claimEdits.filter(
+      (edit) => view.claim[edit.field] === edit.after && claimSaved(edit.field),
+    );
     renderClaimEdits();
     policy();
   }
@@ -1253,7 +1265,7 @@ window.WorkspaceUI = (() => {
     if (!$('claimForm').reportValidity()) return;
     $('saveClaim').disabled = true;
     try {
-      if (await putClaim(claimValues())) $('claimStatus').textContent = 'Claim details saved.';
+      if (await putClaim(claimValues())) claimStatus('Claim details saved.');
     } finally {
       policy();
     }
@@ -1278,9 +1290,9 @@ window.WorkspaceUI = (() => {
         after: claim.claim[change.field],
         quote: change.source_quote,
       })),
-    ].filter((edit) => claim.claim[edit.field] === edit.after);
+    ].filter((edit) => claim.claim[edit.field] === edit.after && claimSaved(edit.field));
     $('claimDetails').open = true;
-    $('claimStatus').textContent = 'Claim details filled from the walkthrough. Review them.';
+    claimStatus('Claim details filled from the walkthrough. Review them.');
     renderClaimEdits();
     return [];
   }
@@ -1297,7 +1309,7 @@ window.WorkspaceUI = (() => {
             if (!applied) return;
             claimEdits = claimEdits.filter((item) => item !== edit);
             renderClaimEdits();
-            $('claimStatus').textContent = 'Walkthrough value undone.';
+            claimStatus('Walkthrough value undone.');
           })
           .catch((e) => say(e.message, 'error')),
       );

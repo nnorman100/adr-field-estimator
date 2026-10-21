@@ -9,7 +9,7 @@ import backend.main as bm
 from backend.claims import make_documents
 from backend.contracts import AIResult, ClaimDetails, InspectionData
 from backend.prompts import live_prompt
-from backend.scope import ScopeSuggestions, scope_prompt, validate_suggestions
+from backend.scope import CLAIM_LABELS, ScopeSuggestions, scope_prompt, validate_suggestions
 from tests.fakes import png
 from tests.test_workspaces import ID, api, data, store  # noqa: F401
 
@@ -265,8 +265,8 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
     ]
     assert result.questions == [
         'Which room is next?',
-        'Confirm the policy number exactly as written on the claim.',
-        'Confirm the adjuster phone exactly as written on the claim.',
+        'Confirm the policy number; the walkthrough value does not match what was said.',
+        'Confirm the adjuster phone; the walkthrough value does not match what was said.',
     ]
     bad_date = ScopeSuggestions(
         changes=[], claim_changes=[claim_change('date_of_loss', 'October 12')], questions=[]
@@ -286,6 +286,63 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
             )
     # Without a sidecar to store them, claim changes are dropped.
     assert validate_suggestions(walk_data(), suggestions).claim_changes == []
+
+
+@pytest.mark.parametrize(
+    'field,value,quote',
+    [
+        ('carrier', 'synthetic  mutual', 'The carrier is Synthetic Mutual.'),
+        ('adjuster_name', 'Avery Quinn', 'Adjuster: AVERY QUINN'),
+        ('adjuster_email', 'Avery@Example.invalid', 'Adjuster email is avery@example.invalid.'),
+        ('claim_number', 'CLM-0042-77', 'Claim number is CLM 0042 77.'),
+        ('policy_number', 'POL12345', 'Policy POL-12345, renewed in 2025.'),
+        ('adjuster_phone', '(661) 555-0100', 'Call the adjuster at 661.555.0100 today.'),
+        ('date_of_loss', '2026-10-12', 'Loss happened on October 12th, 2026.'),
+        ('date_of_loss', '2026-10-12', 'Date of loss 10/12/2026.'),
+        ('date_of_loss', '2026-03-04', 'It flooded on 4 March 2026.'),
+        ('loss_cause', 'Supply line, kitchen sink', 'From the supply line kitchen sink.'),
+        ('deductible', '$1,000', 'The deductible is 1000 dollars.'),
+        ('deductible', '1,000.00', 'The deductible is $1,000.'),
+    ],
+)
+def test_walkthrough_claim_values_match_their_quote(field, value, quote):
+    suggestions = ScopeSuggestions(
+        changes=[], claim_changes=[claim_change(field, value, quote)], questions=[]
+    )
+    inspection = InspectionData.model_validate({**data(), 'technician_transcript': quote})
+    result = validate_suggestions(inspection, suggestions, EMPTY)
+    assert [c.field for c in result.claim_changes] == [field] and result.questions == []
+
+
+@pytest.mark.parametrize(
+    'field,value,quote',
+    [
+        ('adjuster_email', 'avery@example.com', 'Adjuster email is avery@example.invalid.'),
+        ('carrier', 'Synthetic Mutual Insurance', 'The carrier is Synthetic Mutual.'),
+        ('adjuster_name', 'Avery Quinn', 'The adjuster is Avery.'),
+        ('claim_number', '0042-77', 'Claim number is CLM 0042 77.'),
+        ('claim_number', 'CLM 0042', 'Claim number is CLM 0042 77.'),
+        ('policy_number', '12345', 'Policy POL 12345.'),
+        ('policy_number', 'POL-1234', 'Policy POL-12345.'),
+        ('adjuster_phone', '555-0100', 'Call the adjuster at 661 555 0100.'),
+        ('date_of_loss', '2026-10-12', 'Loss happened on October 12.'),
+        ('date_of_loss', '2026-10-13', 'Loss happened on October 12, 2026.'),
+        ('loss_cause', 'burst pipe in the attic', 'Water came through the ceiling.'),
+        ('deductible', '$2,500', 'The deductible is $1,000.'),
+        ('deductible', '$1,000 per claim', 'The deductible is $1,000.'),
+        ('carrier', ' ', 'The carrier is unknown.'),
+    ],
+)
+def test_walkthrough_claim_values_not_in_their_quote_are_asked_about(field, value, quote):
+    suggestions = ScopeSuggestions(
+        changes=[], claim_changes=[claim_change(field, value, quote)], questions=[]
+    )
+    inspection = InspectionData.model_validate({**data(), 'technician_transcript': quote})
+    result = validate_suggestions(inspection, suggestions, EMPTY)
+    assert result.claim_changes == []
+    assert result.questions == [
+        f'Confirm the {CLAIM_LABELS[field]}; the walkthrough value does not match what was said.'
+    ]
 
 
 def test_scope_prompt_includes_claim_details_only_with_a_sidecar():
