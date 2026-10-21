@@ -1,0 +1,11 @@
+
+Running 6 tests using 1 worker
+
+  ✓  1 [chromium] › tests/browser/claim-details.spec.js:32:1 › walkthrough claim details fill with Undo, save to the job and head every document (1.6s)
+  ✓  2 [chromium] › tests/browser/claim-details.spec.js:101:1 › office staff enter claim details; invalid values stay on the form (740ms)
+  ✓  3 [chromium] › tests/browser/claim-details.spec.js:119:1 › a walkthrough fill keeps unsaved claim entries and its markers survive scope edits (1.0s)
+  ✓  4 [chromium] › tests/browser/claim-details.spec.js:141:1 › a claim save that finishes after another job opens leaves that job untouched (1.5s)
+  ✓  5 [chromium] › tests/browser/claim-details.spec.js:170:1 › edits typed while a claim save is pending stay unsaved and get no Undo (977ms)
+  ✓  6 [chromium] › tests/browser/claim-details.spec.js:210:1 › a fill whose document refresh finishes after a manual save marks only its own values (1.6s)
+
+  6 passed (9.0s)
