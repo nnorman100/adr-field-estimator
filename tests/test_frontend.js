@@ -561,20 +561,50 @@ console.log(
     ['abc', 50],
   ])
     assert.equal(psychro.psychrometrics(t, rh), null);
-  assert.deepEqual(psychro.grainDepression(91, 67), {
-    delta_gpp: 24,
-    status: 'optimal',
-    efficiency_percent: 26,
-  });
-  assert.equal(psychro.grainDepression(70, 52).status, 'acceptable');
-  assert.equal(psychro.grainDepression(51, 40).status, 'low');
-  assert.equal(psychro.grainDepression(50, 60).status, 'none');
-  assert.deepEqual(psychro.vaporPressureDifferential(0.609, 0.451), {
-    delta_inhg: 0.158,
-    potential: 'moderate',
-  });
+  // Drying-day summaries against IICRC S500 field guidance: dehumidifier grain depression
+  // (inlet GPP − outlet GPP) is acceptable from 12 and optimal from 20 grains; chamber-to-exhaust
+  // vapor pressure differential is moderate from 0.12 and high from 0.25 inHg (vapor pressures
+  // from the ASHRAE/Magnus equations above); outside air more than 20 GPP drier than the
+  // chamber permits a controlled open system.
+  for (const [inlet, outlet, delta, status, efficiency] of [
+    [91, 67, 24, 'optimal', 26],
+    [70, 50, 20, 'optimal', 29],
+    [70, 52, 18, 'acceptable', 26],
+    [51, 39, 12, 'acceptable', 24],
+    [51, 40, 11, 'low', 22],
+    [89, 84, 5, 'low', 6],
+    [50, 50, 0, 'none', 0],
+    [50, 60, -10, 'none', 0],
+  ])
+    assert.deepEqual(psychro.grainDepression(inlet, outlet), {
+      delta_gpp: delta,
+      status,
+      efficiency_percent: efficiency,
+    });
+  for (const [affected, outlet, delta, potential] of [
+    [0.7, 0.4, 0.3, 'high'],
+    [0.609, 0.451, 0.158, 'moderate'],
+    [0.5, 0.45, 0.05, 'low'],
+    [0.45, 0.45, 0, 'stagnant'],
+    [0.4, 0.45, -0.05, 'stagnant'],
+  ])
+    assert.deepEqual(psychro.vaporPressureDifferential(affected, outlet), {
+      delta_inhg: delta,
+      potential,
+    });
+  // DryScope's Day 1 preset: 74 °F / 72 % chamber air over 86 °F / 36 % dehumidifier exhaust.
+  const chamber = psychro.psychrometrics(74, 72),
+    exhaust = psychro.psychrometrics(86, 36);
+  assert.equal(psychro.grainDepression(chamber.gpp, exhaust.gpp).status, 'optimal');
+  assert.equal(
+    psychro.vaporPressureDifferential(chamber.vapor_pressure_inhg, exhaust.vapor_pressure_inhg)
+      .potential,
+    'moderate',
+  );
   assert.equal(psychro.dryingSystem(61, 91), 'open');
+  assert.equal(psychro.dryingSystem(70, 91), 'open');
   assert.equal(psychro.dryingSystem(71, 91), 'closed');
+  assert.equal(psychro.dryingSystem(54, 51), 'closed');
 
   // Three monitoring days in one wet room, with a dry reference room, outside air and a
   // dehumidifier outlet reading on day 1; one reading for a room that was since renamed.

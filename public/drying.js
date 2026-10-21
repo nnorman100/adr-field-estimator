@@ -4,8 +4,10 @@
 window.DryingLog = (() => {
   let log = null,
     status = '',
+    logFor = null,
     epoch = 0,
-    trigger = null;
+    trigger = null,
+    mutations = Promise.resolve();
   const KINDS = ['air', 'material', 'thermal'];
   const dialog = () => $('readingDialog');
   const readable = () => !!state.session && !!state.draft?.inspection_id;
@@ -20,10 +22,20 @@ window.DryingLog = (() => {
       day: 'numeric',
     });
   const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+  // The log and its load status belong to one inspection; another job's never shows.
+  const shownLog = () => (logFor === (state.draft?.inspection_id ?? null) ? log : null);
+  const shownStatus = () => (logFor === (state.draft?.inspection_id ?? null) ? status : '');
+  // One change at a time, so each response is the server's newest log when it arrives.
+  function serial(task) {
+    const run = mutations.then(task, task);
+    mutations = run.catch(() => {});
+    return run;
+  }
   function clear() {
     ++epoch;
     log = null;
     status = '';
+    logFor = null;
     if (dialog().open) dialog().close();
     render();
   }
@@ -32,6 +44,7 @@ window.DryingLog = (() => {
       current = ++epoch;
     log = null;
     status = '';
+    logFor = id ?? null;
     render();
     if (!readable()) return;
     if (!navigator.onLine) {
@@ -41,16 +54,20 @@ window.DryingLog = (() => {
     }
     try {
       const result = await jsonApi('/api/inspections/' + id + '/readings');
-      if (current !== epoch) return;
+      if (current !== epoch || id !== state.draft?.inspection_id) return;
       log = result;
     } catch (e) {
-      if (current !== epoch) return;
+      if (current !== epoch || id !== state.draft?.inspection_id) return;
       // A draft the server has not stored yet has no log; saving a reading syncs it first.
       if (e.status === 404 && !state.record && !state.signed)
         log = { inspection_id: id, readings: [], updated_at: null };
       else status = e.message;
     }
     render();
+  }
+  // Reconnecting retries a log that was offline or failed to load; a loaded one stays as it is.
+  function reload() {
+    return shownLog() ? Promise.resolve() : load();
   }
   function readingText(r) {
     if (r.kind === 'air')
@@ -195,32 +212,34 @@ window.DryingLog = (() => {
     section.hidden = !show || ui.task !== 'property';
     $('logReading').hidden = !show;
     if (!show) return;
-    const canEdit = editable() && navigator.onLine && !!log;
+    const shown = shownLog(),
+      canEdit = editable() && navigator.onLine && !!shown;
     $('addReading').hidden = !editable();
     $('addReading').disabled = !canEdit;
     $('logReading').disabled = !canEdit;
     const body = $('dryingLogBody');
     body.replaceChildren();
-    if (!log) {
+    if (!shown) {
+      const failure = shownStatus();
       $('dryingLogStatus').textContent = '';
       body.append(
         node(
           'p',
-          status === 'offline'
+          failure === 'offline'
             ? 'You are offline. Connect to load and record drying readings.'
-            : status
-              ? 'The drying log could not load: ' + status
+            : failure
+              ? 'The drying log could not load: ' + failure
               : 'Loading drying log…',
           'empty',
         ),
       );
       return;
     }
-    const summary = ADRPsychro.summarizeLog(log.readings, state.draft.data.rooms);
-    $('dryingLogStatus').textContent = log.readings.length
-      ? plural(log.readings.length, 'reading') + ' · ' + plural(summary.days.length, 'day')
+    const summary = ADRPsychro.summarizeLog(shown.readings, state.draft.data.rooms);
+    $('dryingLogStatus').textContent = shown.readings.length
+      ? plural(shown.readings.length, 'reading') + ' · ' + plural(summary.days.length, 'day')
       : 'No readings yet';
-    if (!log.readings.length)
+    if (!shown.readings.length)
       body.append(
         node(
           'p',
@@ -269,7 +288,7 @@ window.DryingLog = (() => {
       : 'Enter temperature and humidity to calculate grains per pound and dew point.';
   }
   function openDialog(room = '', control = null) {
-    if (!editable() || !log) return;
+    if (!editable() || !shownLog()) return;
     trigger = control;
     const form = $('readingForm');
     form.reset();
@@ -342,11 +361,13 @@ window.DryingLog = (() => {
     $('saveReading').disabled = true;
     try {
       const body = { reading: payload() };
-      // The inspection must exist on the server before a reading can sit beside it.
-      if (!state.signed && !confirmedAuthorization) await syncDraft();
-      if (current !== epoch || id !== state.draft?.inspection_id) return;
-      const result = await jsonApi('/api/inspections/' + id + '/readings', 'POST', body);
-      if (current !== epoch || id !== state.draft?.inspection_id) return;
+      const result = await serial(async () => {
+        // The inspection must exist on the server before a reading can sit beside it.
+        if (!state.signed && !confirmedAuthorization) await syncDraft();
+        if (current !== epoch || id !== state.draft?.inspection_id) return null;
+        return jsonApi('/api/inspections/' + id + '/readings', 'POST', body);
+      });
+      if (!result || current !== epoch || id !== state.draft?.inspection_id) return;
       log = result;
       closeDialog();
       render();
@@ -363,10 +384,15 @@ window.DryingLog = (() => {
       current = epoch;
     control.disabled = true;
     try {
-      const result = await jsonApi(
-        '/api/inspections/' + id + '/readings/' + encodeURIComponent(reading.id),
-        'DELETE',
+      const result = await serial(() =>
+        current !== epoch || id !== state.draft?.inspection_id
+          ? null
+          : jsonApi(
+              '/api/inspections/' + id + '/readings/' + encodeURIComponent(reading.id),
+              'DELETE',
+            ),
       );
+      if (!result) return;
       if (current !== epoch || id !== state.draft?.inspection_id) return;
       log = result;
       render();
@@ -394,5 +420,5 @@ window.DryingLog = (() => {
         throw Error('Reading dialog is missing the ' + kind + ' fields.');
   }
   document.addEventListener('DOMContentLoaded', init);
-  return { load, clear, render, openDialog };
+  return { load, reload, clear, render, openDialog };
 })();

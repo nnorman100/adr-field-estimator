@@ -3759,6 +3759,7 @@ function connectivity() {
   } else
     Promise.resolve(window.WorkspaceUI?.refresh())
       .then(() => syncDraft())
+      .then(() => window.DryingLog?.reload())
       .then(() => drainQueue())
       .then(() => processNotes())
       .catch((e) => say(e.message, 'error'));

@@ -136,6 +136,66 @@ test('readings are recorded per room with calculated GPP and kept with the job',
   expect(errors).toEqual([]);
 });
 
+test('an offline log reloads on reconnect and overlapping removals keep the newest log', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await checkScope(page);
+  for (const [time, temp] of [
+    ['2026-10-21T09:30', '74'],
+    ['2026-10-21T09:40', '75'],
+  ]) {
+    await card(page, 'Room 1').getByRole('button', { name: 'Add reading' }).click();
+    await page.locator('#readingTemp').fill(temp);
+    await page.locator('#readingRh').fill('72');
+    await page.locator('#readingTakenAt').fill(time);
+    await page.locator('#saveReading').click();
+    await expect(page.locator('#readingDialog')).toBeHidden();
+  }
+  await expect(rows(page)).toHaveCount(2);
+
+  // Another job's readings never show under this one while its own log is not loaded.
+  const own = await page.evaluate(() => {
+    const id = state.draft.inspection_id;
+    state.draft.inspection_id = 'f'.repeat(32);
+    DryingLog.render();
+    return id;
+  });
+  await expect(rows(page)).toHaveCount(0);
+  await expect(page.locator('#dryingLogBody .empty')).toHaveText('Loading drying log…');
+  await expect(page.locator('#addReading')).toBeDisabled();
+  await page.evaluate((id) => {
+    state.draft.inspection_id = id;
+    DryingLog.render();
+  }, own);
+  await expect(rows(page)).toHaveCount(2);
+
+  await context.setOffline(true);
+  await page.evaluate(() => DryingLog.load());
+  await expect(page.locator('#dryingLogBody .empty')).toContainText('You are offline');
+  await expect(page.locator('#addReading')).toBeDisabled();
+  await context.setOffline(false);
+  await expect(rows(page)).toHaveCount(2);
+  await expect(page.locator('#addReading')).toBeEnabled();
+
+  // The first removal commits on the server but its response arrives late.
+  let held = true;
+  await page.route('**/readings/*', async (route) => {
+    if (route.request().method() !== 'DELETE' || !held) return route.continue();
+    held = false;
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.fulfill({ response });
+  });
+  await rows(page).nth(0).getByRole('button', { name: 'Remove' }).click();
+  await rows(page).nth(1).getByRole('button', { name: 'Remove' }).click();
+  await expect(rows(page)).toHaveCount(0);
+  await page.waitForTimeout(1200);
+  await expect(rows(page)).toHaveCount(0);
+  await expect(page.locator('#dryingLogStatus')).toHaveText('No readings yet');
+});
+
 test('office staff read the drying log without recording controls', async ({ page, request }) => {
   const fixture = await (
     await request.post('/__test/workspaces', { data: { enabled: true } })

@@ -1,12 +1,7 @@
 """Pinned psychrometric values for drying-log air readings (see backend/psychrometrics.py)."""
 
 import pytest
-from backend.psychrometrics import (
-    drying_system,
-    grain_depression,
-    psychrometrics,
-    vapor_pressure_differential,
-)
+from backend.psychrometrics import psychrometrics
 
 
 @pytest.mark.parametrize(
@@ -55,48 +50,3 @@ def test_monotonic_in_temperature_and_humidity():
     assert psychrometrics(70, 60)['gpp'] > psychrometrics(70, 50)['gpp']
     assert psychrometrics(70, 60)['dew_point_f'] > psychrometrics(70, 50)['dew_point_f']
 
-
-@pytest.mark.parametrize(
-    'inlet, outlet, delta, status, efficiency',
-    [
-        (91, 67, 24, 'optimal', 26),
-        (70, 52, 18, 'acceptable', 26),
-        (89, 84, 5, 'low', 6),
-        (51, 40, 11, 'low', 22),
-        (51, 39, 12, 'acceptable', 24),
-        (50, 60, -10, 'none', 0),
-        (50, 50, 0, 'none', 0),
-    ],
-)
-def test_grain_depression_thresholds_follow_the_twelve_and_twenty_grain_marks(
-    inlet, outlet, delta, status, efficiency
-):
-    assert grain_depression(inlet, outlet) == {
-        'delta_gpp': delta,
-        'status': status,
-        'efficiency_percent': efficiency,
-    }
-
-
-@pytest.mark.parametrize(
-    'affected, outlet, delta, potential',
-    [
-        (0.7, 0.4, 0.3, 'high'),
-        (0.609, 0.451, 0.158, 'moderate'),
-        (0.5, 0.45, 0.05, 'low'),
-        (0.45, 0.45, 0.0, 'stagnant'),
-        (0.4, 0.45, -0.05, 'stagnant'),
-    ],
-)
-def test_vapor_pressure_differential_bands(affected, outlet, delta, potential):
-    assert vapor_pressure_differential(affected, outlet) == {
-        'delta_inhg': delta,
-        'potential': potential,
-    }
-
-
-def test_open_system_only_when_outside_air_is_twenty_grains_drier():
-    assert drying_system(61, 91) == 'open'
-    assert drying_system(70, 91) == 'open'
-    assert drying_system(71, 91) == 'closed'
-    assert drying_system(54, 51) == 'closed'
