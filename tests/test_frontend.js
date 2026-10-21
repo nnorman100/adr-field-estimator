@@ -699,6 +699,26 @@ console.log(
   });
   assert.equal(summary.groups[1].progress, null);
   assert.equal(summary.groups[2].days[0].above_standard, null);
+  // A skipped monitoring visit keeps its calendar place: October 21 and 25 are days 1 and 5, the
+  // drying spans five days, and nothing is filled in for the days between.
+  const skipped = psychro.summarizeLog(
+    [
+      air('2026-10-21T15:00:00Z', 'Bathroom', 'affected', 74, 72),
+      air('2026-10-21T15:10:00Z', 'Hall', 'unaffected', 68, 45),
+      air('2026-10-25T15:00:00Z', 'Bathroom', 'affected', 70, 50),
+    ],
+    [{ name: 'Bathroom' }],
+    utcDay,
+  );
+  assert.deepEqual(skipped.days, ['2026-10-21', '2026-10-25']);
+  assert.deepEqual(
+    skipped.groups[0].days.map((d) => [d.key, d.number]),
+    [
+      ['2026-10-21', 1],
+      ['2026-10-25', 5],
+    ],
+  );
+  assert.equal(skipped.groups[0].progress.days, 5);
   // No readings, no days and no invented rooms beyond the job's own.
   assert.deepEqual(psychro.summarizeLog([], [{ name: 'Room 1' }], utcDay), {
     days: [],

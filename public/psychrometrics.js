@@ -91,6 +91,9 @@
     const d = new Date(iso);
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
+  // Calendar days between two YYYY-MM-DD keys, so a skipped monitoring day keeps its place.
+  const daysBetween = (from, to) =>
+    Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
   const byTime = (a, b) =>
     a.taken_at.localeCompare(b.taken_at) ||
     (a.recorded_at || '').localeCompare(b.recorded_at || '');
@@ -119,7 +122,7 @@
             outside = latestBefore(outsides, key);
           return {
             key,
-            number: days.indexOf(key) + 1,
+            number: daysBetween(days[0], key) + 1,
             readings: list,
             affected,
             reference,
@@ -158,7 +161,7 @@
                     Math.round(((first.affected.gpp - latest.affected.gpp) / span) * 100),
                   ),
                 ),
-          days: tracked.length,
+          days: latest.number - first.number + 1,
         };
       }
       return {

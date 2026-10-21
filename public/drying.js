@@ -7,7 +7,7 @@ window.DryingLog = (() => {
     logFor = null,
     epoch = 0,
     trigger = null,
-    mutations = Promise.resolve();
+    queue = Promise.resolve();
   const KINDS = ['air', 'material', 'thermal'];
   const dialog = () => $('readingDialog');
   const readable = () => !!state.session && !!state.draft?.inspection_id;
@@ -25,10 +25,22 @@ window.DryingLog = (() => {
   // The log and its load status belong to one inspection; another job's never shows.
   const shownLog = () => (logFor === (state.draft?.inspection_id ?? null) ? log : null);
   const shownStatus = () => (logFor === (state.draft?.inspection_id ?? null) ? status : '');
-  // One change at a time, so each response is the server's newest log when it arrives.
-  function serial(task) {
-    const run = mutations.then(task, task);
-    mutations = run.catch(() => {});
+  /* Loads and changes run one at a time, so each response is the server's newest log when it
+     arrives. A response is kept only while its inspection is still open and the log has not been
+     cleared since the request was queued; otherwise it resolves to null. */
+  function ordered(id, request) {
+    const queued = epoch,
+      live = () => queued === epoch && id === state.draft?.inspection_id;
+    const run = queue.then(async () => {
+      if (!live()) return null;
+      const result = await request();
+      if (!result || !live()) return null;
+      log = result;
+      status = '';
+      logFor = id;
+      return result;
+    });
+    queue = run.catch(() => {});
     return run;
   }
   function clear() {
@@ -40,8 +52,7 @@ window.DryingLog = (() => {
     render();
   }
   async function load() {
-    const id = state.draft?.inspection_id,
-      current = ++epoch;
+    const id = state.draft?.inspection_id;
     log = null;
     status = '';
     logFor = id ?? null;
@@ -53,15 +64,16 @@ window.DryingLog = (() => {
       return;
     }
     try {
-      const result = await jsonApi('/api/inspections/' + id + '/readings');
-      if (current !== epoch || id !== state.draft?.inspection_id) return;
-      log = result;
+      await ordered(id, () =>
+        jsonApi('/api/inspections/' + id + '/readings').catch((e) => {
+          // A draft the server has not stored yet has no log; saving a reading syncs it first.
+          if (e.status === 404 && !state.record && !state.signed)
+            return { inspection_id: id, readings: [], updated_at: null };
+          throw e;
+        }),
+      );
     } catch (e) {
-      if (current !== epoch || id !== state.draft?.inspection_id) return;
-      // A draft the server has not stored yet has no log; saving a reading syncs it first.
-      if (e.status === 404 && !state.record && !state.signed)
-        log = { inspection_id: id, readings: [], updated_at: null };
-      else status = e.message;
+      if (logFor === id && !log) status = e.message;
     }
     render();
   }
@@ -356,19 +368,17 @@ window.DryingLog = (() => {
   async function saveReading(event) {
     event.preventDefault();
     if (!$('readingForm').reportValidity()) return;
-    const id = state.draft?.inspection_id,
-      current = epoch;
+    const id = state.draft?.inspection_id;
     $('saveReading').disabled = true;
     try {
       const body = { reading: payload() };
-      const result = await serial(async () => {
+      const result = await ordered(id, async () => {
         // The inspection must exist on the server before a reading can sit beside it.
         if (!state.signed && !confirmedAuthorization) await syncDraft();
-        if (current !== epoch || id !== state.draft?.inspection_id) return null;
+        if (id !== state.draft?.inspection_id) return null;
         return jsonApi('/api/inspections/' + id + '/readings', 'POST', body);
       });
-      if (!result || current !== epoch || id !== state.draft?.inspection_id) return;
-      log = result;
+      if (!result) return;
       closeDialog();
       render();
       say('Reading saved.', 'success');
@@ -380,21 +390,13 @@ window.DryingLog = (() => {
     }
   }
   async function removeReading(reading, control) {
-    const id = state.draft?.inspection_id,
-      current = epoch;
+    const id = state.draft?.inspection_id;
     control.disabled = true;
     try {
-      const result = await serial(() =>
-        current !== epoch || id !== state.draft?.inspection_id
-          ? null
-          : jsonApi(
-              '/api/inspections/' + id + '/readings/' + encodeURIComponent(reading.id),
-              'DELETE',
-            ),
+      const result = await ordered(id, () =>
+        jsonApi('/api/inspections/' + id + '/readings/' + encodeURIComponent(reading.id), 'DELETE'),
       );
       if (!result) return;
-      if (current !== epoch || id !== state.draft?.inspection_id) return;
-      log = result;
       render();
       say('Reading removed.', 'success');
     } finally {

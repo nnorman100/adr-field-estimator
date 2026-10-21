@@ -136,7 +136,7 @@ test('readings are recorded per room with calculated GPP and kept with the job',
   expect(errors).toEqual([]);
 });
 
-test('an offline log reloads on reconnect and overlapping removals keep the newest log', async ({
+test('an offline log reloads on reconnect and overlapping loads and removals keep the newest log', async ({
   page,
   context,
 }) => {
@@ -145,6 +145,7 @@ test('an offline log reloads on reconnect and overlapping removals keep the newe
   for (const [time, temp] of [
     ['2026-10-21T09:30', '74'],
     ['2026-10-21T09:40', '75'],
+    ['2026-10-21T09:50', '76'],
   ]) {
     await card(page, 'Room 1').getByRole('button', { name: 'Add reading' }).click();
     await page.locator('#readingTemp').fill(temp);
@@ -153,7 +154,7 @@ test('an offline log reloads on reconnect and overlapping removals keep the newe
     await page.locator('#saveReading').click();
     await expect(page.locator('#readingDialog')).toBeHidden();
   }
-  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page)).toHaveCount(3);
 
   // Another job's readings never show under this one while its own log is not loaded.
   const own = await page.evaluate(() => {
@@ -169,25 +170,38 @@ test('an offline log reloads on reconnect and overlapping removals keep the newe
     state.draft.inspection_id = id;
     DryingLog.render();
   }, own);
-  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page)).toHaveCount(3);
 
   await context.setOffline(true);
   await page.evaluate(() => DryingLog.load());
   await expect(page.locator('#dryingLogBody .empty')).toContainText('You are offline');
   await expect(page.locator('#addReading')).toBeDisabled();
   await context.setOffline(false);
-  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page)).toHaveCount(3);
   await expect(page.locator('#addReading')).toBeEnabled();
 
-  // The first removal commits on the server but its response arrives late.
-  let held = true;
+  // Reopening the job while a removal is still on its way loads the log after it commits.
+  let held = 'request';
   await page.route('**/readings/*', async (route) => {
-    if (route.request().method() !== 'DELETE' || !held) return route.continue();
-    held = false;
+    const stage = held;
+    held = null;
+    if (route.request().method() !== 'DELETE' || !stage) return route.continue();
+    if (stage === 'request') {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return route.continue();
+    }
+    // The removal commits on the server but its response arrives late.
     const response = await route.fetch();
     await new Promise((resolve) => setTimeout(resolve, 800));
     await route.fulfill({ response });
   });
+  await rows(page).nth(0).getByRole('button', { name: 'Remove' }).click();
+  await page.evaluate(() => DryingLog.load());
+  await expect(rows(page)).toHaveCount(2);
+  await page.waitForTimeout(1200);
+  await expect(rows(page)).toHaveCount(2);
+
+  held = 'response';
   await rows(page).nth(0).getByRole('button', { name: 'Remove' }).click();
   await rows(page).nth(1).getByRole('button', { name: 'Remove' }).click();
   await expect(rows(page)).toHaveCount(0);
