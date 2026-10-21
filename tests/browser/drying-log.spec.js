@@ -34,6 +34,11 @@ test('readings are recorded per room with calculated GPP and kept with the job',
   const dialog = page.locator('#readingDialog');
   await expect(dialog).toBeVisible();
   await expect(page.locator('#readingRoom')).toHaveValue('Room 1');
+  // At phone width the room choice stays readable instead of sharing a row with Taken at.
+  const roomBox = await page.locator('#readingRoom').boundingBox();
+  const takenBox = await page.locator('#readingTakenAt').boundingBox();
+  expect(roomBox.width).toBeGreaterThan(200);
+  expect(takenBox.y).toBeGreaterThan(roomBox.y + roomBox.height);
   await expect(page.locator('#readingTemp')).toBeFocused();
   await expect(page.locator('#readingTakenAt')).not.toHaveValue('');
   await expect(page.locator('#readingCalc')).toContainText('Enter temperature and humidity');

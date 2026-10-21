@@ -2408,4 +2408,8 @@ footer {
   .reading-dialog .form-grid label:first-child:nth-last-child(odd) {
     grid-column: 1 / -1;
   }
+  /* The wide Taken at control would squeeze the room choice to a letter. */
+  #readingForm > .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
