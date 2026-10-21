@@ -1,0 +1,10 @@
+Room 1 day headers: ["Day 1 · Wed, Oct 21","Day 5 · Sun, Oct 25"]
+Room 1 day summaries: ["Affected 91 GPP · 45 GPP above the dry standard (46) · Dehumidifier Δ24 GPP · optimal · vapor pressure Δ0.158 inHg moderate · outside air drier: open system possible","Affected 58 GPP · 12 GPP above the dry standard (46) · outside air drier: open system possible"]
+Room 1 card text: Room 1 | Add reading | Drying progress: 91 → 58 GPP over 5 days · dry standard 46 GPP · 73% of the way | Day 1 · Wed, Oct 21 | Affected 91 GPP · 45 GPP above the dry standard (46) · Dehumidifier Δ24 GPP · optimal · vapor pressure Δ0.158 inHg moderate · outside air drier: open system possible | Affected air · 74°F · 72% RH → 91 GPP · dew point 64°F | 9:30 AM · synthetic@example.invalid | Remove | Dehumidifier outlet · 86°F · 36% RH → 67 GPP · dew point 56°F | 9:50 AM · synthetic@example.invalid | Remove | Drywall · 28 %MC · dry standard 12 %MC | 10:00 AM · synthetic@example.invalid | Remove | Thermal ΔT -6.4°F · cold anomaly · Up 3 ft of the exterior wall | 10:05 AM · synthetic@example.invalid | Remove | Day 5 · Sun, Oct 25 | Affected 58 GPP · 12 GPP above the dry standard (46) · outside air drier: open system possible | Affected air · 72°F · 50% RH → 58 GPP · dew point 52°F | 9:30 AM · synthetic@example.invalid | Remove
+Status: 7 readings · 2 days
+POST RH=140 -> 422 {"detail":[{"type":"less_than_equal","loc":["body","reading","air","relative_humidity"],"msg":"Input should be less than or equal to 100","ctx":{"le":100.0}}]}
+DELETE bad reading id -> 422
+GET without auth -> 401
+GET as another technician -> 404
+GET own -> 200 readings=7 first={"room":"Room 1","taken_at":"2026-10-21T16:30:00Z","note":"","kind":"air","zone":"affected","temperature_f":74,"relative_humidity":72,"id":"2580480c3afb4590b7f39414c397efab","recorded_by":"synthetic@example.invalid","recorded_at":"2026-10-21T22:36:59.828656+00:00","gpp":91,"dew_point_f":64,"dew_point_depression_f":10,"vapor_pressure_inhg":0.609,"enthalpy_btu_lb":31.9}
+state.record.revision after readings: 1

@@ -1,0 +1,13 @@
+390px dialog: Room select width=308 y=254; Taken at y=338 (stacked=true)
+Live calc text: 91 GPP · dew point 64°F · vapor pressure 0.609 inHg
+Room 1 day headers: ["Day 1 · Wed, Oct 21","Day 5 · Sun, Oct 25"]
+Room 1 day summaries: ["Affected 91 GPP · 45 GPP above the dry standard (46) · Dehumidifier Δ24 GPP · optimal · vapor pressure Δ0.158 inHg moderate","Affected 58 GPP · 12 GPP above the dry standard (46)"]
+Room 1 progress: Drying progress: 91 → 58 GPP over 5 days · dry standard 46 GPP · 73% of the way
+Status: 6 readings · 2 days
+Thermal row: Thermal ΔT -6.4°F · cold anomaly · Up 3 ft of the exterior wall10:05 AM · synthetic@example.invalidRemove
+state.record.revision after readings: 1
+After reload: 6 readings
+POST RH=140 -> 422
+GET no auth -> 401
+GET other technician -> 404
+GET own -> 200 readings=6 first={"room":"Room 1","taken_at":"2026-10-21T16:30:00Z","note":"","kind":"air","zone":"affected","temperature_f":74,"relative_humidity":72,"id":"3566a4f1625c4193ac518bbadfc79844","recorded_by":"synthetic@example.invalid","recorded_at":"2026-10-21T22:42:13.769095+00:00","gpp":91,"dew_point_f":64,"dew_point_depression_f":10,"vapor_pressure_inhg":0.609,"enthalpy_btu_lb":31.9}
