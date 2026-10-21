@@ -726,3 +726,84 @@ console.log(
   });
   console.log('PASS: psychrometric values and per-room drying-log summary');
 }
+{
+  // The sizing check's words come from the server result; empty states say what is missing.
+  assert.equal(core.roomSizingNote({ status: 'not_applicable' }), 'mold only · no drying check');
+  assert.equal(
+    core.roomSizingNote({ status: 'not_available', missing: ['ceiling height', 'water class'] }),
+    'check not available · add ceiling height and water class',
+  );
+  assert.equal(
+    core.roomSizingNote({
+      status: 'available',
+      air_movers_min: 3,
+      air_movers_max: 4,
+      dehumidifier_ppd: 23,
+    }),
+    '3–4 air movers · 23 pints/day',
+  );
+  assert.deepEqual(core.sizingSummary({ status: 'not_applicable', rooms: [] }), {
+    empty: 'No water rooms. The drying check applies to rooms with water.',
+  });
+  assert.deepEqual(
+    core.sizingSummary({
+      status: 'not_available',
+      rooms: [
+        { name: 'Kitchen', status: 'available' },
+        { name: 'Hall', status: 'not_available' },
+        { name: ' ', status: 'not_available' },
+      ],
+    }),
+    {
+      empty:
+        'Check not available. Add the floor area, ceiling height and water class under More room options for Hall and Unnamed room.',
+    },
+  );
+  const sizing = {
+    status: 'available',
+    rooms: [],
+    air_movers: { entered: 6, min: 3, max: 4, flag: 'above', reason: 'More.' },
+    dehumidifiers: {
+      entered: 1,
+      recommended_ppd: 23,
+      unit_ppd: null,
+      recommended_units: null,
+      flag: null,
+      reason: 'Rate it.',
+    },
+  };
+  assert.deepEqual(core.sizingSummary(sizing).rows, [
+    { label: 'Air movers', recommended: '3–4', entered: '6', flag: 'above', reason: 'More.' },
+    {
+      label: 'Dehumidification',
+      recommended: '23 pints/day',
+      entered: '1 LGR dehumidifier',
+      flag: null,
+      reason: 'Rate it.',
+    },
+  ]);
+  Object.assign(sizing.dehumidifiers, {
+    entered: 2,
+    unit_ppd: 70,
+    recommended_units: 1,
+    flag: 'above',
+  });
+  assert.equal(core.sizingSummary(sizing).rows[1].recommended, '23 pints/day · 1 unit at 70');
+  assert.equal(core.sizingSummary(sizing).rows[1].entered, '2 LGR dehumidifiers');
+  assert.equal(core.sizingNote(sizing), '· Air movers above · Dehumidification above');
+  sizing.air_movers.flag = 'within';
+  sizing.dehumidifiers.flag = null;
+  assert.equal(core.sizingNote(sizing), '· Air movers within range');
+  sizing.air_movers.flag = null;
+  assert.equal(core.sizingNote(sizing), '· sizing: add the dehumidifier rating');
+  assert.equal(
+    core.sizingNote({ status: 'not_available', rooms: [] }),
+    '· sizing check not available',
+  );
+  assert.equal(
+    core.sizingNote({ status: 'not_applicable', rooms: [] }),
+    '· no water rooms to size',
+  );
+  assert.equal(core.scopeRoomLabels.water_class, 'Water class');
+  console.log('PASS: the sizing check shows recommended beside entered counts with a worded flag');
+}

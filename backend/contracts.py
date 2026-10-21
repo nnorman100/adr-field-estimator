@@ -24,6 +24,11 @@ class Room(StrictModel):
     finished_sf: float = Field(default=0, ge=0, le=100000)
     custom_cabinetry: bool = False
     waste_percent: float = Field(default=0, ge=0, le=100)
+    # Technician-confirmed inputs for the IICRC equipment-sizing check (backend/sizing.py). They are
+    # absent until stated; floor area is the room's floor, never the priced demolition area.
+    floor_sf: float | None = Field(default=None, gt=0, le=100000)
+    ceiling_height_ft: float | None = Field(default=None, gt=0, le=60)
+    water_class: Literal[1, 2, 3, 4] | None = None
 
 
 EquipmentKind = Literal['air_mover', 'dehumidifier', 'air_scrubber']
@@ -81,6 +86,8 @@ class InspectionData(StrictModel):
     rooms: list[Room] = Field(default_factory=list, max_length=30)
     air_movers: int = Field(default=0, ge=0, le=100)
     dehumidifiers: int = Field(default=0, ge=0, le=100)
+    # AHAM pints/day rating of one LGR dehumidifier, for the sizing check; absent until stated.
+    dehumidifier_ppd: int | None = Field(default=None, ge=1, le=1000)
     drying_days: int = Field(default=3, ge=1, le=60)
     labor_hours: float = Field(default=0, ge=0, le=500)
     is_after_hours: bool = False

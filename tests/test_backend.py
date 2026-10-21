@@ -200,8 +200,10 @@ def test_room_loss_type_is_saved_only_when_set_and_old_rooms_keep_their_shape(co
     client, _ = context
     legacy = data()
     legacy.pop('capture_metadata')
+    legacy.pop('dehumidifier_ppd')
     for room in legacy['rooms']:
-        room.pop('loss', None)
+        for key in ('loss', 'floor_sf', 'ceiling_height_ft', 'water_class'):
+            room.pop(key, None)
     assert 'loss' not in legacy['rooms'][0]
     record = client.post('/api/inspections', json={'inspection_id': ID, 'data': legacy}).json()
     assert record['data'] == legacy and 'loss' not in record['data']['rooms'][0]
@@ -1114,3 +1116,45 @@ def test_drying_readings_reject_bad_values_and_other_users(context):
     missing = 'ADR-INS-' + 'e' * 32
     assert client.get('/api/inspections/' + missing + '/readings').status_code == 404
     assert client.get('/api/inspections/not-an-id/readings').status_code == 404
+
+
+def test_draft_records_carry_the_sizing_check_and_its_inputs_stay_absent_until_set(context):
+    client, _ = context
+    values = data()
+    values.pop('capture_metadata')
+    values.pop('dehumidifier_ppd')
+    for key in ('loss', 'floor_sf', 'ceiling_height_ft', 'water_class'):
+        values['rooms'][0].pop(key)
+    record = client.post('/api/inspections', json={'inspection_id': ID, 'data': values}).json()
+    assert record['data'] == values
+    sizing = record['equipment_sizing']
+    assert sizing['status'] == 'not_available'
+    assert sizing['rooms'][0]['missing'] == ['floor area', 'ceiling height', 'water class']
+    values['rooms'][0].update(floor_sf=140, ceiling_height_ft=8.5, water_class=3)
+    values['dehumidifier_ppd'] = 70
+    record = client.put(
+        '/api/inspections/' + ID, json={'expected_revision': 1, 'data': values}
+    ).json()
+    # The client's values come back unchanged (140.0 parses as 140 in the browser), so a reloaded
+    # draft is not a revision conflict.
+    assert record['data'] == values
+    sizing = client.get('/api/inspections/' + ID).json()['equipment_sizing']
+    assert sizing['status'] == 'available'
+    assert sizing['air_movers'] == {
+        'entered': 3,
+        'min': 3,
+        'max': 4,
+        'flag': 'within',
+        'reason': 'Within the IICRC range of 3 to 4.',
+    }
+    assert sizing['dehumidifiers']['recommended_ppd'] == 30
+    assert sizing['dehumidifiers']['flag'] == 'within'
+    # The check is derived on each read and never stored with the draft.
+    assert 'equipment_sizing' not in context[1].get_inspection('owner', ID)
+    values['rooms'][0]['water_class'] = None
+    values['dehumidifier_ppd'] = None
+    record = client.put(
+        '/api/inspections/' + ID, json={'expected_revision': 2, 'data': values}
+    ).json()
+    assert 'water_class' not in record['data']['rooms'][0]
+    assert 'dehumidifier_ppd' not in record['data']

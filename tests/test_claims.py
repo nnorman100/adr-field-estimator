@@ -462,3 +462,20 @@ def test_ai_testing_advice_follows_the_age_rule_and_text_uses_plain_terms(year):
 def test_audit_prompt_gives_the_model_the_app_age_rule(year, rule):
     prompt = audit_prompt(acme(year_built=year).model_dump(mode='json'), [], [])
     assert f'the home was built in {year}, so {rule} lead/asbestos testing' in prompt
+
+
+def test_defense_letter_prints_the_sizing_check_only_when_available():
+    ai = AIResult(summary='Synthetic summary.', suggestions=[], unpriced_work=[])
+    room = {'name': 'Bathroom', 'finished_sf': 10, 'floor_sf': 140, 'ceiling_height_ft': 8}
+    pending = make_documents(scoped(rooms=[room], air_movers=3, dehumidifiers=1), [], ai)
+    assert 'Equipment sizing check' not in pending['iicrc_defense_letter']
+    checked = make_documents(
+        scoped(rooms=[{**room, 'water_class': 2}], air_movers=3, dehumidifiers=1), [], ai
+    )
+    letter = checked['iicrc_defense_letter']
+    assert 'Bathroom: 140 SF floor × 8 ft ceiling = 1,120 cu ft, water class 2.' in letter
+    assert 'Entered for this proposal: 3 air movers and 1 LGR dehumidifier.' in letter
+    # The paragraph sits with the evidence, before the scope; pricing is unchanged by it.
+    assert letter.index('Equipment sizing check') < letter.index('Scope:')
+    assert checked['xactimate_scope'] == pending['xactimate_scope']
+    assert checked['adr_estimate']['proposed_cost'] == pending['adr_estimate']['proposed_cost']

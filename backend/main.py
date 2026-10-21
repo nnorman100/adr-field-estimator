@@ -67,6 +67,7 @@ try:
     from . import signing_links
     from . import tags as qr_tags
     from .claims import make_documents, price_scope, proposal_date
+    from .sizing import equipment_sizing
     from .prompts import (
         live_prompt,
         audit_prompt,
@@ -109,6 +110,7 @@ except ImportError:
     import signing_links
     import tags as qr_tags
     from claims import make_documents, price_scope, proposal_date
+    from sizing import equipment_sizing
     from prompts import (
         live_prompt,
         audit_prompt,
@@ -526,7 +528,16 @@ def reusable_audit(record, revision, identity, customer):
 
 
 def public_record(record):
-    return {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
+    result = {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
+    # An unsigned draft carries the equipment-sizing check for its saved data; it is derived on
+    # every read, never stored, and a signed record keeps only what its documents printed.
+    if 'data' in result and 'auth_id' not in result and result.get('status') != 'signed':
+        try:
+            data = InspectionData.model_validate(result['data'])
+        except ValidationError:
+            return result
+        result['equipment_sizing'] = equipment_sizing(data)
+    return result
 
 
 def parse_json_from_llm(text):
@@ -746,9 +757,12 @@ def inspection_payload(data):
         result.pop('capture_metadata', None)
     # Absent values stay absent so an older draft keeps its stored shape and the client's
     # acknowledged copy; a saved record never gains a key the technician did not set.
+    if result.get('dehumidifier_ppd') is None:
+        result.pop('dehumidifier_ppd', None)
     for room in result['rooms']:
-        if room.get('loss') is None:
-            room.pop('loss', None)
+        for key in ('loss', 'floor_sf', 'ceiling_height_ft', 'water_class'):
+            if room.get(key) is None:
+                room.pop(key, None)
     if not result.get('equipment_scans'):
         result.pop('equipment_scans', None)
     return result

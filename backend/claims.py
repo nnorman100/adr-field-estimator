@@ -7,8 +7,10 @@ from zoneinfo import ZoneInfo
 
 try:
     from .contracts import InspectionData, AIResult, AuditDocuments
+    from .sizing import equipment_sizing, letter_paragraph
 except ImportError:
     from contracts import InspectionData, AIResult, AuditDocuments
+    from sizing import equipment_sizing, letter_paragraph
 
 CENT = Decimal('0.01')
 RATES = {1: ('1.21', '2.78'), 2: ('1.52', '2.89'), 3: ('2.48', '8.39')}
@@ -287,6 +289,8 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
         for part in (company_name, company_address, company_phone, f'CSLB #{company_license}')
         if part.strip()
     )
+    # The sizing check is printed only when every water room has its confirmed inputs.
+    sizing = letter_paragraph(equipment_sizing(data))
     letter = '\n\n'.join(
         [
             letterhead,
@@ -296,6 +300,9 @@ def make_documents(data: InspectionData, photos, ai: AIResult, identity=None, cu
             'This scope describes proposed work; completion has not been recorded.',
             'The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.',
             '\n'.join(observations),
+        ]
+        + ([sizing] if sizing else [])
+        + [
             'Scope:\n' + '\n'.join(recommendations),
             '\n'.join(clauses),
             f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope.',
