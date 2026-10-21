@@ -1,0 +1,28 @@
+rooms: Kitchen
+Hallway ✎
++ Room
+printed cards: [
+  'Kitchen => DS1-RM-e029f8bf-Kitchen',
+  'Hallway => DS1-RM-e029f8bf-Hallway',
+  'Air mover => DS1-EQ-AM-AM-0007'
+]
+sheet status: 3 tags ready. Tap Print.
+jsQR is vendored function: undefined
+fetched decoder: /vendor/jsqr/1.4.0/jsQR.js 200
+status after filming AM tag: Air mover AM-0007 placed in Hallway · 11:10 AM.
+status after filming Kitchen tag: Current room: Kitchen.
+Kitchen chip pressed: true
+video srcObject after close: null
+tagCount: 1 unit tagged · 1 room
+placements: Hallway
+Air mover AM-0007
+scanned 11:10 AM
+Remove
+rooms after clash rename: Kitchen
+KITCHEN ✎
++ Room
+scan with clash: Rooms "Kitchen", "KITCHEN" have the same name. Give each room a distinct name, then try again; nothing was changed.
+jsQR after scanning: function
+placements after rename: Kitchen | Air mover AM-0007 | scanned 11:10 AM | Remove
+scans after refused scan: [["AM-0007","Hallway"]]
+make tags with clash: Rooms "Kitchen", "KITCHEN" have the same name. Give each room a distinct name, then try again; nothing was changed. | cards: 0
