@@ -68,8 +68,8 @@ CLAIM_LABELS = {
     'adjuster_phone': 'adjuster phone',
     'deductible': 'deductible',
 }
-# Identifiers must appear whole in their quote: no adjacent number may continue them.
-QUOTED_IDENTIFIERS = {'claim_number', 'policy_number', 'adjuster_phone'}
+# Claim and policy numbers must appear whole in their quote, never as part of a longer identifier.
+QUOTED_IDENTIFIERS = {'claim_number', 'policy_number'}
 MONTHS = {
     name: i + 1
     for i, names in enumerate(
@@ -190,30 +190,57 @@ def words(text):
     return re.findall(r'[^\W_]+', text.casefold())
 
 
-def identifier_part(token):
-    # A number or an upper-case code such as CLM next to an identifier continues it.
-    return bool(re.search(r'\d', token)) or (len(token) > 1 and token.isupper())
+# Words that may sit beside a spoken claim or policy number without being part of it.
+IDENTIFIER_BOUNDARIES = set(
+    'a an and at by claim for from id is it its my no num number of on or our policy s the their to '
+    'was with your'.split()
+)
 
 
-def in_quote(target, quote, whole=False, digits=False):
-    """Whether target equals a run of the quote's words, ignoring case, spacing and punctuation."""
-    original = re.findall(r'[^\W_]+', quote)
-    tokens = [t.casefold() for t in original]
+def in_quote(target, quote, kind=None):
+    """Whether target equals a run of the quote's words, ignoring case, spacing and punctuation.
+
+    kind 'identifier' needs the run to be a whole identifier: bounded by the quote's ends, sentence
+    punctuation or connecting words. kind 'phone' needs a whole run of numbers.
+    """
+    found = list(re.finditer(r'[^\W_]+', quote))
+    tokens = [m.group().casefold() for m in found]
+    gaps = (
+        [quote[: found[0].start()] if found else quote]
+        + [quote[a.end() : b.start()] for a, b in zip(found, found[1:])]
+        + [quote[found[-1].end() :] if found else '']
+    )
+
+    def edge(k, gap):
+        if kind == 'phone':
+            return not (0 <= k < len(tokens)) or not tokens[k].isdigit()
+        return (
+            not (0 <= k < len(tokens))
+            or tokens[k] in IDENTIFIER_BOUNDARIES
+            or bool(re.search(r'[,;:!?()]|\.(\s|$)', gap))
+        )
+
     for i in range(len(tokens)):
         run = ''
         for j in range(i, len(tokens)):
-            if digits and not tokens[j].isdigit():
+            if kind == 'phone' and not tokens[j].isdigit():
                 break
             run += tokens[j]
             if not target.startswith(run):
                 break
             if run != target:
                 continue
-            neighbours = original[i - 1 : i] + original[j + 1 : j + 2]
-            if not whole or not any(identifier_part(t) for t in neighbours):
+            if not kind or (edge(i - 1, gaps[i]) and edge(j + 1, gaps[j + 1])):
                 return True
             break
     return False
+
+
+def quoted_emails(quote):
+    return {
+        e.rstrip('.').casefold()
+        for e in re.findall(r'[^\s@<>()\[\]"\',;:]+@[^\s@<>()\[\]"\',;:]+', quote)
+    }
 
 
 def quoted_dates(quote):
@@ -241,7 +268,7 @@ def grounded(field, value, quote):
         return tuple(int(part) for part in value.split('-')) in quoted_dates(quote)
     if field == 'adjuster_phone':
         target = re.sub(r'\D', '', value)
-        return bool(target) and in_quote(target, quote, whole=True, digits=True)
+        return bool(target) and in_quote(target, quote, 'phone')
     if field == 'deductible':
         stated = amounts(value)
         rest = words(re.sub(AMOUNT, ' ', value))
@@ -250,8 +277,11 @@ def grounded(field, value, quote):
             and stated[0] in amounts(quote)
             and all(word in words(quote) for word in rest)
         )
+    if field == 'adjuster_email':
+        return value.casefold() in quoted_emails(quote)
     target = ''.join(words(value))
-    return bool(target) and in_quote(target, quote, whole=field in QUOTED_IDENTIFIERS)
+    kind = 'identifier' if field in QUOTED_IDENTIFIERS else None
+    return bool(target) and in_quote(target, quote, kind)
 
 
 def validate_claim(source, claim, suggestions):

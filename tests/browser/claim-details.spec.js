@@ -206,3 +206,49 @@ test('edits typed while a claim save is pending stay unsaved and get no Undo', a
   await expect(page.locator('#claimNumber')).toHaveValue('CLM-TYPED');
   await expect(label(page, 'claimNumber')).not.toContainText('From walkthrough');
 });
+
+test('a fill whose document refresh finishes after a manual save marks only its own values', async ({
+  page,
+}) => {
+  await newJob(page, 'estimator');
+  await page.locator('#address').fill('Synthetic claim property');
+  await page.locator('#yearBuilt').fill('1998');
+  await page.locator('#technicianNotes').fill(words);
+  await page.locator('#fillScopeProperty').click();
+  // Clear the filled claim values so a later fill changes only claim details.
+  for (const id of ['claimCarrier', 'claimNumber'])
+    await label(page, id).getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.locator('#claimNumber')).toHaveValue('');
+  await page.locator('#confirmFilledScope').click();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  await page.locator('.task-nav [data-task="property"]').click();
+  await openClaim(page);
+  // Hold the document refresh that follows the walkthrough's claim save.
+  let armed = false,
+    reached,
+    release;
+  const arrived = new Promise((resolve) => (reached = resolve));
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/api/jobs/*/claim', async (route) => {
+    if (route.request().method() === 'PUT' && armed === false) armed = true;
+    await route.continue();
+  });
+  await page.route('**/api/inspections/*', async (route) => {
+    if (route.request().method() !== 'GET' || armed !== true) return route.continue();
+    armed = 'held';
+    const response = await route.fetch();
+    reached();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.locator('#fillScopeProperty').click();
+  await arrived;
+  await page.locator('#claimCarrier').fill('Typed Mutual');
+  await page.locator('#saveClaim').click();
+  await expect(page.locator('#claimStatus')).toHaveText('Claim details saved.');
+  release();
+  await expect(label(page, 'claimNumber')).toContainText('From walkthrough · Undo');
+  await expect(page.locator('#claimCarrier')).toHaveValue('Typed Mutual');
+  await expect(label(page, 'claimCarrier')).not.toContainText('From walkthrough');
+});

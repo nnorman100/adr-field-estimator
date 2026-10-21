@@ -1240,7 +1240,8 @@ window.WorkspaceUI = (() => {
     if (view) showClaim(view);
     else $('claimStatus').textContent = 'Claim details can be added once this job saves online.';
   }
-  // Saves the values to the job, keeping fields typed meanwhile; false if the job or account changed.
+  // Saves the values to the job, keeping fields typed meanwhile. Returns the saved claim, or null if
+  // the job or account changed.
   async function putClaim(values) {
     const id = state.draft.inspection_id,
       key = context(),
@@ -1251,15 +1252,15 @@ window.WorkspaceUI = (() => {
       expected_version: claim.claim_version,
       claim: values,
     });
-    if (!current()) return false;
+    if (!current()) return null;
     showClaim(view, shown);
     // A change clears unsigned documents on the server; pick that up so stale ones cannot be signed.
     if (!state.signed && state.record?.audit) {
       const record = await jsonApi('/api/inspections/' + id);
-      if (!current()) return false;
+      if (!current()) return null;
       absorb(record);
     }
-    return true;
+    return view.claim;
   }
   async function saveClaim() {
     if (!$('claimForm').reportValidity()) return;
@@ -1281,16 +1282,19 @@ window.WorkspaceUI = (() => {
     const before = claimValues(),
       values = { ...before };
     for (const change of changes) values[change.field] = change.value;
-    if (!(await putClaim(values))) return [];
+    const saved = await putClaim(values);
+    if (!saved) return [];
     claimEdits = [
       ...claimEdits.filter((edit) => !changes.some((change) => change.field === edit.field)),
       ...changes.map((change) => ({
         field: change.field,
         before: before[change.field],
-        after: claim.claim[change.field],
+        after: saved[change.field],
         quote: change.source_quote,
       })),
-    ].filter((edit) => claim.claim[edit.field] === edit.after && claimSaved(edit.field));
+    ].filter(
+      (edit) => $(CLAIM_INPUTS[edit.field]).value.trim() === edit.after && claimSaved(edit.field),
+    );
     $('claimDetails').open = true;
     claimStatus('Claim details filled from the walkthrough. Review them.');
     renderClaimEdits();
