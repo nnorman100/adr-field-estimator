@@ -2,12 +2,29 @@
 
 import json
 import runpy
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
+from urllib.robotparser import RobotFileParser
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = 'alert-disaster-field-2026'
+SITE = 'https://alert-disaster-field-2026.web.app'
+
+
+def meta_robots(path):
+    values = []
+
+    class Meta(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'meta' and attrs.get('name') == 'robots':
+                values.append(attrs.get('content'))
+
+    Meta().feed((ROOT / path).read_text(encoding='utf8'))
+    return values
 
 
 def test_hosting_and_database_use_dedicated_project():
@@ -28,10 +45,9 @@ def test_hosting_and_database_use_dedicated_project():
         '/api/**',
         '/sign',
         '/app',
-        '/app/**',
     ]
     assert config['hosting']['rewrites'][1]['destination'] == '/sign.html'
-    assert [r['destination'] for r in config['hosting']['rewrites'][2:]] == ['/app.html'] * 2
+    assert config['hosting']['rewrites'][2]['destination'] == '/app.html'
     assert config['hosting']['redirects'] == [
         {'source': '/app.html', 'destination': '/app', 'type': 301}
     ]
@@ -44,26 +60,24 @@ def test_hosting_and_database_use_dedicated_project():
             if {'key': key, 'value': value} in h['headers']
         }
 
-    app_and_signing = {'/app', '/app/**', '/app.html', '/sign', '/sign.html'}
+    app_and_signing = {'/app', '/app.html', '/sign', '/sign.html'}
     assert {'/', '/index.html', '/sw.js', '/manifest.webmanifest'} | app_and_signing <= sources(
         'Cache-Control', 'no-store'
     )
     # Only the landing page is indexed, and only the landing page may register WebMCP tools.
     assert sources('X-Robots-Tag', 'noindex, nofollow') == app_and_signing
     assert sources('Permissions-Policy', 'tools=()') == app_and_signing
-    landing = (ROOT / 'public/index.html').read_text(encoding='utf8')
-    assert 'name="robots"' not in landing
-    assert 'name="robots" content="noindex, nofollow"' in (ROOT / 'public/app.html').read_text(
-        encoding='utf8'
-    )
-    assert (ROOT / 'public/robots.txt').read_text(encoding='utf8').splitlines()[-1] == (
-        'Sitemap: https://alert-disaster-field-2026.web.app/sitemap.xml'
-    )
-    sitemap = (ROOT / 'public/sitemap.xml').read_text(encoding='utf8')
-    assert (
-        sitemap.count('<loc>') == 1
-        and '<loc>https://alert-disaster-field-2026.web.app/</loc>' in sitemap
-    )
+    assert meta_robots('public/index.html') == []
+    assert meta_robots('public/app.html') == ['noindex, nofollow']
+    robots = RobotFileParser()
+    robots.parse((ROOT / 'public/robots.txt').read_text(encoding='utf8').splitlines())
+    assert robots.can_fetch('*', SITE + '/') and robots.can_fetch('*', SITE + '/app')
+    assert not robots.can_fetch('*', SITE + '/api/audit')
+    assert robots.site_maps() == [SITE + '/sitemap.xml']
+    urls = ET.parse(ROOT / 'public/sitemap.xml').getroot()
+    namespace = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
+    assert urls.tag == namespace + 'urlset'
+    assert [loc.text for loc in urls.iter(namespace + 'loc')] == [SITE + '/']
     manifest = json.loads((ROOT / 'public/manifest.webmanifest').read_text(encoding='utf8'))
     assert (manifest['id'], manifest['start_url'], manifest['scope']) == ('/', '/app', '/')
 

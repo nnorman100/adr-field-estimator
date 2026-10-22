@@ -366,9 +366,8 @@ def signing_page():
 
 
 @bm.app.get('/app')
-@bm.app.get('/app/{rest:path}')
-def app_shell(rest: str = ''):
-    # Mirrors the /app rewrites in firebase.json: the signed-in app shell, never cached or indexed.
+def app_shell():
+    # Mirrors the /app rewrite in firebase.json: the signed-in app shell, never cached or indexed.
     return Response(
         (ROOT / 'public/app.html').read_bytes(),
         media_type='text/html',

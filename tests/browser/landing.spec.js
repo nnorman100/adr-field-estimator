@@ -30,19 +30,16 @@ test('the front page is the static DryScope landing with a plain Log in link', a
   await page.setViewportSize({ width: 390, height: 844 });
   const response = await page.goto('/');
   expect(response.status()).toBe(200);
-  // Everything a reader or crawler needs is in the HTML source, before any script runs.
-  const source = await response.text();
-  for (const needle of [
-    '<h1 id="landingHeading">Water &amp; mold loss estimates, signed on site.</h1>',
-    '<title>DryScope · Water &amp; mold loss estimates signed on site</title>',
-    '<link rel="canonical" href="https://alert-disaster-field-2026.web.app/">',
-    '<meta property="og:title"',
-    '<script type="application/ld+json">',
-    'Does the AI set the prices?',
-    'superadmins, owners, estimators and office staff',
-  ])
-    expect(source).toContain(needle);
-  expect(source).not.toMatch(/name="robots"/);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    'href',
+    'https://alert-disaster-field-2026.web.app/',
+  );
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
+    'content',
+    'DryScope · Water & mold loss estimates signed on site',
+  );
+  await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+  expect(response.headers()['x-robots-tag']).toBeUndefined();
   await expect(page).toHaveTitle('DryScope · Water & mold loss estimates signed on site');
   await expect(page.locator('h1')).toHaveCount(1);
   await expect(page.locator('#landingHeading')).toHaveText(
@@ -75,7 +72,7 @@ test('the front page is the static DryScope landing with a plain Log in link', a
   await expect(page.locator('form:visible')).toHaveCount(0);
   await expect(page.locator('input:visible, button:visible')).toHaveCount(0);
   await expect(page.getByRole('link', { name: /request access|book a demo/i })).toHaveCount(0);
-  await expect(page.locator('#requestAccess')).toBeHidden();
+  await expect(page.locator('[toolname]')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText(/Alert Disaster|950983|661|Powered by/);
   await expect(page.locator('footer')).toHaveText('DryScope · Private field inspections');
   // The JSON-LD restates only what the page shows.
@@ -142,7 +139,23 @@ test('the app at /app is the sign-in screen, marked noindex, and keeps its own b
   expect(direct.status()).toBe(301);
   expect(direct.headers()['location']).toBe('/app');
   // A nested app path serves the same shell.
-  expect((await page.request.get('/app/anything')).status()).toBe(200);
+});
+
+test('the landing reads completely with JavaScript off, as a crawler first sees it', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: 'block' });
+  const page = await context.newPage();
+  await page.goto('/');
+  await expect(page.locator('#landingHeading')).toHaveText(
+    'Water & mold loss estimates, signed on site.',
+  );
+  await expect(page.locator('#accessNote')).toContainText(
+    'superadmins, owners, estimators and office staff',
+  );
+  await expect(page.locator('.landing-faq > li')).toHaveCount(7);
+  await expect(page.getByRole('link', { name: 'Log in', exact: true })).toHaveCount(3);
+  await context.close();
 });
 
 test('a device holding a Firebase session is handed from / to /app', async ({ page }) => {
@@ -198,78 +211,6 @@ test('a device holding a Firebase session is handed from / to /app', async ({ pa
   await expect(page.locator('#landingHeading')).toBeVisible();
 });
 
-test('request-access links and form appear only with a mailto or https address', async ({
-  browser,
-}) => {
-  for (const [value, shown] of [
-    ['mailto:access@example.invalid', true],
-    ['https://example.invalid/demo', true],
-    ['javascript:alert(1)', false],
-  ]) {
-    const context = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block' });
-    const page = await context.newPage();
-    const problems = watchConsole(page);
-    await page.route(
-      (url) => url.pathname === '/landing.js',
-      async (route) => {
-        const body = await (await route.fetch()).text();
-        route.fulfill({
-          contentType: 'text/javascript',
-          body: body.replace(
-            "const REQUEST_ACCESS_URL = '';",
-            `const REQUEST_ACCESS_URL = '${value}';`,
-          ),
-        });
-      },
-    );
-    await page.goto('/');
-    await expect(page.locator('#landingHeading')).toBeVisible();
-    const links = page.getByRole('link', { name: /request access|book a demo/i });
-    const form = page.locator('#requestAccessForm');
-    if (!shown) {
-      await expect(links).toHaveCount(0);
-      await expect(form).toBeHidden();
-      expect(problems).toEqual([]);
-      await context.close();
-      continue;
-    }
-    await expect(links).toHaveCount(2);
-    await expect(form).toBeVisible();
-    await expect(form).toHaveAttribute('toolname', 'request_access');
-    expect(await form.evaluate((el) => el.hasAttribute('toolautosubmit'))).toBe(false);
-    await page.getByRole('link', { name: 'Request access' }).first().click();
-    await expect(page).toHaveURL(/#requestAccess$/);
-    await form.locator('[name=company]').fill('Synthetic Restoration');
-    await form.locator('[name=name]').fill('Sam Synthetic');
-    await form.locator('[name=email]').fill('sam@example.invalid');
-    if (value.startsWith('https://')) {
-      await expect(form).toHaveAttribute('action', value);
-      // A plain GET to the configured page: no DryScope endpoint is involved.
-      await page.route(value + '*', (route) =>
-        route.fulfill({ contentType: 'text/html', body: '<title>demo</title>' }),
-      );
-      await page.locator('#requestAccessSubmit').click();
-      await expect(page).toHaveURL(
-        value +
-          '?company=Synthetic+Restoration&name=Sam+Synthetic&email=sam%40example.invalid&message=',
-      );
-    } else {
-      // The mail app gets the request (tests/test_landing.js checks the mailto: URL itself); the
-      // page stays put and nothing is sent to DryScope.
-      const requests = [];
-      page.on('request', (request) => requests.push(request.url()));
-      await page.locator('#requestAccessSubmit').click();
-      await page.waitForTimeout(300);
-      await expect(page).toHaveURL(/\/#requestAccess$/);
-      expect(requests.filter((url) => url.includes('/api/') || url.includes('?company='))).toEqual(
-        [],
-      );
-    }
-    expect(problems).toEqual([]);
-    await context.close();
-  }
-});
-
 test('WebMCP: read-only tools register from the page text where a model context exists', async ({
   page,
 }) => {
@@ -291,22 +232,17 @@ test('WebMCP: read-only tools register from the page text where a model context 
         params: Object.keys(tool.inputSchema.properties),
         result: await tool.execute({}),
       };
-    results.faqMatch = await window.__tools
-      .find((tool) => tool.name === 'dryscope_faq')
-      .execute({ question: 'which losses' });
     return results;
   });
   expect(Object.keys(summary).sort()).toEqual([
     'dryscope_access',
     'dryscope_faq',
     'dryscope_overview',
-    'faqMatch',
   ]);
   for (const name of ['dryscope_overview', 'dryscope_faq', 'dryscope_access'])
     expect(summary[name].readOnly).toBe(true);
-  expect(summary.dryscope_overview.params).toEqual([]);
-  expect(summary.dryscope_access.params).toEqual([]);
-  expect(summary.dryscope_faq.params).toEqual(['question']);
+  for (const name of ['dryscope_overview', 'dryscope_faq', 'dryscope_access'])
+    expect(summary[name].params).toEqual([]);
   const origin = new URL(page.url()).origin;
   expect(summary.dryscope_overview.result.headline).toBe(
     await page.locator('#landingHeading').textContent(),
@@ -314,24 +250,19 @@ test('WebMCP: read-only tools register from the page text where a model context 
   expect(summary.dryscope_overview.result.features.map((f) => f.title)).toEqual(
     await page.locator('.landing-features h3').allTextContents(),
   );
-  expect(summary.dryscope_faq.result.faq.length).toBe(
-    await page.locator('.landing-faq > li').count(),
+  expect(summary.dryscope_faq.result.faq).toEqual(
+    await page.locator('.landing-faq > li').evaluateAll((items) =>
+      items.map((item) => ({
+        title: item.querySelector('h3').textContent,
+        detail: item.querySelector('p').textContent,
+      })),
+    ),
   );
-  expect(summary.faqMatch.faq.map((entry) => entry.title)).toEqual([
-    'Which losses does it estimate?',
-  ]);
   expect(summary.dryscope_access.result).toEqual({
     how: await page.locator('#accessNote').evaluate((el) => el.textContent.trim()),
     login_url: origin + '/app',
-    request_access_url: null,
-    request_access_form: null,
   });
-  // Nothing about credentials is exposed, and the only declarative tool is the hidden request form.
-  expect(JSON.stringify(Object.values(summary).map((s) => s.params))).not.toMatch(
-    /password|credential/i,
-  );
-  await expect(page.locator('[toolname]')).toHaveCount(1);
-  await expect(page.locator('[toolname]')).toHaveAttribute('id', 'requestAccessForm');
+  await expect(page.locator('[toolname]')).toHaveCount(0);
   expect(problems).toEqual([]);
 });
 
@@ -349,12 +280,32 @@ test('the homeowner signing page keeps its route, noindex and no tools', async (
 test('crawling files: robots.txt, the one-page sitemap and the 404 page', async ({ page }) => {
   const robots = await page.request.get('/robots.txt');
   expect(robots.status()).toBe(200);
-  const rules = await robots.text();
-  expect(rules).toContain('Sitemap: https://alert-disaster-field-2026.web.app/sitemap.xml');
-  expect(rules).not.toMatch(/Disallow: \/$/m);
+  const directives = (await robots.text())
+    .split('\n')
+    .map((line) => line.replace(/#.*/, '').trim())
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf(':');
+      return [line.slice(0, at).trim().toLowerCase(), line.slice(at + 1).trim()];
+    });
+  expect(directives.filter(([key]) => key === 'sitemap').map(([, value]) => value)).toEqual([
+    'https://alert-disaster-field-2026.web.app/sitemap.xml',
+  ]);
+  const disallowed = directives.filter(([key]) => key === 'disallow').map(([, value]) => value);
+  for (const path of ['/', '/app'])
+    expect(disallowed.some((rule) => path.startsWith(rule))).toBe(false);
   const sitemap = await page.request.get('/sitemap.xml');
   expect(sitemap.status()).toBe(200);
-  const locations = [...(await sitemap.text()).matchAll(/<loc>(.*?)<\/loc>/g)].map((m) => m[1]);
+  await page.goto('/');
+  const locations = await page.evaluate(
+    (xml) => {
+      const doc = new DOMParser().parseFromString(xml, 'application/xml');
+      if (doc.querySelector('parsererror')) return null;
+      const ns = 'http://www.sitemaps.org/schemas/sitemap/0.9';
+      return Array.from(doc.getElementsByTagNameNS(ns, 'loc'), (loc) => loc.textContent.trim());
+    },
+    await sitemap.text(),
+  );
   expect(locations).toEqual(['https://alert-disaster-field-2026.web.app/']);
   const missing = await page.goto('/no-such-page');
   expect(missing.status()).toBe(404);
