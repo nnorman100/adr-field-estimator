@@ -1,0 +1,3 @@
+photo: 8000x6000 JPEG, 7.60 MB (cap 8 MB)
+model_image (draft decode, this change): 60 photos in 9.7s (162 ms/photo); audit deadline 55s
+full decode (previous prep): 60 photos in 34.2s (570 ms/photo); audit deadline 55s

@@ -1,0 +1,5 @@
+upload #30: HTTP 200, job now has 30 photos
+upload #31: HTTP 200, job now has 31 photos
+upload #60: HTTP 200, job now has 60 photos
+upload #61: HTTP 400, detail: "An inspection can contain at most 60 photos."
+device: 61st photo refused with "An inspection can contain at most 60 photos."
