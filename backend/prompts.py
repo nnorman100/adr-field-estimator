@@ -63,11 +63,17 @@ def company_instructions(template, identity):
     )
 
 
+def prompt_inspection(data):
+    """The inspection as the models see it. Equipment tag scans record where equipment stands and
+    are stored and shown only; wiring them into guidance or documents is separate work."""
+    return {key: value for key, value in data.items() if key != 'equipment_scans'}
+
+
 def live_prompt(data, identity=None):
     return (
         company_instructions(LIVE_INSTRUCTIONS, identity)
         + '\nCurrent inspection context (JSON):\n'
-        + json.dumps(data)
+        + json.dumps(prompt_inspection(data))
     )
 
 
@@ -82,7 +88,13 @@ def audit_prompt(data, photos, priced_scope, identity=None):
         + f'\nApp age rule: the home was built in {year}, so the app {rule}'
         + ' lead/asbestos testing before demolition.'
         + '\nInspection evidence (JSON):\n'
-        + json.dumps({'inspection': data, 'photo_log': photo_log, 'priced_scope': priced_scope})
+        + json.dumps(
+            {
+                'inspection': prompt_inspection(data),
+                'photo_log': photo_log,
+                'priced_scope': priced_scope,
+            }
+        )
     )
 
 

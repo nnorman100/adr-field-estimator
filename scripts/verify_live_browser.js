@@ -328,12 +328,14 @@ async function main(args = process.argv.slice(2)) {
           'workspaces.js',
           'psychrometrics.js',
           'drying.js',
+          'tags.js',
           'core.js',
           'documents.js',
           'sign.js',
           'app.css',
           'audio-worklet.js',
           'sw.js',
+          'vendor/jsqr/1.4.0/jsQR.js',
         ].includes(file) ||
           /^vendor\/firebase\/[^/]+\/firebase-[a-z-]+\.js$/.test(file))
       ) {

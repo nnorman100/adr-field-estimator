@@ -26,7 +26,7 @@ const unstamp = (text) =>
   );
   assert.deepEqual(
     [...shell.matchAll(/\.(?:css|js)\?v=([0-9A-Za-z-]+)/g)].map((m) => m[1]),
-    Array(5).fill(marker),
+    Array(6).fill(marker),
     'Deployed asset URLs carry another marker',
   );
   // The homeowner signing page: its own rewrite, never cached, same files as the commit.
@@ -75,6 +75,7 @@ const unstamp = (text) =>
     'workspaces.js',
     'psychrometrics.js',
     'drying.js',
+    'tags.js',
     'app.css',
     'core.js',
     'documents.js',

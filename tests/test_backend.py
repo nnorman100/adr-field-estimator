@@ -13,7 +13,7 @@ MB = bm.MB
 
 
 def data(**changes):
-    return InspectionData(
+    payload = InspectionData(
         address='Synthetic test property',
         year_built=1960,
         rooms=[{'name': 'Bathroom', 'category': 1, 'finished_sf': 10}],
@@ -23,6 +23,10 @@ def data(**changes):
         technician_notes='Localized clean water damage. Proposed drying and drywall removal.',
         **changes,
     ).model_dump(mode='json')
+    # The app sends the tag-scan list only once a tag was scanned, as the server stores it.
+    if not payload['equipment_scans']:
+        payload.pop('equipment_scans')
+    return payload
 
 
 @pytest.fixture

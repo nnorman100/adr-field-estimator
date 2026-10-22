@@ -62,8 +62,10 @@ try:
         VoiceNoteUpload,
         TranscriptionResult,
         ReadingUpload,
+        QrTagRequest,
     )
     from . import signing_links
+    from . import tags as qr_tags
     from .claims import make_documents, price_scope, proposal_date
     from .prompts import (
         live_prompt,
@@ -102,8 +104,10 @@ except ImportError:
         VoiceNoteUpload,
         TranscriptionResult,
         ReadingUpload,
+        QrTagRequest,
     )
     import signing_links
+    import tags as qr_tags
     from claims import make_documents, price_scope, proposal_date
     from prompts import (
         live_prompt,
@@ -745,6 +749,8 @@ def inspection_payload(data):
     for room in result['rooms']:
         if room.get('loss') is None:
             room.pop('loss', None)
+    if not result.get('equipment_scans'):
+        result.pop('equipment_scans', None)
     return result
 
 
@@ -1256,6 +1262,20 @@ async def revoke_signing_link(
 ):
     await stored(store.quota, staff['uid'], 'link', 10)
     return dict(status=await stored(signing_links.revoke, store, staff['uid'], inspection_id))
+
+
+@app.post('/api/qr-tags')
+async def qr_tag_sheet(
+    req: QrTagRequest, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    """QR images for a printed sheet of room and equipment tags. Rendering is a server calculation
+    over the tag codes alone; no inspection is read or changed."""
+    await stored(store.quota, staff['uid'], 'tags', 30)
+    try:
+        tags = await run_in_threadpool(qr_tags.qr_tags, req.codes)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    return {'tags': tags}
 
 
 @app.get('/api/sign')

@@ -17,6 +17,7 @@ const APP_SELECTS = [
   'readingZone',
   'readingUnit',
   'readingPattern',
+  'equipmentTagKind',
 ];
 
 async function observeCsp(page) {
