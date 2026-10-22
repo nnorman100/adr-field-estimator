@@ -152,7 +152,18 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     if (m.type() === 'error' && /Content Security Policy|Refused to/.test(m.text()))
       errors.push(m.text());
   });
-  await page.goto(base);
+  // The static landing answers at the site root: content, a Log in link to the login page, and no errors.
+  const landingPage = await page.goto(base);
+  assert.equal(landingPage.status(), 200, 'The landing page is not served at /');
+  assert(await page.locator('#landingHeading').isVisible(), 'Landing heading is missing at /');
+  assert.equal(
+    await page.locator('#headerLogin').getAttribute('href'),
+    '/app',
+    'Landing Log in link does not open the login page',
+  );
+  await page.waitForTimeout(1000);
+  assert.deepEqual(errors, [], 'Landing page errors or CSP violations: ' + errors.join(';'));
+  await page.goto(base + '/app');
   await page.waitForFunction(
     () =>
       typeof auth !== 'undefined' &&
