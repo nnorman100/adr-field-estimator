@@ -1671,7 +1671,8 @@ async def live_walkthrough(socket: WebSocket):
                     client.aio.live.connect(
                         model=LIVE_MODEL,
                         config=live_config(
-                            live_prompt(record['data'], identity, claim, record['photos']), LIVE_VOICE
+                            live_prompt(record['data'], identity, claim, record['photos']),
+                            LIVE_VOICE,
                         ),
                     )
                 )
