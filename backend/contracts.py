@@ -5,6 +5,11 @@ from datetime import date, datetime, timedelta
 from typing import Literal, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
+try:
+    from .shot_list import known_shot
+except ImportError:
+    from shot_list import known_shot
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -32,6 +37,15 @@ class Room(StrictModel):
     wet_floor_sf: float | None = Field(default=None, ge=0, le=100000)
     ceiling_height_ft: float | None = Field(default=None, gt=0, le=60)
     water_class: Literal[1, 2, 3, 4] | None = None
+    # Technician answers that add shots to the room's photo shot list (backend/shot_list.py).
+    # Absent until set, so rooms saved before them keep their stored shape.
+    source_of_loss: bool | None = None
+    contents_present: bool | None = None
+    equipment_placed: bool | None = None
+    # How many walls or floors are affected and how many materials are wet: the shot list needs one
+    # tagged photo of each. Absent until the technician sets them, like the answers above.
+    affected_surfaces: int | None = Field(default=None, ge=0, le=50)
+    wet_materials: int | None = Field(default=None, ge=0, le=50)
 
 
 EquipmentKind = Literal['air_mover', 'dehumidifier', 'air_scrubber']
@@ -225,6 +239,13 @@ class QrTagRequest(StrictModel):
     codes: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
         min_length=1, max_length=60
     )
+
+
+class PhotoShotUpdate(RevisionRequest):
+    """Tags an uploaded photo of an unsigned draft with a shot type, or clears the tag (null).
+    Photos upload untagged and are tagged here, so an older backend still accepts every upload."""
+
+    shot: Annotated[str, AfterValidator(known_shot)] | None
 
 
 class VoiceNoteUpload(StrictModel):

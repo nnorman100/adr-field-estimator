@@ -238,8 +238,8 @@ class InspectionStore(JobStore):
             return record
         if upload['room'] not in {room['name'] for room in record['data']['rooms']}:
             raise ValueError('Choose a room from this inspection before uploading evidence.')
-        if len(record['photos']) >= 30:
-            raise ValueError('An inspection can contain at most 30 photos.')
+        if len(record['photos']) >= 60:
+            raise ValueError('An inspection can contain at most 60 photos.')
         if record['revision'] != upload['expected_revision'] or record['status'] == 'signed':
             raise Conflict('Restore the latest draft before adding a photo.')
         with Image.open(io.BytesIO(raw)) as image:
@@ -260,8 +260,8 @@ class InspectionStore(JobStore):
         blob.upload_from_string(raw, content_type=mime, if_generation_match=0)
 
         def append(current):
-            if len(current['photos']) >= 30:
-                raise ValueError('An inspection can contain at most 30 photos.')
+            if len(current['photos']) >= 60:
+                raise ValueError('An inspection can contain at most 60 photos.')
             current['photos'].append(photo)
             current.update(revision=current['revision'] + 1, audit=None, status='draft')
             return current
@@ -341,6 +341,26 @@ class InspectionStore(JobStore):
             return log
 
         return self._atomic(remove)
+
+    def tag_photo_shot(self, uid, inspection_id, revision, photo_id, shot):
+        """Tags one uploaded photo with a shot type from the shot list, or clears the tag (None).
+        Like a room move, only the tag changes; it invalidates the audit because the audit reads
+        the tags."""
+
+        def update(record):
+            photo = next((p for p in record['photos'] if p['id'] == photo_id), None)
+            if photo is None:
+                raise LookupError('Photo not found.')
+            if photo.get('shot') != shot:
+                # Untagged photos keep no key, matching photos saved before the shot list existed.
+                if shot:
+                    photo['shot'] = shot
+                else:
+                    photo.pop('shot', None)
+                record.update(revision=record['revision'] + 1, audit=None, status='draft')
+            return record
+
+        return self._change(uid, inspection_id, revision, update, 'photos')
 
     def append_transcript(self, uid, inspection_id, marker, block):
         """Appends a transcribed offline voice note once; a retried note whose marker is already

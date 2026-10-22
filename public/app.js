@@ -14,6 +14,11 @@ const {
   roomKey,
   roomScans,
   roomLoss,
+  SHOT_LIST,
+  ROOM_SHOT_FLAGS,
+  ROOM_SHOT_COUNTS,
+  shotLabel,
+  roomShotStatus,
   applyScopeChanges,
   defaultPhotoRename,
   ingestTranscript,
@@ -611,15 +616,25 @@ function absorb(record) {
       state.draft.photos.push({ ...remote, uploaded: true });
       continue;
     }
-    // A room chosen here keeps showing until the server stores it.
-    const pending = photo.pending_room;
+    // A room or shot tag chosen here keeps showing until the server stores it.
+    const pending = photo.pending_room,
+      pendingShot = photo.pending_shot;
     Object.assign(photo, remote, { uploaded: true });
-    if (pending === undefined) continue;
-    if (remote.room === pending && !roomWrites.has(photo.id)) delete photo.pending_room;
-    else photo.room = pending;
+    if (!remote.shot) delete photo.shot;
+    if (pending !== undefined) {
+      if (remote.room === pending && !roomWrites.has(photo.id)) delete photo.pending_room;
+      else photo.room = pending;
+    }
+    if (pendingShot !== undefined) {
+      if ((remote.shot || null) === pendingShot && !roomWrites.has(photo.id))
+        delete photo.pending_shot;
+      else if (pendingShot) photo.shot = pendingShot;
+      else delete photo.shot;
+    }
   }
   renderPhotos();
   renderSaveStatus();
+  notifyLiveShots();
 }
 function invalidate() {
   clearScopePreview();
@@ -638,6 +653,7 @@ function invalidate() {
 }
 function clearDisplayedInspection() {
   state.scopeEdits = null;
+  state.shotPickerPhoto = null;
   renderWalkthroughEdits();
   stopHomeownerLink();
   roomRemoval = null;
@@ -728,9 +744,9 @@ function changed(resetConfirmation = true) {
     1500,
   );
 }
-// A photo is synced once its bytes and its locally chosen room are both stored.
+// A photo is synced once its bytes and its locally chosen room and shot tag are all stored.
 function photoUnsynced(photo) {
-  return !photo.uploaded || photo.pending_room !== undefined;
+  return !photo.uploaded || photo.pending_room !== undefined || photo.pending_shot !== undefined;
 }
 
 // Concise status for the one-line phone header; the title keeps the revision or authorization ID.
@@ -882,6 +898,23 @@ async function doSync() {
         if (photo.pending_room !== undefined) absorb(await writeRoom(photo, move));
       }
     }
+    // Photos upload untagged; their shot tag follows, so an older backend still takes the upload.
+    for (const photo of state.draft.photos.filter(
+      (p) => p.uploaded && p.pending_shot !== undefined,
+    )) {
+      const tag = () =>
+        jsonApi('/api/inspections/' + id + '/photos/' + photo.id + '/shot', 'PUT', {
+          expected_revision: state.record.revision,
+          shot: photo.pending_shot,
+        });
+      try {
+        absorb(await writeRoom(photo, tag));
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        await reconcile();
+        if (photo.pending_shot !== undefined) absorb(await writeRoom(photo, tag));
+      }
+    }
     renderPhotos();
     for (const photo of state.draft.photos.filter((p) => p.uploaded && p.ocr_status === 'pending'))
       startOCR(photo);
@@ -1008,11 +1041,18 @@ async function drainQueue() {
             room: photo.pending_room,
           });
         delete photo.pending_room;
-        Object.assign(
-          photo,
-          record.photos.find((p) => p.id === photo.id),
-          { uploaded: true },
-        );
+        if (
+          photo.pending_shot !== undefined &&
+          (record.photos.find((p) => p.id === photo.id).shot || null) !== photo.pending_shot
+        )
+          record = await request(path + '/photos/' + photo.id + '/shot', 'PUT', {
+            expected_revision: record.revision,
+            shot: photo.pending_shot,
+          });
+        delete photo.pending_shot;
+        const saved = record.photos.find((p) => p.id === photo.id);
+        Object.assign(photo, saved, { uploaded: true });
+        if (!saved.shot) delete photo.shot;
         row.record = record;
         await saveRow(row);
         if (photo.ocr_status === 'pending') {
@@ -1671,7 +1711,10 @@ function renderRooms() {
       if (key === 'category') grid.append(pills);
     }
     moreBody.append(sizing);
-    card.append(grid, more, node('div', undefined, 'room-photos photo-gallery'));
+    // The shot list waits in a drawer on Check Scope; its summary counts the missing shots.
+    const shotDrawer = node('details', undefined, 'shot-drawer');
+    shotDrawer.append(node('summary'), node('div', undefined, 'room-shots'));
+    card.append(grid, more, shotDrawer, node('div', undefined, 'room-photos photo-gallery'));
     const input = node('input');
     input.type = 'checkbox';
     input.checked = room.custom_cabinetry;
@@ -1935,6 +1978,7 @@ function renderWalkRoomChips() {
   add.className = 'room-chip room-chip-add';
   add.disabled = !editable;
   list.append(add);
+  renderShotLists();
 }
 function beginRoomRename(index) {
   const room = state.draft?.data.rooms[index];
@@ -2002,6 +2046,177 @@ function reassignPhoto(photo, room) {
   changed();
   renderPhotos();
 }
+function tagPhoto(photo, shot) {
+  if (!canEditDraft('photos') || !state.draft.photos.includes(photo)) return;
+  if (shot) photo.shot = shot;
+  else delete photo.shot;
+  photo.pending_shot = shot || null;
+  if (state.shotPickerPhoto === photo.id) state.shotPickerPhoto = null;
+  // A tag is evidence labelling, not scope, so the scope confirmation stands.
+  changed(false);
+  renderPhotos();
+}
+// The room's shot list: its answers and counts, then each required shot as tagged or missing.
+function shotChecklist(room) {
+  const wrap = node('div', undefined, 'shot-list'),
+    flags = node('fieldset', undefined, 'loss-pills shot-flags'),
+    flagList = node('div', undefined, 'loss-pill-list');
+  wrap.shotRoom = room;
+  flags.append(node('legend', 'Photo shot list'), flagList);
+  for (const [key, text] of Object.entries(ROOM_SHOT_FLAGS)) {
+    const pill = node('label', undefined, 'loss-pill'),
+      box = node('input');
+    box.type = 'checkbox';
+    box.dataset.shotFlag = key;
+    box.addEventListener('change', () => {
+      room[key] = box.checked;
+      // Only the shot list reads these answers; pricing and the scope confirmation are unchanged.
+      changed(false);
+      renderShotLists();
+    });
+    pill.append(box, node('span', text));
+    flagList.append(pill);
+  }
+  // How many walls or floors are affected and materials are wet; empty until the technician says.
+  const counts = node('div', undefined, 'shot-counts');
+  for (const [key, text] of Object.entries(ROOM_SHOT_COUNTS)) {
+    const field = node('label', text),
+      input = node('input');
+    input.type = 'number';
+    input.min = 0;
+    input.max = 50;
+    input.step = 1;
+    input.inputMode = 'numeric';
+    input.placeholder = 'Not set';
+    input.dataset.shotCount = key;
+    input.addEventListener('input', () => {
+      const value = input.value.trim() === '' ? null : Number(input.value);
+      if (input.validity.badInput) return;
+      if (value === null) delete room[key];
+      else if (Number.isInteger(value) && value >= 0 && value <= 50) room[key] = value;
+      else return;
+      changed(false);
+      renderShotLists();
+    });
+    for (const type of ['change', 'blur'])
+      input.addEventListener(type, () => {
+        input.value = room[key] ?? '';
+        renderShotLists();
+      });
+    field.append(input);
+    counts.append(field);
+  }
+  wrap.append(flags, counts, node('div', undefined, 'shot-status'));
+  return wrap;
+}
+function updateShotChecklist(wrap) {
+  const room = wrap.shotRoom,
+    editable = canEditDraft('scope'),
+    status = roomShotStatus(room, state.draft.photos),
+    list = node('ul', undefined, 'shot-items'),
+    hints = [];
+  wrap.querySelectorAll('[data-shot-flag]').forEach((box) => {
+    box.checked = !!room[box.dataset.shotFlag];
+    box.disabled = !editable;
+  });
+  wrap.querySelectorAll('[data-shot-count]').forEach((input) => {
+    if (input !== document.activeElement) input.value = room[input.dataset.shotCount] ?? '';
+    input.disabled = !editable;
+  });
+  for (const shot of status.required) {
+    const done = shot.tagged >= shot.needed,
+      item = node('li', undefined, done ? 'shot-done' : 'shot-missing'),
+      mark =
+        shot.needed > 1
+          ? (done ? '✓ ' : '') + Math.min(shot.tagged, shot.needed) + ' of ' + shot.needed
+          : done
+            ? '✓ Tagged'
+            : 'Missing';
+    item.dataset.shot = shot.id;
+    item.append(node('span', mark, 'shot-mark'), node('span', shot.label));
+    list.append(item);
+  }
+  if (status.unsetCounts.length)
+    hints.push(
+      node(
+        'p',
+        'Set how many ' +
+          status.unsetCounts.map((key) => ROOM_SHOT_COUNTS[key].toLowerCase()).join(' and ') +
+          ' so each one gets its photo.',
+        'hint shot-unset',
+      ),
+    );
+  if (status.untagged)
+    hints.push(
+      node(
+        'p',
+        status.untagged +
+          (status.untagged === 1 ? ' untagged photo' : ' untagged photos') +
+          ' · choose a shot type on each photo so it counts.',
+        'hint',
+      ),
+    );
+  wrap.querySelector('.shot-status').replaceChildren(list, ...hints);
+  return status;
+}
+function mountShotChecklist(holder, room) {
+  let wrap = holder.firstElementChild;
+  if (wrap?.shotRoom !== room) holder.replaceChildren((wrap = shotChecklist(room)));
+  return updateShotChecklist(wrap);
+}
+function renderShotLists() {
+  const room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
+  if (room) mountShotChecklist($('shotList'), room);
+  else $('shotList').replaceChildren();
+  document.querySelectorAll('#rooms .room').forEach((card, index) => {
+    const target = card.querySelector('.room-shots'),
+      saved = state.draft?.data.rooms[index];
+    if (!target || !saved) return;
+    const status = mountShotChecklist(target, saved);
+    card.querySelector('.shot-drawer > summary').textContent =
+      'Photo shots · ' +
+      (status.missingPhotos
+        ? status.missingPhotos + ' missing'
+        : status.unsetCounts.length
+          ? 'counts not set'
+          : 'all tagged');
+  });
+  renderShotPicker();
+}
+// Right after a capture, one tap tags the new photo; shots the room still needs come first.
+function renderShotPicker() {
+  const picker = $('shotPicker'),
+    box = $('shotPickerChoices'),
+    photo = state.draft?.photos.find((p) => p.id === state.shotPickerPhoto);
+  picker.hidden = !photo || !!photo.shot || !canEditDraft('photos');
+  if (picker.hidden) return;
+  const room = state.draft.data.rooms.find((r) => roomKey(r.name) === roomKey(photo.room)),
+    missing = new Set(
+      room ? roomShotStatus(room, state.draft.photos).missing.map((s) => s.id) : [],
+    ),
+    choices = [...SHOT_LIST].sort((a, b) => missing.has(b.id) - missing.has(a.id));
+  $('shotPickerLabel').textContent = 'Tag this ' + photo.room + ' photo';
+  if (box.dataset.photo !== photo.id) {
+    box.dataset.photo = photo.id;
+    box.replaceChildren(
+      ...SHOT_LIST.map((shot) => {
+        const choice = button(shot.label, () =>
+          tagPhoto(
+            state.draft.photos.find((p) => p.id === photo.id),
+            shot.id,
+          ),
+        );
+        choice.dataset.shot = shot.id;
+        return choice;
+      }),
+    );
+  }
+  const ordered = choices.map((shot) => box.querySelector('[data-shot="' + shot.id + '"]'));
+  ordered.forEach((choice, index) => {
+    choice.className = 'shot-choice' + (missing.has(choice.dataset.shot) ? ' shot-needed' : '');
+    if (box.children[index] !== choice) box.insertBefore(choice, box.children[index]);
+  });
+}
 function photoUrl(photo) {
   return photo.data_url || state.photoUrls.get(photo.id) || '';
 }
@@ -2035,8 +2250,20 @@ function photoCard(p) {
     }
     select.value = p.room;
     select.addEventListener('change', () => reassignPhoto(p, select.value));
-    caption.append(select);
-  }
+    const shot = node('select', undefined, 'photo-shot'),
+      untagged = node('option', 'Untagged');
+    shot.setAttribute('aria-label', 'Shot type for this photo');
+    untagged.value = '';
+    shot.append(untagged);
+    for (const { id, label } of SHOT_LIST) {
+      const option = node('option', label);
+      option.value = id;
+      shot.append(option);
+    }
+    shot.value = p.shot || '';
+    shot.addEventListener('change', () => tagPhoto(p, shot.value));
+    caption.append(select, shot);
+  } else caption.append(node('div', p.shot ? shotLabel(p.shot) : 'Untagged', 'photo-shot-label'));
   figure.append(caption);
   return figure;
 }
@@ -2051,6 +2278,7 @@ function renderRoomPhotos() {
     if (!photos.length)
       strip.append(node('p', 'No photo of this room yet. Capture one on Walk & Photo.', 'hint'));
   });
+  renderShotLists();
 }
 function renderPhotos() {
   const photos = state.draft?.photos || [];
@@ -2073,7 +2301,7 @@ function renderPhotos() {
 async function addPhoto(blob) {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open a draft before capturing evidence.');
-  if (state.draft.photos.length >= 30) throw Error('An inspection can contain at most 30 photos.');
+  if (state.draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
   if (blob.size > 8 * 1024 * 1024)
     throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))
@@ -2101,6 +2329,7 @@ async function addPhoto(blob) {
     ocr_status: 'pending',
     uploaded: false,
   });
+  state.shotPickerPhoto = state.draft.photos.at(-1).id;
   changed();
   renderPhotos();
   await syncDraft();
@@ -3026,6 +3255,8 @@ function captureGap(message) {
   $('transcriptStatus').textContent = message;
 }
 const LIVE_TOKEN_REFRESH_MS = 600000;
+// Tags often come in bursts; one shot status update follows the last of them.
+const LIVE_SHOT_UPDATE_MS = 2500;
 async function refreshLiveToken(socket, uid) {
   // The relay re-verifies the newest token, so a session outlives the hour-long ID token without reconnecting.
   // A failed refresh is not fatal: at expiry the relay closes and the normal reconnect path recovers.
@@ -3034,6 +3265,30 @@ async function refreshLiveToken(socket, uid) {
     if (state.socket === socket && state.user?.uid === uid && socket.readyState === WebSocket.OPEN)
       socket.send(JSON.stringify({ type: 'refresh', token }));
   } catch {}
+}
+// What Live's photo shot status is built from: the server's room answers, counts and photo tags.
+function shotSignature(record) {
+  return stable([
+    record.data.rooms.map((room) => [
+      room.name,
+      ...Object.keys(ROOM_SHOT_FLAGS).map((key) => !!room[key]),
+      ...Object.keys(ROOM_SHOT_COUNTS).map((key) => room[key] ?? null),
+    ]),
+    record.photos.filter((photo) => photo.shot).map((photo) => [photo.room, photo.shot]),
+  ]);
+}
+// After the server stores a tag or room answer, the relay re-reads the saved record and gives
+// Live the new shot status, so Live never hears of a tag the server does not hold.
+function notifyLiveShots() {
+  const socket = state.socket;
+  if (!state.shotUpdates || !state.liveReady || !socket || !state.record) return;
+  if (shotSignature(state.record) === state.liveShotSignature) return;
+  clearTimeout(state.shotTimer);
+  state.shotTimer = setTimeout(() => {
+    if (state.socket !== socket || !state.liveReady || socket.readyState !== WebSocket.OPEN) return;
+    state.liveShotSignature = shotSignature(state.record);
+    socket.send(JSON.stringify({ type: 'shots' }));
+  }, LIVE_SHOT_UPDATE_MS);
 }
 async function connectLive() {
   if (state.stopping || !state.media) return;
@@ -3090,6 +3345,11 @@ async function connectLive() {
       clearInterval(state.tokenTimer);
       if (msg.token_refresh)
         state.tokenTimer = setInterval(() => refreshLiveToken(socket, uid), LIVE_TOKEN_REFRESH_MS);
+      // The relay built its instructions from the record it read while connecting, which a tag
+      // saved during the handshake may postdate, so every session hears the saved status again.
+      state.shotUpdates = !!msg.shot_updates;
+      state.liveShotSignature = null;
+      notifyLiveShots();
       state.liveStatusText =
         msg.recovery === 'resumed'
           ? 'Live conversation resumed'
@@ -4238,7 +4498,8 @@ async function initialize() {
   });
   $('inspectionForm').addEventListener('input', (e) => {
     if (e.target === validationControl && e.target.validity.valid) clearValidationFeedback();
-    if (e.target.dataset.roomKey) return;
+    // Room fields and shot-list answers save through their own handlers.
+    if (e.target.dataset.roomKey || e.target.closest('.shot-list')) return;
     if (e.target.id === 'scopeConfirmed') $('scopeConfirmNotice').hidden = true;
     collect();
     changed(e.target.id !== 'scopeConfirmed');
@@ -4299,6 +4560,10 @@ async function initialize() {
   click('addTypedNote', addTypedNote);
   click('takePhoto', captureStill);
   click('uploadPhoto', () => $('photoFileInput').click());
+  click('skipShotTag', () => {
+    state.shotPickerPhoto = null;
+    renderShotPicker();
+  });
   click('thermalToggle', () => {
     const on = $('cameraVideo').classList.toggle('thermal-emulation');
     $('thermalBadge').hidden = !on;
@@ -4365,6 +4630,8 @@ async function initialize() {
         ...p,
         id: newId(),
         uploaded: false,
+        // Copies upload untagged, so a saved tag follows each as a pending tag.
+        ...(p.shot ? { pending_shot: p.shot } : {}),
         ocr_status: 'pending',
         ocr: null,
         file: undefined,
