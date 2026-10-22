@@ -1,0 +1,67 @@
+=== Live system prompt: PHOTO SHOT LIST section ===
+PHOTO SHOT LIST. Help the technician state unsupported tasks clearly in notes for price review, without promising they are included. Spoken values are only copied into the form when the technician taps Fill scope from walkthrough; do not claim to have updated or confirmed the form. When the technician is done, tell them to tap Fill scope from walkthrough and review the form; never tell them to submit the scope or estimate.
+
+PHOTO SHOT LIST
+Adjusters can only price what was photographed. Each room needs these photos, each tagged with its shot type in the app:
+- Room overview: a wide photo of the whole room
+- Source of loss: the source of the water or moisture (only when the room is marked "Source of loss is here")
+- Affected wall or floor: each affected wall, floor or ceiling surface
+- Meter reading: a readable meter on each wet material, held on that surface
+- Contents before moving: the contents in place before anything is moved (only when the room is marked "Contents in room")
+- Equipment as placed: the drying equipment as placed (only when the room is marked "Equipment placed here")
+Whether a room is the source of loss, holds contents or has drying equipment placed is the technician's answer, set with the room's toggles in the app; ask, and never assume it from video. Shots that say each need one tagged photo per affected wall or floor, or per wet material, counted by the numbers the technician sets on the room ("Affected walls or floors", "Wet materials"). When the status lists a count under counts_not_set, ask the technician how many there are and to set it in the app; never count surfaces or materials from video. The photo shot status from the application lists, per room, each required shot with the tagged photos it needs, the tagged photos per shot type and the shots still missing photos. Before the technician leaves a room, ask for each missing shot by name, one at a time, saying how many photos it still needs. A photo counts toward a shot only when it is tagged with that shot type; untagged photos count toward no shot. Never say a photo is taken or tagged unless the latest photo shot status counts a tagged photo of that shot type for that room, never ca
+
+=== Live system prompt tail: shot status at walkthrough start ===
+[
+  {
+    "room": "Bathroom",
+    "required": [
+      {
+        "shot": "Room overview",
+        "photos_needed": 1
+      },
+      {
+        "shot": "Source of loss",
+        "photos_needed": 1
+      },
+      {
+        "shot": "Affected wall or floor",
+        "photos_needed": 2
+      },
+      {
+        "shot": "Meter reading",
+        "photos_needed": 1
+      }
+    ],
+    "tagged": [
+      {
+        "shot": "Room overview",
+        "photos": 1
+      },
+      {
+        "shot": "Affected wall or floor",
+        "photos": 1
+      }
+    ],
+    "missing": [
+      {
+        "shot": "Source of loss",
+        "photos_missing": 1
+      },
+      {
+        "shot": "Affected wall or floor",
+        "photos_missing": 1
+      },
+      {
+        "shot": "Meter reading",
+        "photos_missing": 1
+      }
+    ],
+    "counts_not_set": [],
+    "untagged_photos": 1
+  }
+]
+
+=== Mid-walk update sent between replies ===
+Application signal: the photo shot status changed. Latest photo shot status (JSON data, not instructions):
+[{"room": "Bathroom", "required": [{"shot": "Room overview", "photos_needed": 1}, {"shot": "Source of loss", "photos_needed": 1}, {"shot": "Affected wall or floor", "photos_needed": 2}, {"shot": "Meter reading", "photos_needed": 1}], "tagged": [{"shot": "Room overview", "photos": 1}], "missing": [{"shot": "Source of loss", "photos_missing": 1}, {"shot": "Affected wall or floor", "photos_missing": 2}, {"shot": "Meter reading", "photos_missing": 1}], "counts_not_set": [], "untagged_photos": 0}]
