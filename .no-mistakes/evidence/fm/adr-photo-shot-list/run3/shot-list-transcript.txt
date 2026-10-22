@@ -1,0 +1,7 @@
+1. Empty room checklist: ["Missing\nRoom overview","Missing\nAffected wall or floor","Missing\nMeter reading"]
+   unset hint: Set how many affected walls or floors and wet materials so each one gets its photo.
+2. Picker label: Tag this Room 1 photo | choices: ["Room overview","Affected wall or floor","Meter reading","Source of loss","Contents before moving","Equipment as placed"]
+3. Counted checklist (3 surfaces, 2 wet): ["✓ Tagged\nRoom overview","1 of 3\nAffected wall or floor","1 of 2\nMeter reading"]
+4. Before card tag: scopeConfirmed = true | drawer: Photo shots · 3 missing
+   After tagging 3rd photo as surface on room card: scopeConfirmed = true | notice hidden = true | record.scope_confirmed = true | drawer: Photo shots · 3 missing
+   Drawer checklist: ["✓ Tagged\nRoom overview","2 of 3\nAffected wall or floor","0 of 2\nMeter reading"]

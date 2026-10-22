@@ -1,0 +1,4 @@
+elongated 4000x2 JPEG -> model_image ok, 1600x1
+elongated 1700x1 JPEG -> model_image ok, 1600x1
+elongated 2x4000 JPEG -> model_image ok, 1x1600
+60 x 8000x6000 JPEG (7.6 MB) prepared in 9.5s; audit deadline 55s

@@ -1,0 +1,10 @@
+after attempt #10: draft photos=10, saved on server=10
+after attempt #20: draft photos=20, saved on server=20
+after attempt #30: draft photos=30, saved on server=30
+after attempt #40: draft photos=40, saved on server=40
+after attempt #50: draft photos=50, saved on server=50
+after attempt #59: draft photos=59, saved on server=59
+after attempt #60: draft photos=60, saved on server=60
+after attempt #61: draft photos=60, saved on server=60
+visible refusal/status: message: An inspection can contain at most 60 photos.
+POST /photos statuses: {"200":60} 

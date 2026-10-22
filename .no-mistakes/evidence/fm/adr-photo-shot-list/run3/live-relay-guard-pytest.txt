@@ -1,0 +1,4 @@
+tests/test_shot_list.py::test_live_prompt_coaches_the_shot_list_from_tagged_photos_only PASSED [ 33%]
+tests/test_shot_list.py::test_live_relay_reports_saved_shot_tags_between_replies PASSED [ 66%]
+tests/test_shot_list.py::test_live_relay_holds_shot_updates_while_a_reply_is_expected PASSED [100%]
+======================= 3 passed, 7 deselected in 11.91s =======================

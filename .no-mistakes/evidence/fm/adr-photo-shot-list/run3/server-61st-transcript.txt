@@ -1,0 +1,3 @@
+#60: refused: Too many requests. Please wait and retry.
+#60: ok, server has 60
+#61: refused: An inspection can contain at most 60 photos.
