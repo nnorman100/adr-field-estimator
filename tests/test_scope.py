@@ -486,6 +486,25 @@ def test_default_photo_rename_follows_name_undo_combined_with_room_removal():
         'Room 1',
     )
     assert default_photo_rename({'rooms': [kitchen, undone]}, {'rooms': [undone]}) is None
+    # A placeholder holding a confirmed sizing input is the technician's room and keeps its photos.
+    placeholder = {
+        'name': 'Room 1',
+        'unfinished_sf': 0,
+        'finished_sf': 0,
+        'custom_cabinetry': False,
+    }
+    for key, value in [
+        ('floor_sf', 140),
+        ('wet_floor_sf', 0),
+        ('ceiling_height_ft', 8),
+        ('water_class', 2),
+    ]:
+        measured = {**placeholder, key: value}
+        assert default_photo_rename({'rooms': [measured]}, {'rooms': [measured, kitchen]}) is None
+        assert default_photo_rename({'rooms': [placeholder]}, {'rooms': [kitchen]}) == (
+            'Room 1',
+            'Kitchen',
+        )
 
 
 def test_default_replacement_still_requires_category_and_area_and_validates_room_limit():
@@ -514,3 +533,103 @@ def test_default_replacement_still_requires_category_and_area_and_validates_room
         len(validate_suggestions(values, ScopeSuggestions(changes=changes, questions=[])).changes)
         == 60
     )
+    # A drying-only Room 1 with confirmed sizing inputs is kept, so 30 new rooms exceed the limit.
+    measured = values.model_copy(update={'rooms': [Room(name='Room 1', floor_sf=140)]})
+    with pytest.raises(ValueError):
+        validate_suggestions(measured, ScopeSuggestions(changes=changes, questions=[]))
+
+
+def test_scope_fills_sizing_inputs_only_from_stated_values(context, monkeypatch):
+    from backend.scope import scope_response_schema
+
+    fields = scope_response_schema()['properties']['changes']['items']['properties']['field'][
+        'enum'
+    ]
+    assert {
+        'floor_sf',
+        'wet_floor_sf',
+        'ceiling_height_ft',
+        'water_class',
+        'dehumidifier_ppd',
+    } <= set(fields)
+    words = (
+        'Bathroom floor is 140 square feet, ceilings are 8 and a half feet, class 2 water. '
+        'The dehus are rated 70 pints a day.'
+    )
+    client, _ = context
+    prepared(client, technician_transcript=words)
+    provider(
+        monkeypatch,
+        [
+            change('floor_sf', 140, quote='Bathroom floor is 140 square feet', room='Bathroom'),
+            change(
+                'ceiling_height_ft', 8.5, quote='ceilings are 8 and a half feet', room='Bathroom'
+            ),
+            change('water_class', 2, quote='class 2 water', room='Bathroom'),
+            change('dehumidifier_ppd', 70, quote='rated 70 pints a day'),
+        ],
+    )
+    response = suggest(client)
+    assert response.status_code == 200, response.text
+    assert {(c['room'], c['field']): c['value'] for c in response.json()['changes']} == {
+        ('Bathroom', 'floor_sf'): 140,
+        ('Bathroom', 'ceiling_height_ft'): 8.5,
+        ('Bathroom', 'water_class'): 2,
+        (None, 'dehumidifier_ppd'): 70,
+    }
+
+
+@pytest.mark.parametrize('proposed', ['2', 2.0, 5, True])
+def test_water_class_must_be_a_stated_class_number(proposed):
+    quote = 'Bathroom is class 2 water.'
+    values = InspectionData(technician_transcript=quote, rooms=[{'name': 'Bathroom'}])
+    with pytest.raises(ValueError):
+        validate_suggestions(
+            values,
+            ScopeSuggestions(
+                changes=[change('water_class', proposed, quote=quote, room='Bathroom')],
+                questions=[],
+            ),
+        )
+
+
+def test_whole_floor_wet_correction_replaces_a_smaller_wet_floor_override(context, monkeypatch):
+    from backend.contracts import Room
+    from backend.sizing import room_check
+
+    words = 'Correction, the whole Kitchen floor is wet.'
+    kitchen = dict(
+        name='Kitchen',
+        category=1,
+        finished_sf=10,
+        floor_sf=600,
+        wet_floor_sf=50,
+        ceiling_height_ft=8,
+        water_class=2,
+    )
+    client, _ = context
+    prepared(client, rooms=[kitchen], technician_transcript=words)
+    prompts = []
+
+    async def respond(**kwargs):
+        prompts.append(kwargs['contents'])
+        proposed = change(
+            'wet_floor_sf', 600, quote='the whole Kitchen floor is wet', room='Kitchen'
+        )
+        return SimpleNamespace(text=json.dumps(dict(changes=[proposed], questions=[])))
+
+    monkeypatch.setattr(
+        bm,
+        'get_ai_client',
+        lambda: SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
+        ),
+    )
+    response = suggest(client)
+    assert response.status_code == 200, response.text
+    assert 'explicitly states the whole floor of a room is wet' in str(prompts)
+    assert [(c['room'], c['field'], c['value']) for c in response.json()['changes']] == [
+        ('Kitchen', 'wet_floor_sf', 600)
+    ]
+    check = room_check(Room(**{**kitchen, 'wet_floor_sf': 600}))
+    assert (check['air_movers_min'], check['air_movers_max']) == (10, 13)

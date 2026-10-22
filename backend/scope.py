@@ -13,6 +13,7 @@ JobField = Literal[
     'year_built',
     'air_movers',
     'dehumidifiers',
+    'dehumidifier_ppd',
     'drying_days',
     'labor_hours',
     'is_after_hours',
@@ -29,9 +30,20 @@ JobField = Literal[
     'wood_floor_days',
 ]
 RoomField = Literal[
-    'category', 'loss', 'unfinished_sf', 'finished_sf', 'custom_cabinetry', 'waste_percent'
+    'category',
+    'loss',
+    'unfinished_sf',
+    'finished_sf',
+    'custom_cabinetry',
+    'waste_percent',
+    'floor_sf',
+    'wet_floor_sf',
+    'ceiling_height_ft',
+    'water_class',
 ]
 ROOM_FIELDS = set(RoomField.__args__)
+# A room with any confirmed sizing input is the technician's room, not the untouched placeholder.
+SIZING_FIELDS = ('floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class')
 LOSS_TYPES = set(LossType.__args__)
 
 
@@ -87,6 +99,7 @@ def untouched_default_room(room):
         and room.get('unfinished_sf') == 0
         and room.get('finished_sf') == 0
         and room.get('custom_cabinetry') is False
+        and all(room.get(key) is None for key in SIZING_FIELDS)
     )
 
 
@@ -121,6 +134,8 @@ def validate_suggestions(data, suggestions):
             raise ValueError('A proposed value has no supporting technician quote.')
         if change.field == 'category' and type(change.value) is not int:
             raise ValueError('A water category must be an explicit category number.')
+        if change.field == 'water_class' and type(change.value) is not int:
+            raise ValueError('A water class must be an explicit class number.')
         if change.field == 'loss' and change.value not in LOSS_TYPES:
             raise ValueError('A loss type must be water, mold or both.')
         if (change.field in ROOM_FIELDS) != (change.room is not None):
@@ -211,7 +226,13 @@ def scope_prompt(data):
         'Dry moisture or suspected microbial growth alone cannot set category; never diagnose mold, and only map to category 3 when the technician explicitly states category 3 or states the room is mold or both water and mold. '
         'Omit unstated fields; never fill missing values with defaults, zero, or false. Preserve scope not explicitly corrected. '
         'Equipment counts are job totals; do not convert per-room counts into totals or drying recommendations into confirmed quantities. '
-        'Map fans to air_movers and dehus to dehumidifiers only when explicitly stated. Do not output money, rates, moisture readings, '
+        'Map fans to air_movers and dehus to dehumidifiers only when explicitly stated. '
+        'The equipment-sizing inputs need their own explicit statements: floor_sf only from a stated room floor area in square feet (never a demolition area, and never multiplied from length and width), '
+        'wet_floor_sf only from a stated area of wet flooring in square feet, or, when the technician explicitly states the whole floor of a room is wet and that room has a floor_sf, '
+        'set wet_floor_sf to that floor_sf with the whole-floor statement as source_quote; otherwise leave it unstated, '
+        'ceiling_height_ft only from a stated ceiling height converted to feet, water_class only from an explicitly stated IICRC water class 1, 2, 3 or 4 (a water category is not a class), '
+        'and dehumidifier_ppd only from a stated AHAM pints-per-day rating of one dehumidifier. Never assume a standard ceiling height or class. '
+        'Do not output money, rates, moisture readings, '
         'notes, transcript changes, signatures, or scope confirmation. Never propose replacing or deleting the rooms list. '
         'Ask concise questions about ambiguous quantities or room identity.\n'
         + json.dumps(

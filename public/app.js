@@ -25,6 +25,9 @@ const {
   missingItems,
   auditBlockMessage,
   noteFormat,
+  roomSizingNote,
+  sizingSummary,
+  sizingNote,
 } = ADRCore;
 const state = {
   user: null,
@@ -728,6 +731,8 @@ function photoUnsynced(photo) {
 
 // Concise status for the one-line phone header; the title keeps the revision or authorization ID.
 function renderSaveStatus() {
+  // The sizing check follows the save state: it describes only data the server has saved.
+  renderSizing();
   $('jobTitle').textContent = state.draft?.data.address || 'New inspection';
   const status = $('saveStatus'),
     show = (text, detail = text) => {
@@ -1420,6 +1425,10 @@ function collect() {
     const el = $(id);
     data[key] = el.type === 'number' ? (el.value === '' ? null : Number(el.value)) : el.value;
   }
+  // The sizing check's rating stays absent until stated, so older drafts keep their saved shape.
+  const rating = $('dehumidifierPpd').value;
+  if (rating === '' || !(Number(rating) > 0)) delete data.dehumidifier_ppd;
+  else data.dehumidifier_ppd = Number(rating);
   data.package_price = null;
   for (const [id, key] of Object.entries({
     afterHours: 'is_after_hours',
@@ -1466,6 +1475,7 @@ function fillForm() {
     assistantTranscript: 'assistant_transcript',
   }))
     $(id).value = data[key] ?? defaults[key] ?? '';
+  $('dehumidifierPpd').value = data.dehumidifier_ppd ?? '';
   for (const [id, key] of Object.entries({
     afterHours: 'is_after_hours',
     scopeConfirmed: 'scope_confirmed',
@@ -1510,11 +1520,14 @@ function renderRooms() {
   $('photoRoom').replaceChildren();
   state.draft.data.rooms.forEach((room, i) => {
     const card = node('div', undefined, 'room'),
-      head = node('div', undefined, 'section-head');
+      head = node('div', undefined, 'section-head'),
+      sizing = sizingFields(room, i);
     const tagRoom = () => {
       card.querySelectorAll('.loss-tag').forEach((tag) => tag.remove());
       card.prepend(...lossTags(room));
       card.dataset.loss = roomLoss(room);
+      // Mold-only rooms have no water class; the drying check applies to water rooms.
+      sizing.hidden = roomLoss(room) === 'mold';
     };
     tagRoom();
     head.append(node('h3', 'Room ' + (i + 1)));
@@ -1625,6 +1638,7 @@ function renderRooms() {
       parent.append(wrap);
       if (key === 'category') grid.append(pills);
     }
+    moreBody.append(sizing);
     card.append(grid, more, node('div', undefined, 'room-photos photo-gallery'));
     const input = node('input');
     input.type = 'checkbox';
@@ -1645,6 +1659,124 @@ function renderRooms() {
   renderWalkthroughEdits();
   window.DryingLog?.render();
   window.TagsUI?.render();
+}
+// The confirmed inputs of the IICRC equipment-sizing check, under More room options so the card
+// keeps its height. A blank value stays absent from the room, so the server reports the check as
+// not available instead of guessing it.
+function sizingFields(room, i) {
+  const group = node('div', undefined, 'room-sizing'),
+    title = node('p', 'Drying check ', 'room-sizing-title'),
+    note = node('span', '', 'summary-note'),
+    body = node('div', undefined, 'form-grid');
+  note.dataset.sizingRoom = i;
+  title.append(note);
+  for (const [label, key] of [
+    ['Floor area SF', 'floor_sf'],
+    ['Wet floor area SF', 'wet_floor_sf'],
+    ['Ceiling height ft', 'ceiling_height_ft'],
+    ['Water class', 'water_class'],
+  ]) {
+    const wrap = node('label', label),
+      input = node(key === 'water_class' ? 'select' : 'input');
+    input.dataset.roomIndex = i;
+    input.dataset.roomKey = key;
+    if (key === 'water_class')
+      for (const [value, text] of [
+        ['', 'Not stated'],
+        [1, 'Class 1'],
+        [2, 'Class 2'],
+        [3, 'Class 3'],
+        [4, 'Class 4'],
+      ]) {
+        const opt = node('option', text);
+        opt.value = value;
+        input.append(opt);
+      }
+    else {
+      input.type = 'number';
+      input.min = key === 'wet_floor_sf' ? 0 : 0.01;
+      input.max = key === 'ceiling_height_ft' ? 60 : 100000;
+      // A blank wet floor area means the whole floor is wet.
+      if (key === 'wet_floor_sf') input.placeholder = 'Whole floor';
+      input.step = 0.01;
+      input.inputMode = 'decimal';
+    }
+    input.value = room[key] ?? '';
+    input.disabled = !!state.signed;
+    input.addEventListener('input', () => {
+      // A wet floor area may be 0 when only walls are wet; the other inputs must be above 0.
+      const value = Number(input.value),
+        valid = key === 'wet_floor_sf' ? value >= 0 : value > 0;
+      if (input.value === '' || !valid) delete room[key];
+      else room[key] = Number(input.value);
+      changed();
+    });
+    wrap.append(input);
+    body.append(wrap);
+  }
+  group.append(
+    title,
+    body,
+    node(
+      'p',
+      'Enter the room floor area, not the demolition area, and only values confirmed on site. Leave the wet floor area blank when the whole floor is wet.',
+      'hint',
+    ),
+  );
+  return group;
+}
+const sizingFlags = { below: 'Below', within: 'Within range', above: 'Above' };
+// Shows the server's check for the saved data only; while edits are unsaved it says it will update.
+function renderSizing() {
+  const draft = state.draft,
+    panel = $('sizingCheck'),
+    sizing = state.record?.equipment_sizing,
+    fresh = !!draft && !!sizing && !state.conflict && stable(draft.data) === state.ack;
+  document.querySelectorAll('[data-sizing-room]').forEach((note) => {
+    const check = fresh ? sizing.rooms[Number(note.dataset.sizingRoom)] : null;
+    note.textContent = check ? '· ' + roomSizingNote(check) : '';
+  });
+  panel.hidden = !draft || !!state.signed || !!confirmedAuthorization;
+  const note = $('sizingNote');
+  note.textContent = panel.hidden
+    ? ''
+    : fresh
+      ? sizingNote(sizing)
+      : '· sizing updates once the draft saves';
+  if (panel.hidden) return;
+  // A count above or below the recommendation reads in the warning colour, and always in words.
+  note.dataset.flagged = fresh && /below|above/.test(note.textContent);
+  if (!fresh)
+    return $('sizingResult').replaceChildren(
+      node(
+        'p',
+        navigator.onLine
+          ? 'The check updates once the draft saves.'
+          : 'The check runs on the server once the draft saves online.',
+        'hint',
+      ),
+    );
+  const summary = sizingSummary(sizing);
+  if (summary.empty)
+    return $('sizingResult').replaceChildren(node('p', summary.empty, 'sizing-empty'));
+  $('sizingResult').replaceChildren(
+    ...summary.rows.map((row) => {
+      const item = node('div', undefined, 'sizing-row'),
+        head = node('p', undefined, 'sizing-head');
+      head.append(node('strong', row.label));
+      if (row.flag) {
+        const flag = node('span', sizingFlags[row.flag], 'sizing-flag');
+        flag.dataset.flag = row.flag;
+        head.append(flag);
+      }
+      item.append(
+        head,
+        node('p', 'Recommended ' + row.recommended + ' · Entered ' + row.entered),
+        node('p', row.reason, 'hint'),
+      );
+      return item;
+    }),
+  );
 }
 function requestRoomRemoval(room, trigger) {
   if (

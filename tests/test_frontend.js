@@ -726,3 +726,147 @@ console.log(
   });
   console.log('PASS: psychrometric values and per-room drying-log summary');
 }
+{
+  // The sizing check's words come from the server result; empty states say what is missing.
+  assert.equal(core.roomSizingNote({ status: 'not_applicable' }), 'mold only · no drying check');
+  assert.equal(
+    core.roomSizingNote({ status: 'not_available', missing: ['ceiling height', 'water class'] }),
+    'check not available · add ceiling height and water class',
+  );
+  assert.equal(
+    core.roomSizingNote({
+      status: 'not_available',
+      missing: [],
+      problem: 'the wet floor area is larger than the floor area',
+    }),
+    'check not available · the wet floor area is larger than the floor area',
+  );
+  assert.equal(
+    core.roomSizingNote({
+      status: 'available',
+      air_movers_min: 3,
+      air_movers_max: 4,
+      dehumidifier_ppd: 23,
+    }),
+    '3–4 air movers · 23 pints/day',
+  );
+  assert.equal(
+    core.roomSizingNote({
+      status: 'available',
+      air_movers_min: null,
+      air_movers_max: null,
+      dehumidifier_ppd: 96,
+    }),
+    'air movers not sized: no wet floor · 96 pints/day',
+  );
+  assert.deepEqual(core.sizingSummary({ status: 'not_applicable', rooms: [] }), {
+    empty: 'No water rooms. The drying check applies to rooms with water.',
+  });
+  assert.deepEqual(
+    core.sizingSummary({
+      status: 'not_available',
+      rooms: [
+        { name: 'Kitchen', status: 'available' },
+        { name: 'Hall', status: 'not_available' },
+        { name: ' ', status: 'not_available' },
+      ],
+    }),
+    {
+      empty:
+        'Check not available. Add the floor area, ceiling height and water class under More room options for Hall and Unnamed room.',
+    },
+  );
+  assert.deepEqual(
+    core.sizingSummary({
+      status: 'not_available',
+      rooms: [
+        { name: 'Hall', status: 'not_available', missing: ['water class'] },
+        { name: 'Den', status: 'not_available', missing: [], problem: 'larger' },
+      ],
+    }),
+    {
+      empty:
+        'Check not available. Add the floor area, ceiling height and water class under More room options for Hall. The wet floor area is larger than the floor area for Den.',
+    },
+  );
+  const sizing = {
+    status: 'available',
+    rooms: [],
+    air_movers: { entered: 6, min: 3, max: 4, flag: 'above', reason: 'More.' },
+    dehumidifiers: {
+      entered: 1,
+      recommended_ppd: 23,
+      unit_ppd: null,
+      recommended_units: null,
+      flag: null,
+      reason: 'Rate it.',
+    },
+  };
+  assert.deepEqual(core.sizingSummary(sizing).rows, [
+    { label: 'Air movers', recommended: '3–4', entered: '6', flag: 'above', reason: 'More.' },
+    {
+      label: 'Dehumidification',
+      recommended: '23 pints/day',
+      entered: '1 LGR dehumidifier',
+      flag: null,
+      reason: 'Rate it.',
+    },
+  ]);
+  Object.assign(sizing.dehumidifiers, {
+    entered: 2,
+    unit_ppd: 70,
+    recommended_units: 1,
+    flag: 'above',
+  });
+  assert.equal(core.sizingSummary(sizing).rows[1].recommended, '23 pints/day · 1 unit at 70');
+  assert.equal(core.sizingSummary(sizing).rows[1].entered, '2 LGR dehumidifiers');
+  assert.equal(core.sizingNote(sizing), '· Air movers above · Dehumidification above');
+  sizing.air_movers.flag = 'within';
+  sizing.dehumidifiers.flag = null;
+  assert.equal(core.sizingNote(sizing), '· Air movers within range');
+  sizing.air_movers.flag = null;
+  assert.equal(core.sizingNote(sizing), '· sizing: add the dehumidifier rating');
+  Object.assign(sizing.air_movers, { min: null, max: null, reason: 'No wet floor.' });
+  assert.deepEqual(core.sizingSummary(sizing).rows[0], {
+    label: 'Air movers',
+    recommended: 'not sized',
+    entered: '6',
+    flag: null,
+    reason: 'No wet floor.',
+  });
+  assert.equal(core.sizingNote(sizing), '· air movers not sized');
+  sizing.dehumidifiers.flag = 'below';
+  assert.equal(core.sizingNote(sizing), '· air movers not sized · Dehumidification below');
+  assert.equal(
+    core.sizingNote({ status: 'not_available', rooms: [] }),
+    '· sizing check not available',
+  );
+  assert.equal(
+    core.sizingNote({ status: 'not_applicable', rooms: [] }),
+    '· no water rooms to size',
+  );
+  assert.equal(core.scopeRoomLabels.water_class, 'Water class');
+  assert.equal(core.scopeRoomLabels.wet_floor_sf, 'Wet floor area SF');
+  // A Room 1 holding any confirmed sizing input is kept when scope fills a named room.
+  for (const [key, value] of [
+    ['floor_sf', 140],
+    ['wet_floor_sf', 0],
+    ['ceiling_height_ft', 8],
+    ['water_class', 2],
+  ]) {
+    const measured = core.emptyData();
+    measured.rooms[0][key] = value;
+    const applied = core.applyScopeChanges(measured, [
+      { room: 'Kitchen', field: 'category', value: 2 },
+      { room: 'Kitchen', field: 'finished_sf', value: 80 },
+    ]);
+    assert.deepEqual(
+      applied.rooms.map((room) => room.name),
+      ['Room 1', 'Kitchen'],
+    );
+    assert.equal(applied.rooms[0][key], value);
+    assert.equal(applied.rooms[1][key], undefined);
+    assert.equal(core.defaultPhotoRename(measured, applied), null);
+  }
+  console.log('PASS: the sizing check shows recommended beside entered counts with a worded flag');
+}

@@ -72,6 +72,7 @@
     year_built: 'Year built',
     air_movers: 'Air movers',
     dehumidifiers: 'LGR dehumidifiers',
+    dehumidifier_ppd: 'Dehumidifier rating (AHAM pints/day)',
     drying_days: 'Drying days',
     labor_hours: 'Additional labor hours',
     is_after_hours: 'After-hours loss',
@@ -94,13 +95,21 @@
     finished_sf: 'Finished / drywall / trim SF',
     custom_cabinetry: 'Custom cabinetry',
     waste_percent: 'Waste %',
+    floor_sf: 'Floor area SF',
+    wet_floor_sf: 'Wet floor area SF',
+    ceiling_height_ft: 'Ceiling height ft',
+    water_class: 'Water class',
   };
   const roomKey = (name) => name.trim().replace(/\s+/g, ' ').toLowerCase();
   const untouchedDefaultRoom = (room) =>
     room.name === 'Room 1' &&
     room.unfinished_sf === 0 &&
     room.finished_sf === 0 &&
-    room.custom_cabinetry === false;
+    room.custom_cabinetry === false &&
+    // A confirmed sizing input makes it the technician's room, not the untouched placeholder.
+    ['floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'].every(
+      (key) => room[key] == null,
+    );
   function defaultRoomReplacement(data, changes) {
     if (data.rooms.length !== 1 || !untouchedDefaultRoom(data.rooms[0])) return null;
     if (changes.some((change) => change.room != null && roomKey(change.room) === 'room 1'))
@@ -337,6 +346,88 @@
     const type = NOTE_TYPES.find((candidate) => isSupported(candidate));
     return type ? { recorder: type, upload: type.split(';')[0] } : null;
   }
+  // The server's IICRC equipment-sizing check (backend/sizing.py) in the words Check Scope shows.
+  // It is advice beside the technician's counts and never changes them or the prices.
+  const plural = (count, noun) => count + ' ' + noun + (count === 1 ? '' : 's');
+  const listed = (items) =>
+    items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' and ' + items.at(-1);
+  const range = (low, high) => (low === high ? String(low) : low + '–' + high);
+  function roomSizingNote(check) {
+    if (!check) return '';
+    if (check.status === 'not_applicable') return 'mold only · no drying check';
+    if (check.status === 'not_available')
+      return 'check not available · ' + (check.problem || 'add ' + listed(check.missing));
+    return (
+      (check.air_movers_min == null
+        ? 'air movers not sized: no wet floor'
+        : range(check.air_movers_min, check.air_movers_max) + ' air movers') +
+      ' · ' +
+      check.dehumidifier_ppd +
+      ' pints/day'
+    );
+  }
+  function sizingSummary(sizing) {
+    if (sizing.status === 'not_applicable')
+      return { empty: 'No water rooms. The drying check applies to rooms with water.' };
+    if (sizing.status === 'not_available') {
+      const names = (rooms) => listed(rooms.map((room) => room.name.trim() || 'Unnamed room')),
+        unavailable = sizing.rooms.filter((room) => room.status === 'not_available'),
+        missing = unavailable.filter((room) => !room.problem),
+        larger = unavailable.filter((room) => room.problem);
+      return {
+        empty: [
+          'Check not available.',
+          missing.length &&
+            'Add the floor area, ceiling height and water class under More room options for ' +
+              names(missing) +
+              '.',
+          larger.length &&
+            'The wet floor area is larger than the floor area for ' + names(larger) + '.',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      };
+    }
+    const movers = sizing.air_movers,
+      dehus = sizing.dehumidifiers;
+    return {
+      rows: [
+        {
+          label: 'Air movers',
+          recommended: movers.min == null ? 'not sized' : range(movers.min, movers.max),
+          entered: String(movers.entered),
+          flag: movers.flag,
+          reason: movers.reason,
+        },
+        {
+          label: 'Dehumidification',
+          recommended:
+            dehus.recommended_ppd +
+            ' pints/day' +
+            (dehus.unit_ppd == null
+              ? ''
+              : ' · ' + plural(dehus.recommended_units, 'unit') + ' at ' + dehus.unit_ppd),
+          entered: plural(dehus.entered, 'LGR dehumidifier'),
+          flag: dehus.flag,
+          reason: dehus.reason,
+        },
+      ],
+    };
+  }
+  // The closed More equipment & labor drawer's note: every flag in words, or why there is none.
+  const sizingFlagWords = { below: 'below', within: 'within range', above: 'above' };
+  function sizingNote(sizing) {
+    const summary = sizingSummary(sizing);
+    if (summary.empty)
+      return sizing.status === 'not_applicable'
+        ? '· no water rooms to size'
+        : '· sizing check not available';
+    const words = summary.rows
+      .filter((row) => row.flag)
+      .map((row) => '· ' + row.label + ' ' + sizingFlagWords[row.flag]);
+    if (sizing.air_movers.min == null) words.unshift('· air movers not sized');
+    return words.length ? words.join(' ') : '· sizing: add the dehumidifier rating';
+  }
   // A signed record keeps only what it saved. Rooms it never stored stay absent, so no default
   // room or loss tag is invented for it; a new job starts from emptyData() instead.
   function signedDraftData(record) {
@@ -549,6 +640,9 @@
     placementsByRoom,
     roomScans,
     equipmentSummary,
+    roomSizingNote,
+    sizingSummary,
+    sizingNote,
   };
   if (typeof module !== 'undefined') module.exports = api;
   else root.ADRCore = api;
