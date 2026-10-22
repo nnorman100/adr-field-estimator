@@ -7,7 +7,7 @@ anyio==4.15.1
 firebase-admin>=6.9.0,<8
 google-cloud-firestore>=2.21.0,<3
 google-cloud-storage>=3.1.0,<4
-Pillow>=11.0,<13
+Pillow>=11.0,<14
 websockets>=14,<16
 tzdata>=2025.1
 qrcode==8.2
