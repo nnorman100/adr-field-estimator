@@ -83,7 +83,11 @@ def room_check(room):
     height = Decimal(str(room.ceiling_height_ft))
     cubic = floor * height
     factor = LGR_FACTORS[room.water_class]
-    low = 1 if floor < SMALL_ROOM_SF else 1 + up(wet / AIR_MOVER_FLOOR_SF[0])
+    if not wet:
+        low = high = None
+    else:
+        low = 1 if floor < SMALL_ROOM_SF else 1 + up(wet / AIR_MOVER_FLOOR_SF[0])
+        high = 1 + up(wet / AIR_MOVER_FLOOR_SF[1])
     return dict(
         name=room.name,
         status='available',
@@ -94,7 +98,7 @@ def room_check(room):
         water_class=room.water_class,
         cubic_feet=float(cubic),
         air_movers_min=low,
-        air_movers_max=1 + up(wet / AIR_MOVER_FLOOR_SF[1]),
+        air_movers_max=high,
         lgr_factor=factor,
         # Shown to a tenth; the job total sums the exact demand (room_ppd) before rounding up.
         dehumidifier_ppd=float(tenths(cubic / factor)),
@@ -152,10 +156,18 @@ def equipment_sizing(data):
         return dict(status='not_applicable', rooms=rooms)
     if any(room['status'] == 'not_available' for room in water):
         return dict(status='not_available', rooms=rooms)
-    low = sum(room['air_movers_min'] for room in water)
-    high = sum(room['air_movers_max'] for room in water)
     demand = sum(room_ppd(room) for room in water)
-    flag, reason = air_mover_check(data.air_movers, low, high)
+    unsized = [room['name'] for room in water if room['air_movers_min'] is None]
+    if unsized:
+        low = high = flag = None
+        reason = (
+            'Cannot size air movers: no wet floor area in ' + ', '.join(unsized) + '. '
+            'The floor-based IICRC placement does not cover wet walls only.'
+        )
+    else:
+        low = sum(room['air_movers_min'] for room in water)
+        high = sum(room['air_movers_max'] for room in water)
+        flag, reason = air_mover_check(data.air_movers, low, high)
     units, dehu_flag, dehu_reason = dehumidifier_check(
         data.dehumidifiers, demand, data.dehumidifier_ppd
     )
@@ -195,21 +207,27 @@ def letter_paragraph(sizing):
         source = (
             '' if room['wet_floor_stated'] else ' (the whole floor; no smaller wet area entered)'
         )
+        placement = (
+            ''
+            if room['air_movers_min'] is None
+            else f'Air movers for {wet} SF of wet floor{source}: {low} to 1 + {wet} ÷ 50, '
+            f'rounded up = {room["air_movers_min"]} to {room["air_movers_max"]}. '
+        )
         exact = room_ppd(room)
         equals = '=' if tenths(exact) == exact else '≈'
         lines.append(
             f'{room["name"]}: {floor} SF floor × {number(room["ceiling_height_ft"])} ft ceiling = '
             f'{number(room["cubic_feet"])} cu ft, water class {room["water_class"]}. '
-            f'Air movers for {wet} SF of wet floor{source}: {low} to 1 + {wet} ÷ 50, rounded up = '
-            f'{room["air_movers_min"]} to {room["air_movers_max"]}. LGR dehumidification: '
+            f'{placement}LGR dehumidification: '
             f'{number(room["cubic_feet"])} ÷ {room["lgr_factor"]} {equals} '
             f'{number(room["dehumidifier_ppd"])} pints/day (AHAM).'
         )
     movers, dehus = sizing['air_movers'], sizing['dehumidifiers']
     rating = dehus['unit_ppd']
     lines.append(
-        f'Recommended: {movers["min"]} to {movers["max"]} air movers and '
-        f'{dehus["recommended_ppd"]} pints/day of LGR dehumidification (the room total, rounded up'
+        'Recommended: '
+        + ('' if movers['min'] is None else f'{movers["min"]} to {movers["max"]} air movers and ')
+        + f'{dehus["recommended_ppd"]} pints/day of LGR dehumidification (the room total, rounded up'
         + (
             f'; {count(dehus["recommended_units"], "unit")} at {rating} pints/day each'
             if rating is not None

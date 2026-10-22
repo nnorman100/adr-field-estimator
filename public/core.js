@@ -358,8 +358,10 @@
     if (check.status === 'not_available')
       return 'check not available · ' + (check.problem || 'add ' + listed(check.missing));
     return (
-      range(check.air_movers_min, check.air_movers_max) +
-      ' air movers · ' +
+      (check.air_movers_min == null
+        ? 'air movers not sized: no wet floor'
+        : range(check.air_movers_min, check.air_movers_max) + ' air movers') +
+      ' · ' +
       check.dehumidifier_ppd +
       ' pints/day'
     );
@@ -392,7 +394,7 @@
       rows: [
         {
           label: 'Air movers',
-          recommended: range(movers.min, movers.max),
+          recommended: movers.min == null ? 'not sized' : range(movers.min, movers.max),
           entered: String(movers.entered),
           flag: movers.flag,
           reason: movers.reason,
@@ -420,10 +422,11 @@
       return sizing.status === 'not_applicable'
         ? '· no water rooms to size'
         : '· sizing check not available';
-    const flagged = summary.rows.filter((row) => row.flag);
-    return flagged.length
-      ? flagged.map((row) => '· ' + row.label + ' ' + sizingFlagWords[row.flag]).join(' ')
-      : '· sizing: add the dehumidifier rating';
+    const words = summary.rows
+      .filter((row) => row.flag)
+      .map((row) => '· ' + row.label + ' ' + sizingFlagWords[row.flag]);
+    if (sizing.air_movers.min == null) words.unshift('· air movers not sized');
+    return words.length ? words.join(' ') : '· sizing: add the dehumidifier rating';
   }
   // A signed record keeps only what it saved. Rooms it never stored stay absent, so no default
   // room or loss tag is invented for it; a new job starts from emptyData() instead.

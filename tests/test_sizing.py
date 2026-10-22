@@ -49,11 +49,9 @@ def test_air_movers_follow_the_wet_floor_area_and_volume_the_whole_room():
     wet = room(floor_sf=600, wet_floor_sf=50, ceiling_height_ft=8, water_class=2)
     result = equipment_sizing(InspectionData(rooms=[wet], air_movers=2))
     assert result['air_movers']['flag'] == 'within'
-    # Without a stated wet area the whole floor is wet; only walls wet leaves the room's one mover.
+    # Without a stated wet area the whole floor is wet.
     assert room_check(sized())['wet_floor_stated'] is False
     assert room_check(sized())['wet_floor_sf'] == 140
-    check = room_check(sized(wet_floor_sf=0))
-    assert (check['air_movers_min'], check['air_movers_max']) == (1, 1)
     # A wet area larger than the floor is not checked.
     assert room_check(sized(wet_floor_sf=200)) == {
         'name': 'Kitchen',
@@ -189,3 +187,41 @@ def test_sizing_inputs_are_bounded(values):
         room(**values)
     with pytest.raises(ValidationError):
         InspectionData(dehumidifier_ppd=0)
+
+
+def test_wall_only_room_has_no_air_mover_recommendation_but_keeps_dehumidification():
+    walls = room(floor_sf=600, wet_floor_sf=0, ceiling_height_ft=8, water_class=2)
+    check = room_check(walls)
+    assert (check['status'], check['air_movers_min'], check['air_movers_max']) == (
+        'available',
+        None,
+        None,
+    )
+    assert check['dehumidifier_ppd'] == 96
+    data = InspectionData(
+        rooms=[walls, sized(name='Hall')], air_movers=5, dehumidifiers=1, dehumidifier_ppd=70
+    )
+    sizing = equipment_sizing(data)
+    movers = sizing['air_movers']
+    assert (movers['entered'], movers['min'], movers['max'], movers['flag']) == (
+        5,
+        None,
+        None,
+        None,
+    )
+    assert 'Kitchen' in movers['reason']
+    assert sizing['dehumidifiers']['recommended_ppd'] == 96 + 23
+    assert sizing['dehumidifiers']['flag'] == 'below'
+    lines = letter_paragraph(sizing).splitlines()
+    assert lines[1] == (
+        'Kitchen: 600 SF floor × 8 ft ceiling = 4,800 cu ft, water class 2. '
+        'LGR dehumidification: 4,800 ÷ 50 = 96 pints/day (AHAM).'
+    )
+    assert 'Hall' in lines[2] and 'Air movers for 140 SF' in lines[2]
+    assert lines[3] == (
+        'Recommended: 119 pints/day of LGR dehumidification (the room total, rounded up; '
+        '2 units at 70 pints/day each).'
+    )
+    assert lines[4] == (
+        'Entered for this proposal: 5 air movers and 1 LGR dehumidifier rated 70 pints/day each.'
+    )

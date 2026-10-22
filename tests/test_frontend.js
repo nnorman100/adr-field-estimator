@@ -750,6 +750,15 @@ console.log(
     }),
     '3–4 air movers · 23 pints/day',
   );
+  assert.equal(
+    core.roomSizingNote({
+      status: 'available',
+      air_movers_min: null,
+      air_movers_max: null,
+      dehumidifier_ppd: 96,
+    }),
+    'air movers not sized: no wet floor · 96 pints/day',
+  );
   assert.deepEqual(core.sizingSummary({ status: 'not_applicable', rooms: [] }), {
     empty: 'No water rooms. The drying check applies to rooms with water.',
   });
@@ -817,6 +826,17 @@ console.log(
   assert.equal(core.sizingNote(sizing), '· Air movers within range');
   sizing.air_movers.flag = null;
   assert.equal(core.sizingNote(sizing), '· sizing: add the dehumidifier rating');
+  Object.assign(sizing.air_movers, { min: null, max: null, reason: 'No wet floor.' });
+  assert.deepEqual(core.sizingSummary(sizing).rows[0], {
+    label: 'Air movers',
+    recommended: 'not sized',
+    entered: '6',
+    flag: null,
+    reason: 'No wet floor.',
+  });
+  assert.equal(core.sizingNote(sizing), '· air movers not sized');
+  sizing.dehumidifiers.flag = 'below';
+  assert.equal(core.sizingNote(sizing), '· air movers not sized · Dehumidification below');
   assert.equal(
     core.sizingNote({ status: 'not_available', rooms: [] }),
     '· sizing check not available',
