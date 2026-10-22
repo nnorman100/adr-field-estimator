@@ -1872,17 +1872,14 @@ function tagPhoto(photo, shot) {
 function shotChecklist(room) {
   const wrap = node('div', undefined, 'shot-list'),
     flags = node('fieldset', undefined, 'loss-pills shot-flags'),
-    flagList = node('div', undefined, 'loss-pill-list'),
-    status = roomShotStatus(room, state.draft.photos),
-    list = node('ul', undefined, 'shot-items');
+    flagList = node('div', undefined, 'loss-pill-list');
+  wrap.shotRoom = room;
   flags.append(node('legend', 'Photo shot list'), flagList);
   for (const [key, text] of Object.entries(ROOM_SHOT_FLAGS)) {
     const pill = node('label', undefined, 'loss-pill'),
       box = node('input');
     box.type = 'checkbox';
-    box.checked = !!room[key];
     box.dataset.shotFlag = key;
-    box.disabled = !canEditDraft('scope');
     box.addEventListener('change', () => {
       room[key] = box.checked;
       // Only the shot list reads these answers; pricing and the scope confirmation are unchanged.
@@ -1903,9 +1900,7 @@ function shotChecklist(room) {
     input.step = 1;
     input.inputMode = 'numeric';
     input.placeholder = 'Not set';
-    input.value = room[key] ?? '';
     input.dataset.shotCount = key;
-    input.disabled = !canEditDraft('scope');
     input.addEventListener('input', () => {
       const value = input.value.trim() === '' ? null : Number(input.value);
       if (input.validity.badInput) return;
@@ -1913,14 +1908,33 @@ function shotChecklist(room) {
       else if (Number.isInteger(value) && value >= 0 && value <= 50) room[key] = value;
       else return;
       changed(false);
-    });
-    input.addEventListener('blur', () => {
-      input.value = room[key] ?? '';
       renderShotLists();
     });
+    for (const type of ['change', 'blur'])
+      input.addEventListener(type, () => {
+        input.value = room[key] ?? '';
+        renderShotLists();
+      });
     field.append(input);
     counts.append(field);
   }
+  wrap.append(flags, counts, node('div', undefined, 'shot-status'));
+  return wrap;
+}
+function updateShotChecklist(wrap) {
+  const room = wrap.shotRoom,
+    editable = canEditDraft('scope'),
+    status = roomShotStatus(room, state.draft.photos),
+    list = node('ul', undefined, 'shot-items'),
+    hints = [];
+  wrap.querySelectorAll('[data-shot-flag]').forEach((box) => {
+    box.checked = !!room[box.dataset.shotFlag];
+    box.disabled = !editable;
+  });
+  wrap.querySelectorAll('[data-shot-count]').forEach((input) => {
+    if (input !== document.activeElement) input.value = room[input.dataset.shotCount] ?? '';
+    input.disabled = !editable;
+  });
   for (const shot of status.required) {
     const done = shot.tagged >= shot.needed,
       item = node('li', undefined, done ? 'shot-done' : 'shot-missing'),
@@ -1934,9 +1948,8 @@ function shotChecklist(room) {
     item.append(node('span', mark, 'shot-mark'), node('span', shot.label));
     list.append(item);
   }
-  wrap.append(flags, counts, list);
   if (status.unsetCounts.length)
-    wrap.append(
+    hints.push(
       node(
         'p',
         'Set how many ' +
@@ -1946,7 +1959,7 @@ function shotChecklist(room) {
       ),
     );
   if (status.untagged)
-    wrap.append(
+    hints.push(
       node(
         'p',
         status.untagged +
@@ -1955,18 +1968,23 @@ function shotChecklist(room) {
         'hint',
       ),
     );
-  return wrap;
+  wrap.querySelector('.shot-status').replaceChildren(list, ...hints);
+  return status;
+}
+function mountShotChecklist(holder, room) {
+  let wrap = holder.firstElementChild;
+  if (wrap?.shotRoom !== room) holder.replaceChildren((wrap = shotChecklist(room)));
+  return updateShotChecklist(wrap);
 }
 function renderShotLists() {
-  const active = document.activeElement?.dataset?.shotCount ? document.activeElement : null,
-    room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
-  if (!$('shotList').contains(active))
-    $('shotList').replaceChildren(...(room ? [shotChecklist(room)] : []));
+  const room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
+  if (room) mountShotChecklist($('shotList'), room);
+  else $('shotList').replaceChildren();
   document.querySelectorAll('#rooms .room').forEach((card, index) => {
     const target = card.querySelector('.room-shots'),
       saved = state.draft?.data.rooms[index];
     if (!target || !saved) return;
-    const status = roomShotStatus(saved, state.draft.photos);
+    const status = mountShotChecklist(target, saved);
     card.querySelector('.shot-drawer > summary').textContent =
       'Photo shots · ' +
       (status.missingPhotos
@@ -1974,13 +1992,13 @@ function renderShotLists() {
         : status.unsetCounts.length
           ? 'counts not set'
           : 'all tagged');
-    if (!target.contains(active)) target.replaceChildren(shotChecklist(saved));
   });
   renderShotPicker();
 }
 // Right after a capture, one tap tags the new photo; shots the room still needs come first.
 function renderShotPicker() {
   const picker = $('shotPicker'),
+    box = $('shotPickerChoices'),
     photo = state.draft?.photos.find((p) => p.id === state.shotPickerPhoto);
   picker.hidden = !photo || !!photo.shot || !canEditDraft('photos');
   if (picker.hidden) return;
@@ -1990,14 +2008,26 @@ function renderShotPicker() {
     ),
     choices = [...SHOT_LIST].sort((a, b) => missing.has(b.id) - missing.has(a.id));
   $('shotPickerLabel').textContent = 'Tag this ' + photo.room + ' photo';
-  $('shotPickerChoices').replaceChildren(
-    ...choices.map((shot) => {
-      const choice = button(shot.label, () => tagPhoto(photo, shot.id));
-      choice.className = 'shot-choice' + (missing.has(shot.id) ? ' shot-needed' : '');
-      choice.dataset.shot = shot.id;
-      return choice;
-    }),
-  );
+  if (box.dataset.photo !== photo.id) {
+    box.dataset.photo = photo.id;
+    box.replaceChildren(
+      ...SHOT_LIST.map((shot) => {
+        const choice = button(shot.label, () =>
+          tagPhoto(
+            state.draft.photos.find((p) => p.id === photo.id),
+            shot.id,
+          ),
+        );
+        choice.dataset.shot = shot.id;
+        return choice;
+      }),
+    );
+  }
+  const ordered = choices.map((shot) => box.querySelector('[data-shot="' + shot.id + '"]'));
+  ordered.forEach((choice, index) => {
+    choice.className = 'shot-choice' + (missing.has(choice.dataset.shot) ? ' shot-needed' : '');
+    if (box.children[index] !== choice) box.insertBefore(choice, box.children[index]);
+  });
 }
 function photoUrl(photo) {
   return photo.data_url || state.photoUrls.get(photo.id) || '';

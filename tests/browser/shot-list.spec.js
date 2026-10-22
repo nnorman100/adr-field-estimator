@@ -179,28 +179,43 @@ test('a count typed without leaving the field survives a background refresh', as
   await expect(surfaces).toBeFocused();
   await expect(surfaces).toHaveValue('359');
   expect(await page.evaluate(() => state.draft.data.rooms[0].affected_surfaces)).toBe(35);
-  await surfaces.blur();
-  await expect(surfaces).toHaveValue('35');
   await expect(shots(page).nth(1)).toHaveText('0 of 35Affected wall or floor');
+  // Tapping the other count right after a refresh lands there, and both counts are saved.
+  const wet = page.locator('#shotList [data-shot-count="wet_materials"]');
+  await wet.click();
+  await expect(wet).toBeFocused();
+  await expect(surfaces).toHaveValue('35');
+  await wet.pressSequentially('4');
+  await page.evaluate(() => renderPhotos());
+  await expect(wet).toBeFocused();
+  await expect(wet).toHaveValue('4');
+  expect(
+    await page.evaluate(() => {
+      const room = state.draft.data.rooms[0];
+      return [room.affected_surfaces, room.wet_materials];
+    }),
+  ).toEqual([35, 4]);
   // The same holds in the room card's drawer on Check Scope.
   await page.locator('.task-nav [data-task="property"]').click();
   const card = page.locator('#rooms .room').first();
   await card.locator('.shot-drawer > summary').click();
-  const wet = card.locator('[data-shot-count="wet_materials"]');
-  await wet.focus();
-  await wet.pressSequentially('2');
+  const drawerWet = card.locator('[data-shot-count="wet_materials"]');
+  await expect(drawerWet).toHaveValue('4');
+  await drawerWet.click();
+  await drawerWet.press('End');
+  await drawerWet.pressSequentially('2');
   await page.evaluate(() => renderPhotos());
-  await expect(wet).toBeFocused();
-  await expect(wet).toHaveValue('2');
-  expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(2);
+  await expect(drawerWet).toBeFocused();
+  await expect(drawerWet).toHaveValue('42');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(42);
   // Leaving the field after a refresh puts back the saved count, so the form stays valid.
-  await wet.pressSequentially('99');
+  await drawerWet.pressSequentially('9');
   await page.evaluate(() => renderPhotos());
-  await expect(wet).toHaveValue('299');
-  expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(29);
-  await wet.blur();
-  await expect(wet).toHaveValue('29');
-  expect(await wet.evaluate((input) => input.checkValidity())).toBe(true);
+  await expect(drawerWet).toHaveValue('429');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(42);
+  await drawerWet.blur();
+  await expect(drawerWet).toHaveValue('42');
+  expect(await drawerWet.evaluate((input) => input.checkValidity())).toBe(true);
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 });
 
