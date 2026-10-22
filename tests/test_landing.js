@@ -198,10 +198,9 @@ const origin = 'https://example.invalid';
   const decode = (s) => s.replace(/&amp;/g, '&').replace(/&middot;/g, '·');
   const items = (className) =>
     html.match(new RegExp('<ul class="' + className + '">([\\s\\S]*?)</ul>'))[1];
-  const faqItems = [...items('landing-faq').matchAll(/<h3>(.*?)<\/h3><p>(.*?)<\/p>/g)].map((m) => [
-    decode(m[1]),
-    decode(m[2]),
-  ]);
+  const faqItems = [
+    ...items('landing-faq').matchAll(/<h3>(.*?)<\/h3><\/summary><p>(.*?)<\/p>/g),
+  ].map((m) => [decode(m[1]), decode(m[2])]);
   assert.deepEqual(
     byType.FAQPage.mainEntity.map((q) => [q.name, q.acceptedAnswer.text]),
     faqItems,
@@ -209,9 +208,7 @@ const origin = 'https://example.invalid';
   assert.ok(faqItems.length >= 5);
   assert.deepEqual(
     byType.SoftwareApplication.featureList,
-    [...items('landing-cards landing-features').matchAll(/<h3>(.*?)<\/h3>/g)].map((m) =>
-      decode(m[1]),
-    ),
+    [...items('landing-features').matchAll(/<h3>(.*?)<\/h3>/g)].map((m) => decode(m[1])),
   );
   assert.equal(
     byType.SoftwareApplication.description,

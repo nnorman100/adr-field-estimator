@@ -50,7 +50,7 @@ test('the front page is the static DryScope landing with a plain Log in link', a
   );
   for (const heading of [
     'Three steps, one visit',
-    'Straight answers before you ask for a demo',
+    'Questions owners ask',
     'Four documents from one inspection',
     'What the crew gets on the phone',
   ])
@@ -60,6 +60,14 @@ test('the front page is the static DryScope landing with a plain Log in link', a
   await expect(logins).toHaveCount(3);
   for (const link of await logins.all()) await expect(link).toHaveAttribute('href', '/app');
   await expect(page.locator('#headerLogin')).toBeVisible();
+  // A plain text link, not a button: no border or background, underlined, still a full tap target.
+  expect(
+    await page.locator('#headerLogin').evaluate((el) => {
+      const style = getComputedStyle(el),
+        box = el.getBoundingClientRect();
+      return [style.borderStyle, style.backgroundColor, style.textDecorationLine, box.height >= 44];
+    }),
+  ).toEqual(['none', 'rgba(0, 0, 0, 0)', 'underline', true]);
   await expect(page.locator('#accessNote')).toContainText(
     'superadmins, owners, estimators and office staff',
   );
@@ -101,6 +109,7 @@ test('the front page is the static DryScope landing with a plain Log in link', a
   expect(await overflow(page)).toBe(0);
   await page.setViewportSize({ width: 1280, height: 900 });
   expect(await overflow(page)).toBe(0);
+  await page.locator('#headerLogin').evaluate((el) => el.blur());
   await page.screenshot({ path: test.info().outputPath('landing-desktop.png'), fullPage: true });
   expect(problems).toEqual([]);
   await page.locator('#headerLogin').click();
@@ -228,7 +237,7 @@ test('request-access links and form appear only with a mailto or https address',
     await expect(form).toBeVisible();
     await expect(form).toHaveAttribute('toolname', 'request_access');
     expect(await form.evaluate((el) => el.hasAttribute('toolautosubmit'))).toBe(false);
-    await page.getByRole('link', { name: 'Request access' }).click();
+    await page.getByRole('link', { name: 'Request access' }).first().click();
     await expect(page).toHaveURL(/#requestAccess$/);
     await form.locator('[name=company]').fill('Synthetic Restoration');
     await form.locator('[name=name]').fill('Sam Synthetic');

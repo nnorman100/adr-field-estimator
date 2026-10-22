@@ -3,7 +3,7 @@
    renders and reads completely without this script. */
 'use strict';
 const DryScopeLanding = (() => {
-  // Where "Request access" / "Book a demo" send people: a mailto: address or an https: page. Public
+  // Where "Request access" sends people: a mailto: address or an https: page. Public
   // sign-up stays off, so this never creates an account. Empty hides the links and the form.
   const REQUEST_ACCESS_URL = '';
   const APP = '/app';
@@ -155,7 +155,7 @@ const DryScopeLanding = (() => {
     {
       name: 'dryscope_access',
       description:
-        'How a company gets DryScope access (invitation only, no public sign-up), where existing staff log in, and where to request access or a demo when a contact address is configured.',
+        'How a company gets DryScope access (invitation only, no public sign-up), where existing staff log in, and where to request access when a contact address is configured.',
       inputSchema: { type: 'object', properties: {} },
       annotations: { readOnlyHint: true },
       execute: async () => facts(doc, origin, contact).access,
