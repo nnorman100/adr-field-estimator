@@ -1,6 +1,7 @@
 """Reviewable scope suggestions grounded only in the technician's recorded words."""
 
 import re
+from collections import Counter
 from typing import Literal
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr, ValidationError
 
@@ -292,15 +293,21 @@ def validate_claim(source, claim, suggestions):
     if claim is None:
         return [], []
     current = ClaimDetails.model_validate(claim).model_dump()
-    seen = set()
+    counts = Counter(change.field for change in suggestions.claim_changes)
+    asked = set()
     changes, questions = [], []
     for change in suggestions.claim_changes:
-        if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
-            raise ValueError('A proposed value has no supporting technician quote.')
-        if change.field in seen:
-            raise ValueError('Conflicting claim details require clarification.')
-        seen.add(change.field)
         label = CLAIM_LABELS[change.field]
+        if counts[change.field] > 1:
+            if change.field not in asked:
+                asked.add(change.field)
+                questions.append(f'Confirm the {label}; the walkthrough gave more than one value.')
+            continue
+        if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
+            questions.append(
+                f'Confirm the {label}; the walkthrough value has no matching technician quote.'
+            )
+            continue
         try:
             value = getattr(ClaimDetails.model_validate({change.field: change.value}), change.field)
         except ValidationError:

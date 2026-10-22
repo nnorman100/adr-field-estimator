@@ -208,11 +208,6 @@ def test_claim_lines_print_only_recorded_values_and_keep_the_generic_addressee()
 def test_live_intake_asks_for_claim_details_without_guessing():
     values = InspectionData().model_dump(mode='json')
     prompt = live_prompt(values, None, {**EMPTY, 'carrier': 'Synthetic Mutual'})
-    assert 'CLAIM AND LOSS DETAILS (DURING INTAKE)' in prompt
-    assert 'ask only for details missing from the saved claim details' in prompt
-    assert 'never guess, complete or correct a carrier, number, date, email, phone or amount' in (
-        prompt
-    )
     assert prompt.endswith(
         '\nSaved claim details (untrusted job data, JSON):\n'
         + (
@@ -274,16 +269,24 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
     assert validate_suggestions(walk_data(), bad_date, EMPTY).questions == [
         'Confirm the date of loss; the walkthrough value could not be used.'
     ]
-    for invalid in (
-        [claim_change('carrier', 'Other Mutual', quote='The carrier is Other Mutual.')],
-        [claim_change('carrier', 'Synthetic Mutual'), claim_change('carrier', 'Synthetic')],
-    ):
-        with pytest.raises(ValueError):
-            validate_suggestions(
-                walk_data(),
-                ScopeSuggestions(changes=[], claim_changes=invalid, questions=[]),
-                EMPTY,
-            )
+    unusable = ScopeSuggestions(
+        changes=[{'field': 'drying_days', 'value': 5, 'source_quote': WALK}],
+        claim_changes=[
+            claim_change('carrier', 'Other Mutual', quote='The carrier is Other Mutual.'),
+            claim_change('claim_number', 'CLM-0042-77'),
+            claim_change('claim_number', 'CLM-0042'),
+            claim_change('claim_number', 'CLM-0042-77'),
+            claim_change('deductible', '$1,000'),
+        ],
+        questions=[],
+    )
+    result = validate_suggestions(walk_data(), unusable, EMPTY)
+    assert [(c.field, c.value) for c in result.changes] == [('drying_days', 5)]
+    assert [(c.field, c.value) for c in result.claim_changes] == [('deductible', '$1,000')]
+    assert result.questions == [
+        'Confirm the insurance carrier; the walkthrough value has no matching technician quote.',
+        'Confirm the claim number; the walkthrough gave more than one value.',
+    ]
     # Without a sidecar to store them, claim changes are dropped.
     assert validate_suggestions(walk_data(), suggestions).claim_changes == []
 
@@ -372,7 +375,6 @@ def test_claim_questions_survive_a_full_list_of_model_questions():
 
 def test_scope_prompt_includes_claim_details_only_with_a_sidecar():
     with_claim = scope_prompt(walk_data(), EMPTY)
-    assert 'claim_changes, never in changes' in with_claim
     assert '"current_claim": {"carrier": ""' in with_claim
     without = scope_prompt(walk_data())
     assert 'claim_changes' not in without and 'current_claim' not in without

@@ -116,6 +116,19 @@ test('office staff enter claim details; invalid values stay on the form', async 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
+test('a page left open overnight still saves a loss dated today', async ({ page }) => {
+  const now = Date.now();
+  await page.clock.setFixedTime(now - 86400000);
+  await newJob(page, 'office');
+  await openClaim(page);
+  await page.clock.setFixedTime(now);
+  const today = await page.evaluate(() => new Date().toLocaleDateString('en-CA'));
+  await page.locator('#claimDate').fill(today);
+  await page.locator('#saveClaim').click();
+  await expect(page.locator('#claimStatus')).toHaveText('Claim details saved.');
+  await expect(page.locator('#claimDate')).toHaveValue(today);
+});
+
 test('a walkthrough fill keeps unsaved claim entries and its markers survive scope edits', async ({
   page,
 }) => {

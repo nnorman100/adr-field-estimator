@@ -248,7 +248,6 @@ window.WorkspaceUI = (() => {
         });
       });
       $('claimForm').addEventListener('input', claimTyped);
-      $('claimDate').max = new Date().toLocaleDateString('en-CA');
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refresh().catch((e) => say(e.message, 'error'));
       });
@@ -1219,6 +1218,7 @@ window.WorkspaceUI = (() => {
     claimEdits = [];
     renderClaimEdits();
     $('claimForm').reset();
+    $('claimDate').max = new Date().toLocaleDateString('en-CA');
     $('claimStatus').textContent = '';
     $('claimSummary').textContent = '· none recorded';
     $('claimDetails').hidden = !enabled() || !state.draft?.inspection_id;
@@ -1263,6 +1263,7 @@ window.WorkspaceUI = (() => {
     return view.claim;
   }
   async function saveClaim() {
+    $('claimDate').max = new Date().toLocaleDateString('en-CA');
     if (!$('claimForm').reportValidity()) return;
     $('saveClaim').disabled = true;
     try {
