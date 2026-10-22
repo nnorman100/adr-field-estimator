@@ -1906,15 +1906,16 @@ function shotChecklist(room) {
     input.value = room[key] ?? '';
     input.dataset.shotCount = key;
     input.disabled = !canEditDraft('scope');
-    input.addEventListener('change', () => {
+    input.addEventListener('input', () => {
       const value = input.value.trim() === '' ? null : Number(input.value);
+      if (input.validity.badInput) return;
       if (value === null) delete room[key];
       else if (Number.isInteger(value) && value >= 0 && value <= 50) room[key] = value;
-      else {
-        input.value = room[key] ?? '';
-        return;
-      }
+      else return;
       changed(false);
+    });
+    input.addEventListener('change', () => {
+      input.value = room[key] ?? '';
       renderShotLists();
     });
     field.append(input);
@@ -1957,7 +1958,10 @@ function shotChecklist(room) {
   return wrap;
 }
 function renderShotLists() {
-  const room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
+  const active = document.activeElement,
+    key = active?.dataset?.shotCount,
+    holder = key && active.closest('#shotList, #rooms .room'),
+    room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
   $('shotList').replaceChildren(...(room ? [shotChecklist(room)] : []));
   document.querySelectorAll('#rooms .room').forEach((card, index) => {
     const target = card.querySelector('.room-shots'),
@@ -1973,6 +1977,11 @@ function renderShotLists() {
           : 'all tagged');
     target.replaceChildren(shotChecklist(saved));
   });
+  const replaced = holder?.querySelector('[data-shot-count="' + key + '"]');
+  if (replaced && replaced !== active) {
+    replaced.value = active.value;
+    replaced.focus();
+  }
   renderShotPicker();
 }
 // Right after a capture, one tap tags the new photo; shots the room still needs come first.
@@ -2080,7 +2089,7 @@ function renderPhotos() {
 async function addPhoto(blob) {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open a draft before capturing evidence.');
-  if (state.draft.photos.length >= 30) throw Error('An inspection can contain at most 30 photos.');
+  if (state.draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
   if (blob.size > 8 * 1024 * 1024)
     throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))

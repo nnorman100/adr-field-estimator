@@ -231,8 +231,8 @@ class InspectionStore(JobStore):
             return record
         if upload['room'] not in {room['name'] for room in record['data']['rooms']}:
             raise ValueError('Choose a room from this inspection before uploading evidence.')
-        if len(record['photos']) >= 30:
-            raise ValueError('An inspection can contain at most 30 photos.')
+        if len(record['photos']) >= 60:
+            raise ValueError('An inspection can contain at most 60 photos.')
         if record['revision'] != upload['expected_revision'] or record['status'] == 'signed':
             raise Conflict('Restore the latest draft before adding a photo.')
         with Image.open(io.BytesIO(raw)) as image:
@@ -253,8 +253,8 @@ class InspectionStore(JobStore):
         blob.upload_from_string(raw, content_type=mime, if_generation_match=0)
 
         def append(current):
-            if len(current['photos']) >= 30:
-                raise ValueError('An inspection can contain at most 30 photos.')
+            if len(current['photos']) >= 60:
+                raise ValueError('An inspection can contain at most 60 photos.')
             current['photos'].append(photo)
             current.update(revision=current['revision'] + 1, audit=None, status='draft')
             return current

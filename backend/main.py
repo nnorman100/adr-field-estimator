@@ -1612,6 +1612,9 @@ async def live_walkthrough(socket: WebSocket):
                 # Read from the store, with the same access check, so only saved tags are reported.
                 current = await stored(store.get_inspection, uid, inspection_id)
                 await stored(store._access, uid, current, 'live')
+                if shots['speaking'] or finishing:
+                    shots['wanted'] = True
+                    return
                 status = shot_status_json(current['data'], current['photos'])
                 await session.send_client_content(
                     turns=types.Content(

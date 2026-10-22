@@ -160,6 +160,41 @@ test('a new photo is tagged from the quick picker and the room shot list counts 
   await expect(page.locator('#shotList [data-shot-count="affected_surfaces"]')).toHaveValue('2');
 });
 
+test('a count typed without leaving the field survives a background refresh', async ({ page }) => {
+  await open(page);
+  const surfaces = page.locator('#shotList [data-shot-count="affected_surfaces"]');
+  await surfaces.focus();
+  await surfaces.pressSequentially('3');
+  // A finished upload or OCR request redraws the photos while the field still has focus.
+  await page.evaluate(() => renderPhotos());
+  await expect(surfaces).toBeFocused();
+  await expect(surfaces).toHaveValue('3');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].affected_surfaces)).toBe(3);
+  await surfaces.pressSequentially('5');
+  await page.evaluate(() => renderPhotos());
+  await expect(surfaces).toHaveValue('35');
+  // An out-of-range entry is never saved and falls back to the saved count.
+  await surfaces.pressSequentially('9');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].affected_surfaces)).toBe(35);
+  await page.evaluate(() => renderPhotos());
+  await expect(surfaces).toBeFocused();
+  await expect(surfaces).toHaveValue('35');
+  await surfaces.blur();
+  await expect(shots(page).nth(1)).toHaveText('0 of 35Affected wall or floor');
+  // The same holds in the room card's drawer on Check Scope.
+  await page.locator('.task-nav [data-task="property"]').click();
+  const card = page.locator('#rooms .room').first();
+  await card.locator('.shot-drawer > summary').click();
+  const wet = card.locator('[data-shot-count="wet_materials"]');
+  await wet.focus();
+  await wet.pressSequentially('2');
+  await page.evaluate(() => renderPhotos());
+  await expect(wet).toBeFocused();
+  await expect(wet).toHaveValue('2');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(2);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+});
+
 test('a conflict fork keeps each photo tag on its uploaded copy', async ({ page }) => {
   await open(page);
   await addImage(page);

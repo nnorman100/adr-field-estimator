@@ -119,7 +119,7 @@ def live_prompt(data, identity=None, photos=None):
 
 def audit_prompt(data, photos, priced_scope, identity=None):
     photo_log = [
-        {k: p.get(k) for k in ('id', 'room', 'captured_at', 'shot', 'ocr_status', 'ocr')}
+        {k: p.get(k) for k in ('id', 'room', 'captured_at', 'ocr_status', 'ocr')}
         for p in photos
     ]
     year = data['year_built']

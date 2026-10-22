@@ -6,7 +6,7 @@ import backend.main as bm
 from backend.claims import make_documents
 from backend.contracts import AIResult, InspectionData, Room
 from backend.live_support import scope_fingerprint
-from backend.prompts import SHOT_STATUS_UPDATE, audit_prompt, live_prompt
+from backend.prompts import SHOT_STATUS_UPDATE, live_prompt
 from backend.shot_list import ROOM_COUNTS, ROOM_FIELDS, ROOM_FLAGS, SHOT_LIST, room_shot_status
 from tests.fakes import FakeStore, FakeVertexLive, client_content, png
 from tests.test_backend import context, data, inspect, audit, photo, sign_payload, ID
@@ -223,11 +223,6 @@ def test_live_prompt_coaches_the_shot_list_from_tagged_photos_only():
     assert 'Missing shots do not block signing' in instructions
     # The shot list sits inside the instructions, before the inspection data boundary.
     assert instructions.index('PHOTO SHOT LIST') < instructions.index('DATA BOUNDARY')
-    audit_photo = {'id': 'x', 'room': 'Kitchen', 'shot': 'meter', 'ocr_status': 'no_meter'}
-    evidence = audit_prompt({**payload, 'year_built': 1990}, [audit_photo], []).split(
-        '\nInspection evidence (JSON):\n'
-    )[1]
-    assert json.loads(evidence)['photo_log'][0]['shot'] == 'meter'
 
 
 def test_live_relay_reports_saved_shot_tags_between_replies(monkeypatch, tmp_path):
