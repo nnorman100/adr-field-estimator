@@ -10,9 +10,11 @@ Sources for the arithmetic (inputs are only technician-confirmed room values; no
   7.1.22): one air mover per affected room, plus one per 70 (minimum) to 50 (maximum) square feet
   of wet floor, each fraction rounded up per room. Burton's example: 140 SF of wet floor gives 2
   to 3 more air movers. DocuSketch adds that one air mover may be adequate for a room under 25 SF.
-  The wet floor area defaults to the room's floor area until the technician enters a smaller one. The same guidance adds one per 150 to 100 SF of wet wall above
-  2 ft and ceiling, and one per wall offset over 18 in; the app does not collect those areas, so
-  the range here is floor-based and the reasons say so.
+  The wet floor area defaults to the room's floor area until the technician enters a smaller
+  one. The same guidance adds one per 150 to 100 SF of wet wall above 2 ft and ceiling, and one
+  per wall offset over 18 in; the app does not collect those areas, so the range here is
+  floor-based and the reasons say so. A room with no wet floor (wet walls only) is not sized for
+  air movers at all.
 - Dehumidification, IICRC "Initial Dehumidification Recommendation Factors and Formulas"
   (Imperial, revision 3.1.22): cubic feet / chart factor = total pints per day (AHAM), and total
   pints per day / unit AHAM rating = number of dehumidifiers. The Low Grain Refrigerant (LGR) row
