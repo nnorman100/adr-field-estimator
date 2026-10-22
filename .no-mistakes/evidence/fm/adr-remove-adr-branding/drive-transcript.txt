@@ -1,0 +1,17 @@
+GET /brand/adr-logo.jpg: 404
+GET /brand/dryscope-mark.svg: 200
+session has legacy_identity key: false
+masthead title: Alert Disaster Restoration
+masthead logo visible (no saved logo): false
+masthead logo src (no saved logo): null
+create company status: 200
+new company profile: {"name":"Synthetic New Co","address":"","phone":"","email":"","license":"","signoff":"","logo_data_url":""}
+masthead logo src after save: data:image/jpeg;base64,/9j/4AA
+proposal h2: Alert Disaster Restoration · Official proposal
+defense letterhead: 12 Synthetic Way · Fresno, CA 93700 · (555) 010-2000 · CSLB #555000
+any adr-logo request in workspace session: false
+legacy proposal h2: Official proposal
+legacy body mentions ADR/Myers/950983/Bakersfield: false
+legacy PROTECTION clause: Per IICRC and EPA protocols, the contractor technicians will don appropriate personal protective equipment during mitigation/remediation services
+any adr-logo request in legacy session: false
+sign page broken-link text: ESTIMATE REVIEW Review and sign your estimate Your restoration company sent you this private link. Read all four documents, then sign below. No account or password is needed. This signing link is inco
