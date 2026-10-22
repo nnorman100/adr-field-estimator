@@ -342,6 +342,179 @@
   function signedDraftData(record) {
     return { ...emptyData(), rooms: [], ...record.inspection, address: record.address };
   }
+  // QR tags. The printed code is the QR payload and the text a technician types when the camera
+  // is unavailable; backend/tags.py reads the same format. Room tags carry the first 8 hex digits
+  // of the job id, so a tag printed for another job is refused instead of picking a same-named room.
+  const EQUIPMENT_KINDS = { AM: 'air_mover', DH: 'dehumidifier', AS: 'air_scrubber' },
+    EQUIPMENT_CODES = { air_mover: 'AM', dehumidifier: 'DH', air_scrubber: 'AS' },
+    equipmentLabels = {
+      air_mover: ['Air mover', 'Air movers'],
+      dehumidifier: ['LGR dehumidifier', 'LGR dehumidifiers'],
+      air_scrubber: ['Air scrubber', 'Air scrubbers'],
+    },
+    ROOM_TAG = /^DS1-RM-([a-f0-9]{8})-([^\r\n]{1,100})$/i,
+    EQUIPMENT_TAG = /^DS1-EQ-(AM|DH|AS)-([A-Z0-9][A-Z0-9._/-]{0,31})$/i;
+  const equipmentLabel = (kind, count = 1) => equipmentLabels[kind][count === 1 ? 0 : 1];
+  const jobTag = (inspectionId) => inspectionId.slice(8, 16).toLowerCase();
+  const roomTagCode = (inspectionId, room) =>
+    'DS1-RM-' + jobTag(inspectionId) + '-' + room.trim().replace(/\s+/g, ' ');
+  const equipmentTagCode = (kind, assetId) =>
+    'DS1-EQ-' + EQUIPMENT_CODES[kind] + '-' + assetId.trim().toUpperCase();
+  function parseTag(text) {
+    const code = String(text ?? '').trim();
+    let match = ROOM_TAG.exec(code);
+    if (match) {
+      const room = match[2].trim().replace(/\s+/g, ' ');
+      if (room) return { type: 'room', job: match[1].toLowerCase(), room, code };
+    }
+    match = EQUIPMENT_TAG.exec(code);
+    if (match) {
+      const kind = EQUIPMENT_KINDS[match[1].toUpperCase()],
+        asset_id = match[2].toUpperCase();
+      return { type: 'equipment', kind, asset_id, code: equipmentTagCode(kind, asset_id) };
+    }
+    return { type: 'unknown', code };
+  }
+  // Rooms whose names match once normalised share one tag code, so scanning and printing refuse
+  // them until they are renamed. Returns the refusal when any of the chosen rooms clashes, else ''.
+  function roomNameClash(rooms, chosen = rooms) {
+    const groups = new Map();
+    for (const room of rooms) {
+      const key = roomKey(room.name);
+      if (key) groups.set(key, [...(groups.get(key) || []), room]);
+    }
+    const clashing = [...groups.values()].filter(
+      (group) => group.length > 1 && group.some((room) => chosen.includes(room)),
+    );
+    if (!clashing.length) return '';
+    return (
+      'Rooms ' +
+      clashing
+        .flat()
+        .map((room) => '"' + room.name + '"')
+        .join(', ') +
+      ' have the same name. Give each room a distinct name, then try again; nothing was changed.'
+    );
+  }
+  const sameAsset = (a, b) => a.kind === b.kind && a.asset_id === b.asset_id;
+  // What a scanned code means for the open draft. A room tag names the current room; an equipment
+  // tag records that asset in the current room at the scan time, replacing its earlier placement.
+  // Nothing here touches the priced equipment counts. Returns the outcome and mutates draft.data
+  // only for a recorded equipment scan.
+  function applyTag(parsed, draft, currentRoom, now = new Date(), id = null) {
+    const data = draft.data;
+    if (parsed.type === 'unknown') {
+      return {
+        ok: false,
+        type: 'unknown',
+        message:
+          (parsed.code
+            ? 'Not a DryScope tag: "' + parsed.code.slice(0, 40) + '". '
+            : 'No code was read. ') +
+          'Room tags read DS1-RM-… and equipment tags DS1-EQ-…; nothing was recorded.',
+      };
+    }
+    const clash = roomNameClash(data.rooms);
+    if (clash) return { ok: false, type: parsed.type, message: clash };
+    if (parsed.type === 'room') {
+      if (parsed.job !== jobTag(draft.inspection_id))
+        return {
+          ok: false,
+          type: 'room',
+          message: 'This room tag was printed for a different job. Nothing was changed.',
+        };
+      const room = data.rooms.find((entry) => roomKey(entry.name) === roomKey(parsed.room));
+      if (!room)
+        return {
+          ok: false,
+          type: 'room',
+          message:
+            'No room named "' +
+            parsed.room +
+            '" is on this job. Add it with + Room or pick another room; nothing was changed.',
+        };
+      return { ok: true, type: 'room', room, message: 'Current room: ' + room.name + '.' };
+    }
+    const room = data.rooms.find((entry) => entry.name === currentRoom);
+    if (!room)
+      return {
+        ok: false,
+        type: 'equipment',
+        message:
+          'Choose the current room first, then scan the equipment tag. Nothing was recorded.',
+      };
+    const scans = data.equipment_scans || [],
+      previous = scans.find((scan) => sameAsset(scan, parsed)),
+      scan = {
+        id: id || previous?.id || crypto.randomUUID().replaceAll('-', ''),
+        kind: parsed.kind,
+        asset_id: parsed.asset_id,
+        room: room.name,
+        // Whole seconds: the server stores the same text it was sent, so a reloaded draft's
+        // acknowledged copy still matches the saved record instead of reading as a conflict.
+        scanned_at: now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      };
+    if (!previous && scans.length >= 200)
+      return {
+        ok: false,
+        type: 'equipment',
+        message: 'At most 200 equipment tags can be recorded on one job. Nothing was recorded.',
+      };
+    data.equipment_scans = [...scans.filter((entry) => entry !== previous), scan];
+    const moved = previous && roomKey(previous.room) !== roomKey(room.name) ? previous.room : null;
+    return {
+      ok: true,
+      type: 'equipment',
+      scan,
+      moved_from: moved,
+      message:
+        equipmentLabel(parsed.kind) +
+        ' ' +
+        parsed.asset_id +
+        (moved ? ' moved from ' + moved + ' to ' : ' placed in ') +
+        room.name +
+        ' · ' +
+        now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
+        '.',
+    };
+  }
+  function removeScan(data, scan) {
+    const scans = (data.equipment_scans || []).filter((entry) => entry.id !== scan.id);
+    if (scans.length) data.equipment_scans = scans;
+    else delete data.equipment_scans;
+    return scans.length;
+  }
+  // Scans grouped by room in the job's room order; a room no longer on the job keeps its scans
+  // under the stored name after the others. Each group's scans are in scan order.
+  function placementsByRoom(data) {
+    const scans = data.equipment_scans || [],
+      groups = data.rooms.map((room) => ({ room: room.name, scans: [] }));
+    for (const scan of scans) {
+      let group = groups.find((entry) => roomKey(entry.room) === roomKey(scan.room));
+      if (!group) {
+        group = { room: scan.room, scans: [], removed: true };
+        groups.push(group);
+      }
+      group.scans.push(scan);
+    }
+    return groups.filter((group) => group.scans.length);
+  }
+  const roomScans = (data, room) =>
+    (data.equipment_scans || []).filter((scan) => roomKey(scan.room) === roomKey(room));
+  // "2 air movers, 1 LGR dehumidifier" in kind order; '' when nothing is tagged.
+  function equipmentSummary(scans) {
+    return Object.keys(equipmentLabels)
+      .map((kind) => scans.filter((scan) => scan.kind === kind).length)
+      .map((count, i) => {
+        if (!count) return '';
+        const label = equipmentLabel(Object.keys(equipmentLabels)[i], count);
+        // "air mover" mid-sentence, but an acronym such as LGR keeps its case.
+        const lower = label[1] === label[1].toLowerCase();
+        return count + ' ' + (lower ? label[0].toLowerCase() + label.slice(1) : label);
+      })
+      .filter(Boolean)
+      .join(', ');
+  }
   const api = {
     emptyData,
     signedDraftData,
@@ -366,6 +539,16 @@
     missingItems,
     auditBlockMessage,
     noteFormat,
+    equipmentLabel,
+    roomTagCode,
+    equipmentTagCode,
+    parseTag,
+    roomNameClash,
+    applyTag,
+    removeScan,
+    placementsByRoom,
+    roomScans,
+    equipmentSummary,
   };
   if (typeof module !== 'undefined') module.exports = api;
   else root.ADRCore = api;

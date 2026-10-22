@@ -1021,6 +1021,8 @@ class WorkspaceStore:
             defaults = InspectionData(address=record['data']['address']).model_dump(
                 mode='json', exclude_none=True
             )
+            # Saved payloads leave out an empty tag-scan list (inspection_payload).
+            defaults.pop('equipment_scans')
             actual = {k: v for k, v in record['data'].items() if v is not None}
             if actual != defaults:
                 raise AccessDenied('Office-created jobs must start with empty scope.')

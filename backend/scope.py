@@ -217,7 +217,13 @@ def scope_prompt(data):
         + json.dumps(
             {
                 'current_form': data.model_dump(
-                    exclude={'assistant_transcript', 'technician_transcript', 'technician_notes'}
+                    exclude={
+                        'assistant_transcript',
+                        'technician_transcript',
+                        'technician_notes',
+                        # Tag scans are placement records, not scope the model may fill from.
+                        'equipment_scans',
+                    }
                 ),
                 'technician_transcript': data.technician_transcript,
                 'technician_notes': data.technician_notes,

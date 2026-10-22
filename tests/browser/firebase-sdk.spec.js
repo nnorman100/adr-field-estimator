@@ -93,7 +93,9 @@ test('the vendored modular Firebase SDK starts the app same-origin under the Hos
       return appCheckToken();
     }),
   ).toBe('');
-  expect(await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom'])).toEqual([]);
+  expect(
+    await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom', 'equipmentTagKind']),
+  ).toEqual([]);
   expect(external.filter((url) => url.includes('/firebasejs/'))).toEqual([]);
 });
 
@@ -147,7 +149,9 @@ test('on the live web.app site Google sign-in uses the same-origin auth helper u
         }),
     ),
   ).toBe('helper');
-  expect(await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom'])).toEqual([]);
+  expect(
+    await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom', 'equipmentTagKind']),
+  ).toEqual([]);
 });
 
 test('a trailing-dot web.app address reopens on the live host before Firebase starts', async ({

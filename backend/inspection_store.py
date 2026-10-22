@@ -59,7 +59,12 @@ def checked_metadata(value):
 
 
 def changed_fields(old, new):
-    return sorted(key for key in old.keys() | new.keys() if old.get(key) != new.get(key))
+    # A key the saved shape leaves out when empty (equipment_scans) equals its empty default.
+    def value(record, key):
+        found = record.get(key)
+        return None if found in ([], '', {}) else found
+
+    return sorted(key for key in old.keys() | new.keys() if value(old, key) != value(new, key))
 
 
 def saved(inspection_id, record, changed):

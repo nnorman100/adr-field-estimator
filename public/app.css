@@ -661,6 +661,193 @@ h3 {
 .chip-edit {
   opacity: 0.85;
 }
+/* QR tags: Scan tag stays in view at the end of the chip row; the chips scroll beside it. */
+.room-chip-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+.room-chip-row .room-chip-list {
+  flex: 1;
+  min-width: 0;
+}
+.room-chip-scan {
+  border-color: var(--navy);
+}
+.tag-placements {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+.tag-placements .section-head {
+  margin-bottom: 0.5rem;
+}
+.tag-placements h3 {
+  margin: 0;
+}
+.tag-placements .hint {
+  margin: 0.75rem 0;
+}
+.placement-list .empty {
+  padding: 0.5rem 0;
+}
+.placement-room h4 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1rem;
+}
+.placement-room ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.placement-room li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9375rem;
+}
+.placement-unit {
+  font-weight: 700;
+}
+.placement-time {
+  color: var(--text-2);
+  font-size: 0.875rem;
+  margin-right: auto;
+}
+.placement-room li button {
+  min-height: 40px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+}
+.room-equipment {
+  margin: 0.75rem 0 0;
+}
+.tag-dialog {
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+}
+.tag-dialog h3 {
+  margin: 1.25rem 0 0.25rem;
+}
+.tag-dialog .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+/* The scanner's own viewfinder: the walkthrough's .viewfinder keeps its single meaning. */
+.tag-viewfinder {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  aspect-ratio: 4/3;
+  border-radius: 8px;
+  background: #20272c;
+  color: white;
+  margin-bottom: 1rem;
+}
+.tag-viewfinder video {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.tag-dialog.scanning .tag-viewfinder video {
+  display: block;
+}
+.tag-viewfinder p {
+  margin: 0;
+  padding: 1rem;
+  text-align: center;
+  line-height: 1.5;
+  position: relative;
+  z-index: 1;
+}
+#tagScanStatus {
+  font-weight: 700;
+  min-height: 1.5em;
+  margin: 0.5rem 0;
+}
+#tagScanStatus.refused,
+#tagSheetStatus.refused,
+.tag-scan-log li.refused {
+  color: var(--error);
+}
+.tag-scan-log {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  font-size: 0.9375rem;
+}
+.tag-scan-log li {
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--line);
+}
+.tag-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.tag-choices li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tag-choices li button {
+  min-height: 40px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+}
+.tag-sheet {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.print-sheet {
+  display: none;
+}
+.tag-card {
+  margin: 0;
+  border: 1px solid var(--navy);
+  border-radius: 8px;
+  padding: 0.75rem;
+  text-align: center;
+  break-inside: avoid;
+  background: white;
+}
+.tag-card img {
+  width: 160px;
+  height: 160px;
+  max-width: 100%;
+}
+.tag-card figcaption {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.tag-card strong {
+  display: block;
+  font-size: 1rem;
+}
+.tag-card span {
+  display: block;
+  color: var(--text-2);
+}
+.tag-card code {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
 .viewfinder {
   position: relative;
   background: var(--page);
@@ -2290,5 +2477,22 @@ footer {
     padding: 0.5rem 0 0;
     border: 0;
     box-shadow: none;
+  }
+}
+/* A printed tag sheet shows only the tags; the open dialog and the rest of the app stay out. */
+@media print {
+  body.printing-tags > :not(#tagSheet) {
+    display: none !important;
+  }
+  body.printing-tags #tagSheet,
+  body.printing-tags #tagSheet[hidden] {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.35in;
+    margin: 0;
+  }
+  body.printing-tags .tag-card {
+    border: 1px solid #000;
+    border-radius: 0;
   }
 }
