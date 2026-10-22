@@ -1,0 +1,39 @@
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/health", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-cccccccccccccccccccccccccccccccc", "revision": 1, "changed_fields": ["address", "air_movers", "dehumidifiers", "rooms", "scope_confirmed", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/authorizations", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-7823cbc2db7a44ec85c2f89ca1e782f2", "revision": 1, "changed_fields": ["rooms"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}/readings", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-7823cbc2db7a44ec85c2f89ca1e782f2", "revision": 2, "changed_fields": ["address", "technician_notes", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "scope", "elapsed_ms": 153, "outcome": "ok", "inspection_id": "ADR-INS-7823cbc2db7a44ec85c2f89ca1e782f2"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/scope-suggestions", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-7823cbc2db7a44ec85c2f89ca1e782f2", "revision": 3, "changed_fields": ["air_movers", "rooms"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-7823cbc2db7a44ec85c2f89ca1e782f2", "revision": 4, "changed_fields": ["scope_confirmed"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "audit", "elapsed_ms": 1, "outcome": "ok", "inspection_id": "ADR-INS-7823cbc2db7a44ec85c2f89ca1e782f2"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/audit", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}/signing-links", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/session", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/authorizations", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-4ade5c50706c49f7b40c01aee715aa93", "revision": 1, "changed_fields": ["rooms"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/inspections/{inspection_id}/readings", "status": 200}
+{"severity": "INFO", "message": "Inspection saved", "operation": "save", "inspection_id": "ADR-INS-4ade5c50706c49f7b40c01aee715aa93", "revision": 2, "changed_fields": ["address", "technician_notes", "year_built"]}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/inspections/{inspection_id}", "status": 200}
+{"severity": "INFO", "message": "Vertex AI call", "model": "gemini-3.8-flash", "operation": "scope", "elapsed_ms": 1, "outcome": "ok", "inspection_id": "ADR-INS-4ade5c50706c49f7b40c01aee715aa93"}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "POST", "route": "/api/inspections/{inspection_id}/scope-suggestions", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/jobs/{inspection_id}/claim", "status": 200}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "GET", "route": "/api/jobs/{inspection_id}/claim", "status": 404}
+{"severity": "INFO", "message": "App Check", "outcome": "missing", "method": "PUT", "route": "/api/jobs/{inspection_id}/claim", "status": 404}
