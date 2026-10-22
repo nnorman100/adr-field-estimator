@@ -677,6 +677,10 @@ async def generate_audit(contents, inspection_id, started):
 
 def model_image(raw):
     with IMAGE_WORKER, Image.open(io.BytesIO(raw)) as image:
+        # JPEG originals decode at the smallest power-of-two reduction that still fills the box.
+        scale = max(image.size) / 1600
+        if scale > 1:
+            image.draft('RGB', (int(image.width / scale), int(image.height / scale)))
         image = ImageOps.exif_transpose(image).convert('RGB')
         image.thumbnail((1600, 1600))
         output = io.BytesIO()

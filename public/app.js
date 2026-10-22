@@ -4498,8 +4498,8 @@ async function initialize() {
   });
   $('inspectionForm').addEventListener('input', (e) => {
     if (e.target === validationControl && e.target.validity.valid) clearValidationFeedback();
-    // Room fields and shot-list answers save through their own handlers.
-    if (e.target.dataset.roomKey || e.target.closest('.shot-list')) return;
+    // Room fields, shot-list answers and room-card photo controls save through their own handlers.
+    if (e.target.dataset.roomKey || e.target.closest('.shot-list, .room-photos')) return;
     if (e.target.id === 'scopeConfirmed') $('scopeConfirmNotice').hidden = true;
     collect();
     changed(e.target.id !== 'scopeConfirmed');

@@ -130,6 +130,9 @@ test('a new photo is tagged from the quick picker and the room shot list counts 
   ]);
   await expect(card.locator('.shot-unset')).toHaveCount(0);
   await expect(card.locator('.shot-drawer > summary')).toHaveText('Photo shots · 2 missing');
+  // Tagging on a room card labels evidence and leaves a confirmed scope confirmed.
+  await page.locator('#scopeConfirmed').check();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   // Clearing a tag counts the photo as untagged again.
   await card.locator('.photo .photo-shot').first().selectOption('');
   await expect(card.locator('.shot-items li').first()).toHaveText('MissingRoom overview');
@@ -145,6 +148,9 @@ test('a new photo is tagged from the quick picker and the room shot list counts 
   await expect(card.locator('.shot-drawer > summary')).toHaveText('Photo shots · 2 missing');
   await expect.poll(() => settled(page)).toEqual(['surface', 'source']);
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(page.locator('#scopeConfirmed')).toBeChecked();
+  await expect(page.locator('#scopeConfirmNotice')).toBeHidden();
+  expect(await page.evaluate(() => state.record.data.scope_confirmed)).toBe(true);
   const room = await page.evaluate(() => state.record.data.rooms[0]);
   expect([room.affected_surfaces, room.wet_materials]).toEqual([2, 0]);
   // The counts read back after a reload without a revision conflict.

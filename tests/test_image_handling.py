@@ -4,7 +4,7 @@ These pin the behaviour the backend relies on from Pillow so a Pillow upgrade th
 EXIF handling, thumbnailing, decompression-bomb checks or mode conversion fails here first.
 """
 
-import base64, io
+import base64, io, time
 import pytest
 from PIL import Image, ImageDraw
 import backend.main as bm
@@ -80,6 +80,19 @@ def test_model_image_applies_exif_orientation_and_fits_a_jpeg_in_1600_pixels():
     with Image.open(io.BytesIO(part.inline_data.data)) as image:
         # The black half of the landscape frame becomes the top of the upright portrait.
         assert image.getpixel((400, 10))[0] < 40 and image.getpixel((400, 1590))[0] > 215
+
+
+def test_model_image_prepares_a_full_job_of_large_phone_photos_well_inside_the_audit_deadline():
+    # A 48-megapixel phone original just under the 8 MB upload cap, sized like a full 60-photo job.
+    noise = [Image.effect_noise((480, 360), sigma) for sigma in (40, 50, 60)]
+    photo = Image.merge('RGB', noise).resize((8000, 6000), Image.Resampling.BICUBIC)
+    raw = encode(photo, 'JPEG', quality=90)
+    assert len(raw) <= 8 * 1024 * 1024
+    started = time.perf_counter()
+    parts = [bm.model_image(raw) for _ in range(60)]
+    elapsed = time.perf_counter() - started
+    assert elapsed < bm.REST_DEADLINE_SECONDS / 3, f'{elapsed:.1f}s to prepare 60 photos'
+    assert decoded(parts[-1].inline_data.data)[:3] == ('JPEG', 'RGB', (1600, 1200))
 
 
 def test_model_image_flattens_transparent_png_photos_to_rgb_jpeg():

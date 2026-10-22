@@ -344,8 +344,8 @@ class InspectionStore(JobStore):
 
     def tag_photo_shot(self, uid, inspection_id, revision, photo_id, shot):
         """Tags one uploaded photo with a shot type from the shot list, or clears the tag (None).
-        Like a room move, only the tag changes; it invalidates the audit because the audit reads
-        the tags."""
+        Like a room move, only the tag changes; it invalidates the audit because every saved
+        revision change does."""
 
         def update(record):
             photo = next((p for p in record['photos'] if p['id'] == photo_id), None)
