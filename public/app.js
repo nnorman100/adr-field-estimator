@@ -209,6 +209,7 @@ function showTask(task, focus = true) {
   document
     .querySelectorAll('[data-panel]')
     .forEach((panel) => (panel.hidden = panel.dataset.panel !== task));
+  window.DryingLog?.render();
   document.querySelectorAll('.task-nav [data-task]').forEach((tab) => {
     if (tab.dataset.task === task) tab.setAttribute('aria-current', 'step');
     else tab.removeAttribute('aria-current');
@@ -687,6 +688,7 @@ function clearDisplayedInspection() {
   $('savedSignature').src = '';
   $('savedSignature').hidden = true;
   $('retrySavedEvidence').hidden = true;
+  window.DryingLog?.clear();
   renderPhotos();
   window.TagsUI?.render();
   renderSaveStatus();
@@ -1641,6 +1643,7 @@ function renderRooms() {
   updateRoomPicker();
   renderRoomPhotos();
   renderWalkthroughEdits();
+  window.DryingLog?.render();
   window.TagsUI?.render();
 }
 function requestRoomRemoval(room, trigger) {
@@ -2002,6 +2005,7 @@ async function openNew(data = null, photos = []) {
   await persist();
   await syncDraft();
   await window.WorkspaceUI?.editor();
+  window.DryingLog?.load().catch(() => {});
   renderNotes();
   drainQueue();
 }
@@ -2088,6 +2092,7 @@ async function restoreDraft(id) {
   await persist();
   await syncDraft();
   await window.WorkspaceUI?.editor();
+  window.DryingLog?.load().catch(() => {});
   processNotes();
   drainQueue();
 }
@@ -2320,6 +2325,7 @@ async function restoreSigned(id) {
   showTask('review');
   $('jobsDialog').close();
   await window.WorkspaceUI?.editor();
+  window.DryingLog?.load().catch(() => {});
   const draft = state.draft,
     current = () => state.user?.uid === uid && state.signed === record && state.draft === draft;
   let missing = 0;
@@ -3762,6 +3768,7 @@ function connectivity() {
   renderControls();
   renderSaveStatus();
   renderNotes();
+  window.DryingLog?.render();
   if (offline) {
     if (state.media) {
       captureGap(
@@ -3773,6 +3780,7 @@ function connectivity() {
   } else
     Promise.resolve(window.WorkspaceUI?.refresh())
       .then(() => syncDraft())
+      .then(() => window.DryingLog?.reload())
       .then(() => drainQueue())
       .then(() => processNotes())
       .catch((e) => say(e.message, 'error'));

@@ -530,3 +530,199 @@ console.log(
   );
   console.log('PASS: the audit-block banner lists each unpriced item, setup gap and pending photo');
 }
+{
+  // Drying-log psychrometrics: the browser shows the same values the server stores.
+  const psychro = require('../public/psychrometrics.js');
+  for (const [tempF, rh, gpp, dewPoint] of [
+    [70, 50, 54, 51],
+    [75, 50, 65, 55],
+    [80, 40, 61, 54],
+    [32, 100, 26, 32],
+    [74, 72, 91, 64],
+    [86, 36, 67, 56],
+    [68, 45, 46, 46],
+  ]) {
+    const result = psychro.psychrometrics(tempF, rh);
+    assert.equal(result.gpp, gpp, tempF + '°F / ' + rh + '% GPP');
+    assert.equal(result.dew_point_f, dewPoint, tempF + '°F / ' + rh + '% dew point');
+  }
+  assert.deepEqual(psychro.psychrometrics(70, 50), {
+    gpp: 54,
+    dew_point_f: 51,
+    dew_point_depression_f: 19,
+    vapor_pressure_inhg: 0.37,
+    enthalpy_btu_lb: 25.3,
+  });
+  // Blank or unreadable input calculates nothing rather than treating it as zero degrees.
+  for (const [t, rh] of [
+    ['', 50],
+    [70, ''],
+    [null, 50],
+    ['abc', 50],
+  ])
+    assert.equal(psychro.psychrometrics(t, rh), null);
+  // Drying-day summaries against IICRC S500 field guidance: dehumidifier grain depression
+  // (inlet GPP − outlet GPP) is acceptable from 12 and optimal from 20 grains; chamber-to-exhaust
+  // vapor pressure differential is moderate from 0.12 and high from 0.25 inHg (vapor pressures
+  // from the ASHRAE/Magnus equations above); outside air more than 20 GPP drier than the
+  // chamber permits a controlled open system.
+  for (const [inlet, outlet, delta, status, efficiency] of [
+    [91, 67, 24, 'optimal', 26],
+    [70, 50, 20, 'optimal', 29],
+    [70, 52, 18, 'acceptable', 26],
+    [51, 39, 12, 'acceptable', 24],
+    [51, 40, 11, 'low', 22],
+    [89, 84, 5, 'low', 6],
+    [50, 50, 0, 'none', 0],
+    [50, 60, -10, 'none', 0],
+  ])
+    assert.deepEqual(psychro.grainDepression(inlet, outlet), {
+      delta_gpp: delta,
+      status,
+      efficiency_percent: efficiency,
+    });
+  for (const [affected, outlet, delta, potential] of [
+    [0.7, 0.4, 0.3, 'high'],
+    [0.609, 0.451, 0.158, 'moderate'],
+    [0.5, 0.45, 0.05, 'low'],
+    [0.45, 0.45, 0, 'stagnant'],
+    [0.4, 0.45, -0.05, 'stagnant'],
+  ])
+    assert.deepEqual(psychro.vaporPressureDifferential(affected, outlet), {
+      delta_inhg: delta,
+      potential,
+    });
+  // DryScope's Day 1 preset: 74 °F / 72 % chamber air over 86 °F / 36 % dehumidifier exhaust.
+  const chamber = psychro.psychrometrics(74, 72),
+    exhaust = psychro.psychrometrics(86, 36);
+  assert.equal(psychro.grainDepression(chamber.gpp, exhaust.gpp).status, 'optimal');
+  assert.equal(
+    psychro.vaporPressureDifferential(chamber.vapor_pressure_inhg, exhaust.vapor_pressure_inhg)
+      .potential,
+    'moderate',
+  );
+  assert.equal(psychro.dryingSystem(61, 91), 'open');
+  assert.equal(psychro.dryingSystem(70, 91), 'open');
+  assert.equal(psychro.dryingSystem(71, 91), 'closed');
+  assert.equal(psychro.dryingSystem(54, 51), 'closed');
+
+  // Three monitoring days in one wet room, with a dry reference room, outside air and a
+  // dehumidifier outlet reading on day 1; one reading for a room that was since renamed.
+  let n = 0;
+  const entry = (taken, fields) => ({
+    id: String(++n).padStart(32, '0'),
+    recorded_at: taken,
+    recorded_by: 'tech@example.invalid',
+    note: '',
+    taken_at: taken,
+    ...fields,
+  });
+  const air = (taken, room, zone, t, rh) =>
+    entry(taken, {
+      kind: 'air',
+      room,
+      zone,
+      temperature_f: t,
+      relative_humidity: rh,
+      ...psychro.psychrometrics(t, rh),
+    });
+  const readings = [
+    air('2026-10-23T15:00:00Z', 'Bathroom', 'affected', 73, 42),
+    air('2026-10-21T15:00:00Z', 'Bathroom', 'affected', 74, 72),
+    air('2026-10-21T15:10:00Z', 'Hall', 'unaffected', 68, 45),
+    air('2026-10-21T15:20:00Z', '', 'outside', 62, 74),
+    air('2026-10-21T15:30:00Z', 'Bathroom', 'dehu_outlet', 86, 36),
+    entry('2026-10-21T15:40:00Z', {
+      kind: 'material',
+      room: 'Bathroom',
+      material: 'Drywall',
+      moisture: 28,
+      unit: '%MC',
+      dry_standard: 12,
+      affected: true,
+    }),
+    air('2026-10-22T15:00:00Z', 'Bathroom', 'affected', 76, 52),
+    entry('2026-10-23T15:05:00Z', {
+      kind: 'thermal',
+      room: 'Old room',
+      delta_t_f: -6.4,
+      pattern: 'cold_anomaly',
+      boundary: '',
+    }),
+  ];
+  const utcDay = (iso) => iso.slice(0, 10);
+  const summary = psychro.summarizeLog(
+    readings,
+    [{ name: 'Bathroom' }, { name: 'Kitchen' }, { name: 'Hall' }],
+    utcDay,
+  );
+  assert.deepEqual(summary.days, ['2026-10-21', '2026-10-22', '2026-10-23']);
+  // Current rooms first in Check Scope order, then names no room carries, then outside/whole job.
+  assert.deepEqual(
+    summary.groups.map((g) => [g.room, g.known, g.count]),
+    [
+      ['Bathroom', true, 5],
+      ['Kitchen', true, 0],
+      ['Hall', true, 1],
+      ['Old room', false, 1],
+      ['', false, 1],
+    ],
+  );
+  const bathroom = summary.groups[0];
+  assert.deepEqual(
+    bathroom.days.map((d) => [d.number, d.readings.length, d.above_standard, d.system]),
+    [
+      [1, 3, 45, 'open'],
+      [2, 1, 24, 'closed'],
+      [3, 1, 5, 'closed'],
+    ],
+  );
+  // Readings inside a day keep time order even when they were saved out of order.
+  assert.deepEqual(
+    bathroom.days[0].readings.map((r) => r.taken_at.slice(11, 16)),
+    ['15:00', '15:30', '15:40'],
+  );
+  assert.deepEqual(bathroom.days[0].depression, {
+    delta_gpp: 24,
+    status: 'optimal',
+    efficiency_percent: 26,
+  });
+  assert.equal(bathroom.days[0].vapor.potential, 'moderate');
+  assert.equal(bathroom.days[1].depression, null);
+  // The day-1 dry reference (46 GPP) still anchors later days until a newer one is taken.
+  assert.deepEqual(bathroom.progress, {
+    first_gpp: 91,
+    latest_gpp: 51,
+    reference_gpp: 46,
+    percent: 89,
+    days: 3,
+  });
+  assert.equal(summary.groups[1].progress, null);
+  assert.equal(summary.groups[2].days[0].above_standard, null);
+  // A skipped monitoring visit keeps its calendar place: October 21 and 25 are days 1 and 5, the
+  // drying spans five days, and nothing is filled in for the days between.
+  const skipped = psychro.summarizeLog(
+    [
+      air('2026-10-21T15:00:00Z', 'Bathroom', 'affected', 74, 72),
+      air('2026-10-21T15:10:00Z', 'Hall', 'unaffected', 68, 45),
+      air('2026-10-25T15:00:00Z', 'Bathroom', 'affected', 70, 50),
+    ],
+    [{ name: 'Bathroom' }],
+    utcDay,
+  );
+  assert.deepEqual(skipped.days, ['2026-10-21', '2026-10-25']);
+  assert.deepEqual(
+    skipped.groups[0].days.map((d) => [d.key, d.number]),
+    [
+      ['2026-10-21', 1],
+      ['2026-10-25', 5],
+    ],
+  );
+  assert.equal(skipped.groups[0].progress.days, 5);
+  // No readings, no days and no invented rooms beyond the job's own.
+  assert.deepEqual(psychro.summarizeLog([], [{ name: 'Room 1' }], utcDay), {
+    days: [],
+    groups: [{ room: 'Room 1', known: true, days: [], progress: null, count: 0 }],
+  });
+  console.log('PASS: psychrometric values and per-room drying-log summary');
+}

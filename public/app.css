@@ -2479,6 +2479,127 @@ footer {
     box-shadow: none;
   }
 }
+/* Drying log: its own Check Scope card under the scope form, with one tinted card per room. */
+.drying-log {
+  margin-top: 1rem;
+}
+.drying-log > .section-head {
+  margin-bottom: 0.5rem;
+}
+.drying-log > .section-head h2,
+.drying-log > .section-head .status {
+  margin: 0;
+}
+.drying-log > .hint {
+  margin: 0 0 1rem;
+}
+.drying-room .section-head {
+  margin-bottom: 0.25rem;
+}
+.drying-progress {
+  margin: 0 0 0.75rem;
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+.drying-day {
+  border-top: 1px solid var(--line);
+  padding-top: 0.6rem;
+  margin-top: 0.6rem;
+}
+.drying-day h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.9375rem;
+}
+.drying-day-summary {
+  margin: 0 0 0.5rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.reading-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.reading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 0.75rem;
+  padding: 0.4rem 0;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.reading .reading-meta {
+  grid-column: 1;
+  color: var(--text-2);
+  font-size: 0.875rem;
+}
+.reading .reading-remove {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  min-height: 44px;
+}
+.reading-dialog {
+  max-width: 560px;
+}
+.reading-dialog .section-head {
+  margin-bottom: 1rem;
+}
+.reading-kinds {
+  margin: 0 0 1rem;
+}
+.reading-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.reading-calc {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--water-tint);
+  border-left: 3px solid var(--water-deep);
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+.reading-dialog label {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+.reading-dialog label.check {
+  display: flex;
+}
+.reading-dialog input:not([type='checkbox'], [type='radio']),
+.reading-dialog select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  min-height: 44px;
+  font-size: 1rem;
+}
+.reading-dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+@media (max-width: 700px) {
+  .drying-log > .section-head button {
+    min-height: 44px;
+  }
+  .reading-dialog .form-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 0 0.75rem;
+  }
+  .reading-dialog .form-grid label:first-child:nth-last-child(odd) {
+    grid-column: 1 / -1;
+  }
+  /* The wide Taken at control would squeeze the room choice to a letter. */
+  #readingForm > .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
 /* A printed tag sheet shows only the tags; the open dialog and the rest of the app stay out. */
 @media print {
   body.printing-tags > :not(#tagSheet) {

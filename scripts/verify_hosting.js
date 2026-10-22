@@ -73,6 +73,8 @@ const unstamp = (text) =>
   for (const file of [
     'app.js',
     'workspaces.js',
+    'psychrometrics.js',
+    'drying.js',
     'tags.js',
     'app.css',
     'core.js',

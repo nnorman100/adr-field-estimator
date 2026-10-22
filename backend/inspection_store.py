@@ -16,11 +16,13 @@ try:
     from .cloud_log import event
     from .scope import default_photo_rename
     from .contracts import InspectionData
+    from .psychrometrics import psychrometrics
 except ImportError:
     from job_store import JobStore, decode_image, IMAGE_WORKER
     from cloud_log import event
     from scope import default_photo_rename
     from contracts import InspectionData
+    from psychrometrics import psychrometrics
 
 # Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
 DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40, 'transcribe': 200}
@@ -287,6 +289,58 @@ class InspectionStore(JobStore):
             return record
 
         return self._change(uid, inspection_id, revision, update, 'photos')
+
+    # Drying readings live in their own document beside the inspection. They never enter the
+    # priced revision, so adding one changes no audit, proposal hash or signature, and a monitoring
+    # visit after signing can still record the day's readings against the immutable agreement.
+    READING_LIMIT = 400
+
+    def _log_ref(self, inspection_id):
+        self._ref(inspection_id)
+        return self.db.collection('drying_logs').document(inspection_id)
+
+    @staticmethod
+    def _log_body(inspection_id, snapshot):
+        body = snapshot.to_dict() if snapshot.exists else None
+        return body or {'inspection_id': inspection_id, 'readings': [], 'updated_at': None}
+
+    def drying_log(self, uid, inspection_id):
+        self._owned(self._ref(inspection_id).get(), uid)
+        return self._log_body(inspection_id, self._log_ref(inspection_id).get())
+
+    def add_reading(self, uid, email, inspection_id, reading):
+        """Appends one reading; the server names who saved it and computes the air values."""
+        ref, log_ref = self._ref(inspection_id), self._log_ref(inspection_id)
+        entry = dict(reading, id=uuid4().hex, recorded_by=email, recorded_at=now())
+        if entry['kind'] == 'air':
+            entry.update(psychrometrics(entry['temperature_f'], entry['relative_humidity']))
+
+        def append(tx):
+            self._owned(ref.get(transaction=tx), uid, 'scope', tx)
+            log = self._log_body(inspection_id, log_ref.get(transaction=tx))
+            if len(log['readings']) >= self.READING_LIMIT:
+                raise ValueError(f'At most {self.READING_LIMIT} readings are kept per job.')
+            log['readings'].append(entry)
+            log['updated_at'] = now()
+            tx.set(log_ref, log)
+            return log
+
+        return self._atomic(append)
+
+    def remove_reading(self, uid, inspection_id, reading_id):
+        ref, log_ref = self._ref(inspection_id), self._log_ref(inspection_id)
+
+        def remove(tx):
+            self._owned(ref.get(transaction=tx), uid, 'scope', tx)
+            log = self._log_body(inspection_id, log_ref.get(transaction=tx))
+            kept = [r for r in log['readings'] if r['id'] != reading_id]
+            if len(kept) == len(log['readings']):
+                raise LookupError('Reading not found.')
+            log.update(readings=kept, updated_at=now())
+            tx.set(log_ref, log)
+            return log
+
+        return self._atomic(remove)
 
     def append_transcript(self, uid, inspection_id, marker, block):
         """Appends a transcribed offline voice note once; a retried note whose marker is already

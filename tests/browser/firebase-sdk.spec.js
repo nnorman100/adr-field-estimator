@@ -9,6 +9,16 @@ const CSP = require('../../firebase.json')
 // report-sample adds diagnostics only; the Hosting policy's enforcement stays intact.
 const DIAGNOSTIC_CSP = CSP.replace("style-src 'self'", "style-src 'self' 'report-sample'");
 test.use({ serviceWorkers: 'block' });
+// Every native select in the app shell.
+const APP_SELECTS = [
+  'coordEstimator',
+  'photoRoom',
+  'readingRoom',
+  'readingZone',
+  'readingUnit',
+  'readingPattern',
+  'equipmentTagKind',
+];
 
 async function observeCsp(page) {
   await page.addInitScript(() => {
@@ -93,9 +103,7 @@ test('the vendored modular Firebase SDK starts the app same-origin under the Hos
       return appCheckToken();
     }),
   ).toBe('');
-  expect(
-    await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom', 'equipmentTagKind']),
-  ).toEqual([]);
+  expect(await unexpectedCsp(page, browserName, APP_SELECTS)).toEqual([]);
   expect(external.filter((url) => url.includes('/firebasejs/'))).toEqual([]);
 });
 
@@ -149,9 +157,7 @@ test('on the live web.app site Google sign-in uses the same-origin auth helper u
         }),
     ),
   ).toBe('helper');
-  expect(
-    await unexpectedCsp(page, browserName, ['coordEstimator', 'photoRoom', 'equipmentTagKind']),
-  ).toEqual([]);
+  expect(await unexpectedCsp(page, browserName, APP_SELECTS)).toEqual([]);
 });
 
 test('a trailing-dot web.app address reopens on the live host before Firebase starts', async ({

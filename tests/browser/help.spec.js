@@ -31,6 +31,7 @@ const FIELD = [
   'Property and scope',
   'Walkthrough with the live camera assistant',
   'Photo evidence',
+  'Drying log and readings',
   'QR room and equipment tags',
   'Review and claim documents',
   "Getting the homeowner's signature",
@@ -155,11 +156,11 @@ test.describe('company roles', () => {
     [
       'office',
       'For you: Office staff',
-      ['My jobs and Company jobs', 'Review and claim documents', ALL[7]],
-      ALL[7],
+      ['My jobs and Company jobs', 'Review and claim documents', ALL[8]],
+      ALL[8],
     ],
-    ['owner', 'For you: Owner and Superadmin', ALL, ALL[8]],
-    ['admin', 'For you: Superadmin', [ALL[10]], ALL[10]],
+    ['owner', 'For you: Owner and Superadmin', ALL, ALL[9]],
+    ['admin', 'For you: Superadmin', [ALL[11]], ALL[11]],
   ])
     test(role + ' help lists the role topics first', async ({ page, browserName }) => {
       await page.setViewportSize({ width: 390, height: 844 });
@@ -216,7 +217,7 @@ test.describe('company roles', () => {
     await page.goto('/');
     await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
     await openHelp(page);
-    expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[5], ALL[7]]);
+    expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[6], ALL[8]]);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     const result = await page.request.fetch('/api/companies/adr/team/' + uid('office'), {
       method: 'PUT',

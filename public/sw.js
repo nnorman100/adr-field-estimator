@@ -10,6 +10,8 @@ const ASSETS = [
   '/documents.js?v=' + VERSION,
   '/app.js?v=' + VERSION,
   '/workspaces.js?v=' + VERSION,
+  '/psychrometrics.js?v=' + VERSION,
+  '/drying.js?v=' + VERSION,
   '/tags.js?v=' + VERSION,
   '/audio-worklet.js?v=' + VERSION,
   '/vendor/firebase/13.0.0/firebase-app.js',
