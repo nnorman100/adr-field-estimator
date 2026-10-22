@@ -92,8 +92,9 @@ MONTHS = {
     for name in names
 }
 AMOUNT = r'\d+(?:,\d{3})*(?:\.\d+)?'
-# A whole stated amount: a currency sign before it, or "dollars" or "deductible" beside it.
 MONEY = re.compile(rf'(?<![\w.,/-])(\$\s*)?({AMOUNT})(?![\w/-]|[.,]\d)')
+# Characters that may join the digit groups of a phone number or of another number.
+JOINERS = r'[\s().-]'
 
 
 class ScopeChange(StrictModel):
@@ -113,7 +114,7 @@ class ScopeSuggestions(StrictModel):
     changes: list[ScopeChange] = Field(max_length=100)
     # Claim details for the job sidecar, kept apart from the inspection form's values.
     # Entries are checked one by one in validate_claim, so a malformed one never rejects the response.
-    claim_changes: list[Any] = Field(default_factory=list)
+    claim_changes: Any = Field(default_factory=list)
     questions: list[str] = Field(max_length=20)
 
 
@@ -264,14 +265,37 @@ def amounts(text):
     return [float(a.replace(',', '')) for a in re.findall(AMOUNT, text)]
 
 
+def sentences(quote):
+    """The quote with sentence punctuation that ends a phrase replaced by '|', keeping positions."""
+    return re.sub(r'[.,;:!?](?=\s|$)', '|', quote)
+
+
+def joined(before, after):
+    """Whether a number continues, through joining characters, into a digit group, month or letters."""
+    last = re.search(rf'([^\W\d_]+){JOINERS}*$', before)
+    first = re.match(rf'{JOINERS}*([^\W\d_]+)', after)
+    return bool(
+        re.search(rf'\d{JOINERS}*$', before)
+        or re.match(rf'{JOINERS}*\d', after)
+        or re.search(rf'[^\W\d_]\s*[().-]{JOINERS}*$', before)
+        or re.match(rf'{JOINERS}*[().-]\s*[^\W\d_]', after)
+        or (last and last.group(1).casefold() in MONTHS)
+        or (first and first.group(1).casefold() in MONTHS)
+    )
+
+
 def money(quote):
+    """Whole amounts with a $ sign, followed by "dollars", or right after "deductible (is|of)"."""
+    text = sentences(quote)
     found = set()
-    for m in MONEY.finditer(quote):
-        before, after = quote[: m.start()], quote[m.end() :]
+    for m in MONEY.finditer(text):
+        before, after = text[: m.start()], text[m.end() :]
+        if joined(before, after):
+            continue
         if (
             m.group(1)
-            or re.match(r'\s*(dollars?|deductible)\b', after, re.IGNORECASE)
-            or re.search(r'\bdeductible\s*:?\s*$', before, re.IGNORECASE)
+            or re.match(r'\s*dollars?\b', after, re.IGNORECASE)
+            or re.search(r'\bdeductible(?:\s+(?:is|of))?\s*$', before, re.IGNORECASE)
         ):
             found.add(float(m.group(2).replace(',', '')))
     return found
@@ -285,15 +309,20 @@ def phone_digits(text):
 
 
 def quoted_phones(quote):
-    """Phone numbers written with only phone separators and not joined to a letter or other token."""
+    """Phone numbers bounded by spaces, the quote's ends or sentence punctuation on both sides."""
+    text = sentences(quote)
     found = set()
-    for m in re.finditer(r'[\d\s().-]+', quote):
-        run, start, end = m.group(), m.start(), m.end()
-        if run[0].isdigit() and start and re.match(r'\w', quote[start - 1]):
-            continue
-        if run[-1].isdigit() and end < len(quote) and re.match(r'\w', quote[end]):
-            continue
-        found.add(phone_digits(run))
+    for m in re.finditer(r'[\d\s().-]+', text):
+        run = m.group().strip()
+        start = m.start() + len(m.group()) - len(m.group().lstrip())
+        end = start + len(run)
+        if (
+            (run[:1].isdigit() or run[:1] == '(')
+            and run[-1:].isdigit()
+            and (start == 0 or text[start - 1].isspace())
+            and (end == len(text) or text[end].isspace() or text[end] == '|')
+        ):
+            found.add(phone_digits(run))
     return found - {''}
 
 
@@ -323,14 +352,16 @@ def validate_claim(source, claim, suggestions):
     if claim is None:
         return [], []
     current = ClaimDetails.model_validate(claim).model_dump()
+    entries = suggestions.claim_changes
+    entries = entries if isinstance(entries, list) else [] if entries is None else [entries]
     fields = [
         raw.get('field') if isinstance(raw, dict) and isinstance(raw.get('field'), str) else None
-        for raw in suggestions.claim_changes
+        for raw in entries
     ]
     fields = [field if field in CLAIM_LABELS else None for field in fields]
     counts = Counter(fields)
     changes, questions = [], []
-    for field, raw in zip(fields, suggestions.claim_changes):
+    for field, raw in zip(fields, entries):
         label = CLAIM_LABELS[field] if field else 'claim details'
         if field and counts[field] > 1:
             questions.append(f'Confirm the {label}; the walkthrough gave more than one value.')

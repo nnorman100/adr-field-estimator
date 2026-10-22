@@ -310,7 +310,10 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
         ('loss_cause', 'Supply line, kitchen sink', 'From the supply line kitchen sink.'),
         ('deductible', '$1,000', 'The deductible is 1000 dollars.'),
         ('deductible', '1,000.00', 'The deductible is $1,000.'),
-        ('deductible', '$500', 'A 500 deductible on policy HO500.'),
+        ('deductible', '$500', 'The deductible of 500 on policy HO500.'),
+        ('deductible', '$1,000', 'The deductible is 1000.'),
+        ('deductible', '$1,000', 'Loss happened October 12 2026 deductible is $1,000.'),
+        ('adjuster_phone', '661-555-0100', 'Adjuster phone 661-555-0100. 2 rooms wet.'),
         ('adjuster_phone', '661-555-0100', 'Adjuster phone is 1 (661) 555-0100.'),
         ('adjuster_phone', '555-0100', 'Call the adjuster at 555 0100.'),
     ],
@@ -351,8 +354,16 @@ def test_walkthrough_claim_values_match_their_quote(field, value, quote):
         ('deductible', '$2,026', WALK),
         ('deductible', '12', WALK),
         ('deductible', '$500', 'Policy HO500. The deductible is $1,000.'),
-        ('deductible', '$1,000', 'The deductible is 1000.'),
+        ('deductible', '$500', 'A 500 deductible on policy HO500.'),
+        ('deductible', '$2,026', 'Loss happened October 12 2026 deductible is $1,000.'),
+        ('deductible', '$77', 'Claim CLM 0042 77 deductible is $1,000'),
+        ('deductible', '$100', 'Call 661 555 0100 deductible $1,000'),
+        ('deductible', '$12', 'The deductible is 12 October 2026.'),
+        ('deductible', '$500', 'The deductible is HO-500.'),
         ('adjuster_phone', '0042-77', WALK),
+        ('adjuster_phone', '123-4567', 'Policy number HO-123-4567.'),
+        ('adjuster_phone', '555-0100', 'Claim number CLM-555-0100.'),
+        ('adjuster_phone', '555-0100', 'Claim 555-0100-A is open.'),
         ('adjuster_phone', '555-0100', 'Policy HO5550100.'),
         ('adjuster_phone', '661-555-0100', 'On October 12, 2026 call 661 555 0100 2.'),
     ],
@@ -397,6 +408,33 @@ def test_malformed_claim_entries_are_asked_about_without_losing_the_room_fill():
         'Confirm the claim details; the walkthrough value could not be used.',
         'Confirm the adjuster email; the walkthrough gave more than one value.',
     ]
+
+
+@pytest.mark.parametrize(
+    'claim_changes,questions',
+    [
+        (None, []),
+        (
+            {'field': 'carrier'},
+            ['Confirm the insurance carrier; the walkthrough value could not be used.'],
+        ),
+        (
+            'carrier: Synthetic Mutual',
+            ['Confirm the claim details; the walkthrough value could not be used.'],
+        ),
+    ],
+)
+def test_claim_changes_that_are_not_a_list_never_reject_the_response(claim_changes, questions):
+    suggestions = ScopeSuggestions.model_validate(
+        dict(
+            changes=[{'field': 'drying_days', 'room': None, 'value': 5, 'source_quote': WALK}],
+            claim_changes=claim_changes,
+            questions=[],
+        )
+    )
+    result = validate_suggestions(walk_data(), suggestions, EMPTY)
+    assert [(c.field, c.value) for c in result.changes] == [('drying_days', 5)]
+    assert result.claim_changes == [] and result.questions == questions
 
 
 def test_scope_fill_with_a_malformed_claim_entry_still_returns_room_changes(api, monkeypatch):
