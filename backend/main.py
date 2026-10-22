@@ -1604,24 +1604,32 @@ async def live_walkthrough(socket: WebSocket):
             await socket.send_json(ready)
             # Tagged photo changes reach the model as context between its replies, because
             # client content sent while it speaks would cut the reply off.
-            shots = {'wanted': False, 'speaking': False, 'sent_at': 0.0}
+            shots = {'wanted': False, 'speaking': False}
+            shot_wake = asyncio.Event()
 
-            async def send_shot_status():
-                shots['wanted'] = False
-                shots['sent_at'] = time.monotonic()
-                # Read from the store, with the same access check, so only saved tags are reported.
-                current = await stored(store.get_inspection, uid, inspection_id)
-                await stored(store._access, uid, current, 'live')
-                if shots['speaking'] or finishing:
-                    shots['wanted'] = True
-                    return
-                status = shot_status_json(current['data'], current['photos'])
-                await session.send_client_content(
-                    turns=types.Content(
-                        role='user', parts=[types.Part(text=SHOT_STATUS_UPDATE + status)]
-                    ),
-                    turn_complete=False,
-                )
+            async def shot_updates():
+                sent_at = 0.0
+                while True:
+                    await shot_wake.wait()
+                    shot_wake.clear()
+                    await asyncio.sleep(max(0.0, sent_at + 1 - time.monotonic()))
+                    if not shots['wanted'] or shots['speaking'] or finishing:
+                        continue
+                    shots['wanted'] = False
+                    # Read from the store, with the same access check, so only saved tags are reported.
+                    current = await stored(store.get_inspection, uid, inspection_id)
+                    await stored(store._access, uid, current, 'live')
+                    if shots['speaking'] or finishing:
+                        shots['wanted'] = True
+                        continue
+                    sent_at = time.monotonic()
+                    status = shot_status_json(current['data'], current['photos'])
+                    await session.send_client_content(
+                        turns=types.Content(
+                            role='user', parts=[types.Part(text=SHOT_STATUS_UPDATE + status)]
+                        ),
+                        turn_complete=False,
+                    )
 
             if recovery == 'new':
                 # The Live API waits for input, so only a brand-new walkthrough asks the model to speak first.
@@ -1686,12 +1694,7 @@ async def live_walkthrough(socket: WebSocket):
                         await session.send_realtime_input(audio_stream_end=True)
                     elif kind == 'shots' and protocol == 2:
                         shots['wanted'] = True
-                        if (
-                            not shots['speaking']
-                            and not finishing
-                            and moment - shots['sent_at'] >= 1
-                        ):
-                            await send_shot_status()
+                        shot_wake.set()
                     elif kind == 'refresh':
                         # A renewed ID token extends the session only for the same verified user.
                         refreshed = await verify_staff(data.get('token', ''))
@@ -1800,8 +1803,8 @@ async def live_walkthrough(socket: WebSocket):
                                     final_text.set()
                                 await socket.send_json({'type': 'turn_complete'})
                                 shots['speaking'] = False
-                            if shots['wanted'] and not shots['speaking'] and not finishing:
-                                await send_shot_status()
+                            if shots['wanted'] and not shots['speaking']:
+                                shot_wake.set()
                         if away:
                             outcome = 'rollover'
                             if protocol == 2:
@@ -1843,7 +1846,9 @@ async def live_walkthrough(socket: WebSocket):
                             'touch',
                         )
 
-            tasks = [asyncio.create_task(fn()) for fn in (upstream, downstream, heartbeat)]
+            tasks = [
+                asyncio.create_task(fn()) for fn in (upstream, downstream, heartbeat, shot_updates)
+            ]
             try:
                 done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:

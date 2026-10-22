@@ -173,13 +173,14 @@ test('a count typed without leaving the field survives a background refresh', as
   await surfaces.pressSequentially('5');
   await page.evaluate(() => renderPhotos());
   await expect(surfaces).toHaveValue('35');
-  // An out-of-range entry is never saved and falls back to the saved count.
+  // An out-of-range entry is never saved; it stays on screen until the field is left.
   await surfaces.pressSequentially('9');
-  expect(await page.evaluate(() => state.draft.data.rooms[0].affected_surfaces)).toBe(35);
   await page.evaluate(() => renderPhotos());
   await expect(surfaces).toBeFocused();
-  await expect(surfaces).toHaveValue('35');
+  await expect(surfaces).toHaveValue('359');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].affected_surfaces)).toBe(35);
   await surfaces.blur();
+  await expect(surfaces).toHaveValue('35');
   await expect(shots(page).nth(1)).toHaveText('0 of 35Affected wall or floor');
   // The same holds in the room card's drawer on Check Scope.
   await page.locator('.task-nav [data-task="property"]').click();

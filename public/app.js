@@ -1915,6 +1915,7 @@ function shotChecklist(room) {
       changed(false);
     });
     input.addEventListener('change', () => {
+      if (refreshingShots) return;
       input.value = room[key] ?? '';
       renderShotLists();
     });
@@ -1957,11 +1958,13 @@ function shotChecklist(room) {
     );
   return wrap;
 }
+let refreshingShots = false;
 function renderShotLists() {
   const active = document.activeElement,
     key = active?.dataset?.shotCount,
     holder = key && active.closest('#shotList, #rooms .room'),
     room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
+  refreshingShots = true;
   $('shotList').replaceChildren(...(room ? [shotChecklist(room)] : []));
   document.querySelectorAll('#rooms .room').forEach((card, index) => {
     const target = card.querySelector('.room-shots'),
@@ -1977,6 +1980,7 @@ function renderShotLists() {
           : 'all tagged');
     target.replaceChildren(shotChecklist(saved));
   });
+  refreshingShots = false;
   const replaced = holder?.querySelector('[data-shot-count="' + key + '"]');
   if (replaced && replaced !== active) {
     replaced.value = active.value;
