@@ -231,6 +231,7 @@ test('an edit voids an unused link, and revoked or expired links are refused', a
   );
   const broken = await homeowner(browser, new URL('/sign#not-a-link', page.url()).href);
   await expect(broken.page.locator('#signStatus')).toContainText('This signing link is incomplete');
+  await expect(broken.page.locator('body')).not.toContainText(/Alert Disaster|950983|661/);
   for (const home of [edited, open, expired, broken]) await home.context.close();
   await expect(page.locator('#saveStatus')).not.toHaveText('Signed');
 });
