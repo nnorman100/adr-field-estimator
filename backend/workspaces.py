@@ -26,10 +26,10 @@ from pydantic import AfterValidator, Field, SecretStr, field_validator
 from typing import Annotated, Literal
 
 try:
-    from .contracts import StrictModel
+    from .contracts import ClaimDetails, StrictModel
     from .inspection_store import Conflict, now, reserve_slot
 except ImportError:
-    from contracts import StrictModel
+    from contracts import ClaimDetails, StrictModel
     from inspection_store import Conflict, now, reserve_slot
 
 ADR_ID = 'adr'
@@ -180,6 +180,12 @@ class CoordinationUpdate(StrictModel):
     office_notes: str = Field(default='', max_length=4000)
     assigned_estimator_uid: str | None = Field(default=None, max_length=128)
     address: str | None = Field(default=None, max_length=500)
+
+
+class ClaimUpdate(StrictModel):
+    # Jobs saved before claim details have no claim_version; they start at 0.
+    expected_version: int = Field(ge=0)
+    claim: ClaimDetails
 
 
 def email_address(value):
@@ -1087,6 +1093,69 @@ class WorkspaceStore:
         named = proposal.get('customer_name')
         if named is not None and named != self.customer_name(record, tx):
             raise Conflict('Customer details changed. Generate new documents before signing.')
+
+    @staticmethod
+    def job_claim(job):
+        return ClaimDetails.model_validate(job.get('claim', {})).model_dump()
+
+    def claim_details(self, record, tx=None):
+        return self.job_claim(self.job_for(record, tx))
+
+    def check_claim(self, record, documents, tx=None):
+        # Documents audited before claim details, or without workspaces, carry none to compare.
+        if 'claim' in documents and documents['claim'] != self.claim_details(record, tx):
+            raise Conflict('Claim details changed. Generate new documents before signing.')
+
+    def claim(self, uid, inspection_id):
+        record = self.read('inspections', inspection_id)
+        if not record:
+            raise LookupError('Inspection not found.')
+        job, actor = self.job_access(uid, record)
+        return self.claim_view(job, actor)
+
+    def claim_view(self, job, actor):
+        return dict(
+            job_id=job['job_id'],
+            claim_version=job.get('claim_version', 0),
+            claim=self.job_claim(job),
+            editable=bool({'scope', 'coordination'} & set(actor['capabilities'])),
+        )
+
+    def update_claim(self, uid, inspection_id, req):
+        """Estimators record claim details during intake and office staff after it; signed
+        documents keep the snapshot they were signed with."""
+        ref = self.ref('_workspace_jobs', inspection_id)
+        inspection_ref = self.ref('inspections', inspection_id)
+
+        def update(tx):
+            record = self.read('inspections', inspection_id, tx)
+            if not record:
+                raise LookupError('Inspection not found.')
+            job, actor = self.job_access(uid, record, tx=tx)
+            if not {'scope', 'coordination'} & set(actor['capabilities']):
+                raise AccessDenied('Your role cannot change claim details.')
+            if job.get('claim_version', 0) != req.expected_version:
+                raise Conflict('Claim details changed. Reload before saving.')
+            claim = req.claim.model_dump()
+            # The documents print the claim details, so new details need new documents.
+            if (
+                claim != self.job_claim(job)
+                and record['status'] != 'signed'
+                and record.get('audit') is not None
+            ):
+                record.update(audit=None, status='draft', updated_at=now())
+                tx.set(inspection_ref, record)
+            job.update(
+                claim=claim,
+                claim_version=req.expected_version + 1,
+                status=record['status'],
+                updated_at=now(),
+            )
+            tx.set(ref, job)
+            self.event(tx, uid, 'job_claim', actor['company_id'], {'job_id': inspection_id})
+            return self.claim_view(job, actor)
+
+        return self._run(update)
 
     def coordination(self, uid, inspection_id, req):
         ref = self.ref('_workspace_jobs', inspection_id)

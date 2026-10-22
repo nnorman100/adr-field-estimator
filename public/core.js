@@ -100,6 +100,39 @@
     ceiling_height_ft: 'Ceiling height ft',
     water_class: 'Water class',
   };
+  // Claim and loss details from the job sidecar. backend/claims.py prints the same values in the
+  // defense letter's TO and RE lines.
+  const claimLabels = {
+    carrier: 'Insurance carrier',
+    claim_number: 'Claim number',
+    policy_number: 'Policy number',
+    date_of_loss: 'Date of loss',
+    loss_cause: 'Cause and source of loss',
+    adjuster_name: 'Adjuster name',
+    adjuster_email: 'Adjuster email',
+    adjuster_phone: 'Adjuster phone',
+    deductible: 'Deductible',
+  };
+  // The document header lines for the recorded values only; dates print MM-DD-YYYY like the proposal.
+  function claimLines(claim) {
+    if (!claim) return [];
+    return [
+      ['Insurance carrier', claim.carrier],
+      ['Claim number', claim.claim_number],
+      ['Policy number', claim.policy_number],
+      ['Date of loss', claim.date_of_loss?.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$2-$3-$1')],
+      ['Cause and source of loss', claim.loss_cause],
+      [
+        'Adjuster',
+        [claim.adjuster_name, claim.adjuster_email, claim.adjuster_phone]
+          .filter(Boolean)
+          .join(' · '),
+      ],
+      ['Deductible', claim.deductible],
+    ]
+      .filter(([, value]) => value)
+      .map(([label, value]) => label + ': ' + value);
+  }
   const roomKey = (name) => name.trim().replace(/\s+/g, ' ').toLowerCase();
   const untouchedDefaultRoom = (room) =>
     room.name === 'Room 1' &&
@@ -616,6 +649,8 @@
     aspect,
     scopeJobLabels,
     scopeRoomLabels,
+    claimLabels,
+    claimLines,
     roomKey,
     roomLoss,
     applyScopeChanges,

@@ -1,12 +1,14 @@
 """Reviewable scope suggestions grounded only in the technician's recorded words."""
 
-from typing import Literal
-from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
+import re
+from collections import Counter
+from typing import Any, Literal
+from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr, ValidationError
 
 try:
-    from .contracts import StrictModel, InspectionData, Room, LossType
+    from .contracts import ClaimDetails, StrictModel, InspectionData, Room, LossType
 except ImportError:
-    from contracts import StrictModel, InspectionData, Room, LossType
+    from contracts import ClaimDetails, StrictModel, InspectionData, Room, LossType
 
 JobField = Literal[
     'address',
@@ -41,10 +43,59 @@ RoomField = Literal[
     'ceiling_height_ft',
     'water_class',
 ]
+ClaimField = Literal[
+    'carrier',
+    'claim_number',
+    'policy_number',
+    'date_of_loss',
+    'loss_cause',
+    'adjuster_name',
+    'adjuster_email',
+    'adjuster_phone',
+    'deductible',
+]
 ROOM_FIELDS = set(RoomField.__args__)
 # A room with any confirmed sizing input is the technician's room, not the untouched placeholder.
 SIZING_FIELDS = ('floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class')
 LOSS_TYPES = set(LossType.__args__)
+CLAIM_LABELS = {
+    'carrier': 'insurance carrier',
+    'claim_number': 'claim number',
+    'policy_number': 'policy number',
+    'date_of_loss': 'date of loss',
+    'loss_cause': 'cause and source of loss',
+    'adjuster_name': 'adjuster name',
+    'adjuster_email': 'adjuster email',
+    'adjuster_phone': 'adjuster phone',
+    'deductible': 'deductible',
+}
+# Claim and policy numbers must appear whole in their quote, never as part of a longer identifier.
+QUOTED_IDENTIFIERS = {'claim_number', 'policy_number'}
+MONTHS = {
+    name: i + 1
+    for i, names in enumerate(
+        (
+            ('january', 'jan'),
+            ('february', 'feb'),
+            ('march', 'mar'),
+            ('april', 'apr'),
+            ('may',),
+            ('june', 'jun'),
+            ('july', 'jul'),
+            ('august', 'aug'),
+            ('september', 'sep', 'sept'),
+            ('october', 'oct'),
+            ('november', 'nov'),
+            ('december', 'dec'),
+        )
+    )
+    for name in names
+}
+AMOUNT = r'\d+(?:,\d{3})*(?:\.\d+)?'
+MONEY = re.compile(rf'(?<![\w.,/-])(\$)?({AMOUNT})(?![\w/-]|[.,]\d)')
+PERCENT = r'\s*%|\s+(?:per\s?cent|percent)\b'
+# Characters that may join the digit groups of a phone number or of another number.
+JOINERS = r'[\s().-]'
 
 
 class ScopeChange(StrictModel):
@@ -54,8 +105,17 @@ class ScopeChange(StrictModel):
     source_quote: str = Field(min_length=1, max_length=2000)
 
 
+class ClaimChange(StrictModel):
+    field: ClaimField
+    value: StrictStr
+    source_quote: StrictStr
+
+
 class ScopeSuggestions(StrictModel):
     changes: list[ScopeChange] = Field(max_length=100)
+    # Claim details for the job sidecar, kept apart from the inspection form's values.
+    # Entries are checked one by one in validate_claim, so a malformed one never rejects the response.
+    claim_changes: Any = Field(default_factory=list)
     questions: list[str] = Field(max_length=20)
 
 
@@ -81,6 +141,18 @@ def scope_response_schema():
                         'source_quote': {'type': 'STRING'},
                     },
                     'required': ['field', 'room', 'value', 'source_quote'],
+                },
+            },
+            'claim_changes': {
+                'type': 'ARRAY',
+                'items': {
+                    'type': 'OBJECT',
+                    'properties': {
+                        'field': {'type': 'STRING', 'enum': list(ClaimField.__args__)},
+                        'value': {'type': 'STRING'},
+                        'source_quote': {'type': 'STRING'},
+                    },
+                    'required': ['field', 'value', 'source_quote'],
                 },
             },
             'questions': {'type': 'ARRAY', 'items': {'type': 'STRING'}},
@@ -120,7 +192,234 @@ def default_photo_rename(before, after):
     return (old_rooms[0]['name'], new_rooms[0]['name']) if forward or undo else None
 
 
-def validate_suggestions(data, suggestions):
+def words(text):
+    return re.findall(r'[^\W_]+', text.casefold())
+
+
+# Words that may sit beside a spoken claim or policy number without being part of it.
+IDENTIFIER_BOUNDARIES = set(
+    'an and at by claim for from id is it its my no num number of on or our policy the their to was '
+    'with your'.split()
+)
+
+
+def in_quote(target, quote, kind=None):
+    """Whether target equals a run of the quote's words, ignoring case, spacing and punctuation.
+
+    kind 'identifier' needs the run to be a whole identifier: no neighbouring word that could belong
+    to it, and bounded by the quote's ends, sentence punctuation or connecting words.
+    """
+    found = list(re.finditer(r'[^\W_]+', quote))
+    original = [m.group() for m in found]
+    tokens = [t.casefold() for t in original]
+    gaps = (
+        [quote[: found[0].start()] if found else quote]
+        + [quote[a.end() : b.start()] for a, b in zip(found, found[1:])]
+        + [quote[found[-1].end() :] if found else '']
+    )
+
+    def edge(k, gap):
+        if not (0 <= k < len(tokens)):
+            return True
+        word = original[k]
+        if re.search(r'\d', word) or len(word) == 1 or word.isupper():
+            return False
+        return tokens[k] in IDENTIFIER_BOUNDARIES or bool(re.search(r'[,;:!?()]|\.(\s|$)', gap))
+
+    for i in range(len(tokens)):
+        run = ''
+        for j in range(i, len(tokens)):
+            run += tokens[j]
+            if not target.startswith(run):
+                break
+            if run != target:
+                continue
+            if not kind or (edge(i - 1, gaps[i]) and edge(j + 1, gaps[j + 1])):
+                return True
+            break
+    return False
+
+
+def quoted_emails(quote):
+    return {
+        e.rstrip('.!?').casefold()
+        for e in re.findall(r'[^\s@<>()\[\]"\',;:]+@[^\s@<>()\[\]"\',;:]+', quote)
+    }
+
+
+def quoted_dates(quote):
+    text = ' '.join(words(quote))
+    found = set()
+    for y, m, d in re.findall(r'\b(\d{4}) (\d{1,2}) (\d{1,2})\b', text):
+        found.add((int(y), int(m), int(d)))
+    for m, d, y in re.findall(r'\b(\d{1,2}) (\d{1,2}) (\d{4})\b', text):
+        found.add((int(y), int(m), int(d)))
+    day = r'(\d{1,2})(?:st|nd|rd|th)?'
+    for m, d, y in re.findall(rf'\b([a-z]+) {day} (\d{{4}})\b', text):
+        found.add((int(y), MONTHS.get(m, 0), int(d)))
+    for d, m, y in re.findall(rf'\b{day} (?:of )?([a-z]+) (\d{{4}})\b', text):
+        found.add((int(y), MONTHS.get(m, 0), int(d)))
+    return found
+
+
+def amounts(text):
+    return [float(a.replace(',', '')) for a in re.findall(AMOUNT, text)]
+
+
+def sentences(quote):
+    """The quote with sentence punctuation that ends a phrase replaced by '|', keeping positions."""
+    return re.sub(r'[.,;:!?](?=\s|$)', '|', quote)
+
+
+def joined(before, after):
+    """Whether a number continues, through joining characters, into a digit group, month or letters."""
+    last = re.search(rf'([^\W\d_]+){JOINERS}*$', before)
+    first = re.match(rf'{JOINERS}*([^\W\d_]+)', after)
+    return bool(
+        re.search(rf'\d{JOINERS}*$', before)
+        or re.match(rf'{JOINERS}*\d', after)
+        or re.search(rf'[^\W\d_]\s*[().-]{JOINERS}*$', before)
+        or re.match(rf'{JOINERS}*[().-]\s*[^\W\d_]', after)
+        or (last and last.group(1).casefold() in MONTHS)
+        or (first and first.group(1).casefold() in MONTHS)
+    )
+
+
+def deductibles(quote):
+    """(amount, unit) pairs, only from these phrasings: a percentage is the amount followed by %,
+    "percent" or "per cent"; a dollar amount has $ attached, is followed by "dollars", or follows
+    "deductible is|of" and then ends the phrase. A dollar amount never counts when it has a
+    three-digit decimal, or is followed by more dollars or cents ("dollars 50", "dollars and 50",
+    "and 50 cents") or by hundred(s), thousand(s), million(s), billion(s), grand, k or mil."""
+    text = sentences(quote)
+    found = set()
+    for m in MONEY.finditer(text):
+        before, after = text[: m.start()], text[m.end() :]
+        if joined(before, after):
+            continue
+        amount = float(m.group(2).replace(',', ''))
+        percent = re.match(PERCENT, after, re.IGNORECASE)
+        dollars = re.match(r'\s+dollars\b', after, re.IGNORECASE)
+        if percent:
+            if not m.group(1):
+                found.add((amount, 'percent'))
+        elif (
+            re.match(r'\s*(?:%|pct\b|per\s?cent)', after, re.IGNORECASE)
+            or re.match(
+                r'\s*(?:dollars\s+(?:and\s+)?\d+|and\s+\d+\s+cents|hundreds?|thousands?|millions?'
+                r'|billions?|grand|k|mil)\b',
+                after,
+                re.IGNORECASE,
+            )
+            or re.search(r'\.\d{3}$', m.group(2))
+        ):
+            continue
+        elif (
+            m.group(1)
+            or dollars
+            or (
+                re.search(r'\bdeductible\s+(?:is|of)\s+$', before, re.IGNORECASE)
+                and re.match(r'(\||$)', after)
+            )
+        ):
+            found.add((amount, 'dollar'))
+    return found
+
+
+def phone_digits(text):
+    digits = re.sub(r'\D', '', text)
+    if len(digits) == 11 and digits.startswith('1'):
+        digits = digits[1:]
+    return digits if len(digits) in (7, 10) else ''
+
+
+def quoted_phones(quote):
+    """Phone numbers bounded by spaces, the quote's ends or sentence punctuation on both sides."""
+    text = sentences(quote)
+    found = set()
+    for m in re.finditer(r'[\d\s().-]+', text):
+        run = m.group().strip()
+        start = m.start() + len(m.group()) - len(m.group().lstrip())
+        end = start + len(run)
+        if (
+            (run[:1].isdigit() or run[:1] == '(')
+            and run[-1:].isdigit()
+            and (start == 0 or text[start - 1].isspace())
+            and (end == len(text) or text[end].isspace() or text[end] == '|')
+        ):
+            found.add(phone_digits(run))
+    return found - {''}
+
+
+def grounded(field, value, quote):
+    """Whether the whole claim value is stated in its supporting quote."""
+    if field == 'date_of_loss':
+        return tuple(int(part) for part in value.split('-')) in quoted_dates(quote)
+    if field == 'adjuster_phone':
+        return phone_digits(value) in quoted_phones(quote)
+    if field == 'deductible':
+        stated = amounts(value)
+        percent = bool(re.search(r'%|\b(?:per\s?cent|percent)\b', value, re.IGNORECASE))
+        rest = words(re.sub(AMOUNT, ' ', value))
+        return (
+            len(stated) == 1
+            and not (percent and '$' in value)
+            and (stated[0], 'percent' if percent else 'dollar') in deductibles(quote)
+            and all(word in words(quote) for word in rest)
+        )
+    if field == 'adjuster_email':
+        return value.casefold() in quoted_emails(quote)
+    target = ''.join(words(value))
+    kind = 'identifier' if field in QUOTED_IDENTIFIERS else None
+    return bool(target) and in_quote(target, quote, kind)
+
+
+def validate_claim(source, claim, suggestions):
+    """Quote-backed claim changes and questions for claim values that cannot be used."""
+    if claim is None:
+        return [], []
+    current = ClaimDetails.model_validate(claim).model_dump()
+    entries = suggestions.claim_changes
+    entries = entries if isinstance(entries, list) else [] if entries is None else [entries]
+    fields = [
+        raw.get('field') if isinstance(raw, dict) and isinstance(raw.get('field'), str) else None
+        for raw in entries
+    ]
+    fields = [field if field in CLAIM_LABELS else None for field in fields]
+    counts = Counter(fields)
+    changes, questions = [], []
+    for field, raw in zip(fields, entries):
+        label = CLAIM_LABELS[field] if field else 'claim details'
+        if field and counts[field] > 1:
+            questions.append(f'Confirm the {label}; the walkthrough gave more than one value.')
+            continue
+        try:
+            change = ClaimChange.model_validate(raw)
+        except ValidationError:
+            questions.append(f'Confirm the {label}; the walkthrough value could not be used.')
+            continue
+        if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
+            questions.append(
+                f'Confirm the {label}; the walkthrough value has no matching technician quote.'
+            )
+            continue
+        try:
+            value = getattr(ClaimDetails.model_validate({change.field: change.value}), change.field)
+        except ValidationError:
+            questions.append(f'Confirm the {label}; the walkthrough value could not be used.')
+            continue
+        if not value or not grounded(change.field, value, change.source_quote):
+            questions.append(
+                f'Confirm the {label}; the walkthrough value does not match what was said.'
+            )
+            continue
+        if value != current[change.field]:
+            changes.append(change.model_copy(update={'value': value}))
+    return changes, list(dict.fromkeys(questions))
+
+
+def validate_suggestions(data, suggestions, claim=None):
+    """claim is the job's saved claim details; None when claim details cannot be stored."""
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
     candidate = data.model_dump(mode='json')
     known = {}
@@ -194,10 +493,27 @@ def validate_suggestions(data, suggestions):
     InspectionData.model_validate(candidate, strict=True)
     if any(len(q) > 1000 for q in suggestions.questions):
         raise ValueError('Clarification is too long.')
-    return ScopeSuggestions(changes=changes, questions=suggestions.questions)
+    claim_changes, claim_questions = validate_claim(source, claim, suggestions)
+    return ScopeSuggestions(
+        changes=changes,
+        claim_changes=claim_changes,
+        questions=(claim_questions + suggestions.questions)[:20],
+    )
 
 
-def scope_prompt(data):
+CLAIM_PROMPT = (
+    'Also return insurance claim details in claim_changes, never in changes, ONLY when the technician transcript or notes state them '
+    '(including what the homeowner is recorded saying): carrier, claim_number, policy_number, date_of_loss, loss_cause, adjuster_name, '
+    'adjuster_email, adjuster_phone and deductible. Copy names, numbers, emails, phone numbers and amounts exactly as stated; never guess, '
+    'complete, correct or look them up. Set date_of_loss as YYYY-MM-DD only when month, day and year were all stated; ask about a relative '
+    "or partial date instead. loss_cause is the stated cause and source of loss in the speaker's words, for example "
+    '"supply line under the kitchen sink"; never infer it from damage, photos or the water category. Each claim change needs an exact '
+    'source_quote. Omit unstated claim fields and fields that already match current_claim; ask about conflicting claim values. '
+)
+
+
+def scope_prompt(data, claim=None):
+    """claim is the job's saved claim details; None leaves claim details out of the extraction."""
     import json
 
     return (
@@ -235,6 +551,7 @@ def scope_prompt(data):
         'Do not output money, rates, moisture readings, '
         'notes, transcript changes, signatures, or scope confirmation. Never propose replacing or deleting the rooms list. '
         'Ask concise questions about ambiguous quantities or room identity.\n'
+        + (CLAIM_PROMPT + '\n' if claim is not None else '')
         + json.dumps(
             {
                 'current_form': data.model_dump(
@@ -246,6 +563,7 @@ def scope_prompt(data):
                         'equipment_scans',
                     }
                 ),
+                **({'current_claim': claim} if claim is not None else {}),
                 'technician_transcript': data.technician_transcript,
                 'technician_notes': data.technician_notes,
             }
