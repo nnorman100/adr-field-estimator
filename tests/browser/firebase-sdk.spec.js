@@ -85,7 +85,7 @@ test('the vendored modular Firebase SDK starts the app same-origin under the Hos
     }
     return route.continue();
   });
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   expect(
@@ -138,7 +138,7 @@ test('on the live web.app site Google sign-in uses the same-origin auth helper u
           : response.headers(),
     });
   });
-  await page.goto(live + '/');
+  await page.goto(live + '/app');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   expect(await page.evaluate(() => [auth.app.options.authDomain, auth.config.authDomain])).toEqual([
     'alert-disaster-field-2026.web.app',
@@ -180,8 +180,12 @@ test('a trailing-dot web.app address reopens on the live host before Firebase st
     const response = await route.fetch({ url: new URL(url.pathname + url.search, baseURL).href });
     return route.fulfill({ response });
   });
+  // The landing at the root hands over to the app on the same host, which reopens on the live host.
   await page.goto(dotted + '/?from=link#top');
-  await expect(page).toHaveURL(live + '/?from=link#top');
+  await expect(page).toHaveURL(live + '/app?from=link#top');
+  await expect(page.locator('#googleSignIn')).toBeVisible();
+  await page.goto(dotted + '/app?from=link#top');
+  await expect(page).toHaveURL(live + '/app?from=link#top');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   expect(await page.evaluate(() => auth.app.options.authDomain)).toBe(
     'alert-disaster-field-2026.web.app',
@@ -206,13 +210,15 @@ test('a Home Screen app on the trailing-dot address says to re-add the icon', as
     return route.fulfill({ response });
   });
   // Locators would wait for the cancelled redirect to finish, so the page is read directly.
-  await page.goto(dotted + '/', { waitUntil: 'commit' });
-  await expect
-    .poll(() => page.evaluate(() => document.getElementById('message')?.textContent))
-    .toBe(
-      'This Home Screen icon opens a wrong address, where Google sign-in and walkthroughs fail. Delete the icon, then open alert-disaster-field-2026.web.app in Safari and add it to the Home Screen again.',
-    );
-  expect(page.url()).toBe(dotted + '/');
+  for (const start of ['/', '/app']) {
+    await page.goto(dotted + start, { waitUntil: 'commit' });
+    await expect
+      .poll(() => page.evaluate(() => document.getElementById('message')?.textContent))
+      .toBe(
+        'This Home Screen icon opens a wrong address, where Google sign-in and walkthroughs fail. Delete the icon, then open alert-disaster-field-2026.web.app in Safari and add it to the Home Screen again.',
+      );
+    expect(page.url()).toBe(dotted + '/app');
+  }
 });
 
 test('a trailing-dot address with unsynced drafts stays until they sync', async ({
@@ -258,12 +264,15 @@ test('a trailing-dot address with unsynced drafts stays until they sync', async 
         request.onerror = () => reject(request.error);
       }),
   );
-  await page.goto(dotted + '/');
-  await expect(page.locator('#hostSyncNotice')).toHaveText(
-    'Drafts on this device are still syncing. Sign in with email and keep this Home Screen icon until they finish.',
-  );
-  await expect(page.locator('#emailAuthForm')).toBeVisible();
-  expect(page.url()).toBe(dotted + '/');
+  // Opened at the root or at /app, the app stays on this origin until the drafts sync.
+  for (const start of ['/', '/app']) {
+    await page.goto(dotted + start);
+    await expect(page).toHaveURL(dotted + '/app');
+    await expect(page.locator('#hostSyncNotice')).toHaveText(
+      'Drafts on this device are still syncing. Sign in with email and keep this Home Screen icon until they finish.',
+    );
+    await expect(page.locator('#emailAuthForm')).toBeVisible();
+  }
 });
 
 test('native select CSP diagnostics keep authored inline styles visible', async ({

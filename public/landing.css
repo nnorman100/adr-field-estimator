@@ -1,0 +1,271 @@
+/* The public DryScope landing page: the app's tokens and type (public/app.css), plain typography
+   and whitespace instead of boxes, kept to the rules this one static page needs. */
+@font-face {
+  font-family: Lato;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/lato-400-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: Lato;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/lato-700-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: Lato;
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('/fonts/lato-900-latin.woff2') format('woff2');
+}
+:root {
+  --navy: #0b2545;
+  --water: #7cc4e8;
+  --water-deep: #1a6a96;
+  --page: #f6f8fa;
+  --paper: #ffffff;
+  --text-2: #56606e;
+  --line: #dadddd;
+  font:
+    16px Lato,
+    Arial,
+    sans-serif;
+  color: var(--navy);
+  background: var(--page);
+  color-scheme: light;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  margin: 0;
+  line-height: 1.55;
+}
+a {
+  color: var(--navy);
+}
+a:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--navy);
+  outline-offset: 3px;
+}
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  margin: 0;
+}
+/* The navy bar carries the white DryScope lockup and one plain link: Log in. */
+.product-bar {
+  background: var(--navy);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem max(1.5rem, calc((100vw - 960px) / 2));
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+.lockup {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.lockup img {
+  display: block;
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+.header-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.5rem 0.25rem;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  white-space: nowrap;
+}
+.header-link:focus-visible {
+  outline-color: #fff;
+}
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 1.5rem 3rem;
+}
+.hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2.5rem;
+  padding: 3.5rem 0 2rem;
+}
+.landing-mark {
+  width: 160px;
+  height: auto;
+}
+.landing-eyebrow {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--water-deep);
+}
+h1 {
+  font-size: 2.5rem;
+  margin: 0 0 1rem;
+}
+.landing-lede {
+  font-size: 1.1875rem;
+  max-width: 36em;
+  margin: 0 0 1.25rem;
+}
+.access-note {
+  margin: 0;
+  color: var(--text-2);
+}
+/* Sections are separated by whitespace and one thin rule; nothing inside is boxed. */
+.landing-section {
+  padding: 2.5rem 0 1rem;
+  border-top: 1px solid var(--line);
+}
+h2 {
+  font-size: 1.625rem;
+  margin: 0 0 1.5rem;
+}
+h3 {
+  font-size: 1.0625rem;
+}
+.landing-steps,
+.landing-docs,
+.landing-faq,
+.landing-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.landing-steps,
+.landing-docs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem 2.5rem;
+}
+.landing-docs {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.landing-steps p,
+.landing-docs p,
+.landing-faq p,
+.landing-features p {
+  margin: 0.35rem 0 0;
+  color: var(--text-2);
+}
+/* The one accent on the page: small navy step numbers. */
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-bottom: 0.75rem;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 900;
+}
+/* FAQ answers stay in the HTML but open on demand. */
+.landing-faq > li + li {
+  border-top: 1px solid var(--line);
+}
+.landing-faq summary {
+  cursor: pointer;
+  padding: 0.875rem 0;
+}
+.landing-faq summary h3 {
+  display: inline;
+}
+.landing-faq details p {
+  max-width: 44em;
+  margin: 0 0 1rem;
+}
+/* Features read as one line each: the name, then a few words. */
+.landing-features > li {
+  padding: 0.5rem 0;
+}
+.landing-features h3,
+.landing-features p {
+  display: inline;
+  margin: 0;
+}
+.landing-features h3::after {
+  content: ' · ';
+  color: var(--text-2);
+  font-weight: 400;
+}
+.closing {
+  margin: 3rem 0 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+}
+footer {
+  text-align: center;
+  color: var(--text-2);
+  font-size: 0.875rem;
+  padding: 1rem;
+}
+@media (max-width: 700px) {
+  .product-bar {
+    padding: 0.25rem 1rem;
+    padding-top: max(0.25rem, env(safe-area-inset-top));
+    gap: 0.5rem;
+  }
+  .lockup img {
+    width: 120px;
+  }
+  .header-link {
+    min-height: 44px;
+  }
+  main {
+    padding: 0 1rem 2rem;
+  }
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    padding-top: 2rem;
+  }
+  .landing-mark {
+    width: 72px;
+  }
+  h1 {
+    font-size: 1.875rem;
+  }
+  .landing-lede {
+    font-size: 1.0625rem;
+  }
+  h2 {
+    font-size: 1.375rem;
+  }
+  .landing-section {
+    padding-top: 2rem;
+  }
+}
+@media print {
+  .product-bar {
+    display: none !important;
+  }
+  .landing-faq details {
+    display: block;
+  }
+}

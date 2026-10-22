@@ -16,11 +16,16 @@ const versioned = (html) =>
     file: m[1],
     stamp: m[2],
   }));
-const localShell = fs.readFileSync('public/index.html', 'utf8'),
+const localShell = fs.readFileSync('public/app.html', 'utf8'),
+  localLanding = fs.readFileSync('public/index.html', 'utf8'),
   localSigning = fs.readFileSync('public/sign.html', 'utf8');
 (async () => {
   const base = 'https://alert-disaster-field-2026.web.app';
-  const response = await fetch(base);
+  // The site root is the public landing page; the app shell answers at /app.
+  const landing = await fetch(base + '/');
+  assert(landing.ok);
+  assert.equal(unstamp(await landing.text()), unstamp(localLanding), 'Deployed landing differs');
+  const response = await fetch(base + '/app');
   assert(response.ok);
   const shell = await response.text();
   const marker =
@@ -66,7 +71,7 @@ const localShell = fs.readFileSync('public/index.html', 'utf8'),
     'Displayed app version is not the stamped commit',
   );
   assert.equal(unstamp(shell), unstamp(localShell));
-  for (const path of ['/', '/index.html', '/?v=ui-20261006-6']) {
+  for (const path of ['/app', '/app?v=ui-20261006-6']) {
     const html = await fetch(base + path);
     assert.match(
       html.headers.get('cache-control') || '',
@@ -235,6 +240,7 @@ const localShell = fs.readFileSync('public/index.html', 'utf8'),
   });
   for (const path of [
     '/brand/adr-logo.jpg',
+    '/brand/dryscope-mark.svg',
     '/brand/dryscope-wordmark.svg',
     '/brand/dryscope-wordmark-white.svg',
     '/fonts/lato-400-latin.woff2',

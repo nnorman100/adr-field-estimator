@@ -9,6 +9,8 @@ assert.deepEqual(fs.readFileSync('index.html'), fs.readFileSync('public/index.ht
   assert.equal(manifest.short_name, 'DryScope');
   assert.equal(manifest.theme_color, '#0B2545');
   assert.equal(manifest.background_color, '#F6F8FA');
+  // The app starts at /app; the id keeps the identity that installed home-screen apps already have.
+  assert.deepEqual([manifest.id, manifest.start_url, manifest.scope], ['/', '/app', '/']);
   const css = fs.readFileSync('public/app.css', 'utf8');
   assert.doesNotMatch(css, /#d42b32|#b9232a|--green|--adr\b/i);
 
@@ -37,13 +39,18 @@ assert.deepEqual(fs.readFileSync('index.html'), fs.readFileSync('public/index.ht
     const event = { waitUntil: (promise) => (work = promise) };
     listeners.install(event);
     await work;
-    // The field shell must cold-load offline; signing links remain an online-only page.
-    const html = fs.readFileSync('public/index.html', 'utf8');
-    const assets = [...html.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)];
-    assert.ok(assets.length > 0);
-    for (const [, asset] of assets) {
-      assert.ok(precached.includes(asset), `HTML asset missing from precache: ${asset}`);
+    // The landing page and the field shell must cold-load offline; signing links remain an
+    // online-only page. Absolute URLs (the canonical link) are not assets.
+    for (const name of ['public/index.html', 'public/app.html']) {
+      const html = fs.readFileSync(name, 'utf8');
+      const assets = [...html.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)]
+        .map(([, asset]) => asset)
+        .filter((asset) => asset.startsWith('/'));
+      assert.ok(assets.length > 0);
+      for (const asset of assets)
+        assert.ok(precached.includes(asset), `${name} asset missing from precache: ${asset}`);
     }
+    assert.ok(precached.includes('/') && precached.includes('/app'));
     listeners.activate(event);
     await work;
     assert.deepEqual(deleted, ['alert-disaster-old', 'dryscope-old']);

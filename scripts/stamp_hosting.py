@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.release_stamp import COMMIT_PATTERN, DirtyTree, release_row, source_commit
 
 PLACEHOLDER = 'unstamped'
-# Hosting serves public/ under the routing in firebase.json; the root index.html mirrors the shell.
+# Hosting serves public/ under the routing in firebase.json; the root index.html mirrors the landing page.
 DEPLOYED = ['public', 'firebase.json', '.firebaserc', 'index.html']
 WORKER = re.compile(r"(?<=^const VERSION=')[^']*(?=';)", re.M)
 ASSET = re.compile(r'(?:(?<=\.css\?v=)|(?<=\.js\?v=))[0-9A-Za-z-]+')
@@ -28,8 +28,9 @@ DISPLAY = re.compile(r'(?<=App version )[^<]+(?=</small>)')
 # file: (pattern, exact number of matches, value for the match)
 TARGETS = {
     'public/sw.js': [(WORKER, 1, 'marker')],
-    'public/index.html': [(ASSET, 8, 'marker'), (DISPLAY, 1, 'display')],
-    'index.html': [(ASSET, 8, 'marker'), (DISPLAY, 1, 'display')],
+    'public/index.html': [(ASSET, 2, 'marker')],
+    'index.html': [(ASSET, 2, 'marker')],
+    'public/app.html': [(ASSET, 8, 'marker'), (DISPLAY, 1, 'display')],
     'public/app.js': [(ASSET, 1, 'marker')],
     'public/sign.html': [(ASSET, 4, 'marker')],
 }

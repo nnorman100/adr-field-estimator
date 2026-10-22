@@ -66,7 +66,8 @@ INVITATION_DAILY_LIMIT = 50
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_DEADLINE = 24
-APP_URL = 'https://alert-disaster-field-2026.web.app/'
+# The signed-in app lives at /app; the site root is the public DryScope landing page.
+APP_URL = 'https://alert-disaster-field-2026.web.app/app'
 INVITATION_SUBJECT = 'Invitation to join {company} on DryScope'
 # The build context is backend/, so it carries its own copy of public/brand/adr-logo.jpg.
 with open(os.path.join(os.path.dirname(__file__), 'brand', 'adr-logo.jpg'), 'rb') as _logo:

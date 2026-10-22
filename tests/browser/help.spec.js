@@ -77,7 +77,7 @@ test.describe('signed out', () => {
       'help opens from the header at ' + width + '×844 and closes by Escape or Close',
       async ({ page }) => {
         await page.setViewportSize({ width, height: 844 });
-        await page.goto('/');
+        await page.goto('/app');
         await expect(page.locator('#authPanel')).toBeVisible();
         await expectWordmark(page);
         const help = page.getByRole('button', { name: 'Help', exact: true });
@@ -107,7 +107,7 @@ test.describe('signed out', () => {
 
 test('signed-out screen says what the app is for before sign-in', async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
-  await page.goto('/');
+  await page.goto('/app');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page).toHaveTitle('DryScope · Water & mold loss estimates');
   for (const hidden of [
@@ -168,7 +168,7 @@ test.describe('company roles', () => {
         (value) => sessionStorage.setItem('synthetic-uid', value),
         uid(role),
       );
-      await page.goto('/');
+      await page.goto('/app');
       await expect(page.locator('#workspaceDashboard')).toBeVisible();
       await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
       // Signed in, the company takes the white strip; DryScope stays in the bar, Account and footer.
@@ -214,7 +214,7 @@ test.describe('company roles', () => {
       (value) => sessionStorage.setItem('synthetic-uid', value),
       uid('office'),
     );
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
     await openHelp(page);
     expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[6], ALL[8]]);
@@ -235,7 +235,7 @@ test.describe('company roles', () => {
 });
 
 test('help without company workspaces lists the field workflow first', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled();
   await openHelp(page);
   await expect(page.locator('#helpYoursHeading')).toHaveText('For you: Estimator');
@@ -249,7 +249,7 @@ test('help without company workspaces lists the field workflow first', async ({ 
 test('signed-out offline shell keeps DryScope identity', async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#authPanel')).toBeVisible();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;

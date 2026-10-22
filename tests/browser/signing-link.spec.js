@@ -64,7 +64,7 @@ async function signAsHomeowner(page) {
   await expect(page.locator('#signedReceipt')).toBeVisible();
 }
 async function technician(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }
@@ -263,7 +263,7 @@ test.describe('company workspaces', () => {
     browser,
   }) => {
     await page.addInitScript(() => sessionStorage.setItem('synthetic-uid', 'test-owner-ws-other'));
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await page.getByRole('button', { name: 'New job', exact: true }).click();
     await task(page, 'property');
@@ -304,7 +304,7 @@ test.describe('company workspaces', () => {
     browser,
   }) => {
     await page.addInitScript(() => sessionStorage.setItem('synthetic-uid', 'test-owner-ws-owner'));
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await page.getByRole('button', { name: 'New job', exact: true }).click();
     await task(page, 'property');

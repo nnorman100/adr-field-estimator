@@ -14,7 +14,7 @@ curl -sSfL https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js | sed 's#f
 | `firebase/13.0.0/firebase-auth.js` | 13.0.0 | https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js | `286224de4d870ef55e4301f718488fa77f146d60d6953b3a76f9a3883669b34a` | `4efb4436232a15e04a2f876628b872140a837f7167af8660fbf94d5247f480d1` |
 | `firebase/13.0.0/firebase-app-check.js` | 13.0.0 | https://www.gstatic.com/firebasejs/13.0.0/firebase-app-check.js | `eb521d7ce76254e7f5aef24ec6b660452bc986028ff0efaba3476220b5a03472` | `f82bfa8484550dbf4666335d6477b60bc6bb123145dc5d748dd1a83167f1d187` |
 
-The release is part of the path, so an upgrade gets new URLs and installed apps never mix cached files from two releases. To upgrade, vendor the new release into its own `firebase/<version>/` directory, delete the old one, and change the version in `FIREBASE_SDK` in `app.js`, the `modulepreload` links in both `index.html` copies and `ASSETS` in `sw.js`.
+The release is part of the path, so an upgrade gets new URLs and installed apps never mix cached files from two releases. To upgrade, vendor the new release into its own `firebase/<version>/` directory, delete the old one, and change the version in `FIREBASE_SDK` in `app.js`, the `modulepreload` links in `public/app.html` and `ASSETS` in `sw.js`.
 
 `app.js` loads the App Check build only when `APP_CHECK_SITE_KEY` is set; see [App Check](../../docs/app-check.md).
 

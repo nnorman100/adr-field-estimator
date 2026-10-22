@@ -76,7 +76,7 @@ test('offline draft with several photos survives reload with images intact and b
     browserName === 'webkit',
     'Playwright WebKit offline emulation also blocks in-memory Blob reads (createImageBitmap/FileReader fail), so photos cannot be added offline in this harness; physical iPhone acceptance remains open.',
   );
-  await page.goto('/');
+  await page.goto('/app');
   await ready(page);
   await controlled(page);
   await context.setOffline(true);
@@ -124,7 +124,7 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
       return put.apply(this, args);
     };
   });
-  await page.goto('/');
+  await page.goto('/app');
   await ready(page);
   for (const [width, height] of [
     [300, 600],
@@ -159,7 +159,7 @@ test('typing a note rewrites the draft row a few times and never rewrites photo 
 test('an immediate save consumes the pending autosave without losing later edits', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/app');
   await ready(page);
   await page.evaluate(() => syncChain);
   await page.evaluate(() => {
@@ -203,7 +203,7 @@ test('finishing the initial save does not close a Jobs menu opened during startu
     };
   });
   try {
-    await page.goto('/');
+    await page.goto('/app');
     await page.waitForFunction(() => window.__initialSaveStarted);
     await expect(page.locator('#address')).toBeEnabled();
     await page.locator('#jobMenu > summary').click();
@@ -289,7 +289,7 @@ test('version 1 draft rows with embedded photos migrate on upgrade and still syn
     },
     { uid, open, queued, data: core.emptyData() },
   );
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toHaveValue('Migrated open property', { timeout: 15000 });
   await expect(page.locator('#technicianNotes')).toHaveValue('Written before the storage upgrade');
   await page.locator('.task-nav [data-task="walkthrough"]').click();

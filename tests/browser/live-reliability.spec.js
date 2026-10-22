@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 test.beforeEach(async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.locator('.task-nav [data-task="property"]').click();

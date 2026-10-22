@@ -171,7 +171,7 @@ for (const width of [320, 390])
       const errors = [];
       pageErrors.set(page, errors);
       page.on('pageerror', (error) => errors.push(error.stack || error.message));
-      await page.goto('/');
+      await page.goto('/app');
       await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
       await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await checkScope(page);

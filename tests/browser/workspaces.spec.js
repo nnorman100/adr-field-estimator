@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 const uid = (role) => 'test-owner-ws-' + role;
 async function start(page, role) {
   await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid(role));
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#workspaceDashboard')).toBeVisible();
 }
 async function call(page, path, method = 'GET', body, role = 'owner') {
@@ -476,7 +476,7 @@ test('invitation is explicit and bound to the matching Google account', async ({
     (value) => sessionStorage.setItem('synthetic-uid', value),
     uid('pending'),
   );
-  await page.goto('/?invite=' + invitation.invitation_id);
+  await page.goto('/app?invite=' + invitation.invitation_id);
   await expect(page.getByRole('button', { name: 'Accept invitation' })).toBeVisible();
   expect((await call(page, '/api/session', 'GET', undefined, 'pending')).status()).toBe(200); // The harness overrides identity only; membership still comes from real policy.
   await expect(page.locator('#dashboardJobs')).toBeHidden();
@@ -666,7 +666,7 @@ test('invited password account stays unverified without authenticated calls, the
       sessionStorage.setItem('synthetic-signed-out', '1');
     }
   }, email);
-  await page.goto('/?invite=' + invitation.invitation_id);
+  await page.goto('/app?invite=' + invitation.invitation_id);
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await expect(page.locator('#emailAuthForm')).toContainText('link in your invitation email');
@@ -706,7 +706,7 @@ test('email sign-in errors share one message and do not reveal accounts', async 
       sessionStorage.setItem('synthetic-signed-out', '1');
     }
   }, email);
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   const signIn = async (address, password) => {
     await page.locator('#authEmail').fill(address);
@@ -735,7 +735,7 @@ test('email sign-in errors share one message and do not reveal accounts', async 
 test('Forgot password asks before it sends a reset email', async ({ page, browserName }) => {
   const email = 'a-long-staff-address.synthetic@restoration-company.example.invalid';
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   const forgot = page.getByRole('button', { name: 'Forgot password' }),
     dialog = page.getByRole('dialog', { name: 'Reset password?' }),
@@ -894,7 +894,7 @@ for (const mode of [
         await page.setViewportSize({ width, height: 844 });
         if (mode === 'legacy owner-only') {
           await request.post('/__test/workspaces', { data: { enabled: false } });
-          await page.goto('/');
+          await page.goto('/app');
           await expect(page.locator('#saveStatus')).toHaveText('Saved');
         } else if (mode.startsWith('other company')) {
           await start(page, 'other');
@@ -976,7 +976,7 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
 }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#googleSignIn')).toBeVisible();
   await showUpdateBanner(page);
   await expect(page.locator('.lockup img')).toBeVisible();
@@ -1132,7 +1132,7 @@ async function signInWithTemporary(page, email, before) {
       sessionStorage.setItem('synthetic-signed-out', '1');
   });
   if (before) await page.addInitScript(before);
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#emailAuthForm')).toBeVisible();
   await page.locator('#authEmail').fill(email);
   await page.locator('#authPassword').fill(TEMPORARY);

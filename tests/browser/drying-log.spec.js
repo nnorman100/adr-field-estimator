@@ -6,7 +6,7 @@ const { test, expect } = require('@playwright/test');
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
 
 async function open(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }
@@ -311,7 +311,7 @@ test('office staff read the drying log without recording controls', async ({ pag
       (value) => sessionStorage.setItem('synthetic-uid', value),
       'test-owner-ws-office',
     );
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await page
       .locator('#dashboardContent')

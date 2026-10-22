@@ -313,8 +313,8 @@ async function main(args = process.argv.slice(2)) {
       }
       // /sign mirrors the Hosting rewrite to the homeowner signing page.
       const file =
-        url.pathname === '/'
-          ? 'index.html'
+        url.pathname === '/app'
+          ? 'app.html'
           : url.pathname === '/sign'
             ? 'sign.html'
             : url.pathname.slice(1);
@@ -322,7 +322,7 @@ async function main(args = process.argv.slice(2)) {
       if (
         local &&
         ([
-          'index.html',
+          'app.html',
           'sign.html',
           'app.js',
           'workspaces.js',
@@ -356,7 +356,7 @@ async function main(args = process.argv.slice(2)) {
       bridgeLiveSocket(socket, liveTarget(service), BASE, { record: audit.live }),
     );
     audit.phase('load');
-    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.goto(BASE + '/app', { waitUntil: 'domcontentloaded' });
     if (smoke) {
       await expect(page.locator('#googleSignIn')).toBeVisible({ timeout: 30000 });
       await page.waitForFunction(

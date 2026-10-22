@@ -4,7 +4,7 @@ The app was migrated on October 6, 2026. Hosting, Firebase Authentication, Fires
 
 | Resource | Dedicated value |
 | --- | --- |
-| App | https://alert-disaster-field-2026.web.app |
+| App | https://alert-disaster-field-2026.web.app/app (the site root is the public landing page) |
 | Web app ID | `1:545776254070:web:c380c2ee35398689143357` |
 | Hosting target | `alert-disaster` |
 | Firestore | `(default)`, native mode, `us-west2`, deletion protection enabled |
@@ -68,7 +68,7 @@ Other sites and databases in `mitigation-project` are unchanged. The old backend
 
 ## Deployment
 
-Never use a blanket `firebase deploy`. Keep both `index.html` copies identical. Deploy indexes separately and verify they are READY before enabling paginated queries.
+Never use a blanket `firebase deploy`. Keep both `index.html` copies (the landing page) identical; the app shell is `public/app.html`, served at `/app`. Deploy indexes separately and verify they are READY before enabling paginated queries.
 
 Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED=true`. The script requires `--workspaces on|off`, always sets that flag, keeps the other existing variables (staff list, model settings), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
 
