@@ -7,7 +7,7 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers
 const chip = (page, name) => page.locator('#roomChips').getByRole('button', { name, exact: true });
 const renameBox = (page) => page.locator('#roomChips .room-chip-input');
 async function open(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }

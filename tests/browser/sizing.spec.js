@@ -6,7 +6,7 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers
 const room = (page, key) => page.locator('[data-room-index="0"][data-room-key="' + key + '"]');
 const row = (page, label) => page.locator('#sizingResult .sizing-row').filter({ hasText: label });
 async function ready(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await checkScope(page);
   await page.locator('#address').fill('Synthetic sizing property');

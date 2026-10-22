@@ -9,14 +9,21 @@
       "**/node_modules/**",
       "vendor/README.md"
     ],
+    "trailingSlash": false,
     "headers": [
       {"source":"/","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/index.html","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/manifest.webmanifest","headers":[{"key":"Cache-Control","value":"no-store"}]},
       {"source":"/sw.js","headers":[{"key":"Cache-Control","value":"no-store"}]},
-      {"source":"/sign","headers":[{"key":"Cache-Control","value":"no-store"}]},
-      {"source":"/sign.html","headers":[{"key":"Cache-Control","value":"no-store"}]},
+      {"source":"/app","headers":[{"key":"Cache-Control","value":"no-store"},{"key":"X-Robots-Tag","value":"noindex, nofollow"},{"key":"Permissions-Policy","value":"tools=()"}]},
+      {"source":"/app/**","headers":[{"key":"Cache-Control","value":"no-store"},{"key":"X-Robots-Tag","value":"noindex, nofollow"},{"key":"Permissions-Policy","value":"tools=()"}]},
+      {"source":"/app.html","headers":[{"key":"Cache-Control","value":"no-store"},{"key":"X-Robots-Tag","value":"noindex, nofollow"},{"key":"Permissions-Policy","value":"tools=()"}]},
+      {"source":"/sign","headers":[{"key":"Cache-Control","value":"no-store"},{"key":"X-Robots-Tag","value":"noindex, nofollow"},{"key":"Permissions-Policy","value":"tools=()"}]},
+      {"source":"/sign.html","headers":[{"key":"Cache-Control","value":"no-store"},{"key":"X-Robots-Tag","value":"noindex, nofollow"},{"key":"Permissions-Policy","value":"tools=()"}]},
       {"source":"**","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},{"key":"Content-Security-Policy","value":"default-src 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://securetoken.googleapis.com https://www.google.com/recaptcha/ wss://alert-disaster-field-estimator-545776254070.us-west2.run.app; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"}]}
+    ],
+    "redirects": [
+      {"source":"/app.html","destination":"/app","type":301}
     ],
     "rewrites": [
       {
@@ -31,8 +38,12 @@
         "destination": "/sign.html"
       },
       {
-        "source": "**",
-        "destination": "/index.html"
+        "source": "/app",
+        "destination": "/app.html"
+      },
+      {
+        "source": "/app/**",
+        "destination": "/app.html"
       }
     ]
   },

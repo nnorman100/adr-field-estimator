@@ -30,7 +30,7 @@ test('signing out while the session request is delayed ends signed out with no s
   page,
 }) => {
   const release = await gateFirstSession(page);
-  await page.goto('/');
+  await page.goto('/app');
   await page.waitForFunction(() => window.__sessionStarted);
   await page.evaluate(() => auth.signOut());
   await expect(page.locator('#googleSignIn')).toBeVisible();
@@ -59,7 +59,7 @@ test.describe('company workspaces', () => {
     await page.addInitScript((value) => {
       if (!sessionStorage.getItem('synthetic-uid')) sessionStorage.setItem('synthetic-uid', value);
     }, uid('owner'));
-    await page.goto('/');
+    await page.goto('/app');
     await page.waitForFunction(() => window.__sessionStarted);
     await page.evaluate(async (value) => {
       sessionStorage.setItem('synthetic-uid', value);
@@ -94,7 +94,7 @@ test.describe('company workspaces', () => {
       (value) => sessionStorage.setItem('synthetic-uid', value),
       uid('owner'),
     );
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#dashboardHeading')).toHaveText('Alert Disaster Restoration');
     // Configure a real synthetic profile logo so the reset must clear both its image and its text.
     await page.evaluate(async () => {
@@ -142,9 +142,7 @@ test.describe('company workspaces', () => {
     );
     await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
     await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
-    // Signed out the bar offers only Sign in; the help contact line is still reset for the next account.
-    await expect(page.locator('#helpButton')).toBeHidden();
-    await expect(page.locator('#headerSignIn')).toBeVisible();
+    await page.locator('#helpButton').click();
     await expect(page.locator('#helpContact')).toHaveText(
       'For company access, ask your company owner.',
     );

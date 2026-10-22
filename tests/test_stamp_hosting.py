@@ -74,13 +74,14 @@ def test_stamp_check_and_reset_round_trip(shell):
     hosting.write(HEAD, shell)
     assert hosting.check(shell, fake_git()) == HEAD
     assert f"const VERSION='{HEAD}';" in (shell / 'public/sw.js').read_text()
-    html = (shell / 'public/index.html').read_text(encoding='utf8')
+    html = (shell / 'public/app.html').read_text(encoding='utf8')
     assert html.count(f'?v={HEAD}') == 8 and f'App version {HEAD[:12]}</small>' in html
+    assert (shell / 'public/index.html').read_text(encoding='utf8').count(f'?v={HEAD}') == 2
     assert (shell / 'public/sign.html').read_text(encoding='utf8').count(f'?v={HEAD}') == 4
     assert f'/audio-worklet.js?v={HEAD}' in (shell / 'public/app.js').read_text(encoding='utf8')
     hosting.write(HEAD + '-dirty', shell)
     assert hosting.check(shell, fake_git()) == HEAD + '-dirty'
-    assert f'App version {HEAD[:12]}-dirty</small>' in (shell / 'index.html').read_text(
+    assert f'App version {HEAD[:12]}-dirty</small>' in (shell / 'public/app.html').read_text(
         encoding='utf8'
     )
     hosting.write(hosting.PLACEHOLDER, shell)

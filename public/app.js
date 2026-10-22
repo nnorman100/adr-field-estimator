@@ -1,9 +1,6 @@
 /* ADR inspection lifecycle: safe DOM, private drafts and revision-bound signing. */
 'use strict';
 const $ = (id) => document.getElementById(id);
-// Where the landing page's "Request access" / "Book a demo" links go: a mailto: address or an https:
-// page. Public sign-up stays off, so this never creates an account. Empty hides both links.
-const REQUEST_ACCESS_URL = '';
 const {
   emptyData,
   signedDraftData,
@@ -4310,13 +4307,6 @@ async function initialize() {
     await authSdk.signInWithPopup(auth, provider);
   });
   $('emailAuthForm').addEventListener('submit', (e) => e.preventDefault());
-  // The landing "Sign in" links land on the email field; the href still works without script.
-  for (const link of document.querySelectorAll('a[href="#authPanel"]'))
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      $('authPanel').scrollIntoView({ block: 'start' });
-      $('authEmail').focus({ preventScroll: true });
-    });
   authClick('emailSignIn', async () => {
     const entered = credentials();
     if (entered) await authSdk.signInWithEmailAndPassword(auth, entered.email, entered.password);
@@ -4765,24 +4755,8 @@ async function passwordChangeRequired(user) {
     return false;
   }
 }
-// The marketing landing frames the sign-in card only for visitors with no account signed in;
-// verification and temporary-password steps keep the plain login page.
-function showLanding(visible) {
-  for (const section of document.querySelectorAll('.landing')) section.hidden = !visible;
-  // Signed out, the bar carries one control: Sign in. Help and Account return with an account.
-  $('headerSignIn').hidden = !visible;
-  $('helpButton').hidden = visible;
-  $('accountMenu').hidden = visible;
-  const contact = /^(mailto:|https:\/\/)/.test(REQUEST_ACCESS_URL) ? REQUEST_ACCESS_URL : '';
-  for (const id of ['requestAccess', 'requestAccessFooter']) {
-    $(id).hidden = !visible || !contact;
-    if (contact) $(id).href = contact;
-    else $(id).removeAttribute('href');
-  }
-}
 function showAuthStage(user, stage) {
   $('authPanel').hidden = stage === 'ready';
-  showLanding(stage === 'signedOut');
   $('googleSignIn').hidden = stage !== 'signedOut';
   // Signed out, unverified or on a temporary password: only the login page shows, never the inspection workspace.
   document.body.classList.toggle('login-page', stage !== 'ready');

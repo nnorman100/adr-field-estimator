@@ -38,7 +38,7 @@ test.beforeEach(async ({ page }) => {
       }
     };
   });
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.waitForFunction(() => state.session && !state.workspaceInitializing);
   await page.locator('.task-nav [data-task="property"]').click();

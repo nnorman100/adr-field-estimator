@@ -4,7 +4,9 @@ const VERSION='unstamped';
 const CACHE='dryscope-'+VERSION;
 const ASSETS = [
   '/',
-  '/index.html',
+  '/landing.css?v=' + VERSION,
+  '/landing.js?v=' + VERSION,
+  '/app',
   '/app.css?v=' + VERSION,
   '/core.js?v=' + VERSION,
   '/documents.js?v=' + VERSION,
@@ -64,7 +66,9 @@ self.addEventListener('fetch', (event) => {
         try {
           return await fetch(event.request);
         } catch {
-          return (await caches.match('/index.html')) || Response.error();
+          // The landing at "/" hands a signed-in device on to /app; everything else is the app shell.
+          const shell = url.pathname === '/' ? '/' : '/app';
+          return (await caches.match(shell)) || Response.error();
         }
       })(),
     );

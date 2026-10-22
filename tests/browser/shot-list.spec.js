@@ -6,7 +6,7 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers
 
 const shots = (page) => page.locator('#shotList .shot-items li');
 async function open(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }

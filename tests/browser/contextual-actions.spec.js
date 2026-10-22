@@ -6,7 +6,7 @@ for (const width of [390, 1280]) {
   test.describe('contextual actions at ' + width, () => {
     test.use({ viewport: { width, height: width === 390 ? 844 : 900 }, serviceWorkers: 'block' });
     test.beforeEach(async ({ page }) => {
-      await page.goto('/');
+      await page.goto('/app');
       await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
       await expect(page.locator('#saveStatus')).toHaveText('Saved');
       await checkScope(page);

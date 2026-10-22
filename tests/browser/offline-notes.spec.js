@@ -80,7 +80,7 @@ test('offline notes record on the phone, survive a reload, then fill the transcr
     'Playwright WebKit offline emulation also blocks in-memory Blob reads, so notes cannot be saved offline in this harness; physical iPhone acceptance remains open.',
   );
   await fakeRecorder(page);
-  await page.goto('/');
+  await page.goto('/app');
   await ready(page);
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
@@ -191,7 +191,7 @@ test('a weak Live connection offers offline notes without switching, and the tec
   page,
   browserName,
 }) => {
-  await page.goto('/');
+  await page.goto('/app');
   await ready(page);
   test.skip(
     !(await page.evaluate(() => !!(window.AudioContext || window.webkitAudioContext))) ||
@@ -329,7 +329,7 @@ test.describe('controlled voice-note uploads', () => {
   }) => {
     await fakeRecorder(page);
     await page.route('**/voice-notes', (route) => route.abort());
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     await walkthrough(page);
     await page.locator('#startNotes').click();
@@ -365,7 +365,7 @@ test.describe('controlled voice-note uploads', () => {
       await route.fetch();
       await route.abort();
     });
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     await walkthrough(page);
     await page.locator('#startNotes').click();
@@ -401,7 +401,7 @@ test.describe('controlled voice-note uploads', () => {
           })
         : route.continue(),
     );
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     await walkthrough(page);
     await page.locator('#startNotes').click();
@@ -456,7 +456,7 @@ test.describe('controlled voice-note uploads', () => {
           })
         : route.continue(),
     );
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     await walkthrough(page);
     await page.locator('#startNotes').click();
@@ -483,7 +483,7 @@ test.describe('controlled voice-note uploads', () => {
     await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>
       drop && route.request().method() === 'PUT' ? route.abort() : route.continue(),
     );
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     await walkthrough(page);
     await page.locator('#startNotes').click();
@@ -511,7 +511,7 @@ test.describe('controlled voice-note uploads', () => {
       if (++calls === 1) await held;
       await route.continue();
     });
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     await walkthrough(page);
     await page.locator('#startNotes').click();
@@ -541,7 +541,7 @@ test.describe('controlled voice-note uploads', () => {
   }) => {
     await fakeRecorder(page);
     await page.route('**/voice-notes', (route) => route.abort());
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     const first = await page.evaluate(() => state.draft.inspection_id);
     await walkthrough(page);
@@ -601,7 +601,7 @@ test.describe('controlled voice-note uploads', () => {
     await fakeRecorder(page);
     const fail = (route) => route.abort();
     await page.route('**/voice-notes', fail);
-    await page.goto('/');
+    await page.goto('/app');
     await ready(page);
     const first = await page.evaluate(() => state.draft.inspection_id);
     await walkthrough(page);

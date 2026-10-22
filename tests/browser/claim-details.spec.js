@@ -17,7 +17,7 @@ test.afterEach(async ({ request }) => {
 
 async function newJob(page, role) {
   await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid(role));
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#workspaceDashboard')).toBeVisible();
   await page.getByRole('button', { name: 'New job', exact: true }).click();
   await checkScope(page);

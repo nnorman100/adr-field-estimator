@@ -1,0 +1,345 @@
+/* The public DryScope landing page. Same tokens, type and cards as the app (public/app.css), kept
+   to the rules this one static page needs so it loads fast on a phone. */
+@font-face {
+  font-family: Lato;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/lato-400-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: Lato;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/lato-700-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: Lato;
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('/fonts/lato-900-latin.woff2') format('woff2');
+}
+:root {
+  --navy: #0b2545;
+  --water: #7cc4e8;
+  --water-deep: #1a6a96;
+  --water-tint: #e4f3fb;
+  --mold: #9ed8a8;
+  --mold-deep: #2c7a47;
+  --mold-tint: #e7f6ea;
+  --page: #f6f8fa;
+  --paper: #ffffff;
+  --text-2: #56606e;
+  --error: #b3261e;
+  --line: #dadddd;
+  font:
+    16px Lato,
+    Arial,
+    sans-serif;
+  color: var(--navy);
+  background: var(--page);
+  color-scheme: light;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  margin: 0;
+  line-height: 1.5;
+}
+a {
+  color: var(--navy);
+}
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--navy);
+  outline-offset: 3px;
+}
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  margin: 0;
+}
+.eyebrow {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+/* The navy bar carries the white DryScope lockup and the one control a visitor needs: Log in. */
+.product-bar {
+  background: var(--navy);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem max(1.5rem, calc((100vw - 1120px) / 2));
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+.lockup {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.lockup img {
+  display: block;
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+.header-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.5rem 1rem;
+  border: 1px solid #ffffff99;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.header-link:hover {
+  border-color: #fff;
+}
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 1.5rem 2rem;
+}
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2rem;
+  padding: 2.5rem 0 1rem;
+}
+.hero-copy {
+  max-width: 680px;
+}
+h1 {
+  font-size: 2.25rem;
+  margin: 0.25rem 0 0.75rem;
+}
+.hero-line {
+  font-size: 1.125rem;
+  margin: 0 0 1rem;
+}
+.landing-lede,
+.section-lede {
+  margin: 0 0 1.25rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.access-note {
+  margin: 0 0 1.25rem;
+  padding: 0.875rem 1rem;
+  border-left: 4px solid var(--water);
+  background: var(--water-tint);
+  border-radius: 6px;
+}
+.landing-mark {
+  width: 220px;
+  height: auto;
+  justify-self: end;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.landing-button,
+button.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.75rem 1.25rem;
+  border: 1px solid var(--navy);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--navy);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+button.primary {
+  background: var(--navy);
+  color: #fff;
+}
+.landing-section {
+  padding: 2rem 0 0.5rem;
+}
+h2 {
+  font-size: 1.75rem;
+  margin: 0 0 0.75rem;
+}
+.landing-steps,
+.landing-cards,
+.landing-faq {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+.landing-steps,
+.landing-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.landing-steps > li,
+.landing-cards > li,
+.landing-faq > li {
+  min-width: 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+.landing-faq > li + li {
+  margin-top: 0.75rem;
+}
+.landing-steps h3,
+.landing-cards h3,
+.landing-faq h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+.landing-steps p,
+.landing-cards p,
+.landing-faq p {
+  margin: 0;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin-bottom: 0.75rem;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  font-weight: 900;
+}
+.landing-docs > li {
+  border-top: 4px solid var(--water);
+}
+.landing-docs > li:nth-child(even) {
+  border-top-color: var(--water-deep);
+}
+.landing-features > li {
+  background: var(--water-tint);
+  border-color: var(--water-tint);
+}
+.landing-features > li:nth-child(4n + 3),
+.landing-features > li:nth-child(4n + 4) {
+  background: var(--mold-tint);
+  border-color: var(--mold-tint);
+}
+/* The request-access form: ordinary fields, sent by the person. Hidden until an address is set. */
+.request-access form {
+  max-width: 720px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+label {
+  display: block;
+  margin-bottom: 1rem;
+  font-weight: 700;
+}
+input,
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid #b7bec1;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--navy);
+  font: inherit;
+  font-weight: 400;
+  min-height: 48px;
+}
+.closing {
+  margin: 2rem 0 1rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.closing p {
+  margin: 0 0 1rem;
+  line-height: 1.6;
+}
+.closing .hero-actions {
+  justify-content: center;
+}
+.closing .hero-actions:not(:has(:not([hidden]))) {
+  display: none;
+}
+footer {
+  text-align: center;
+  color: var(--text-2);
+  font-size: 0.875rem;
+  padding: 1rem;
+}
+@media (max-width: 700px) {
+  .product-bar {
+    padding: 0.25rem 1rem;
+    padding-top: max(0.25rem, env(safe-area-inset-top));
+    gap: 0.5rem;
+  }
+  .lockup img {
+    width: 120px;
+  }
+  .header-link {
+    min-height: 44px;
+    padding: 0.5rem 0.75rem;
+  }
+  main {
+    padding: 0 1rem 1.5rem;
+  }
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    padding-top: 1.5rem;
+  }
+  h1 {
+    font-size: 1.75rem;
+  }
+  h2 {
+    font-size: 1.4rem;
+  }
+  .landing-mark {
+    width: 88px;
+    justify-self: start;
+    grid-row: 1;
+  }
+}
+@media print {
+  .product-bar,
+  .hero-actions,
+  .request-access {
+    display: none !important;
+  }
+}

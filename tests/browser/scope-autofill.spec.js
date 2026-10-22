@@ -6,7 +6,7 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers
 const words = 'Kitchen, category 2, 80 SF drywall. Use 3 fans.';
 const room = (page, key) => page.locator('[data-room-index="0"][data-room-key="' + key + '"]');
 async function ready(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled();
   await checkScope(page);
   await page.locator('#address').fill('Synthetic scope autofill property');

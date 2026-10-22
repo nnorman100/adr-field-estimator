@@ -1271,7 +1271,7 @@ def test_invitation_provisions_a_password_account_and_mails_only_its_set_passwor
     assert invited['delivery_status'] == 'sent'
     assert accounts.created == [{'email': 'new@example.invalid', 'email_verified': False}]
     assert [(l['email'], l['url'], l['in_app']) for l in accounts.links] == [
-        ('new@example.invalid', 'https://alert-disaster-field-2026.web.app/', False)
+        ('new@example.invalid', 'https://alert-disaster-field-2026.web.app/app', False)
     ]
     link = accounts.links[0]['link']
     assert 'Set your password for DryScope: ' + link in sent[0]['text']
@@ -1720,7 +1720,7 @@ def test_invitation_email_escapes_a_hostile_company_name():
 )
 def test_invitation_email_sign_in_steps_and_links(role, phrase):
     invite, company = branded(role=role)
-    accept = 'https://alert-disaster-field-2026.web.app/?invite=' + 'a' * 32
+    accept = 'https://alert-disaster-field-2026.web.app/app?invite=' + 'a' * 32
     setup = 'https://example.invalid/set?mode=resetPassword&oobCode=secret-oob'
     password = workspaces.invitation_email(invite, company, setup)
     google = workspaces.invitation_email(invite, company, None)

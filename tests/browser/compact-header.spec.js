@@ -19,7 +19,7 @@ test.describe('compact phone header', () => {
             (value) => sessionStorage.setItem('synthetic-uid', value),
             uid(role),
           );
-          await page.goto('/');
+          await page.goto('/app');
           await expect(page.locator('#workspaceDashboard')).toBeVisible();
           const newJob = page.locator('#workspaceDashboard > .section-head > #dashboardNewJob');
           await expect(newJob).toBeVisible();
@@ -101,7 +101,7 @@ test.describe('compact phone header', () => {
       (value) => sessionStorage.setItem('synthetic-uid', value),
       uid('owner'),
     );
-    await page.goto('/');
+    await page.goto('/app');
     await page.locator('#dashboardNewJob').click();
     await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
     const more = page.locator('#jobMenu');

@@ -22,15 +22,50 @@ def test_hosting_and_database_use_dedicated_project():
     assert api['source'] == '/api/**'
     assert api['run']['serviceId'] == 'alert-disaster-field-estimator'
     assert api['run']['region'] == 'us-west2'
-    # The homeowner signing page is served before the app shell's catch-all rewrite.
-    assert [r['source'] for r in config['hosting']['rewrites']] == ['/api/**', '/sign', '**']
+    # The site root is the static landing page; the homeowner signing page and the app shell have
+    # their own rewrites and no catch-all, so unknown paths get the 404 page instead of the app.
+    assert [r['source'] for r in config['hosting']['rewrites']] == [
+        '/api/**',
+        '/sign',
+        '/app',
+        '/app/**',
+    ]
     assert config['hosting']['rewrites'][1]['destination'] == '/sign.html'
-    no_store = {
-        h['source']
-        for h in config['hosting']['headers']
-        if {'key': 'Cache-Control', 'value': 'no-store'} in h['headers']
-    }
-    assert {'/sign', '/sign.html'} <= no_store
+    assert [r['destination'] for r in config['hosting']['rewrites'][2:]] == ['/app.html'] * 2
+    assert config['hosting']['redirects'] == [
+        {'source': '/app.html', 'destination': '/app', 'type': 301}
+    ]
+    assert config['hosting']['trailingSlash'] is False
+
+    def sources(key, value):
+        return {
+            h['source']
+            for h in config['hosting']['headers']
+            if {'key': key, 'value': value} in h['headers']
+        }
+
+    app_and_signing = {'/app', '/app/**', '/app.html', '/sign', '/sign.html'}
+    assert {'/', '/index.html', '/sw.js', '/manifest.webmanifest'} | app_and_signing <= sources(
+        'Cache-Control', 'no-store'
+    )
+    # Only the landing page is indexed, and only the landing page may register WebMCP tools.
+    assert sources('X-Robots-Tag', 'noindex, nofollow') == app_and_signing
+    assert sources('Permissions-Policy', 'tools=()') == app_and_signing
+    landing = (ROOT / 'public/index.html').read_text(encoding='utf8')
+    assert 'name="robots"' not in landing
+    assert 'name="robots" content="noindex, nofollow"' in (ROOT / 'public/app.html').read_text(
+        encoding='utf8'
+    )
+    assert (ROOT / 'public/robots.txt').read_text(encoding='utf8').splitlines()[-1] == (
+        'Sitemap: https://alert-disaster-field-2026.web.app/sitemap.xml'
+    )
+    sitemap = (ROOT / 'public/sitemap.xml').read_text(encoding='utf8')
+    assert (
+        sitemap.count('<loc>') == 1
+        and '<loc>https://alert-disaster-field-2026.web.app/</loc>' in sitemap
+    )
+    manifest = json.loads((ROOT / 'public/manifest.webmanifest').read_text(encoding='utf8'))
+    assert (manifest['id'], manifest['start_url'], manifest['scope']) == ('/', '/app', '/')
 
 
 def test_service_rejects_another_project_before_initializing_ai(monkeypatch):

@@ -9,7 +9,7 @@ const renameBox = (page) => page.locator('#roomChips .room-chip-input');
 const room = (page, index, key) =>
   page.locator('[data-room-index="' + index + '"][data-room-key="' + key + '"]');
 async function open(page) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 }

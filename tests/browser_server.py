@@ -357,8 +357,33 @@ def signing_page():
     return Response(
         (ROOT / 'public/sign.html').read_bytes(),
         media_type='text/html',
-        headers={'Cache-Control': 'no-store'},
+        headers={
+            'Cache-Control': 'no-store',
+            'X-Robots-Tag': 'noindex, nofollow',
+            'Permissions-Policy': 'tools=()',
+        },
     )
+
+
+@bm.app.get('/app')
+@bm.app.get('/app/{rest:path}')
+def app_shell(rest: str = ''):
+    # Mirrors the /app rewrites in firebase.json: the signed-in app shell, never cached or indexed.
+    return Response(
+        (ROOT / 'public/app.html').read_bytes(),
+        media_type='text/html',
+        headers={
+            'Cache-Control': 'no-store',
+            'X-Robots-Tag': 'noindex, nofollow',
+            'Permissions-Policy': 'tools=()',
+        },
+    )
+
+
+@bm.app.get('/app.html')
+def app_shell_redirect():
+    # Mirrors the firebase.json redirect: the file's own name is never a second address.
+    return Response(status_code=301, headers={'Location': '/app'})
 
 
 bm.app.mount('/', StaticFiles(directory=str(ROOT / 'public'), html=True), name='frontend')
