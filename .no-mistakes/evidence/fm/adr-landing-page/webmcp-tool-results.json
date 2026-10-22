@@ -1,0 +1,126 @@
+[
+  {
+    "name": "dryscope_overview",
+    "readOnly": true,
+    "params": [],
+    "result": {
+      "product": "DryScope",
+      "url": "http://127.0.0.1:5055/",
+      "audience": "For water mitigation & disaster restoration companies",
+      "headline": "Water & mold loss estimates, signed on site.",
+      "summary": "Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.",
+      "steps": [
+        {
+          "title": "Walk & Photo",
+          "detail": "Talk through each room while the live camera assistant listens, watches and asks for the shots an adjuster expects."
+        },
+        {
+          "title": "Check Scope",
+          "detail": "Confirm the rooms, water categories, water or mold loss type, measurements, equipment and drying days filled from what you said."
+        },
+        {
+          "title": "Review & Sign",
+          "detail": "Review the estimate range and the homeowner signs on your phone, or on theirs through a private link."
+        }
+      ],
+      "documents": [
+        {
+          "title": "Proposal",
+          "detail": "low–high customer estimate, ready to sign"
+        },
+        {
+          "title": "Itemized claim",
+          "detail": "every line with quantity, rate, waste and total"
+        },
+        {
+          "title": "Scope defense letter",
+          "detail": "IICRC S500 / S520, addressed to the adjuster"
+        },
+        {
+          "title": "Photo moisture log",
+          "detail": "each photo with its room, time and meter reading"
+        }
+      ],
+      "features": [
+        {
+          "title": "Live voice-and-camera walkthrough",
+          "detail": "real-time coaching; weak signal pauses video and keeps the voice"
+        },
+        {
+          "title": "Required photo shot list",
+          "detail": "per-room missing shots, one-tap tagging after each capture"
+        },
+        {
+          "title": "Drying log with psychrometrics",
+          "detail": "GPP and dew point as you type, material and thermal readings per room and day"
+        },
+        {
+          "title": "QR room and equipment tags",
+          "detail": "a scan selects the room or records where the unit stands"
+        },
+        {
+          "title": "IICRC equipment-sizing check",
+          "detail": "recommended air movers and dehumidification beside what is priced"
+        },
+        {
+          "title": "Claim & loss details",
+          "detail": "carrier, claim and policy numbers, adjuster contact, printed into the documents"
+        },
+        {
+          "title": "Per-room water or mold loss type",
+          "detail": "rooms tagged WATER, MOLD or both"
+        },
+        {
+          "title": "Your company's branding",
+          "detail": "your name, logo, license and contact details head every document"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dryscope_faq",
+    "readOnly": true,
+    "params": [],
+    "result": {
+      "faq": [
+        {
+          "title": "What is DryScope?",
+          "detail": "A web app a restoration technician opens on a phone at a water or mold loss. It coaches the walkthrough by voice and camera, fills the scope from what the technician says, and produces a priced proposal, an itemized claim, a scope defense letter and a photo moisture log from one inspection."
+        },
+        {
+          "title": "Who is it for?",
+          "detail": "Owners and operations managers of water mitigation and disaster restoration companies, and the estimators, technicians and office staff who work their jobs. Each company works in its own isolated workspace with its own branding on every document."
+        },
+        {
+          "title": "How does a company get access?",
+          "detail": "By invitation only; there is no public sign-up. A company is created for its owner, the owner invites estimators and office staff by email, and each person sets a password from the invitation or signs in with Google. Homeowners never need an account: they review and sign through a private link."
+        },
+        {
+          "title": "Which documents does it produce?",
+          "detail": "Four from one inspection: a proposal with a low–high customer estimate, an itemized claim, an IICRC S500 / S520 scope defense letter addressed to the recorded adjuster, and a photo moisture log with each photo's room, time and recognized meter reading."
+        },
+        {
+          "title": "Does the AI set the prices?",
+          "detail": "No. Every price is computed on the server from a cell-traced estimating sheet, together with the mandatory wording. The model drafts the narrative and fills the form from the technician's words; it never supplies a price, overrides a total or removes a required clause. Work the sheet does not price is flagged as unpriced and blocks signing until a technician corrects it."
+        },
+        {
+          "title": "Which losses does it estimate?",
+          "detail": "Water and mold losses only. Fire, smoke and other loss types are out of scope."
+        },
+        {
+          "title": "Does it work in the field without signal?",
+          "detail": "It is an installable web app for any phone or tablet browser. Drafts save on the device first and sync when online, and offline notes keep voice notes, photos and typed notes on the phone until they upload. The live assistant, document generation and signing need a connection."
+        }
+      ]
+    }
+  },
+  {
+    "name": "dryscope_access",
+    "readOnly": true,
+    "params": [],
+    "result": {
+      "how": "Log in is for superadmins, owners, estimators and office staff; there is no public sign-up.",
+      "login_url": "http://127.0.0.1:5055/app"
+    }
+  }
+]

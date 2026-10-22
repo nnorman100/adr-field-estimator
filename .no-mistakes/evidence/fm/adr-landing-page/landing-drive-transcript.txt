@@ -1,0 +1,35 @@
+desktop / url: http://127.0.0.1:5055/
+h1: Water & mold loss estimates, signed on site.
+header links: ["DryScope -> /","Log in -> /app"]
+header has Account/? buttons: 0
+visible "Sign up" text count: 0
+FAQ open count before click: 0
+footer: DryScope · Private field inspections
+footer DryScope occurrences: 1
+FAQ open after clicking "How does a company get access?": 1
+FAQ access answer visible: By invitation only; there is no public sign-up. A company is created for its owner, the owner invites estimators and office staff by email, and each person sets a password from the invitation or signs in with Google. Homeowners never need an account: they review and sign through a private link.
+JSON-LD FAQ questions equal visible: true
+after header Log in url: http://127.0.0.1:5055/app
+/app visible inputs: ["text:address","number:yearBuilt","number:airMovers","number:dehumidifiers","number:dryingDays","checkbox:scopeConfirmed"]
+/app visible buttons: ["?","1\nWalk & Photo","2\nCheck Scope","3\nReview & Sign","Go to Walk & Photo →","Fill scope from walkthrough","Add room","Finish & review"]
+/app meta robots: noindex, nofollow
+page errors (desktop): []
+390 header Log in box (visible in first viewport, tap target): {"x":325,"y":4,"width":49,"height":44}
+390 horizontal overflow: false
+390 one-tap Log in url: http://127.0.0.1:5055/app
+/?invite=abc123 handed to: http://127.0.0.1:5055/app?invite=abc123#x
+/?mode&oobCode handed to: http://127.0.0.1:5055/app?mode=resetPassword&oobCode=zzz
+signed-out stays on: http://127.0.0.1:5055/
+localStorage session handed to: http://127.0.0.1:5055/app
+IndexedDB session handed to: http://127.0.0.1:5055/app
+non-session keys + utm param stays on: http://127.0.0.1:5055/?utm_source=x
+no leftover firebaseLocalStorageDb created: []
+WebMCP tools: ["dryscope_overview readOnly=true params=[]","dryscope_faq readOnly=true params=[]","dryscope_access readOnly=true params=[]"]
+dryscope_faq entries: 7
+dryscope_access: {"how":"Log in is for superadmins, owners, estimators and office staff; there is no public sign-up.","login_url":"http://127.0.0.1:5055/app"}
+dryscope_overview steps: ["Walk & Photo","Check Scope","Review & Sign"]
+/app registered tools: 0
+no-JS h1: Water & mold loss estimates, signed on site.
+no-JS Log in href: /app
+no-JS FAQ count: 7
+404 status/title: 404 Page not found · DryScope

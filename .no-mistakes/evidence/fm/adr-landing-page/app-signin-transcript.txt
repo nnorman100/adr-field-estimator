@@ -1,0 +1,2 @@
+desktop-1280 https://localhost:8878/app inputs ["email:authEmail","password:authPassword"] buttons ["?","Sign in","Forgot password","Sign in with Google"]
+phone-390 https://localhost:8878/app inputs ["email:authEmail","password:authPassword"] buttons ["?","Sign in","Forgot password","Sign in with Google"]

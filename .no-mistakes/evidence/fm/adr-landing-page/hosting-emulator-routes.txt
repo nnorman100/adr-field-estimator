@@ -1,0 +1,69 @@
+# Firebase Hosting emulator (firebase-tools 15.33.0) serving this change's firebase.json + public/
+=== GET /
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+<title>DryScope · Water &amp; mold loss estimates signed on site</title>
+=== GET /app
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+X-Robots-Tag: noindex, nofollow
+Permissions-Policy: tools=()
+<title>DryScope · Water &amp; mold loss estimates</title>
+=== GET /app/
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+X-Robots-Tag: noindex, nofollow
+Permissions-Policy: tools=()
+<title>DryScope · Water &amp; mold loss estimates</title>
+=== GET /app.html
+HTTP/1.1 301 Moved Permanently
+Location: /app
+Content-Type: text/html; charset=utf-8
+=== GET /app.html?invite=x
+HTTP/1.1 301 Moved Permanently
+Location: /app?invite=x
+Content-Type: text/html; charset=utf-8
+=== GET /?invite=abc123
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+<title>DryScope · Water &amp; mold loss estimates signed on site</title>
+=== GET /sign
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+X-Robots-Tag: noindex, nofollow
+Permissions-Policy: tools=()
+<title>Review and sign your estimate</title>
+=== GET /sign?t=tok
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+X-Robots-Tag: noindex, nofollow
+Permissions-Policy: tools=()
+<title>Review and sign your estimate</title>
+=== GET /app/anything
+HTTP/1.1 404 Not Found
+Content-Type: text/html; charset=utf-8
+<title>Page not found · DryScope</title>
+=== GET /robots.txt
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+=== GET /sitemap.xml
+HTTP/1.1 200 OK
+Content-Type: application/xml
+=== GET /nope
+HTTP/1.1 404 Not Found
+Content-Type: text/html; charset=utf-8
+<title>Page not found · DryScope</title>
+=== GET /index.html
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: no-store
+<title>DryScope · Water &amp; mold loss estimates signed on site</title>
+=== GET /landing.js
+HTTP/1.1 200 OK
+Content-Type: application/javascript; charset=utf-8
