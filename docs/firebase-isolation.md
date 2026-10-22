@@ -4,7 +4,7 @@ The app was migrated on October 6, 2026. Hosting, Firebase Authentication, Fires
 
 | Resource | Dedicated value |
 | --- | --- |
-| App | https://alert-disaster-field-2026.web.app |
+| App | https://alert-disaster-field-2026.web.app/app (the site root is the public landing page) |
 | Web app ID | `1:545776254070:web:c380c2ee35398689143357` |
 | Hosting target | `alert-disaster` |
 | Firestore | `(default)`, native mode, `us-west2`, deletion protection enabled |
