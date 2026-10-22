@@ -212,6 +212,8 @@ test('a Home Screen app on the trailing-dot address says to re-add the icon', as
   // Locators would wait for the cancelled redirect to finish, so the page is read directly.
   for (const start of ['/', '/app']) {
     await page.goto(dotted + start, { waitUntil: 'commit' });
+    // The landing at "/" forwards to /app; polling before that navigation settles loses the execution context.
+    await page.waitForURL(dotted + '/app', { waitUntil: 'commit' });
     await expect
       .poll(() => page.evaluate(() => document.getElementById('message')?.textContent))
       .toBe(
