@@ -298,8 +298,8 @@ test.describe('company workspaces', () => {
     await home.context.close();
   });
 
-  // Temporary until PR 2 stores ADR's logo in its profile.
-  test('an ADR job without a profile logo shows the bundled logo on the signing page', async ({
+  // ADR has no built-in logo: without a saved one the homeowner sees no logo.
+  test('an ADR job without a profile logo shows no logo on the signing page', async ({
     page,
     browser,
   }) => {
@@ -316,10 +316,8 @@ test.describe('company workspaces', () => {
     await expect(page.locator('#documents')).toBeVisible();
     const home = await homeowner(browser, await sendLink(page));
     for (const doc of ['#doc-proposal', '#doc-defense'])
-      await expect(home.page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
-        'src',
-        '/brand/adr-logo.jpg',
-      );
+      await expect(home.page.locator(doc + ' .document-letterhead img')).toBeHidden();
+    expect(await home.page.locator('img[src*="adr-logo"]').count()).toBe(0);
     await home.context.close();
   });
 });

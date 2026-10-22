@@ -75,6 +75,10 @@ def test_link_reads_the_bound_documents_and_signs_once_as_the_technician(ready):
     assert body['status'] == 'pending' and body['documents'] == record['audit']['documents']
     assert body['consent'] == dict(version=sl.CONSENT_VERSION, statements=sl.CONSENT)
     assert 'owner_uid' not in json.dumps(body) and 'users/' not in json.dumps(body)
+    # Documents saved without a company identity get no built-in one.
+    assert 'legacy_identity' not in body
+    for branding in ['Alert Disaster', 'Matthew Myers', '950983', 'adr-logo']:
+        assert branding not in json.dumps(body)
     assert homeowner(value).get('/api/sign/photos/' + 'b' * 32).status_code == 200
     assert homeowner(value).get('/api/sign/photos/' + 'c' * 32).status_code == 404
     assert homeowner(value).get('/api/sign/signature').status_code == 404

@@ -21,8 +21,7 @@ from fastapi.staticfiles import StaticFiles
 import backend.main as bm
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
-from tests.fakes import FakeAuth, FakeStore, FakeCompanyStore
-from backend.workspaces import ADR_PROFILE
+from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
 import backend.workspaces as wm
 from backend.contracts import InspectionData
 from copy import deepcopy

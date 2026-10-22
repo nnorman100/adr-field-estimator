@@ -98,7 +98,6 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     'icon-192.png',
     'icon-512.png',
     'apple-touch-icon.png',
-    'brand/adr-logo.jpg',
     'brand/dryscope-mark.svg',
     'brand/dryscope-mark-navy.svg',
     'brand/dryscope-mark-white.svg',
@@ -250,7 +249,6 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     return urls;
   });
   for (const path of [
-    '/brand/adr-logo.jpg',
     '/brand/dryscope-mark.svg',
     '/brand/dryscope-wordmark.svg',
     '/brand/dryscope-wordmark-white.svg',

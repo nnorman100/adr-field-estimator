@@ -5,6 +5,17 @@ from PIL import Image, ImageDraw
 from google.api_core.exceptions import AlreadyExists
 from backend.inspection_store import InspectionStore
 
+# ADR's details as its owner would enter them in Company settings; the app itself ships no company identity.
+ADR_PROFILE = dict(
+    name='Alert Disaster Restoration',
+    address='3300 Patton Way · Bakersfield, CA 93308',
+    phone='(661) 426-2151',
+    email='',
+    license='950983',
+    signoff='Matthew Myers',
+    logo_data_url='',
+)
+
 
 def png(blank=False):
     image = Image.new('RGBA', (120, 60), (255, 255, 255, 0))

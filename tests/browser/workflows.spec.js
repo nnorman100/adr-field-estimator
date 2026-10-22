@@ -208,7 +208,7 @@ test('older drafts with retired job flags load and documents print the standard 
     'Testing is required under California State Law due to the home',
   );
   await expect(proposal).toContainText(
-    'Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment',
+    'Per IICRC and EPA protocols, the contractor technicians will don appropriate personal protective equipment',
   );
   await expect(proposal).toContainText('This estimate does not include testing of any kind.');
   await expect(proposal).toContainText('Estimate is valid for 30 days from date of inspection.');
@@ -438,12 +438,12 @@ test('permission denial, portrait evidence, clipboard denial and print document 
   await page.emulateMedia({ media: 'print' });
   for (const id of ['doc-proposal', 'doc-claim', 'doc-defense', 'doc-photos'])
     await expect(page.locator('#' + id)).toBeVisible();
-  await expect(page.locator('#doc-proposal > h2')).toHaveText(
-    'Alert Disaster Restoration · Official proposal',
-  );
-  await expect(page.locator('#doc-defense .document-letterhead img')).toBeVisible();
-  await expect(page.locator('#doc-defense .document-letterhead p')).toHaveText(
-    '3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983',
+  // Owner-only mode has no company profile, so the documents name no company and show no logo.
+  await expect(page.locator('#doc-proposal > h2')).toHaveText('Official proposal');
+  await expect(page.locator('#doc-defense .document-letterhead img')).toBeHidden();
+  await expect(page.locator('#doc-defense .document-letterhead p')).toHaveText('');
+  await expect(page.locator('body')).not.toContainText(
+    /Alert Disaster|Matthew Myers|950983|Bakersfield|426-2151/,
   );
   if (browserName === 'chromium')
     await page.pdf({

@@ -434,35 +434,63 @@ test('company profile edits require regenerated documents and render labels safe
   expect(await page.evaluate(() => window.companyInjected)).toBeUndefined();
 });
 
-// Temporary until PR 2 stores ADR's logo in its profile: only 'adr' falls back to the bundled logo.
-test('ADR without a profile logo shows the bundled logo until a saved logo replaces it', async ({
+// ADR is an ordinary company: the app shows only what its owner saved in Company settings.
+test('ADR shows no built-in logo or details until its owner saves its own profile', async ({
   page,
 }) => {
   await start(page, 'owner');
-  await expect(page.locator('.masthead .brand img')).toHaveAttribute('src', '/brand/adr-logo.jpg');
-  await expect(page.locator('.masthead .brand img')).toBeVisible();
-  await page.locator('#dashboardJobs').click();
+  const blank = { address: '', phone: '', email: '', license: '', signoff: '', logo_data_url: '' };
+  const cleared = await call(page, '/api/companies/adr', 'PUT', {
+    expected_version: 1,
+    profile: { name: 'Alert Disaster Restoration', ...blank },
+  });
+  expect(cleared.ok()).toBe(true);
+  await page.evaluate(() => WorkspaceUI.refresh());
+  await expect(page.locator('.masthead .brand strong')).toHaveText('Alert Disaster Restoration');
+  await expect(page.locator('.masthead .brand img')).toBeHidden();
+  await navigate(page, 'dashboardJobs');
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
+  await expect(page.locator('#doc-proposal > h2')).toHaveText(
+    'Alert Disaster Restoration · Official proposal',
+  );
   for (const doc of ['#doc-proposal', '#doc-defense'])
-    await expect(page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
-      'src',
-      '/brand/adr-logo.jpg',
-    );
+    await expect(page.locator(doc + ' .document-letterhead img')).toBeHidden();
+  // Incomplete profiles keep the existing behaviour: review names what is missing and signing waits.
+  await expect(page.locator('#auditWarnings')).toContainText('Company setup required');
+  await expect(page.locator('#authorizeJob')).toBeDisabled();
+  await expect(page.locator('body')).not.toContainText(/950983|Matthew Myers|Bakersfield|426-2151/);
+  expect(await page.locator('img[src*="adr-logo"]').count()).toBe(0);
   await navigate(page, 'dashboardProfile');
-  await page.locator('input[name=logo]').setInputFiles('public/brand/adr-logo.jpg');
+  const profile = page.locator('form.dashboard-form');
+  await profile.locator('input[name=address]').fill('12 Synthetic Way · Fresno, CA 93700');
+  await profile.locator('input[name=phone]').fill('(555) 010-2000');
+  await profile.locator('input[name=license]').fill('555000');
+  await profile.locator('input[name=signoff]').fill('Sam Synthetic');
+  await profile.locator('input[name=logo]').setInputFiles('public/icon-192.png');
   await page.getByRole('button', { name: 'Save company details' }).click();
   await expect(page.locator('#message')).toContainText('Company details saved');
   await expect(page.locator('.masthead .brand img')).toHaveAttribute('src', /^data:image\/jpeg/);
   await navigate(page, 'dashboardJobs');
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
   await page.locator('#finishAudit').click();
-  for (const doc of ['#doc-proposal', '#doc-defense'])
+  for (const doc of ['#doc-proposal', '#doc-defense']) {
     await expect(page.locator(doc + ' .document-letterhead img')).toHaveAttribute(
       'src',
       /^data:image\/jpeg/,
     );
+    await expect(page.locator(doc + ' .document-letterhead p')).toHaveText(
+      '12 Synthetic Way · Fresno, CA 93700 · (555) 010-2000 · CSLB #555000',
+    );
+  }
+  await expect(page.locator('#proposalBody')).toContainText(
+    'Estimator: Sam Synthetic · CSLB #555000',
+  );
+  await expect(page.locator('#defenseBody')).toContainText(
+    'Sincerely,\nSam Synthetic\nAlert Disaster Restoration',
+  );
+  await expect(page.locator('#auditWarnings')).toBeHidden();
 });
 
 test('invitation is explicit and bound to the matching Google account', async ({ page }) => {
@@ -902,7 +930,7 @@ for (const mode of [
           if (mode.endsWith('with logo'))
             await page.evaluate(() => {
               const logo = document.querySelector('.masthead .brand img');
-              logo.src = '/brand/adr-logo.jpg';
+              logo.src = '/icon-192.png';
               logo.hidden = false;
             });
           await page.getByRole('button', { name: 'New job', exact: true }).click();

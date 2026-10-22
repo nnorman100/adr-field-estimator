@@ -42,8 +42,8 @@ from backend.claims import make_documents
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import AIResult, InspectionData
 from backend.inspection_store import Conflict, InspectionStore, Limited
-from backend.workspaces import ADR_PROFILE, AccessDenied, MemberUpdate, WorkspaceStore
-from tests.fakes import Bucket, png
+from backend.workspaces import AccessDenied, MemberUpdate, WorkspaceStore
+from tests.fakes import ADR_PROFILE, Bucket, png
 from tests.test_backend import ID, data, sign_payload
 
 

@@ -2855,7 +2855,7 @@ function renderDocuments() {
     ui.viewed.clear();
     selectDocument('proposal');
   }
-  ADRDocuments.render(docs, state.draft.photos, photoUrl, state.session?.legacy_identity);
+  ADRDocuments.render(docs, state.draft.photos, photoUrl);
   renderRoomChips();
   $('signingArea').hidden = !!state.signed || !!confirmedAuthorization;
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;

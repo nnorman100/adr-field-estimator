@@ -199,9 +199,9 @@ def test_claim_lines_print_only_recorded_values_and_keep_the_generic_addressee()
     # Without workspaces there is no sidecar, so the documents carry no claim snapshot.
     documents = make_documents(inspection, [], ai)
     assert 'claim' not in documents
-    assert (
-        f'\n\n{GENERIC}\n\nRE: Remediation scope for Test property\n\n'
-        in (documents['iicrc_defense_letter'])
+    # Without a company identity there is no letterhead, so the addressee opens the letter.
+    assert documents['iicrc_defense_letter'].startswith(
+        f'{GENERIC}\n\nRE: Remediation scope for Test property\n\n'
     )
 
 

@@ -14,6 +14,7 @@ from backend.claims import (
 )
 from backend.contracts import InspectionData, AIResult
 from backend.prompts import audit_prompt
+from tests.fakes import ADR_PROFILE
 
 
 def scoped(**kwargs):
@@ -78,7 +79,7 @@ def test_disclaimers_age_planned_work_and_estimate_range():
 
 def test_standard_estimate_clauses_follow_property_age():
     ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
-    old = make_documents(scoped(), [], ai)
+    old = make_documents(scoped(), [], ai, dict(ADR_PROFILE, company_id='adr', version=1))
     proposal = old['adr_estimate']
     assert proposal['recommendations'] == [
         TESTING,
@@ -102,6 +103,26 @@ def test_standard_estimate_clauses_follow_property_age():
     )
     assert TESTING not in modern['recommendations'] and PRETEST not in modern['disclaimers']
     assert modern['disclaimers'][-2:] == [REPRICE, VALIDITY]
+
+
+def test_documents_without_a_company_identity_name_no_company():
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    docs = make_documents(scoped(), [], ai)
+    text = str(docs)
+    for value in ['Alert Disaster', 'Matthew Myers', '950983', 'Bakersfield', '426-2151', 'CSLB #']:
+        assert value not in text
+    proposal = docs['adr_estimate']
+    assert proposal['recommendations'][1] == (
+        'Per IICRC and EPA protocols, the contractor technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.'
+    )
+    assert proposal['disclaimers'][1].endswith(
+        'will NOT be the responsibility of the contractor. This estimate does not include testing of any kind.'
+    )
+    assert docs['iicrc_defense_letter'].startswith(
+        'TO: Insurance Claims Examiner / Adjuster\n\nRE: '
+    )
+    assert docs['iicrc_defense_letter'].endswith('\n\nSincerely,')
+    assert docs.get('company_identity') is None and docs['company_setup_missing'] == []
 
 
 def test_retired_job_condition_flags_load_but_print_nothing():

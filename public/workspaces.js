@@ -155,13 +155,12 @@ window.WorkspaceUI = (() => {
   }
   function branding() {
     if (!enabled()) return;
-    const company = state.session.company,
-      profile = company?.profile;
+    const profile = state.session.company?.profile;
     const image = document.querySelector('.masthead .brand img'),
       title = document.querySelector('.masthead .brand strong');
     title.textContent = profile?.name || 'Company administration';
     document.body.classList.add('company-brand');
-    const logo = ADRDocuments.logoFor(profile && { ...profile, company_id: company.company_id });
+    const logo = ADRDocuments.logoFor(profile);
     image.hidden = !logo;
     if (logo) image.src = logo;
     else image.removeAttribute('src');
@@ -1337,7 +1336,7 @@ window.WorkspaceUI = (() => {
   }
   function documentBranding() {
     if (!state.documents) return;
-    ADRDocuments.brand(state.documents, state.session?.legacy_identity);
+    ADRDocuments.brand(state.documents);
     policy();
   }
   return {

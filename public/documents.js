@@ -32,8 +32,10 @@
       .sort((a, b) => position(a) - position(b))
       .map((photo, i) => ({ photo, label: 'Photo ' + (i + 1) + ' (' + photo.room + ')' }));
   }
-  function render(docs, photos, photoUrl, legacyIdentity) {
-    const identity = docs.company_identity || legacyIdentity || {};
+  function render(docs, photos, photoUrl) {
+    const identity = docs.company_identity || {};
+    const license = identity.license ? 'CSLB #' + identity.license : '';
+    const estimator = [identity.signoff, license].filter(Boolean).join(' · ');
     $('estimateRange').textContent = estimateLabel(docs.adr_estimate);
     $('itemizedTotal').textContent = money(docs.xactimate_total);
     const p = docs.adr_estimate,
@@ -46,7 +48,7 @@
       ...customer,
       p.property_address,
       p.date || '',
-      'Estimator: ' + (identity.signoff || '') + ' · CSLB #' + (identity.license || ''),
+      ...(estimator ? ['Estimator: ' + estimator] : []),
       ...claim,
     ]);
     body.append(
@@ -141,25 +143,27 @@
     $('auditWarnings').textContent = warnings.join(' · ');
     $('auditWarnings').hidden = !warnings.length;
   }
-  // Temporary fallback until ADR's profile stores its logo; PR 2 uploads it and removes this.
-  const ADR_LOGO_FALLBACK = '/brand/adr-logo.jpg';
-  // A saved profile logo always wins; only company 'adr' falls back to the bundled logo.
+  // Only the company's own saved logo is shown; there is no built-in company logo.
   function logoFor(identity) {
-    return identity?.logo_data_url || (identity?.company_id === 'adr' ? ADR_LOGO_FALLBACK : '');
+    return identity?.logo_data_url || '';
   }
-  // Pre-workspace records use the historical identity supplied by the backend, never a live profile.
-  function brand(docs, legacyIdentity) {
-    const identity = docs.company_identity || legacyIdentity || {};
-    const name = identity.name || '';
-    document.querySelector('#doc-proposal > h2').textContent = name + ' · Official proposal';
+  // Documents show the identity saved with them; records saved without one show no company details.
+  function brand(docs) {
+    const identity = docs.company_identity;
+    const name = identity?.name || '';
+    document.querySelector('#doc-proposal > h2').textContent = [name, 'Official proposal']
+      .filter(Boolean)
+      .join(' · ');
     for (const letter of document.querySelectorAll('.document-letterhead')) {
-      letter.querySelector('p').textContent = [
-        identity.address,
-        identity.phone,
-        identity.license ? 'CSLB #' + identity.license : 'License not provided',
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      letter.querySelector('p').textContent = identity
+        ? [
+            identity.address,
+            identity.phone,
+            identity.license ? 'CSLB #' + identity.license : 'License not provided',
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : '';
       const image = letter.querySelector('img');
       const logo = logoFor(identity);
       image.hidden = !logo;
