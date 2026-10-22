@@ -2,7 +2,7 @@
 
 import re
 from collections import Counter
-from typing import Literal
+from typing import Any, Literal
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr, ValidationError
 
 try:
@@ -92,6 +92,8 @@ MONTHS = {
     for name in names
 }
 AMOUNT = r'\d+(?:,\d{3})*(?:\.\d+)?'
+# A whole stated amount: a currency sign before it, or "dollars" or "deductible" beside it.
+MONEY = re.compile(rf'(?<![\w.,/-])(\$\s*)?({AMOUNT})(?![\w/-]|[.,]\d)')
 
 
 class ScopeChange(StrictModel):
@@ -103,14 +105,15 @@ class ScopeChange(StrictModel):
 
 class ClaimChange(StrictModel):
     field: ClaimField
-    value: StrictStr = Field(min_length=1, max_length=500)
-    source_quote: str = Field(min_length=1, max_length=2000)
+    value: StrictStr
+    source_quote: StrictStr
 
 
 class ScopeSuggestions(StrictModel):
     changes: list[ScopeChange] = Field(max_length=100)
     # Claim details for the job sidecar, kept apart from the inspection form's values.
-    claim_changes: list[ClaimChange] = Field(default_factory=list, max_length=20)
+    # Entries are checked one by one in validate_claim, so a malformed one never rejects the response.
+    claim_changes: list[Any] = Field(default_factory=list)
     questions: list[str] = Field(max_length=20)
 
 
@@ -202,8 +205,7 @@ def in_quote(target, quote, kind=None):
     """Whether target equals a run of the quote's words, ignoring case, spacing and punctuation.
 
     kind 'identifier' needs the run to be a whole identifier: no neighbouring word that could belong
-    to it, and bounded by the quote's ends, sentence punctuation or connecting words. kind 'phone'
-    needs a whole run of numbers.
+    to it, and bounded by the quote's ends, sentence punctuation or connecting words.
     """
     found = list(re.finditer(r'[^\W_]+', quote))
     original = [m.group() for m in found]
@@ -215,8 +217,6 @@ def in_quote(target, quote, kind=None):
     )
 
     def edge(k, gap):
-        if kind == 'phone':
-            return not (0 <= k < len(tokens)) or not tokens[k].isdigit()
         if not (0 <= k < len(tokens)):
             return True
         word = original[k]
@@ -227,8 +227,6 @@ def in_quote(target, quote, kind=None):
     for i in range(len(tokens)):
         run = ''
         for j in range(i, len(tokens)):
-            if kind == 'phone' and not tokens[j].isdigit():
-                break
             run += tokens[j]
             if not target.startswith(run):
                 break
@@ -266,19 +264,51 @@ def amounts(text):
     return [float(a.replace(',', '')) for a in re.findall(AMOUNT, text)]
 
 
+def money(quote):
+    found = set()
+    for m in MONEY.finditer(quote):
+        before, after = quote[: m.start()], quote[m.end() :]
+        if (
+            m.group(1)
+            or re.match(r'\s*(dollars?|deductible)\b', after, re.IGNORECASE)
+            or re.search(r'\bdeductible\s*:?\s*$', before, re.IGNORECASE)
+        ):
+            found.add(float(m.group(2).replace(',', '')))
+    return found
+
+
+def phone_digits(text):
+    digits = re.sub(r'\D', '', text)
+    if len(digits) == 11 and digits.startswith('1'):
+        digits = digits[1:]
+    return digits if len(digits) in (7, 10) else ''
+
+
+def quoted_phones(quote):
+    """Phone numbers written with only phone separators and not joined to a letter or other token."""
+    found = set()
+    for m in re.finditer(r'[\d\s().-]+', quote):
+        run, start, end = m.group(), m.start(), m.end()
+        if run[0].isdigit() and start and re.match(r'\w', quote[start - 1]):
+            continue
+        if run[-1].isdigit() and end < len(quote) and re.match(r'\w', quote[end]):
+            continue
+        found.add(phone_digits(run))
+    return found - {''}
+
+
 def grounded(field, value, quote):
     """Whether the whole claim value is stated in its supporting quote."""
     if field == 'date_of_loss':
         return tuple(int(part) for part in value.split('-')) in quoted_dates(quote)
     if field == 'adjuster_phone':
-        target = re.sub(r'\D', '', value)
-        return bool(target) and in_quote(target, quote, 'phone')
+        return phone_digits(value) in quoted_phones(quote)
     if field == 'deductible':
         stated = amounts(value)
         rest = words(re.sub(AMOUNT, ' ', value))
         return (
             len(stated) == 1
-            and stated[0] in amounts(quote)
+            and stated[0] in money(quote)
             and all(word in words(quote) for word in rest)
         )
     if field == 'adjuster_email':
@@ -293,15 +323,22 @@ def validate_claim(source, claim, suggestions):
     if claim is None:
         return [], []
     current = ClaimDetails.model_validate(claim).model_dump()
-    counts = Counter(change.field for change in suggestions.claim_changes)
-    asked = set()
+    fields = [
+        raw.get('field') if isinstance(raw, dict) and isinstance(raw.get('field'), str) else None
+        for raw in suggestions.claim_changes
+    ]
+    fields = [field if field in CLAIM_LABELS else None for field in fields]
+    counts = Counter(fields)
     changes, questions = [], []
-    for change in suggestions.claim_changes:
-        label = CLAIM_LABELS[change.field]
-        if counts[change.field] > 1:
-            if change.field not in asked:
-                asked.add(change.field)
-                questions.append(f'Confirm the {label}; the walkthrough gave more than one value.')
+    for field, raw in zip(fields, suggestions.claim_changes):
+        label = CLAIM_LABELS[field] if field else 'claim details'
+        if field and counts[field] > 1:
+            questions.append(f'Confirm the {label}; the walkthrough gave more than one value.')
+            continue
+        try:
+            change = ClaimChange.model_validate(raw)
+        except ValidationError:
+            questions.append(f'Confirm the {label}; the walkthrough value could not be used.')
             continue
         if not normalized(change.source_quote) or normalized(change.source_quote) not in source:
             questions.append(
@@ -320,7 +357,7 @@ def validate_claim(source, claim, suggestions):
             continue
         if value != current[change.field]:
             changes.append(change.model_copy(update={'value': value}))
-    return changes, questions
+    return changes, list(dict.fromkeys(questions))
 
 
 def validate_suggestions(data, suggestions, claim=None):

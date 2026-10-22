@@ -116,6 +116,17 @@ test('office staff enter claim details; invalid values stay on the form', async 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
+test('a claim details load failure still opens the rest of the job', async ({ page }) => {
+  await page.route('**/api/jobs/*/claim', (route) =>
+    route.request().method() === 'GET' ? route.abort('failed') : route.continue(),
+  );
+  const readings = page.waitForRequest((r) => /\/api\/inspections\/[^/]+\/readings$/.test(r.url()));
+  await newJob(page, 'estimator');
+  await readings;
+  await expect(page.locator('#claimStatus')).toContainText('Claim details could not load.');
+  await expect(page.locator('#claimSummary')).toHaveText('· none recorded');
+});
+
 test('a page left open overnight still saves a loss dated today', async ({ page }) => {
   const now = Date.now();
   await page.clock.setFixedTime(now - 86400000);

@@ -310,6 +310,9 @@ def test_walkthrough_claim_changes_need_quotes_and_never_complete_identifiers():
         ('loss_cause', 'Supply line, kitchen sink', 'From the supply line kitchen sink.'),
         ('deductible', '$1,000', 'The deductible is 1000 dollars.'),
         ('deductible', '1,000.00', 'The deductible is $1,000.'),
+        ('deductible', '$500', 'A 500 deductible on policy HO500.'),
+        ('adjuster_phone', '661-555-0100', 'Adjuster phone is 1 (661) 555-0100.'),
+        ('adjuster_phone', '555-0100', 'Call the adjuster at 555 0100.'),
     ],
 )
 def test_walkthrough_claim_values_match_their_quote(field, value, quote):
@@ -343,6 +346,15 @@ def test_walkthrough_claim_values_match_their_quote(field, value, quote):
         ('deductible', '$2,500', 'The deductible is $1,000.'),
         ('deductible', '$1,000 per claim', 'The deductible is $1,000.'),
         ('carrier', ' ', 'The carrier is unknown.'),
+        ('deductible', '$77', WALK),
+        ('deductible', '42', WALK),
+        ('deductible', '$2,026', WALK),
+        ('deductible', '12', WALK),
+        ('deductible', '$500', 'Policy HO500. The deductible is $1,000.'),
+        ('deductible', '$1,000', 'The deductible is 1000.'),
+        ('adjuster_phone', '0042-77', WALK),
+        ('adjuster_phone', '555-0100', 'Policy HO5550100.'),
+        ('adjuster_phone', '661-555-0100', 'On October 12, 2026 call 661 555 0100 2.'),
     ],
 )
 def test_walkthrough_claim_values_not_in_their_quote_are_asked_about(field, value, quote):
@@ -354,6 +366,65 @@ def test_walkthrough_claim_values_not_in_their_quote_are_asked_about(field, valu
     assert result.claim_changes == []
     assert result.questions == [
         f'Confirm the {CLAIM_LABELS[field]}; the walkthrough value does not match what was said.'
+    ]
+
+
+def test_malformed_claim_entries_are_asked_about_without_losing_the_room_fill():
+    raw = dict(
+        changes=[{'field': 'drying_days', 'room': None, 'value': 5, 'source_quote': WALK}],
+        claim_changes=[
+            {'field': 'policy_number', 'value': '', 'source_quote': ''},
+            {'field': 'deductible', 'value': 1000, 'source_quote': WALK},
+            {'field': 'carrier', 'value': 'Synthetic Mutual', 'source_quote': WALK, 'note': 'x'},
+            {'field': 'loss_cause', 'value': 'x' * 600, 'source_quote': WALK},
+            {'field': 'roof_age', 'value': '10', 'source_quote': WALK},
+            'claim_number: CLM 0042 77',
+            *[claim_change('adjuster_email', 'avery@example.invalid')] * 21,
+            claim_change('claim_number', 'CLM 0042 77'),
+        ],
+        questions=[],
+    )
+    # The provider response is checked against this model before validation.
+    suggestions = ScopeSuggestions.model_validate(raw)
+    result = validate_suggestions(walk_data(), suggestions, EMPTY)
+    assert [(c.field, c.value) for c in result.changes] == [('drying_days', 5)]
+    assert [(c.field, c.value) for c in result.claim_changes] == [('claim_number', 'CLM 0042 77')]
+    assert result.questions == [
+        'Confirm the policy number; the walkthrough value has no matching technician quote.',
+        'Confirm the deductible; the walkthrough value could not be used.',
+        'Confirm the insurance carrier; the walkthrough value could not be used.',
+        'Confirm the cause and source of loss; the walkthrough value could not be used.',
+        'Confirm the claim details; the walkthrough value could not be used.',
+        'Confirm the adjuster email; the walkthrough gave more than one value.',
+    ]
+
+
+def test_scope_fill_with_a_malformed_claim_entry_still_returns_room_changes(api, monkeypatch):
+    client, current, store = api
+    values = {**data(), 'technician_transcript': WALK, 'scope_confirmed': False}
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': values})
+
+    async def generate(schema, *args, **kwargs):
+        return schema.model_validate(
+            dict(
+                changes=[{'field': 'drying_days', 'room': None, 'value': 4, 'source_quote': WALK}],
+                claim_changes=[{'field': 'policy_number', 'value': '', 'source_quote': ''}],
+                questions=[],
+            )
+        )
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    response = client.post(
+        '/api/inspections/' + ID + '/scope-suggestions',
+        json={'inspection_id': ID, 'expected_revision': 1},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [(c['field'], c['value']) for c in body['changes']] == [('drying_days', 4)]
+    assert body['claim_changes'] == []
+    assert body['questions'] == [
+        'Confirm the policy number; the walkthrough value has no matching technician quote.'
     ]
 
 
@@ -377,7 +448,7 @@ def test_scope_prompt_includes_claim_details_only_with_a_sidecar():
     with_claim = scope_prompt(walk_data(), EMPTY)
     assert '"current_claim": {"carrier": ""' in with_claim
     without = scope_prompt(walk_data())
-    assert 'claim_changes' not in without and 'current_claim' not in without
+    assert 'current_claim' not in without
 
 
 def test_scope_suggestions_return_claim_changes_for_the_job(api, monkeypatch):

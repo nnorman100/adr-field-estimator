@@ -1231,12 +1231,17 @@ window.WorkspaceUI = (() => {
     const id = state.draft.inspection_id,
       key = context();
     let view = null;
+    let failure = null;
     try {
       view = await jsonApi('/api/jobs/' + id + '/claim');
     } catch (e) {
-      if (e.status !== 404) throw e;
+      if (e.status !== 404) failure = e;
     }
     if (id !== state.draft?.inspection_id || key !== context()) return;
+    if (failure) {
+      $('claimStatus').textContent = 'Claim details could not load. ' + failure.message;
+      return;
+    }
     if (view) showClaim(view);
     else $('claimStatus').textContent = 'Claim details can be added once this job saves online.';
   }
