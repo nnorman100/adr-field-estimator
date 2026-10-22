@@ -166,7 +166,7 @@ test('offline notes record on the phone, survive a reload, then fill the transcr
   await expect(page.locator('#scopeMissing li')).toHaveText([
     'No property address',
     'No year built',
-    'No photo of Room 1',
+    'Room 1: 3 photo shots missing (Room overview, Affected wall or floor, Meter reading) · set how many: affected walls or floors, wet materials',
   ]);
   await expect(page.locator('#scopeQuestions li')).toHaveText(['Confirm any additional labor.']);
   await walkthrough(page);
