@@ -1,24 +1,24 @@
 """Explicit, idempotent ADR sidecar migration. Signed source records are never written."""
 
-from copy import deepcopy
-
 try:
-    from .workspaces import ADR_ID, ADR_PROFILE
+    from .workspaces import WorkspaceStore
     from .inspection_store import Conflict, now
 except ImportError:
-    from workspaces import ADR_ID, ADR_PROFILE
+    from workspaces import WorkspaceStore
     from inspection_store import Conflict, now
 
+ADR_ID = 'adr'
 MIGRATION_ID = 'adr-company-v1'
 
 
-def migration_records(workspaces, approved_users, admin_uid):
+def migration_records(workspaces, approved_users, admin_uid, company_name):
     if admin_uid not in approved_users:
         raise ValueError('The superadmin must be explicitly approved.')
     records = {}
+    # Only the name is seeded; the owner enters the rest of the profile in Company settings.
     company = dict(
         company_id=ADR_ID,
-        profile=deepcopy(ADR_PROFILE),
+        profile=WorkspaceStore.new_company(company_name)['profile'],
         version=1,
         status='active',
         owner_uid=admin_uid,
@@ -109,8 +109,8 @@ def migration_records(workspaces, approved_users, admin_uid):
     return records, skipped
 
 
-def migrate(workspaces, approved_users, admin_uid, apply=False):
-    records, skipped = migration_records(workspaces, approved_users, admin_uid)
+def migrate(workspaces, approved_users, admin_uid, company_name, apply=False):
+    records, skipped = migration_records(workspaces, approved_users, admin_uid, company_name)
     report = {
         'migration_id': MIGRATION_ID,
         'apply': apply,

@@ -19,6 +19,7 @@ ADMIN_EMAIL = 'nathanaelcnorman@gmail.com'
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--company-name', required=True)
     parser.add_argument('--approved-email', action='append', default=[])
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--manifest', type=Path)
@@ -54,7 +55,7 @@ def main():
         return result
 
     before = fingerprints()
-    report = migrate(workspace, users, admin_uid, args.apply)
+    report = migrate(workspace, users, admin_uid, args.company_name, args.apply)
     after = fingerprints()
     report['source_records_preserved'] = all(
         after.get(path) == digest for path, digest in before.items()

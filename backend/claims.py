@@ -268,11 +268,15 @@ def addressee(claim):
 def make_documents(
     data: InspectionData, photos, ai: AIResult, identity=None, customer_name='', claim=None
 ):
-    company_name = identity['name'] if identity else 'Alert Disaster Restoration'
-    company_address = identity['address'] if identity else 'Bakersfield, CA'
-    company_license = identity['license'] if identity else '950983'
-    company_phone = identity.get('phone', '') if identity else ''
-    signoff = identity['signoff'] if identity else 'Matthew Myers'
+    # Company details come only from the issuing company's profile; empty fields print nothing.
+    company = identity or {}
+    company_name = company.get('name', '')
+    company_address = company.get('address', '')
+    company_license = company.get('license', '')
+    company_phone = company.get('phone', '')
+    signoff = company.get('signoff', '')
+    # Standard clauses keep their meaning when no company name was supplied.
+    clause_company = company_name.strip() or 'the contractor'
     setup = []
     if identity:
         setup = [
@@ -299,7 +303,7 @@ def make_documents(
         else f'The home was built in {data.year_built}. Therefore, no lead or asbestos testing is required prior to the start of work.'
     )
     clauses = ([PRETEST] if before else []) + [
-        EXCLUSIONS.format(company=company_name),
+        EXCLUSIONS.format(company=clause_company),
         REPRICE,
         VALIDITY,
     ]
@@ -318,21 +322,26 @@ def make_documents(
     )
     recommendations = (
         ([TESTING] if before else [])
-        + [PROTECTION.format(company=company_name)]
+        + [PROTECTION.format(company=clause_company)]
         + [i['description'] for i in items if i['code'] not in SCOPE_EXCLUDED]
         + [ADDITIONAL]
     )
     customer = customer_name.strip()
     letterhead = ' · '.join(
         ' '.join(part.replace('•', '·').split())
-        for part in (company_name, company_address, company_phone, f'CSLB #{company_license}')
+        for part in (
+            company_name,
+            company_address,
+            company_phone,
+            f'CSLB #{company_license}' if company_license.strip() else '',
+        )
         if part.strip()
     )
     # The sizing check is printed only when every water room has its confirmed inputs.
     sizing = letter_paragraph(equipment_sizing(data))
     letter = '\n\n'.join(
-        [
-            letterhead,
+        ([letterhead] if letterhead else [])
+        + [
             addressee(claim or {}),
             '\n'.join(
                 [f'RE: Remediation scope for {data.address}']
@@ -348,7 +357,7 @@ def make_documents(
             'Scope:\n' + '\n'.join(recommendations),
             '\n'.join(clauses),
             f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope.',
-            f'Sincerely,\n{signoff}\n{company_name}',
+            '\n'.join(line for line in ('Sincerely,', signoff, company_name) if line.strip()),
         ]
     )
     has_work = (

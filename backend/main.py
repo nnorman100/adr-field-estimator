@@ -87,7 +87,7 @@ try:
         AUDIO_ACK_EVERY,
     )
     from .company_store import CompanyInspectionStore
-    from .workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
+    from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
@@ -134,7 +134,7 @@ except ImportError:
         AUDIO_ACK_EVERY,
     )
     from company_store import CompanyInspectionStore
-    from workspaces import AccessDenied, LEGACY_IDENTITY, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
+    from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
@@ -750,7 +750,6 @@ async def session_info(staff=Depends(current_staff)):
         live_voice=LIVE_VOICE,
         workspaces_enabled=WORKSPACES_ENABLED,
         workspace_protocol_version=1,
-        legacy_identity=LEGACY_IDENTITY,
     )
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, staff['uid'])
@@ -1350,10 +1349,7 @@ async def qr_tag_sheet(
 @app.get('/api/sign')
 async def signing_link_view(request: Request, store=Depends(get_job_store)):
     token = await signing_link(request, store)
-    result = await linked(signing_links.view, store, token)
-    if not result['documents'].get('company_identity'):
-        result['legacy_identity'] = LEGACY_IDENTITY
-    return result
+    return await linked(signing_links.view, store, token)
 
 
 @app.get('/api/sign/photos/{photo_id}')

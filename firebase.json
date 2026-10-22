@@ -47,7 +47,7 @@
       "anonymous": false,
       "emailPassword": true,
       "googleSignIn": {
-        "oAuthBrandDisplayName": "Alert Disaster Restoration",
+        "oAuthBrandDisplayName": "DryScope",
         "supportEmail": "nathanaelcnorman@gmail.com"
       }
     }

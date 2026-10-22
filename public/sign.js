@@ -47,14 +47,9 @@
     const view = page.view,
       docs = view.documents;
     document.body.classList.add('has-documents');
-    ADRDocuments.render(
-      docs,
-      photos(),
-      (photo) => page.photoUrls.get(photo.id) || '',
-      view.legacy_identity,
-    );
-    const company = ADRDocuments.brand(docs, view.legacy_identity);
-    $('signFooter').textContent = company + ' · Private estimate review';
+    ADRDocuments.render(docs, photos(), (photo) => page.photoUrls.get(photo.id) || '');
+    const company = ADRDocuments.brand(docs);
+    $('signFooter').textContent = [company, 'Private estimate review'].filter(Boolean).join(' · ');
     const signed = view.status === 'signed';
     $('homeownerSigning').hidden = signed;
     $('signedReceipt').hidden = !signed;

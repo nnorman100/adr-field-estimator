@@ -20,7 +20,6 @@ import backend.workspaces as workspaces
 from backend.claims import make_documents
 from backend.contracts import InspectionData, AIResult
 from backend.workspaces import (
-    ADR_PROFILE,
     AccessDenied,
     CompanyCreate,
     MemberUpdate,
@@ -31,7 +30,7 @@ from backend.workspaces import (
 )
 from backend.inspection_store import Conflict, Limited
 from backend.workspace_migration import migrate
-from tests.fakes import FakeCompanyStore, FakeStore, png
+from tests.fakes import ADR_PROFILE, FakeCompanyStore, FakeStore, png
 from tests.test_voice_notes import note as voice_note
 
 ID = 'ADR-INS-' + 'a' * 32
@@ -607,12 +606,22 @@ def test_migration_preview_idempotency_and_signed_payload_unchanged():
     )
     before = deepcopy(original.db.records)
     secured = FakeCompanyStore(original.db, original.bucket)
-    preview = migrate(secured.workspaces, {'legacy': 'legacy@example.invalid'}, 'legacy')
+    preview = migrate(
+        secured.workspaces, {'legacy': 'legacy@example.invalid'}, 'legacy', 'Legacy Co'
+    )
     assert preview['create'] == 6 and preview['unmapped_source_records'] == 1
     assert original.db.records == before
-    report = migrate(secured.workspaces, {'legacy': 'legacy@example.invalid'}, 'legacy', True)
-    again = migrate(secured.workspaces, {'legacy': 'legacy@example.invalid'}, 'legacy', True)
+    report = migrate(
+        secured.workspaces, {'legacy': 'legacy@example.invalid'}, 'legacy', 'Legacy Co', True
+    )
+    again = migrate(
+        secured.workspaces, {'legacy': 'legacy@example.invalid'}, 'legacy', 'Legacy Co', True
+    )
     assert report['create'] == 6 and again['create'] == 0
+    # The migration seeds only the given name; the owner enters the rest in Company settings.
+    assert original.db.records['_companies/adr']['profile'] == dict(
+        name='Legacy Co', address='', phone='', email='', license='', signoff='', logo_data_url=''
+    )
     for key, value in before.items():
         assert original.db.records[key] == value
     assert secured.get('legacy', 'ADR-AUTH-legacy123')['payload_sha256'] == 'immutable-hash'
@@ -978,12 +987,12 @@ def test_migration_refreshes_old_writer_summaries_and_preserves_assignments():
     legacy.create_inspection('legacy', ID, data())
     secured = FakeCompanyStore(legacy.db, legacy.bucket)
     w = secured.workspaces
-    migrate(w, {'legacy': 'legacy@example.invalid'}, 'legacy', True)
+    migrate(w, {'legacy': 'legacy@example.invalid'}, 'legacy', 'Legacy Co', True)
     job = secured.db.records['_workspace_jobs/' + ID]
     job['office_notes'] = 'Keep coordination'
     job['assigned_estimator_uid'] = 'assigned'
     legacy.update_inspection('legacy', ID, 1, data('Changed by old production writer'))
-    migrate(w, {'legacy': 'legacy@example.invalid'}, 'legacy', True)
+    migrate(w, {'legacy': 'legacy@example.invalid'}, 'legacy', 'Legacy Co', True)
     job = secured.db.records['_workspace_jobs/' + ID]
     assert (
         job['address'] == 'Changed by old production writer'
@@ -991,7 +1000,9 @@ def test_migration_refreshes_old_writer_summaries_and_preserves_assignments():
         and job['assigned_estimator_uid'] == 'assigned'
     )
     secured.create_inspection('legacy', OTHER, data('New company-aware job'))
-    assert migrate(w, {'legacy': 'legacy@example.invalid'}, 'legacy', True)['create'] == 0
+    assert (
+        migrate(w, {'legacy': 'legacy@example.invalid'}, 'legacy', 'Legacy Co', True)['create'] == 0
+    )
 
 
 def test_company_documents_require_a_client_that_renders_saved_identity(api):
@@ -1657,7 +1668,9 @@ def test_invitation_email_shows_the_company_logo_inline_and_explains_the_app():
     invite, company = branded(logo=logo)
     message = workspaces.invitation_email(invite, company, 'https://example.invalid/set?a=1&b=2')
     assert message['logo']['data'] == base64.b64decode(logo.partition(',')[2])
-    assert message['logo']['subtype'] == 'jpeg' and message['logo']['data'] != workspaces.ADR_LOGO
+    assert (
+        message['logo']['subtype'] == 'jpeg' and message['logo']['data'] != workspaces.DRYSCOPE_LOGO
+    )
     page, text = message['html'], message['text']
     assert page.count('src="cid:invitation-logo@dryscope"') == 1
     assert 'data:' not in page and 'src="http' not in page
@@ -1675,8 +1688,6 @@ def test_invitation_email_shows_the_company_logo_inline_and_explains_the_app():
 
 
 def test_invitation_email_falls_back_to_the_dryscope_logo():
-    with open('public/brand/adr-logo.jpg', 'rb') as public:
-        assert workspaces.ADR_LOGO == public.read()
     oversized = 'data:image/jpeg;base64,' + base64.b64encode(b'x' * 100001).decode()
     for logo in [
         '',
@@ -1694,10 +1705,10 @@ def test_invitation_email_falls_back_to_the_dryscope_logo():
         workspaces.invitation_email(direct_invite(), legacy, None)['logo']['data']
         == workspaces.DRYSCOPE_LOGO
     )
-    # ADR alone keeps its bundled logo until its profile stores one.
+    # ADR has no built-in logo: without a saved one it gets DryScope's like every company.
     invite, adr = branded(name='Alert Disaster Restoration')
     message = workspaces.invitation_email(invite, {**adr, 'company_id': 'adr'}, None)
-    assert message['logo'] == dict(data=workspaces.ADR_LOGO, subtype='jpeg', width=131, height=64)
+    assert message['logo']['data'] == workspaces.DRYSCOPE_LOGO
 
 
 def test_invitation_email_escapes_a_hostile_company_name():
@@ -3366,14 +3377,17 @@ def test_live_permission_change_that_keeps_access_keeps_the_session(store, monke
     assert store.db.records['_live_resume/estimator']['handle'] == 'synthetic-private'
 
 
-def test_session_supplies_historical_identity_without_mutating_current_profile(api):
+def test_session_carries_no_built_in_company_identity(api):
     client, current, store = api
-    store.db.records['_companies/adr']['profile']['signoff'] = 'New Estimator'
+    # ADR as an ordinary company that has entered only its name.
+    store.db.records['_companies/adr']['profile'] = workspaces.WorkspaceStore.new_company(
+        'Alert Disaster Restoration'
+    )['profile']
     session = client.get('/api/session').json()
-    assert session['legacy_identity'] == workspaces.LEGACY_IDENTITY
-    assert session['legacy_identity']['signoff'] == ADR_PROFILE['signoff']
-    assert session['legacy_identity']['logo_data_url'].startswith('data:image/jpeg;base64,')
-    assert session['company']['profile']['signoff'] == 'New Estimator'
+    assert 'legacy_identity' not in session
+    assert session['company']['profile']['signoff'] == ''
+    for value in ['Matthew Myers', '950983', 'Bakersfield', '426-2151', 'adr-logo', 'data:image']:
+        assert value not in str(session)
 
 
 # Owner logins with a temporary password: the superadmin alternative to an owner invitation.

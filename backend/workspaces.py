@@ -32,7 +32,6 @@ except ImportError:
     from contracts import ClaimDetails, StrictModel
     from inspection_store import Conflict, now, reserve_slot
 
-ADR_ID = 'adr'
 ROLES = {'owner', 'estimator', 'office'}
 CAPABILITIES = {
     'owner': [
@@ -52,15 +51,6 @@ CAPABILITIES = {
     'estimator': ['jobs_read', 'jobs_create', 'scope', 'photos', 'ocr', 'audit', 'sign', 'live'],
     'office': ['jobs_read', 'jobs_create', 'coordination', 'assignment'],
 }
-ADR_PROFILE = dict(
-    name='Alert Disaster Restoration',
-    address='3300 Patton Way · Bakersfield, CA 93308',
-    phone='(661) 426-2151',
-    email='',
-    license='950983',
-    signoff='Matthew Myers',
-    logo_data_url='',
-)
 
 INVITATION_DAILY_LIMIT = 50
 SMTP_HOST = 'smtp.gmail.com'
@@ -69,17 +59,9 @@ SMTP_DEADLINE = 24
 # The signed-in app lives at /app; the site root is the public DryScope landing page.
 APP_URL = 'https://alert-disaster-field-2026.web.app/app'
 INVITATION_SUBJECT = 'Invitation to join {company} on DryScope'
-# The build context is backend/, so it carries its own copy of public/brand/adr-logo.jpg.
-with open(os.path.join(os.path.dirname(__file__), 'brand', 'adr-logo.jpg'), 'rb') as _logo:
-    ADR_LOGO = _logo.read()
 # Invitation logo for a company without one: the DryScope lockup on white.
 with open(os.path.join(os.path.dirname(__file__), 'brand', 'dryscope-logo.png'), 'rb') as _logo:
     DRYSCOPE_LOGO = _logo.read()
-# Signed records predating workspaces have no identity snapshot. Preserve their historical letterhead.
-LEGACY_IDENTITY = {
-    **ADR_PROFILE,
-    'logo_data_url': 'data:image/jpeg;base64,' + base64.b64encode(ADR_LOGO).decode('ascii'),
-}
 LOGO_CID = 'invitation-logo@dryscope'
 # Set on the membership (the server's gate) and as a Firebase custom claim (the client's cue) when a
 # superadmin creates an owner login; cleared when the owner sets their own password.
@@ -381,7 +363,6 @@ class WorkspaceStore:
     def new_company(name):
         identifier = uuid4().hex
         profile = {
-            **ADR_PROFILE,
             'name': name.strip(),
             'address': '',
             'phone': '',
@@ -1326,15 +1307,13 @@ def password_setup_link(email):
 
 
 def invitation_logo(company):
-    """The company's saved logo (already a capped JPEG from clean_logo), otherwise ADR's bundled logo for ADR and DryScope's for every other company."""
+    """The company's saved logo (already a capped JPEG from clean_logo), otherwise DryScope's."""
     match = re.fullmatch(
         r'data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)',
         company['profile'].get('logo_data_url') or '',
     )
     candidates = [(match[2], match[1])] if match else []
-    # Mirrors ADRDocuments.logoFor: until ADR's profile stores its logo, only ADR falls back to it.
-    fallback = (ADR_LOGO, 'jpeg') if company.get('company_id') == ADR_ID else (DRYSCOPE_LOGO, 'png')
-    for data, subtype in candidates + [fallback]:
+    for data, subtype in candidates + [(DRYSCOPE_LOGO, 'png')]:
         try:
             if isinstance(data, str):
                 data = base64.b64decode(data, validate=True)
@@ -1501,7 +1480,7 @@ def send_smtp(payload, username, password, invite, deadline):
     message['From'] = payload['from']
     message['To'] = ', '.join(payload['to'])
     message['Subject'] = payload['subject']
-    domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'adr.invalid'
+    domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'dryscope.invalid'
     message['Message-ID'] = (
         f'<invitation-{invite["invitation_id"]}-{invite["send_attempt"]}@{domain}>'
     )
