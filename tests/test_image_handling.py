@@ -95,6 +95,11 @@ def test_model_image_prepares_a_full_job_of_large_phone_photos_well_inside_the_a
     assert decoded(parts[-1].inline_data.data)[:3] == ('JPEG', 'RGB', (1600, 1200))
 
 
+def test_model_image_fits_a_very_elongated_jpeg_without_a_zero_sized_draft():
+    part = bm.model_image(encode(Image.new('RGB', (4000, 2), 'gray'), 'JPEG'))
+    assert decoded(part.inline_data.data)[:3] == ('JPEG', 'RGB', (1600, 1))
+
+
 def test_model_image_flattens_transparent_png_photos_to_rgb_jpeg():
     raw = base64.b64decode(png().partition(',')[2])
     part = bm.model_image(raw)

@@ -166,6 +166,8 @@ AUDIT_SAVE_RESERVE_SECONDS = 5
 LIVE_MODEL = os.getenv('LIVE_MODEL', 'gemini-3.8-live')
 LIVE_LOCATION = os.getenv('LIVE_LOCATION', 'us-central1')
 LIVE_RECHECK_SECONDS = 20
+# How long a shot update waits for an expected reply that has not started speaking yet.
+LIVE_REPLY_WAIT_SECONDS = 5
 LIVE_VOICE = os.getenv('LIVE_VOICE', 'Charon')
 LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live'
 ORIGINS = [
@@ -680,7 +682,8 @@ def model_image(raw):
         # JPEG originals decode at the smallest power-of-two reduction that still fills the box.
         scale = max(image.size) / 1600
         if scale > 1:
-            image.draft('RGB', (int(image.width / scale), int(image.height / scale)))
+            box = (max(1, int(image.width / scale)), max(1, int(image.height / scale)))
+            image.draft('RGB', box)
         image = ImageOps.exif_transpose(image).convert('RGB')
         image.thumbnail((1600, 1600))
         output = io.BytesIO()
@@ -1696,23 +1699,33 @@ async def live_walkthrough(socket: WebSocket):
                 )
             await socket.send_json(ready)
             # Tagged photo changes reach the model as context between its replies, because
-            # client content sent while it speaks would cut the reply off.
-            shots = {'wanted': False, 'speaking': False}
+            # client content sent while it speaks would cut the reply off. A reply counts from when
+            # one is expected, after the greeting or technician speech, until it ends.
+            shots = {'wanted': False, 'speaking': False, 'expected': 0.0}
             shot_wake = asyncio.Event()
+
+            def replying():
+                return shots['speaking'] or time.monotonic() < shots['expected']
 
             async def shot_updates():
                 sent_at = 0.0
                 while True:
-                    await shot_wake.wait()
+                    held = shots['expected'] - time.monotonic()
+                    try:
+                        await asyncio.wait_for(
+                            shot_wake.wait(), held if shots['wanted'] and held > 0 else None
+                        )
+                    except asyncio.TimeoutError:
+                        pass
                     shot_wake.clear()
                     await asyncio.sleep(max(0.0, sent_at + 1 - time.monotonic()))
-                    if not shots['wanted'] or shots['speaking'] or finishing:
+                    if not shots['wanted'] or replying() or finishing:
                         continue
                     shots['wanted'] = False
                     # Read from the store, with the same access check, so only saved tags are reported.
                     current = await stored(store.get_inspection, uid, inspection_id)
                     await stored(store._access, uid, current, 'live')
-                    if shots['speaking'] or finishing:
+                    if replying() or finishing:
                         shots['wanted'] = True
                         continue
                     sent_at = time.monotonic()
@@ -1726,6 +1739,7 @@ async def live_walkthrough(socket: WebSocket):
 
             if recovery == 'new':
                 # The Live API waits for input, so only a brand-new walkthrough asks the model to speak first.
+                shots['expected'] = time.monotonic() + LIVE_REPLY_WAIT_SECONDS
                 await session.send_client_content(
                     turns=types.Content(role='user', parts=[types.Part(text=GREETING_TRIGGER)]),
                     turn_complete=True,
@@ -1847,6 +1861,7 @@ async def live_walkthrough(socket: WebSocket):
                         if content:
                             if content.interrupted:
                                 shots['speaking'] = False
+                                shots['expected'] = 0.0
                                 counters.end_reply(interrupted=True)
                                 await socket.send_json({'type': 'interrupted'})
                             for side, value in [
@@ -1854,6 +1869,10 @@ async def live_walkthrough(socket: WebSocket):
                                 ('assistant', content.output_transcription),
                             ]:
                                 if value and (value.text or getattr(value, 'finished', False)):
+                                    if side == 'technician' and value.text:
+                                        shots['expected'] = (
+                                            time.monotonic() + LIVE_REPLY_WAIT_SECONDS
+                                        )
                                     sequence += 1
                                     message = {
                                         'type': 'transcript',
@@ -1896,7 +1915,8 @@ async def live_walkthrough(socket: WebSocket):
                                     final_text.set()
                                 await socket.send_json({'type': 'turn_complete'})
                                 shots['speaking'] = False
-                            if shots['wanted'] and not shots['speaking']:
+                                shots['expected'] = 0.0
+                            if shots['wanted'] and not replying():
                                 shot_wake.set()
                         if away:
                             outcome = 'rollover'

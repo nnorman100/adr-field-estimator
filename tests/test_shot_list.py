@@ -319,3 +319,63 @@ def test_live_relay_reports_saved_shot_tags_between_replies(monkeypatch, tmp_pat
             assert kinds.index('update', kinds.index('update') + 1) > audio_at[-1]
             socket.send_json({'type': 'end'})
             assert socket.receive_json()['type'] == 'finished'
+
+
+def test_live_relay_holds_shot_updates_while_a_reply_is_expected(monkeypatch, tmp_path):
+    store = FakeStore()
+    store.create_inspection(
+        'owner', ID, InspectionData(rooms=[{'name': 'Kitchen'}]).model_dump(mode='json')
+    )
+
+    async def identity(token, **_):
+        return {'uid': 'owner', 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'verify_staff', identity)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    monkeypatch.setattr(bm, 'LIVE_REPLY_WAIT_SECONDS', 2.5)
+
+    def updates(connection):
+        sent = [client_content(m) for m in connection['received'] if client_content(m)]
+        return [c for c in sent if c['turns'][0]['parts'][0]['text'].startswith(SHOT_STATUS_UPDATE)]
+
+    def settle(connection, seconds):
+        time.sleep(seconds)
+        return len(updates(connection))
+
+    with FakeVertexLive(tmp_path) as vertex, TestClient(bm.app) as client:
+        monkeypatch.setattr(bm.genai, 'Client', vertex.client(bm.genai.Client))
+        vertex.replies['setup'] = [{'setupComplete': {}}]
+        with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
+            socket.send_json(
+                dict(
+                    type='authenticate',
+                    token='synthetic',
+                    inspection_id=ID,
+                    protocol_version=2,
+                    capture_id='e' * 32,
+                )
+            )
+            assert socket.receive_json()['type'] == 'ready'
+            connection = vertex.connections[0]
+            # The greeting reply has not started speaking, so the update waits for it.
+            socket.send_json({'type': 'shots'})
+            assert settle(connection, 1.5) == 0
+            # A reply that never comes holds the update only for the short bound.
+            assert settle(connection, 2) == 1
+            # Once the technician speaks, a reply is expected before any audio arrives.
+            time.sleep(1.1)
+            vertex.replies['audio'] = [
+                {'serverContent': {'inputTranscription': {'text': 'What is next?'}}}
+            ]
+            socket.send_json({'type': 'audio', 'data': pcm(3300)})
+            assert socket.receive_json()['type'] == 'transcript'
+            socket.send_json({'type': 'shots'})
+            assert settle(connection, 1.5) == 1
+            vertex.replies['audio'] = [
+                {'serverContent': {'turnComplete': True, 'interactionStatus': 'IDLE'}}
+            ]
+            socket.send_json({'type': 'audio', 'data': pcm(0)})
+            assert socket.receive_json()['type'] == 'turn_complete'
+            assert settle(connection, 0.5) == 2
+            socket.send_json({'type': 'end'})
+            assert socket.receive_json()['type'] == 'finished'
