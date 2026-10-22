@@ -92,7 +92,8 @@ MONTHS = {
     for name in names
 }
 AMOUNT = r'\d+(?:,\d{3})*(?:\.\d+)?'
-MONEY = re.compile(rf'(?<![\w.,/-])(\$\s*)?({AMOUNT})(?![\w/-]|[.,]\d)')
+MONEY = re.compile(rf'(?<![\w.,/-])(\$)?({AMOUNT})(?![\w/-]|[.,]\d)')
+PERCENT = r'\s*%|\s+(?:per\s?cent|percent)\b'
 # Characters that may join the digit groups of a phone number or of another number.
 JOINERS = r'[\s().-]'
 
@@ -285,22 +286,30 @@ def joined(before, after):
 
 
 def deductibles(quote):
-    """(amount, unit) pairs: percentages written with % or "percent", and dollar amounts with a $
-    sign, followed by "dollars", or right after "deductible (is|of)"."""
+    """(amount, unit) pairs, only from these phrasings: a percentage is the amount followed by %,
+    "percent" or "per cent"; a dollar amount has $ attached, is followed by "dollars", or follows
+    "deductible is|of" and then ends the phrase."""
     text = sentences(quote)
     found = set()
     for m in MONEY.finditer(text):
         before, after = text[: m.start()], text[m.end() :]
-        percent = re.match(r'\s*(%|percent\b)', after, re.IGNORECASE)
-        if joined(before, after) or (percent and m.group(1)):
+        if joined(before, after):
             continue
         amount = float(m.group(2).replace(',', ''))
+        percent = re.match(PERCENT, after, re.IGNORECASE)
+        dollars = re.match(r'\s+dollars\b', after, re.IGNORECASE)
         if percent:
-            found.add((amount, 'percent'))
+            if not m.group(1):
+                found.add((amount, 'percent'))
+        elif re.match(r'\s*(?:%|pct\b|per\s?cent)', after, re.IGNORECASE):
+            continue
         elif (
             m.group(1)
-            or re.match(r'\s*dollars?\b', after, re.IGNORECASE)
-            or re.search(r'\bdeductible(?:\s+(?:is|of))?\s*$', before, re.IGNORECASE)
+            or dollars
+            or (
+                re.search(r'\bdeductible\s+(?:is|of)\s+$', before, re.IGNORECASE)
+                and re.match(r'(\||$)', after)
+            )
         ):
             found.add((amount, 'dollar'))
     return found
@@ -339,7 +348,7 @@ def grounded(field, value, quote):
         return phone_digits(value) in quoted_phones(quote)
     if field == 'deductible':
         stated = amounts(value)
-        percent = bool(re.search(r'%|\bpercent\b', value, re.IGNORECASE))
+        percent = bool(re.search(r'%|\b(?:per\s?cent|percent)\b', value, re.IGNORECASE))
         rest = words(re.sub(AMOUNT, ' ', value))
         return (
             len(stated) == 1
