@@ -288,7 +288,9 @@ def joined(before, after):
 def deductibles(quote):
     """(amount, unit) pairs, only from these phrasings: a percentage is the amount followed by %,
     "percent" or "per cent"; a dollar amount has $ attached, is followed by "dollars", or follows
-    "deductible is|of" and then ends the phrase, and is never followed by a scale word or cents."""
+    "deductible is|of" and then ends the phrase. A dollar amount never counts when it has a
+    three-digit decimal, or is followed by more dollars or cents ("dollars 50", "dollars and 50",
+    "and 50 cents") or by hundred(s), thousand(s), million(s), billion(s), grand, k or mil."""
     text = sentences(quote)
     found = set()
     for m in MONEY.finditer(text):
@@ -304,7 +306,8 @@ def deductibles(quote):
         elif (
             re.match(r'\s*(?:%|pct\b|per\s?cent)', after, re.IGNORECASE)
             or re.match(
-                r'\s*(?:dollars\s+and|hundred|thousand|million|billion|grand)\b',
+                r'\s*(?:dollars\s+(?:and\s+)?\d+|and\s+\d+\s+cents|hundreds?|thousands?|millions?'
+                r'|billions?|grand|k|mil)\b',
                 after,
                 re.IGNORECASE,
             )
