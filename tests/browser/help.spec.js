@@ -43,7 +43,7 @@ const ALL = [
   'Company settings',
   'Companies and the support view',
 ];
-// Signed out, the navy bar shows the loaded white DryScope lockup with the controls; no empty company strip.
+// Signed out, the navy bar shows the loaded white DryScope lockup with one Sign in control; no empty company strip.
 async function expectWordmark(page) {
   const lockup = page.locator('.product-bar .lockup img');
   await expect(lockup).toBeVisible();
@@ -53,8 +53,9 @@ async function expectWordmark(page) {
     .poll(() => lockup.evaluate((img) => img.complete && img.naturalWidth > 0))
     .toBe(true);
   expect((await lockup.boundingBox()).width).toBeGreaterThan(80);
-  await expect(page.locator('.product-bar #helpButton')).toBeVisible();
-  await expect(page.locator('.product-bar #accountMenu')).toBeVisible();
+  await expect(page.locator('.product-bar #headerSignIn')).toBeVisible();
+  await expect(page.locator('.product-bar #helpButton')).toBeHidden();
+  await expect(page.locator('.product-bar #accountMenu')).toBeHidden();
   await expect(page.locator('.masthead')).toBeHidden();
   expect((await page.locator('.product-bar').boundingBox()).height).toBeLessThan(85);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
@@ -73,23 +74,42 @@ test.describe('signed out', () => {
     await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   });
   for (const width of [320, 390])
+    test('the header offers only Sign in at ' + width + '×844', async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto('/');
+      await expect(page.locator('#authPanel')).toBeVisible();
+      await expectWordmark(page);
+      await expect(page.getByRole('button', { name: 'Help', exact: true })).toBeHidden();
+      await expect(page.getByRole('dialog', { name: 'Help' })).toBeHidden();
+    });
+});
+
+// A signed-in dashboard keeps the bar on phones; an open job folds Help into the job's More menu.
+test.describe('signed-in dashboard', () => {
+  test.beforeEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: true } });
+  });
+  test.afterEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: false } });
+  });
+  for (const width of [320, 390])
     test(
       'help opens from the header at ' + width + '×844 and closes by Escape or Close',
       async ({ page }) => {
         await page.setViewportSize({ width, height: 844 });
+        await page.addInitScript(
+          (value) => sessionStorage.setItem('synthetic-uid', value),
+          uid('estimator'),
+        );
         await page.goto('/');
-        await expect(page.locator('#authPanel')).toBeVisible();
-        await expectWordmark(page);
+        await expect(page.locator('#workspaceDashboard')).toBeVisible();
+        await expect(page.locator('#headerSignIn')).toBeHidden();
         const help = page.getByRole('button', { name: 'Help', exact: true });
         await expect(help).toHaveAttribute('aria-haspopup', 'dialog');
         let dialog = await openHelp(page);
-        await expect(page.locator('#helpYours')).toBeHidden();
-        await expect(page.locator('#helpOtherHeading')).toHaveText('App features');
-        expect(await topics(page, 'helpOther')).toEqual(ALL);
-        await expect(dialog.locator('[data-help-topic="start"]')).toHaveAttribute('open', '');
-        await expect(dialog.locator('#helpContact')).toHaveText(
-          'For company access, ask your company owner.',
-        );
+        await expect(page.locator('#helpYoursHeading')).toHaveText('For you: Estimator');
+        await expect(page.locator('#helpOtherHeading')).toHaveText('Other roles');
+        await expect(dialog.locator('#helpContact')).toContainText('Need help with a job?');
         await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
         await page.keyboard.press('Escape');
         await expect(dialog).toBeHidden();
@@ -126,8 +146,8 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.masthead .brand')).toHaveAttribute('aria-label', 'DryScope');
   await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
-  await expect(page.locator('footer .powered')).toHaveText('Powered by DryScope');
-  await expect(page.locator('#accountMenu')).toContainText('DryScope · App version');
+  await expect(page.locator('footer .powered')).toBeHidden();
+  await expect(page.locator('#accountMenu')).toBeHidden();
   await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
   await expect(page.locator('#authPanel #googleSignIn')).toBeVisible();
   await expect(page.getByRole('button', { name: /google/i })).toHaveCount(1);
@@ -136,7 +156,7 @@ test('signed-out screen says what the app is for before sign-in', async ({ page 
   expect(await page.evaluate(signedOutLoginOrder)).toEqual(LOGIN_ORDER);
   await expect(page.locator('#emailSignIn')).toHaveClass(/primary/);
   await expect(page.locator('#googleSignIn')).not.toHaveClass(/primary/);
-  const line = page.locator('#authPanel #positioning');
+  const line = page.locator('#landingHero #positioning');
   await expect(line).toBeVisible();
   await expect(line).toContainText('Water & mold loss estimates, signed on site.');
   await expect(line).toContainText(

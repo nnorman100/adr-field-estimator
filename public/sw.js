@@ -25,6 +25,7 @@ const ASSETS = [
   '/icon-512.png',
   '/apple-touch-icon.png',
   '/brand/adr-logo.jpg',
+  '/brand/dryscope-mark.svg',
   '/brand/dryscope-wordmark.svg',
   '/brand/dryscope-wordmark-white.svg',
   '/fonts/lato-400-latin.woff2',

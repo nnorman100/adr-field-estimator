@@ -2465,6 +2465,214 @@ footer {
   margin: 0;
 }
 
+/* Signed out with no account: the DryScope landing frames the sign-in card. It shares the app's
+   paper cards, navy type and water/mold tints; nothing here is a separate design system. */
+.header-sign-in {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.5rem 0.875rem;
+  margin-right: 0.5rem;
+  border: 1px solid #ffffff99;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.header-sign-in:hover {
+  border-color: #fff;
+}
+.landing {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+.landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2rem;
+  padding-top: 2.5rem;
+  padding-bottom: 1rem;
+}
+.landing-hero .positioning {
+  max-width: 640px;
+  margin: 0.75rem 0 1rem;
+}
+.landing-hero .positioning-headline {
+  font-size: 2.25rem;
+  line-height: 1.15;
+  margin: 0 0 0.75rem;
+}
+.landing-hero .positioning-line {
+  font-size: 1.125rem;
+  line-height: 1.5;
+}
+.landing-lede {
+  max-width: 640px;
+  margin: 0 0 1.5rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.landing-access-note {
+  max-width: 640px;
+  margin: 1rem 0 0;
+}
+.landing-mark {
+  width: 220px;
+  height: auto;
+  justify-self: end;
+}
+.landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.landing-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.75rem 1.25rem;
+  border: 1px solid var(--navy);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--navy);
+  font-weight: 700;
+  text-decoration: none;
+}
+.landing-button.primary {
+  background: var(--navy);
+  color: #fff;
+}
+.landing-section {
+  padding: 2rem 0 0.5rem;
+}
+.landing-section h2 {
+  font-size: 1.75rem;
+  margin: 0.35rem 0 0.75rem;
+}
+.landing-section-lede {
+  max-width: 720px;
+  margin: 0 0 1.25rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.landing-steps,
+.landing-cards {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+.landing-steps > li,
+.landing-cards > li {
+  min-width: 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+.landing-steps > li h3,
+.landing-cards > li h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+.landing-steps > li p,
+.landing-cards > li p {
+  margin: 0;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.landing-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin-bottom: 0.75rem;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  font-weight: 900;
+}
+.landing-docs > li {
+  border-top: 4px solid var(--water);
+}
+.landing-docs > li:nth-child(even) {
+  border-top-color: var(--water-deep);
+}
+.landing-features > li {
+  background: var(--water-tint);
+  border-color: var(--water-tint);
+}
+.landing-features > li:nth-child(4n + 3),
+.landing-features > li:nth-child(4n + 4) {
+  background: var(--mold-tint);
+  border-color: var(--mold-tint);
+}
+.landing-closing {
+  margin: 2rem 0 1rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.landing-closing p {
+  margin: 0 0 1rem;
+  line-height: 1.6;
+}
+.landing-closing .landing-actions:empty,
+.landing-closing .landing-actions:not(:has(:not([hidden]))) {
+  display: none;
+}
+/* The landing names DryScope in the footer once; the attribution line frames a signed-in company. */
+.login-page footer .powered {
+  display: none;
+}
+.landing-closing .landing-actions {
+  justify-content: center;
+}
+.landing-hero + .auth-panel {
+  margin-top: 0.5rem;
+}
+@media (max-width: 700px) {
+  .landing {
+    padding: 0 1rem;
+  }
+  .landing-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    padding-top: 1.5rem;
+  }
+  .landing-hero .positioning-headline {
+    font-size: 1.75rem;
+  }
+  .landing-mark {
+    width: 88px;
+    justify-self: start;
+    grid-row: 1;
+  }
+  .landing-section h2 {
+    font-size: 1.4rem;
+  }
+  .header-sign-in {
+    min-height: 44px;
+    padding: 0.5rem 0.75rem;
+    margin-right: 0;
+  }
+}
+@media print {
+  .landing,
+  .header-sign-in {
+    display: none !important;
+  }
+}
+
 /* Signed out: a plain login page, no workspace behind it. */
 .login-page .workspace-bar,
 .login-page .inspection-shell,

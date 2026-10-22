@@ -142,7 +142,9 @@ test.describe('company workspaces', () => {
     );
     await expect(page.locator('#workspaceAccountDetails')).toBeEmpty();
     await expect(page.locator('#footerText')).toHaveText('DryScope · Private field inspections');
-    await page.locator('#helpButton').click();
+    // Signed out the bar offers only Sign in; the help contact line is still reset for the next account.
+    await expect(page.locator('#helpButton')).toBeHidden();
+    await expect(page.locator('#headerSignIn')).toBeVisible();
     await expect(page.locator('#helpContact')).toHaveText(
       'For company access, ask your company owner.',
     );

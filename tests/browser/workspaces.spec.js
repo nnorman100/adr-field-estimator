@@ -984,8 +984,10 @@ test('signed-out phone header at 320×844 fits the Update ready banner without o
     'src',
     '/brand/dryscope-wordmark-white.svg',
   );
+  // Signed out the bar's one control is Sign in; Help and Account return with an account.
+  await expect(page.locator('#accountMenu')).toBeHidden();
   const boxes = await page.evaluate(() =>
-    ['.lockup', '#updateBanner', '#accountMenu'].map((s) => {
+    ['.lockup', '#updateBanner', '#headerSignIn'].map((s) => {
       const r = document.querySelector(s).getBoundingClientRect();
       return [r.left, r.right];
     }),

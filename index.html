@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0B2545"><meta name="description" content="Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.">
   <title>DryScope · Water &amp; mold loss estimates</title>
+  <meta property="og:type" content="website"><meta property="og:site_name" content="DryScope"><meta property="og:title" content="DryScope · Water &amp; mold loss estimates"><meta property="og:description" content="Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log."><meta property="og:url" content="https://alert-disaster-field-2026.web.app/"><meta property="og:image" content="https://alert-disaster-field-2026.web.app/icon-512.png"><meta property="og:image:alt" content="The DryScope mark: a water droplet and spore cluster inside a moisture-meter ring"><meta name="twitter:card" content="summary">
   <link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/app.css?v=unstamped">
   <link rel="modulepreload" href="/vendor/firebase/13.0.0/firebase-app.js"><link rel="modulepreload" href="/vendor/firebase/13.0.0/firebase-auth.js">
@@ -16,13 +17,21 @@
   <header class="product-bar">
     <a class="lockup" href="/" aria-label="DryScope"><img src="/brand/dryscope-wordmark-white.svg" width="1754" height="512" alt="DryScope"></a>
     <div id="updateBanner" class="notice" hidden><span class="update-text">Update ready.</span> <button id="applyUpdate">Save &amp; update</button></div>
-    <div class="header-tools"><button id="helpButton" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="helpDialog"><span class="help-mark">?</span><span class="help-label">Help</span></button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><div id="workspaceAccountDetails"></div><small>DryScope &middot; App version unstamped</small></div></details></div>
+    <div class="header-tools"><a id="headerSignIn" class="header-sign-in" href="#authPanel" hidden>Sign in</a><button id="helpButton" class="help-button" type="button" aria-label="Help" aria-haspopup="dialog" aria-controls="helpDialog"><span class="help-mark">?</span><span class="help-label">Help</span></button><details id="accountMenu" class="menu"><summary>Account</summary><div class="menu-content"><span id="accountStatus" role="status">Sign in to start an inspection</span><button id="signOutButton" hidden>Sign out</button><hr><div id="workspaceAccountDetails"></div><small>DryScope &middot; App version unstamped</small></div></details></div>
   </header>
   <div class="masthead"><a class="brand" href="/" aria-label="DryScope"><img src="/brand/dryscope-wordmark.svg" width="240" height="70" alt="DryScope"><strong>DryScope</strong></a></div>
   <div id="offlineBanner" class="notice" hidden>You are offline. Changes stay on this device until synced. AI and signing need a connection.</div>
   <div id="hostSyncNotice" class="notice" role="status" hidden>Drafts on this device are still syncing. Sign in with email and keep this Home Screen icon until they finish.</div>
+  <section id="landingHero" class="landing landing-hero" aria-labelledby="landingHeading" hidden>
+    <div class="landing-hero-copy"><span class="eyebrow">FOR WATER MITIGATION &amp; DISASTER RESTORATION COMPANIES</span>
+      <div id="positioning" class="positioning"><h1 id="landingHeading" class="positioning-headline">Water &amp; mold loss estimates, signed on site.</h1><p class="positioning-line">Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.</p></div>
+      <p class="landing-lede">DryScope is a field estimator for the technician on the phone at the loss. One walkthrough with the live camera assistant becomes a confirmed scope, an estimate range and four carrier-ready documents the homeowner can sign before the truck leaves.</p>
+      <div class="landing-actions"><a id="requestAccess" class="landing-button" href="#" hidden>Request access</a></div>
+      <p class="hint landing-access-note">Staff join by invitation from their company owner. Homeowners sign through a private link and never need an account.</p>
+    </div>
+    <img class="landing-mark" src="/brand/dryscope-mark.svg" width="512" height="512" alt="">
+  </section>
   <section id="authPanel" class="auth-panel" aria-label="Sign in" hidden>
-    <div id="positioning" class="positioning"><p class="positioning-headline">Water &amp; mold loss estimates, signed on site.</p><p class="positioning-line">Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.</p></div>
     <form id="emailAuthForm" novalidate><h2>Sign in</h2><p class="hint">New staff set a password with the link in your invitation email.</p>
       <label>Email<input id="authEmail" type="email" maxlength="254" required autocomplete="username"></label>
       <label>Password<input id="authPassword" type="password" maxlength="128" required autocomplete="current-password"></label>
@@ -40,6 +49,39 @@
       <div class="actions"><button id="savePassword" type="submit" class="primary">Save password</button><button id="setPasswordSignOut" type="button">Sign out</button></div>
     </form>
     <p id="authStatus" role="status" aria-live="polite" hidden></p>
+  </section>
+  <section id="landingBody" class="landing landing-body" aria-labelledby="landingHowHeading" hidden>
+    <section class="landing-section" aria-labelledby="landingHowHeading"><span class="eyebrow">HOW A JOB RUNS</span><h2 id="landingHowHeading">Three steps, one visit</h2>
+      <ol class="landing-steps">
+        <li><span class="landing-step-number">1</span><h3>Walk &amp; Photo</h3><p>Start the live walkthrough and talk through each room while the camera streams. The assistant listens, watches and asks for the shots an adjuster expects: room overview, each affected wall or floor, a meter reading on every wet material, the source of loss, contents and equipment as placed.</p></li>
+        <li><span class="landing-step-number">2</span><h3>Check Scope</h3><p>Fill the scope from what was said, then confirm it. Each room carries its water category and a Water, Mold or Water + Mold loss type, measured demolition areas, waste and cabinetry; equipment counts and drying days price from the estimating sheet's rates.</p></li>
+        <li><span class="landing-step-number">3</span><h3>Review &amp; Sign</h3><p>Review the customer estimate range beside the itemized base-rate total. The homeowner signs on the technician's phone, or on their own through a private link that works once, expires in 7 days and dies on any later edit.</p></li>
+      </ol>
+    </section>
+    <section class="landing-section" aria-labelledby="landingDocsHeading"><span class="eyebrow">WHAT YOU LEAVE WITH</span><h2 id="landingDocsHeading">Four documents from one inspection</h2>
+      <p class="landing-section-lede">Pricing and mandatory wording are computed on the server from a cell-traced estimating sheet. The model drafts the narrative; it never sets a price or removes a required clause.</p>
+      <ul class="landing-cards landing-docs">
+        <li><h3>Proposal</h3><p>Low–high customer estimate with your company name, license and sign-off, ready for an e-signature.</p></li>
+        <li><h3>Itemized claim</h3><p>Every demolition, equipment, labor and job-charge line with quantity, rate, waste and total, exportable as JSON.</p></li>
+        <li><h3>Scope defense letter</h3><p>An IICRC S500 / S520 letter addressed to the recorded adjuster with the claim reference, for carrier pushback.</p></li>
+        <li><h3>Photo moisture log</h3><p>Each photo with its room, time and recognized meter reading. Pending or failed recognition stays marked unverified.</p></li>
+      </ul>
+    </section>
+    <section class="landing-section" aria-labelledby="landingFieldHeading"><span class="eyebrow">BUILT FOR THE FIELD</span><h2 id="landingFieldHeading">What the crew gets on the phone</h2>
+      <ul class="landing-cards landing-features">
+        <li><h3>Live voice-and-camera walkthrough</h3><p>Real-time voice coaching while the phone camera streams the loss. Weak signal pauses video and keeps the voice going.</p></li>
+        <li><h3>Required photo shot list</h3><p>Per-room missing shots, one-tap tagging after each capture, and a count of what is still missing before documents are generated.</p></li>
+        <li><h3>Drying log with psychrometrics</h3><p>Temperature and humidity become grains per pound and dew point as they are typed; material and thermal readings keep their dry standard and ΔT, per room and per day.</p></li>
+        <li><h3>QR room and equipment tags</h3><p>Print tags for each room and each air mover, dehumidifier or scrubber. A scan selects the room or records where the unit stands.</p></li>
+        <li><h3>IICRC equipment-sizing check</h3><p>Recommended air movers and LGR dehumidification from floor area, ceiling height and water class, flagged Above, Below or Within range beside what is priced.</p></li>
+        <li><h3>Claim &amp; loss details</h3><p>Carrier, claim and policy numbers, date and cause of loss, adjuster contact and deductible, printed into the documents.</p></li>
+        <li><h3>Per-room water or mold loss type</h3><p>Rooms are tagged WATER, MOLD or both, with the category and cabinetry rules the sheet applies to each.</p></li>
+        <li><h3>Your company's branding</h3><p>Each company is an isolated workspace. Your name, logo, license and contact details head every document; DryScope stays behind the scenes.</p></li>
+      </ul>
+    </section>
+    <section class="landing-section landing-closing" aria-label="Already invited"><p id="landingClosing">Already invited? <a href="#authPanel">Sign in at the top of this page</a> with the email from your invitation, or with Google.</p>
+      <div class="landing-actions"><a id="requestAccessFooter" class="landing-button" href="#" hidden>Book a demo</a></div>
+    </section>
   </section>
   <div class="workspace-bar"><nav id="workspaceNav" class="workspace-nav" aria-label="Company workspace" hidden><button id="workspaceMenuToggle" class="workspace-menu-toggle" type="button" aria-expanded="false" aria-controls="workspaceLinks">Menu</button><div id="workspaceLinks" class="workspace-links"><button id="dashboardHome">Dashboard</button><button id="dashboardJobs">Company jobs</button><button id="dashboardTeam" hidden>Team & invitations</button><button id="dashboardProfile" hidden>Company settings</button><button id="dashboardAdmin" hidden>Companies</button></div></nav><section id="jobCoordination" class="job-coordination collapsed" aria-labelledby="coordinationHeading" hidden><div class="section-head"><h2 id="coordinationHeading">Job coordination</h2><button id="coordinationToggle" class="coordination-toggle" type="button" aria-expanded="false" aria-controls="coordinationForm">Job coordination</button></div><form id="coordinationForm"><div class="form-grid"><label>Property address<input id="coordAddress" maxlength="500"></label><label>Assigned estimator<select id="coordEstimator"></select></label><label>Customer name<input id="coordName" maxlength="150"></label><label>Customer phone<input id="coordPhone" maxlength="80" type="tel"></label><label>Customer email<input id="coordEmail" maxlength="254" type="email"></label></div><label>Office notes<textarea id="coordNotes" maxlength="4000" rows="3"></textarea></label><button id="saveCoordination" type="submit" class="primary">Save coordination</button><p id="coordinationStatus" role="status"></p></form></section></div>
   <section id="workspaceDashboard" class="workspace-dashboard" aria-labelledby="dashboardHeading" hidden><div class="section-head"><div><span id="dashboardEyebrow" class="eyebrow">LOSS ESTIMATES</span><h1 id="dashboardHeading">Dashboard</h1></div><button id="dashboardNewJob" class="primary" type="button" hidden><span aria-hidden="true">+</span> New job</button></div><p id="dashboardDescription"></p><div id="dashboardContent"></div></section>

@@ -235,6 +235,7 @@ const localShell = fs.readFileSync('public/index.html', 'utf8'),
   });
   for (const path of [
     '/brand/adr-logo.jpg',
+    '/brand/dryscope-mark.svg',
     '/brand/dryscope-wordmark.svg',
     '/brand/dryscope-wordmark-white.svg',
     '/fonts/lato-400-latin.woff2',
