@@ -193,6 +193,14 @@ test('a count typed without leaving the field survives a background refresh', as
   await expect(wet).toBeFocused();
   await expect(wet).toHaveValue('2');
   expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(2);
+  // Leaving the field after a refresh puts back the saved count, so the form stays valid.
+  await wet.pressSequentially('99');
+  await page.evaluate(() => renderPhotos());
+  await expect(wet).toHaveValue('299');
+  expect(await page.evaluate(() => state.draft.data.rooms[0].wet_materials)).toBe(29);
+  await wet.blur();
+  await expect(wet).toHaveValue('29');
+  expect(await wet.evaluate((input) => input.checkValidity())).toBe(true);
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
 });
 

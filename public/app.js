@@ -1914,8 +1914,7 @@ function shotChecklist(room) {
       else return;
       changed(false);
     });
-    input.addEventListener('change', () => {
-      if (refreshingShots) return;
+    input.addEventListener('blur', () => {
       input.value = room[key] ?? '';
       renderShotLists();
     });
@@ -1958,14 +1957,11 @@ function shotChecklist(room) {
     );
   return wrap;
 }
-let refreshingShots = false;
 function renderShotLists() {
-  const active = document.activeElement,
-    key = active?.dataset?.shotCount,
-    holder = key && active.closest('#shotList, #rooms .room'),
+  const active = document.activeElement?.dataset?.shotCount ? document.activeElement : null,
     room = state.draft?.data.rooms.find((r) => r.name === $('photoRoom').value);
-  refreshingShots = true;
-  $('shotList').replaceChildren(...(room ? [shotChecklist(room)] : []));
+  if (!$('shotList').contains(active))
+    $('shotList').replaceChildren(...(room ? [shotChecklist(room)] : []));
   document.querySelectorAll('#rooms .room').forEach((card, index) => {
     const target = card.querySelector('.room-shots'),
       saved = state.draft?.data.rooms[index];
@@ -1978,14 +1974,8 @@ function renderShotLists() {
         : status.unsetCounts.length
           ? 'counts not set'
           : 'all tagged');
-    target.replaceChildren(shotChecklist(saved));
+    if (!target.contains(active)) target.replaceChildren(shotChecklist(saved));
   });
-  refreshingShots = false;
-  const replaced = holder?.querySelector('[data-shot-count="' + key + '"]');
-  if (replaced && replaced !== active) {
-    replaced.value = active.value;
-    replaced.focus();
-  }
   renderShotPicker();
 }
 // Right after a capture, one tap tags the new photo; shots the room still needs come first.
