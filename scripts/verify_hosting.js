@@ -10,6 +10,14 @@ const unstamp = (text) =>
     .replace(/^(const VERSION=')[^']*(';)/m, '$1unstamped$2')
     .replace(/(\.(?:css|js)\?v=)[0-9A-Za-z-]+/g, '$1unstamped')
     .replace(/(App version )[^<]+(<\/small>)/, '$1unstamped$2');
+// Each versioned asset a page loads, with its ?v= stamp; the local copies define what to expect.
+const versioned = (html) =>
+  [...html.matchAll(/"\/([^"?]+\.(?:css|js))\?v=([0-9A-Za-z-]+)"/g)].map((m) => ({
+    file: m[1],
+    stamp: m[2],
+  }));
+const localShell = fs.readFileSync('public/index.html', 'utf8'),
+  localSigning = fs.readFileSync('public/sign.html', 'utf8');
 (async () => {
   const base = 'https://alert-disaster-field-2026.web.app';
   const response = await fetch(base);
@@ -25,8 +33,8 @@ const unstamp = (text) =>
     'The deployed shell is not stamped with a source commit: ' + marker,
   );
   assert.deepEqual(
-    [...shell.matchAll(/\.(?:css|js)\?v=([0-9A-Za-z-]+)/g)].map((m) => m[1]),
-    Array(6).fill(marker),
+    versioned(shell).map((asset) => asset.stamp),
+    Array(versioned(localShell).length).fill(marker),
     'Deployed asset URLs carry another marker',
   );
   // The homeowner signing page: its own rewrite, never cached, same files as the commit.
@@ -38,11 +46,11 @@ const unstamp = (text) =>
   );
   const signingPage = await signing.text();
   assert.deepEqual(
-    [...signingPage.matchAll(/\.(?:css|js)\?v=([0-9A-Za-z-]+)/g)].map((m) => m[1]),
-    Array(4).fill(marker),
+    versioned(signingPage).map((asset) => asset.stamp),
+    Array(versioned(localSigning).length).fill(marker),
     'Signing page asset URLs carry another marker',
   );
-  assert.equal(unstamp(signingPage), unstamp(fs.readFileSync('public/sign.html', 'utf8')));
+  assert.equal(unstamp(signingPage), unstamp(localSigning));
   // Without a link the anonymous route answers with the link-specific 404, not a missing route.
   assert.equal(
     (await (await fetch(base + '/api/sign')).json()).detail,
@@ -57,7 +65,7 @@ const unstamp = (text) =>
     ),
     'Displayed app version is not the stamped commit',
   );
-  assert.equal(unstamp(shell), unstamp(fs.readFileSync('public/index.html', 'utf8')));
+  assert.equal(unstamp(shell), unstamp(localShell));
   for (const path of ['/', '/index.html', '/?v=ui-20261006-6']) {
     const html = await fetch(base + path);
     assert.match(
@@ -70,19 +78,11 @@ const unstamp = (text) =>
       'Redesigned task navigation is missing: ' + path,
     );
   }
-  for (const file of [
-    'app.js',
-    'workspaces.js',
-    'psychrometrics.js',
-    'drying.js',
-    'tags.js',
-    'app.css',
-    'core.js',
-    'documents.js',
-    'sign.js',
+  for (const file of new Set([
+    ...[...versioned(localShell), ...versioned(localSigning)].map((asset) => asset.file),
     'audio-worklet.js',
     'sw.js',
-  ])
+  ]))
     assert.equal(
       unstamp(await (await fetch(base + '/' + file + '?verify=repair-20261006')).text()),
       unstamp(fs.readFileSync('public/' + file, 'utf8')),
