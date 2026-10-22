@@ -284,20 +284,25 @@ def joined(before, after):
     )
 
 
-def money(quote):
-    """Whole amounts with a $ sign, followed by "dollars", or right after "deductible (is|of)"."""
+def deductibles(quote):
+    """(amount, unit) pairs: percentages written with % or "percent", and dollar amounts with a $
+    sign, followed by "dollars", or right after "deductible (is|of)"."""
     text = sentences(quote)
     found = set()
     for m in MONEY.finditer(text):
         before, after = text[: m.start()], text[m.end() :]
-        if joined(before, after):
+        percent = re.match(r'\s*(%|percent\b)', after, re.IGNORECASE)
+        if joined(before, after) or (percent and m.group(1)):
             continue
-        if (
+        amount = float(m.group(2).replace(',', ''))
+        if percent:
+            found.add((amount, 'percent'))
+        elif (
             m.group(1)
             or re.match(r'\s*dollars?\b', after, re.IGNORECASE)
             or re.search(r'\bdeductible(?:\s+(?:is|of))?\s*$', before, re.IGNORECASE)
         ):
-            found.add(float(m.group(2).replace(',', '')))
+            found.add((amount, 'dollar'))
     return found
 
 
@@ -334,10 +339,12 @@ def grounded(field, value, quote):
         return phone_digits(value) in quoted_phones(quote)
     if field == 'deductible':
         stated = amounts(value)
+        percent = bool(re.search(r'%|\bpercent\b', value, re.IGNORECASE))
         rest = words(re.sub(AMOUNT, ' ', value))
         return (
             len(stated) == 1
-            and stated[0] in money(quote)
+            and not (percent and '$' in value)
+            and (stated[0], 'percent' if percent else 'dollar') in deductibles(quote)
             and all(word in words(quote) for word in rest)
         )
     if field == 'adjuster_email':
