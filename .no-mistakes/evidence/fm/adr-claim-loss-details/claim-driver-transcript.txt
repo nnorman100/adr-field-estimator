@@ -1,0 +1,20 @@
+A summary before: · none recorded
+A filled carrier=Synthetic Mutual number=CLM 0042 77
+A status: Claim details saved. summary: · Claim CLM 0042 77
+A stored sidecar (read by office role): {"job_id":"ADR-INS-94fb8ff19286464c9376380e7836b088","claim_version":2,"claim":{"carrier":"Synthetic Mutual","claim_number":"CLM 0042 77","policy_number":"POL-9988","date_of_loss":"2026-10-12","loss_cause":"Supply line failure under kitchen sink","adjuster_name":"Avery Quinn","adjuster_email":"avery.quinn@example.invalid","adjuster_phone":"(661) 555-0100","deductible":"$1,000"},"editable":true}
+A doc proposal: "123 Synthetic Ave, Bakersfield\n\n10-21-2026\n\nEstimator: Matthew Myers · CSLB #950983\n\nInsurance carrier: Synthetic Mutual\n\nClaim number: CLM 0042 77\n\nPolicy number: POL-9988\n\nDate of loss: 10-12-2026\n\nCause and source of loss: Supply line failure under kitchen sink\n\nAdjuster: Avery Quinn · avery.quinn@example.invalid · (661) 555-0100\n\nDeductible: $1,000\n\nCustomer estimate range: $1,674.65–$1,790.25\n\nItemized scope total: $1,674.65\n\nFindings\n\nThe home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.\n\nTechnician observations: Room 1, category 2, 80"
+A doc claim: "Property: 123 Synthetic Ave, BakersfieldInsurance carrier: Synthetic MutualClaim number: CLM 0042 77Policy number: POL-9988Date of loss: 10-12-2026Cause and source of loss: Supply line failure under kitchen sinkAdjuster: Avery Quinn · avery.quinn@example.invalid · (661) 555-0100Deductible: $1,000"
+A doc defense: "Alert Disaster Restoration · 3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983\n\nTO: Avery Quinn, Adjuster\nSynthetic Mutual\navery.quinn@example.invalid · (661) 555-0100\n\nRE: Remediation scope for 123 Synthetic Ave, Bakersfield\nClaim number: CLM 0042 77\nPolicy number: POL-9988\nDate of loss: 10-12-2026\nCause and source of loss: Supply line failure under kitchen sink\nDeductible: $1,000\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence a"
+A doc photo: "Insurance carrier: Synthetic MutualClaim number: CLM 0042 77Policy number: POL-9988Date of loss: 10-12-2026Cause and source of loss: Supply line failure under kitchen sinkAdjuster: Avery Quinn · avery.quinn@example.invalid · (661) 555-0100Deductible: $1,000"
+doc tab controls: 0
+B stored sidecar: {"carrier":"","claim_number":"","policy_number":"","date_of_loss":"","loss_cause":"","adjuster_name":"Avery Quinn","adjuster_email":"","adjuster_phone":"","deductible":""}
+B form claim_number="" email="" policy="" carrier="" adjuster="Avery Quinn"
+B room draft: {"rooms":[]}
+B form category/sf: ["airMovers=3"]
+B questions: ["Confirm the claim number; the walkthrough value does not match what was said.","Confirm the adjuster email; the walkthrough value does not match what was said.","Confirm the insurance carrier; the walkthrough value has no matching technician quote.","Confirm the policy number; the walkthrough gave more than one value.","Confirm any additional labor."]
+B suggestions: ""
+C GET claim on job with no inspection record: 404 {"detail":"Record not found."}
+C PUT claim on job with no inspection record: 404 {"detail":"Record not found."}
+D other-company GET of ADR job claim: 404 {"detail":"Record not found."}
+B draft rooms "\"rooms\":[{\"name\":\"Room 1\",\"category\":2,\"loss\":\"water\",\"unfinished_sf\":0,\"finished_sf\":80,\"custom_cabinetry\":false,\"waste_percent\":0}]"
+B defense head "Alert Disaster Restoration · 3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983\n\nTO: Avery Quinn, Adjuster\n\nRE: Remediation scope for Adversarial property\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S"
