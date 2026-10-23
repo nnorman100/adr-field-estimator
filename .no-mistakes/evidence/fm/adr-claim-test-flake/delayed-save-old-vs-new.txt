@@ -1,0 +1,156 @@
+npm notice run npx
+npm notice run 'playwright' test tests/browser/zz-repro-old.spec.js tests/browser/zz-repro-new.spec.js --project=chromium --repeat-each=3 --reporter=list
+
+Running 6 tests using 1 worker
+
+  ✓  1 [chromium] › tests/browser/zz-repro-new.spec.js:32:1 › REPRO-NEW walkthrough claim details fill with Undo, save to the job and head every document (3.7s)
+  ✘  2 [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document (1.8s)
+  ✓  3 [chromium] › tests/browser/zz-repro-new.spec.js:32:1 › REPRO-NEW walkthrough claim details fill with Undo, save to the job and head every document (3.8s)
+  ✘  4 [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document (1.7s)
+  ✓  5 [chromium] › tests/browser/zz-repro-new.spec.js:32:1 › REPRO-NEW walkthrough claim details fill with Undo, save to the job and head every document (3.6s)
+  ✘  6 [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document (1.7s)
+
+
+  1) [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document 
+
+    Error: expect(received).toBeNull()
+
+    Received: {"adr_estimate": {"customer_name": "", "date": "10-22-2026", "disclaimers": ["NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."], "findings": ["The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.", "Technician observations: Room 1, category 2, 80 square feet of drywall. Use 3 fans. Synthetic Mutual claim number CLM 0042 77."], "lead_notice_required": false, "property_address": "Synthetic claim property", "proposed_cost": 1790.25, "proposed_cost_low": 1674.65, "recommendations": ["Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.", "Room 1: category 2 finished/drywall/trim demolition", "Axial air movers", "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."]}, "ai_suggestions": ["Document drying progress."], "ai_summary": "<img src=x onerror=\"window.reviewInjected=true\"> Confirmed scope summary.", "claim": {"adjuster_email": "", "adjuster_name": "Avery Quinn", "adjuster_phone": "", "carrier": "", "claim_number": "CLM-0042-77", "date_of_loss": "2026-10-12", "deductible": "", "loss_cause": "Supply line under kitchen sink", "policy_number": ""}, "company_identity": {"address": "3300 Patton Way · Bakersfield, CA 93308", "company_id": "adr", "email": "", "license": "950983", "logo_data_url": "", "name": "Alert Disaster Restoration", "phone": "(661) 426-2151", "signoff": "Matthew Myers", "version": 1, "water_heater_notice": ""}, "company_setup_missing": [], "compliance_notes": ["The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.", "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."], "iicrc_defense_letter": "Alert Disaster Restoration · 3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983·
+    TO: Avery Quinn, Adjuster·
+    RE: Remediation scope for Synthetic claim property
+    Claim number: CLM-0042-77
+    Date of loss: 10-12-2026
+    Cause and source of loss: Supply line under kitchen sink·
+    This scope describes proposed work; completion has not been recorded.·
+    The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.·
+    The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.
+    Technician observations: Room 1, category 2, 80 square feet of drywall. Use 3 fans. Synthetic Mutual claim number CLM 0042 77.·
+    Scope:
+    Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.
+    Room 1: category 2 finished/drywall/trim demolition
+    Axial air movers
+    If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.·
+    NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.
+    If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.
+    Estimate is valid for 30 days from date of inspection.·
+    Itemized charges at base rates: $1,674.65. Customer estimate range: $1,674.65 to $1,790.25. The range applies the estimating sheet labor/material allowance to the priced scope.·
+    Sincerely,
+    Matthew Myers
+    Alert Disaster Restoration", "photo_audit_log": [], "schema_version": 3, "signable": true, "unpriced_work": [], "xactimate_scope": [{"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 1, "total": 133.95, "unit": "EA", "unit_price": 133.95, "waste_percent": 0}, {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 628.85, "unit": "HR", "unit_price": 47.46, "waste_percent": 0}, {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 1, "total": 159.53, "unit": "load", "unit_price": 159.53, "waste_percent": 0}, {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1, "total": 74.75, "unit": "day", "unit_price": 74.75, "waste_percent": 0}, {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1, "total": 183.12, "unit": "EA", "unit_price": 183.12, "waste_percent": 0}, {"code": "ADR-DEMO", "description": "Room 1: category 2 finished/drywall/trim demolition", "quantity": 80, "total": 231.2, "unit": "SF", "unit_price": 2.89, "waste_percent": 0}, {"code": "ADR-FAN", "description": "Axial air movers", "quantity": 9, "total": 263.25, "unit": "unit-day", "unit_price": 29.25, "waste_percent": 0}], "xactimate_total": 1674.65}
+
+       95 |   await page.locator('#saveClaim').click();
+       96 |   await expect(page.locator('#claimStatus')).toHaveText('Claim details saved.');
+    >  97 |   expect(await page.evaluate(() => state.documents)).toBeNull();
+          |                                                      ^
+       98 |   await expect(page.locator('#documents')).toBeHidden();
+       99 |   expect(errors).toEqual([]);
+      100 | });
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M5K6VAE22HNRSCTAGMDNKJ0F/tests/browser/zz-repro-old.spec.js:97:54
+
+    Error Context: test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document 
+
+    Error: expect(received).toBeNull()
+
+    Received: {"adr_estimate": {"customer_name": "", "date": "10-22-2026", "disclaimers": ["NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."], "findings": ["The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.", "Technician observations: Room 1, category 2, 80 square feet of drywall. Use 3 fans. Synthetic Mutual claim number CLM 0042 77."], "lead_notice_required": false, "property_address": "Synthetic claim property", "proposed_cost": 1790.25, "proposed_cost_low": 1674.65, "recommendations": ["Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.", "Room 1: category 2 finished/drywall/trim demolition", "Axial air movers", "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."]}, "ai_suggestions": ["Document drying progress."], "ai_summary": "<img src=x onerror=\"window.reviewInjected=true\"> Confirmed scope summary.", "claim": {"adjuster_email": "", "adjuster_name": "Avery Quinn", "adjuster_phone": "", "carrier": "", "claim_number": "CLM-0042-77", "date_of_loss": "2026-10-12", "deductible": "", "loss_cause": "Supply line under kitchen sink", "policy_number": ""}, "company_identity": {"address": "3300 Patton Way · Bakersfield, CA 93308", "company_id": "adr", "email": "", "license": "950983", "logo_data_url": "", "name": "Alert Disaster Restoration", "phone": "(661) 426-2151", "signoff": "Matthew Myers", "version": 1, "water_heater_notice": ""}, "company_setup_missing": [], "compliance_notes": ["The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.", "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."], "iicrc_defense_letter": "Alert Disaster Restoration · 3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983·
+    TO: Avery Quinn, Adjuster·
+    RE: Remediation scope for Synthetic claim property
+    Claim number: CLM-0042-77
+    Date of loss: 10-12-2026
+    Cause and source of loss: Supply line under kitchen sink·
+    This scope describes proposed work; completion has not been recorded.·
+    The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.·
+    The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.
+    Technician observations: Room 1, category 2, 80 square feet of drywall. Use 3 fans. Synthetic Mutual claim number CLM 0042 77.·
+    Scope:
+    Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.
+    Room 1: category 2 finished/drywall/trim demolition
+    Axial air movers
+    If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.·
+    NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.
+    If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.
+    Estimate is valid for 30 days from date of inspection.·
+    Itemized charges at base rates: $1,674.65. Customer estimate range: $1,674.65 to $1,790.25. The range applies the estimating sheet labor/material allowance to the priced scope.·
+    Sincerely,
+    Matthew Myers
+    Alert Disaster Restoration", "photo_audit_log": [], "schema_version": 3, "signable": true, "unpriced_work": [], "xactimate_scope": [{"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 1, "total": 133.95, "unit": "EA", "unit_price": 133.95, "waste_percent": 0}, {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 628.85, "unit": "HR", "unit_price": 47.46, "waste_percent": 0}, {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 1, "total": 159.53, "unit": "load", "unit_price": 159.53, "waste_percent": 0}, {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1, "total": 74.75, "unit": "day", "unit_price": 74.75, "waste_percent": 0}, {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1, "total": 183.12, "unit": "EA", "unit_price": 183.12, "waste_percent": 0}, {"code": "ADR-DEMO", "description": "Room 1: category 2 finished/drywall/trim demolition", "quantity": 80, "total": 231.2, "unit": "SF", "unit_price": 2.89, "waste_percent": 0}, {"code": "ADR-FAN", "description": "Axial air movers", "quantity": 9, "total": 263.25, "unit": "unit-day", "unit_price": 29.25, "waste_percent": 0}], "xactimate_total": 1674.65}
+
+       95 |   await page.locator('#saveClaim').click();
+       96 |   await expect(page.locator('#claimStatus')).toHaveText('Claim details saved.');
+    >  97 |   expect(await page.evaluate(() => state.documents)).toBeNull();
+          |                                                      ^
+       98 |   await expect(page.locator('#documents')).toBeHidden();
+       99 |   expect(errors).toEqual([]);
+      100 | });
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M5K6VAE22HNRSCTAGMDNKJ0F/tests/browser/zz-repro-old.spec.js:97:54
+
+    Error Context: test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium-repeat1/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium-repeat1/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium-repeat1/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document 
+
+    Error: expect(received).toBeNull()
+
+    Received: {"adr_estimate": {"customer_name": "", "date": "10-22-2026", "disclaimers": ["NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."], "findings": ["The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.", "Technician observations: Room 1, category 2, 80 square feet of drywall. Use 3 fans. Synthetic Mutual claim number CLM 0042 77."], "lead_notice_required": false, "property_address": "Synthetic claim property", "proposed_cost": 1790.25, "proposed_cost_low": 1674.65, "recommendations": ["Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.", "Room 1: category 2 finished/drywall/trim demolition", "Axial air movers", "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."]}, "ai_suggestions": ["Document drying progress."], "ai_summary": "<img src=x onerror=\"window.reviewInjected=true\"> Confirmed scope summary.", "claim": {"adjuster_email": "", "adjuster_name": "Avery Quinn", "adjuster_phone": "", "carrier": "", "claim_number": "CLM-0042-77", "date_of_loss": "2026-10-12", "deductible": "", "loss_cause": "Supply line under kitchen sink", "policy_number": ""}, "company_identity": {"address": "3300 Patton Way · Bakersfield, CA 93308", "company_id": "adr", "email": "", "license": "950983", "logo_data_url": "", "name": "Alert Disaster Restoration", "phone": "(661) 426-2151", "signoff": "Matthew Myers", "version": 1, "water_heater_notice": ""}, "company_setup_missing": [], "compliance_notes": ["The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.", "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."], "iicrc_defense_letter": "Alert Disaster Restoration · 3300 Patton Way · Bakersfield, CA 93308 · (661) 426-2151 · CSLB #950983·
+    TO: Avery Quinn, Adjuster·
+    RE: Remediation scope for Synthetic claim property
+    Claim number: CLM-0042-77
+    Date of loss: 10-12-2026
+    Cause and source of loss: Supply line under kitchen sink·
+    This scope describes proposed work; completion has not been recorded.·
+    The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.·
+    The home was built in 1998. Therefore, no lead or asbestos testing is required prior to the start of work.
+    Technician observations: Room 1, category 2, 80 square feet of drywall. Use 3 fans. Synthetic Mutual claim number CLM 0042 77.·
+    Scope:
+    Per IICRC and EPA protocols, Alert Disaster Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.
+    Room 1: category 2 finished/drywall/trim demolition
+    Axial air movers
+    If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.·
+    NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.
+    If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.
+    Estimate is valid for 30 days from date of inspection.·
+    Itemized charges at base rates: $1,674.65. Customer estimate range: $1,674.65 to $1,790.25. The range applies the estimating sheet labor/material allowance to the priced scope.·
+    Sincerely,
+    Matthew Myers
+    Alert Disaster Restoration", "photo_audit_log": [], "schema_version": 3, "signable": true, "unpriced_work": [], "xactimate_scope": [{"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 1, "total": 133.95, "unit": "EA", "unit_price": 133.95, "waste_percent": 0}, {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 628.85, "unit": "HR", "unit_price": 47.46, "waste_percent": 0}, {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 1, "total": 159.53, "unit": "load", "unit_price": 159.53, "waste_percent": 0}, {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1, "total": 74.75, "unit": "day", "unit_price": 74.75, "waste_percent": 0}, {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1, "total": 183.12, "unit": "EA", "unit_price": 183.12, "waste_percent": 0}, {"code": "ADR-DEMO", "description": "Room 1: category 2 finished/drywall/trim demolition", "quantity": 80, "total": 231.2, "unit": "SF", "unit_price": 2.89, "waste_percent": 0}, {"code": "ADR-FAN", "description": "Axial air movers", "quantity": 9, "total": 263.25, "unit": "unit-day", "unit_price": 29.25, "waste_percent": 0}], "xactimate_total": 1674.65}
+
+       95 |   await page.locator('#saveClaim').click();
+       96 |   await expect(page.locator('#claimStatus')).toHaveText('Claim details saved.');
+    >  97 |   expect(await page.evaluate(() => state.documents)).toBeNull();
+          |                                                      ^
+       98 |   await expect(page.locator('#documents')).toBeHidden();
+       99 |   expect(errors).toEqual([]);
+      100 | });
+        at /home/nnorm/.no-mistakes/worktrees/e9831d793e9a/01M5K6VAE22HNRSCTAGMDNKJ0F/tests/browser/zz-repro-old.spec.js:97:54
+
+    Error Context: test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium-repeat2/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium-repeat2/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/zz-repro-old-REPRO-OLD-wal-6e10e-job-and-head-every-document-chromium-repeat2/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3 failed
+    [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document 
+    [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document 
+    [chromium] › tests/browser/zz-repro-old.spec.js:32:1 › REPRO-OLD walkthrough claim details fill with Undo, save to the job and head every document 
+  3 passed (19.4s)
