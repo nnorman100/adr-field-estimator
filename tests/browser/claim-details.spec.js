@@ -93,7 +93,7 @@ test('walkthrough claim details fill with Undo, save to the job and head every d
   await page.locator('#claimDeductible').fill('$1,000');
   await page.locator('#saveClaim').click();
   await expect(page.locator('#claimStatus')).toHaveText('Claim details saved.');
-  expect(await page.evaluate(() => state.documents)).toBeNull();
+  await expect.poll(() => page.evaluate(() => state.documents)).toBeNull();
   await expect(page.locator('#documents')).toBeHidden();
   expect(errors).toEqual([]);
 });
