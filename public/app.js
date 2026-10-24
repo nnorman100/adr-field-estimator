@@ -856,7 +856,7 @@ async function doSync() {
         await reconcile();
       }
     }
-    for (const photo of state.draft.photos.filter((p) => !p.uploaded)) {
+    for (const photo of state.draft.photos.filter((p) => !p.uploaded && !locatingPhotos.has(p))) {
       const payload = {
         photo_id: photo.id,
         expected_revision: state.record.revision,
@@ -2301,13 +2301,13 @@ function renderPhotos() {
     ? verified.room + ' · ' + verified.ocr.meter_type + ': ' + verified.ocr.value
     : 'No reading verified.';
 }
+const locatingPhotos = new WeakSet();
 function addPhoto(blob) {
   const draft = state.draft;
   const capture = async () => {
     if (state.draft !== draft) throw Error('The inspection changed before capture completed.');
     if (!state.draft || state.signed || confirmedAuthorization)
       throw Error('Open a draft before capturing evidence.');
-    if (state.draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
     if (blob.size > 8 * 1024 * 1024)
       throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))
@@ -2315,6 +2315,7 @@ function addPhoto(blob) {
     const room = $('photoRoom').value;
     if (!room) throw Error('Add a room and choose its name before taking a photo.');
     // Asked now, beside the capture time; the browser prompts the first time and works with no signal.
+    const captured_at = new Date().toISOString();
     const located = ADRCore.readLocation(navigator.geolocation);
     const bitmap = await createImageBitmap(blob);
     const width = bitmap.width,
@@ -2330,25 +2331,31 @@ function addPhoto(blob) {
     const photo = {
       id: newId(),
       room,
-      captured_at: new Date().toISOString(),
+      captured_at,
       data_url,
       width,
       height,
       ocr_status: 'pending',
       uploaded: false,
     };
-    state.draft.photos.push(photo);
+    if (state.draft !== draft) throw Error('The inspection changed before capture completed.');
+    if (draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
+    locatingPhotos.add(photo);
+    draft.photos.push(photo);
     state.shotPickerPhoto = photo.id;
     changed();
     renderPhotos();
     await persist();
     photo.location = await located;
+    locatingPhotos.delete(photo);
     if (state.draft !== draft) return;
     changed();
     renderPhotos();
-    await doSync();
+    await persist();
   };
-  syncChain = syncChain.catch(() => {}).then(capture);
+  const prepared = capture();
+  prepared.catch(() => {});
+  syncChain = syncChain.catch(() => {}).then(() => prepared).then(doSync);
   return syncChain;
 }
 async function captureStill() {
