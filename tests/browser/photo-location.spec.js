@@ -138,42 +138,45 @@ test('a photo saved before location stamps reads No location recorded', async ({
   await expect(page.locator('#photoGallery')).toContainText('No location recorded');
 });
 
-
 for (const transition of ['new', 'restore']) {
-  test('a delayed location preserves the originating photo before ' + transition, async ({
-    page,
-    context,
-  }) => {
-    await open(page);
-    await context.setOffline(true);
-    const origin = await page.evaluate(() => {
-      navigator.geolocation.getCurrentPosition = (ok) => {
-        window.finishLocation = () =>
-          ok({ coords: { latitude: 35, longitude: -119, accuracy: 5 } });
-      };
-      return state.draft.inspection_id;
-    });
-    await addImage(page);
-    await expect.poll(() => page.evaluate(async () => {
-      const rows = await localDrafts();
-      return rows.some((row) => row.draft.photos.length === 1);
-    })).toBe(true);
-    await page.evaluate((kind) => {
-      window.photoTransitionDone = false;
-      window.photoTransition = (kind === 'new'
-        ? openNew()
-        : restoreDraft(state.draft.inspection_id)
-      ).then(() => { window.photoTransitionDone = true; });
-    }, transition);
-    expect(await page.evaluate(() => window.photoTransitionDone)).toBe(false);
-    await page.evaluate(() => window.finishLocation());
-    await page.evaluate(() => window.photoTransition);
-    await page.evaluate((id) => restoreDraft(id), origin);
-    await expect(page.locator('#photoGallery')).toContainText('source: device');
-    expect(await page.evaluate(() => state.draft.photos.length)).toBe(1);
-  });
+  test(
+    'a delayed location preserves the originating photo before ' + transition,
+    async ({ page, context }) => {
+      await open(page);
+      await context.setOffline(true);
+      const origin = await page.evaluate(() => {
+        navigator.geolocation.getCurrentPosition = (ok) => {
+          window.finishLocation = () =>
+            ok({ coords: { latitude: 35, longitude: -119, accuracy: 5 } });
+        };
+        return state.draft.inspection_id;
+      });
+      await addImage(page);
+      await expect
+        .poll(() =>
+          page.evaluate(async () => {
+            const rows = await localDrafts();
+            return rows.some((row) => row.draft.photos.length === 1);
+          }),
+        )
+        .toBe(true);
+      await page.evaluate((kind) => {
+        window.photoTransitionDone = false;
+        window.photoTransition = (
+          kind === 'new' ? openNew() : restoreDraft(state.draft.inspection_id)
+        ).then(() => {
+          window.photoTransitionDone = true;
+        });
+      }, transition);
+      expect(await page.evaluate(() => window.photoTransitionDone)).toBe(false);
+      await page.evaluate(() => window.finishLocation());
+      await page.evaluate(() => window.photoTransition);
+      await page.evaluate((id) => restoreDraft(id), origin);
+      await expect(page.locator('#photoGallery')).toContainText('source: device');
+      expect(await page.evaluate(() => state.draft.photos.length)).toBe(1);
+    },
+  );
 }
-
 
 test('forking a conflicted draft waits for the photo location before copying evidence', async ({
   page,
@@ -185,8 +188,7 @@ test('forking a conflicted draft waits for the photo location before copying evi
     state.conflict = true;
     document.getElementById('conflictActions').hidden = false;
     navigator.geolocation.getCurrentPosition = (ok) => {
-      window.finishLocation = () =>
-        ok({ coords: { latitude: 35, longitude: -119, accuracy: 5 } });
+      window.finishLocation = () => ok({ coords: { latitude: 35, longitude: -119, accuracy: 5 } });
     };
     return state.draft.inspection_id;
   });
@@ -214,7 +216,10 @@ test('an unavailable device fix saves an explicit missing location', async ({ pa
   await expect(page.locator('#photoAuditLog a')).toHaveCount(0);
 });
 
-test('new proposal includes approved privacy wording and signing freezes GPS and documents', async ({ page, context }) => {
+test('new proposal includes approved privacy wording and signing freezes GPS and documents', async ({
+  page,
+  context,
+}) => {
   await context.grantPermissions(['geolocation']);
   await context.setGeolocation(FIX);
   await open(page);
@@ -222,7 +227,9 @@ test('new proposal includes approved privacy wording and signing freezes GPS and
   await settled(page);
   await finish(page);
   await page.locator('[data-tab=proposal]').click();
-  await expect(page.locator('#proposalBody')).toContainText("Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log.");
+  await expect(page.locator('#proposalBody')).toContainText(
+    "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log.",
+  );
   await page.locator('#documentsConfirmed').check();
   const canvas = page.locator('#signCanvas');
   await canvas.scrollIntoViewIfNeeded();
@@ -233,19 +240,44 @@ test('new proposal includes approved privacy wording and signing freezes GPS and
   await page.mouse.up();
   await page.locator('#authorizeJob').click();
   await expect(page.locator('#saveStatus')).toHaveText('Signed');
-  const snapshot = await page.evaluate(() => ({ uid: sessionStorage.getItem('synthetic-uid'), id: state.draft.inspection_id, record: state.record }));
+  const snapshot = await page.evaluate(() => ({
+    uid: sessionStorage.getItem('synthetic-uid'),
+    id: state.draft.inspection_id,
+    record: state.record,
+  }));
   const headers = { Authorization: 'Bearer ' + snapshot.uid };
-  const before = await (await page.request.get('/api/inspections/' + snapshot.id, { headers })).json();
-  const response = await page.request.post('/api/inspections/' + snapshot.id + '/photos', { headers, data: {
-    expected_revision: before.revision, photo_id: 'c'.repeat(32), room: before.photos[0].room,
-    captured_at: '2026-10-24T12:00:00Z', data_url: await page.evaluate(() => (() => { const c = document.createElement('canvas'); c.width = 200; c.height = 300; c.getContext('2d').fillRect(0, 0, 100, 150); return c.toDataURL('image/png'); })()),
-    location: { source: 'device', latitude: 0, longitude: 0, accuracy_m: 1 },
-  }});
+  const before = await (
+    await page.request.get('/api/inspections/' + snapshot.id, { headers })
+  ).json();
+  const response = await page.request.post('/api/inspections/' + snapshot.id + '/photos', {
+    headers,
+    data: {
+      expected_revision: before.revision,
+      photo_id: 'c'.repeat(32),
+      room: before.photos[0].room,
+      captured_at: '2026-10-24T12:00:00Z',
+      data_url: await page.evaluate(() =>
+        (() => {
+          const c = document.createElement('canvas');
+          c.width = 200;
+          c.height = 300;
+          c.getContext('2d').fillRect(0, 0, 100, 150);
+          return c.toDataURL('image/png');
+        })(),
+      ),
+      location: { source: 'device', latitude: 0, longitude: 0, accuracy_m: 1 },
+    },
+  });
   expect(response.status(), await response.text()).toBe(409);
-  const after = await (await page.request.get('/api/inspections/' + snapshot.id, { headers })).json();
+  const after = await (
+    await page.request.get('/api/inspections/' + snapshot.id, { headers })
+  ).json();
   expect(after.photos).toEqual(before.photos);
   expect(after.audit.documents).toEqual(before.audit.documents);
   await page.locator('[data-tab=photos]').click();
   await expect(page.locator('#photoAuditLog')).toContainText('35.373292, -119.018712');
-  require('node:fs').writeFileSync(test.info().outputPath('signed-evidence.json'), JSON.stringify({ rejected_status: response.status(), before, after }, null, 2));
+  require('node:fs').writeFileSync(
+    test.info().outputPath('signed-evidence.json'),
+    JSON.stringify({ rejected_status: response.status(), before, after }, null, 2),
+  );
 });

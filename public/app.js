@@ -2361,7 +2361,10 @@ function addPhoto(blob) {
   };
   const prepared = capture();
   prepared.catch(() => {});
-  syncChain = syncChain.catch(() => {}).then(() => prepared).then(doSync);
+  syncChain = syncChain
+    .catch(() => {})
+    .then(() => prepared)
+    .then(doSync);
   return syncChain;
 }
 async function captureStill() {

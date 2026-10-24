@@ -2,15 +2,25 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 let resolveLocation;
-const location = new Promise((resolve) => { resolveLocation = resolve; });
+const location = new Promise((resolve) => {
+  resolveLocation = resolve;
+});
 const persisted = [];
 let room = 'Bathroom';
 let locationRequests = 0;
 let saveFailure = null;
 let releaseSync;
-const previousSync = new Promise((resolve) => { releaseSync = resolve; });
+const previousSync = new Promise((resolve) => {
+  releaseSync = resolve;
+});
 const context = {
-  ADRCore: { ...require('../public/core.js'), readLocation: () => { locationRequests++; return location; } },
+  ADRCore: {
+    ...require('../public/core.js'),
+    readLocation: () => {
+      locationRequests++;
+      return location;
+    },
+  },
   document: { getElementById: () => ({ value: room }), addEventListener() {} },
   navigator: {},
   location: { href: 'https://localhost/app' },
@@ -32,7 +42,8 @@ const context = {
 };
 context.window = context;
 vm.runInNewContext(
-  fs.readFileSync('public/app.js', 'utf8') + `
+  fs.readFileSync('public/app.js', 'utf8') +
+    `
     changed = () => {};
     renderPhotos = () => {};
     persist = async () => save(state.draft);
@@ -86,4 +97,7 @@ vm.runInNewContext(
   assert.equal(persisted.at(-1).inspection_id, 'retry');
   assert.equal(persisted.at(-1).photos[0].location.source, 'not_shared');
   console.log('PASS: capture preserves context and recovers location after a save failure');
-})().catch((error) => { console.error(error); process.exitCode = 1; });
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

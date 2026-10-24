@@ -508,20 +508,31 @@ def test_defense_letter_prints_the_sizing_check_only_when_available():
 @pytest.mark.parametrize('identity', [None, ADR_PROFILE, {'name': 'Other Company'}])
 @pytest.mark.parametrize('source', [None, 'not_shared', 'not_available', 'device'])
 def test_new_proposals_include_owner_approved_photo_privacy(year_built, identity, source):
-    photos = [{
-        'id': 'photo', 'room': 'Bathroom', 'ocr_status': 'no_meter',
-        'captured_at': '2026-10-24T12:00:00Z', 'width': 200, 'height': 300,
-    }]
+    photos = [
+        {
+            'id': 'photo',
+            'room': 'Bathroom',
+            'ocr_status': 'no_meter',
+            'captured_at': '2026-10-24T12:00:00Z',
+            'width': 200,
+            'height': 300,
+        }
+    ]
     if source is not None:
         photos[0]['location'] = {'source': source}
         if source == 'device':
             photos[0]['location'].update(latitude=35.0, longitude=-119.0, accuracy_m=5)
     docs = make_documents(
-        scoped(year_built=year_built), photos,
+        scoped(year_built=year_built),
+        photos,
         AIResult(summary='Reviewed', suggestions=[], unpriced_work=[]),
         {**ADR_PROFILE, **identity, 'company_id': 'synthetic-company', 'version': 1}
-        if identity else None,
+        if identity
+        else None,
     )
-    assert docs['adr_estimate']['disclaimers'].count(
-        "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log."
-    ) == 1
+    assert (
+        docs['adr_estimate']['disclaimers'].count(
+            "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log."
+        )
+        == 1
+    )
