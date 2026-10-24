@@ -55,6 +55,31 @@
     proposal.proposed_cost_low == null
       ? money(proposal.proposed_cost)
       : money(proposal.proposed_cost_low) + '–' + money(proposal.proposed_cost);
+  // Company jobs list rows are {id, kind: 'draft' | 'signed' | 'local', address, customer, claim,
+  // label, open}; a device-only local draft counts as a draft.
+  const JOB_TABS = [
+    ['all', 'All', () => true],
+    ['drafts', 'Drafts', (row) => row.kind !== 'signed'],
+    ['signed', 'Signed', (row) => row.kind === 'signed'],
+  ];
+  const filterJobs = (rows, { tab, query }) => {
+    const keep = JOB_TABS.find(([name]) => name === tab)[2],
+      text = query.trim().toLowerCase();
+    return rows.filter(
+      (row) =>
+        keep(row) &&
+        (!text ||
+          [row.address, row.customer, row.claim].some((v) =>
+            (v || '').toLowerCase().includes(text),
+          )),
+    );
+  };
+  // `more` marks the kinds with older pages not loaded yet, so a count never reads as complete.
+  const jobTabs = (rows, more = {}) =>
+    JOB_TABS.map(([tab, name, keep]) => {
+      const partial = tab === 'all' ? more.drafts || more.signed : more[tab];
+      return { tab, label: name + ' (' + rows.filter(keep).length + (partial ? '+' : '') + ')' };
+    });
   const pcmToFloat = (bytes) => {
     if (bytes.byteLength % 2) throw Error('Invalid PCM');
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -715,6 +740,8 @@
     stable,
     money,
     estimateLabel,
+    filterJobs,
+    jobTabs,
     pcmToFloat,
     aspect,
     scopeJobLabels,

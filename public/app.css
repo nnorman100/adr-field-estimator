@@ -2066,6 +2066,23 @@ footer {
   white-space: pre-line;
   width: 100%;
 }
+.job-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.job-tabs button {
+  padding: 0.5rem;
+  font-size: 0.9375rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.job-tabs .selected {
+  border-color: var(--navy);
+  background: var(--page);
+  box-shadow: inset 0 0 0 1px var(--navy);
+}
 .dashboard-card .status {
   display: inline-block;
   margin: 0.5rem 0;
