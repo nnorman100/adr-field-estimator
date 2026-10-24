@@ -3,7 +3,7 @@
 import re
 from datetime import date, datetime, timedelta
 from typing import Literal, Annotated
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 try:
     from .shot_list import known_shot
@@ -180,11 +180,33 @@ class HomeownerSignature(StrictModel):
     signature_png: str = Field(min_length=1, max_length=3000000)
 
 
+class PhotoLocation(StrictModel):
+    """Where the phone said it was when the photo was taken. Only a 'device' fix carries
+    coordinates; a refused or failed fix is recorded as such, never guessed or filled in later."""
+
+    source: Literal['device', 'not_available', 'not_shared']
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    # Horizontal accuracy radius in meters, as the browser reports it.
+    accuracy_m: float | None = Field(default=None, ge=0, le=1000000)
+
+    @model_validator(mode='after')
+    def fix_matches_source(self):
+        fix = (self.latitude, self.longitude, self.accuracy_m)
+        if self.source == 'device' and None in fix:
+            raise ValueError('A device location needs latitude, longitude and accuracy.')
+        if self.source != 'device' and any(value is not None for value in fix):
+            raise ValueError('A location that was not recorded carries no coordinates.')
+        return self
+
+
 class PhotoUpload(RevisionRequest):
     photo_id: str = Field(pattern=r'^[a-f0-9]{32}$')
     room: str = Field(min_length=1, max_length=100)
     captured_at: datetime
     data_url: str = Field(min_length=1, max_length=12000000)
+    # Absent from older clients and photos saved before location stamps: "No location recorded".
+    location: PhotoLocation | None = None
 
 
 class PhotoRoomUpdate(RevisionRequest):
@@ -295,6 +317,7 @@ class PhotoLog(StrictModel):
     height: int
     ocr_status: Literal['pending', 'verified', 'no_meter', 'failed']
     ocr: OcrResult | None
+    location: PhotoLocation | None = None
 
 
 class LineItem(StrictModel):

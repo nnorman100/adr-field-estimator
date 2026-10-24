@@ -734,7 +734,65 @@
       .filter(Boolean)
       .join(', ');
   }
+  // Where a photo was taken, from navigator.geolocation. Never rejects and never guesses: a refusal or
+  // a failure is recorded as such, and nothing waits longer than the timeout for a fix.
+  function readLocation(geolocation, timeout = 8000) {
+    return new Promise((resolve) => {
+      if (!geolocation) return resolve({ source: 'not_available' });
+      // The browser's own timeout starts only after the permission prompt is answered.
+      const giveUp = setTimeout(() => resolve({ source: 'not_available' }), timeout + 2000),
+        done = (location) => (clearTimeout(giveUp), resolve(location));
+      try {
+        geolocation.getCurrentPosition(
+          ({ coords }) => {
+            const { latitude, longitude, accuracy } = coords || {};
+            done(
+              [latitude, longitude, accuracy].every(Number.isFinite)
+                ? {
+                    source: 'device',
+                    latitude: Math.round(latitude * 1e6) / 1e6,
+                    longitude: Math.round(longitude * 1e6) / 1e6,
+                    accuracy_m: Math.round(accuracy * 10) / 10,
+                  }
+                : { source: 'not_available' },
+            );
+          },
+          (error) => done({ source: error?.code === 1 ? 'not_shared' : 'not_available' }),
+          { enableHighAccuracy: true, timeout, maximumAge: 30000 },
+        );
+      } catch {
+        done({ source: 'not_available' });
+      }
+    });
+  }
+  // The photo log wording; a photo saved before location stamps has no location at all.
+  function locationLabel(location) {
+    if (!location) return 'No location recorded';
+    if (location.source === 'device')
+      return (
+        'Location: ' +
+        location.latitude.toFixed(6) +
+        ', ' +
+        location.longitude.toFixed(6) +
+        ' (±' +
+        Math.round(location.accuracy_m) +
+        ' m) · source: device'
+      );
+    return location.source === 'not_shared' ? 'Location not shared' : 'Location not available';
+  }
+  // A keyless Google Maps link, only for a device fix.
+  function locationUrl(location) {
+    return location?.source === 'device'
+      ? 'https://www.google.com/maps/search/?api=1&query=' +
+          location.latitude.toFixed(6) +
+          ',' +
+          location.longitude.toFixed(6)
+      : '';
+  }
   const api = {
+    readLocation,
+    locationLabel,
+    locationUrl,
     emptyData,
     signedDraftData,
     stable,

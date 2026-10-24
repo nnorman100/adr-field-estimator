@@ -856,12 +856,13 @@ async function doSync() {
         await reconcile();
       }
     }
-    for (const photo of state.draft.photos.filter((p) => !p.uploaded)) {
+    for (const photo of state.draft.photos.filter((p) => !p.uploaded && !locatingPhotos.has(p))) {
       const payload = {
         photo_id: photo.id,
         expected_revision: state.record.revision,
         room: photo.room,
         captured_at: photo.captured_at,
+        ...(photo.location && { location: photo.location }),
         data_url: photo.data_url,
       };
       const upload = () => jsonApi('/api/inspections/' + id + '/photos', 'POST', payload);
@@ -1028,6 +1029,7 @@ async function drainQueue() {
             expected_revision: record.revision,
             room: photo.room,
             captured_at: photo.captured_at,
+            ...(photo.location && { location: photo.location }),
             data_url: bytes.get(photo.id),
           });
         }
@@ -2233,6 +2235,7 @@ function photoCard(p) {
     node('strong', p.room),
     node('div', new Date(p.captured_at).toLocaleString()),
     status,
+    node('div', ADRCore.locationLabel(p.location)),
   );
   if (p.ocr_status === 'verified')
     caption.append(node('div', p.ocr.meter_type + ': ' + p.ocr.value));
@@ -2298,41 +2301,71 @@ function renderPhotos() {
     ? verified.room + ' · ' + verified.ocr.meter_type + ': ' + verified.ocr.value
     : 'No reading verified.';
 }
-async function addPhoto(blob) {
-  if (!state.draft || state.signed || confirmedAuthorization)
-    throw Error('Open a draft before capturing evidence.');
-  if (state.draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
-  if (blob.size > 8 * 1024 * 1024)
-    throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))
-    throw Error('Use JPEG, PNG or WebP; convert unsupported camera formats first.');
-  const room = $('photoRoom').value;
-  if (!room) throw Error('Add a room and choose its name before taking a photo.');
-  const bitmap = await createImageBitmap(blob);
-  const width = bitmap.width,
-    height = bitmap.height;
-  bitmap.close();
-  if (width * height > 60000000) throw Error('Photo exceeds 60 megapixels.');
-  const data_url = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(Error('Photo could not be read.'));
-    reader.readAsDataURL(blob);
-  });
-  state.draft.photos.push({
-    id: newId(),
-    room,
-    captured_at: new Date().toISOString(),
-    data_url,
-    width,
-    height,
-    ocr_status: 'pending',
-    uploaded: false,
-  });
-  state.shotPickerPhoto = state.draft.photos.at(-1).id;
-  changed();
-  renderPhotos();
-  await syncDraft();
+const locatingPhotos = new WeakSet();
+function addPhoto(blob) {
+  const draft = state.draft;
+  const capture = async () => {
+    if (state.draft !== draft) throw Error('The inspection changed before capture completed.');
+    if (!state.draft || state.signed || confirmedAuthorization)
+      throw Error('Open a draft before capturing evidence.');
+    if (blob.size > 8 * 1024 * 1024)
+      throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))
+      throw Error('Use JPEG, PNG or WebP; convert unsupported camera formats first.');
+    const room = $('photoRoom').value;
+    if (!room) throw Error('Add a room and choose its name before taking a photo.');
+    // Asked now, beside the capture time; the browser prompts the first time and works with no signal.
+    const captured_at = new Date().toISOString();
+    const located = ADRCore.readLocation(navigator.geolocation);
+    const bitmap = await createImageBitmap(blob);
+    const width = bitmap.width,
+      height = bitmap.height;
+    bitmap.close();
+    if (width * height > 60000000) throw Error('Photo exceeds 60 megapixels.');
+    const data_url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(Error('Photo could not be read.'));
+      reader.readAsDataURL(blob);
+    });
+    const photo = {
+      id: newId(),
+      room,
+      captured_at,
+      data_url,
+      width,
+      height,
+      ocr_status: 'pending',
+      uploaded: false,
+    };
+    if (state.draft !== draft) throw Error('The inspection changed before capture completed.');
+    if (draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
+    locatingPhotos.add(photo);
+    draft.photos.push(photo);
+    state.shotPickerPhoto = photo.id;
+    changed();
+    renderPhotos();
+    try {
+      await persist();
+    } finally {
+      try {
+        photo.location = await located;
+      } finally {
+        locatingPhotos.delete(photo);
+      }
+    }
+    if (state.draft !== draft) return;
+    changed();
+    renderPhotos();
+    await persist();
+  };
+  const prepared = capture();
+  prepared.catch(() => {});
+  syncChain = syncChain
+    .catch(() => {})
+    .then(() => prepared)
+    .then(doSync);
+  return syncChain;
 }
 async function captureStill() {
   if (!state.media) {
@@ -2671,6 +2704,7 @@ async function showJobs() {
 }
 async function restoreSigned(id) {
   const uid = state.user?.uid;
+  await syncChain.catch(() => {});
   await stopWalk();
   await persist();
   const record = await jsonApi('/api/authorizations/' + encodeURIComponent(id));
@@ -4626,6 +4660,7 @@ async function initialize() {
     .querySelectorAll('[data-tab]')
     .forEach((tab) => tab.addEventListener('click', () => selectDocument(tab.dataset.tab)));
   click('restoreRemote', async () => {
+    await syncChain.catch(() => {});
     const record = await jsonApi('/api/inspections/' + state.draft.inspection_id);
     state.draft = {
       inspection_id: record.inspection_id,
@@ -4643,6 +4678,7 @@ async function initialize() {
     await loadPhotoUrls('/api/inspections/' + record.inspection_id + '/photos/');
   });
   click('forkLocal', async () => {
+    await syncChain.catch(() => {});
     await loadPhotoUrls('/api/inspections/' + state.draft.inspection_id + '/photos/');
     const data = structuredClone(state.draft.data),
       photos = state.draft.photos.map((p) => ({

@@ -1,7 +1,7 @@
 /* The four claim documents, built from text nodes only; shared by the app and the homeowner signing page. */
 'use strict';
 (function (root) {
-  const { money, estimateLabel, claimLines } = root.ADRCore;
+  const { money, estimateLabel, claimLines, locationLabel, locationUrl } = root.ADRCore;
   const $ = (id) => document.getElementById(id);
   function node(tag, text, className) {
     const el = document.createElement(tag);
@@ -128,6 +128,15 @@
           ? 'Verified meter: ' + photo.ocr.meter_type + ' · ' + photo.ocr.value
           : 'Unverified: ' + photo.ocr_status.replaceAll('_', ' '),
       ]);
+      detail.append(node('p', locationLabel(photo.location)));
+      const map = locationUrl(photo.location);
+      if (map) {
+        const link = node('a', 'Open in Google Maps');
+        link.href = map;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        detail.lastChild.append(' · ', link);
+      }
       entry.append(img, detail);
       $('photoAuditLog').append(entry);
     }
