@@ -2345,9 +2345,15 @@ function addPhoto(blob) {
     state.shotPickerPhoto = photo.id;
     changed();
     renderPhotos();
-    await persist();
-    photo.location = await located;
-    locatingPhotos.delete(photo);
+    try {
+      await persist();
+    } finally {
+      try {
+        photo.location = await located;
+      } finally {
+        locatingPhotos.delete(photo);
+      }
+    }
     if (state.draft !== draft) return;
     changed();
     renderPhotos();
