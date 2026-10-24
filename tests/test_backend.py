@@ -143,6 +143,16 @@ def test_audit_waits_for_pending_ocr_and_rejects_real_input_changes(context):
     assert response.status_code == 409 and 'changed while waiting' in response.json()['detail']
 
 
+def test_owner_less_job_lists_carry_empty_customer_and_claim(context):
+    client, store = context
+    record = audit(client, inspect(client))
+    assert client.post('/api/authorize', json=sign_payload(record)).status_code == 200
+    (draft,) = client.get('/api/inspections').json()['inspections']
+    (signed,) = client.get('/api/authorizations').json()['authorizations']
+    for row in (draft, signed):
+        assert (row['customer_name'], row['claim_number']) == ('', '')
+
+
 def test_authenticated_durable_flow_and_immutable_retry(context):
     client, store = context
     record = audit(client, inspect(client))
