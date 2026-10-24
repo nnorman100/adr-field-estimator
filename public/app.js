@@ -862,6 +862,7 @@ async function doSync() {
         expected_revision: state.record.revision,
         room: photo.room,
         captured_at: photo.captured_at,
+        ...(photo.location && { location: photo.location }),
         data_url: photo.data_url,
       };
       const upload = () => jsonApi('/api/inspections/' + id + '/photos', 'POST', payload);
@@ -1028,6 +1029,7 @@ async function drainQueue() {
             expected_revision: record.revision,
             room: photo.room,
             captured_at: photo.captured_at,
+            ...(photo.location && { location: photo.location }),
             data_url: bytes.get(photo.id),
           });
         }
@@ -2233,6 +2235,7 @@ function photoCard(p) {
     node('strong', p.room),
     node('div', new Date(p.captured_at).toLocaleString()),
     status,
+    node('div', ADRCore.locationLabel(p.location)),
   );
   if (p.ocr_status === 'verified')
     caption.append(node('div', p.ocr.meter_type + ': ' + p.ocr.value));
@@ -2308,6 +2311,8 @@ async function addPhoto(blob) {
     throw Error('Use JPEG, PNG or WebP; convert unsupported camera formats first.');
   const room = $('photoRoom').value;
   if (!room) throw Error('Add a room and choose its name before taking a photo.');
+  // Asked now, beside the capture time; the browser prompts the first time and works with no signal.
+  const located = ADRCore.readLocation(navigator.geolocation);
   const bitmap = await createImageBitmap(blob);
   const width = bitmap.width,
     height = bitmap.height;
@@ -2323,6 +2328,7 @@ async function addPhoto(blob) {
     id: newId(),
     room,
     captured_at: new Date().toISOString(),
+    location: await located,
     data_url,
     width,
     height,

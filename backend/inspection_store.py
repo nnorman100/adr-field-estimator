@@ -232,6 +232,7 @@ class InspectionStore(JobStore):
                 existing['file']['sha256'] != digest
                 or existing['room'] != upload['room']
                 or existing['captured_at'] != upload['captured_at']
+                or existing.get('location') != upload.get('location')
             ):
                 raise Conflict('This photo ID already represents different evidence.')
             self._access(uid, record, 'photos')
@@ -255,6 +256,9 @@ class InspectionStore(JobStore):
             ocr=None,
             file=dict(path=path, content_type=mime, sha256=digest),
         )
+        # Older clients send none; the key stays absent so the photo reads as having no stamp.
+        if upload.get('location'):
+            photo['location'] = {k: v for k, v in upload['location'].items() if v is not None}
         checked_metadata({**record, 'photos': record['photos'] + [photo]})
         blob = self.bucket.blob(path)
         blob.upload_from_string(raw, content_type=mime, if_generation_match=0)

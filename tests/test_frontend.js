@@ -1020,3 +1020,71 @@ console.log(
   ]);
   console.log('PASS: jobs list tabs, counts and search cover drafts, local drafts and signed jobs');
 }
+{
+  const fix = { source: 'device', latitude: 35.373292, longitude: -119.018712, accuracy_m: 12.5 };
+  assert.equal(
+    core.locationLabel(fix),
+    'Location: 35.373292, -119.018712 (±13 m) · source: device',
+  );
+  assert.equal(
+    core.locationUrl(fix),
+    'https://www.google.com/maps/search/?api=1&query=35.373292,-119.018712',
+  );
+  // Missing fixes are shown as missing, with no link; photos from before location stamps say so.
+  assert.equal(core.locationLabel({ source: 'not_shared' }), 'Location not shared');
+  assert.equal(core.locationLabel({ source: 'not_available' }), 'Location not available');
+  assert.equal(core.locationLabel(undefined), 'No location recorded');
+  assert.equal(core.locationLabel(null), 'No location recorded');
+  for (const none of [{ source: 'not_shared' }, { source: 'not_available' }, undefined])
+    assert.equal(core.locationUrl(none), '');
+
+  const asking = (answer, options = []) => ({
+    getCurrentPosition: (ok, fail, opts) => (options.push(opts), answer(ok, fail)),
+  });
+  (async () => {
+    const seen = [];
+    assert.deepEqual(
+      await core.readLocation(
+        asking(
+          (ok) =>
+            ok({ coords: { latitude: 35.37329249, longitude: -119.0187124, accuracy: 12.46 } }),
+          seen,
+        ),
+      ),
+      { source: 'device', latitude: 35.373292, longitude: -119.018712, accuracy_m: 12.5 },
+    );
+    assert.equal(seen[0].enableHighAccuracy, true);
+    assert.deepEqual(await core.readLocation(asking((ok, fail) => fail({ code: 1 }))), {
+      source: 'not_shared',
+    });
+    for (const code of [2, 3, undefined])
+      assert.deepEqual(await core.readLocation(asking((ok, fail) => fail({ code }))), {
+        source: 'not_available',
+      });
+    assert.deepEqual(await core.readLocation(undefined), { source: 'not_available' });
+    assert.deepEqual(
+      await core.readLocation(
+        asking(() => {
+          throw Error('blocked by policy');
+        }),
+      ),
+      { source: 'not_available' },
+    );
+    assert.deepEqual(
+      await core.readLocation(asking((ok) => ok({ coords: { latitude: NaN, longitude: 0 } }))),
+      { source: 'not_available' },
+    );
+    // A prompt nobody answers cannot hold the photo forever.
+    assert.deepEqual(
+      await core.readLocation(
+        asking(() => {}),
+        10,
+      ),
+      { source: 'not_available' },
+    );
+    console.log('PASS: photo locations are read, labeled and linked without guessing');
+  })().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

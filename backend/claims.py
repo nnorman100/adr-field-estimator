@@ -390,7 +390,16 @@ def make_documents(
         photo_audit_log=[
             {
                 k: p.get(k)
-                for k in ('id', 'room', 'captured_at', 'width', 'height', 'ocr_status', 'ocr')
+                for k in (
+                    'id',
+                    'room',
+                    'captured_at',
+                    'width',
+                    'height',
+                    'ocr_status',
+                    'ocr',
+                    'location',
+                )
             }
             for p in photos
         ],
