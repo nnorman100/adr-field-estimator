@@ -3,6 +3,9 @@ const { saveDraft, checkScope } = require('./actions');
 
 // Photo location stamps against the synthetic backend; the position is emulated, not a phone's GPS.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, serviceWorkers: 'block' });
+test.afterEach(async ({ page }, info) => {
+  await page.screenshot({ path: info.outputPath('photo-location-full-page.png'), fullPage: true });
+});
 
 const FIX = { latitude: 35.373292, longitude: -119.018712, accuracy: 12 };
 async function open(page) {
@@ -196,4 +199,53 @@ test('forking a conflicted draft waits for the photo location before copying evi
   expect(await page.evaluate(() => state.draft.photos.map((photo) => photo.location))).toEqual([
     { source: 'device', latitude: 35, longitude: -119, accuracy_m: 5 },
   ]);
+});
+
+test('an unavailable device fix saves an explicit missing location', async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    navigator.geolocation.getCurrentPosition = (ok, fail) => fail({ code: 2 });
+  });
+  await addImage(page);
+  await expect(page.locator('#photoGallery')).toContainText('Location not available');
+  expect(await settled(page)).toEqual([{ source: 'not_available' }]);
+  await finish(page);
+  await expect(page.locator('#photoAuditLog')).toContainText('Location not available');
+  await expect(page.locator('#photoAuditLog a')).toHaveCount(0);
+});
+
+test('new proposal includes approved privacy wording and signing freezes GPS and documents', async ({ page, context }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation(FIX);
+  await open(page);
+  await addImage(page);
+  await settled(page);
+  await finish(page);
+  await page.locator('[data-tab=proposal]').click();
+  await expect(page.locator('#proposalBody')).toContainText("Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log.");
+  await page.locator('#documentsConfirmed').check();
+  const canvas = page.locator('#signCanvas');
+  await canvas.scrollIntoViewIfNeeded();
+  const rect = await canvas.boundingBox();
+  await page.mouse.move(rect.x + 20, rect.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + 150, rect.y + 70, { steps: 8 });
+  await page.mouse.up();
+  await page.locator('#authorizeJob').click();
+  await expect(page.locator('#saveStatus')).toHaveText('Signed');
+  const snapshot = await page.evaluate(() => ({ uid: sessionStorage.getItem('synthetic-uid'), id: state.draft.inspection_id, record: state.record }));
+  const headers = { Authorization: 'Bearer ' + snapshot.uid };
+  const before = await (await page.request.get('/api/inspections/' + snapshot.id, { headers })).json();
+  const response = await page.request.post('/api/inspections/' + snapshot.id + '/photos', { headers, data: {
+    expected_revision: before.revision, photo_id: 'c'.repeat(32), room: before.photos[0].room,
+    captured_at: '2026-10-24T12:00:00Z', data_url: await page.evaluate(() => (() => { const c = document.createElement('canvas'); c.width = 200; c.height = 300; c.getContext('2d').fillRect(0, 0, 100, 150); return c.toDataURL('image/png'); })()),
+    location: { source: 'device', latitude: 0, longitude: 0, accuracy_m: 1 },
+  }});
+  expect(response.status(), await response.text()).toBe(409);
+  const after = await (await page.request.get('/api/inspections/' + snapshot.id, { headers })).json();
+  expect(after.photos).toEqual(before.photos);
+  expect(after.audit.documents).toEqual(before.audit.documents);
+  await page.locator('[data-tab=photos]').click();
+  await expect(page.locator('#photoAuditLog')).toContainText('35.373292, -119.018712');
+  require('node:fs').writeFileSync(test.info().outputPath('signed-evidence.json'), JSON.stringify({ rejected_status: response.status(), before, after }, null, 2));
 });
