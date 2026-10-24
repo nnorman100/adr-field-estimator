@@ -2301,44 +2301,55 @@ function renderPhotos() {
     ? verified.room + ' · ' + verified.ocr.meter_type + ': ' + verified.ocr.value
     : 'No reading verified.';
 }
-async function addPhoto(blob) {
-  if (!state.draft || state.signed || confirmedAuthorization)
-    throw Error('Open a draft before capturing evidence.');
-  if (state.draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
-  if (blob.size > 8 * 1024 * 1024)
-    throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))
-    throw Error('Use JPEG, PNG or WebP; convert unsupported camera formats first.');
-  const room = $('photoRoom').value;
-  if (!room) throw Error('Add a room and choose its name before taking a photo.');
-  // Asked now, beside the capture time; the browser prompts the first time and works with no signal.
-  const located = ADRCore.readLocation(navigator.geolocation);
-  const bitmap = await createImageBitmap(blob);
-  const width = bitmap.width,
-    height = bitmap.height;
-  bitmap.close();
-  if (width * height > 60000000) throw Error('Photo exceeds 60 megapixels.');
-  const data_url = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(Error('Photo could not be read.'));
-    reader.readAsDataURL(blob);
-  });
-  state.draft.photos.push({
-    id: newId(),
-    room,
-    captured_at: new Date().toISOString(),
-    location: await located,
-    data_url,
-    width,
-    height,
-    ocr_status: 'pending',
-    uploaded: false,
-  });
-  state.shotPickerPhoto = state.draft.photos.at(-1).id;
-  changed();
-  renderPhotos();
-  await syncDraft();
+function addPhoto(blob) {
+  const draft = state.draft;
+  const capture = async () => {
+    if (state.draft !== draft) throw Error('The inspection changed before capture completed.');
+    if (!state.draft || state.signed || confirmedAuthorization)
+      throw Error('Open a draft before capturing evidence.');
+    if (state.draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
+    if (blob.size > 8 * 1024 * 1024)
+      throw Error('Photo exceeds 8 MB. Choose a smaller JPEG, PNG or WebP.');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type))
+      throw Error('Use JPEG, PNG or WebP; convert unsupported camera formats first.');
+    const room = $('photoRoom').value;
+    if (!room) throw Error('Add a room and choose its name before taking a photo.');
+    // Asked now, beside the capture time; the browser prompts the first time and works with no signal.
+    const located = ADRCore.readLocation(navigator.geolocation);
+    const bitmap = await createImageBitmap(blob);
+    const width = bitmap.width,
+      height = bitmap.height;
+    bitmap.close();
+    if (width * height > 60000000) throw Error('Photo exceeds 60 megapixels.');
+    const data_url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(Error('Photo could not be read.'));
+      reader.readAsDataURL(blob);
+    });
+    const photo = {
+      id: newId(),
+      room,
+      captured_at: new Date().toISOString(),
+      data_url,
+      width,
+      height,
+      ocr_status: 'pending',
+      uploaded: false,
+    };
+    state.draft.photos.push(photo);
+    state.shotPickerPhoto = photo.id;
+    changed();
+    renderPhotos();
+    await persist();
+    photo.location = await located;
+    if (state.draft !== draft) return;
+    changed();
+    renderPhotos();
+    await doSync();
+  };
+  syncChain = syncChain.catch(() => {}).then(capture);
+  return syncChain;
 }
 async function captureStill() {
   if (!state.media) {
@@ -2677,6 +2688,7 @@ async function showJobs() {
 }
 async function restoreSigned(id) {
   const uid = state.user?.uid;
+  await syncChain.catch(() => {});
   await stopWalk();
   await persist();
   const record = await jsonApi('/api/authorizations/' + encodeURIComponent(id));

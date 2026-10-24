@@ -134,3 +134,39 @@ test('a photo saved before location stamps reads No location recorded', async ({
   await page.locator('.task-nav [data-task="walkthrough"]').click();
   await expect(page.locator('#photoGallery')).toContainText('No location recorded');
 });
+
+
+for (const transition of ['new', 'restore']) {
+  test('a delayed location preserves the originating photo before ' + transition, async ({
+    page,
+    context,
+  }) => {
+    await open(page);
+    await context.setOffline(true);
+    const origin = await page.evaluate(() => {
+      navigator.geolocation.getCurrentPosition = (ok) => {
+        window.finishLocation = () =>
+          ok({ coords: { latitude: 35, longitude: -119, accuracy: 5 } });
+      };
+      return state.draft.inspection_id;
+    });
+    await addImage(page);
+    await expect.poll(() => page.evaluate(async () => {
+      const rows = await localDrafts();
+      return rows.some((row) => row.draft.photos.length === 1);
+    })).toBe(true);
+    await page.evaluate((kind) => {
+      window.photoTransitionDone = false;
+      window.photoTransition = (kind === 'new'
+        ? openNew()
+        : restoreDraft(state.draft.inspection_id)
+      ).then(() => { window.photoTransitionDone = true; });
+    }, transition);
+    expect(await page.evaluate(() => window.photoTransitionDone)).toBe(false);
+    await page.evaluate(() => window.finishLocation());
+    await page.evaluate(() => window.photoTransition);
+    await page.evaluate((id) => restoreDraft(id), origin);
+    await expect(page.locator('#photoGallery')).toContainText('source: device');
+    expect(await page.evaluate(() => state.draft.photos.length)).toBe(1);
+  });
+}

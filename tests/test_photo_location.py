@@ -111,3 +111,14 @@ def test_coordinates_never_reach_the_logs(context, capsys, caplog):
     output = captured.out + captured.err + caplog.text
     for text in ('35.373292', '-119.018712', '35.37', '119.01'):
         assert text not in output
+
+
+@pytest.mark.parametrize('source', ['not_shared', 'not_available'])
+def test_identical_missing_location_upload_retries_are_idempotent(context, source):
+    client, _ = context
+    initial = inspect(client)
+    first = upload(client, initial, {'source': source})
+    assert first.status_code == 200, first.text
+    retry = upload(client, initial, {'source': source})
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == first.json()
