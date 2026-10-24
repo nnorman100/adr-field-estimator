@@ -1658,6 +1658,35 @@ def test_smtp_sends_the_resend_message_over_starttls_with_a_stable_message_id(sm
     assert message_parts(message) == [sent[0]['text'] + '\n', sent[0]['html'] + '\n']
 
 
+def test_invitations_keep_their_headers_and_idempotency_key_on_the_shared_sender(smtp, monkeypatch):
+    """Guards the invitation path through the sender it shares with document delivery."""
+    client, store, accounts, sent, writes, connections, plan, sleeps = smtp
+    monkeypatch.setattr(workspaces, 'password_setup_link', lambda email: None)
+    requests = []
+    original = workspaces.urllib.request.urlopen
+    monkeypatch.setattr(
+        workspaces.urllib.request,
+        'urlopen',
+        lambda request, timeout: requests.append(request) or original(request, timeout),
+    )
+    company = {'profile': {'name': 'Owner Chosen Name', 'email': 'office@example.invalid'}}
+    workspaces.send_invitation(direct_invite(), company)
+    monkeypatch.setenv('INVITATION_TRANSPORT', 'resend')
+    workspaces.send_invitation(direct_invite(), company)
+    message = connections[0]['server'].message
+    assert list(message.keys()) == [
+        'From',
+        'To',
+        'Subject',
+        'Message-ID',
+        'MIME-Version',
+        'Content-Type',
+    ]
+    assert sorted(sent[0]) == ['attachments', 'from', 'html', 'subject', 'text', 'to']
+    assert sent[0]['from'] == 'ADR <invite@example.invalid>'
+    assert requests[0].get_header('Idempotency-key') == 'a' * 32 + '/' + 'b' * 32
+
+
 def branded(role='office', name='Kern Water Pros', logo=''):
     invite = {**direct_invite(), 'role': role}
     return invite, {'profile': {'name': name, 'logo_data_url': logo}}

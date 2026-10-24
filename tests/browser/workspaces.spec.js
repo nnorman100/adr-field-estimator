@@ -541,6 +541,23 @@ test('email failures stay visible and can be retried', async ({ page, request })
   await expect(page.getByRole('button', { name: 'Resend invitation' })).toBeVisible();
 });
 
+test('owners alone see the notice once the day passes 400 emails', async ({ page, request }) => {
+  const notice = page.locator('#dashboardContent .notice');
+  await request.post('/__test/workspaces', { data: { enabled: true, emails_today: 400 } });
+  await start(page, 'owner');
+  await expect(page.locator('#dashboardContent .dashboard-card').first()).toBeVisible();
+  await expect(notice).toHaveCount(0);
+  await request.post('/__test/workspaces', { data: { enabled: true, emails_today: 401 } });
+  await start(page, 'owner');
+  await expect(notice).toHaveText(
+    'DryScope has sent more than 400 emails today, close to its daily limit of about 500. ' +
+      'Invitations may not send until tomorrow; resend any that fail then.',
+  );
+  await start(page, 'office');
+  await expect(page.locator('#dashboardContent .dashboard-card').first()).toBeVisible();
+  await expect(notice).toHaveCount(0);
+});
+
 test('other company branding and signing snapshots stay isolated from ADR', async ({
   page,
   browserName,

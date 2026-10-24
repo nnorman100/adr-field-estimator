@@ -35,6 +35,10 @@ LOG_FIELDS = frozenset(
         'reply_pace_median',
         'client_gap_count',
         'client_video_pauses',
+        # Email: the day's send count, and delivery entries by ID and recipient role, never an address.
+        'emails_today',
+        'delivery_id',
+        'recipient_role',
     }
 )
 

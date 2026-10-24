@@ -334,6 +334,16 @@ window.WorkspaceUI = (() => {
     $('dashboardNewJob').hidden = !can('jobs_create');
     const content = $('dashboardContent'),
       grid = node('div', undefined, 'dashboard-grid');
+    // The server sets this for owners only, past 400 emails in a day from the shared sender.
+    if (state.session.email_notice)
+      content.append(
+        node(
+          'p',
+          'DryScope has sent more than 400 emails today, close to its daily limit of about 500. ' +
+            'Invitations may not send until tomorrow; resend any that fail then.',
+          'notice',
+        ),
+      );
     content.append(grid);
     if (state.session.role) {
       const card = node('section', undefined, 'dashboard-card');
