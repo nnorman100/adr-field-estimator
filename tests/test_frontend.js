@@ -982,3 +982,41 @@ console.log(
   ]);
   console.log('PASS: claim details print only recorded values in document headers');
 }
+{
+  const row = (id, kind, address, customer = '', claim = '') => ({
+    id,
+    kind,
+    address,
+    customer,
+    claim,
+  });
+  const rows = [
+    row('d1', 'draft', '12 Oak Street', 'Jordan Lee', 'CLM-0042-77'),
+    row('d2', 'draft', '', 'Priya Shah'),
+    row('s1', 'signed', '9 Elm Avenue', 'Sam Ortiz', 'clm-9001'),
+    row('l1', 'local', 'Oak Ridge Court'),
+  ];
+  const ids = (options) => core.filterJobs(rows, options).map((r) => r.id);
+  assert.deepEqual(ids({ tab: 'all', query: '' }), ['d1', 'd2', 's1', 'l1']);
+  assert.deepEqual(ids({ tab: 'drafts', query: '' }), ['d1', 'd2', 'l1']);
+  assert.deepEqual(ids({ tab: 'signed', query: '' }), ['s1']);
+  assert.deepEqual(ids({ tab: 'all', query: '  oak ' }), ['d1', 'l1']);
+  assert.deepEqual(ids({ tab: 'all', query: 'PRIYA' }), ['d2']);
+  assert.deepEqual(ids({ tab: 'all', query: 'CLM-9' }), ['s1']);
+  assert.deepEqual(ids({ tab: 'signed', query: 'oak' }), []);
+  assert.deepEqual(ids({ tab: 'drafts', query: '0042' }), ['d1']);
+  const labels = (more) => core.jobTabs(rows, more).map((t) => t.tab + ' ' + t.label);
+  assert.deepEqual(labels(), ['all All (4)', 'drafts Drafts (3)', 'signed Signed (1)']);
+  // Counts ignore the search box and never read as complete while older pages remain.
+  assert.deepEqual(labels({ drafts: true }), [
+    'all All (4+)',
+    'drafts Drafts (3+)',
+    'signed Signed (1)',
+  ]);
+  assert.deepEqual(labels({ signed: true }), [
+    'all All (4+)',
+    'drafts Drafts (3)',
+    'signed Signed (1+)',
+  ]);
+  console.log('PASS: jobs list tabs, counts and search cover drafts, local drafts and signed jobs');
+}

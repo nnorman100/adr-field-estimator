@@ -2117,6 +2117,60 @@ def test_superadmin_support_reads_any_company_and_audits_each_view(api, uid):
         assert private not in logged
 
 
+def test_job_lists_name_the_customer_and_claim_only_within_the_company(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    draft = 'ADR-INS-' + 'e' * 32
+    current['uid'] = 'owner'
+    assert (
+        client.post('/api/inspections', json={'inspection_id': draft, 'data': data()}).status_code
+        == 200
+    )
+    store.db.records['_workspace_jobs/' + draft].update(
+        customer_name=' Draft Customer ', claim={'claim_number': 'CLM-DRAFT-1'}
+    )
+    store.db.records['_workspace_jobs/' + OTHER].update(
+        customer_name='Foreign Customer', claim={'claim_number': 'CLM-FOREIGN-9'}
+    )
+    expected = {
+        draft: ('Draft Customer', 'CLM-DRAFT-1'),
+        ID: ('Synthetic Customer Name', ''),
+    }
+
+    def names(rows, key):
+        return {r[key]: (r['customer_name'], r['claim_number']) for r in rows}
+
+    for uid in ('owner', 'office'):
+        current['uid'] = uid
+        assert names(client.get('/api/inspections').json()['inspections'], 'inspection_id') == (
+            expected
+        )
+        assert names(client.get('/api/authorizations').json()['authorizations'], 'auth_id') == {
+            SIGNED: expected[ID]
+        }
+    # The estimator sees only their own job, and its listing carries only that job's names.
+    current['uid'] = 'estimator'
+    assert names(client.get('/api/inspections').json()['inspections'], 'inspection_id') == {
+        ID: expected[ID]
+    }
+    current['uid'] = 'admin'
+    base = '/api/admin/companies/adr'
+    assert names(client.get(base + '/jobs').json()['inspections'], 'inspection_id') == expected
+    assert names(client.get(base + '/authorizations').json()['authorizations'], 'auth_id') == {
+        SIGNED: expected[ID]
+    }
+    for uid in ('owner', 'office', 'estimator', 'admin'):
+        current['uid'] = uid
+        for path in ('/api/inspections', '/api/authorizations', base + '/jobs'):
+            listed = client.get(path)
+            if listed.status_code == 200:
+                assert 'Foreign' not in listed.text and 'CLM-FOREIGN' not in listed.text
+    current['uid'] = 'other-owner'
+    assert names(client.get('/api/inspections').json()['inspections'], 'inspection_id') == {
+        OTHER: ('Foreign Customer', 'CLM-FOREIGN-9')
+    }
+
+
 @pytest.mark.parametrize('uid', ['estimator', 'office', 'other-owner', 'estimator2'])
 def test_support_view_requires_superadmin(api, uid):
     client, current, store = api
