@@ -417,20 +417,11 @@ window.WorkspaceUI = (() => {
     if (['estimator', 'office'].includes(state.session?.role)) await jobs();
     else await home();
   }
-  async function jobs() {
-    await stopWalk();
-    await persist();
-    const epoch = show(
-      state.session.role === 'estimator' ? 'My jobs' : 'Company jobs',
-      'Draft inspections and saved agreements.',
-    );
-    current('dashboardJobs');
-    $('dashboardNewJob').hidden = !can('jobs_create');
-    const content = $('dashboardContent');
-    const filters = { tab: 'all', query: '' },
-      pages = { drafts: [], signed: [] },
-      cursors = {};
-    let local = [];
+  // Tabs with counts, one search box and the job rows, shared by the company jobs list and the
+  // read-only support view. Rows are { id, address, customer, claim, label, open }; `more` says
+  // whether older drafts or agreements remain unloaded.
+  function jobBrowser(content, rows, more) {
+    const filters = { tab: 'all', query: '' };
     const tabs = node('nav', undefined, 'job-tabs'),
       search = node('input'),
       searchLabel = node('label', 'Search jobs'),
@@ -452,21 +443,17 @@ window.WorkspaceUI = (() => {
       tabs.append(control);
       return control;
     });
-    const rows = () => {
-      const saved = new Set(pages.drafts.map((row) => row.id));
-      return [...pages.drafts, ...pages.signed, ...local.filter((row) => !saved.has(row.id))];
-    };
     function render() {
       const all = rows(),
-        more = { drafts: !!cursors.drafts, signed: !!cursors.signed };
-      ADRCore.jobTabs(all, more).forEach(({ tab, label }, i) => {
+        remaining = more();
+      ADRCore.jobTabs(all, remaining).forEach(({ tab, label }, i) => {
         tabButtons[i].textContent = label;
         tabButtons[i].classList.toggle('selected', tab === filters.tab);
         tabButtons[i].setAttribute('aria-pressed', String(tab === filters.tab));
       });
       partial.textContent =
         'Counts and search cover the jobs loaded so far. Load older jobs to include the rest.';
-      partial.hidden = !more.drafts && !more.signed;
+      partial.hidden = !remaining.drafts && !remaining.signed;
       const shown = ADRCore.filterJobs(all, filters);
       list.replaceChildren(
         ...shown.map((row) =>
@@ -490,6 +477,29 @@ window.WorkspaceUI = (() => {
       filters.query = search.value;
       render();
     });
+    return { render, older };
+  }
+  async function jobs() {
+    await stopWalk();
+    await persist();
+    const epoch = show(
+      state.session.role === 'estimator' ? 'My jobs' : 'Company jobs',
+      'Draft inspections and saved agreements.',
+    );
+    current('dashboardJobs');
+    $('dashboardNewJob').hidden = !can('jobs_create');
+    const content = $('dashboardContent');
+    const pages = { drafts: [], signed: [] },
+      cursors = {};
+    let local = [];
+    const rows = () => {
+      const saved = new Set(pages.drafts.map((row) => row.id));
+      return [...pages.drafts, ...pages.signed, ...local.filter((row) => !saved.has(row.id))];
+    };
+    const { render, older } = jobBrowser(content, rows, () => ({
+      drafts: !!cursors.drafts,
+      signed: !!cursors.signed,
+    }));
     const pageRows = (records, signed) =>
       records
         .filter((record) => signed || record.status !== 'signed')
@@ -982,31 +992,40 @@ window.WorkspaceUI = (() => {
       button('Back to company administration', () => companyAdmin(cid)),
       node('h2', 'Jobs and documents'),
     );
-    const list = node('div', undefined, 'dashboard-list');
-    content.append(list);
     // Signed jobs are listed once, as their agreements.
-    for (const record of drafts.inspections.filter((r) => r.status !== 'signed'))
-      list.append(
-        Object.assign(
-          button((record.address || 'Untitled job') + '\nDraft · revision ' + record.revision, () =>
-            supportRecord(cid, record.inspection_id, false),
-          ),
-          { className: 'job-link' },
-        ),
-      );
-    for (const record of signed.authorizations)
-      list.append(
-        Object.assign(
-          button(
-            (record.address || 'Untitled job') + '\nSigned agreement · ' + estimateLabel(record),
-            () => supportRecord(cid, record.auth_id, true),
-          ),
-          { className: 'job-link' },
-        ),
-      );
-    if (!list.childElementCount) list.append(node('p', 'No jobs saved yet.'));
+    const rows = [
+      ...drafts.inspections
+        .filter((r) => r.status !== 'signed')
+        .map((record) => ({
+          id: record.inspection_id,
+          kind: 'draft',
+          address: record.address,
+          customer: record.customer_name,
+          claim: record.claim_number,
+          label: 'Draft · revision ' + record.revision,
+          open: () => supportRecord(cid, record.inspection_id, false),
+        })),
+      ...signed.authorizations.map((record) => ({
+        id: record.auth_id,
+        kind: 'signed',
+        address: record.address,
+        customer: record.customer_name,
+        claim: record.claim_number,
+        label: 'Signed agreement · ' + estimateLabel(record),
+        open: () => supportRecord(cid, record.auth_id, true),
+      })),
+    ];
+    const { render, older } = jobBrowser(
+      content,
+      () => rows,
+      () => ({
+        drafts: !!drafts.next_cursor,
+        signed: !!signed.next_cursor,
+      }),
+    );
     if (drafts.next_cursor || signed.next_cursor)
-      list.append(node('p', 'Showing the 100 most recent drafts and agreements.'));
+      older.append(node('p', 'Showing the 100 most recent drafts and agreements.'));
+    render();
     content.append(node('h2', 'Team'));
     const grid = node('div', undefined, 'dashboard-grid');
     content.append(grid);
