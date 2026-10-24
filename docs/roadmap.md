@@ -5,7 +5,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 ## Handoff (Oct 24, 2026)
 - **Repo state:** `master` includes PR #130 (jobs list tabs and search, `c1bc7d7`, merged Oct 24). No PRs are open. Not released: production is still commit `0b5dbae` (see `RELEASES.md`).
 - **Next for Nate:** Phase 0, items 1–3 (phone test 2, ADR company profile, invitation check). Approve a release of PR #130 together with the Phase 1 batch.
-- **Next for an agent:** finish the Phase 1.1 follow-ups, then Phase 0 item 6 (the local SMTP test), then Phase 1.2 (GPS stamp). Each item is one small PR that passes the eight checks below.
+- **Next for an agent:** Phase 0 item 6 (the local SMTP test), then Phase 1.2 (GPS stamp). The Phase 1.1 Help and read-only support-list follow-ups are implemented; Nate's phone check remains open. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
   - Agents may merge Low or Medium risk PRs with green CI. High risk PRs and every production deploy need Nate's go.
@@ -65,7 +65,7 @@ Source files are in `nnorman100/Dryscope`; read them with `gh api`. Rebuild each
 
 1. **Jobs list filters and search (S, Low risk).** Add status tabs with counts, and search by client, address or claim number on the company jobs list (`public/workspaces.js:420-470`, `public/app.js:~2575`). It filters on the device, over what `/api/inspections` and `/api/authorizations` already return. Status comes from the coordination record (`backend/workspace_api.py:226`). Totals use the server's `estimateLabel`, never a price worked out on the device. Reference: Dryscope `components/dashboards/TechPipelineDashboard.tsx`.
    - **Status:** merged as PR #130 (`c1bc7d7`, Oct 24); not released yet.
-   - **Follow-up before the Phase 1 release:** add a Help how-to ("Find a job") for owner, office and estimator (check 6); confirm the superadmin support list shows the same tabs read-only; Nate tries search on his phone (check 8).
+   - **Follow-up before the Phase 1 release:** the Help how-to ("Find a job") for owner, office and estimator and the shared read-only support-list tabs and search are implemented (see [workspace list behavior](company-workspaces.md#company-documents-and-offline-drafts)). Nate still needs to try search on his phone (check 8).
 2. **GPS stamp on photos (S–M, Medium risk).** When a photo is taken, record `navigator.geolocation` with its accuracy and a source label ("device" or "not available"; never guess). Store it with the photo metadata in `backend/inspection_store.py` and the photo save path in `backend/main.py`. Print it in the photo moisture log (`public/documents.js`), plus a keyless Google Maps link. A failed or refused location fix is shown as missing, not hidden. Location is part of the evidence, so a signed record's GPS never changes. Reference: Dryscope `TechFieldDashboard.tsx` and the photo log column in `DocumentSuiteModal.tsx`.
    - **Older photos:** photos saved before this show "No location recorded". Nothing is backfilled.
    - **Offline:** location works with no signal and is saved with the photo on the phone, then synced.
