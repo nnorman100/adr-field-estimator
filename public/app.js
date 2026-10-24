@@ -4632,6 +4632,7 @@ async function initialize() {
     .querySelectorAll('[data-tab]')
     .forEach((tab) => tab.addEventListener('click', () => selectDocument(tab.dataset.tab)));
   click('restoreRemote', async () => {
+    await syncChain.catch(() => {});
     const record = await jsonApi('/api/inspections/' + state.draft.inspection_id);
     state.draft = {
       inspection_id: record.inspection_id,
@@ -4649,6 +4650,7 @@ async function initialize() {
     await loadPhotoUrls('/api/inspections/' + record.inspection_id + '/photos/');
   });
   click('forkLocal', async () => {
+    await syncChain.catch(() => {});
     await loadPhotoUrls('/api/inspections/' + state.draft.inspection_id + '/photos/');
     const data = structuredClone(state.draft.data),
       photos = state.draft.photos.map((p) => ({

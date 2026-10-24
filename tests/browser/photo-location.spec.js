@@ -170,3 +170,30 @@ for (const transition of ['new', 'restore']) {
     expect(await page.evaluate(() => state.draft.photos.length)).toBe(1);
   });
 }
+
+
+test('forking a conflicted draft waits for the photo location before copying evidence', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await context.setOffline(true);
+  const original = await page.evaluate(() => {
+    state.conflict = true;
+    document.getElementById('conflictActions').hidden = false;
+    navigator.geolocation.getCurrentPosition = (ok) => {
+      window.finishLocation = () =>
+        ok({ coords: { latitude: 35, longitude: -119, accuracy: 5 } });
+    };
+    return state.draft.inspection_id;
+  });
+  await addImage(page);
+  await expect.poll(() => page.evaluate(() => state.draft.photos.length)).toBe(1);
+  await page.locator('#forkLocal').click({ force: true });
+  expect(await page.evaluate(() => state.draft.inspection_id)).toBe(original);
+  await page.evaluate(() => window.finishLocation());
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(original);
+  expect(await page.evaluate(() => state.draft.photos.map((photo) => photo.location))).toEqual([
+    { source: 'device', latitude: 35, longitude: -119, accuracy_m: 5 },
+  ]);
+});
