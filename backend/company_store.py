@@ -137,7 +137,13 @@ class CompanyInspectionStore(InspectionStore):
             last = row.to_dict()
             record = listed(last)
             if record:
-                records.append(record)
+                # The sidecar row is already read, so the list names the customer and claim
+                # without another read per job.
+                listing = dict(
+                    customer_name=last.get('customer_name', '').strip(),
+                    claim_number=(last.get('claim') or {}).get('claim_number', ''),
+                )
+                records.append(dict(record, listing=listing))
             else:
                 skipped += 1
         else:

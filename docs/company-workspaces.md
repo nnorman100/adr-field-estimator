@@ -102,6 +102,8 @@ New audits store company_identity and its profile version. Profile changes inval
 
 Estimators land on My jobs, office staff on Company jobs, and owners/superadmins on their dashboard. Signing in opens the workspace without creating or automatically reopening an inspection. Authorized local drafts remain available through Jobs.
 
+The My jobs and Company jobs list has **All**, **Drafts** and **Signed** tabs with counts (drafts saved only on this device count as drafts) and one search box that matches address, customer name or claim number. The draft and agreement list endpoints, and the superadmin support lists, return each job's coordinated customer name and claim number from the job sidecar that the page query already read, so they add no read per job and name only jobs the caller may list. Tabs and search work on the device over the pages loaded so far: while older pages remain, the affected counts show a `+` and the list says to load older jobs to include the rest. The owner-less Jobs dialog is unchanged.
+
 Draft keys include user/company/inspection. Legacy local drafts recover only after online confirmation of ADR membership. Access/context changes stop capture, clear visible records, pause queued writes and retain local drafts for authorized recovery. Offline coordination/admin mutation controls are disabled. Cached role data never authorizes a server operation; online synchronization revalidates access.
 
 ## Migration and release

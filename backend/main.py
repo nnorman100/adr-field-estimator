@@ -821,6 +821,15 @@ async def list_inspections(
     return {'inspections': [inspection_summary(r) for r in records], 'next_cursor': next_cursor}
 
 
+def listing_summary(record):
+    # Company job pages attach the job's customer and claim; owner-less records have neither.
+    listing = record.get('listing', {})
+    return dict(
+        customer_name=listing.get('customer_name', ''),
+        claim_number=listing.get('claim_number', ''),
+    )
+
+
 def inspection_summary(record):
     return dict(
         inspection_id=record['inspection_id'],
@@ -828,6 +837,7 @@ def inspection_summary(record):
         revision=record['revision'],
         status=record['status'],
         updated_at=record['updated_at'],
+        **listing_summary(record),
     )
 
 
@@ -1418,7 +1428,7 @@ def authorization_summary(record):
             'photos_count',
             'schema_version',
         )
-    }
+    } | listing_summary(record)
 
 
 @app.get('/api/authorizations/{auth_id}')

@@ -427,65 +427,136 @@ window.WorkspaceUI = (() => {
     current('dashboardJobs');
     $('dashboardNewJob').hidden = !can('jobs_create');
     const content = $('dashboardContent');
-    const list = node('div', undefined, 'dashboard-list');
-    content.append(list);
-    const seen = new Set();
-    const append = (records, signed) => {
-      for (const record of records) {
-        if (!signed && record.status === 'signed') continue;
-        const id = signed ? record.auth_id : record.inspection_id;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        list.append(
+    const filters = { tab: 'all', query: '' },
+      pages = { drafts: [], signed: [] },
+      cursors = {};
+    let local = [];
+    const tabs = node('nav', undefined, 'job-tabs'),
+      search = node('input'),
+      searchLabel = node('label', 'Search jobs'),
+      partial = node('p', '', 'hint'),
+      list = node('div', undefined, 'dashboard-list'),
+      older = node('div', undefined, 'actions');
+    tabs.setAttribute('aria-label', 'Job status');
+    search.type = 'search';
+    search.placeholder = 'Address, customer or claim number';
+    search.maxLength = 200;
+    searchLabel.append(search);
+    content.append(tabs, searchLabel, partial, list, older);
+    const tabButtons = ADRCore.jobTabs([]).map(({ tab }) => {
+      const control = button('', () => {
+        filters.tab = tab;
+        render();
+      });
+      control.dataset.tab = tab;
+      tabs.append(control);
+      return control;
+    });
+    const rows = () => {
+      const saved = new Set(pages.drafts.map((row) => row.id));
+      return [...pages.drafts, ...pages.signed, ...local.filter((row) => !saved.has(row.id))];
+    };
+    function render() {
+      const all = rows(),
+        more = { drafts: !!cursors.drafts, signed: !!cursors.signed };
+      ADRCore.jobTabs(all, more).forEach(({ tab, label }, i) => {
+        tabButtons[i].textContent = label;
+        tabButtons[i].classList.toggle('selected', tab === filters.tab);
+        tabButtons[i].setAttribute('aria-pressed', String(tab === filters.tab));
+      });
+      partial.textContent =
+        'Counts and search cover the jobs loaded so far. Load older jobs to include the rest.';
+      partial.hidden = !more.drafts && !more.signed;
+      const shown = ADRCore.filterJobs(all, filters);
+      list.replaceChildren(
+        ...shown.map((row) =>
           Object.assign(
             button(
-              (record.address || 'Untitled job') +
+              (row.address || 'Untitled job') +
                 '\n' +
-                (signed
-                  ? 'Signed · ' + estimateLabel(record)
-                  : 'Draft · revision ' + record.revision),
-              () => (signed ? restoreSigned(id) : restoreDraft(id)),
+                [row.label, row.customer, row.claim && 'Claim ' + row.claim]
+                  .filter(Boolean)
+                  .join(' · '),
+              row.open,
             ),
             { className: 'job-link' },
           ),
-        );
-      }
-    };
-    const load = async (path, key, signed, cursor) => {
+        ),
+      );
+      if (!shown.length)
+        list.append(node('p', all.length ? 'No jobs match.' : 'No jobs saved yet.'));
+    }
+    search.addEventListener('input', () => {
+      filters.query = search.value;
+      render();
+    });
+    const pageRows = (records, signed) =>
+      records
+        .filter((record) => signed || record.status !== 'signed')
+        .map((record) => ({
+          id: signed ? record.auth_id : record.inspection_id,
+          kind: signed ? 'signed' : 'draft',
+          address: record.address,
+          customer: record.customer_name,
+          claim: record.claim_number,
+          label: signed
+            ? 'Signed · ' + estimateLabel(record)
+            : 'Draft · revision ' + record.revision,
+          open: signed
+            ? () => restoreSigned(record.auth_id)
+            : () => restoreDraft(record.inspection_id),
+        }));
+    const load = async (kind, cursor) => {
+      const signed = kind === 'signed',
+        path = signed ? '/api/authorizations' : '/api/inspections';
       const result = await jsonApi(path + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''));
       if (epoch !== viewEpoch) return;
-      append(result[key], signed);
-      if (result.next_cursor) {
-        const more = button('Load older ' + (signed ? 'agreements' : 'drafts'), async () => {
-          more.disabled = true;
-          try {
-            await load(path, key, signed, result.next_cursor);
-            more.remove();
-          } catch (e) {
-            more.disabled = false;
-            throw e;
-          }
-        });
-        list.append(more);
-      }
+      const known = new Set(pages[kind].map((row) => row.id));
+      pages[kind].push(
+        ...pageRows(result[signed ? 'authorizations' : 'inspections'], signed).filter(
+          (row) => !known.has(row.id),
+        ),
+      );
+      cursors[kind] = result.next_cursor;
+      older.replaceChildren(
+        ...['drafts', 'signed']
+          .filter((name) => cursors[name])
+          .map((name) => {
+            const more = button(
+              'Load older ' + (name === 'signed' ? 'agreements' : 'drafts'),
+              async () => {
+                more.disabled = true;
+                try {
+                  await load(name, cursors[name]);
+                } finally {
+                  more.disabled = false;
+                }
+              },
+            );
+            return more;
+          }),
+      );
+      render();
     };
     if (navigator.onLine) {
-      await load('/api/inspections', 'inspections', false);
-      await load('/api/authorizations', 'authorizations', true);
+      await load('drafts');
+      await load('signed');
     }
     if (epoch !== viewEpoch) return;
     if (can('scope'))
-      for (const row of await localDrafts())
-        if (!seen.has(row.draft.inspection_id) && row.record?.status !== 'signed')
-          list.append(
-            Object.assign(
-              button((row.draft.data.address || 'Local draft') + '\nSaved on this device', () =>
-                restoreDraft(row.draft.inspection_id),
-              ),
-              { className: 'job-link' },
-            ),
-          );
-    if (!list.childElementCount) list.append(node('p', 'No jobs saved yet.'));
+      local = (await localDrafts())
+        .filter((row) => row.record?.status !== 'signed')
+        .map((row) => ({
+          id: row.draft.inspection_id,
+          kind: 'local',
+          address: row.draft.data.address || 'Local draft',
+          customer: '',
+          claim: '',
+          label: 'Saved on this device',
+          open: () => restoreDraft(row.draft.inspection_id),
+        }));
+    if (epoch !== viewEpoch) return;
+    render();
   }
   function invitationList(container, invitations, companyId, after, actions = true) {
     const list = node('div', undefined, 'dashboard-list');
