@@ -2769,6 +2769,24 @@ async function restoreSigned(id) {
     missing ? 'error' : 'success',
   );
 }
+async function copySigned() {
+  const id = state.signed?.auth_id || confirmedAuthorization;
+  if (!id || !window.WorkspaceUI?.can('jobs_copy')) throw Error('Open a signed job first.');
+  if (!navigator.onLine) throw Error('Copying a signed job requires a connection.');
+  $('copyToDraft').disabled = true;
+  let draft;
+  try {
+    draft = await jsonApi('/api/authorizations/' + encodeURIComponent(id) + '/copy', 'POST', {
+      inspection_id: 'ADR-INS-' + newId(),
+    });
+  } catch (e) {
+    window.WorkspaceUI.policy();
+    throw e;
+  }
+  $('jobMenu').open = false;
+  await restoreDraft(draft.inspection_id);
+  say('Copied to a new draft. Photos and signatures stay with the signed job.', 'success');
+}
 async function finishAudit() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned draft first.');
@@ -4457,6 +4475,7 @@ async function initialize() {
   click('setPasswordSignOut', signOut);
   click('discardSignOut', discardAndSignOut);
   click('newInspection', () => openNew());
+  click('copyToDraft', copySigned);
   const jobs = () => (window.WorkspaceUI?.enabled() ? WorkspaceUI.jobs() : showJobs());
   click('openJobs', jobs);
   click('backToJobs', jobs);

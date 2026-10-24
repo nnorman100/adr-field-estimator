@@ -135,6 +135,10 @@ class CreateInspection(StrictModel):
     data: InspectionData = Field(default_factory=InspectionData)
 
 
+class CopyRequest(StrictModel):
+    inspection_id: str = Field(pattern=r'^ADR-INS-[a-f0-9]{32}$')
+
+
 class UpdateInspection(StrictModel):
     expected_revision: int = Field(ge=1)
     data: InspectionData

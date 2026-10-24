@@ -37,6 +37,7 @@ CAPABILITIES = {
     'owner': [
         'jobs_read',
         'jobs_create',
+        'jobs_copy',
         'coordination',
         'assignment',
         'scope',
@@ -48,8 +49,18 @@ CAPABILITIES = {
         'team_manage',
         'profile_manage',
     ],
-    'estimator': ['jobs_read', 'jobs_create', 'scope', 'photos', 'ocr', 'audit', 'sign', 'live'],
-    'office': ['jobs_read', 'jobs_create', 'coordination', 'assignment'],
+    'estimator': [
+        'jobs_read',
+        'jobs_create',
+        'jobs_copy',
+        'scope',
+        'photos',
+        'ocr',
+        'audit',
+        'sign',
+        'live',
+    ],
+    'office': ['jobs_read', 'jobs_create', 'jobs_copy', 'coordination', 'assignment'],
 }
 
 INVITATION_DAILY_LIMIT = 50
@@ -1001,7 +1012,12 @@ class WorkspaceStore:
         actor = self.company_actor(uid, tx=tx)
         if 'jobs_create' not in actor['capabilities']:
             raise AccessDenied('Job creation is not allowed.')
-        if actor['role'] == 'office':
+        copied = record.get('copied_from')
+        source = None
+        if copied:
+            # Rechecked here, in the creating transaction, for a role and job that may have changed.
+            source, _ = self.job_access(uid, copied, 'jobs_copy', tx)
+        if actor['role'] == 'office' and not copied:
             try:
                 from .contracts import InspectionData
             except ImportError:
@@ -1032,6 +1048,9 @@ class WorkspaceStore:
             updated_at=record['updated_at'],
             created_at=record['created_at'],
         )
+        if source:
+            # The claim details come over; the customer, assignment and notes belong to the new job.
+            job.update(claim=self.job_claim(source), claim_version=1)
         tx.create(self.ref('_workspace_jobs', job['job_id']), job)
         return job
 

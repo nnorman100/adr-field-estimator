@@ -151,6 +151,12 @@ window.WorkspaceUI = (() => {
     for (const control of $('claimForm').querySelectorAll('input,button'))
       control.disabled = !claimEditable;
     $('newInspection').disabled = !can('jobs_create');
+    // Copying a signed job makes a new draft on the server, so it needs a connection.
+    $('copyToDraft').hidden = !(state.signed || confirmedAuthorization) || !can('jobs_copy');
+    $('copyToDraft').disabled = !navigator.onLine;
+    $('copyToDraft').textContent = navigator.onLine
+      ? 'Copy to new draft'
+      : 'Copy to new draft (needs a connection)';
     document.body.classList.toggle('office-view', state.session.role === 'office');
   }
   function branding() {
