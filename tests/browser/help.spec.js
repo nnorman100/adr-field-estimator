@@ -28,6 +28,7 @@ const topics = (page, group) =>
   page.locator('#' + group + ' > details > summary').allTextContents();
 const FIELD = [
   'My jobs and Company jobs',
+  'Find a job',
   'Property and scope',
   'Walkthrough with the live camera assistant',
   'Photo evidence',
@@ -152,15 +153,15 @@ test.describe('company roles', () => {
     await request.post('/__test/workspaces', { data: { enabled: false } });
   });
   for (const [role, heading, yours, topic] of [
-    ['estimator', 'For you: Estimator', FIELD, FIELD[2]],
+    ['estimator', 'For you: Estimator', FIELD, FIELD[3]],
     [
       'office',
       'For you: Office staff',
-      ['My jobs and Company jobs', 'Review and claim documents', ALL[8]],
-      ALL[8],
+      ['My jobs and Company jobs', 'Find a job', 'Review and claim documents', ALL[9]],
+      ALL[9],
     ],
-    ['owner', 'For you: Owner and Superadmin', ALL, ALL[9]],
-    ['admin', 'For you: Superadmin', [ALL[11]], ALL[11]],
+    ['owner', 'For you: Owner and Superadmin', ALL, ALL[10]],
+    ['admin', 'For you: Superadmin', [ALL[12]], ALL[12]],
   ])
     test(role + ' help lists the role topics first', async ({ page, browserName }) => {
       await page.setViewportSize({ width: 390, height: 844 });
@@ -217,7 +218,7 @@ test.describe('company roles', () => {
     await page.goto('/app');
     await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
     await openHelp(page);
-    expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[6], ALL[8]]);
+    expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[1], FIELD[7], ALL[9]]);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     const result = await page.request.fetch('/api/companies/adr/team/' + uid('office'), {
       method: 'PUT',

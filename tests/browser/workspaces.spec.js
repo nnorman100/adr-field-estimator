@@ -261,8 +261,22 @@ test('superadmin support view is read-only with audited team fixes', async ({ pa
   );
   const content = page.locator('#dashboardContent');
   await expect(content).toContainText('recorded in the audit log');
-  const editable = content.locator('form, input, select, textarea');
+  // Search is the one input: it filters the list and edits nothing.
+  const editable = content.locator('form, input:not([type=search]), select, textarea');
   await expect(editable).toHaveCount(0);
+  const tabs = page.getByRole('navigation', { name: 'Job status' }),
+    rows = content.locator('.job-link');
+  await expect(tabs.getByRole('button')).toHaveText(['All (1)', 'Drafts (1)', 'Signed (0)']);
+  await tabs.getByRole('button', { name: /^Signed/ }).click();
+  await expect(rows).toHaveCount(0);
+  await tabs.getByRole('button', { name: /^Drafts/ }).click();
+  await expect(rows.filter({ hasText: 'Assigned bathroom' })).toHaveCount(1);
+  await page.getByLabel('Search jobs').fill('no such customer');
+  await expect(rows).toHaveCount(0);
+  await expect(content).toContainText('No jobs match.');
+  await page.getByLabel('Search jobs').fill('assigned BATH');
+  await expect(rows).toHaveCount(1);
+  await tabs.getByRole('button', { name: /^All/ }).click();
   const owner = content.locator('.dashboard-card').filter({
     has: page.getByRole('heading', { name: uid('owner') + '@example.invalid', exact: true }),
   });
