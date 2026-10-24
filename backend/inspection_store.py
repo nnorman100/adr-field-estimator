@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 from PIL import Image
+from pydantic import ValidationError
 from google.cloud import firestore
 
 try:
@@ -149,7 +150,7 @@ class InspectionStore(JobStore):
     def inspection_page(self, uid, cursor=None):
         return self._page('inspections', uid, 'updated_at', 'inspection_id', cursor)
 
-    def create_inspection(self, uid, inspection_id, data):
+    def create_inspection(self, uid, inspection_id, data, copied_from=None):
         checked_metadata(data)
         ref = self._ref(inspection_id)
         changed = []
@@ -158,7 +159,7 @@ class InspectionStore(JobStore):
             snapshot = ref.get(transaction=tx)
             if snapshot.exists:
                 existing = self._owned(snapshot, uid, 'create', tx)
-                if existing['data'] != data:
+                if existing['data'] != data or existing.get('copied_from') != copied_from:
                     raise Conflict('This inspection already exists. Restore it before editing.')
                 changed.clear()
                 return existing
@@ -175,11 +176,39 @@ class InspectionStore(JobStore):
                 created_at=now(),
                 updated_at=now(),
             )
+            if copied_from:
+                record['copied_from'] = copied_from
             self._create_access(uid, record, tx)
             tx.create(ref, record)
             return record
 
         return saved(inspection_id, self._atomic(create), changed)
+
+    def copy_source(self, uid, auth_id):
+        """The rooms and scope of a signed job as a new draft's data, with the copied_from marker.
+        The signatures, audit, signing links, photos, readings and walkthrough record stay with the
+        signed job, which is not changed."""
+        source = self.get(uid, auth_id)
+        if not source:
+            raise LookupError('Signed agreement not found.')
+        self._access(uid, source, 'jobs_copy')
+        try:
+            data = InspectionData.model_validate(source['inspection'])
+        except (KeyError, ValidationError):
+            raise ValueError('This older signed job has no saved scope to copy.')
+        # Evidence of the original visit: its transcripts, recording record and scanned tags. The
+        # technician confirms the scope again before documents are generated.
+        data = data.model_copy(
+            update=dict(
+                technician_transcript='',
+                assistant_transcript='',
+                capture_metadata=None,
+                equipment_scans=[],
+                scope_confirmed=False,
+                package_price=None,
+            )
+        )
+        return data, dict(auth_id=auth_id, inspection_id=source['inspection_id'])
 
     def _change(self, uid, inspection_id, revision, transform, action='scope'):
         ref = self._ref(inspection_id)

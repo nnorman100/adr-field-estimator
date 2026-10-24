@@ -48,6 +48,7 @@ from websockets.exceptions import ConnectionClosed
 
 try:
     from .contracts import (
+        CopyRequest,
         CreateInspection,
         UpdateInspection,
         ClaimDetails,
@@ -95,6 +96,7 @@ try:
     from .cloud_log import event
 except ImportError:
     from contracts import (
+        CopyRequest,
         CreateInspection,
         UpdateInspection,
         ClaimDetails,
@@ -807,6 +809,23 @@ async def create_inspection(
     return public_record(
         await stored(
             store.create_inspection, staff['uid'], req.inspection_id, inspection_payload(req.data)
+        )
+    )
+
+
+@app.post('/api/authorizations/{auth_id}/copy')
+async def copy_signed_job(
+    auth_id: str, req: CopyRequest, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    data, copied_from = await stored(store.copy_source, staff['uid'], auth_id)
+    return public_record(
+        await stored(
+            store.create_inspection,
+            staff['uid'],
+            req.inspection_id,
+            inspection_payload(data),
+            copied_from,
         )
     )
 

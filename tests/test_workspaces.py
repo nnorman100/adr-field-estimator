@@ -4180,3 +4180,143 @@ def test_drying_readings_follow_job_access_and_the_scope_capability(api):
     record = client.get('/api/inspections/' + ID).json()
     assert record['revision'] == 1 and record['audit'] is None
     assert 'readings' not in record and 'readings' not in store.db.records['_workspace_jobs/' + ID]
+
+
+COPY = 'ADR-INS-' + 'c' * 32
+
+
+def copy_request(client, auth_id=SIGNED, inspection_id=COPY):
+    return client.post(
+        '/api/authorizations/' + auth_id + '/copy', json={'inspection_id': inspection_id}
+    )
+
+
+def test_copy_to_new_draft_carries_scope_and_claim_but_no_signed_evidence(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = 'office'
+    claim = dict(carrier='Synthetic Mutual', claim_number='CLM-77', date_of_loss='2026-10-01')
+    assert (
+        client.put(
+            '/api/jobs/' + ID + '/claim', json={'expected_version': 0, 'claim': claim}
+        ).status_code
+        == 200
+    )
+    before = deepcopy(
+        {k: v for k, v in store.db.records.items() if k.split('/')[1] in (ID, SIGNED)}
+    )
+    copied = copy_request(client)
+    assert copied.status_code == 200
+    draft = copied.json()
+    assert draft['inspection_id'] == COPY and draft['status'] == 'draft' and draft['revision'] == 1
+    assert draft['copied_from'] == dict(auth_id=SIGNED, inspection_id=ID)
+    assert [(r['name'], r['finished_sf']) for r in draft['data']['rooms']] == [('Bathroom', 10)]
+    assert draft['data']['air_movers'] == 3
+    assert draft['data']['address'] == 'Test property' and draft['data']['scope_confirmed'] is False
+    assert draft['photos'] == [] and draft['audit'] is None
+    assert not {'authorization_id', 'auth_id', 'signature'} & draft.keys()
+    job = store.db.records['_workspace_jobs/' + COPY]
+    assert (
+        job['claim']['claim_number'] == 'CLM-77' and job['claim']['carrier'] == 'Synthetic Mutual'
+    )
+    assert job['claim_version'] == 1 and not job['auth_exists'] and job['status'] == 'draft'
+    assert job['customer_name'] == '' and job['customer_email'] == ''
+    assert job['assigned_estimator_uid'] is None and job['creator_uid'] == 'office'
+    # The signed job, its evidence and its sidecars are untouched.
+    after = {k: v for k, v in store.db.records.items() if k.split('/')[1] in (ID, SIGNED)}
+    assert after == before
+    assert not store.db.records['_workspace_jobs/' + ID].get('copied_from')
+    assert 'signing' not in json.dumps(draft).lower()
+    # A retry with the same identifiers returns the same draft; another source conflicts.
+    assert copy_request(client).json() == draft
+    current['uid'] = 'owner'
+    assert (
+        client.put(
+            '/api/inspections/' + COPY, json={'expected_revision': 1, 'data': data('Moved')}
+        ).status_code
+        == 200
+    )
+    assert client.get('/api/inspections/' + COPY).json()['copied_from'] == draft['copied_from']
+
+
+@pytest.mark.parametrize(
+    'uid, allowed',
+    [
+        ('owner', True),
+        ('office', True),
+        ('estimator', True),
+        ('estimator2', False),
+        ('admin', False),
+        ('other-owner', False),
+    ],
+)
+def test_copy_to_new_draft_roles(api, uid, allowed):
+    client, current, store = api
+    signed_job(client, current, store)
+    current['uid'] = uid
+    response = copy_request(client)
+    assert (response.status_code == 200) is allowed
+    if not allowed:
+        assert response.status_code in (403, 404)
+        assert 'inspections/' + COPY not in store.db.records
+        assert '_workspace_jobs/' + COPY not in store.db.records
+    # The session capabilities are what the app reads to show the action.
+    capabilities = client.get('/api/session').json()['capabilities']
+    assert ('jobs_copy' in capabilities) is (uid != 'admin')
+
+
+def test_copy_to_new_draft_is_refused_for_older_records_without_a_saved_scope(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    del store.db.records['authorizations/' + SIGNED]['inspection']
+    current['uid'] = 'owner'
+    response = copy_request(client)
+    assert response.status_code == 400 and 'older signed job' in response.json()['detail']
+    assert 'inspections/' + COPY not in store.db.records
+    assert copy_request(client, 'ADR-AUTH-missing').status_code == 404
+
+
+def test_copy_to_new_draft_drops_the_original_walkthrough_record(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    stored_data = store.db.records['authorizations/' + SIGNED]['inspection']
+    stored_data.update(
+        technician_transcript='heard on site',
+        assistant_transcript='replied on site',
+        package_price='legacy',
+        equipment_scans=[
+            dict(
+                id='e' * 32,
+                kind='air_mover',
+                asset_id='AM-1',
+                room='Bathroom',
+                scanned_at='2026-10-14T12:00:00Z',
+            )
+        ],
+        technician_notes='Crawl space is wet.',
+    )
+    current['uid'] = 'estimator'
+    copied = copy_request(client).json()['data']
+    assert copied['technician_transcript'] == '' and copied['assistant_transcript'] == ''
+    assert 'equipment_scans' not in copied and copied['package_price'] is None
+    assert copied['technician_notes'] == 'Crawl space is wet.'
+
+
+def test_copy_to_new_draft_checks_the_role_again_where_the_draft_is_created(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    # An estimator removed from the job after the first check cannot create the copy.
+    store.db.records['_workspace_jobs/' + ID]['accessible_estimator_uids'] = ['estimator2']
+    with pytest.raises((AccessDenied, LookupError)):
+        store.create_inspection(
+            'estimator',
+            COPY,
+            data(),
+            copied_from=dict(auth_id=SIGNED, inspection_id=ID),
+        )
+    assert 'inspections/' + COPY not in store.db.records
+    # A forged marker from another company's user finds no job.
+    with pytest.raises((AccessDenied, LookupError)):
+        store.create_inspection(
+            'other-owner', COPY, data(), copied_from=dict(auth_id=SIGNED, inspection_id=ID)
+        )
