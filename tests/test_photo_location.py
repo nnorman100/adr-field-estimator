@@ -95,6 +95,7 @@ def test_a_signed_record_keeps_its_photo_location(context):
     assert after['photos'][0]['location'] == FIX
     agreement = client.get('/api/authorizations/ADR-AUTH-test123456').json()
     assert agreement['photos'][0]['location'] == FIX
+    assert agreement['documents'] == signed['audit']['documents']
     # No route edits a location, and a signed record accepts no new photo, with or without one.
     other = upload(client, {'revision': after['revision']}, {'source': 'not_shared'}, 'c' * 32)
     assert other.status_code == 409

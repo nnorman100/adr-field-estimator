@@ -8,6 +8,7 @@ from backend.claims import (
     make_documents,
     ADDITIONAL,
     PRETEST,
+    PHOTO_LOCATION_PRIVACY,
     REPRICE,
     TESTING,
     VALIDITY,
@@ -88,6 +89,7 @@ def test_standard_estimate_clauses_follow_property_age():
         ADDITIONAL,
     ]
     assert proposal['disclaimers'] == [
+        PHOTO_LOCATION_PRIVACY,
         PRETEST,
         'NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.',
         REPRICE,
@@ -115,7 +117,7 @@ def test_documents_without_a_company_identity_name_no_company():
     assert proposal['recommendations'][1] == (
         'Per IICRC and EPA protocols, the contractor technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.'
     )
-    assert proposal['disclaimers'][1].endswith(
+    assert proposal['disclaimers'][2].endswith(
         'will NOT be the responsibility of the contractor. This estimate does not include testing of any kind.'
     )
     assert docs['iicrc_defense_letter'].startswith(
@@ -500,3 +502,21 @@ def test_defense_letter_prints_the_sizing_check_only_when_available():
     assert letter.index('Equipment sizing check') < letter.index('Scope:')
     assert checked['xactimate_scope'] == pending['xactimate_scope']
     assert checked['adr_estimate']['proposed_cost'] == pending['adr_estimate']['proposed_cost']
+
+
+@pytest.mark.parametrize('year_built', [1960, 2000])
+@pytest.mark.parametrize('identity', [None, ADR_PROFILE, {'name': 'Other Company'}])
+@pytest.mark.parametrize('source', [None, 'not_shared', 'not_available', 'device'])
+def test_new_proposals_include_owner_approved_photo_privacy(year_built, identity, source):
+    photos = [{'id': 'photo', 'room': 'Bathroom', 'ocr_status': 'not_requested'}]
+    if source is not None:
+        photos[0]['location'] = {'source': source}
+        if source == 'device':
+            photos[0]['location'].update(latitude=35.0, longitude=-119.0, accuracy_m=5)
+    docs = make_documents(
+        scoped(year_built=year_built), photos,
+        AIResult(summary='Reviewed', suggestions=[], unpriced_work=[]), identity,
+    )
+    assert docs['adr_estimate']['disclaimers'].count(
+        "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log."
+    ) == 1
