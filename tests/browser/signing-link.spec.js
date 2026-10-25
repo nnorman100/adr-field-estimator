@@ -335,3 +335,33 @@ test.describe('company workspaces', () => {
     await home.context.close();
   });
 });
+
+
+test('homeowner retry submits the current email choice', async ({ page, browser }) => {
+  await technician(page);
+  await audit(page);
+  const home = await homeowner(browser, await sendLink(page));
+  const view = home.page;
+  for (const name of ['proposal', 'claim', 'defense', 'photos'])
+    await view.locator('[data-tab="' + name + '"]').click();
+  await view.locator('#signerName').fill('Synthetic Homeowner');
+  await view.locator('input[name=signerRole][value=owner]').check();
+  await view.locator('#consentReviewed').check();
+  await view.locator('#consentElectronic').check();
+  await draw(view);
+  await view.route('**/api/sign', async (route) => {
+    if (route.request().method() === 'POST') return route.abort();
+    return route.continue();
+  });
+  await view.locator('#submitSignature').click();
+  await expect(view.locator('#signError')).toContainText('Not signed yet');
+  await view.locator('#emailCopy').uncheck();
+  await view.unroute('**/api/sign');
+  await view.locator('#submitSignature').click();
+  await expect(view.locator('#signedReceipt')).toBeVisible();
+  const posted = home.requests.filter(
+    (request) => request.method === 'POST' && new URL(request.url).pathname === '/api/sign',
+  );
+  expect(posted.map((request) => JSON.parse(request.body).email_copy)).toEqual([true, false]);
+  await home.context.close();
+});

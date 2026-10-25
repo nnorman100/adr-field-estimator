@@ -157,26 +157,7 @@ class Deliveries:
             if not job or not job.get('auth_id'):
                 raise LookupError('Signed job not found.')
             company = self.w.read('_companies', job['company_id'], tx)
-            reasons = skip_reasons(company, skipped)
-            record = dict(
-                delivery_id=uuid4().hex,
-                job_id=job_id,
-                auth_id=job['auth_id'],
-                company_id=job['company_id'],
-                created_at=now(),
-                entries={
-                    role: dict(
-                        status='skipped' if role in reasons else 'queued',
-                        reason=reasons.get(role, ''),
-                        retryable=False,
-                        attempt='',
-                        send_started=0,
-                        message_id=None,
-                        updated_at=now(),
-                    )
-                    for role in RECIPIENTS
-                },
-            )
+            record = self.record(job, skip_reasons(company, skipped))
             tx.create(self.ref(job_id), record)
             return record, True
 
@@ -184,6 +165,29 @@ class Deliveries:
         if created:
             for role in RECIPIENTS:
                 logged(record, role)
+        return record
+
+    @staticmethod
+    def record(job, skipped):
+        record = dict(
+            delivery_id=uuid4().hex,
+            job_id=job['job_id'],
+            auth_id=job['auth_id'],
+            company_id=job['company_id'],
+            created_at=now(),
+            entries={
+                role: dict(
+                    status='skipped' if role in skipped else 'queued',
+                    reason=skipped.get(role, ''),
+                    retryable=False,
+                    attempt='',
+                    send_started=0,
+                    message_id=None,
+                    updated_at=now(),
+                )
+                for role in RECIPIENTS
+            },
+        )
         return record
 
     def send(self, job_id, compose, roles=RECIPIENTS):
@@ -324,13 +328,25 @@ class Deliveries:
         return record, attempt, False
 
 
+def homeowner_skips(job, record):
+    skipped = dict(NOT_SWITCHED_ON)
+    if not record['email_copy']:
+        skipped['homeowner'] = NOT_ASKED
+    else:
+        try:
+            email_address(job.get('customer_email') or '')
+        except ValueError:
+            skipped['homeowner'] = NO_CUSTOMER_EMAIL
+    return skipped
+
+
 def deliver_homeowner(store, record, origin):
-    """Queue the signed job and send the homeowner's private document link.
+    """Send the homeowner's private document link.
 
     The choice recorded on the signature wins: True sends when customer_email is a real address,
     False or a missing address skips with a reason, and a signature with no choice (signed before
     the checkbox) is left alone. Adjuster and crew-lead entries are skipped. Sending is idempotent
-    through Deliveries.send. Raises only when the record cannot be queued; a send failure is stored
+    through Deliveries.send. A send failure is stored
     on the entry and does not propagate."""
     if (
         not isinstance(record, dict)
@@ -339,19 +355,11 @@ def deliver_homeowner(store, record, origin):
     ):
         return None
     job = store.workspaces.job_for(record)
-    skipped = dict(NOT_SWITCHED_ON)
-    to = ''
-    if not record['email_copy']:
-        skipped['homeowner'] = NOT_ASKED
-    else:
-        try:
-            to = email_address(job.get('customer_email') or '')
-        except ValueError:
-            skipped['homeowner'] = NO_CUSTOMER_EMAIL
     deliveries = Deliveries(store.workspaces)
-    queued = deliveries.queue(job['job_id'], skipped)
-    if 'homeowner' in skipped:
+    queued = store.workspaces.read('_job_deliveries', job['job_id'])
+    if queued['entries']['homeowner']['status'] == 'skipped':
         return queued
+    to = email_address(job.get('customer_email') or '')
     company = store.workspaces.company_actor(record['owner_uid'])['company']
     name = company['profile']['name']
 

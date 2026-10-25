@@ -3034,8 +3034,8 @@ async function authorize() {
     proposal_hash: state.record.audit.proposal_hash,
     signature_png: state.signature,
     documents_confirmed: true,
-    email_copy: $('emailCopy').checked,
   };
+  payload.email_copy = $('emailCopy').checked;
   state.pendingAuthorization = payload;
   $('authorizeJob').disabled = true;
   $('authorizationStatus').textContent = 'Saving signed agreement…';

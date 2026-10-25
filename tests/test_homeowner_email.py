@@ -264,3 +264,62 @@ def test_roles_that_cannot_sign_do_not_queue_a_delivery(api, uid, status):
     response = client.post('/api/authorize', json=body)
     assert response.status_code == status, response.text
     assert '_job_deliveries/' + ID not in store.db.records
+
+
+@pytest.mark.parametrize('channel', ['onsite', 'link'])
+def test_queue_failure_cannot_commit_a_signature(smtp, monkeypatch, channel):
+    from tests.fakes import Tx
+
+    client, store, _accounts, _sent, _writes, connections, _plan, _sleeps = smtp
+    record = prepare(client, store)
+    link = mint(client, record) if channel == 'link' else None
+    original = Tx.create
+
+    def fail_queue(tx, ref, value):
+        if ref.key.startswith('_job_deliveries/'):
+            raise RuntimeError('Synthetic queue failure')
+        return original(tx, ref, value)
+
+    monkeypatch.setattr(Tx, 'create', fail_queue)
+
+    def submit():
+        if channel == 'onsite':
+            return authorize(client, record, email_copy=True)
+        return homeowner(token(link)).post(
+            '/api/sign',
+            json={**SIGNER, 'signature_png': sign_payload(record)['signature_png'], 'email_copy': True},
+        )
+
+    response = submit()
+    assert response.status_code == 503
+    assert not any(key.startswith('authorizations/') for key in store.db.records)
+    assert store.db.records['inspections/' + ID]['status'] != 'signed'
+    assert not store.db.records['_workspace_jobs/' + ID].get('auth_id')
+    assert '_job_deliveries/' + ID not in store.db.records
+    assert not connections
+    monkeypatch.setattr(Tx, 'create', original)
+    assert submit().status_code == 200
+    assert delivery(store)['entries']['homeowner']['status'] == 'sent'
+
+
+@pytest.mark.parametrize('channel', ['onsite', 'link'])
+def test_delivery_is_durable_before_transport_starts(smtp, monkeypatch, channel):
+    client, store, _accounts, _sent, _writes, connections, _plan, _sleeps = smtp
+    record = prepare(client, store)
+
+    def interrupted(*args):
+        raise RuntimeError('Synthetic interruption before sending')
+
+    monkeypatch.setattr(bm, 'deliver_homeowner', interrupted)
+    if channel == 'onsite':
+        response = authorize(client, record, email_copy=True)
+    else:
+        link = mint(client, record)
+        response = homeowner(token(link)).post(
+            '/api/sign',
+            json={**SIGNER, 'signature_png': sign_payload(record)['signature_png'], 'email_copy': True},
+        )
+    assert response.status_code == 200
+    assert store.db.records['authorizations/' + response.json()['auth_id']]['email_copy'] is True
+    assert delivery(store)['entries']['homeowner']['status'] == 'queued'
+    assert not connections
