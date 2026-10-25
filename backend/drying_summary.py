@@ -24,6 +24,7 @@ def room_names(facts):
         [m['room'] for m in facts['materials']]
         + [a['room'] for a in facts['air']]
         + facts['missing_rooms']
+        + list(facts['room_readings'])
     )) or [None]
 
 
@@ -35,7 +36,7 @@ def summary_options(facts):
         air = [a for a in facts['air'] if a['room'] == name]
         trend = (
             'at_dry_standard' if facts['status'] == 'dry_standard_met'
-            else 'no_new_reading' if name in facts['missing_rooms'] or not (materials or air)
+            else 'no_new_reading' if not facts['room_readings'].get(name, {}).get('last_reading_at')
             else facts.get('air_trends', {}).get(name, 'recorded')
         )
         mentions = ['status']

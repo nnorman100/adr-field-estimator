@@ -179,8 +179,17 @@ def watch_state(data, log, setup_at, previous=None, at=None):
     if not data.get('rooms') or missing_rooms or any(r.get('dry_standard') is None for r in latest):
         flags.append('missing_dry_standard')
     air_trends = {}
+    room_readings = {}
     for g in grouped['groups']:
+        room_rows = [r for r in readings if r['room'] == g['room']]
+        room_last = room_rows[-1]['taken_at'] if room_rows else None
+        room_readings[g['room']] = dict(
+            last_reading_at=room_last,
+            overdue=bool(room_last and instant(room_last) + timedelta(days=1) < at),
+        )
         air_days = [d for d in g['days'] if d['affected']]
+        if not air_days:
+            continue
         stalled = len(air_days) >= 3 and all(
             air_days[i]['affected']['gpp'] >= air_days[i - 1]['affected']['gpp'] for i in (-2, -1)
         )
@@ -220,6 +229,7 @@ def watch_state(data, log, setup_at, previous=None, at=None):
         air=[dict(room=g['room'], **g['progress']) for g in grouped['groups'] if g['progress']],
         missing_rooms=missing_rooms,
         air_trends=air_trends,
+        room_readings=room_readings,
     )
 
 
@@ -236,6 +246,7 @@ def facts(watch):
             'air',
             'missing_rooms',
             'air_trends',
+            'room_readings',
         )
     }
 

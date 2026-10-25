@@ -1,0 +1,9 @@
+[
+  {"name":"fresh partial coverage without reference","materials":1,"air":[90,70,50],"reference":false,"at":"2026-10-23T17:00:00Z","expected_trend":"improving","expected_missing":true,"expected_overdue":false},
+  {"name":"fresh partial coverage with reference","materials":1,"air":[90,70,50],"reference":true,"at":"2026-10-23T17:00:00Z","expected_trend":"improving","expected_missing":true,"expected_overdue":false},
+  {"name":"air only without reference","materials":0,"air":[90,70,50],"reference":false,"at":"2026-10-23T17:00:00Z","expected_trend":"improving","expected_missing":true,"expected_overdue":false},
+  {"name":"fresh material only partial coverage","materials":1,"air":[],"reference":false,"at":"2026-10-23T17:00:00Z","expected_trend":"recorded","expected_missing":true,"expected_overdue":false},
+  {"name":"no readings","materials":0,"air":[],"reference":false,"at":"2026-10-23T17:00:00Z","expected_trend":"no_new_reading","expected_missing":true,"expected_overdue":false},
+  {"name":"old improving readings remain distinct from recency","materials":1,"air":[90,70,50],"reference":false,"at":"2026-10-25T17:00:00Z","expected_trend":"improving","expected_missing":true,"expected_overdue":true},
+  {"name":"complete coverage with wet materials","materials":2,"air":[90,70,50],"reference":false,"at":"2026-10-23T17:00:00Z","expected_trend":"improving","expected_missing":false,"expected_overdue":false}
+]

@@ -593,3 +593,72 @@ def test_room_trends_use_own_readings(watched, monkeypatch, stalled_room, improv
     state = watch_state(data, improving_only, '2026-10-21T16:00:00Z', at=at)
     assert state['air_trends'][improving_room] == 'improving'
     assert 'stalled' not in state['flags']
+
+
+@pytest.mark.parametrize(
+    'case', json.loads((FIXTURES / 'reading-presence.json').read_text()), ids=lambda c: c['name'],
+)
+def test_reading_presence_is_independent_of_coverage_and_reference(watched, monkeypatch, case):
+    from backend.drying_summary import room_names, summary_options
+
+    _, _, store, watch = watched
+    data = dict(address='Synthetic property', drying_days=3, rooms=[
+        dict(name='Kitchen', wet_materials=0), dict(name='Bath', wet_materials=2),
+    ])
+    readings = []
+    for room, values in [('Kitchen', [70, 70, 70]), ('Bath', case['air'])]:
+        for day, gpp in zip([21, 22, 23], values):
+            readings.append(dict(
+                kind='air', room=room, zone='affected', gpp=gpp,
+                vapor_pressure_inhg=0.4, taken_at=f'2026-10-{day}T16:00:00Z',
+            ))
+    for index in range(case['materials']):
+        readings.append(dict(
+            kind='material', room='Bath', material=f'Material {index}', unit='%WME',
+            moisture=22, dry_standard=12, affected=True, taken_at='2026-10-23T16:00:00Z',
+        ))
+    if case['reference']:
+        readings.append(dict(
+            kind='air', room='Bath', zone='unaffected', gpp=40,
+            vapor_pressure_inhg=0.3, taken_at='2026-10-21T15:00:00Z',
+        ))
+    log = dict(readings=readings, updated_at='2026-10-23T17:00:00Z')
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.db.records['authorizations/' + job['auth_id']]['inspection'] = data
+    store.db.records['drying_logs/' + ID] = log
+    monkeypatch.setattr(monitoring_store, 'watch_state', lambda data, log, setup, previous:
+                        watch_state(data, log, setup, previous, at=instant(case['at'])))
+    current = watch.view('office', ID)
+    assert current['status'] == 'active'
+    assert ('Bath' in current['missing_rooms']) == case['expected_missing']
+    assert current['room_readings']['Bath']['overdue'] == case['expected_overdue']
+    assert bool(current['room_readings']['Bath']['last_reading_at']) == bool(
+        case['air'] or case['materials'] or case['reference']
+    )
+    assert current['air_trends']['Kitchen'] == 'stalled'
+    assert 'stalled' in current['flags']
+    if case['air']:
+        assert current['air_trends']['Bath'] == 'improving'
+    else:
+        assert 'Bath' not in current['air_trends']
+    names = room_names(current)
+    index = names.index('Bath')
+    option = summary_options(current)[index]
+    assert option['trend'] == case['expected_trend']
+    assert ('air' in option['mentions']) == case['reference']
+    assert ('progress' in option['mentions']) == case['reference']
+    selected = dict(rooms=[dict(
+        room_index=index, trend=case['expected_trend'], mention='status',
+    )])
+    watch.save_summary('office', ID, current['facts_hash'], selected)
+    text = watch.view('office', ID)['summary']['text']
+    label = {'recorded': 'readings recorded', 'no_new_reading': 'no new reading'}.get(
+        case['expected_trend'], case['expected_trend'],
+    )
+    assert text.endswith(f'Room {index + 1}: {label}.')
+    wrong = deepcopy(selected)
+    wrong['rooms'][0]['trend'] = (
+        'recorded' if case['expected_trend'] == 'no_new_reading' else 'no_new_reading'
+    )
+    with pytest.raises(ValueError, match='does not match'):
+        watch.save_summary('office', ID, current['facts_hash'], wrong)
