@@ -1687,8 +1687,10 @@ async def support_authorization(
     store=Depends(get_job_store),
 ):
     workspace_client(request)
-    record, job = await stored(store.support_authorization, staff['uid'], company_id, auth_id)
-    return {'authorization': public_record(record), 'job': job}
+    record, job, delivery = await stored(
+        store.support_authorization, staff['uid'], company_id, auth_id
+    )
+    return {'authorization': public_record(record), 'job': job, 'delivery': delivery}
 
 
 @app.get('/api/admin/companies/{company_id}/authorizations/{auth_id}/evidence/{name}')

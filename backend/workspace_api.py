@@ -15,6 +15,7 @@ try:
         ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
     )
+    from .delivery import read_delivery, resend_delivery
 except ImportError:
     from workspaces import (
         CompanyCreate,
@@ -28,6 +29,7 @@ except ImportError:
         ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
     )
+    from delivery import read_delivery, resend_delivery
 
 
 OWNER_LOGIN_FAILED = 'The owner login could not be created. Try again or contact support.'
@@ -52,6 +54,18 @@ async def failure_for(request: Request):
         if isinstance(body, dict) and body.get('owner_password') is not None:
             return OWNER_LOGIN_FAILED
     return None
+
+
+def workspace_protocol(request):
+    """Same rule as main.workspace_client. Imported at call time so this module can load with main."""
+    try:
+        from . import main as backend_main
+    except ImportError:
+        import main as backend_main
+    if backend_main.WORKSPACES_ENABLED and request.headers.get('X-ADR-Workspace-Protocol') != '1':
+        raise HTTPException(
+            409, 'Update the app before generating or opening company-branded documents.'
+        )
 
 
 def register_workspace_routes(app, identity, get_store, stored, live, account):
@@ -250,3 +264,19 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     ):
         await stored(store.quota, claims['uid'], 'draft', 60)
         return await stored(workspace(store).update_claim, claims['uid'], inspection_id, req)
+
+    @app.get('/api/jobs/{inspection_id}/delivery')
+    async def job_delivery(
+        inspection_id: str, request: Request, claims=Depends(identity), store=Depends(get_store)
+    ):
+        workspace_protocol(request)
+        return await stored(read_delivery, store, claims['uid'], inspection_id)
+
+    @app.post('/api/jobs/{inspection_id}/delivery/resend')
+    async def job_delivery_resend(
+        inspection_id: str, request: Request, claims=live_identity, store=Depends(get_store)
+    ):
+        workspace_protocol(request)
+        await stored(store.quota, claims['uid'], 'delivery', 10)
+        origin = request.headers.get('origin')
+        return await stored(resend_delivery, store, claims['uid'], inspection_id, origin)

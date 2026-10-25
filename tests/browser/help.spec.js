@@ -39,6 +39,7 @@ const FIELD = [
 ];
 const ALL = [
   ...FIELD,
+  'Sending documents',
   'Job coordination and assigning estimators',
   'Team and invitations',
   'Company settings',
@@ -178,11 +179,17 @@ test.describe('company roles', () => {
     [
       'office',
       'For you: Office staff',
-      ['My jobs and Company jobs', 'Find a job', 'Review and claim documents', ALL[9]],
-      ALL[9],
+      [
+        'My jobs and Company jobs',
+        'Find a job',
+        'Review and claim documents',
+        'Sending documents',
+        'Job coordination and assigning estimators',
+      ],
+      'Sending documents',
     ],
-    ['owner', 'For you: Owner and Superadmin', ALL, ALL[10]],
-    ['admin', 'For you: Superadmin', [ALL[12]], ALL[12]],
+    ['owner', 'For you: Owner and Superadmin', ALL, 'Sending documents'],
+    ['admin', 'For you: Superadmin', ['Sending documents', ALL[13]], ALL[13]],
   ])
     test(role + ' help lists the role topics first', async ({ page, browserName }) => {
       await page.setViewportSize({ width: 390, height: 844 });
@@ -240,7 +247,13 @@ test.describe('company roles', () => {
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
     await openHelp(page);
-    expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[1], FIELD[7], ALL[9]]);
+    expect(await topics(page, 'helpYours')).toEqual([
+      FIELD[0],
+      FIELD[1],
+      FIELD[7],
+      'Sending documents',
+      'Job coordination and assigning estimators',
+    ]);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     const result = await page.request.fetch('/api/companies/adr/team/' + uid('office'), {
       method: 'PUT',

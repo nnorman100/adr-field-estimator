@@ -6,12 +6,12 @@ import re
 from google.cloud import firestore
 
 try:
-    from .delivery import Deliveries, homeowner_skips, skip_reasons
+    from .delivery import Deliveries, homeowner_skips, public_delivery, skip_reasons
     from .cloud_log import event
     from .inspection_store import InspectionStore, Conflict
     from .workspaces import WorkspaceStore, AccessDenied
 except ImportError:
-    from delivery import Deliveries, homeowner_skips, skip_reasons
+    from delivery import Deliveries, homeowner_skips, public_delivery, skip_reasons
     from cloud_log import event
     from inspection_store import InspectionStore, Conflict
     from workspaces import WorkspaceStore, AccessDenied
@@ -239,10 +239,17 @@ class CompanyInspectionStore(InspectionStore):
 
     def support_authorization(self, uid, company_id, auth_id):
         record, job = self._support_source(uid, company_id, 'authorizations', auth_id)
-        self.workspaces.support_audit(
-            uid, company_id, 'view_document', 'document/' + auth_id, record
-        )
-        return record, job
+
+        def finish(tx):
+            # Same transaction as the audit entry, so a revoked superadmin gets neither.
+            self.workspaces.support_job(uid, company_id, record, tx)
+            delivery = self.workspaces.read('_job_deliveries', job['job_id'], tx)
+            self.workspaces.event(
+                tx, uid, 'support_view_document', company_id, {}, 'document/' + auth_id
+            )
+            return public_delivery(delivery)
+
+        return record, job, self.workspaces._run(finish)
 
     def support_evidence(self, uid, company_id, auth_id, name):
         record, _ = self._support_source(uid, company_id, 'authorizations', auth_id)

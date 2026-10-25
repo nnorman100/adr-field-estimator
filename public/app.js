@@ -2808,6 +2808,7 @@ async function restoreSigned(id) {
       : 'Signed agreement restored. The original cannot be edited.',
     missing ? 'error' : 'success',
   );
+  window.WorkspaceUI?.loadDelivery?.().catch((e) => say(e.message, 'error'));
 }
 async function copySigned() {
   const id = state.signed?.auth_id || confirmedAuthorization;
