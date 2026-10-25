@@ -31,7 +31,7 @@ def validate_summary(result, facts):
         raise ValueError('Drying is not verified complete.')
     # No instructions or financial/scope advice, including spelled-out invented quantities.
     if re.search(
-        r'\b(price|cost|dollars?|usd|charge|bill|demoli\w*|remov\w*|add|extend|recommend\w*|should|must|need to|install|replace|increase|decrease|equipment|fans?|dehumidifiers?|one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand)\b',
+        r'\b(price|cost|dollars?|usd|charge|bill|demoli\w*|remov\w*|add|extend\w*|continu\w*|shorten\w*|prolong\w*|resume\w*|stop\w*|keep|maintain\w*|reduce\w*|recommend\w*|should|must|need to|install|replace|increase|decrease|equipment|fans?|dehumidifiers?|one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand)\b',
         text,
         re.I,
     ):

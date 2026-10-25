@@ -479,8 +479,8 @@ def worker():
         (ROOT / 'public/sw.js')
         .read_text()
         .replace(
-            "const CACHE='dryscope-'+VERSION;",
-            "const CACHE='dryscope-'+VERSION+'" + worker_suffix + "';",
+            "const VERSION='unstamped';",
+            "const VERSION='unstamped" + worker_suffix + "';",
         ),
         media_type='text/javascript',
         headers={'Cache-Control': 'no-store'},

@@ -41,7 +41,17 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 2 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": "Day 2 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME.",
+    "invalid": [
+      "Continue drying for 3 more days.",
+      "Extend drying for 3 days.",
+      "Shorten drying to 3 days.",
+      "Keep drying for 3 days.",
+      "Resume drying for 3 days.",
+      "Stop drying after 3 days.",
+      "A continuation of drying for 3 days is recommended.",
+      "The drying plan should be shortened."
+    ]
   },
   {
     "name": "pack-3",

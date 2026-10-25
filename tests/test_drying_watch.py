@@ -41,6 +41,9 @@ def test_deterministic_status_and_browser_parity(case):
 @pytest.mark.parametrize('case', SUMMARIES, ids=lambda c: c['name'])
 def test_summary_fact_packs(case):
     assert validate_summary(DryingSummary(text=case['valid']), case['facts']) == case['valid']
+    for text in case.get('invalid', []):
+        with pytest.raises(ValueError, match='only describe'):
+            validate_summary(DryingSummary(text=text), case['facts'])
 
 
 @pytest.mark.parametrize(
