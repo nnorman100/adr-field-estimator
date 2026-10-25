@@ -118,7 +118,16 @@ def matches(filter_text, entry):
     }
     for clause in filter_text.split(' AND '):
         if clause.startswith('severity>='):
-            levels = ['DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY']
+            levels = [
+                'DEBUG',
+                'INFO',
+                'NOTICE',
+                'WARNING',
+                'ERROR',
+                'CRITICAL',
+                'ALERT',
+                'EMERGENCY',
+            ]
             if levels.index(entry['severity']) < levels.index(clause.split('>=', 1)[1]):
                 return False
         elif '=~' in clause:
@@ -159,7 +168,9 @@ def test_log_policy_matches_structured_events(preview, capsys, key, message, fie
 
 @pytest.mark.parametrize('args', [[], ['--email', 'nope']])
 def test_script_rejects_missing_or_invalid_email(args):
-    result = subprocess.run(['bash', str(SCRIPT), '--dry-run', *args], capture_output=True, text=True)
+    result = subprocess.run(
+        ['bash', str(SCRIPT), '--dry-run', *args], capture_output=True, text=True
+    )
     assert result.returncode != 0
 
 
@@ -183,9 +194,7 @@ def test_live_provider_failures_match(preview, capsys, code):
 @pytest.mark.parametrize('outcome', ['finished', 'rollover', 'disconnected', 'closed'])
 @pytest.mark.parametrize('code', [None, 1000, 503])
 def test_normal_live_endings_do_not_match(preview, capsys, outcome, code):
-    event(
-        'Live session ended', logging.INFO, operation='live', outcome=outcome, provider_code=code
-    )
+    event('Live session ended', logging.INFO, operation='live', outcome=outcome, provider_code=code)
     entry = json.loads(capsys.readouterr().out)
     condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
     assert not matches(condition, entry)
