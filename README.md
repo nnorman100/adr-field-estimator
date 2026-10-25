@@ -10,7 +10,7 @@ The new build adds isolated company workspaces with superadmin, owner, estimator
 
 Company workspaces are enabled in production since October 15, 2026; the serving backend and Hosting release are recorded in [RELEASES.md](RELEASES.md). Invitations are sent by Gmail SMTP. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
 
-The Phase 2 step 1 build counts successful invitation and document emails together in one service-wide daily count (a 24-hour window starting with its first send). Once the count exceeds 400, further sends log a warning and company owners see a dashboard notice that invitations may not send until tomorrow. The warning does not block sending; Gmail's own limit still applies. For homeowner email behavior, see [Inspection workflow](#inspection-workflow); delivery records, retries and company email identity are described in [Document delivery](docs/company-workspaces.md#document-delivery).
+For homeowner email behavior, see [Inspection workflow](#inspection-workflow); delivery records, retries, company email identity and the shared daily email warning are described in [Document delivery](docs/company-workspaces.md#document-delivery).
 
 ## Inspection workflow
 
