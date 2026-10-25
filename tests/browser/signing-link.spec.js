@@ -33,7 +33,12 @@ async function homeowner(browser, url) {
   const page = await context.newPage();
   const requests = [];
   page.on('request', (request) =>
-    requests.push({ url: request.url(), headers: request.headers() }),
+    requests.push({
+      url: request.url(),
+      headers: request.headers(),
+      method: request.method(),
+      body: request.postData(),
+    }),
   );
   await page.goto(url);
   return { context, page, requests };
@@ -100,6 +105,10 @@ test('technician sends a link, an unsigned-in homeowner signs it and the technic
   await expect(view.locator('#auditNotes')).toHaveCount(0);
   expect(await view.evaluate(() => window.reviewInjected)).toBeUndefined();
   await expect(view.locator('#consentReviewedText')).toContainText('I reviewed all four documents');
+  await expect(view.locator('#emailCopy')).toBeChecked();
+  await expect(view.locator('label').filter({ has: view.locator('#emailCopy') })).toHaveText(
+    'Email me a copy of my signed documents.',
+  );
   await expect(view.locator('#linkExpiry')).toContainText('This link expires');
   expect(await view.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   if (browserName === 'chromium')
@@ -116,6 +125,10 @@ test('technician sends a link, an unsigned-in homeowner signs it and the technic
   if (browserName === 'chromium')
     await view.screenshot({ path: test.info().outputPath('homeowner-signed.png'), fullPage: true });
   // No sign-in anywhere on the homeowner side: only the link header reaches the API.
+  const posted = home.requests.find(
+    (r) => r.method === 'POST' && new URL(r.url).pathname === '/api/sign',
+  );
+  expect(JSON.parse(posted.body).email_copy).toBe(true);
   const api = home.requests.filter((r) => new URL(r.url).pathname.startsWith('/api/'));
   expect(api.length).toBeGreaterThan(1);
   for (const request of api) {

@@ -155,7 +155,12 @@ test('AI notes stay out of the proposal and the technician signs after the propo
     );
   await page.locator('#documentsConfirmed').check();
   await draw(page);
+  await expect(page.locator('#emailCopy')).toBeChecked();
+  const posted = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().includes('/api/authorize'),
+  );
   await page.locator('#authorizeJob').click();
+  expect((await posted).postDataJSON().email_copy).toBe(true);
   await expect(page.locator('#saveStatus')).toHaveText('Signed');
 });
 

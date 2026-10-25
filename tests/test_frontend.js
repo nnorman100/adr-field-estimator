@@ -51,6 +51,10 @@ assert.deepEqual(fs.readFileSync('index.html'), fs.readFileSync('public/index.ht
         assert.ok(precached.includes(asset), `${name} asset missing from precache: ${asset}`);
     }
     assert.ok(precached.includes('/') && precached.includes('/app'));
+    const emailCopy =
+      /<input id="emailCopy" type="checkbox" checked> Email me a copy of my signed documents\./;
+    assert.match(fs.readFileSync('public/app.html', 'utf8'), emailCopy);
+    assert.match(fs.readFileSync('public/sign.html', 'utf8'), emailCopy);
     listeners.activate(event);
     await work;
     assert.deepEqual(deleted, ['alert-disaster-old', 'dryscope-old']);

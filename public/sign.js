@@ -314,6 +314,7 @@
       electronic_consent: true,
       consent_version: page.view.consent.version,
       signature_png: page.signature,
+      email_copy: $('emailCopy').checked,
     };
     page.pending = body;
     $('submitSignature').disabled = true;

@@ -168,6 +168,9 @@ class AuthorizeRequest(AuditRequest):
     proposal_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
     signature_png: str = Field(min_length=1, max_length=3000000)
     documents_confirmed: Literal[True]
+    # The on-site "Email me a copy of my signed documents." box. Absent on a client that predates
+    # it: that is not a request, and nothing is backfilled onto an agreement already signed.
+    email_copy: bool | None = None
 
 
 class SigningLinkRequest(RevisionRequest):
@@ -189,6 +192,9 @@ class HomeownerSignature(StrictModel):
     # The statements the page showed; a page with older wording must reload before signing.
     consent_version: Literal['homeowner-link-v1']
     signature_png: str = Field(min_length=1, max_length=3000000)
+    # The /sign page's "Email me a copy of my signed documents." box. Absent means the page
+    # did not ask; a saved agreement is not backfilled.
+    email_copy: bool | None = None
 
 
 class PhotoLocation(StrictModel):

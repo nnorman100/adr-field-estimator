@@ -347,6 +347,10 @@ def sign(store, token, req, client):
         ),
         signing_link=dict(id=key, created_by=link['owner_uid'], created_at=iso(link['created_at'])),
     )
+    # Kept beside the signature, outside the hashed payload, so a link signed before the checkbox
+    # still matches on retry and is not backfilled.
+    if req.get('email_copy') is not None:
+        extra['email_copy'] = req['email_copy']
     try:
         return store.authorize(link['owner_uid'], payload, extra, LinkClaim(link_ref))
     except AccessDenied:

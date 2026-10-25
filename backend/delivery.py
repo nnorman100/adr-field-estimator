@@ -1,7 +1,7 @@
 """Delivery of the signed paperwork. Each job has one delivery sidecar, beside its coordination record
 and never inside the signed agreement, with one entry per recipient role. A durable signature queues
 one record and sends the adjuster a private link when the signed claim details include an adjuster
-email. Crew-lead mail is queued; homeowner mail stays skipped until its own step. Nothing scans older jobs."""
+email. Crew-lead mail is queued; homeowner mail is sent when requested. Nothing scans older jobs."""
 
 import html
 import time
@@ -56,6 +56,12 @@ DOCUMENT_ORIGINS = (
 # concurrent retry never opens a second Gmail session for an attempt still in flight.
 RESERVATION_SECONDS = 30
 FAILED = 'The email could not be sent. A retry sends it again.'
+NOT_ASKED = 'The homeowner did not ask for an emailed copy.'
+NO_CUSTOMER_EMAIL = 'No customer email is saved on the job.'
+NOT_SWITCHED_ON = {
+    'adjuster': 'Adjuster email is not switched on.',
+    'crew_lead': 'Crew-lead email is not switched on.',
+}
 # Gmail does not deduplicate, so an attempt that never recorded its outcome is not sent again.
 UNCONFIRMED = (
     'Sending stopped before it was confirmed, so the email may have arrived. '
@@ -316,6 +322,56 @@ class Deliveries:
         entry.update(status='sending', attempt=attempt, send_started=time.time(), updated_at=now())
         tx.set(self.ref(job_id), record)
         return record, attempt, False
+
+
+def deliver_homeowner(store, record, origin):
+    """Queue the signed job and send the homeowner's private document link.
+
+    The choice recorded on the signature wins: True sends when customer_email is a real address,
+    False or a missing address skips with a reason, and a signature with no choice (signed before
+    the checkbox) is left alone. Adjuster and crew-lead entries are skipped. Sending is idempotent
+    through Deliveries.send. Raises only when the record cannot be queued; a send failure is stored
+    on the entry and does not propagate."""
+    if (
+        not isinstance(record, dict)
+        or 'email_copy' not in record
+        or not hasattr(store, 'workspaces')
+    ):
+        return None
+    job = store.workspaces.job_for(record)
+    skipped = dict(NOT_SWITCHED_ON)
+    to = ''
+    if not record['email_copy']:
+        skipped['homeowner'] = NOT_ASKED
+    else:
+        try:
+            to = email_address(job.get('customer_email') or '')
+        except ValueError:
+            skipped['homeowner'] = NO_CUSTOMER_EMAIL
+    deliveries = Deliveries(store.workspaces)
+    queued = deliveries.queue(job['job_id'], skipped)
+    if 'homeowner' in skipped:
+        return queued
+    company = store.workspaces.company_actor(record['owner_uid'])['company']
+    name = company['profile']['name']
+
+    def compose(role, _delivery):
+        token, _expires = document_links.mint(
+            store, record['owner_uid'], record['auth_id'], 'homeowner'
+        )
+        url = origin + '/documents#' + token
+        return delivery_email(
+            company,
+            to,
+            'Your signed documents from ' + name,
+            [
+                'Your signed proposal and photo log are ready.',
+                'Open them with the private link below. Nothing is attached.',
+            ],
+            [('View your signed documents', url)],
+        )
+
+    return deliveries.send(job['job_id'], compose)
 
 
 def logged(record, role):
