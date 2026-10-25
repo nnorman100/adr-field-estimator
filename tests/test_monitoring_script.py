@@ -28,18 +28,32 @@ def preview(tmp_path):
     stub.chmod(0o755)
     configs = tmp_path / 'configs'
     result = subprocess.run(
-        ['bash', str(SCRIPT), '--email', 'owner@example.com', '--dry-run',
-         '--config-dir', str(configs)],
-        capture_output=True, text=True,
-        env={**os.environ, 'PATH': f'{fake}:' + os.environ['PATH'],
-             'GCLOUD_RECORDING': str(recording)},
+        [
+            'bash',
+            str(SCRIPT),
+            '--email',
+            'owner@example.com',
+            '--dry-run',
+            '--config-dir',
+            str(configs),
+        ],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            'PATH': f'{fake}:' + os.environ['PATH'],
+            'GCLOUD_RECORDING': str(recording),
+        },
     )
     assert result.returncode == 0, result.stderr
     assert not recording.exists()
-    commands = [shlex.split(line[2:]) for line in result.stdout.splitlines()
-                if line.startswith('+ ')]
-    policies = {path.stem.removeprefix('policy-'): json.loads(path.read_text())
-                for path in configs.glob('policy-*.json')}
+    commands = [
+        shlex.split(line[2:]) for line in result.stdout.splitlines() if line.startswith('+ ')
+    ]
+    policies = {
+        path.stem.removeprefix('policy-'): json.loads(path.read_text())
+        for path in configs.glob('policy-*.json')
+    }
     return commands, policies
 
 
@@ -53,21 +67,37 @@ def test_preview_targets_project_service_and_notification_address(preview):
     assert channel[1:5] == ['beta', 'monitoring', 'channels', 'create']
     assert '--channel-labels=email_address=owner@example.com' in channel
     assert uptime[1:4] == ['monitoring', 'uptime', 'create']
-    for flag in (f'--resource-labels=host={PROJECT}.web.app,project_id={PROJECT}',
-                 '--path=/api/health', '--protocol=https', '--status-codes=200',
-                 '--period=5', '--regions=usa-iowa,usa-oregon,usa-virginia',
-                 '--matcher-content=healthy'):
+    for flag in (
+        f'--resource-labels=host={PROJECT}.web.app,project_id={PROJECT}',
+        '--path=/api/health',
+        '--protocol=https',
+        '--status-codes=200',
+        '--period=5',
+        '--regions=usa-iowa,usa-oregon,usa-virginia',
+        '--matcher-content=healthy',
+    ):
         assert flag in uptime
-    assert set(policies) == {'site-down', 'server-errors', 'vertex-errors', 'live-provider-errors',
-                             'email-send-failed', 'email-delivery-failed', 'email-volume'}
+    assert set(policies) == {
+        'site-down',
+        'server-errors',
+        'vertex-errors',
+        'live-provider-errors',
+        'email-send-failed',
+        'email-delivery-failed',
+        'email-volume',
+    }
     assert len(creates) == len(policies)
     for command in creates:
         assert command[1:4] == ['monitoring', 'policies', 'create']
-        filename = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--policy-from-file='))
+        filename = next(
+            arg.split('=', 1)[1] for arg in command if arg.startswith('--policy-from-file=')
+        )
         assert json.loads(Path(filename).read_text()) in policies.values()
     for policy in policies.values():
         assert policy['combiner'] == 'OR'
-        assert policy['notificationChannels'] == [f'projects/{PROJECT}/notificationChannels/NEW_EMAIL_CHANNEL']
+        assert policy['notificationChannels'] == [
+            f'projects/{PROJECT}/notificationChannels/NEW_EMAIL_CHANNEL'
+        ]
         assert policy['alertStrategy']['autoClose'] == '86400s'
     outage = policies['site-down']['conditions'][0]['conditionThreshold']
     assert outage['thresholdValue'] == 1
@@ -81,9 +111,11 @@ def test_preview_targets_project_service_and_notification_address(preview):
 
 
 def matches(filter_text, entry):
-    fields = {'resource.type': 'cloud_run_revision',
-              'resource.labels.service_name': SERVICE,
-              **{f'jsonPayload.{key}': value for key, value in entry.items()}}
+    fields = {
+        'resource.type': 'cloud_run_revision',
+        'resource.labels.service_name': SERVICE,
+        **{f'jsonPayload.{key}': value for key, value in entry.items()},
+    }
     for clause in filter_text.split(' AND '):
         if clause.startswith('severity>='):
             levels = ['DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY']
@@ -106,12 +138,15 @@ def matches(filter_text, entry):
     return True
 
 
-@pytest.mark.parametrize('key,message,fields', [
-    ('vertex-errors', 'Vertex AI call', {'operation': 'audit'}),
-    ('email-send-failed', 'Email send failed', {'operation': 'email', 'status': 'send_failed'}),
-    ('email-delivery-failed', 'Delivery entry', {'operation': 'delivery', 'status': 'failed'}),
-    ('email-volume', 'Daily email count', {'operation': 'email', 'status': 'daily_warning'}),
-])
+@pytest.mark.parametrize(
+    'key,message,fields',
+    [
+        ('vertex-errors', 'Vertex AI call', {'operation': 'audit'}),
+        ('email-send-failed', 'Email send failed', {'operation': 'email', 'status': 'send_failed'}),
+        ('email-delivery-failed', 'Delivery entry', {'operation': 'delivery', 'status': 'failed'}),
+        ('email-volume', 'Daily email count', {'operation': 'email', 'status': 'daily_warning'}),
+    ],
+)
 def test_log_policy_matches_structured_events(preview, capsys, key, message, fields):
     policy = preview[1][key]
     event(message, logging.ERROR, **fields)
@@ -131,8 +166,13 @@ def test_script_rejects_missing_or_invalid_email(args):
 @pytest.mark.parametrize('code', [500, 503, 599, 1006, 1011, 1013])
 def test_live_provider_failures_match(preview, capsys, code):
     policy = preview[1]['live-provider-errors']
-    event('Live session ended', logging.WARNING, operation='live',
-          outcome='ServerError', provider_code=code)
+    event(
+        'Live session ended',
+        logging.WARNING,
+        operation='live',
+        outcome='ServerError',
+        provider_code=code,
+    )
     entry = json.loads(capsys.readouterr().out)
     condition = policy['conditions'][0]['conditionMatchedLog']['filter']
     assert matches(condition, entry)
@@ -143,8 +183,9 @@ def test_live_provider_failures_match(preview, capsys, code):
 @pytest.mark.parametrize('outcome', ['finished', 'rollover', 'disconnected', 'closed'])
 @pytest.mark.parametrize('code', [None, 1000, 503])
 def test_normal_live_endings_do_not_match(preview, capsys, outcome, code):
-    event('Live session ended', logging.INFO, operation='live',
-          outcome=outcome, provider_code=code)
+    event(
+        'Live session ended', logging.INFO, operation='live', outcome=outcome, provider_code=code
+    )
     entry = json.loads(capsys.readouterr().out)
     condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
     assert not matches(condition, entry)
@@ -152,8 +193,13 @@ def test_normal_live_endings_do_not_match(preview, capsys, outcome, code):
 
 @pytest.mark.parametrize('code', [None, 1000, 1001, 499, 600, 1503])
 def test_live_other_codes_do_not_match(preview, capsys, code):
-    event('Live session ended', logging.WARNING, operation='live',
-          outcome='ConnectionClosed', provider_code=code)
+    event(
+        'Live session ended',
+        logging.WARNING,
+        operation='live',
+        outcome='ConnectionClosed',
+        provider_code=code,
+    )
     entry = json.loads(capsys.readouterr().out)
     condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
     assert not matches(condition, entry)

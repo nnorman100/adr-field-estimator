@@ -458,11 +458,15 @@ def test_invitation_failure_logs_once_without_pii(store, capsys, resend):
     result = w.deliver('owner', invitation['invitation_id'], fail)
     lines = capsys.readouterr().out.splitlines()
     assert result['delivery_status'] == 'failed'
-    assert [json.loads(line) for line in lines] == [{
-        'severity': 'ERROR', 'message': 'Email send failed',
-        'operation': 'email', 'status': 'send_failed',
-        'outcome': 'SMTPAuthenticationError',
-    }]
+    assert [json.loads(line) for line in lines] == [
+        {
+            'severity': 'ERROR',
+            'message': 'Email send failed',
+            'operation': 'email',
+            'status': 'send_failed',
+            'outcome': 'SMTPAuthenticationError',
+        }
+    ]
     w.deliver('owner', invitation['invitation_id'], lambda *args: 'message-id')
     assert not capsys.readouterr().out
 
