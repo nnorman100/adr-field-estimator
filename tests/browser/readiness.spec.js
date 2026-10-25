@@ -235,9 +235,10 @@ for (const category of [1, 2, 3]) {
       room.category = category;
       renderRooms();
     }, category);
+    await checkScope(page);
     const selected = page.locator('[data-room-key="loss"]:checked').first();
     const displayed = await selected.inputValue();
-    await selected.click();
+    await selected.locator('..').click();
     await expect.poll(() => page.evaluate(() => state.draft.data.rooms[0].loss)).toBe(displayed);
     expect(await page.evaluate(() => state.draft.data.rooms[0].category)).toBe(category);
     await expect(page.locator('#saveStatus')).toHaveText('Saved');

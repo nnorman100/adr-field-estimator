@@ -3470,7 +3470,7 @@ async function refreshLiveToken(socket, uid) {
       socket.send(JSON.stringify({ type: 'refresh', token }));
   } catch {}
 }
-// What Live's photo shot status is built from: the server's room answers, counts and photo tags.
+// Include saved readiness when enabled so edits without new photo tags also notify Live.
 function shotSignature(record) {
   return stable([
     record.data.rooms.map((room) => [
@@ -3482,8 +3482,8 @@ function shotSignature(record) {
     state.session?.ai_features?.includes('readiness') ? record.readiness : null,
   ]);
 }
-// After the server stores a tag or room answer, the relay re-reads the saved record and gives
-// Live the new shot status, so Live never hears of a tag the server does not hold.
+// The relay re-reads saved state after this signal; unsaved device edits never become
+// Live context. Sidecar saves force a signal because they may not refresh state.record.
 function notifyLiveShots(force = false) {
   const socket = state.socket;
   if (!state.shotUpdates || !state.liveReady || !socket || !state.record) return;

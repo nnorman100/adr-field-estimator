@@ -33,8 +33,9 @@ through the drying-log reconnect path. AI/document generation remains online-onl
 
 Authorized draft responses derive readiness from the existing claim and reading
 sidecars. The relay rechecks job access when reading saved readiness, and appends
-it to the existing shot-status context message at most once a second, between
-replies. Claim saves and reading saves/removals notify that channel. The gated
+it to the existing shot-status context message under the [relay timing and access
+constraints](firebase-isolation.md). Saved draft changes that alter readiness, claim
+saves and reading saves/removals notify that channel. The gated
 Live instructions ask one listed gap after photo shots, never fill or mark anything
 complete, and never describe gaps as blockers. No new model operation, per-user
 cap, log field or monitoring alert is introduced; existing Live caps, failure alerts
