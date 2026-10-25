@@ -106,7 +106,7 @@ test.describe('signed out', () => {
     );
 });
 
-test('signing help names the adjuster email and says nothing is attached', async ({ page }) => {
+test('signing help requires company delivery and an adjuster email and says nothing is attached', async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/app');
@@ -114,7 +114,7 @@ test('signing help names the adjuster email and says nothing is attached', async
   const topic = dialog.locator('[data-help-topic="signing"]');
   await topic.locator('summary').click();
   await expect(topic).toContainText(
-    'When the claim details include an adjuster email, DryScope emails that adjuster a private link to the itemized claim, the scope defense letter and the scope-code JSON.',
+    'When the company delivery switch is on and the claim details include an adjuster email, DryScope emails that adjuster a private link to the itemized claim, the scope defense letter and the scope-code JSON.',
   );
   await expect(topic).toContainText('Nothing is attached.');
   await expect(topic).toContainText('The homeowner is not emailed and no text is sent.');
