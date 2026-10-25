@@ -471,9 +471,12 @@ def test_crew_lead_email_is_the_summary_and_turning_delivery_off_stops_a_queued_
     assert len(connections) == 1
 
 
+@pytest.mark.parametrize('queue_error', [False, True])
 @pytest.mark.parametrize('channel', ['device', 'link'])
 @pytest.mark.parametrize('enabled,email', [(True, 'lead@example.invalid'), (True, ''), (False, '')])
-def test_signing_queues_crew_after_receipt_without_sending(api, channel, enabled, email):
+def test_signing_queues_crew_after_receipt_without_sending(
+    api, channel, enabled, email, queue_error, monkeypatch
+):
     from tests.fakes import png
     from tests.test_workspaces import data
     from tests.test_signing_links import mint, token, sign
@@ -496,8 +499,32 @@ def test_signing_queues_crew_after_receipt_without_sending(api, channel, enabled
             documents_confirmed=True,
         )
         submit = lambda: client.post('/api/authorize', json=payload)
+    original_queue = Deliveries.queue
+    if queue_error:
+        def unavailable(self, job_id, skipped):
+            job = store.db.records['_workspace_jobs/' + job_id]
+            assert 'authorizations/' + job['auth_id'] in store.db.records
+            raise RuntimeError('Synthetic delivery outage')
+
+        monkeypatch.setattr(Deliveries, 'queue', unavailable)
     response = submit()
     assert response.status_code == 200, response.text
+    if queue_error:
+        assert response.json()['status'] == 'success'
+        assert response.json()['delivery_error'] == (
+            'Your agreement is saved, but document delivery could not be queued.'
+        )
+        assert 'authorizations/' + response.json()['auth_id'] in store.db.records
+        assert store.db.records['_workspace_jobs/' + ID]['status'] == 'signed'
+        assert '_job_deliveries/' + ID not in store.db.records
+        repeated = submit()
+        assert repeated.status_code == 200 and repeated.json() == response.json()
+        monkeypatch.setattr(Deliveries, 'queue', original_queue)
+        recovered = submit()
+        assert recovered.status_code == 200 and recovered.json()['delivery_error'] is None
+        assert recovered.json()['auth_id'] == response.json()['auth_id']
+    else:
+        assert response.json()['delivery_error'] is None
     queued = deepcopy(store.db.records['_job_deliveries/' + ID])
     assert queued['auth_id'] == response.json()['auth_id']
     assert 'authorizations/' + queued['auth_id'] in store.db.records
@@ -509,3 +536,26 @@ def test_signing_queues_crew_after_receipt_without_sending(api, channel, enabled
     assert '_email_counts/daily' not in store.db.records
     assert submit().status_code == 200
     assert store.db.records['_job_deliveries/' + ID] == queued
+
+
+@pytest.mark.parametrize('count', [0, 1, 2])
+@pytest.mark.parametrize('as_model', [False, True])
+def test_crew_email_includes_power_distribution_without_prices(count, as_model):
+    payload = dict(
+        address='Synthetic job', rooms=[], air_movers=0, dehumidifiers=0,
+        air_scrubbers=0, wood_floor_systems=0, power_distribution=count,
+        technician_notes='Price $9999', technician_transcript='Price $9999',
+    )
+    data = InspectionData.model_validate(payload) if as_model else payload
+    company = deepcopy(COMPANY)
+    company['profile']['crew_lead_email'] = 'lead@example.invalid'
+    message = crew_lead_message(company, data)
+    for body in (message['text'], message['html']):
+        if count:
+            label = 'power-distribution unit' if count == 1 else 'power-distribution units'
+            assert f'Equipment: {count} {label}' in body
+            assert 'none recorded' not in body
+        else:
+            assert 'Equipment: none recorded.' in body
+            assert 'power-distribution' not in body
+        assert '$' not in body and '9999' not in body

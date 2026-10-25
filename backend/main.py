@@ -1220,14 +1220,18 @@ async def audit_inspection(
 
 async def queue_signed_delivery(store, record):
     if WORKSPACES_ENABLED and record.get('inspection_id'):
-        await stored(
-            Deliveries(store.workspaces).queue,
-            record['inspection_id'],
-            {
-                'homeowner': 'Homeowner document email is not enabled yet.',
-                'adjuster': 'Adjuster document email is not enabled yet.',
-            },
-        )
+        try:
+            await stored(
+                Deliveries(store.workspaces).queue,
+                record['inspection_id'],
+                {
+                    'homeowner': 'Homeowner document email is not enabled yet.',
+                    'adjuster': 'Adjuster document email is not enabled yet.',
+                },
+            )
+        except Exception:
+            return 'Your agreement is saved, but document delivery could not be queued.'
+    return None
 
 
 @app.post('/api/authorize')
@@ -1283,8 +1287,9 @@ async def authorize_estimate(
                 'Signing requires the current inspection revision, proposal hash, document confirmation and PNG signature.',
             )
         record = await stored(store.authorize, staff['uid'], req.model_dump(mode='json'))
-    await queue_signed_delivery(store, record)
+    delivery_error = await queue_signed_delivery(store, record)
     return dict(
+        delivery_error=delivery_error,
         status='success',
         auth_id=record['auth_id'],
         timestamp=record['created_at'],
@@ -1497,8 +1502,9 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
             user_agent=request.headers.get('user-agent', '')[:512],
         ),
     )
-    await queue_signed_delivery(store, record)
+    delivery_error = await queue_signed_delivery(store, record)
     return dict(
+        delivery_error=delivery_error,
         status='success',
         auth_id=record['auth_id'],
         timestamp=record['created_at'],

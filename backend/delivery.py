@@ -104,6 +104,7 @@ def crew_summary(data):
         (data.dehumidifiers, 'dehumidifier', 'dehumidifiers'),
         (data.air_scrubbers, 'air scrubber', 'air scrubbers'),
         (data.wood_floor_systems, 'wood-floor drying system', 'wood-floor drying systems'),
+        (data.power_distribution, 'power-distribution unit', 'power-distribution units'),
     ):
         if count:
             equipment.append(f'{count} {singular if count == 1 else plural}')
