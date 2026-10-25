@@ -486,7 +486,10 @@ def test_signing_queues_crew_after_receipt_without_sending(
     store.db.records['_companies/adr']['profile'].update(
         document_delivery=enabled, crew_lead_email=email
     )
-    assert client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code == 200
+    assert (
+        client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code
+        == 200
+    )
     record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
     assert '_job_deliveries/' + ID not in store.db.records
     if channel == 'link':
@@ -494,13 +497,17 @@ def test_signing_queues_crew_after_receipt_without_sending(
         submit = lambda: sign(value)
     else:
         payload = dict(
-            inspection_id=ID, expected_revision=1, auth_id='ADR-AUTH-crew123456',
-            proposal_hash=record['audit']['proposal_hash'], signature_png=png(),
+            inspection_id=ID,
+            expected_revision=1,
+            auth_id='ADR-AUTH-crew123456',
+            proposal_hash=record['audit']['proposal_hash'],
+            signature_png=png(),
             documents_confirmed=True,
         )
         submit = lambda: client.post('/api/authorize', json=payload)
     original_queue = Deliveries.queue
     if queue_error:
+
         def unavailable(self, job_id, skipped):
             job = store.db.records['_workspace_jobs/' + job_id]
             assert 'authorizations/' + job['auth_id'] in store.db.records
@@ -530,7 +537,9 @@ def test_signing_queues_crew_after_receipt_without_sending(
     assert 'authorizations/' + queued['auth_id'] in store.db.records
     crew = queued['entries']['crew_lead']
     assert crew['status'] == ('queued' if enabled and email else 'skipped')
-    assert crew['reason'] == ('' if enabled and email else NO_CREW_LEAD if enabled else DELIVERY_OFF)
+    assert crew['reason'] == (
+        '' if enabled and email else NO_CREW_LEAD if enabled else DELIVERY_OFF
+    )
     assert queued['entries']['homeowner']['status'] == 'skipped'
     assert queued['entries']['adjuster']['status'] == 'skipped'
     assert '_email_counts/daily' not in store.db.records
@@ -542,9 +551,15 @@ def test_signing_queues_crew_after_receipt_without_sending(
 @pytest.mark.parametrize('as_model', [False, True])
 def test_crew_email_includes_power_distribution_without_prices(count, as_model):
     payload = dict(
-        address='Synthetic job', rooms=[], air_movers=0, dehumidifiers=0,
-        air_scrubbers=0, wood_floor_systems=0, power_distribution=count,
-        technician_notes='Price $9999', technician_transcript='Price $9999',
+        address='Synthetic job',
+        rooms=[],
+        air_movers=0,
+        dehumidifiers=0,
+        air_scrubbers=0,
+        wood_floor_systems=0,
+        power_distribution=count,
+        technician_notes='Price $9999',
+        technician_transcript='Price $9999',
     )
     data = InspectionData.model_validate(payload) if as_model else payload
     company = deepcopy(COMPANY)
