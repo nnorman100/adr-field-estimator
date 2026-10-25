@@ -11,7 +11,7 @@ except ImportError:
 
 class RoomSummary(StrictModel):
     room_index: StrictInt = Field(ge=0)
-    trend: Literal['recorded', 'stalled', 'no_new_reading', 'at_dry_standard']
+    trend: Literal['recorded', 'stalled', 'improving', 'no_new_reading', 'at_dry_standard']
     mention: Literal['status', 'moisture', 'air', 'progress']
 
 
@@ -36,8 +36,7 @@ def summary_options(facts):
         trend = (
             'at_dry_standard' if facts['status'] == 'dry_standard_met'
             else 'no_new_reading' if name in facts['missing_rooms'] or not (materials or air)
-            else 'stalled' if air and 'stalled' in facts['flags']
-            else 'recorded'
+            else facts.get('air_trends', {}).get(name, 'recorded')
         )
         mentions = ['status']
         if materials:
@@ -57,6 +56,7 @@ def validate_summary(result, facts):
     labels = {
         'recorded': 'readings recorded',
         'stalled': 'stalled',
+        'improving': 'improving',
         'no_new_reading': 'no new reading',
         'at_dry_standard': 'at dry standard',
     }

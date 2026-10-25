@@ -544,3 +544,52 @@ const sources = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
     assert before['cache'] != after['cache']
     assert before['assets'] == after['assets']
     assert before['offline'] == after['offline'] == 'cached asset'
+
+
+@pytest.mark.parametrize('stalled_room,improving_room', [('Kitchen', 'Bath'), ('Bath', 'Kitchen')])
+def test_room_trends_use_own_readings(watched, monkeypatch, stalled_room, improving_room):
+    _, _, store, watch = watched
+    rooms = [stalled_room, improving_room]
+    data = dict(address='Synthetic property', drying_days=3,
+                rooms=[dict(name=room, wet_materials=1) for room in rooms])
+    readings = []
+    for room, values in [(stalled_room, [70, 70, 70]), (improving_room, [90, 70, 50])]:
+        for day, gpp in zip([21, 22, 23], values):
+            readings.append(dict(
+                kind='air', room=room, zone='affected', gpp=gpp,
+                vapor_pressure_inhg=0.4, taken_at=f'2026-10-{day}T16:00:00Z',
+            ))
+        readings.append(dict(
+            kind='material', room=room, material='Drywall', unit='%WME',
+            moisture=22, dry_standard=12, affected=True, taken_at='2026-10-23T16:00:00Z',
+        ))
+    log = dict(readings=readings, updated_at='2026-10-23T17:00:00Z')
+    at = instant('2026-10-23T17:00:00Z')
+    state = watch_state(data, log, '2026-10-21T16:00:00Z', at=at)
+    assert state['air_trends'] == {stalled_room: 'stalled', improving_room: 'improving'}
+    assert 'stalled' in state['flags']
+
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.db.records['authorizations/' + job['auth_id']]['inspection'] = data
+    store.db.records['drying_logs/' + ID] = log
+    monkeypatch.setattr(monitoring_store, 'watch_state', lambda data, log, setup, previous:
+                        watch_state(data, log, setup, previous, at=at))
+    current = watch.view('office', ID)
+    selection = dict(rooms=[
+        dict(room_index=0, trend='stalled', mention='status'),
+        dict(room_index=1, trend='improving', mention='status'),
+    ])
+    watch.save_summary('office', ID, current['facts_hash'], selection)
+    cached = watch.view('office', ID)['summary']['text']
+    assert cached.endswith('Room 1: stalled; Room 2: improving.')
+
+    wrong = deepcopy(selection)
+    wrong['rooms'][1]['trend'] = 'stalled'
+    with pytest.raises(ValueError, match='does not match'):
+        watch.save_summary('office', ID, current['facts_hash'], wrong)
+    assert watch.view('office', ID)['summary']['text'] == cached
+
+    improving_only = dict(log, readings=[r for r in readings if r['room'] == improving_room])
+    state = watch_state(data, improving_only, '2026-10-21T16:00:00Z', at=at)
+    assert state['air_trends'][improving_room] == 'improving'
+    assert 'stalled' not in state['flags']

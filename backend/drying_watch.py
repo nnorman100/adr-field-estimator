@@ -178,13 +178,20 @@ def watch_state(data, log, setup_at, previous=None, at=None):
     flags = []
     if not data.get('rooms') or missing_rooms or any(r.get('dry_standard') is None for r in latest):
         flags.append('missing_dry_standard')
+    air_trends = {}
     for g in grouped['groups']:
         air_days = [d for d in g['days'] if d['affected']]
-        if len(air_days) >= 3 and all(
+        stalled = len(air_days) >= 3 and all(
             air_days[i]['affected']['gpp'] >= air_days[i - 1]['affected']['gpp'] for i in (-2, -1)
-        ):
-            flags.append('stalled')
-            break
+        )
+        improving = len(air_days) >= 2 and (
+            air_days[-1]['affected']['gpp'] < air_days[-2]['affected']['gpp']
+        )
+        air_trends[g['room']] = (
+            'stalled' if stalled else 'improving' if improving else 'recorded'
+        )
+    if 'stalled' in air_trends.values():
+        flags.append('stalled')
     status = 'dry_standard_met' if dry else 'active'
     if previous.get('closed'):
         status = 'marked_dry' if previous['closed']['action'] == 'mark_dry' else 'closed'
@@ -212,6 +219,7 @@ def watch_state(data, log, setup_at, previous=None, at=None):
         ],
         air=[dict(room=g['room'], **g['progress']) for g in grouped['groups'] if g['progress']],
         missing_rooms=missing_rooms,
+        air_trends=air_trends,
     )
 
 
@@ -227,6 +235,7 @@ def facts(watch):
             'materials',
             'air',
             'missing_rooms',
+            'air_trends',
         )
     }
 
