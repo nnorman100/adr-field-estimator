@@ -95,7 +95,12 @@ CLAIM_WORDS = 'Synthetic Mutual claim number CLM 0042 77.'
 async def generate(**kwargs):
     schema = kwargs['config'].response_schema
     if schema.__name__ == 'DryingSummary' if isinstance(schema, type) else False:
-        return SimpleNamespace(text=json.dumps({'text': 'Monitoring is active.'}))
+        from backend.drying_summary import summary_options
+        pack = json.loads(str(kwargs['contents']).split('\n')[-1])
+        option = summary_options(pack['facts'])[0]
+        return SimpleNamespace(text=json.dumps({'rooms': [{
+            'room_index': option['room_index'], 'trend': option['trend'], 'mention': 'status',
+        }]}))
     if isinstance(schema, dict) and schema == bm.scope_response_schema():
         kitchen = 'Kitchen, category 2, 80 SF drywall' in str(kwargs['contents'])
         room = 'Kitchen' if kitchen else 'Room 1'
@@ -479,8 +484,8 @@ def worker():
         (ROOT / 'public/sw.js')
         .read_text()
         .replace(
-            "const VERSION='unstamped';",
-            "const VERSION='unstamped" + worker_suffix + "';",
+            "const CACHE='dryscope-a1-'+VERSION;",
+            "const CACHE='dryscope-a1-'+VERSION+'" + worker_suffix + "';",
         ),
         media_type='text/javascript',
         headers={'Cache-Control': 'no-store'},

@@ -22,7 +22,7 @@ try:
     from . import ai_features
     from .monitoring_store import WatchAction, ReminderRequest
     from .drying_watch import facts
-    from .drying_summary import DryingSummary, validate_summary
+    from .drying_summary import DryingSummary, validate_summary, summary_options
     from .prompts import DRYING_SUMMARY_INSTRUCTIONS
     from .cloud_log import event
 except ImportError:
@@ -42,7 +42,7 @@ except ImportError:
     import ai_features
     from monitoring_store import WatchAction, ReminderRequest
     from drying_watch import facts
-    from drying_summary import DryingSummary, validate_summary
+    from drying_summary import DryingSummary, validate_summary, summary_options
     from prompts import DRYING_SUMMARY_INSTRUCTIONS
     from cloud_log import event
 
@@ -147,7 +147,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         pack = facts(current)
         result = await bm.generate(
             DryingSummary,
-            DRYING_SUMMARY_INSTRUCTIONS + '\n' + json.dumps(pack),
+            DRYING_SUMMARY_INSTRUCTIONS + '\n' + json.dumps(dict(facts=pack, options=summary_options(pack))),
             bm.AUDIT_MODEL,
             'drying_watch',
             inspection_id,
@@ -155,7 +155,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             timeout=25,
         )
         try:
-            text = validate_summary(result, pack)
+            validate_summary(result, pack)
         except ValueError:
             event(
                 'Drying summary rejected',
@@ -165,7 +165,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
                 watch_status=current['status'],
             )
             raise HTTPException(502, 'Could not write the summary. Retry.') from None
-        await stored(watch.save_summary, claims['uid'], inspection_id, current['facts_hash'], text)
+        await stored(watch.save_summary, claims['uid'], inspection_id, current['facts_hash'], result)
         return await stored(watch.view, claims['uid'], inspection_id)
 
     @app.post('/api/jobs/{inspection_id}/drying-watch/state')

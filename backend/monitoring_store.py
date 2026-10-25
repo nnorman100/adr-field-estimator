@@ -14,7 +14,8 @@ try:
     from . import ai_features
     from .cloud_log import event
     from .contracts import StrictModel
-    from .drying_watch import watch_state, facts_hash
+    from .drying_watch import watch_state, facts_hash, facts
+    from .drying_summary import DryingSummary, validate_summary
     from .inspection_store import Conflict, now
     from .workspaces import (
         AccessDenied,
@@ -30,7 +31,8 @@ except ImportError:
     import ai_features
     from cloud_log import event
     from contracts import StrictModel
-    from drying_watch import watch_state, facts_hash
+    from drying_watch import watch_state, facts_hash, facts
+    from drying_summary import DryingSummary, validate_summary
     from inspection_store import Conflict, now
     from workspaces import (
         AccessDenied,
@@ -96,6 +98,12 @@ class Monitoring:
         result['facts_hash'] = facts_hash(result)
         if (result.get('summary') or {}).get('facts_hash') != result['facts_hash']:
             result.pop('summary', None)
+        if result.get('summary'):
+            try:
+                selection = DryingSummary.model_validate(result['summary']['selection'])
+                result['summary']['text'] = validate_summary(selection, facts(result))
+            except (KeyError, ValueError):
+                result.pop('summary', None)
         result.setdefault('extensions', [])
         result.setdefault('reminders', [])
         return result
@@ -206,20 +214,28 @@ class Monitoring:
         if support:
             self.w.support_audit(uid, company_id, 'view_drying_watch', 'drying-watch')
         else:
-            self.w.company_actor(uid, company_id)
+            def recheck(tx):
+                self.w.company_actor(uid, company_id, tx=tx)
+                for row in rows[:50]:
+                    self.access(uid, row.to_dict()['job_id'], tx=tx)
+            self.w._run(recheck)
         return dict(
             jobs=records,
             next_cursor=rows[49].to_dict()['job_id'] if len(rows) > 50 else None,
             unavailable=len(rows[:50]) - len(records),
         )
 
-    def save_summary(self, uid, job_id, expected, text):
+    def save_summary(self, uid, job_id, expected, selection):
         def save(tx):
             job, _ = self.access(uid, job_id, tx=tx)
             record = self.compute(job, tx)
             if record['facts_hash'] != expected:
                 raise Conflict('Readings changed. Reload the drying summary.')
-            record['summary'] = dict(text=text, facts_hash=expected, generated_at=now())
+            selected = DryingSummary.model_validate(selection)
+            text = validate_summary(selected, facts(record))
+            record['summary'] = dict(
+                selection=selected.model_dump(), text=text, facts_hash=expected, generated_at=now()
+            )
             tx.set(self.ref(job_id), dict(record, updated_at=now()))
             return record
 

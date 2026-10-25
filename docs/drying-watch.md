@@ -48,8 +48,9 @@ billable days require **Copy to new draft** and a separate agreement.
 
 The model receives a small fact pack with material/air measurements, day counts,
 missing rooms and flags. No customer, address, transcript, notes, email or price
-is sent. The validator rejects invented numbers, money, scope/equipment advice,
-over 60 words, and dry/complete assertions unless all standards are met.
+is sent. The model returns closed room/trend/fact selections, never narrative text. The server
+validates each selection against the facts and renders fixed sentences with its own
+measurements. Legacy text-only caches are discarded; money and advice have no output field.
 Summaries cache on `facts_hash` plus log update time; repeat views use the cache.
 Provider or validation failure leaves facts visible with **Retry summary**.
 Calls are limited to 6/minute and 60/day per user; state changes to 10/minute

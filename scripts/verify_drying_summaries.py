@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from backend.drying_summary import DryingSummary, validate_summary
+from backend.drying_summary import DryingSummary, validate_summary, summary_options
 from backend.prompts import DRYING_SUMMARY_INSTRUCTIONS
 
 
@@ -36,7 +36,7 @@ def main():
             for pack in packs[:5]:
                 result = await generate(
                     DryingSummary,
-                    DRYING_SUMMARY_INSTRUCTIONS + '\n' + json.dumps(pack['facts']),
+                    DRYING_SUMMARY_INSTRUCTIONS + '\n' + json.dumps(dict(facts=pack['facts'], options=summary_options(pack['facts']))),
                     AUDIT_MODEL,
                     'drying_watch',
                     'synthetic-eval',
@@ -49,7 +49,13 @@ def main():
         print('live: 5/5 summaries passed unchanged')
     else:
         for pack in packs:
-            validate_summary(DryingSummary(text=pack['valid']), pack['facts'])
+            assert validate_summary(DryingSummary.model_validate(pack['valid']), pack['facts']) == pack['expected']
+            for invalid in pack.get('invalid', []):
+                try:
+                    validate_summary(invalid, pack['facts'])
+                except ValueError:
+                    continue
+                raise AssertionError('Invalid summary accepted')
         print('dry-run: 10/10 fixture summaries passed; no model calls')
 
 

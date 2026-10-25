@@ -1,9 +1,7 @@
-"""A bounded narrative over deterministic monitoring facts; never a command or a reminder."""
+"""Closed model selections rendered from deterministic monitoring facts."""
 
-import json
-import re
-from decimal import Decimal
-from pydantic import Field
+from typing import Literal
+from pydantic import Field, StrictInt
 
 try:
     from .contracts import StrictModel
@@ -11,29 +9,75 @@ except ImportError:
     from contracts import StrictModel
 
 
+class RoomSummary(StrictModel):
+    room_index: StrictInt = Field(ge=0)
+    trend: Literal['recorded', 'stalled', 'no_new_reading', 'at_dry_standard']
+    mention: Literal['status', 'moisture', 'air', 'progress']
+
+
 class DryingSummary(StrictModel):
-    text: str = Field(min_length=1, max_length=600)
+    rooms: list[RoomSummary] = Field(min_length=1, max_length=2)
 
 
-def numbers(text):
-    return {Decimal(n) for n in re.findall(r'(?<![\w.])-?\d+(?:\.\d+)?', text)}
+def room_names(facts):
+    return list(dict.fromkeys(
+        [m['room'] for m in facts['materials']]
+        + [a['room'] for a in facts['air']]
+        + facts['missing_rooms']
+    )) or [None]
+
+
+def summary_options(facts):
+    names = room_names(facts)
+    options = []
+    for index, name in enumerate(names):
+        materials = [m for m in facts['materials'] if m['room'] == name]
+        air = [a for a in facts['air'] if a['room'] == name]
+        trend = (
+            'at_dry_standard' if facts['status'] == 'dry_standard_met'
+            else 'no_new_reading' if name in facts['missing_rooms'] or not (materials or air)
+            else 'stalled' if air and 'stalled' in facts['flags']
+            else 'recorded'
+        )
+        mentions = ['status']
+        if materials:
+            mentions.append('moisture')
+        if air:
+            mentions.extend(['air', 'progress'])
+        options.append(dict(room_index=index, trend=trend, mentions=mentions))
+    return options
 
 
 def validate_summary(result, facts):
-    text = result.text.strip()
-    if not text or len(text.split()) > 60 or '$' in text:
-        raise ValueError('Invalid drying summary.')
-    if not numbers(text).issubset(numbers(json.dumps(facts))):
-        raise ValueError('Ungrounded drying summary.')
-    if facts['status'] != 'dry_standard_met' and re.search(
-        r'\b(dry|complete|completed|finished)\b', text, re.I
-    ):
-        raise ValueError('Drying is not verified complete.')
-    # No instructions or financial/scope advice, including spelled-out invented quantities.
-    if re.search(
-        r'\b(price|cost|dollars?|usd|charge|bill|demoli\w*|remov\w*|add|extend\w*|continu\w*|shorten\w*|prolong\w*|resume\w*|stop\w*|keep|maintain\w*|reduce\w*|recommend\w*|should|must|need to|install|replace|increase|decrease|equipment|fans?|dehumidifiers?|one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand)\b',
-        text,
-        re.I,
-    ):
-        raise ValueError('The summary must only describe the recorded facts.')
-    return text
+    result = DryingSummary.model_validate(result)
+    options = summary_options(facts)
+    names = room_names(facts)
+    clauses = []
+    seen = set()
+    labels = {
+        'recorded': 'readings recorded',
+        'stalled': 'stalled',
+        'no_new_reading': 'no new reading',
+        'at_dry_standard': 'at dry standard',
+    }
+    for selection in result.rooms:
+        index = selection.room_index
+        if index >= len(options) or index in seen:
+            raise ValueError('Unknown or repeated summary room.')
+        option = options[index]
+        if selection.trend != option['trend'] or selection.mention not in option['mentions']:
+            raise ValueError('Summary selection does not match recorded facts.')
+        seen.add(index)
+        clause = f"Room {index + 1}: {labels[selection.trend]}"
+        if selection.mention == 'moisture':
+            material = next(m for m in facts['materials'] if m['room'] == names[index])
+            reference = material['dry_standard']
+            clause += f"; moisture {material['moisture']}, reference {reference if reference is not None else 'not set'}"
+        elif selection.mention in ('air', 'progress'):
+            air = next(a for a in facts['air'] if a['room'] == names[index])
+            if selection.mention == 'air':
+                clause += f"; affected air {air['latest_gpp']} GPP, reference {air['reference_gpp']} GPP"
+            else:
+                clause += f"; progress {air['percent']}%"
+        clauses.append(clause)
+    return f"Day {facts['day_number']} of {facts['planned_days']}. " + '; '.join(clauses) + '.'

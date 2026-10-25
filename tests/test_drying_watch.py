@@ -40,10 +40,10 @@ def test_deterministic_status_and_browser_parity(case):
 
 @pytest.mark.parametrize('case', SUMMARIES, ids=lambda c: c['name'])
 def test_summary_fact_packs(case):
-    assert validate_summary(DryingSummary(text=case['valid']), case['facts']) == case['valid']
+    assert validate_summary(DryingSummary.model_validate(case['valid']), case['facts']) == case['expected']
     for text in case.get('invalid', []):
-        with pytest.raises(ValueError, match='only describe'):
-            validate_summary(DryingSummary(text=text), case['facts'])
+        with pytest.raises(ValueError):
+            validate_summary(text, case['facts'])
 
 
 @pytest.mark.parametrize(
@@ -62,7 +62,7 @@ def test_summary_fact_packs(case):
 )
 def test_ungrounded_or_actionable_summary_is_rejected(text):
     with pytest.raises(ValueError):
-        validate_summary(DryingSummary(text=text), SUMMARIES[1]['facts'])
+        validate_summary({'text': text}, SUMMARIES[1]['facts'])
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ def test_summary_is_cached_failure_is_retryable_and_never_changes_signed_sources
 
     async def generate(schema, contents, *args, **kwargs):
         calls.append(contents)
-        return DryingSummary(text='Monitoring is active.')
+        return DryingSummary(rooms=[dict(room_index=0, trend='no_new_reading', mention='status')])
 
     monkeypatch.setattr(bm, 'generate', generate)
     for _ in range(2):
@@ -172,7 +172,7 @@ def test_summary_rechecks_access_and_facts_after_provider(watched, monkeypatch):
 
     async def generate(*args, **kwargs):
         store.db.records['_memberships/estimator']['status'] = 'disabled'
-        return DryingSummary(text='Monitoring is active.')
+        return DryingSummary(rooms=[dict(room_index=0, trend='no_new_reading', mention='status')])
 
     monkeypatch.setattr(bm, 'generate', generate)
     assert client.post(f'/api/jobs/{ID}/drying-watch/summary').status_code == 403
@@ -423,3 +423,124 @@ def test_reminder_recipient_approval(watched, monkeypatch, recipient, change, re
     assert len(calls) == int(retry)
     watch.remind('office', ID, request(watch, recipient))
     assert len(calls) == int(retry) + 1
+
+
+@pytest.mark.parametrize('route', ['/api/jobs/drying-watch', '/api/companies/adr/drying-watch'])
+def test_list_rechecks_each_job_after_role_downgrade(watched, monkeypatch, route):
+    client, actor, store, watch = watched
+    actor['uid'] = 'office'
+    original = watch.view
+
+    def view(*args, **kwargs):
+        result = original(*args, **kwargs)
+        store.db.records['_memberships/office']['role'] = 'estimator'
+        return result
+
+    monkeypatch.setattr(watch, 'view', view)
+    response = client.get(route)
+    assert response.status_code == 404
+    assert 'Synthetic' not in response.text
+
+
+@pytest.mark.parametrize('text', [
+    'Continue drying for 3 more days.',
+    'Drying for 3 more days is advised.',
+    '€22.',
+])
+def test_free_text_summary_never_reaches_cache_or_response(watched, monkeypatch, text):
+    client, actor, store, watch = watched
+    actor['uid'] = 'office'
+
+    async def generate(*args, **kwargs):
+        return {'text': text}
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    response = client.post(f'/api/jobs/{ID}/drying-watch/summary')
+    assert response.status_code == 502
+    assert text not in response.text
+    assert not watch.view('office', ID).get('summary')
+
+
+def test_legacy_text_cache_is_not_displayed(watched):
+    _, _, store, watch = watched
+    current = watch.view('office', ID)
+    store.db.records['_job_monitoring/' + ID]['summary'] = dict(
+        text='€22.', facts_hash=current['facts_hash'], generated_at='old',
+    )
+    assert not watch.view('office', ID).get('summary')
+
+
+def test_structured_summary_mentions_air_and_progress():
+    pack = deepcopy(SUMMARIES[1]['facts'])
+    pack['air'] = [dict(room='Kitchen', latest_gpp=71, reference_gpp=53, percent=40)]
+    for mention, expected in [
+        ('air', 'affected air 71 GPP, reference 53 GPP'),
+        ('progress', 'progress 40%'),
+    ]:
+        selection = dict(rooms=[dict(room_index=0, trend='recorded', mention=mention)])
+        assert expected in validate_summary(selection, pack)
+    with pytest.raises(ValueError):
+        validate_summary(dict(rooms=[
+            dict(room_index=0, trend='recorded', mention='status'),
+            dict(room_index=0, trend='recorded', mention='status'),
+        ]), pack)
+
+
+def test_worker_update_fixture_preserves_offline_asset_urls():
+    import sys
+
+    served = subprocess.run(
+        [sys.executable, '-c', """
+import json
+from tests import browser_server as server
+before = server.worker().body.decode()
+server.worker_suffix = 'test-owner-update'
+after = server.worker().body.decode()
+print(json.dumps([before, after]))
+"""],
+        text=True, capture_output=True, check=True,
+    )
+    consumer = """
+const vm = require('node:vm');
+const sources = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+(async () => {
+  const results = [];
+  for (const source of sources) {
+    const handlers = {}, result = {};
+    const sandbox = {
+      URL,
+      self: {
+        location: {origin: 'https://localhost'},
+        addEventListener: (type, handler) => { handlers[type] = handler; },
+      },
+      caches: {
+        open: async (name) => {
+          result.cache = name;
+          return {addAll: async (assets) => { result.assets = assets; }};
+        },
+        match: async () => 'cached asset',
+      },
+    };
+    vm.runInNewContext(source, sandbox);
+    await new Promise((resolve, reject) => handlers.install({
+      waitUntil: (promise) => promise.then(resolve, reject),
+    }));
+    let response;
+    handlers.fetch({
+      request: {url: 'https://localhost/drying-watch.js?v=unstamped', method: 'GET', mode: 'cors'},
+      respondWith: (promise) => { response = promise; },
+    });
+    result.offline = await response;
+    results.push(result);
+  }
+  process.stdout.write(JSON.stringify(results));
+})().catch(() => process.exit(1));
+"""
+    run = subprocess.run(
+        ['node', '-e', consumer], input=served.stdout,
+        text=True, capture_output=True, check=True,
+    )
+    before, after = json.loads(run.stdout)
+    assert before['cache'] != after['cache']
+    assert before['assets'] == after['assets']
+    assert before['offline'] == after['offline'] == 'cached asset'

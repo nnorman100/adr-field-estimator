@@ -523,6 +523,10 @@ test('worker update prompts, preserves the draft and keeps protected data out of
     return result;
   });
   expect(urls.filter((url) => url.includes('/api/'))).toEqual([]);
+  await page.context().setOffline(true);
+  await page.reload();
+  await expect(page.locator('#technicianNotes')).toHaveValue('Preserve during installed update');
+  await page.context().setOffline(false);
 });
 test('logout clears user-specific local drafts', async ({ page }) => {
   await scope(page);

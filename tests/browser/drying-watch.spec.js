@@ -23,7 +23,7 @@ async function open(page, role) {
   await expect(list).toContainText('Assigned bathroom');
   await list.getByRole('button', { name: 'Assigned bathroom', exact: true }).click();
   await expect(page.locator('#dryingWatch')).toBeVisible();
-  await expect(page.locator('#dryingWatch .watch-summary')).toHaveText('Monitoring is active.');
+  await expect(page.locator('#dryingWatch .watch-summary')).toHaveText(/Day \d+ of 3\. Room 1: no new reading\./);
 }
 
 for (const width of [390, 320]) {
@@ -144,7 +144,7 @@ test('loading, failed summary, rate limit and retry keep deterministic facts vis
   await page.unroute('**/drying-watch/summary');
   await expect(card.getByRole('button', { name: 'Retry summary', exact: true })).toBeEnabled();
   await card.getByRole('button', { name: 'Retry summary', exact: true }).click();
-  await expect(card.locator('.watch-summary')).toHaveText('Monitoring is active.');
+  await expect(card.locator('.watch-summary')).toHaveText(/Day \d+ of 3\. Room 1: no new reading\./);
 });
 
 test('reminder needs confirmation, records failure and retries; extension never changes plan', async ({

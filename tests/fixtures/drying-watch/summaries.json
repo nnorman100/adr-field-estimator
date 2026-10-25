@@ -18,7 +18,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 1 of 3. Materials are dry at 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "at_dry_standard",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 1 of 3. Room 1: at dry standard; moisture 12, reference 12."
   },
   {
     "name": "pack-2",
@@ -41,17 +50,84 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 2 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME.",
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
     "invalid": [
-      "Continue drying for 3 more days.",
-      "Extend drying for 3 days.",
-      "Shorten drying to 3 days.",
-      "Keep drying for 3 days.",
-      "Resume drying for 3 days.",
-      "Stop drying after 3 days.",
-      "A continuation of drying for 3 days is recommended.",
-      "The drying plan should be shortened."
-    ]
+      {
+        "text": "Continue drying for 3 more days."
+      },
+      {
+        "text": "Extend drying for 3 days."
+      },
+      {
+        "text": "Shorten drying to 3 days."
+      },
+      {
+        "text": "Keep drying for 3 days."
+      },
+      {
+        "text": "Resume drying for 3 days."
+      },
+      {
+        "text": "Stop drying after 3 days."
+      },
+      {
+        "text": "A continuation of drying for 3 days is recommended."
+      },
+      {
+        "text": "The drying plan should be shortened."
+      },
+      {
+        "text": "Drying for 3 more days is advised."
+      },
+      {
+        "text": "€22."
+      },
+      {
+        "rooms": [
+          {
+            "room_index": 0,
+            "trend": "advised",
+            "mention": "status"
+          }
+        ]
+      },
+      {
+        "rooms": [
+          {
+            "room_index": 0,
+            "trend": "recorded",
+            "mention": "price"
+          }
+        ]
+      },
+      {
+        "rooms": [
+          {
+            "room_index": 99,
+            "trend": "recorded",
+            "mention": "status"
+          }
+        ]
+      },
+      {
+        "rooms": [
+          {
+            "room_index": 0,
+            "trend": "at_dry_standard",
+            "mention": "status"
+          }
+        ]
+      }
+    ],
+    "expected": "Day 2 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-3",
@@ -72,7 +148,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 3 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 3 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-4",
@@ -95,7 +180,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 4 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 4 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-5",
@@ -116,7 +210,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 5 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 5 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-6",
@@ -139,7 +242,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 6 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 6 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-7",
@@ -160,7 +272,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 7 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 7 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-8",
@@ -183,7 +304,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 8 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 8 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-9",
@@ -204,7 +334,16 @@
       "air": [],
       "missing_rooms": []
     },
-    "valid": "Day 9 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 9 of 3. Room 1: readings recorded; moisture 22, reference 12."
   },
   {
     "name": "pack-10",
@@ -229,6 +368,15 @@
         "Bath"
       ]
     },
-    "valid": "Day 10 of 3. Recorded moisture is 22 %WME against a reference of 12 %WME."
+    "valid": {
+      "rooms": [
+        {
+          "room_index": 0,
+          "trend": "recorded",
+          "mention": "moisture"
+        }
+      ]
+    },
+    "expected": "Day 10 of 3. Room 1: readings recorded; moisture 22, reference 12."
   }
 ]
