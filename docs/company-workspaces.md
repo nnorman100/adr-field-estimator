@@ -137,3 +137,15 @@ Draft keys include user/company/inspection. Legacy local drafts recover only aft
 Prior matched production pair at start: backend alert-disaster-field-estimator-00006-yer; frontend live-reliable-20261007-1; Hosting version 0350de7b1566a1b5 (release 1791398669068000). Source baseline was preserved under review-artifacts/workspaces-20261007/baseline, which is no longer tracked (git history before its removal still holds it). Capture a fresh pair before promotion. Stop workspace writes before rollback, disable workspace authorization, and restore the matched original owner-only backend/frontend. Sidecars are retained but ignored in that mode; raw customer documents and evidence are not deleted. New-company memberships are unavailable in owner-only rollback, and staff-signed/assigned jobs need reconciliation before reactivation.
 
 Physical iPhone/Bluetooth acceptance remains open. This feature does not add billing, company rates, other-state rules, multiple-company membership, Live tools, Cloud Vision or automatic invitation background retries.
+
+## Drying watch
+
+When `AI_FEATURES` includes `drying_watch`, signed jobs have a private monitoring
+sidecar. Owners and office staff see the company list; estimators see their
+authorized jobs. Owners and office staff can confirm a reminder, extend the
+plan with a note, or close monitoring with a reason. The job's estimator can
+also mark it dry with a reason. Superadmin support is audited and read-only.
+The owner must separately enable drying reminders in Company settings. Nothing
+is emailed on a schedule. The signed agreement never changes; extra billable
+days go through Copy to new draft. See [Drying watch](drying-watch.md) for
+thresholds, offline behavior, retention and the rollout checks.

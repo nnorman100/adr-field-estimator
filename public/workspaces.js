@@ -365,6 +365,7 @@ window.WorkspaceUI = (() => {
         ),
       );
     content.append(grid);
+    window.DryingWatch?.dashboard(content);
     if (state.session.role) {
       const card = node('section', undefined, 'dashboard-card');
       card.append(
@@ -525,6 +526,7 @@ window.WorkspaceUI = (() => {
     current('dashboardJobs');
     $('dashboardNewJob').hidden = !can('jobs_create');
     const content = $('dashboardContent');
+    window.DryingWatch?.dashboard(content);
     const pages = { drafts: [], signed: [] },
       cursors = {};
     let local = [];
@@ -879,6 +881,15 @@ window.WorkspaceUI = (() => {
       box.name = 'document_delivery';
       box.checked = p.document_delivery === true;
       delivery.append(box, ' Send document emails after signing');
+      if (window.DryingWatch?.enabled()) {
+        const reminder = node('label'),
+          toggle = node('input');
+        toggle.type = 'checkbox';
+        toggle.name = 'drying_reminders';
+        toggle.checked = p.drying_reminders === true;
+        reminder.append(toggle, ' Allow drying reminders after an office or owner confirmation');
+        form.append(reminder);
+      }
       form.append(
         delivery,
         node(
@@ -894,6 +905,8 @@ window.WorkspaceUI = (() => {
       if (can('delivery_manage')) {
         updated.crew_lead_email = (values.get('crew_lead_email') || '').trim();
         updated.document_delivery = values.get('document_delivery') === 'on';
+        if (window.DryingWatch?.enabled())
+          updated.drying_reminders = values.get('drying_reminders') === 'on';
       }
       if (logo.files[0]) {
         if (logo.files[0].size > 1000000) throw Error('Logo exceeds 1 MB.');
@@ -1090,6 +1103,7 @@ window.WorkspaceUI = (() => {
     if (drafts.next_cursor || signed.next_cursor)
       older.append(node('p', 'Showing the 100 most recent drafts and agreements.'));
     render();
+    window.DryingWatch?.dashboard(content, cid, (authId) => supportRecord(cid, authId, true));
     content.append(node('h2', 'Team'));
     const grid = node('div', undefined, 'dashboard-grid');
     content.append(grid);
@@ -1230,6 +1244,7 @@ window.WorkspaceUI = (() => {
         supportImage(base + '/evidence/signature', 'Customer signature'),
       );
       content.append(signature, supportDelivery(result.delivery));
+      window.DryingWatch?.supportCard(result.monitoring, content);
     }
   }
   function supportDelivery(delivery) {

@@ -2599,6 +2599,7 @@ def superadmin_tools(invites):
         ('team metadata', 'GET', other + '/team', None, 200),
         ('invitation metadata', 'GET', other + '/invitations', None, 200),
         ('support jobs', 'GET', support + 'adr/jobs', None, 200),
+        ('support drying watch (rollout off)', 'GET', support + 'adr/drying-watch', None, 404),
         ('support documents', 'GET', support + 'adr/authorizations', None, 200),
         ('support job', 'GET', support + 'adr/jobs/' + ID, None, 200),
         ('support photo', 'GET', support + 'adr/jobs/' + ID + '/photos/' + PHOTO, None, 200),

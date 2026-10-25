@@ -67,7 +67,7 @@ try:
         ReadingUpload,
         QrTagRequest,
     )
-    from . import places, signing_links
+    from . import places, signing_links, ai_features
     from .delivery import Deliveries
     from . import document_links
     from . import tags as qr_tags
@@ -788,7 +788,11 @@ async def session_info(staff=Depends(current_staff)):
         live_voice=LIVE_VOICE,
         workspaces_enabled=WORKSPACES_ENABLED,
         workspace_protocol_version=1,
+<<<<<<< HEAD
         ai_features=sorted(AI_FEATURES),
+=======
+        ai_features=sorted(ai_features.AI_FEATURES) if WORKSPACES_ENABLED else [],
+>>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
     )
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, staff['uid'])
@@ -1737,7 +1741,12 @@ async def support_authorization(
     record, job, delivery = await stored(
         store.support_authorization, staff['uid'], company_id, auth_id
     )
-    return {'authorization': public_record(record), 'job': job, 'delivery': delivery}
+    result = {'authorization': public_record(record), 'job': job, 'delivery': delivery}
+    if ai_features.enabled('drying_watch') and (record.get('inspection') or {}).get('drying_days'):
+        result['monitoring'] = await stored(
+            store.workspaces.monitoring.view, staff['uid'], job['job_id'], company_id
+        )
+    return result
 
 
 @app.get('/api/admin/companies/{company_id}/authorizations/{auth_id}/evidence/{name}')

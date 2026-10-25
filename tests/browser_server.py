@@ -19,7 +19,7 @@ import uvicorn
 from fastapi import Request, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
-from backend import places
+from backend import places, ai_features, monitoring_store
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
@@ -52,6 +52,9 @@ async def identity(request: Request):
         if matched and fault.get(name):
             fault[name] -= 1
             raise HTTPException(503, 'Synthetic saved evidence load failure')
+    if request.url.path.endswith('/drying-watch/summary') and fault.get('drying_summary'):
+        fault['drying_summary'] -= 1
+        raise HTTPException(502, 'Synthetic provider failure')
     if request.url.path == '/api/audit' and fault.get('audit'):
         fault['audit'] -= 1
         raise HTTPException(502, 'Synthetic provider failure')
@@ -91,6 +94,8 @@ CLAIM_WORDS = 'Synthetic Mutual claim number CLM 0042 77.'
 
 async def generate(**kwargs):
     schema = kwargs['config'].response_schema
+    if schema.__name__ == 'DryingSummary' if isinstance(schema, type) else False:
+        return SimpleNamespace(text=json.dumps({'text': 'Monitoring is active.'}))
     if isinstance(schema, dict) and schema == bm.scope_response_schema():
         kitchen = 'Kitchen, category 2, 80 SF drywall' in str(kwargs['contents'])
         room = 'Kitchen' if kitchen else 'Room 1'
@@ -262,7 +267,11 @@ async def password_claims(uid: str):
 async def workspaces_fixture(request: Request):
     global store, accounts
     body = await request.json()
+<<<<<<< HEAD
     bm.AI_FEATURES = frozenset(body.get('ai_features', []))
+=======
+    ai_features.AI_FEATURES = frozenset(body.get('ai_features', []))
+>>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
     if not body.get('enabled'):
         store = legacy_store
         bm.WORKSPACES_ENABLED = False
@@ -337,6 +346,57 @@ async def workspaces_fixture(request: Request):
 
     wm.send_invitation = sender
     return {'enabled': True, 'inspection_id': 'ADR-INS-' + 'c' * 32}
+
+
+@bm.app.post('/__test/drying-watch')
+async def drying_watch_fixture(request: Request):
+    from backend.contracts import AIResult
+    from tests.fakes import png
+
+    body = await request.json()
+    job_id = 'ADR-INS-' + 'c' * 32
+    uid = 'test-owner-ws-estimator'
+    record = store.get_inspection(uid, job_id)
+    documents = bm.make_documents(
+        InspectionData.model_validate(record['data']),
+        [],
+        AIResult(summary='Confirmed', suggestions=[], unpriced_work=[]),
+        store.workspaces.snapshot(uid),
+    )
+    record = store.save_audit(uid, job_id, record['revision'], documents)
+    payload = dict(
+        inspection_id=job_id,
+        auth_id='ADR-AUTH-dryingwatch123',
+        expected_revision=record['revision'],
+        proposal_hash=record['audit']['proposal_hash'],
+        signature_png=png(),
+        documents_confirmed=True,
+    )
+    store.authorize(uid, payload)
+    store.db.records['_workspace_jobs/' + job_id]['assigned_estimator_uid'] = uid
+    store.db.records['_companies/adr']['profile'].update(
+        drying_reminders=body.get('reminders', True), crew_lead_email='crew@example.invalid'
+    )
+    store.db.records['_memberships/test-owner-ws-unassigned'] = dict(
+        uid='test-owner-ws-unassigned',
+        email='unassigned@example.invalid',
+        company_id='adr',
+        role='estimator',
+        status='active',
+        version=1,
+    )
+    monitoring_store.mail_settings = lambda: {}
+    sends = []
+
+    def fake_send(*args, **kwargs):
+        if body.get('send_fail'):
+            body['send_fail'] = False
+            raise RuntimeError('Synthetic reminder failure')
+        sends.append(args[3])
+        return 'synthetic-reminder'
+
+    monitoring_store.send_email = fake_send
+    return {'job_id': job_id, 'auth_id': payload['auth_id']}
 
 
 @bm.app.post('/__test/expire-signing-links')

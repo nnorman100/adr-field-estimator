@@ -153,6 +153,7 @@ class CompanyProfile(StrictModel):
     # None on a save leaves the stored value. Profiles saved before these fields omit them.
     crew_lead_email: str | None = Field(default=None, max_length=254)
     document_delivery: Annotated[bool | None, BeforeValidator(delivery_switch)] = None
+    drying_reminders: Annotated[bool | None, BeforeValidator(delivery_switch)] = None
 
 
 class CompanyCreate(StrictModel):
@@ -219,12 +220,16 @@ def email_address(value):
 
 # Letterhead fields travel onto signed documents. These stay on the company profile only.
 PROFILE_NOT_ON_DOCUMENTS = frozenset(
-    {'water_heater_notice', 'crew_lead_email', 'document_delivery'}
+    {'water_heater_notice', 'crew_lead_email', 'document_delivery', 'drying_reminders'}
 )
 
 
 def delivery_state(profile):
-    return ((profile.get('crew_lead_email') or ''), profile.get('document_delivery') is True)
+    return (
+        (profile.get('crew_lead_email') or ''),
+        profile.get('document_delivery') is True,
+        profile.get('drying_reminders') is True,
+    )
 
 
 def delivery_settings(actor, stored, profile, incoming):
@@ -246,6 +251,11 @@ def delivery_settings(actor, stored, profile, incoming):
             profile['document_delivery'] = stored['document_delivery'] is True
     else:
         profile['document_delivery'] = incoming.document_delivery
+    if incoming.drying_reminders is None:
+        if 'drying_reminders' in stored:
+            profile['drying_reminders'] = stored['drying_reminders'] is True
+    else:
+        profile['drying_reminders'] = incoming.drying_reminders
     if delivery_state(profile) != delivery_state(stored) and (
         'delivery_manage' not in actor['capabilities']
     ):
@@ -305,6 +315,11 @@ class WorkspaceStore:
     def __init__(self, db, atomic=None):
         self.db = db
         self._run = atomic or self._atomic
+        try:
+            from .monitoring_store import Monitoring
+        except ImportError:
+            from monitoring_store import Monitoring
+        self.monitoring = Monitoring(self)
 
     def _atomic(self, callback):
         return firestore.transactional(callback)(self.db.transaction())
@@ -670,7 +685,12 @@ class WorkspaceStore:
                 company['status'] = req.status
             else:
                 profile = req.profile.model_dump(
-                    exclude={'water_heater_notice', 'crew_lead_email', 'document_delivery'}
+                    exclude={
+                        'water_heater_notice',
+                        'crew_lead_email',
+                        'document_delivery',
+                        'drying_reminders',
+                    }
                 )
                 profile['name'] = profile['name'].strip()
                 if not profile['name']:
@@ -1307,6 +1327,7 @@ class WorkspaceStore:
                 status=record['status'],
                 updated_at=now(),
             )
+            self.monitoring.sync(inspection_id, tx, job=job)
             tx.set(ref, job)
             if (req.address is not None or customer_changed) and record['status'] != 'signed':
                 tx.set(inspection_ref, record)

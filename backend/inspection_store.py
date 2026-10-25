@@ -30,6 +30,9 @@ DAILY_LIMITS = {
     'ocr': 400,
     'audit': 60,
     'scope': 120,
+    'drying_summary': 60,
+    'drying_action': 120,
+    'drying_reminder': 60,
     'live': 40,
     'transcribe': 200,
     # Address suggestions (while typing), place details (a chosen suggestion) and job map images.
@@ -371,10 +374,14 @@ class InspectionStore(JobStore):
                 raise ValueError(f'At most {self.READING_LIMIT} readings are kept per job.')
             log['readings'].append(entry)
             log['updated_at'] = now()
+            self._sync_monitoring(inspection_id, log, tx)
             tx.set(log_ref, log)
             return log
 
         return self._atomic(append)
+
+    def _sync_monitoring(self, inspection_id, log, tx):
+        pass  # Legacy mode has no company monitoring.
 
     def remove_reading(self, uid, inspection_id, reading_id):
         ref, log_ref = self._ref(inspection_id), self._log_ref(inspection_id)
@@ -386,6 +393,7 @@ class InspectionStore(JobStore):
             if len(kept) == len(log['readings']):
                 raise LookupError('Reading not found.')
             log.update(readings=kept, updated_at=now())
+            self._sync_monitoring(inspection_id, log, tx)
             tx.set(log_ref, log)
             return log
 

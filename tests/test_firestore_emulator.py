@@ -771,6 +771,7 @@ def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypat
         assert browser_request('GET', path, browser_token('owner')) == 403, path
 
 
+<<<<<<< HEAD
 def test_readiness_derives_from_existing_log_without_source_writes():
     from backend.readiness import readiness
 
@@ -800,3 +801,110 @@ def test_readiness_derives_from_existing_log_without_source_writes():
     assert not stored(store.db, '_limits/owner')
     with pytest.raises((PermissionError, LookupError)):
         store.drying_log('other', ID)
+=======
+def test_monitoring_reading_assignment_transactions_reminder_reservation_and_retention(monkeypatch):
+    from backend import ai_features, monitoring_store
+    from backend.monitoring_store import ReminderRequest
+    from backend.workspaces import CoordinationUpdate
+    from scripts.preview_drying_watch import preview
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset({'drying_watch'}))
+    stores = instances(CompanyInspectionStore)
+    record = audited(stores[0])
+    agreement = stores[0].authorize('owner', sign_payload(record))
+    db = stores[0].db
+    original = stored(db, 'authorizations/' + agreement['auth_id'])
+    db.document('_companies/adr').update(
+        {'profile.drying_reminders': True, 'profile.crew_lead_email': 'crew@example.invalid'}
+    )
+    reading = dict(
+        kind='material',
+        room=record['data']['rooms'][0]['name'],
+        material='Drywall',
+        unit='%WME',
+        moisture=22,
+        dry_standard=12,
+        affected=True,
+        taken_at='2026-10-21T10:00:00Z',
+    )
+    result = stores[0].add_reading('owner', 'owner@example.invalid', ID, reading)
+    watch = stored(db, '_job_monitoring/' + ID)
+    assert watch['last_reading_at'] == reading['taken_at']
+    assert watch['log_updated_at'] == result['updated_at']
+    assert 'expire_at' not in watch  # Permanent coordination; no new TTL policy.
+    stores[0].workspaces.coordination('owner', ID, CoordinationUpdate(expected_version=1))
+    assert stored(db, '_job_monitoring/' + ID)['accessible_estimator_uids'] == ['owner']
+    req = ReminderRequest(
+        reminder_id='a' * 32,
+        approved=True,
+        recipient='crew_lead',
+        facts_hash=stores[0].workspaces.monitoring.view('owner', ID)['facts_hash'],
+    )
+    sends = []
+    monkeypatch.setattr(monitoring_store, 'mail_settings', lambda: {})
+    monkeypatch.setattr(
+        monitoring_store, 'send_email', lambda *args, **kwargs: sends.append(args[3])
+    )
+    outcomes(
+        concurrently(
+            [lambda s=s: s.workspaces.monitoring.remind('owner', ID, req) for s in stores]
+        ),
+        refused=LookupError,
+    )
+    for s in stores:
+        s.workspaces.monitoring.remind('owner', ID, req)
+    assert sends == ['monitoring/' + ID + '/' + req.reminder_id]
+    entry = stored(db, '_job_monitoring/' + ID)['reminders'][0]
+    assert entry['status'] in ('sent', 'sending')
+    assert stored(db, 'authorizations/' + agreement['auth_id']) == original
+    for path in ('_job_monitoring/' + ID, '_job_monitoring'):
+        assert browser_request('GET', path, browser_token('owner')) == 403
+    assert (
+        browser_request(
+            'PATCH',
+            '_job_monitoring/' + ID,
+            browser_token('owner'),
+            {'fields': {'status': {'stringValue': 'dry_standard_met'}}},
+        )
+        == 403
+    )
+    # The preview defaults to no writes and reports only counts, then applies idempotently.
+    db.document('_job_monitoring/' + ID).delete()
+    summary = preview(stores[0].workspaces, 'adr')
+    assert summary['eligible_for_creation'] == 1 and summary['created'] == 0
+    assert stored(db, '_job_monitoring/' + ID) is None
+    assert preview(stores[0].workspaces, 'adr', apply=True)['created'] == 1
+    assert preview(stores[0].workspaces, 'adr', apply=True)['created'] == 0
+
+
+def test_monitoring_sidecar_failure_rolls_back_reading(monkeypatch):
+    from backend import ai_features
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset({'drying_watch'}))
+    store = instances(CompanyInspectionStore, 1)[0]
+    record = audited(store)
+    store.authorize('owner', sign_payload(record))
+
+    def broken(*args, **kwargs):
+        raise RuntimeError('Synthetic monitoring failure')
+
+    monkeypatch.setattr(store.workspaces.monitoring, 'compute', broken)
+    with pytest.raises(RuntimeError):
+        store.add_reading(
+            'owner',
+            'owner@example.invalid',
+            ID,
+            dict(
+                kind='material',
+                room='Bathroom',
+                material='Drywall',
+                unit='%WME',
+                moisture=22,
+                dry_standard=12,
+                affected=True,
+                taken_at='2026-10-21T10:00:00Z',
+            ),
+        )
+    assert stored(store.db, 'drying_logs/' + ID) is None
+    assert stored(store.db, '_job_monitoring/' + ID) is None
+>>>>>>> 6d10f99 (Add gated drying watch for signed jobs)

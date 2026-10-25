@@ -3,7 +3,7 @@ const VERSION='unstamped';
 // Readiness uses the existing app, core, workspace and drying assets precached below.
 // A Hosting deploy stamps VERSION with the commit; that stamp is the cache name phones update to.
 // prettier-ignore
-const CACHE='dryscope-'+VERSION;
+const CACHE='dryscope-a1-'+VERSION;
 const ASSETS = [
   '/',
   '/landing.css?v=' + VERSION,
@@ -14,6 +14,7 @@ const ASSETS = [
   '/documents.js?v=' + VERSION,
   '/app.js?v=' + VERSION,
   '/workspaces.js?v=' + VERSION,
+  '/drying-watch.js?v=' + VERSION,
   '/psychrometrics.js?v=' + VERSION,
   '/drying.js?v=' + VERSION,
   '/tags.js?v=' + VERSION,

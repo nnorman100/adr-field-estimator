@@ -1,0 +1,369 @@
+[
+  {
+    "name": "clean dry-down",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 30,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-21T16:00:00Z"
+        },
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 20,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-22T16:00:00Z"
+        },
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 12,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-23T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-23T17:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-23T17:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "dry_standard_met",
+      "flags": [],
+      "next_due_at": null
+    }
+  },
+  {
+    "name": "stalled GPP",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "air",
+          "room": "Kitchen",
+          "zone": "affected",
+          "taken_at": "2026-10-21T16:00:00Z",
+          "gpp": 70,
+          "vapor_pressure_inhg": 0.4
+        },
+        {
+          "kind": "air",
+          "room": "Kitchen",
+          "zone": "affected",
+          "taken_at": "2026-10-22T16:00:00Z",
+          "gpp": 70,
+          "vapor_pressure_inhg": 0.4
+        },
+        {
+          "kind": "air",
+          "room": "Kitchen",
+          "zone": "affected",
+          "taken_at": "2026-10-23T16:00:00Z",
+          "gpp": 70,
+          "vapor_pressure_inhg": 0.4
+        },
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 22,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-23T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-23T17:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-23T17:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "active",
+      "flags": [
+        "stalled"
+      ],
+      "next_due_at": "2026-10-24T16:00:00Z"
+    }
+  },
+  {
+    "name": "overdue thirty hours",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 22,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-21T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-22T22:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-22T22:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "active",
+      "flags": [
+        "overdue"
+      ],
+      "next_due_at": "2026-10-22T16:00:00Z"
+    }
+  },
+  {
+    "name": "no dry standard",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 10,
+          "dry_standard": null,
+          "affected": true,
+          "taken_at": "2026-10-23T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-23T17:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-23T17:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "active",
+      "flags": [
+        "missing_dry_standard"
+      ],
+      "next_due_at": "2026-10-24T16:00:00Z"
+    }
+  },
+  {
+    "name": "two rooms one wet",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        },
+        {
+          "name": "Bath"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 12,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-23T16:00:00Z"
+        },
+        {
+          "kind": "material",
+          "room": "Bath",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 22,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-23T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-23T17:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-23T17:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "active",
+      "flags": [],
+      "next_due_at": "2026-10-24T16:00:00Z"
+    }
+  },
+  {
+    "name": "equipment pulled early",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 22,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-21T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-22T17:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-22T17:00:00Z",
+    "previous": {
+      "closed": {
+        "action": "close",
+        "reason": "Equipment pulled early",
+        "by_uid": "office"
+      }
+    },
+    "expected": {
+      "status": "closed",
+      "flags": [],
+      "next_due_at": null
+    }
+  },
+  {
+    "name": "past signed plan",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 22,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-24T16:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-24T17:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-24T17:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "active",
+      "flags": [
+        "past_signed_plan"
+      ],
+      "next_due_at": "2026-10-25T16:00:00Z"
+    }
+  },
+  {
+    "name": "California midnight",
+    "data": {
+      "address": "Synthetic property",
+      "drying_days": 3,
+      "rooms": [
+        {
+          "name": "Kitchen"
+        }
+      ]
+    },
+    "log": {
+      "readings": [
+        {
+          "kind": "air",
+          "room": "Kitchen",
+          "zone": "affected",
+          "taken_at": "2026-10-22T06:00:00Z",
+          "gpp": 70,
+          "vapor_pressure_inhg": 0.4
+        },
+        {
+          "kind": "air",
+          "room": "Kitchen",
+          "zone": "affected",
+          "taken_at": "2026-10-22T08:00:00Z",
+          "gpp": 70,
+          "vapor_pressure_inhg": 0.4
+        },
+        {
+          "kind": "material",
+          "room": "Kitchen",
+          "material": "Drywall",
+          "unit": "%WME",
+          "moisture": 22,
+          "dry_standard": 12,
+          "affected": true,
+          "taken_at": "2026-10-22T08:00:00Z"
+        }
+      ],
+      "updated_at": "2026-10-22T09:00:00Z"
+    },
+    "setup_at": "2026-10-21T16:00:00Z",
+    "at": "2026-10-22T09:00:00Z",
+    "previous": {},
+    "expected": {
+      "status": "active",
+      "flags": [],
+      "next_due_at": "2026-10-23T08:00:00Z"
+    }
+  }
+]

@@ -2874,6 +2874,7 @@ footer {
   }
 }
 
+<<<<<<< HEAD
 /* Readiness is advisory and works on the narrowest field phones. */
 #readinessDialog {
   max-height: 85dvh;
@@ -2895,4 +2896,46 @@ footer {
     align-items: flex-start;
     flex-direction: column;
   }
+=======
+/* Drying watch: wrap measurements and recipient addresses on the narrowest field phones. */
+.drying-watch-card,
+.watch-row,
+.watch-approval {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.watch-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.watch-flag {
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.5rem;
+  background: #e8eff5;
+  color: #173650;
+}
+.watch-actions {
+  display: grid;
+  gap: 0.6rem;
+  margin-block: 1rem;
+}
+.watch-actions button,
+.watch-approval button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.watch-approval {
+  padding: 1rem;
+  border: 1px solid #8aa5b7;
+  border-radius: 0.75rem;
+}
+.watch-approval textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.watch-row {
+  padding-block: 1rem;
+  border-bottom: 1px solid #d7e0e8;
+>>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
 }

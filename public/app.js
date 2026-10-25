@@ -220,6 +220,7 @@ function showTask(task, focus = true) {
     .querySelectorAll('[data-panel]')
     .forEach((panel) => (panel.hidden = panel.dataset.panel !== task));
   window.DryingLog?.render();
+  window.DryingWatch?.render();
   document.querySelectorAll('.task-nav [data-task]').forEach((tab) => {
     if (tab.dataset.task === task) tab.setAttribute('aria-current', 'step');
     else tab.removeAttribute('aria-current');
@@ -719,6 +720,7 @@ function clearDisplayedInspection() {
   $('savedSignature').hidden = true;
   $('retrySavedEvidence').hidden = true;
   window.DryingLog?.clear();
+  window.DryingWatch?.clear();
   renderPhotos();
   window.TagsUI?.render();
   renderSaveStatus();
@@ -1755,6 +1757,7 @@ function renderRooms() {
   renderRoomPhotos();
   renderWalkthroughEdits();
   window.DryingLog?.render();
+  window.DryingWatch?.render();
   window.TagsUI?.render();
 }
 // The confirmed inputs of the IICRC equipment-sizing check, under More room options so the card
@@ -2453,6 +2456,7 @@ async function openNew(data = null, photos = []) {
   await syncDraft();
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
+  window.DryingWatch?.refresh().catch(() => {});
   renderNotes();
   drainQueue();
 }
@@ -2540,6 +2544,7 @@ async function restoreDraft(id) {
   await syncDraft();
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
+  window.DryingWatch?.refresh().catch(() => {});
   processNotes();
   drainQueue();
 }
@@ -2618,6 +2623,7 @@ function openHelp() {
     : 'How to use the field estimator. Sign in to see the topics for your role first.';
   helpTopics ??= [...document.querySelectorAll('#helpDialog [data-help-roles]')];
   for (const topic of helpTopics) {
+<<<<<<< HEAD
     if (topic.dataset.helpTopic === 'readiness') {
       topic.hidden =
         !state.session?.ai_features?.includes('readiness') ||
@@ -2626,6 +2632,11 @@ function openHelp() {
         topic.remove();
         continue;
       }
+=======
+    if (topic.dataset.helpTopic === 'drying-watch' && !window.DryingWatch?.enabled()) {
+      topic.remove();
+      continue;
+>>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
     }
     const yours = topic.dataset.helpRoles.split(' ').some((role) => roles.includes(role));
     $(yours ? 'helpYours' : 'helpOther').append(topic);
@@ -2783,6 +2794,7 @@ async function restoreSigned(id) {
   $('jobsDialog').close();
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
+  window.DryingWatch?.refresh().catch(() => {});
   const draft = state.draft,
     current = () => state.user?.uid === uid && state.signed === record && state.draft === draft;
   let missing = 0;
@@ -2833,6 +2845,7 @@ async function restoreSigned(id) {
     missing ? 'error' : 'success',
   );
   window.WorkspaceUI?.loadDelivery?.().catch((e) => say(e.message, 'error'));
+  window.DryingWatch?.refresh().catch(() => {});
 }
 async function copySigned() {
   const id = state.signed?.auth_id || confirmedAuthorization;
@@ -4398,6 +4411,7 @@ function connectivity() {
   renderSaveStatus();
   renderNotes();
   window.DryingLog?.render();
+  window.DryingWatch?.render();
   if (offline) {
     if (state.media) {
       captureGap(
@@ -4410,6 +4424,7 @@ function connectivity() {
     Promise.resolve(window.WorkspaceUI?.refresh())
       .then(() => syncDraft())
       .then(() => window.DryingLog?.reload())
+      .then(() => window.DryingWatch?.refresh())
       .then(() => drainQueue())
       .then(() => processNotes())
       .catch((e) => say(e.message, 'error'));

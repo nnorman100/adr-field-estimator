@@ -39,6 +39,8 @@ LOG_FIELDS = frozenset(
         'emails_today',
         'delivery_id',
         'recipient_role',
+        'reminder_id',
+        'watch_status',
     }
 )
 

@@ -227,3 +227,17 @@ node scripts/verify_live_browser.js --headless --auth-smoke
 This check does not authenticate, create jobs or establish field-device acceptance.
 If the browser closes before sign-in, authenticated verification has not run; restart the
 helper and complete sign-in before changing traffic or Hosting.
+
+## Drying watch rollout
+
+A1 is disabled unless `AI_FEATURES` includes `drying_watch`. Its additional owner
+switch is `profile.drying_reminders`, default off. No scheduler exists. Summary
+calls are capped at 6/minute and 60/day per user; confirmed monitoring changes at
+10/minute and 120/day, reminders at 6/minute and 60/day.
+
+`_job_monitoring` is permanent private coordination data with no `expire_at`;
+the four TTL collection groups above remain unchanged. Its company/status/due
+and estimator-filtered indexes are in `firestore.indexes.json`. Deploy those
+indexes separately and verify them before enabling the feature. No rules or
+TTL policy change is needed. The preview/backfill script is counts-only and
+read-only by default; see [Drying watch](drying-watch.md).
