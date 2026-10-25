@@ -10,6 +10,7 @@ from uuid import uuid4
 try:
     from . import document_links
     from .cloud_log import event
+    from .contracts import InspectionData
     from .inspection_store import now
     from .workspaces import (
         LOGO_CID,
@@ -25,6 +26,7 @@ try:
 except ImportError:
     import document_links
     from cloud_log import event
+    from contracts import InspectionData
     from inspection_store import now
     from workspaces import (
         LOGO_CID,
@@ -60,6 +62,73 @@ UNCONFIRMED = (
     'Sending stopped before it was confirmed, so the email may have arrived. '
     'It is not sent again automatically.'
 )
+DELIVERY_OFF = 'Document delivery is turned off for this company.'
+NO_CREW_LEAD = 'No crew-lead email is saved for this company.'
+
+
+def delivery_on(company):
+    profile = (company or {}).get('profile') or {}
+    return profile.get('document_delivery') is True
+
+
+def crew_email(company):
+    profile = (company or {}).get('profile') or {}
+    return (profile.get('crew_lead_email') or '').strip()
+
+
+def skip_reasons(company, pending=None):
+    """Reasons for recipients that will not be sent. Delivery off skips every role. Otherwise a
+    company with no crew-lead email skips that role, and pending supplies the other steps'
+    reasons."""
+    if not delivery_on(company):
+        return {role: DELIVERY_OFF for role in RECIPIENTS}
+    reasons = dict(pending or {})
+    if not crew_email(company):
+        reasons.setdefault('crew_lead', NO_CREW_LEAD)
+    return reasons
+
+
+def plain(value):
+    return ' '.join(str(value).split())
+
+
+def crew_summary(data):
+    """Address, rooms, equipment and drying days for the crew lead. Prices are left out, and so are
+    notes, transcripts and anything else that could carry a dollar amount."""
+    if not isinstance(data, InspectionData):
+        data = InspectionData.model_validate(data)
+    rooms = [plain(room.name) for room in data.rooms]
+    equipment = []
+    for count, singular, plural in (
+        (data.air_movers, 'air mover', 'air movers'),
+        (data.dehumidifiers, 'dehumidifier', 'dehumidifiers'),
+        (data.air_scrubbers, 'air scrubber', 'air scrubbers'),
+        (data.wood_floor_systems, 'wood-floor drying system', 'wood-floor drying systems'),
+    ):
+        if count:
+            equipment.append(f'{count} {singular if count == 1 else plural}')
+    drying = f'Drying days: {data.drying_days}.'
+    if data.wood_floor_systems:
+        drying += f' Wood-floor drying days: {data.wood_floor_days}.'
+    return [
+        'Job summary',
+        'Address: ' + (plain(data.address) or 'No address recorded.'),
+        'Rooms:\n' + ('\n'.join(rooms) or 'None recorded.'),
+        'Equipment: ' + (', '.join(equipment) or 'none recorded.'),
+        drying,
+    ]
+
+
+def crew_lead_message(company, data):
+    """The crew-lead email. It refuses to build when the company has no crew-lead email."""
+    to = crew_email(company)
+    if not to:
+        raise ValueError(NO_CREW_LEAD)
+    summary = crew_summary(data)
+    address = summary[1].removeprefix('Address: ')
+    if address == 'No address recorded.':
+        address = 'a signed job'
+    return delivery_email(company, to, 'Job summary for ' + address, summary)
 
 
 class Deliveries:
@@ -69,9 +138,11 @@ class Deliveries:
     def ref(self, job_id):
         return self.w.ref('_job_deliveries', job_id)
 
-    def queue(self, job_id, skipped):
+    def queue(self, job_id, skipped, *, apply_policy=False):
         """Creates the signed job's delivery record once; repeating it returns the record unchanged.
-        skipped maps each role that will not be sent to its reason; every other role is queued."""
+        skipped maps each role that will not be sent to its reason; every other role is queued.
+        apply_policy reads the company: delivery off skips every role, and no crew-lead email skips
+        that role. Other steps pass their own reasons in skipped."""
 
         def create(tx):
             current = self.w.read('_job_deliveries', job_id, tx)
@@ -80,6 +151,10 @@ class Deliveries:
             job = self.w.read('_workspace_jobs', job_id, tx)
             if not job or not job.get('auth_id'):
                 raise LookupError('Signed job not found.')
+            reasons = skipped
+            if apply_policy:
+                company = self.w.read('_companies', job['company_id'], tx)
+                reasons = skip_reasons(company, skipped)
             record = dict(
                 delivery_id=uuid4().hex,
                 job_id=job_id,
@@ -88,8 +163,8 @@ class Deliveries:
                 created_at=now(),
                 entries={
                     role: dict(
-                        status='skipped' if role in skipped else 'queued',
-                        reason=skipped.get(role, ''),
+                        status='skipped' if role in reasons else 'queued',
+                        reason=reasons.get(role, ''),
                         retryable=False,
                         attempt='',
                         send_started=0,
@@ -217,7 +292,8 @@ class Deliveries:
 
     def reserve(self, tx, job_id, role):
         """Returns the record, a new attempt ID when this entry should be sent now (else None), and
-        whether an unconfirmed attempt was just marked failed."""
+        whether the entry was just rewritten without sending (unconfirmed, or skipped because
+        delivery is off)."""
         record = self.w.read('_job_deliveries', job_id, tx)
         if not record:
             raise LookupError('Delivery not found.')
@@ -228,8 +304,17 @@ class Deliveries:
             entry.update(status='failed', reason=UNCONFIRMED, retryable=False, updated_at=now())
             tx.set(self.ref(job_id), record)
             return record, None, True
-        if entry['status'] != 'queued' and not (entry['status'] == 'failed' and entry['retryable']):
+        sendable = entry['status'] == 'queued' or (
+            entry['status'] == 'failed' and entry['retryable']
+        )
+        if not sendable:
             return record, None, False
+        # Off at send time skips work that was queued while the switch was on. Sent entries stay.
+        company = self.w.read('_companies', record['company_id'], tx)
+        if not delivery_on(company):
+            entry.update(status='skipped', reason=DELIVERY_OFF, retryable=False, updated_at=now())
+            tx.set(self.ref(job_id), record)
+            return record, None, True
         attempt = uuid4().hex
         entry.update(status='sending', attempt=attempt, send_started=time.time(), updated_at=now())
         tx.set(self.ref(job_id), record)

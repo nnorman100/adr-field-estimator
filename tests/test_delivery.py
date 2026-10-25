@@ -8,7 +8,18 @@ import urllib.error
 from copy import deepcopy
 import pytest
 import backend.workspaces as workspaces
-from backend.delivery import RECIPIENTS, UNCONFIRMED, Deliveries, delivery_email
+from backend.claims import price_scope, proposal_range
+from backend.contracts import InspectionData
+from backend.delivery import (
+    DELIVERY_OFF,
+    NO_CREW_LEAD,
+    RECIPIENTS,
+    UNCONFIRMED,
+    Deliveries,
+    crew_lead_message,
+    crew_summary,
+    delivery_email,
+)
 from tests.test_workspaces import (  # noqa: F401
     ID,
     api,
@@ -36,6 +47,8 @@ def sending(smtp):
         job_id=ID, company_id='adr', auth_id='auth-' + 'c' * 32, status='signed', version=3
     )
     store.db.records['authorizations/auth-' + 'c' * 32] = {'signed': 'record'}
+    # The sender tests run with delivery on. A company without the switch still reads as off.
+    store.db.records['_companies/adr']['profile']['document_delivery'] = True
     return client, store, sent, connections, plan, Deliveries(store.workspaces)
 
 
@@ -315,3 +328,143 @@ def test_uncertain_resend_delivery_is_never_retried(sending, monkeypatch, outcom
     assert (entry['status'], entry['reason'], entry['retryable']) == ('failed', UNCONFIRMED, False)
     deliveries.send(ID, compose)
     assert len(calls) == 1
+
+
+def job_scope():
+    return dict(
+        address='12 Kern Ave\nBakersfield',
+        year_built=1980,
+        rooms=[
+            dict(name='Bathroom', category=1, finished_sf=10),
+            dict(name='Kitchen', category=2, finished_sf=20),
+        ],
+        air_movers=3,
+        dehumidifiers=1,
+        air_scrubbers=0,
+        wood_floor_systems=1,
+        wood_floor_days=5,
+        drying_days=3,
+        technician_notes='Quoted $9,999.99 for extra work',
+        technician_transcript='The total is $9,999.99',
+    )
+
+
+def test_crew_summary_lists_the_job_and_leaves_prices_out():
+    payload = job_scope()
+    data = InspectionData.model_validate(payload)
+    text = '\n'.join(crew_summary(payload))
+    items, total = price_scope(data)
+    low, high = proposal_range(data, items)
+    assert '$' not in text and '9999' not in text and '9,999' not in text
+    for amount in (total, low, high):
+        assert f'{amount:,.2f}' not in text
+    assert 'Address: 12 Kern Ave Bakersfield' in text
+    assert 'Rooms:\nBathroom\nKitchen' in text
+    assert 'Equipment: 3 air movers, 1 dehumidifier, 1 wood-floor drying system' in text
+    assert 'Drying days: 3. Wood-floor drying days: 5.' in text
+    assert 'Bcc' not in text and 'technician' not in text.lower()
+    empty = '\n'.join(
+        crew_summary(
+            dict(
+                address='  ',
+                rooms=[],
+                air_movers=1,
+                dehumidifiers=0,
+                air_scrubbers=1,
+                wood_floor_systems=0,
+                drying_days=4,
+            )
+        )
+    )
+    assert 'No address recorded.' in empty and 'None recorded.' in empty
+    assert 'Equipment: 1 air mover, 1 air scrubber' in empty
+    assert 'Drying days: 4.' in empty and 'Wood-floor' not in empty
+
+
+def test_delivery_off_skips_every_role_and_stays_skipped(sending, capsys):
+    client, store, sent, connections, plan, deliveries = sending
+    profile = store.db.records['_companies/adr']['profile']
+    profile['crew_lead_email'] = 'lead@crew.example.invalid'
+    profile['document_delivery'] = False
+    record = deliveries.queue(ID, {'homeowner': 'Checkbox off.'}, apply_policy=True)
+    assert entries(store) == dict.fromkeys(RECIPIENTS, 'skipped')
+    for entry in record['entries'].values():
+        assert entry['reason'] == DELIVERY_OFF
+    deliveries.send(ID, compose)
+    profile['document_delivery'] = True
+    assert deliveries.queue(ID, {}, apply_policy=True) == record
+    deliveries.send(ID, compose)
+    assert not connections
+    output = capsys.readouterr().out
+    for secret in ('lead@crew', 'Checkbox', '12 Kern'):
+        assert secret not in output
+
+
+def test_a_company_saved_before_the_switch_skips_every_recipient(sending):
+    client, store, sent, connections, plan, deliveries = sending
+    profile = store.db.records['_companies/adr']['profile']
+    profile.pop('document_delivery')
+    profile.pop('crew_lead_email', None)
+    record = deliveries.queue(ID, {}, apply_policy=True)
+    assert entries(store) == dict.fromkeys(RECIPIENTS, 'skipped')
+    assert {entry['reason'] for entry in record['entries'].values()} == {DELIVERY_OFF}
+    deliveries.send(ID, compose)
+    assert not connections
+
+
+def test_delivery_on_without_a_crew_email_skips_only_that_role(sending):
+    client, store, sent, connections, plan, deliveries = sending
+    profile = store.db.records['_companies/adr']['profile']
+    profile.pop('crew_lead_email', None)
+    deliveries.queue(ID, {}, apply_policy=True)
+    assert entries(store) == dict(homeowner='queued', adjuster='queued', crew_lead='skipped')
+    assert (
+        store.db.records['_job_deliveries/' + ID]['entries']['crew_lead']['reason'] == NO_CREW_LEAD
+    )
+    with pytest.raises(ValueError, match=NO_CREW_LEAD):
+        crew_lead_message(store.db.records['_companies/adr'], job_scope())
+
+
+def test_crew_lead_email_is_the_summary_and_turning_delivery_off_stops_a_queued_send(
+    sending, capsys
+):
+    client, store, sent, connections, plan, deliveries = sending
+    profile = store.db.records['_companies/adr']['profile']
+    profile['crew_lead_email'] = 'Lead@Crew.example.invalid'
+    payload = job_scope()
+    record = deliveries.queue(
+        ID, {'homeowner': 'Not switched on.', 'adjuster': 'No adjuster email.'}, apply_policy=True
+    )
+    assert entries(store)['crew_lead'] == 'queued'
+    assert record['entries']['homeowner']['reason'] == 'Not switched on.'
+    assert record['entries']['adjuster']['reason'] == 'No adjuster email.'
+
+    def compose_crew(role, ignored):
+        assert role == 'crew_lead'
+        return crew_lead_message(store.db.records['_companies/adr'], payload)
+
+    deliveries.send(ID, compose_crew)
+    assert len(connections) == 1
+    message = connections[0]['server'].message
+    assert message['To'] == 'lead@crew.example.invalid'
+    text, page = message_parts(message)
+    for body in (text, page):
+        assert '$' not in body and '9999' not in body
+        assert 'Bathroom' in body and 'Drying days: 3.' in body
+        assert 'Powered by DryScope' in body
+    output = capsys.readouterr().out
+    for secret in ('lead@crew', '12 Kern', '9999'):
+        assert secret not in output
+
+    # A later job is not in this record. Flip one queued failure path on a fresh entry set:
+    # sent mail stays sent, and a still-queued entry is skipped once the switch is off.
+    stored = store.db.records['_job_deliveries/' + ID]
+    stored['entries']['adjuster'].update(status='queued', reason='', retryable=False)
+    profile['document_delivery'] = False
+    deliveries.send(ID, compose_crew)
+    assert entries(store)['crew_lead'] == 'sent'
+    assert entries(store)['adjuster'] == 'skipped'
+    assert (
+        store.db.records['_job_deliveries/' + ID]['entries']['adjuster']['reason'] == DELIVERY_OFF
+    )
+    assert len(connections) == 1

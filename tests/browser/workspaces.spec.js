@@ -507,6 +507,46 @@ test('ADR shows no built-in logo or details until its owner saves its own profil
   await expect(page.locator('#auditWarnings')).toBeHidden();
 });
 
+test('the owner sets the crew-lead email and delivery switch', async ({ page }) => {
+  await start(page, 'owner');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await navigate(page, 'dashboardProfile');
+  const form = page.locator('form.dashboard-form');
+  await expect(form.locator('input[name=crew_lead_email]')).toHaveValue('');
+  await expect(form.locator('input[name=document_delivery]')).not.toBeChecked();
+  await expect(form).toContainText('no prices');
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
+  const help = page.getByRole('dialog', { name: 'Help' });
+  await help.locator('summary', { hasText: 'Company settings' }).click();
+  await expect(help).toContainText('Crew-lead email');
+  await expect(help).toContainText('needs a connection');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await form.locator('input[name=crew_lead_email]').fill('lead@example.invalid');
+  await form.locator('input[name=document_delivery]').check();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  await page.getByRole('button', { name: 'Save company details' }).click();
+  await expect(page.locator('#message')).toContainText('Company details saved');
+  await expect(form.locator('input[name=crew_lead_email]')).toHaveValue('lead@example.invalid');
+  await expect(form.locator('input[name=document_delivery]')).toBeChecked();
+  await page.context().setOffline(true);
+  const save = page.getByRole('button', { name: /Save company details/ });
+  await expect(save).toBeDisabled();
+  await expect(save).toHaveText('Save company details (needs a connection)');
+  await expect(form.locator('input[name=crew_lead_email]')).toBeDisabled();
+  await page.context().setOffline(false);
+  await navigate(page, 'dashboardJobs');
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#proposalBody')).toBeVisible();
+  await expect(page.locator('#proposalBody')).not.toContainText('lead@example.invalid');
+  await expect(page.locator('#defenseBody')).not.toContainText('lead@example.invalid');
+  await expect(page.locator('#defenseBody')).toContainText('$');
+  for (const role of ['estimator', 'office', 'admin']) {
+    await start(page, role);
+    await expect(page.locator('#dashboardProfile')).toBeHidden();
+  }
+});
+
 test('invitation is explicit and bound to the matching Google account', async ({ page }) => {
   const invitation = await (
     await call(page, '/api/companies/adr/invitations', 'POST', {
