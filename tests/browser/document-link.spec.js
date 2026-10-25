@@ -158,8 +158,7 @@ test('the homeowner link shows the signed proposal and photo log, read-only, wit
   await view.emulateMedia({ media: 'print' });
   for (const name of ['proposal', 'photos'])
     await expect(view.locator('#doc-' + name)).toBeVisible();
-  for (const name of ['claim', 'defense'])
-    await expect(view.locator('#doc-' + name)).toBeHidden();
+  for (const name of ['claim', 'defense']) await expect(view.locator('#doc-' + name)).toBeHidden();
   await view.screenshot({ path: test.info().outputPath('homeowner-print.png'), fullPage: true });
   await expect(view.locator('#homeownerSigning')).toBeHidden();
   await home.context.close();
@@ -213,8 +212,7 @@ test('the adjuster link shows the claim and letter with the scope JSON, and noth
     [404, UNAVAILABLE],
   ]);
   await view.emulateMedia({ media: 'print' });
-  for (const name of ['claim', 'defense'])
-    await expect(view.locator('#doc-' + name)).toBeVisible();
+  for (const name of ['claim', 'defense']) await expect(view.locator('#doc-' + name)).toBeVisible();
   for (const name of ['proposal', 'photos'])
     await expect(view.locator('#doc-' + name)).toBeHidden();
   await view.screenshot({ path: test.info().outputPath('adjuster-print.png'), fullPage: true });
@@ -272,7 +270,10 @@ test('revoking both active sets refuses both recipients', async ({ page, browser
   }
 });
 
-test('role downgrade stops documents, photos and signatures; other roles cannot mint', async ({ page, browser }) => {
+test('role downgrade stops documents, photos and signatures; other roles cannot mint', async ({
+  page,
+  browser,
+}) => {
   for (const role of ['office', 'admin', 'other']) {
     const denied = await page.request.post('/__test/document-links', {
       data: { uid: uid(role), auth_id: AUTH, document_set: 'homeowner' },
@@ -282,11 +283,22 @@ test('role downgrade stops documents, photos and signatures; other roles cannot 
   const url = await mint(page, 'homeowner');
   const reader = await recipient(browser, url);
   await expect(reader.page.locator('#documents')).toBeVisible();
-  const changed = await call(page, '/api/companies/adr/team/' + uid('estimator'), 'PUT',
-    { expected_version: 1, role: 'office', status: 'active' }, 'owner');
+  const changed = await call(
+    page,
+    '/api/companies/adr/team/' + uid('estimator'),
+    'PUT',
+    { expected_version: 1, role: 'office', status: 'active' },
+    'owner',
+  );
   expect(changed.status(), await changed.text()).toBe(200);
-  for (const path of ['/api/documents', '/api/documents/signature', '/api/documents/photos/' + PHOTO]) {
-    const denied = await page.request.get(path, { headers: { 'X-ADR-Document-Link': url.split('#')[1] } });
+  for (const path of [
+    '/api/documents',
+    '/api/documents/signature',
+    '/api/documents/photos/' + PHOTO,
+  ]) {
+    const denied = await page.request.get(path, {
+      headers: { 'X-ADR-Document-Link': url.split('#')[1] },
+    });
     expect(denied.status()).toBe(404);
   }
   await reader.page.reload();
@@ -307,15 +319,22 @@ test('offline reload does not expose cached signed documents', async ({ page, br
   const reader = await recipient(browser, await mint(page, 'homeowner'));
   await expect(reader.page.locator('#documents')).toBeVisible();
   await reader.context.setOffline(true);
-  try { await reader.page.reload(); } catch (error) {
+  try {
+    await reader.page.reload();
+  } catch (error) {
     expect(String(error)).toMatch(/ERR_INTERNET_DISCONNECTED/);
   }
   await expect(reader.page.locator('#documents')).toHaveCount(0);
   await reader.context.close();
 });
 
-test('older signed records open without invented claim details or locations', async ({ page, browser }) => {
-  expect((await page.request.post('/__test/old-document-record', { data: { auth_id: AUTH } })).ok()).toBe(true);
+test('older signed records open without invented claim details or locations', async ({
+  page,
+  browser,
+}) => {
+  expect(
+    (await page.request.post('/__test/old-document-record', { data: { auth_id: AUTH } })).ok(),
+  ).toBe(true);
   const reader = await recipient(browser, await mint(page, 'homeowner'));
   await expect(reader.page.locator('#signedReceipt')).toBeVisible();
   await reader.page.locator('[data-tab="photos"]').click();
