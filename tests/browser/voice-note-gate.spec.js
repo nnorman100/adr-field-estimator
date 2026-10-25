@@ -72,6 +72,7 @@ async function deskFinish(page) {
   await page.locator('#address').fill('Synthetic voice-note gate');
   await page.locator('#yearBuilt').fill('1960');
   await page.locator('[data-room-key="finished_sf"]').fill('10');
+  await page.locator('#technicianNotes').fill('Use 3 fans.');
   await page.locator('#scopeConfirmed').check();
   await saveDraft(page);
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
@@ -148,11 +149,10 @@ test('a delayed transcription holds Finish, a signing link and on-device signing
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeHidden();
   expect(audits).toBe(0);
-  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('10');
-  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
-  await page.locator('#fillScopeProperty').click();
-  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
+  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+  await task(page, 'property');
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await page.locator('#confirmFilledScope').click();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
@@ -164,6 +164,7 @@ test('a delayed transcription holds Finish, a signing link and on-device signing
 
 test('a failed transcription blocks Finish and signing until the technician resolves it, and survives a reload', async ({
   page,
+  context,
 }) => {
   await fakeRecorder(page);
   await page.goto('/app');
@@ -211,6 +212,14 @@ test('a failed transcription blocks Finish and signing until the technician reso
   await expect(page.locator('#message')).toContainText(
     'Play it, type the key facts, then remove it.',
   );
+  await context.setOffline(true);
+  const retainedParts = await savedParts(page);
+  await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
+  await expect(page.locator('#message')).toContainText('requires a connection');
+  await expect(page.locator('#voiceNotes li')).toHaveCount(1);
+  expect(await savedParts(page)).toBe(retainedParts);
+  expect(resolves).toBe(0);
+  await context.setOffline(false);
   await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
   await expect(page.locator('#voiceNotes li')).toHaveCount(0);
   expect(resolves).toBe(1);
@@ -258,4 +267,71 @@ test('an outstanding homeowner link blocks offline voice recording and survives 
   await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
   expect(await page.evaluate(() => state.draft.homeowner_link_pending)).toBe(false);
   await page.locator('#recordNote').click();
+});
+
+test('a lost transcription response clears renewed scope confirmation and preserves a local correction', async ({ page }) => {
+  await fakeRecorder(page);
+  await page.goto('/app');
+  await ready(page);
+  await deskFinish(page);
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  let arrived = false;
+  await page.route(/\/api\/inspections\/[^/]+\/voice-notes$/, async (route) => {
+    arrived = true;
+    await held;
+    await route.fetch();
+    await route.abort();
+  });
+  await task(page, 'walkthrough');
+  await page.locator('#startNotes').click();
+  await page.locator('#recordNote').click();
+  await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+  await task(page, 'property');
+  await page.locator('#scopeConfirmed').check();
+  await saveDraft(page);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await task(page, 'walkthrough');
+  await page.locator('#recordNote').click();
+  await expect.poll(() => arrived).toBe(true);
+  release();
+  await expect(page.locator('#voiceNotes li')).toContainText('Not uploaded yet');
+  await page.locator('#typedNote').fill('Preserve this local correction: use 3 fans.');
+  await page.locator('#addTypedNote').click();
+  await expect(page.locator('#voiceNotes li')).toContainText('Added to the walkthrough transcript');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(page.locator('#conflictActions')).toBeHidden();
+  await expect(page.locator('#technicianNotes')).toHaveValue(/Preserve this local correction: use 3 fans/);
+  await expect(page.locator('#technicianTranscript')).toHaveValue(/80 square feet of drywall/);
+  await task(page, 'property');
+  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+});
+
+test('a saved inspection offers transcript review without any voice notes stored on this device', async ({ page }) => {
+  await fakeRecorder(page);
+  await page.goto('/app');
+  await ready(page);
+  await recordOne(page);
+  await expect(page.locator('#voiceNotes li')).toContainText('Added to the walkthrough transcript');
+  await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+  await page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('adr-private-drafts-v2');
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction(['notes', 'note_audio'], 'readwrite');
+      tx.objectStore('notes').clear();
+      tx.objectStore('note_audio').clear();
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+  }));
+  await page.reload();
+  await ready(page);
+  await task(page, 'walkthrough');
+  expect(await savedParts(page)).toBe(0);
+  await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+  await page.locator('#reviewVoiceNotesWalk').click();
+  await expect(page.locator('#message')).toContainText('Transcript reviewed.');
+  expect(await page.evaluate(() => state.record.voice_notes.every((row) => row.reviewed))).toBe(true);
+  await expect(page.locator('#reviewVoiceNotesWalk')).toBeHidden();
 });

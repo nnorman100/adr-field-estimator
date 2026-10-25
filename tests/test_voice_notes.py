@@ -70,10 +70,10 @@ def test_voice_note_is_transcribed_into_the_walkthrough_and_audio_is_not_stored(
         '[Offline voice note bbbbbbbb · Bedroom 2 · recorded Oct 16, 2:05 PM · transcribed later]\n'
         'Bedroom 2 category 1, 120 square feet of drywall.\n'
     )
-    # Every other field is untouched, and nothing was written to the evidence bucket.
-    assert {k: v for k, v in saved['data'].items() if k != 'technician_transcript'} == {
-        k: v for k, v in record['data'].items() if k != 'technician_transcript'
-    }
+    # New observations require scope confirmation again; other inputs stay untouched.
+    assert saved['data']['scope_confirmed'] is False
+    unchanged = set(record['data']) - {'technician_transcript', 'scope_confirmed'}
+    assert {k: saved['data'][k] for k in unchanged} == {k: record['data'][k] for k in unchanged}
     assert store.bucket.objects == {}
     assert 'audio' not in json.dumps(store.get_inspection('owner', ID))
     [call] = calls
@@ -173,7 +173,7 @@ def test_provider_failure_leaves_the_transcript_unchanged(context, monkeypatch):
     transcriber(monkeypatch, fail=True)
     assert send(client).status_code == 502
     saved = bm.public_record(store.get_inspection('owner', ID))
-    assert saved['data'] == record['data']
+    assert saved['data'] == {**record['data'], 'scope_confirmed': False}
     assert saved['voice_notes'] == [{'id': NOTE, 'status': 'failed', 'reviewed': False}]
     assert 'audio' not in json.dumps(saved)
 

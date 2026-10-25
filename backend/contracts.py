@@ -292,7 +292,7 @@ class PhotoShotUpdate(RevisionRequest):
 
 
 class VoiceNoteId(StrictModel):
-    """A voice note already saved on the phone. Reserving it clears an unsigned estimate."""
+    """A voice note reference reserved before capture or upload to clear an unsigned estimate."""
 
     note_id: str = Field(pattern=r'^[a-f0-9]{32}$')
 

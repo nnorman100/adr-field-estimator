@@ -1234,7 +1234,7 @@ async def reserve_voice_note(
     staff=Depends(current_staff),
     store=Depends(get_job_store),
 ):
-    """Records that a note is saved on the phone, before its audio is transcribed."""
+    """Reserves a note before capture or upload, invalidating the unsigned estimate."""
     await _voice_note_ready(store, staff['uid'], inspection_id)
     saved, moved = await stored(
         store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'

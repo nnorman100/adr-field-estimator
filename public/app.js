@@ -816,8 +816,8 @@ function renderSaveStatus() {
   else show('Offline · saved on phone');
 }
 // A voice note whose response was lost still committed its transcript block on the server. When
-// that is the only difference from the acknowledged data, takes the server's transcript plus the
-// local additions, marks those notes done and returns true; otherwise leaves everything unchanged.
+// only server changes are that transcript and a cleared scope confirmation, merges both with
+// local edits, marks those notes done and returns true; otherwise leaves everything unchanged.
 async function takeLostNotes(key, ack, local, remote, save = saveNote) {
   const acknowledged = JSON.parse(ack),
     base = acknowledged.technician_transcript,
@@ -4106,7 +4106,9 @@ async function recordNote() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned inspection first.');
   if (!navigator.onLine && state.draft.homeowner_link_pending)
-    throw Error('A homeowner signing link is open. Connect to cancel it before recording new notes.');
+    throw Error(
+      'A homeowner signing link is open. Connect to cancel it before recording new notes.',
+    );
   const format = window.MediaRecorder && noteFormat((type) => MediaRecorder.isTypeSupported(type));
   if (!format) throw Error('This browser cannot record voice notes. Type your notes instead.');
   if (notes.note) return;
@@ -4155,7 +4157,9 @@ async function recordNote() {
       syncChain = syncChain.catch(() => {}).then(task);
       await syncChain;
     } else if (draft.homeowner_link_pending)
-      throw Error('A homeowner signing link is open. Connect to cancel it before recording new notes.');
+      throw Error(
+        'A homeowner signing link is open. Connect to cancel it before recording new notes.',
+      );
     if (state.draft !== draft || state.signed || confirmedAuthorization)
       throw Error('Open an unsigned inspection first.');
     changed();
@@ -4266,12 +4270,7 @@ async function removeNote(note) {
   if (notes.player) notes.player.pause();
   // A failed note is an explicit resolution. Pending notes stay until they transcribe.
   // A signed job cannot change the server record; removing the local copy only dismisses it.
-  if (
-    note.status === 'failed' &&
-    state.draft &&
-    !state.signed &&
-    !confirmedAuthorization
-  ) {
+  if (note.status === 'failed' && state.draft && !state.signed && !confirmedAuthorization) {
     if (!navigator.onLine) throw Error('Removing a failed voice note requires a connection.');
     if (!note.reserved) await reserveNote(note, state.draft);
     absorb(
@@ -4536,7 +4535,8 @@ async function settleVoiceNotes() {
     if (notes.recorder) await stopNote();
     if (navigator.onLine && state.draft && !state.signed && !confirmedAuthorization) {
       for (const note of (await draftNotes(noteKey())).filter(
-        (item) => item.status === 'saved' && item.parts && !item.reserved && !sendingNotes.has(item.id),
+        (item) =>
+          item.status === 'saved' && item.parts && !item.reserved && !sendingNotes.has(item.id),
       )) {
         try {
           await reserveNote(note, state.draft);
@@ -4573,9 +4573,7 @@ async function settleVoiceNotes() {
     const failed = rows.find((note) => note.status === 'failed');
     if (failed) throw Error(noteStatus(failed));
     if (unreviewedVoiceNotes(rows).length)
-      throw Error(
-        'Review the voice-note transcript before filling scope, finishing, or signing.',
-      );
+      throw Error('Review the voice-note transcript before filling scope, finishing, or signing.');
   } finally {
     notes.insideSettle = false;
     ui.settlingNotes = false;
