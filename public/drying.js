@@ -40,6 +40,8 @@ window.DryingLog = (() => {
         log = result;
         status = '';
         logFor = id;
+        renderReadiness();
+        if (readinessEnabled()) notifyLiveShots(true);
       }
       return result;
     });
@@ -220,6 +222,7 @@ window.DryingLog = (() => {
     return card;
   }
   function render() {
+    renderReadiness();
     const section = $('dryingLog');
     if (!section) return;
     const show = readable();
@@ -431,5 +434,12 @@ window.DryingLog = (() => {
         throw Error('Reading dialog is missing the ' + kind + ' fields.');
   }
   document.addEventListener('DOMContentLoaded', init);
-  return { load, reload, clear, render, openDialog };
+  return {
+    load,
+    reload,
+    clear,
+    render,
+    openDialog,
+    readinessReadings: () => shownLog()?.readings ?? null,
+  };
 })();

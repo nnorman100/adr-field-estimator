@@ -1,6 +1,6 @@
 // prettier-ignore
 const VERSION='unstamped';
-// Document delivery status is drawn by /app, app.js and workspaces.js, which are already listed below.
+// Readiness uses the existing app, core, workspace and drying assets precached below.
 // A Hosting deploy stamps VERSION with the commit; that stamp is the cache name phones update to.
 // prettier-ignore
 const CACHE='dryscope-'+VERSION;

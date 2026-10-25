@@ -35,6 +35,8 @@ class FakeAudioContext {
     return source;
   }
 }
+const timers = new Map();
+let timerId = 0;
 const context = {
   ADRCore: require('../public/core.js'),
   document: { getElementById: element, addEventListener() {} },
@@ -45,9 +47,13 @@ const context = {
   },
   performance: { now: () => clock.now },
   atob: (text) => Buffer.from(text, 'base64').toString('binary'),
-  clearTimeout() {},
+  clearTimeout: (id) => timers.delete(id),
   clearInterval() {},
-  setTimeout: () => {},
+  setTimeout: (fn, delay) => {
+    const id = ++timerId;
+    timers.set(id, { fn, delay });
+    return id;
+  },
   URL,
   Uint8Array,
   Float32Array,
@@ -57,7 +63,7 @@ const context = {
 context.window = context;
 vm.runInNewContext(
   fs.readFileSync('public/app.js', 'utf8') +
-    ';globalThis.hooks={state,playback,flushPlayback,clearPlayback,renderSignal,acknowledged};',
+    ';globalThis.hooks={state,playback,flushPlayback,clearPlayback,renderSignal,acknowledged,notifyLiveShots,shotSignature};',
   context,
 );
 const { state, playback, flushPlayback, renderSignal, acknowledged } = context.hooks;
@@ -126,3 +132,31 @@ clock.now += 5000;
 renderSignal();
 assert.ok(state.videoPausedUntil < clock.now);
 console.log('PASS: lagging acknowledgements pause Live video with a visible weak-signal status');
+
+const { notifyLiveShots, shotSignature } = context.hooks;
+const packets = [];
+timers.clear();
+state.session = { ai_features: [] };
+state.record = { data: { rooms: [] }, photos: [], readiness: { gaps: [], ready: true } };
+state.shotUpdates = true;
+state.liveReady = true;
+state.socket = { readyState: 1, send: (raw) => packets.push(JSON.parse(raw)) };
+state.liveShotSignature = shotSignature(state.record);
+state.record.readiness = { gaps: [{ room: 0, code: 'floor_sf' }], ready: false };
+notifyLiveShots();
+assert.equal(timers.size, 0, 'disabled readiness does not notify Live');
+state.session.ai_features = ['readiness'];
+state.liveShotSignature = shotSignature(state.record);
+state.record.readiness = { gaps: [], ready: true };
+notifyLiveShots();
+assert.equal(timers.size, 1, 'saved readiness alone schedules a packet');
+notifyLiveShots();
+assert.equal(timers.size, 1, 'updates coalesce in the existing debounce');
+const pending = [...timers.values()][0];
+assert.equal(pending.delay, 2500, 'existing transport debounce remains unchanged');
+timers.clear();
+pending.fn();
+assert.deepEqual(packets, [{ type: 'shots' }]);
+notifyLiveShots();
+assert.equal(timers.size, 0, 'unchanged saved readiness does not repeat');
+console.log('PASS: saved readiness changes notify Live only when enabled and retain coalescing');

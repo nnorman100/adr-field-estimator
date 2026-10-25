@@ -29,6 +29,7 @@ const {
   canonicalUrl,
   splitPhotos,
   missingItems,
+  readiness,
   auditBlockMessage,
   noteFormat,
   roomSizingNote,
@@ -292,7 +293,9 @@ function renderControls() {
     ui.auditing ||
     state.conflict ||
     (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('scope'));
-  $('finishAudit').disabled = !editable || !navigator.onLine || ui.auditing || ui.fillingScope;
+  $('finishAudit').disabled =
+    !editable || (!navigator.onLine && !readinessEnabled()) || ui.auditing || ui.fillingScope;
+  renderReadiness();
   renderDraftActions();
   for (const id of ['fillScope', 'fillScopeProperty']) {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
@@ -659,6 +662,8 @@ function clearDisplayedInspection() {
   stopHomeownerLink();
   roomRemoval = null;
   $('removeRoomDialog').close();
+  $('readinessDialog').close();
+  $('readinessGaps').replaceChildren();
   $('removeRoomDescription').textContent = '';
   clearValidationFeedback();
   clearSigningError('documentsConfirmedError');
@@ -722,6 +727,7 @@ function clearDisplayedInspection() {
 function changed(resetConfirmation = true) {
   if (!state.draft || state.signed || confirmedAuthorization) return;
   state.localVersion++;
+  renderReadiness();
   if (resetConfirmation) {
     // Say so, because a silent un-tick hid that the confirmed scope had moved.
     if ($('scopeConfirmed').checked) $('scopeConfirmNotice').hidden = false;
@@ -1337,7 +1343,14 @@ async function fillScopeFromWalkthrough() {
       }
     if (state.draft !== draft || state.user?.uid !== uid) return;
     $('scopeQuestions').replaceChildren(...questions.map((question) => node('li', question)));
-    const missing = missingItems(filled, draft.photos);
+    const missing = readinessEnabled()
+      ? missingItems(
+          filled,
+          draft.photos,
+          window.WorkspaceUI?.readinessClaim() || {},
+          window.DryingLog?.readinessReadings() ?? null,
+        )
+      : missingItems(filled, draft.photos);
     $('scopeMissing').replaceChildren(...missing.map((item) => node('li', item)));
     $('scopeGapsHeading').hidden = !missing.length && !questions.length;
     $('scopeSuggestionList').replaceChildren(
@@ -1643,7 +1656,8 @@ function renderRooms() {
       radio.dataset.roomKey = 'loss';
       radio.checked = roomLoss(room) === value;
       radio.disabled = !!state.signed;
-      radio.addEventListener('change', () => {
+      radio.addEventListener('click', () => {
+        if (room.loss === value) return;
         room.loss = value;
         if (value !== 'water') {
           room.category = 3;
@@ -2190,6 +2204,7 @@ function renderShotLists() {
           : 'all tagged');
   });
   renderShotPicker();
+  renderReadiness();
 }
 // Right after a capture, one tap tags the new photo; shots the room still needs come first.
 function renderShotPicker() {
@@ -2603,6 +2618,15 @@ function openHelp() {
     : 'How to use the field estimator. Sign in to see the topics for your role first.';
   helpTopics ??= [...document.querySelectorAll('#helpDialog [data-help-roles]')];
   for (const topic of helpTopics) {
+    if (topic.dataset.helpTopic === 'readiness') {
+      topic.hidden =
+        !state.session?.ai_features?.includes('readiness') ||
+        !roles.some((r) => ['owner', 'estimator'].includes(r));
+      if (topic.hidden) {
+        topic.remove();
+        continue;
+      }
+    }
     const yours = topic.dataset.helpRoles.split(' ').some((role) => roles.includes(role));
     $(yours ? 'helpYours' : 'helpOther').append(topic);
   }
@@ -2828,10 +2852,130 @@ async function copySigned() {
   await restoreDraft(draft.inspection_id);
   say('Copied to a new draft. Photos and signatures stay with the signed job.', 'success');
 }
+function readinessEnabled() {
+  return !!state.session?.ai_features?.includes('readiness') && canEditDraft('scope');
+}
+function currentReadiness() {
+  const readings = navigator.onLine ? (window.DryingLog?.readinessReadings() ?? null) : null;
+  return readiness(
+    state.draft.data,
+    state.draft.photos,
+    window.WorkspaceUI?.readinessClaim() || {},
+    readings,
+  );
+}
+function renderReadiness() {
+  const line = $('readinessCount');
+  if (!line) return;
+  line.hidden = !readinessEnabled();
+  if (line.hidden) return;
+  const count = currentReadiness().gaps.length;
+  line.textContent = count ? 'Still missing: ' + count + ' item(s)' : 'No readiness gaps listed';
+}
+function fixReadiness(gap) {
+  const dialog = $('readinessDialog');
+  dialog.close();
+  const index = state.draft.data.rooms.findIndex(
+    (r) => (r.name.trim() || 'Unnamed room') === gap.room,
+  );
+  if (
+    gap.code.startsWith('shot:') ||
+    ['affected_surfaces', 'wet_materials', 'ocr'].includes(gap.code)
+  ) {
+    showTask('walkthrough');
+    if (index >= 0) {
+      $('photoRoom').value = state.draft.data.rooms[index].name;
+      renderShotLists();
+    }
+    $('shotList').scrollIntoView({ block: 'center' });
+    $('photoRoom').focus();
+    return;
+  }
+  showTask('property');
+  if (['setup_readings', 'readings_unknown'].includes(gap.code)) {
+    $('dryingLog').scrollIntoView({ block: 'center' });
+    if (navigator.onLine) window.DryingLog?.openDialog(gap.room, $('addReading'));
+    return;
+  }
+  if (gap.code.startsWith('claim:')) {
+    $('claimDetails').open = true;
+    $('claimDetails').scrollIntoView({ block: 'center' });
+    $('claimForm').querySelector('input')?.focus();
+    return;
+  }
+  const ids = {
+    address: 'address',
+    year_built: 'yearBuilt',
+    rooms: 'addRoom',
+    equipment: 'airMovers',
+    dehumidifier_ppd: 'dehumidifierPpd',
+    scope_confirmed: 'scopeConfirmed',
+  };
+  const field = gap.code === 'demolition' ? 'finished_sf' : gap.code;
+  const target =
+    index >= 0
+      ? document.querySelector('[data-room-index="' + index + '"][data-room-key="' + field + '"]')
+      : $(ids[gap.code]);
+  for (let parent = target?.parentElement; parent; parent = parent.parentElement)
+    if (parent.tagName === 'DETAILS') parent.open = true;
+  target?.scrollIntoView({ block: 'center' });
+  target?.focus();
+}
+function confirmReadiness() {
+  if (!readinessEnabled()) return Promise.resolve(true);
+  const gaps = currentReadiness().gaps;
+  const keys = gaps.map((g) => stable([g.room, g.code]));
+  // Local UI acknowledgement only, outside inspection.data and the server save queue.
+  const previous = state.draft.readinessFinish || [];
+  state.draft.readinessFinish = keys;
+  void persist().catch((e) => say(e.message, 'error'));
+  if (!keys.some((k) => !previous.includes(k))) return Promise.resolve(true);
+  const dialog = $('readinessDialog'),
+    list = $('readinessGaps');
+  list.replaceChildren();
+  for (const room of [...new Set(gaps.map((g) => g.room))]) {
+    const group = node('section');
+    group.append(node('h3', room || 'Whole job'));
+    for (const gap of gaps.filter((g) => g.room === room)) {
+      const row = node('div', undefined, 'readiness-gap'),
+        fix = node('button', 'Fix');
+      fix.type = 'button';
+      fix.setAttribute('aria-label', 'Fix: ' + gap.text + (room ? ' · ' + room : ''));
+      fix.addEventListener('click', () => fixReadiness(gap));
+      row.append(
+        node(
+          'span',
+          !navigator.onLine && gap.code === 'readings_unknown'
+            ? 'Readings unknown offline'
+            : gap.text,
+        ),
+        fix,
+      );
+      if (gap.code === 'readings_unknown') row.classList.add('hint');
+      group.append(row);
+    }
+    list.append(group);
+  }
+  $('readinessLive').hidden = !state.liveReady;
+  $('readinessOffline').hidden = navigator.onLine;
+  return new Promise((resolve) => {
+    let accepted = false;
+    $('readinessContinue').onclick = () => {
+      accepted = true;
+      dialog.close();
+    };
+    $('readinessBack').onclick = () => dialog.close();
+    dialog.addEventListener('close', () => resolve(accepted), { once: true });
+    dialog.showModal();
+  });
+}
 async function finishAudit() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned draft first.');
   collect();
+  if (!(await confirmReadiness())) return;
+  if (!navigator.onLine)
+    throw Error('Connect to generate documents. Your draft is saved on this device.');
   clearValidationFeedback();
   if (!$('inspectionForm').checkValidity()) {
     showTask('property', false);
@@ -3326,7 +3470,7 @@ async function refreshLiveToken(socket, uid) {
       socket.send(JSON.stringify({ type: 'refresh', token }));
   } catch {}
 }
-// What Live's photo shot status is built from: the server's room answers, counts and photo tags.
+// Include saved readiness when enabled so edits without new photo tags also notify Live.
 function shotSignature(record) {
   return stable([
     record.data.rooms.map((room) => [
@@ -3335,14 +3479,15 @@ function shotSignature(record) {
       ...Object.keys(ROOM_SHOT_COUNTS).map((key) => room[key] ?? null),
     ]),
     record.photos.filter((photo) => photo.shot).map((photo) => [photo.room, photo.shot]),
+    state.session?.ai_features?.includes('readiness') ? record.readiness : null,
   ]);
 }
-// After the server stores a tag or room answer, the relay re-reads the saved record and gives
-// Live the new shot status, so Live never hears of a tag the server does not hold.
-function notifyLiveShots() {
+// The relay re-reads saved state after this signal; unsaved device edits never become
+// Live context. Sidecar saves force a signal because they may not refresh state.record.
+function notifyLiveShots(force = false) {
   const socket = state.socket;
   if (!state.shotUpdates || !state.liveReady || !socket || !state.record) return;
-  if (shotSignature(state.record) === state.liveShotSignature) return;
+  if (!force && shotSignature(state.record) === state.liveShotSignature) return;
   clearTimeout(state.shotTimer);
   state.shotTimer = setTimeout(() => {
     if (state.socket !== socket || !state.liveReady || socket.readyState !== WebSocket.OPEN) return;
@@ -4580,7 +4725,7 @@ async function initialize() {
     say(navigator.onLine ? 'Draft saved privately.' : 'Draft saved on this device.', 'success');
   });
   click('finishAudit', () =>
-    walkthroughNeedsScope() ? fillScopeFromWalkthrough() : finishAudit(),
+    navigator.onLine && walkthroughNeedsScope() ? fillScopeFromWalkthrough() : finishAudit(),
   );
   click('fillScope', fillScopeFromWalkthrough);
   click('fillScopeProperty', fillScopeFromWalkthrough);

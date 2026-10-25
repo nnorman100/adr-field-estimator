@@ -385,7 +385,80 @@
   });
   // Gaps the technician can still fill on site, checked against the form with any proposed scope
   // values applied. The model's clarification questions are listed beside these.
-  function missingItems(data, photos = []) {
+  // Keep in parity with backend/readiness.py. These gaps are advisory, never signing rules.
+  function readiness(data, photos = [], claim = {}, readings = null) {
+    const gaps = [],
+      add = (code, text, room = '') => gaps.push({ room, code, text });
+    if (!String(data.address || '').trim()) add('address', 'No property address');
+    if (data.year_built == null) add('year_built', 'No year built');
+    if (!data.rooms?.length) add('rooms', 'No affected rooms');
+    for (const room of data.rooms || []) {
+      const name = (room.name || '').trim() || 'Unnamed room';
+      if (!(room.finished_sf > 0) && !(room.unfinished_sf > 0))
+        add('demolition', 'No measured demolition area', name);
+      if (!room.loss) add('loss', 'Loss type not confirmed', name);
+      if (roomLoss(room) !== 'mold') {
+        for (const [field, label] of Object.entries({
+          floor_sf: 'floor area',
+          ceiling_height_ft: 'ceiling height',
+          water_class: 'water class',
+        }))
+          if (room[field] == null) add(field, 'No ' + label + ' for the drying check', name);
+        if (room.wet_floor_sf != null && room.floor_sf != null && room.wet_floor_sf > room.floor_sf)
+          add('wet_floor_sf', 'Wet floor area exceeds floor area', name);
+      }
+      for (const shot of roomShotStatus(room, photos).missing)
+        add(
+          'shot:' + shot.id,
+          shot.label + ': ' + (shot.needed - shot.tagged) + ' photo(s) missing',
+          name,
+        );
+      for (const [field, label] of Object.entries(ROOM_SHOT_COUNTS))
+        if (room[field] == null) add(field, 'Set how many: ' + label.toLowerCase(), name);
+    }
+    const equipment = ['air_movers', 'dehumidifiers', 'wood_floor_systems'].some(
+      (k) => data[k] > 0,
+    );
+    if (!equipment) add('equipment', 'No drying equipment counts');
+    if (data.dehumidifiers > 0 && data.dehumidifier_ppd == null)
+      add('dehumidifier_ppd', 'No dehumidifier AHAM pints/day rating');
+    const fields = {
+      carrier: 'insurance carrier',
+      claim_number: 'claim number',
+      policy_number: 'policy number',
+      date_of_loss: 'date of loss',
+      loss_cause: 'cause and source of loss',
+      adjuster_name: 'adjuster name',
+      adjuster_email: 'adjuster email',
+      adjuster_phone: 'adjuster phone',
+      deductible: 'deductible',
+    };
+    if (Object.values(claim || {}).some((v) => String(v || '').trim()))
+      for (const [field, label] of Object.entries(fields))
+        if (!String(claim[field] || '').trim()) add('claim:' + field, 'No ' + label);
+    if (equipment) {
+      if (readings == null) add('readings_unknown', 'Readings not loaded');
+      else if (
+        !readings.some(
+          (r) =>
+            (r.kind === 'air' && (r.zone || 'affected') === 'affected') ||
+            (r.kind === 'material' && r.affected !== false),
+        )
+      )
+        add('setup_readings', 'No setup-day affected air or material reading');
+    }
+    if (photos.some((p) => ['pending', 'failed'].includes(p.ocr_status)))
+      add('ocr', 'Photo readings await verification');
+    if (!data.scope_confirmed) add('scope_confirmed', 'Scope not confirmed');
+    return { gaps, ready: !gaps.length };
+  }
+  function missingItems(data, photos = [], claim, readings) {
+    // The existing Fill scope list stays unchanged until the server enables readiness.
+    // Supplying sidecar context opts into the complete F1 list (including unknown readings).
+    if (claim !== undefined || readings !== undefined)
+      return readiness(data, photos, claim || {}, readings ?? null).gaps.map(
+        (g) => (g.room ? g.room + ': ' : '') + g.text,
+      );
     const items = [];
     if (!String(data.address || '').trim()) items.push('No property address');
     if (data.year_built == null) items.push('No year built');
@@ -824,6 +897,7 @@
     canonicalUrl,
     splitPhotos,
     missingItems,
+    readiness,
     auditBlockMessage,
     noteFormat,
     equipmentLabel,

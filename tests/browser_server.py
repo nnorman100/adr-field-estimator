@@ -262,6 +262,7 @@ async def password_claims(uid: str):
 async def workspaces_fixture(request: Request):
     global store, accounts
     body = await request.json()
+    bm.AI_FEATURES = frozenset(body.get('ai_features', []))
     if not body.get('enabled'):
         store = legacy_store
         bm.WORKSPACES_ENABLED = False

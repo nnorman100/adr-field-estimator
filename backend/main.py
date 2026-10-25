@@ -80,6 +80,7 @@ try:
         TRANSCRIBE_INSTRUCTIONS,
         GREETING_TRIGGER,
         SHOT_STATUS_UPDATE,
+        READINESS_UPDATE,
         shot_status_json,
     )
     from .live_support import (
@@ -132,6 +133,7 @@ except ImportError:
         TRANSCRIBE_INSTRUCTIONS,
         GREETING_TRIGGER,
         SHOT_STATUS_UPDATE,
+        READINESS_UPDATE,
         shot_status_json,
     )
     from live_support import (
@@ -180,6 +182,10 @@ LIVE_REPLY_WAIT_SECONDS = 5
 LIVE_VOICE = os.getenv('LIVE_VOICE', 'Charon')
 LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live'
 ORIGINS = list(DOCUMENT_ORIGINS)
+AI_FEATURES = frozenset(
+    x.strip().lower() for x in os.getenv('AI_FEATURES', '').split(',') if x.strip()
+)
+
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED', 'false').lower() == 'true'
 STAFF_EMAILS = {
     e.strip().lower()
@@ -549,7 +555,7 @@ def reusable_audit(record, revision, identity, customer, claim=None):
     )
 
 
-def public_record(record):
+def public_record(record, *, readiness_state=None):
     result = {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
     # An unsigned draft carries the equipment-sizing check for its saved data; it is derived on
     # every read, never stored, and a signed record keeps only what its documents printed.
@@ -559,7 +565,33 @@ def public_record(record):
         except ValidationError:
             return result
         result['equipment_sizing'] = equipment_sizing(data)
+        if 'readiness' in AI_FEATURES and readiness_state is not None:
+            result['readiness'] = readiness_state
     return result
+
+
+async def saved_readiness(store, uid, record):
+    # Called only after the record's access check; recheck after sidecar reads as well.
+    try:
+        from .readiness import readiness
+    except ImportError:
+        from readiness import readiness
+    log = await stored(store.drying_log, uid, record['inspection_id'])
+    claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
+    await stored(store._access, uid, record)
+    return readiness(record['data'], record.get('photos', []), claim, log['readings'])
+
+
+async def draft_record(store, uid, record):
+    state = None
+    if (
+        'readiness' in AI_FEATURES
+        and 'data' in record
+        and 'auth_id' not in record
+        and record.get('status') != 'signed'
+    ):
+        state = await saved_readiness(store, uid, record)
+    return public_record(record, readiness_state=state)
 
 
 def parse_json_from_llm(text):
@@ -756,6 +788,7 @@ async def session_info(staff=Depends(current_staff)):
         live_voice=LIVE_VOICE,
         workspaces_enabled=WORKSPACES_ENABLED,
         workspace_protocol_version=1,
+        ai_features=sorted(AI_FEATURES),
     )
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, staff['uid'])
@@ -815,10 +848,12 @@ async def create_inspection(
     req: CreateInspection, staff=Depends(current_staff), store=Depends(get_job_store)
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.create_inspection, staff['uid'], req.inspection_id, inspection_payload(req.data)
-        )
+        ),
     )
 
 
@@ -828,14 +863,16 @@ async def copy_signed_job(
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
     data, copied_from = await stored(store.copy_source, staff['uid'], auth_id)
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.create_inspection,
             staff['uid'],
             req.inspection_id,
             inspection_payload(data),
             copied_from,
-        )
+        ),
     )
 
 
@@ -876,7 +913,7 @@ async def get_inspection(
     record = await stored(store.get_inspection, staff['uid'], inspection_id)
     if record.get('audit') and record['audit']['documents'].get('company_identity'):
         workspace_client(request)
-    return public_record(record)
+    return await draft_record(store, staff['uid'], record)
 
 
 @app.put('/api/inspections/{inspection_id}')
@@ -887,14 +924,16 @@ async def update_inspection(
     store=Depends(get_job_store),
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.update_inspection,
             staff['uid'],
             inspection_id,
             req.expected_revision,
             inspection_payload(req.data),
-        )
+        ),
     )
 
 
@@ -904,7 +943,7 @@ async def upload_photo(
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
     record = await stored(store.add_photo, staff['uid'], inspection_id, req.model_dump(mode='json'))
-    return public_record(record)
+    return await draft_record(store, staff['uid'], record)
 
 
 @app.put('/api/inspections/{inspection_id}/photos/{photo_id}/room')
@@ -916,7 +955,9 @@ async def move_photo(
     store=Depends(get_job_store),
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.move_photo,
             staff['uid'],
@@ -924,7 +965,7 @@ async def move_photo(
             req.expected_revision,
             photo_id,
             req.room,
-        )
+        ),
     )
 
 
@@ -974,7 +1015,9 @@ async def tag_photo_shot(
     store=Depends(get_job_store),
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.tag_photo_shot,
             staff['uid'],
@@ -982,7 +1025,7 @@ async def tag_photo_shot(
             req.expected_revision,
             photo_id,
             req.shot,
-        )
+        ),
     )
 
 
@@ -1018,10 +1061,12 @@ async def ocr_photo(
     except (HTTPException, asyncio.CancelledError):
         await stored(store.set_ocr, staff['uid'], inspection_id, photo_id, None)
         raise
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.set_ocr, staff['uid'], inspection_id, photo_id, result.model_dump(mode='json')
-        )
+        ),
     )
 
 
@@ -1131,7 +1176,7 @@ async def transcribe_voice_note(
         raise HTTPException(409, 'Signed inspections are immutable. Start a new inspection.')
     marker = voice_note_marker(req.note_id)
     if marker in record['data'].get('technician_transcript', ''):
-        return public_record(record)
+        return await draft_record(store, staff['uid'], record)
     raw = voice_note_audio(req)
     transcript = record['data'].get('technician_transcript', '')
     longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
@@ -1149,14 +1194,16 @@ async def transcribe_voice_note(
         thinking_level=SCOPE_THINKING_LEVEL,
         timeout=REST_DEADLINE_SECONDS - 5,
     )
-    return public_record(
+    return await draft_record(
+        store,
+        staff['uid'],
         await stored(
             store.append_transcript,
             staff['uid'],
             inspection_id,
             marker,
             voice_note_block(req, result.text),
-        )
+        ),
     )
 
 
@@ -1201,7 +1248,7 @@ async def audit_inspection(
     claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
     if reusable_audit(record, revision, identity, customer, claim):
         # Every input edit clears the audit, so a second Finish & review returns the saved result.
-        return public_record(record)
+        return await draft_record(store, staff['uid'], record)
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
     contents = [prompt]
     for photo in record['photos']:
@@ -1215,7 +1262,7 @@ async def audit_inspection(
             400, 'The scope could not be priced. Review the inspection inputs and retry.'
         )
     saved = await stored(store.save_audit, staff['uid'], req.inspection_id, revision, documents)
-    return public_record(saved)
+    return await draft_record(store, staff['uid'], saved)
 
 
 @app.post('/api/authorize')
@@ -1587,7 +1634,7 @@ async def get_authorization(
         raise HTTPException(404, 'Signed agreement not found.')
     if record.get('documents', {}).get('company_identity'):
         workspace_client(request)
-    return public_record(record)
+    return await draft_record(store, staff['uid'], record)
 
 
 @app.get('/api/authorizations/{auth_id}/evidence/{name}')
@@ -1804,7 +1851,17 @@ async def live_walkthrough(socket: WebSocket):
         )
         async with AsyncExitStack() as stack:
             config = live_config(
-                live_prompt(record['data'], identity, claim, record['photos']), LIVE_VOICE, handle
+                live_prompt(
+                    record['data'],
+                    identity,
+                    claim,
+                    record['photos'],
+                    readiness_state=(await saved_readiness(store, uid, record))
+                    if 'readiness' in AI_FEATURES
+                    else None,
+                ),
+                LIVE_VOICE,
+                handle,
             )
             try:
                 session = await stack.enter_async_context(
@@ -1829,7 +1886,15 @@ async def live_walkthrough(socket: WebSocket):
                     client.aio.live.connect(
                         model=LIVE_MODEL,
                         config=live_config(
-                            live_prompt(record['data'], identity, claim, record['photos']),
+                            live_prompt(
+                                record['data'],
+                                identity,
+                                claim,
+                                record['photos'],
+                                readiness_state=(await saved_readiness(store, uid, record))
+                                if 'readiness' in AI_FEATURES
+                                else None,
+                            ),
                             LIVE_VOICE,
                         ),
                     )
@@ -1883,12 +1948,17 @@ async def live_walkthrough(socket: WebSocket):
                     if replying() or finishing:
                         shots['wanted'] = True
                         continue
-                    sent_at = time.monotonic()
                     status = shot_status_json(current['data'], current['photos'])
+                    parts = [types.Part(text=SHOT_STATUS_UPDATE + status)]
+                    if 'readiness' in AI_FEATURES:
+                        state = await saved_readiness(store, uid, current)
+                        parts.append(types.Part(text=READINESS_UPDATE + json.dumps(state)))
+                    if replying() or finishing:
+                        shots['wanted'] = True
+                        continue
+                    sent_at = time.monotonic()
                     await session.send_client_content(
-                        turns=types.Content(
-                            role='user', parts=[types.Part(text=SHOT_STATUS_UPDATE + status)]
-                        ),
+                        turns=types.Content(role='user', parts=parts),
                         turn_complete=False,
                     )
 
