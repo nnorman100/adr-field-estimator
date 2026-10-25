@@ -54,9 +54,6 @@ RESERVATION_SECONDS = 30
 FAILED = 'The email could not be sent. A retry sends it again.'
 NOT_ASKED = 'The homeowner did not ask for an emailed copy.'
 NO_CUSTOMER_EMAIL = 'No customer email is saved on the job.'
-NOT_SWITCHED_ON = {
-    'crew_lead': 'Crew-lead email is not switched on.',
-}
 # Gmail does not deduplicate, so an attempt that never recorded its outcome is not sent again.
 UNCONFIRMED = (
     'Sending stopped before it was confirmed, so the email may have arrived. '
@@ -263,7 +260,7 @@ class Deliveries:
     def _deliver_adjuster(self, store, agreement, origin):
         documents = agreement.get('documents') or {}
         recipient, reason = adjuster_recipient(documents)
-        skipped = dict(NOT_SWITCHED_ON, homeowner='Homeowner email is not switched on.')
+        skipped = {'homeowner': 'Homeowner email is not switched on.'}
         if reason:
             skipped['adjuster'] = reason
         record = self.queue(agreement['inspection_id'], skipped)
@@ -324,7 +321,7 @@ class Deliveries:
 
 
 def homeowner_skips(job, record):
-    skipped = dict(NOT_SWITCHED_ON)
+    skipped = {}
     _recipient, reason = adjuster_recipient(record.get('documents') or {})
     if reason:
         skipped['adjuster'] = reason

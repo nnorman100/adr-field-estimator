@@ -15,7 +15,6 @@ from backend.delivery import (
     DOCUMENT_ORIGINS,
     INVALID_ADJUSTER_EMAIL,
     NO_ADJUSTER_EMAIL,
-    NOT_SWITCHED_ON,
     NO_CREW_LEAD,
 )
 from tests.test_backend import audit as owner_audit

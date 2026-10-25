@@ -7,7 +7,7 @@ import smtplib
 import pytest
 
 import backend.main as bm
-from backend.delivery import NO_CUSTOMER_EMAIL, NOT_ASKED, NOT_SWITCHED_ON
+from backend.delivery import NO_CREW_LEAD, NO_CUSTOMER_EMAIL, NOT_ASKED
 from tests.fakes import ADR_PROFILE
 from tests.test_backend import ID, audit, context, inspect, sign_payload
 from tests.test_document_links import reader
@@ -24,7 +24,11 @@ def prepare(client, store, email=CUSTOMER):
             '/api/companies/adr',
             json={
                 'expected_version': 1,
-                'profile': {**ADR_PROFILE, 'email': 'Office@Alert.example.invalid'},
+                'profile': {
+                    **ADR_PROFILE,
+                    'email': 'Office@Alert.example.invalid',
+                    'document_delivery': True,
+                },
             },
         ).status_code
         == 200
@@ -92,8 +96,7 @@ def test_a_ticked_box_emails_one_private_link_and_a_retry_does_not(smtp, capsys)
         'adjuster': 'skipped',
         'crew_lead': 'skipped',
     }
-    for role, reason in NOT_SWITCHED_ON.items():
-        assert entry[role]['reason'] == reason
+    assert entry['crew_lead']['reason'] == NO_CREW_LEAD
     assert len(connections) == 1
     message = connections[0]['server'].message
     assert message['To'] == CUSTOMER
