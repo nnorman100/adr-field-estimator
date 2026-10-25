@@ -216,6 +216,7 @@ test.describe('company roles', () => {
       uid('office'),
     );
     await page.goto('/app');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await expect(page.locator('#workspaceNav button').first()).toBeEnabled();
     await openHelp(page);
     expect(await topics(page, 'helpYours')).toEqual([FIELD[0], FIELD[1], FIELD[7], ALL[9]]);
