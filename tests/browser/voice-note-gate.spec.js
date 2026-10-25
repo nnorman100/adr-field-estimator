@@ -352,7 +352,6 @@ test('a saved inspection offers transcript review without any voice notes stored
   await expect(page.locator('#reviewVoiceNotesWalk')).toBeHidden();
 });
 
-
 test('a signing link sent on another device blocks offline recording without visiting Review', async ({
   page,
   browser,

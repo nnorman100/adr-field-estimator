@@ -815,9 +815,9 @@ function renderSaveStatus() {
     show('Saved on phone · sync pending', 'Changes saved on this device · cloud sync pending');
   else show('Offline · saved on phone');
 }
-// A voice note whose response was lost still committed its transcript block on the server. When
-// only server changes are that transcript and a cleared scope confirmation, merges both with
-// local edits, marks those notes done and returns true; otherwise leaves everything unchanged.
+// A lost reservation or transcription response may have cleared scope confirmation on the server.
+// Merge that reset and any appended voice-note blocks with local edits, marking appended notes
+// done; reject other server changes so normal revision-conflict handling preserves the draft.
 async function takeLostNotes(key, ack, local, remote, save = saveNote) {
   const acknowledged = JSON.parse(ack),
     base = acknowledged.technician_transcript,
@@ -3334,13 +3334,7 @@ function showHomeownerLink(inspection, link) {
   homeownerLink.timer = setInterval(() => checkHomeownerLink().catch(() => {}), 10000);
 }
 async function loadHomeownerLinkStatus() {
-  if (
-    !navigator.onLine ||
-    !state.draft ||
-    !state.record ||
-    state.signed ||
-    confirmedAuthorization
-  )
+  if (!navigator.onLine || !state.draft || !state.record || state.signed || confirmedAuthorization)
     return;
   const draft = state.draft,
     revision = state.record?.revision;

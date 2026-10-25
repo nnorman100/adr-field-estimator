@@ -263,7 +263,10 @@ vm.runInContext(fs.readFileSync('public/app.js', 'utf8'), context);
     context,
   );
   assert.equal(vm.runInContext('voiceNoteNeedsLinkCancellation(state.draft)', context), false);
-  await vm.runInContext('delete state.draft.homeowner_link_pending; state.record.audit = null;', context);
+  await vm.runInContext(
+    'delete state.draft.homeowner_link_pending; state.record.audit = null;',
+    context,
+  );
   assert.equal(vm.runInContext('voiceNoteNeedsLinkCancellation(state.draft)', context), false);
   console.log('PASS: voice-note lifecycle and lost-response confirmation recovery');
 })().catch((error) => {
