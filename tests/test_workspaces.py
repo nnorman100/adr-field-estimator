@@ -444,6 +444,33 @@ def test_email_confirmation_retry_and_idempotency(store):
     assert len(calls) == 2 and calls[0] != calls[1]
 
 
+@pytest.mark.parametrize('resend', [False, True])
+def test_invitation_failure_logs_once_without_pii(store, capsys, resend):
+    w = store.workspaces
+    invitation = w.invite('owner', 'adr', 'private@example.invalid', 'office')
+    if resend:
+        w.invitation_action('owner', 'adr', invitation['invitation_id'], 'resend')
+
+    def fail(*args):
+        raise smtplib.SMTPAuthenticationError(535, b'private@example.invalid secret-password body')
+
+    capsys.readouterr()
+    result = w.deliver('owner', invitation['invitation_id'], fail)
+    lines = capsys.readouterr().out.splitlines()
+    assert result['delivery_status'] == 'failed'
+    assert [json.loads(line) for line in lines] == [
+        {
+            'severity': 'ERROR',
+            'message': 'Email send failed',
+            'operation': 'email',
+            'status': 'send_failed',
+            'outcome': 'SMTPAuthenticationError',
+        }
+    ]
+    w.deliver('owner', invitation['invitation_id'], lambda *args: 'message-id')
+    assert not capsys.readouterr().out
+
+
 def test_disabled_inviter_and_concurrent_owner_replacement(store):
     w = store.workspaces
     invite = w.invite('owner', 'adr', 'new@example.invalid', 'office')

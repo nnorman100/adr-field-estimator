@@ -2,7 +2,7 @@
 
 A mobile inspection app serving Alert Disaster Restoration first, and other restoration companies as isolated company workspaces. The site's front page is the public DryScope landing page; open [the dedicated app](https://alert-disaster-field-2026.web.app/app) at `/app` and sign in with Google or a verified, invited email/password account.
 
-Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical `alert-disaster-live` site was retired as of 2026-10-12; use this app's address. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md).
+Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage and Vertex AI belong to `alert-disaster-field-2026`. The historical `alert-disaster-live` site was retired as of 2026-10-12; use this app's address. Peer sites and shared databases remain untouched. See [infrastructure and deployment](docs/firebase-isolation.md) and [repair acceptance evidence](docs/review-repairs.md). Uptime and error alerts are set up by the owner-run script described in [monitoring and alerts](docs/MONITORING.md).
 
 ## Company dashboards
 

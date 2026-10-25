@@ -1028,7 +1028,14 @@ class WorkspaceStore:
             message_id = (sender or send_invitation)(invite, company)
             status = 'sent'
             error = ''
-        except Exception:
+        except Exception as failure:
+            event(
+                'Email send failed',
+                logging.ERROR,
+                operation='email',
+                status='send_failed',
+                outcome=type(failure).__name__,
+            )
             message_id = None
             status = 'failed'
             error = 'Invitation email could not be sent. Check the sender setup and retry.'
