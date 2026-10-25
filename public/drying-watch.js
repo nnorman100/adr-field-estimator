@@ -228,6 +228,8 @@ window.DryingWatch = (() => {
     pending = {
       action,
       recipient,
+      recipient_hash: current.recipient_hashes?.[recipient],
+      recipient_address: recipient === 'estimator' ? current.estimator : current.crew_lead,
       request_id: reminderId || id(),
       facts_hash: current.facts_hash,
       reason: '',
@@ -242,7 +244,7 @@ window.DryingWatch = (() => {
     form.id = 'watchApproval';
     const text =
       pending.action === 'remind'
-        ? `Send one reminder to ${pending.recipient === 'estimator' ? current.estimator : 'the crew lead'} with the address, ${plan(current)}, and last reading ${time(current.last_reading_at)}?`
+        ? `Send one reminder to ${pending.recipient_address} with the address, ${plan(current)}, and last reading ${time(current.last_reading_at)}?`
         : pending.action === 'extend'
           ? 'Save a plan extension note? Extra billable days need Copy to new draft.'
           : pending.action === 'mark_dry'
@@ -294,6 +296,7 @@ window.DryingWatch = (() => {
             approved: true,
             reminder_id: request.request_id,
             recipient: request.recipient,
+            recipient_hash: request.recipient_hash,
             facts_hash: request.facts_hash,
           }
         : {

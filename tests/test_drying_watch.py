@@ -82,6 +82,7 @@ def request(watch, recipient='estimator', key='a' * 32):
     return ReminderRequest(
         reminder_id=key,
         recipient=recipient,
+        recipient_hash=watch.view('office', ID)['recipient_hashes'][recipient],
         approved=True,
         facts_hash=watch.view('office', ID)['facts_hash'],
     )
@@ -379,3 +380,43 @@ def test_old_agreement_without_saved_plan_does_not_break_list(watched):
     assert result['jobs'] == [] and result['unavailable'] == 1
     with pytest.raises(LookupError, match='no saved drying plan'):
         watch.view('owner', ID)
+
+
+@pytest.mark.parametrize('count,expected', [(0, 'dry_standard_met'), (None, 'active'), (1, 'active')])
+def test_reference_room_material_count(count, expected):
+    case = deepcopy(STATES[0])
+    case['data']['rooms'].append(dict(name='Reference', wet_materials=count))
+    result = watch_state(case['data'], case['log'], case['setup_at'], at=instant(case['at']))
+    assert result['status'] == expected
+    assert ('missing_dry_standard' in result['flags']) == (count != 0)
+    assert ('Reference' in result['missing_rooms']) == (count != 0)
+
+
+@pytest.mark.parametrize('recipient,change', [
+    ('estimator', 'assignment'), ('estimator', 'email'), ('crew_lead', 'email'),
+])
+@pytest.mark.parametrize('retry', [False, True])
+def test_reminder_recipient_approval(watched, monkeypatch, recipient, change, retry):
+    _, _, store, watch = watched
+    monkeypatch.setattr(monitoring_store, 'mail_settings', lambda: {})
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise RuntimeError('Synthetic failure')
+
+    monkeypatch.setattr(monitoring_store, 'send_email', fail)
+    req = request(watch, recipient)
+    if retry:
+        watch.remind('office', ID, req)
+    if change == 'assignment':
+        store.db.records['_workspace_jobs/' + ID]['assigned_estimator_uid'] = 'estimator2'
+    elif recipient == 'estimator':
+        store.db.records['_memberships/estimator']['email'] = 'changed@example.invalid'
+    else:
+        store.db.records['_companies/adr']['profile']['crew_lead_email'] = 'changed@example.invalid'
+    with pytest.raises(Conflict, match='Recipient changed'):
+        watch.remind('office', ID, req)
+    assert len(calls) == int(retry)
+    watch.remind('office', ID, request(watch, recipient))
+    assert len(calls) == int(retry) + 1

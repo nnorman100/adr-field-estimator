@@ -838,6 +838,7 @@ def test_monitoring_reading_assignment_transactions_reminder_reservation_and_ret
         reminder_id='a' * 32,
         approved=True,
         recipient='crew_lead',
+        recipient_hash=stores[0].workspaces.monitoring.view('owner', ID)['recipient_hashes']['crew_lead'],
         facts_hash=stores[0].workspaces.monitoring.view('owner', ID)['facts_hash'],
     )
     sends = []

@@ -120,6 +120,7 @@ except ImportError:
         QrTagRequest,
     )
     import places
+    import ai_features
     import signing_links
     from delivery import Deliveries
     import document_links

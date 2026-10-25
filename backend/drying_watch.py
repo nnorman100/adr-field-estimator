@@ -161,10 +161,10 @@ def watch_state(data, log, setup_at, previous=None, at=None):
     missing_rooms = [
         r['name']
         for r in data.get('rooms', [])
-        if len([m for m in latest if m['room'] == r['name']]) < max(1, r.get('wet_materials') or 1)
+        if len([m for m in latest if m['room'] == r['name']]) < (r['wet_materials'] if r.get('wet_materials') is not None else 1)
     ]
     dry = (
-        bool(latest)
+        bool(data.get('rooms'))
         and not missing_rooms
         and all(
             r.get('dry_standard') is not None and r['moisture'] <= r['dry_standard'] for r in latest
@@ -176,7 +176,7 @@ def watch_state(data, log, setup_at, previous=None, at=None):
         1, (at.astimezone(ZONE).date() - instant(setup_at).astimezone(ZONE).date()).days + 1
     )
     flags = []
-    if not latest or missing_rooms or any(r.get('dry_standard') is None for r in latest):
+    if not data.get('rooms') or missing_rooms or any(r.get('dry_standard') is None for r in latest):
         flags.append('missing_dry_standard')
     for g in grouped['groups']:
         air_days = [d for d in g['days'] if d['affected']]

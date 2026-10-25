@@ -1,6 +1,8 @@
 """Authorized monitoring sidecar and human-approved reminder reservations."""
 
 import logging
+import hashlib
+import json
 import time
 from uuid import uuid4
 from typing import Literal
@@ -53,6 +55,7 @@ class WatchAction(StrictModel):
 class ReminderRequest(StrictModel):
     reminder_id: str = Field(pattern=r'^[a-f0-9]{32}$')
     recipient: Literal['estimator', 'crew_lead'] = 'estimator'
+    recipient_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
     facts_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
     approved: StrictBool
 
@@ -132,7 +135,9 @@ class Monitoring:
                 record,
                 reminders_enabled=company['profile'].get('drying_reminders') is True,
                 estimator=recipient,
-                crew_lead=bool(company['profile'].get('crew_lead_email')),
+                crew_lead=self.recipient(company, job, assignee, 'crew_lead', required=False),
+                recipient_hashes={role: self.recipient_hash(company, job, assignee, role)
+                                  for role in ('estimator', 'crew_lead')},
             )
             # Reservation internals never leave the server.
             result['reminders'] = [
@@ -287,6 +292,14 @@ class Monitoring:
             raise ValueError('Choose an active assigned estimator or a configured crew lead.')
         return None
 
+    def recipient_hash(self, company, job, member, role):
+        value = [
+            role,
+            job.get('assigned_estimator_uid') if role == 'estimator' else None,
+            self.recipient(company, job, member, role, required=False),
+        ]
+        return hashlib.sha256(json.dumps(value, separators=(',', ':')).encode()).hexdigest()
+
     def reserve(self, uid, job_id, req):
         if not req.approved:
             raise ValueError('Approve the reminder before sending.')
@@ -317,6 +330,8 @@ class Monitoring:
                 if job.get('assigned_estimator_uid')
                 else None
             )
+            if self.recipient_hash(company, job, member, req.recipient) != req.recipient_hash:
+                raise Conflict('Recipient changed. Review the reminder before sending.')
             recipient = self.recipient(company, job, member, req.recipient)
             if not entry:
                 if len(record['reminders']) >= 200:
@@ -333,6 +348,7 @@ class Monitoring:
                 accepted_by_uid=uid,
                 accepted_at=now(),
                 facts_hash=req.facts_hash,
+                recipient_hash=req.recipient_hash,
             )
             gap = (
                 ('No reading since ' + record['last_reading_at'])

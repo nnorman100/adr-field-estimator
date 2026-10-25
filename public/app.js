@@ -2845,7 +2845,6 @@ async function restoreSigned(id) {
     missing ? 'error' : 'success',
   );
   window.WorkspaceUI?.loadDelivery?.().catch((e) => say(e.message, 'error'));
-  window.DryingWatch?.refresh().catch(() => {});
 }
 async function copySigned() {
   const id = state.signed?.auth_id || confirmedAuthorization;
