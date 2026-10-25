@@ -54,6 +54,7 @@ CAPABILITIES = {
         'team_manage',
         'profile_manage',
         'delivery_manage',
+        'delivery_resend',
     ],
     'estimator': [
         'jobs_read',
@@ -67,7 +68,14 @@ CAPABILITIES = {
         'sign',
         'live',
     ],
-    'office': ['jobs_read', 'jobs_create', 'jobs_copy', 'coordination', 'assignment'],
+    'office': [
+        'jobs_read',
+        'jobs_create',
+        'jobs_copy',
+        'coordination',
+        'assignment',
+        'delivery_resend',
+    ],
 }
 
 INVITATION_DAILY_LIMIT = 50

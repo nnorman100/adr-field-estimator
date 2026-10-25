@@ -1457,6 +1457,20 @@ td:not(:first-child) {
   max-height: 180px;
   object-fit: contain;
 }
+.delivery-status {
+  margin: 1.25rem 0 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.delivery-status h3 {
+  margin: 0 0 0.35rem;
+}
+.delivery-status ul {
+  margin: 0.4rem 0 0.75rem;
+  padding-left: 1.2rem;
+}
 .signing {
   margin-top: 1.75rem;
 }

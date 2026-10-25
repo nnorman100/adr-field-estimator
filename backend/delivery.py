@@ -182,14 +182,14 @@ class Deliveries:
         )
         return record
 
-    def send(self, job_id, compose, roles=RECIPIENTS):
+    def send(self, job_id, compose, roles=RECIPIENTS, actor=None):
         """Sends queued entries and retryable failures; uncertain outcomes are never retried.
         Sent and skipped entries are never sent again. compose(role, record) builds that role's
-        message with delivery_email."""
+        message with delivery_email. actor is (uid, capability) rechecked on each reservation."""
         record = None
         for role in roles:
             record, attempt, stale = self.w._run(
-                lambda tx, role=role: self.reserve(tx, job_id, role)
+                lambda tx, role=role: self.reserve(tx, job_id, role, actor)
             )
             if stale:
                 logged(record, role)
@@ -289,10 +289,56 @@ class Deliveries:
 
         return self.send(agreement['inspection_id'], compose, roles=('adjuster',))
 
-    def reserve(self, tx, job_id, role):
+    def resend(self, store, uid, job_id, origin):
+        """Sends only queued entries and retryable failures for a job the caller may resend.
+
+        Sent and skipped entries are left alone, so repeating this never sends a second copy.
+        Links are minted as the technician who signed, the same user later reads act as."""
+        job, _actor = self.w.job_access(uid, {'inspection_id': job_id}, 'delivery_resend')
+        if not job.get('auth_id'):
+            raise LookupError('Signed job not found.')
+        if not self.w.read('_job_deliveries', job_id):
+            raise LookupError('Delivery not found.')
+        agreement = store.get(uid, job['auth_id'])
+        if not agreement:
+            raise LookupError('Signed agreement not found.')
+
+        def compose(role, current):
+            company = self.w.read('_companies', current['company_id'])
+            if not company:
+                raise LookupError('Company not found.')
+            if role == 'crew_lead':
+                return crew_lead_message(company, agreement.get('inspection') or {})
+            host = origin if origin in DOCUMENT_ORIGINS else DOCUMENT_ORIGINS[0]
+            if role == 'homeowner':
+                token, _expires = document_links.mint(
+                    store, agreement['owner_uid'], agreement['auth_id'], 'homeowner'
+                )
+                return homeowner_email(
+                    company,
+                    email_address(job.get('customer_email') or ''),
+                    host + '/documents#' + token,
+                )
+            if role == 'adjuster':
+                documents = agreement.get('documents') or {}
+                address, problem = adjuster_recipient(documents)
+                if problem or not address:
+                    raise RuntimeError('Adjuster email is missing.')
+                token, _expires = document_links.mint(
+                    store, agreement['owner_uid'], agreement['auth_id'], 'adjuster'
+                )
+                return adjuster_email(company, address, documents, host + '/documents#' + token)
+            raise RuntimeError('Unknown recipient.')
+
+        record = self.send(job_id, compose, actor=(uid, 'delivery_resend'))
+        return {'delivery': public_delivery(record)}
+
+    def reserve(self, tx, job_id, role, actor=None):
         """Returns the record, a new attempt ID when this entry should be sent now (else None), and
         whether the entry was just rewritten without sending (unconfirmed, or skipped because
         delivery is off)."""
+        if actor:
+            self.w.job_access(actor[0], {'inspection_id': job_id}, actor[1], tx)
         record = self.w.read('_job_deliveries', job_id, tx)
         if not record:
             raise LookupError('Delivery not found.')
@@ -358,25 +404,45 @@ def deliver_homeowner(store, record, origin):
         return queued
     to = email_address(job.get('customer_email') or '')
     company = store.workspaces.company_actor(record['owner_uid'])['company']
-    name = company['profile']['name']
 
     def compose(role, _delivery):
         token, _expires = document_links.mint(
             store, record['owner_uid'], record['auth_id'], 'homeowner'
         )
-        url = origin + '/documents#' + token
-        return delivery_email(
-            company,
-            to,
-            'Your signed documents from ' + name,
-            [
-                'Your signed proposal and photo log are ready.',
-                'Open them with the private link below. Nothing is attached.',
-            ],
-            [('View your signed documents', url)],
-        )
+        return homeowner_email(company, to, origin + '/documents#' + token)
 
     return deliveries.send(job['job_id'], compose, roles=('homeowner',))
+
+
+def read_delivery(store, uid, job_id):
+    """Status for an owner or office staff member. None when the job was signed before delivery."""
+    if not getattr(store, 'workspaces', None):
+        raise LookupError('Delivery not found.')
+    store.workspaces.job_access(uid, {'inspection_id': job_id}, 'delivery_resend')
+    return {'delivery': public_delivery(store.workspaces.read('_job_deliveries', job_id))}
+
+
+def resend_delivery(store, uid, job_id, origin):
+    if not getattr(store, 'workspaces', None):
+        raise LookupError('Delivery not found.')
+    return Deliveries(store.workspaces).resend(store, uid, job_id, origin)
+
+
+def public_delivery(record):
+    """What the job may show. No address, message id, attempt or link."""
+    if not record:
+        return None
+    return {
+        'entries': [
+            {
+                'role': role,
+                'status': record['entries'][role]['status'],
+                'reason': record['entries'][role].get('reason') or '',
+                'retryable': bool(record['entries'][role].get('retryable')),
+            }
+            for role in RECIPIENTS
+        ]
+    }
 
 
 def logged(record, role):
@@ -403,6 +469,21 @@ def adjuster_recipient(documents):
         return email_address(raw), None
     except ValueError:
         return None, INVALID_ADJUSTER_EMAIL
+
+
+def homeowner_email(company, address, url):
+    """The homeowner's message: one private link to the signed proposal and photo log."""
+    name = company['profile']['name']
+    return delivery_email(
+        company,
+        address,
+        'Your signed documents from ' + name,
+        [
+            'Your signed proposal and photo log are ready.',
+            'Open them with the private link below. Nothing is attached.',
+        ],
+        [('View your signed documents', url)],
+    )
 
 
 def adjuster_email(company, address, documents, url):

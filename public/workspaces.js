@@ -9,7 +9,9 @@ window.WorkspaceUI = (() => {
     claimEdits = [],
     refreshing = false,
     initialized = false,
-    supportUrls = [];
+    supportUrls = [],
+    deliveryJob = null,
+    deliveryView = undefined;
   const POSITIONING_HEADLINE = 'Water & mold loss estimates, signed on site.',
     POSITIONING_LINE =
       'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.';
@@ -165,6 +167,7 @@ window.WorkspaceUI = (() => {
       ? 'Copy to new draft'
       : 'Copy to new draft (needs a connection)';
     document.body.classList.toggle('office-view', state.session.role === 'office');
+    paintDelivery();
   }
   function branding() {
     if (!enabled()) return;
@@ -260,6 +263,12 @@ window.WorkspaceUI = (() => {
         });
       });
       $('claimForm').addEventListener('input', claimTyped);
+      $('resendDelivery').addEventListener('click', () =>
+        resendDelivery().catch((e) => {
+          $('deliveryActionStatus').textContent = e.message;
+          say(e.message, 'error');
+        }),
+      );
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) refresh().catch((e) => say(e.message, 'error'));
       });
@@ -327,6 +336,7 @@ window.WorkspaceUI = (() => {
       } else if (!claim && state.draft?.inspection_id && !$('claimDetails').hidden)
         // A job started offline has claim details once its first save reaches the server.
         await loadClaim();
+      if (previous === next && (state.signed || confirmedAuthorization)) await loadDelivery();
     } finally {
       refreshing = false;
     }
@@ -1219,8 +1229,24 @@ window.WorkspaceUI = (() => {
         node('h2', 'Signature'),
         supportImage(base + '/evidence/signature', 'Customer signature'),
       );
-      content.append(signature);
+      content.append(signature, supportDelivery(result.delivery));
     }
+  }
+  function supportDelivery(delivery) {
+    const card = node('section', undefined, 'dashboard-card');
+    card.append(node('h2', 'Document delivery'));
+    if (!delivery) {
+      card.append(
+        node(
+          'p',
+          'No delivery record. Jobs signed before document delivery have none, and nothing is sent for them.',
+        ),
+      );
+      return card;
+    }
+    for (const entry of delivery.entries) card.append(node('p', deliveryLine(entry)));
+    card.append(node('p', 'Resend is not available in the support view.'));
+    return card;
   }
   async function editor() {
     if (!enabled()) return;
@@ -1478,6 +1504,111 @@ window.WorkspaceUI = (() => {
     claimEdits = claimEdits.filter((edit) => edit.field !== field);
     renderClaimEdits();
   }
+  const DELIVERY_ROLES = {
+    homeowner: 'Homeowner',
+    adjuster: 'Adjuster',
+    crew_lead: 'Crew lead',
+  };
+  const DELIVERY_STATUS = {
+    queued: 'Queued',
+    sending: 'Sending',
+    sent: 'Sent',
+    failed: 'Failed',
+    skipped: 'Skipped',
+  };
+  function deliveryLine(entry) {
+    const name = DELIVERY_ROLES[entry.role] || entry.role;
+    const status = DELIVERY_STATUS[entry.status] || entry.status;
+    return name + ': ' + status + (entry.reason ? ' — ' + entry.reason : '');
+  }
+  function deliveryPending(delivery) {
+    return (delivery?.entries || []).some(
+      (entry) => entry.status === 'queued' || (entry.status === 'failed' && entry.retryable),
+    );
+  }
+  function paintDelivery() {
+    const panel = $('deliveryStatus');
+    if (!panel) return;
+    const signed = !!(state.signed || confirmedAuthorization);
+    const visible = enabled() && signed && !!state.draft?.inspection_id && can('delivery_resend');
+    panel.hidden = !visible;
+    if (!visible) return;
+    const note = $('deliveryStatusNote'),
+      list = $('deliveryEntries'),
+      button = $('resendDelivery');
+    if (deliveryJob !== state.draft.inspection_id || deliveryView === undefined) {
+      note.textContent = navigator.onLine
+        ? 'Loading delivery status…'
+        : 'Delivery status needs a connection.';
+      list.replaceChildren();
+      button.hidden = true;
+      return;
+    }
+    if (!deliveryView) {
+      note.textContent =
+        'No delivery record. Jobs signed before document delivery have none, and nothing is sent for them.';
+      list.replaceChildren();
+      button.hidden = true;
+      return;
+    }
+    const pending = deliveryPending(deliveryView);
+    note.textContent = pending
+      ? deliveryView.entries.some((entry) => entry.status === 'failed' && entry.retryable)
+        ? 'Delivery failed: Resend'
+        : 'Some documents are still unsent.'
+      : 'Sent and skipped mail is not sent again.';
+    list.replaceChildren(
+      ...deliveryView.entries.map((entry) => {
+        const item = node('li', deliveryLine(entry));
+        return item;
+      }),
+    );
+    button.hidden = !pending;
+    button.disabled = !navigator.onLine;
+    button.textContent = navigator.onLine ? 'Resend' : 'Resend (needs a connection)';
+  }
+  async function loadDelivery() {
+    const id = state.draft?.inspection_id;
+    if (!enabled() || !(state.signed || confirmedAuthorization) || !id || !can('delivery_resend')) {
+      deliveryJob = null;
+      deliveryView = undefined;
+      paintDelivery();
+      return;
+    }
+    if (!navigator.onLine) {
+      paintDelivery();
+      return;
+    }
+    const key = context();
+    const result = await jsonApi('/api/jobs/' + encodeURIComponent(id) + '/delivery');
+    if (id !== state.draft?.inspection_id || key !== context()) return;
+    deliveryJob = id;
+    deliveryView = result.delivery;
+    paintDelivery();
+  }
+  async function resendDelivery() {
+    const id = state.draft?.inspection_id;
+    if (!id || !can('delivery_resend')) throw Error('Resend is not available for this job.');
+    if (!navigator.onLine) {
+      paintDelivery();
+      throw Error('Resend needs a connection.');
+    }
+    $('resendDelivery').disabled = true;
+    const key = context();
+    try {
+      const result = await jsonApi(
+        '/api/jobs/' + encodeURIComponent(id) + '/delivery/resend',
+        'POST',
+      );
+      if (id !== state.draft?.inspection_id || key !== context()) return;
+      deliveryJob = id;
+      deliveryView = result.delivery;
+      $('deliveryActionStatus').textContent = 'Delivery updated.';
+      say('Delivery updated.', 'success');
+    } finally {
+      paintDelivery();
+    }
+  }
   function documentBranding() {
     if (!state.documents) return;
     ADRDocuments.brand(state.documents);
@@ -1498,5 +1629,6 @@ window.WorkspaceUI = (() => {
     scopeAddressChanged,
     loadClaim,
     fillClaim,
+    loadDelivery,
   };
 })();
