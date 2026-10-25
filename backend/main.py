@@ -1306,7 +1306,7 @@ async def transcribe_voice_note(
                 marker,
                 '',
                 req.note_id,
-            )
+            ),
         )
     saved, moved = await stored(
         store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
@@ -1355,7 +1355,7 @@ async def transcribe_voice_note(
             marker,
             voice_note_block(req, result.text),
             req.note_id,
-        )
+        ),
     )
 
 
