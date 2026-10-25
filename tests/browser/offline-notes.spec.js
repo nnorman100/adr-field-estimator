@@ -455,9 +455,7 @@ test.describe('controlled voice-note uploads', () => {
     );
     expect(await savedParts(page)).toBeLessThan(before);
   });
-  test('a refused draft save blocks recording before any audio accumulates', async ({
-    page,
-  }) => {
+  test('a refused draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let refuse = true;
     await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>
@@ -490,9 +488,7 @@ test.describe('controlled voice-note uploads', () => {
       'Added to the walkthrough transcript',
     );
   });
-  test('a lost draft save blocks recording before any audio accumulates', async ({
-    page,
-  }) => {
+  test('a lost draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let drop = true;
     await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>

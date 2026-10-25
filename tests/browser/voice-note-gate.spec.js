@@ -257,7 +257,9 @@ test('an outstanding homeowner link blocks offline voice recording and survives 
   expect(await page.evaluate(() => !!notes.recorder)).toBe(false);
   await page.locator('#typedNote').fill('Offline observation remains available.');
   await page.locator('#addTypedNote').click();
-  await expect(page.locator('#technicianNotes')).toHaveValue(/Offline observation remains available/);
+  await expect(page.locator('#technicianNotes')).toHaveValue(
+    /Offline observation remains available/,
+  );
   await page.locator('#recordNote').click();
   await expect(page.locator('#message')).toContainText(
     'Connect to cancel it before recording new notes.',
@@ -269,7 +271,9 @@ test('an outstanding homeowner link blocks offline voice recording and survives 
   await page.locator('#recordNote').click();
 });
 
-test('a lost transcription response clears renewed scope confirmation and preserves a local correction', async ({ page }) => {
+test('a lost transcription response clears renewed scope confirmation and preserves a local correction', async ({
+  page,
+}) => {
   await fakeRecorder(page);
   await page.goto('/app');
   await ready(page);
@@ -301,30 +305,40 @@ test('a lost transcription response clears renewed scope confirmation and preser
   await expect(page.locator('#voiceNotes li')).toContainText('Added to the walkthrough transcript');
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(page.locator('#conflictActions')).toBeHidden();
-  await expect(page.locator('#technicianNotes')).toHaveValue(/Preserve this local correction: use 3 fans/);
+  await expect(page.locator('#technicianNotes')).toHaveValue(
+    /Preserve this local correction: use 3 fans/,
+  );
   await expect(page.locator('#technicianTranscript')).toHaveValue(/80 square feet of drywall/);
   await task(page, 'property');
   await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
 });
 
-test('a saved inspection offers transcript review without any voice notes stored on this device', async ({ page }) => {
+test('a saved inspection offers transcript review without any voice notes stored on this device', async ({
+  page,
+}) => {
   await fakeRecorder(page);
   await page.goto('/app');
   await ready(page);
   await recordOne(page);
   await expect(page.locator('#voiceNotes li')).toContainText('Added to the walkthrough transcript');
   await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
-  await page.evaluate(() => new Promise((resolve, reject) => {
-    const request = indexedDB.open('adr-private-drafts-v2');
-    request.onsuccess = () => {
-      const db = request.result;
-      const tx = db.transaction(['notes', 'note_audio'], 'readwrite');
-      tx.objectStore('notes').clear();
-      tx.objectStore('note_audio').clear();
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = () => reject(tx.error);
-    };
-  }));
+  await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('adr-private-drafts-v2');
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction(['notes', 'note_audio'], 'readwrite');
+          tx.objectStore('notes').clear();
+          tx.objectStore('note_audio').clear();
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+      }),
+  );
   await page.reload();
   await ready(page);
   await task(page, 'walkthrough');
@@ -332,6 +346,8 @@ test('a saved inspection offers transcript review without any voice notes stored
   await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
   await page.locator('#reviewVoiceNotesWalk').click();
   await expect(page.locator('#message')).toContainText('Transcript reviewed.');
-  expect(await page.evaluate(() => state.record.voice_notes.every((row) => row.reviewed))).toBe(true);
+  expect(await page.evaluate(() => state.record.voice_notes.every((row) => row.reviewed))).toBe(
+    true,
+  );
   await expect(page.locator('#reviewVoiceNotesWalk')).toBeHidden();
 });
