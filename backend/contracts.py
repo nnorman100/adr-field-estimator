@@ -91,8 +91,19 @@ def not_future_year(year):
 YearBuilt = Annotated[int, Field(ge=1800), AfterValidator(not_future_year)]
 
 
+class Coordinates(StrictModel):
+    """Where the technician's chosen address suggestion is. They describe the address only while the
+    field still reads `address`; any later edit of the text leaves them unused and the app clears them."""
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    address: str = Field(min_length=1, max_length=500)
+
+
 class InspectionData(StrictModel):
     address: str = Field(default='', max_length=500)
+    # Added with address suggestions; drafts saved before it stay without the key (see inspection_payload).
+    coordinates: Coordinates | None = None
     year_built: YearBuilt | None = None
     # Retired job-condition flags, accepted only so older drafts load; documents ignore them.
     # Technicians describe these conditions in notes or the walkthrough instead.

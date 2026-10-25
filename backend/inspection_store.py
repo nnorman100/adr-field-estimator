@@ -26,7 +26,17 @@ except ImportError:
     from psychrometrics import psychrometrics
 
 # Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
-DAILY_LIMITS = {'ocr': 400, 'audit': 60, 'scope': 120, 'live': 40, 'transcribe': 200}
+DAILY_LIMITS = {
+    'ocr': 400,
+    'audit': 60,
+    'scope': 120,
+    'live': 40,
+    'transcribe': 200,
+    # Address suggestions (while typing), place details (a chosen suggestion) and job map images.
+    'places_suggest': 200,
+    'places_details': 60,
+    'places_map': 60,
+}
 TRANSCRIPT_LIMIT = 80000
 
 
@@ -125,6 +135,9 @@ class InspectionStore(JobStore):
     def _access(self, uid, record, action='read', tx=None):
         if record.get('owner_uid') != uid:
             raise LookupError('Inspection not found.')
+
+    def places_access(self, uid):
+        """Address lookups need no job; the staff allowlist already admitted this user."""
 
     def _create_access(self, uid, record, tx):
         pass

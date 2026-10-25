@@ -1499,6 +1499,8 @@ function collect() {
     const el = $(id);
     data[key] = el.type === 'number' ? (el.value === '' ? null : Number(el.value)) : el.value;
   }
+  // Coordinates describe the address they were chosen for; editing the text drops them.
+  if (data.coordinates && data.coordinates.address !== data.address) delete data.coordinates;
   // The sizing check's rating stays absent until stated, so older drafts keep their saved shape.
   const rating = $('dehumidifierPpd').value;
   if (rating === '' || !(Number(rating) > 0)) delete data.dehumidifier_ppd;
@@ -1511,6 +1513,7 @@ function collect() {
     data[key] = $(id).checked;
   renderJobChargesSummary();
   window.WorkspaceUI?.scopeAddressChanged();
+  window.PlacesUI?.render();
 }
 function fillForm() {
   clearScopePreview();
@@ -1558,6 +1561,7 @@ function fillForm() {
   renderJobChargesSummary();
   $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
+  window.PlacesUI?.render();
   renderRooms();
   renderWalkthroughEdits();
   renderPhotos();

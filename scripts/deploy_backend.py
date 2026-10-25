@@ -2,7 +2,8 @@
 
 Cloud Run copies environment variables from the service's latest template, which can be a staged
 revision that never received traffic. Setting WORKSPACES_ENABLED on every deploy prevents a release
-from silently inheriting the staged value. Promotion is a separate reviewed update-traffic step.
+from silently inheriting the staged value. The same command mounts the Maps key secret by name, so a
+release never depends on a binding made by hand in the console. Promotion is a separate reviewed update-traffic step.
 
 The deployed commit is written to backend/SOURCE_COMMIT inside the uploaded build context, so the
 image itself reports it as source_commit in /api/health; a later raw deploy cannot inherit it the way
@@ -22,6 +23,9 @@ sys.path.insert(0, str(ROOT))
 from scripts.release_stamp import DirtyTree, release_row, source_commit
 
 PROJECT = 'alert-disaster-field-2026'
+# The Maps key for address suggestions and the job map: a Secret Manager secret that adr-runtime may
+# read, mounted as an environment variable. Without it the app keeps a plain address box.
+MAPS_SECRET = 'MAPS_API_KEY=dryscope-maps-api-key:latest'
 STAMP = ROOT / 'backend' / 'SOURCE_COMMIT'
 
 
@@ -44,6 +48,7 @@ def command(workspaces, tag, commit):
         '--timeout=3600',
         '--allow-unauthenticated',
         '--update-env-vars=WORKSPACES_ENABLED=' + {'on': 'true', 'off': 'false'}[workspaces],
+        '--update-secrets=' + MAPS_SECRET,
         '--update-labels=source-commit=' + commit,
         '--no-traffic',
         '--tag=' + tag,

@@ -561,6 +561,8 @@ def scope_prompt(data, claim=None):
                         'technician_notes',
                         # Tag scans are placement records, not scope the model may fill from.
                         'equipment_scans',
+                        # Location data for the map, never model input.
+                        'coordinates',
                     }
                 ),
                 **({'current_claim': claim} if claim is not None else {}),

@@ -34,6 +34,9 @@ def test_workspaces_off_is_explicit_and_receives_no_traffic():
     argv = deploy.command('off', 'workspaces-off-1', HEAD)
     assert '--update-env-vars=WORKSPACES_ENABLED=false' in argv
     assert '--no-traffic' in argv and '--tag=workspaces-off-1' in argv
+    # The Maps key is mounted from its Secret Manager secret, never passed as a value.
+    assert '--update-secrets=MAPS_API_KEY=dryscope-maps-api-key:latest' in argv
+    assert not any('--set-secrets' in a or 'AIza' in a for a in argv)
     for flag in (
         '--region=us-west2',
         '--project=alert-disaster-field-2026',
