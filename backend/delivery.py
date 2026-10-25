@@ -1,12 +1,14 @@
 """Delivery of the signed paperwork. Each job has one delivery sidecar, beside its coordination record
-and never inside the signed agreement, with one entry per recipient role. Nothing queues a delivery
-yet: signing does not trigger one and no recipient email is switched on."""
+and never inside the signed agreement, with one entry per recipient role. A durable signature queues
+one record and sends the adjuster a private link when the signed claim details include an adjuster
+email. Homeowner and crew-lead mail stay skipped until their own steps. Nothing scans older jobs."""
 
 import html
 import time
 from uuid import uuid4
 
 try:
+    from . import document_links
     from .cloud_log import event
     from .inspection_store import now
     from .workspaces import (
@@ -21,6 +23,7 @@ try:
         send_email,
     )
 except ImportError:
+    import document_links
     from cloud_log import event
     from inspection_store import now
     from workspaces import (
@@ -36,6 +39,18 @@ except ImportError:
     )
 
 RECIPIENTS = ('homeowner', 'adjuster', 'crew_lead')
+# Later steps replace these. A skipped entry is never sent, so they are decided once, at queue time.
+NOT_SWITCHED_ON = {
+    'homeowner': 'Homeowner email is not switched on.',
+    'crew_lead': 'Crew-lead email is not switched on.',
+}
+NO_ADJUSTER_EMAIL = 'No adjuster email.'
+INVALID_ADJUSTER_EMAIL = 'The adjuster email is not a valid address.'
+# Same hosts as main.ORIGINS. A request Origin outside this list never becomes a link.
+DOCUMENT_ORIGINS = (
+    'https://alert-disaster-field-2026.web.app',
+    'https://alert-disaster-field-2026.firebaseapp.com',
+)
 # As for invitations: a send ends within SMTP_DEADLINE (24 s), inside this reservation, so a
 # concurrent retry never opens a second Gmail session for an attempt still in flight.
 RESERVATION_SECONDS = 30
@@ -157,6 +172,49 @@ class Deliveries:
             emails_sent(counter)
         return record
 
+    def deliver_adjuster(self, store, agreement, origin):
+        """After a durable signature. The signature already stands: this never raises.
+
+        The adjuster entry is skipped, with a reason, when the signed claim has no usable email.
+        A private link to the itemized claim, the scope defense letter and the scope-code JSON
+        is the whole message; nothing is attached. Repeating this retries only an unsent entry."""
+        try:
+            return self._deliver_adjuster(store, agreement, origin)
+        except Exception:
+            return None
+
+    def _deliver_adjuster(self, store, agreement, origin):
+        documents = agreement.get('documents') or {}
+        recipient, reason = adjuster_recipient(documents)
+        skipped = dict(NOT_SWITCHED_ON)
+        if reason:
+            skipped['adjuster'] = reason
+        record = self.queue(agreement['inspection_id'], skipped)
+        if record['entries']['adjuster']['status'] == 'skipped':
+            return record
+        host = origin if origin in DOCUMENT_ORIGINS else DOCUMENT_ORIGINS[0]
+
+        def compose(role, current):
+            if role != 'adjuster':
+                raise RuntimeError('Only the adjuster email is switched on.')
+            address, problem = adjuster_recipient(documents)
+            if problem or not address:
+                raise RuntimeError('Adjuster email is missing.')
+            token, _expires = document_links.mint(
+                store, agreement['owner_uid'], agreement['auth_id'], 'adjuster'
+            )
+            company = self.w.read('_companies', current['company_id'])
+            if not company:
+                raise LookupError('Company not found.')
+            return adjuster_email(
+                company,
+                address,
+                documents,
+                host + '/documents#' + token,
+            )
+
+        return self.send(agreement['inspection_id'], compose)
+
     def reserve(self, tx, job_id, role):
         """Returns the record, a new attempt ID when this entry should be sent now (else None), and
         whether an unconfirmed attempt was just marked failed."""
@@ -187,6 +245,60 @@ def logged(record, role):
         recipient_role=role,
         status=record['entries'][role]['status'],
     )
+
+
+def adjuster_recipient(documents):
+    """The address on the signed claim snapshot, and a skip reason when there is nothing to send.
+
+    The live claim sidecar can change after signing. The email follows the snapshot the documents
+    were signed with, which is the claim details those documents hold."""
+    claim = documents.get('claim') if isinstance(documents, dict) else None
+    raw = claim.get('adjuster_email') if isinstance(claim, dict) else ''
+    if not isinstance(raw, str) or not raw.strip():
+        return None, NO_ADJUSTER_EMAIL
+    try:
+        return email_address(raw), None
+    except ValueError:
+        return None, INVALID_ADJUSTER_EMAIL
+
+
+def adjuster_email(company, address, documents, url):
+    """The adjuster's message: one private link, no file attached, and no ESX claim."""
+    name = company['profile']['name']
+    proposal = documents.get('adr_estimate') or {}
+    claim = documents.get('claim') or {}
+    sentences = [f'{name} signed a remediation scope and sent the claim documents.']
+    if proposal.get('property_address'):
+        sentences.append(f'The property is {proposal["property_address"]}.')
+    if claim.get('claim_number'):
+        sentences.append(f'The claim number is {claim["claim_number"]}.')
+    days = document_links.LINK_SECONDS // 86400
+    return delivery_email(
+        company,
+        address,
+        f'Claim documents from {name}',
+        [
+            ' '.join(sentences),
+            (
+                'This private link opens the itemized claim and the scope defense letter. '
+                'Download scope JSON on that page saves the scope-code export, using the '
+                "company's internal scope codes. "
+                f'The link can be opened more than once and expires in {days} days.'
+            ),
+        ],
+        [('View the claim documents', url)],
+    )
+
+
+def deliver_signed_adjuster(store, agreement, origin):
+    """Queues and sends after a signature when this store has company workspaces. Never raises."""
+    if not getattr(store, 'workspaces', None) or not isinstance(agreement, dict):
+        return None
+    if not agreement.get('inspection_id') or not agreement.get('auth_id'):
+        return None
+    if not agreement.get('owner_uid'):
+        return None
+    return Deliveries(store.workspaces).deliver_adjuster(store, agreement, origin)
 
 
 def delivery_email(company, to, subject, paragraphs, links=()):

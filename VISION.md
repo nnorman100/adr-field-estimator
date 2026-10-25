@@ -25,7 +25,7 @@ The app never claims more than it can show: color emulation is not thermal evide
 ## A signature is a record
 
 Audits and signatures bind to a saved revision and proposal hash, and any later edit to the scope or prices invalidates both.
-A homeowner may sign on site or from their own phone through a link, under the same revision and hash binding (the link signs as the technician who sent it, works once, expires after 7 days and stops working on any edit; it is shared by QR code, copied link or the phone's share sheet, and the server sends no email or text, per `docs/firebase-isolation.md`).
+A homeowner may sign on site or from their own phone through a link, under the same revision and hash binding (the link signs as the technician who sent it, works once, expires after 7 days and stops working on any edit; it is shared by QR code, copied link or the phone's share sheet, delivery behavior is described in [document delivery](docs/company-workspaces.md#document-delivery)).
 Success is shown only after a durable server receipt.
 After signing, office staff may correct address, name and contact fields without re-signing, and each correction is recorded in an audit entry naming who changed what.
 Everything else in a signed agreement, its documents, its evidence and the walkthrough recording never changes; later coordination lives in separate sidecars.
@@ -33,7 +33,7 @@ Everything else in a signed agreement, its documents, its evidence and the walkt
 ## The agreement reaches everyone it involves
 
 Through the signing link, the homeowner can also upload photos and video of the loss, which join the photo log as evidence (not built yet; today the signing link is read-and-sign only, and the technician adds all photos).
-After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter (not built yet; today the app sends no email or text and has no delivery step after signing, as `README.md` says, and the ESX file does not exist: it exports ADR-scope-code JSON and makes no ESX compatibility claim, per `AGENTS.md`).
+After signing, the homeowner receives the signed proposal and photo log, the crew lead receives a job summary, and the adjuster receives the itemized claim, scope defense letter and scope-code JSON export. The owner-approved plan uses private links by email, with crew-lead texting later and no ESX claim; see Phase 2 in `docs/roadmap.md`. Current implementation and remaining recipient steps are recorded in [document delivery](docs/company-workspaces.md#document-delivery).
 Office staff schedule the drying setup and monitoring visits on a crew calendar, technicians get reminders, and readings are logged per visit against the job (not built yet; today there is no crew calendar, reminder or per-visit reading log, and saving does not dispatch technicians, per `README.md`).
 
 ## Field work is never silently lost
