@@ -109,7 +109,7 @@ Steps, each its own PR:
    - Logs carry only the delivery ID, recipient role and status. Never the email address.
 2. Read-only document link and the read-only page.
 3. Homeowner email. Use `customer_email` from the coordination record (`backend/workspaces.py:162`). Add an "Email me a copy" checkbox, ticked by default, to the on-site signing step and to the `/sign` link page. Record whether it was ticked with the signature. Send only when it's ticked and an email exists; otherwise mark the entry "skipped" and give the reason. Nate approves the checkbox wording.
-4. Adjuster email.
+4. Adjuster email. Implemented: after a durable signature, a private link to the itemized claim, the scope defense letter and the scope-code JSON, only when the signed claim details include an adjuster email; otherwise that entry is skipped with a reason. No attachment and no ESX claim. Homeowner and crew-lead entries stay skipped until their steps. Not released.
 5. Crew-lead email and the delivery switch for each company.
 6. Delivery status and Resend on the job, visible to owner and office. Superadmin support sees the status read-only, and the server refuses Resend there. Resend needs a connection. Add a Help how-to ("Sending documents") and update `README.md` ("the app sends no email" changes).
 

@@ -33,7 +33,7 @@ Everything else in a signed agreement, its documents, its evidence and the walkt
 ## The agreement reaches everyone it involves
 
 Through the signing link, the homeowner can also upload photos and video of the loss, which join the photo log as evidence (not built yet; today the signing link is read-and-sign only, and the technician adds all photos).
-After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter (not built yet; today the app sends no email or text and has no delivery step after signing, as `README.md` says, and the ESX file does not exist: it exports ADR-scope-code JSON and makes no ESX compatibility claim, per `AGENTS.md`).
+After signing, the homeowner receives the signed proposal and photo log by email, the crew lead receives a job summary by text, and the adjuster receives the ESX file, itemized claim and scope defense letter (the adjuster email is sent after a durable signature when the signed claim details include an adjuster email: a private link to the itemized claim, the scope defense letter and the scope-code JSON, with no attachment and no ESX claim; the homeowner email and the crew-lead message are not built yet, and the ESX file does not exist, per `AGENTS.md`).
 Office staff schedule the drying setup and monitoring visits on a crew calendar, technicians get reminders, and readings are logged per visit against the job (not built yet; today there is no crew calendar, reminder or per-visit reading log, and saving does not dispatch technicians, per `README.md`).
 
 ## Field work is never silently lost

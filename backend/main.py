@@ -89,6 +89,7 @@ try:
         AUDIO_ACK_EVERY,
     )
     from .company_store import CompanyInspectionStore
+    from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster
     from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
@@ -139,6 +140,7 @@ except ImportError:
         AUDIO_ACK_EVERY,
     )
     from company_store import CompanyInspectionStore
+    from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster
     from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
@@ -175,10 +177,7 @@ LIVE_RECHECK_SECONDS = 20
 LIVE_REPLY_WAIT_SECONDS = 5
 LIVE_VOICE = os.getenv('LIVE_VOICE', 'Charon')
 LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live'
-ORIGINS = [
-    'https://alert-disaster-field-2026.web.app',
-    'https://alert-disaster-field-2026.firebaseapp.com',
-]
+ORIGINS = list(DOCUMENT_ORIGINS)
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED', 'false').lower() == 'true'
 STAFF_EMAILS = {
     e.strip().lower()
@@ -1270,6 +1269,8 @@ async def authorize_estimate(
                 'Signing requires the current inspection revision, proposal hash, document confirmation and PNG signature.',
             )
         record = await stored(store.authorize, staff['uid'], req.model_dump(mode='json'))
+        # The signature is already durable. A failed or skipped email does not change this response.
+        await stored(deliver_signed_adjuster, store, record, document_origin(request))
     return dict(
         status='success',
         auth_id=record['auth_id'],
@@ -1290,6 +1291,12 @@ LINK_REQUESTS_PER_MINUTE = 120
 # front end appends Hosting's own address, so the client is this many entries from the right and
 # every entry before it is client-supplied.
 TRUSTED_FORWARDED_HOPS = 2
+
+
+def document_origin(request):
+    """A document link's site: the caller's origin when it is one of ours, otherwise the public site."""
+    origin = request.headers.get('origin')
+    return origin if origin in ORIGINS else ORIGINS[0]
 
 
 def client_ip(request):
@@ -1477,6 +1484,7 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
             user_agent=request.headers.get('user-agent', '')[:512],
         ),
     )
+    await stored(deliver_signed_adjuster, store, record, document_origin(request))
     return dict(
         status='success',
         auth_id=record['auth_id'],
@@ -1485,8 +1493,8 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
     )
 
 
-# Read-only document links: one signed agreement, one document set, no signing. The server mints
-# them after signing (document_links.mint); there is no route or app action to create one yet.
+# Read-only document links: one signed agreement, one document set, no signing. Signing mints the
+# adjuster's link when it emails one (delivery.deliver_signed_adjuster). Nothing else creates one.
 @app.get('/api/documents')
 async def document_link_view(request: Request, store=Depends(get_job_store)):
     token = await document_link(request, store)
