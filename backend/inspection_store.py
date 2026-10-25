@@ -25,7 +25,7 @@ except ImportError:
     from contracts import InspectionData
     from psychrometrics import psychrometrics
 
-# Per-user daily caps on paid Vertex AI calls; Live counts new (non-resume) session starts.
+# Per-user daily caps on paid API calls; Live counts new (non-resume) session starts.
 DAILY_LIMITS = {
     'ocr': 400,
     'audit': 60,

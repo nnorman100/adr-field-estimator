@@ -1,6 +1,7 @@
 /* Address suggestions and the job map. Both come from the backend (/api/places/*), which holds the
    Maps key, so the browser never loads a Google script or image. With no connection, no key or no
-   permission the address stays a plain text box and the map says it is unavailable; a job saved
+   permission the address stays a plain text box; roles without lookup access see only directions.
+   With no connection or key the map says it is unavailable; a job saved
    before this existed has no coordinates and shows only the directions link. */
 window.PlacesUI = (() => {
   const MIN_CHARS = 4,

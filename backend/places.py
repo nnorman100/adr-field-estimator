@@ -3,8 +3,9 @@
 The browser never calls Google. These functions run on the server with the key from MAPS_API_KEY
 (Secret Manager secret dryscope-maps-api-key, bound when the backend is deployed); without it
 nothing here is configured and the app keeps a plain address box. The typed address and the
-coordinates travel only in request bodies and are never logged, and provider errors are not passed
-on because a provider message can echo the request.
+coordinates reach the backend only in request bodies and are never logged. The server's Static
+Maps request includes coordinates in Google's query string; provider errors are not passed on
+because a provider message can echo the request.
 """
 
 import json

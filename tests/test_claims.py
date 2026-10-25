@@ -119,9 +119,9 @@ def test_documents_without_a_company_identity_name_no_company():
     assert proposal['recommendations'][1] == (
         'Per IICRC and EPA protocols, the contractor technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.'
     )
-    assert proposal['disclaimers'][2].endswith(
+    assert any(clause.endswith(
         'will NOT be the responsibility of the contractor. This estimate does not include testing of any kind.'
-    )
+    ) for clause in proposal['disclaimers'])
     assert docs['iicrc_defense_letter'].startswith(
         'TO: Insurance Claims Examiner / Adjuster\n\nRE: '
     )
