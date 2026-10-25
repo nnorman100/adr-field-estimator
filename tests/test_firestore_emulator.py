@@ -728,3 +728,43 @@ def test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims
     assert stored(db, '_admin_events/forged') is None
     assert stored(db, '_companies/adr')['status'] == 'active'
     assert stored(db, '_memberships/office')['role'] == 'office'
+
+
+def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypatch):
+    """Two instances retry one job's delivery at once: each queued entry is sent exactly once, the
+    shared daily count matches, and the sidecar stays private to the server."""
+    import backend.delivery as delivery
+
+    db = client()
+    job = 'ADR-INS-' + 'd' * 32
+    db.document('_workspace_jobs/' + job).set(
+        dict(job_id=job, company_id='adr', auth_id='auth-' + 'd' * 32, status='signed')
+    )
+    sends = []
+    monkeypatch.setattr(delivery, 'mail_settings', lambda: {})
+    monkeypatch.setattr(
+        delivery,
+        'send_email',
+        lambda settings, payload, kind, key, deadline, *, prevent_duplicates: (
+            sends.append(key) or '<' + key + '>'
+        ),
+    )
+    stores = [delivery.Deliveries(WorkspaceStore(client())) for _ in range(2)]
+    stores[0].queue(job, {'crew_lead': 'Not switched on.'})
+    compose = lambda role, record: {'to': [role + '@example.invalid']}
+    outcomes(concurrently([lambda s=s: s.send(job, compose) for s in stores]), refused=LookupError)
+    for s in stores:
+        s.send(job, compose)
+    entries = stored(db, '_job_deliveries/' + job)['entries']
+    roles = [key.split('/')[1] for key in sends]
+    # Never twice. An emulator lock timeout can abort a finish, leaving its entry reserved.
+    assert sorted(roles) == ['adjuster', 'homeowner']
+    assert entries['crew_lead']['status'] == 'skipped'
+    sent = [role for role, e in entries.items() if e['status'] == 'sent']
+    assert set(sent) <= set(roles)
+    assert all(entries[role]['status'] in ('sent', 'sending') for role in roles)
+    assert (stored(db, '_email_counts/daily') or {'sent': {'count': 0}})['sent']['count'] == len(
+        sent
+    )
+    for path in ('_job_deliveries/' + job, '_job_deliveries', '_email_counts/daily'):
+        assert browser_request('GET', path, browser_token('owner')) == 403, path

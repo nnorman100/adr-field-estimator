@@ -6,6 +6,8 @@ import hashlib
 import html
 import io
 import json
+import logging
+import math
 import os
 import re
 import smtplib
@@ -26,9 +28,11 @@ from pydantic import AfterValidator, Field, SecretStr, field_validator
 from typing import Annotated, Literal
 
 try:
+    from .cloud_log import event
     from .contracts import ClaimDetails, StrictModel
     from .inspection_store import Conflict, now, reserve_slot
 except ImportError:
+    from cloud_log import event
     from contracts import ClaimDetails, StrictModel
     from inspection_store import Conflict, now, reserve_slot
 
@@ -69,6 +73,9 @@ INVITATION_DAILY_LIMIT = 50
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_DEADLINE = 24
+# Invitations and document delivery share one sender, and Gmail allows about 500 emails a day.
+# Past this many in a day the service logs a warning and owners see a notice.
+DAILY_EMAIL_WARNING = 400
 # The signed-in app lives at /app; the site root is the public DryScope landing page.
 APP_URL = 'https://alert-disaster-field-2026.web.app/app'
 INVITATION_SUBJECT = 'Invitation to join {company} on DryScope'
@@ -973,6 +980,7 @@ class WorkspaceStore:
 
         def finish(tx):
             current = self.read('_invitations', identifier, tx)
+            counter = self.email_count(tx) if status == 'sent' else None
             if (
                 current
                 and current['send_attempt'] == invite['send_attempt']
@@ -980,10 +988,25 @@ class WorkspaceStore:
             ):
                 current.update(delivery_status=status, delivery_error=error, message_id=message_id)
                 tx.set(self.ref('_invitations', identifier), current)
-                return current
-            return current
+            if counter:
+                tx.set(self.ref('_email_counts', 'daily'), counter)
+            return current, counter
 
-        return self._run(finish)
+        current, counter = self._run(finish)
+        emails_sent(counter)
+        return current
+
+    def email_count(self, tx):
+        """The day's sent-email counter with one more send; read it before the transaction's first write."""
+        return reserve_slot(self.read('_email_counts', 'daily', tx) or {}, 'sent', math.inf, 86400)
+
+    def email_notice(self):
+        counter = (self.read('_email_counts', 'daily') or {}).get('sent')
+        return bool(
+            counter
+            and time.time() - counter['start'] < 86400
+            and counter['count'] > DAILY_EMAIL_WARNING
+        )
 
     def job_for(self, record, tx=None):
         if record.get('inspection_id') and not record.get('auth_id'):
@@ -1229,6 +1252,19 @@ class WorkspaceStore:
         return self._run(update)
 
 
+def emails_sent(counter):
+    """Logs the day's count once it passes the warning level; counter is what email_count stored."""
+    count = counter['sent']['count'] if counter else 0
+    if count > DAILY_EMAIL_WARNING:
+        event(
+            'Daily email count passed the warning level',
+            logging.WARNING,
+            operation='email',
+            status='daily_warning',
+            emails_today=count,
+        )
+
+
 def auth_app():
     try:
         return firebase_admin.get_app('adr')
@@ -1433,78 +1469,125 @@ def invitation_email(invite, company, setup):
     return dict(subject=subject, text=text, html=page, logo=logo)
 
 
-def send_invitation(invite, company):
-    """Send through the transport INVITATION_TRANSPORT selects: 'resend' (default) or 'smtp' (Gmail app password)."""
+def mail_settings():
+    """The transport INVITATION_TRANSPORT selects, 'resend' (default) or 'smtp' (Gmail app password),
+    with its sender and secrets; checked before any work that a send would need."""
     transport = os.getenv('INVITATION_TRANSPORT') or 'resend'
-    sender = os.getenv('INVITATION_FROM', '')
+    settings = dict(transport=transport, sender=os.getenv('INVITATION_FROM', ''))
     if transport == 'resend':
-        key = os.getenv('RESEND_API_KEY', '')
-        configured = key and sender
+        settings.update(key=os.getenv('RESEND_API_KEY', ''))
     elif transport == 'smtp':
-        username = os.getenv('INVITATION_SMTP_USERNAME', '')
-        password = os.getenv('INVITATION_SMTP_PASSWORD', '')
-        configured = username and password and sender
+        settings.update(
+            username=os.getenv('INVITATION_SMTP_USERNAME', ''),
+            password=os.getenv('INVITATION_SMTP_PASSWORD', ''),
+        )
     else:
-        configured = False
-    if not configured:
-        raise RuntimeError('Invitation email is not configured.')
+        raise RuntimeError('Email is not configured.')
+    if not all(settings.values()):
+        raise RuntimeError('Email is not configured.')
+    return settings
+
+
+def send_invitation(invite, company):
+    settings = mail_settings()
     deadline = time.monotonic() + SMTP_DEADLINE
     message = invitation_email(invite, company, password_setup_link(invite['email']))
-    logo = message['logo']
     payload = {
-        'from': sender,
         'to': [invite['email']],
         'subject': message['subject'],
         'text': message['text'],
         'html': message['html'],
-        # Resend's inline image: the HTML refers to it as cid:<content_id>.
-        'attachments': [
-            {
-                'content': base64.b64encode(logo['data']).decode(),
-                'filename': 'logo.' + logo['subtype'].replace('jpeg', 'jpg'),
-                'content_type': 'image/' + logo['subtype'],
-                'content_id': LOGO_CID,
-            }
-        ],
+        'attachments': [logo_attachment(message['logo'])],
     }
-    if transport == 'smtp':
-        return send_smtp(payload, username, password, invite, deadline)
+    key = invite['invitation_id'] + '/' + invite['send_attempt']
+    return send_email(settings, payload, 'invitation', key, deadline)
+
+
+def logo_attachment(logo):
+    # Resend's inline image: the HTML refers to it as cid:<content_id>.
+    return {
+        'content': base64.b64encode(logo['data']).decode(),
+        'filename': 'logo.' + logo['subtype'].replace('jpeg', 'jpg'),
+        'content_type': 'image/' + logo['subtype'],
+        'content_id': LOGO_CID,
+    }
+
+
+class UnconfirmedDelivery(RuntimeError):
+    pass
+
+
+def send_email(settings, payload, kind, key, deadline, *, prevent_duplicates=False):
+    """The one sender for invitations and document delivery. key names this send attempt: Resend's
+    Idempotency-Key and, as <kind>-<key with - for />@<sender domain>, the SMTP Message-ID.
+    payload may carry reply_to, one address."""
+    payload = {'from': settings['sender'], **payload}
+    if settings['transport'] == 'smtp':
+        domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'dryscope.invalid'
+        message_id = f'<{kind}-{key.replace("/", "-")}@{domain}>'
+        return send_smtp(
+            payload,
+            settings['username'],
+            settings['password'],
+            message_id,
+            deadline,
+            prevent_duplicates=prevent_duplicates,
+        )
     request = urllib.request.Request(
         'https://api.resend.com/emails',
         data=json.dumps(payload).encode(),
         method='POST',
         headers={
-            'Authorization': 'Bearer ' + key,
+            'Authorization': 'Bearer ' + settings['key'],
             'Content-Type': 'application/json',
-            'Idempotency-Key': invite['invitation_id'] + '/' + invite['send_attempt'],
+            'Idempotency-Key': key,
         },
     )
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=8) as response:
-                result = json.loads(response.read(65536))
+                try:
+                    result = json.loads(response.read(65536))
+                except Exception as error:
+                    if prevent_duplicates:
+                        raise UnconfirmedDelivery() from error
+                    raise
+                if prevent_duplicates and (not isinstance(result, dict) or not result.get('id')):
+                    raise UnconfirmedDelivery()
                 if not isinstance(result.get('id'), str):
+                    if prevent_duplicates:
+                        raise UnconfirmedDelivery()
                     raise RuntimeError('Unconfirmed email delivery.')
                 return result['id']
         except urllib.error.HTTPError as error:
+            if prevent_duplicates and (error.code == 408 or error.code >= 500):
+                raise UnconfirmedDelivery() from error
             if error.code not in (408, 429, 500, 502, 503, 504) or attempt == 2:
                 raise
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError) as error:
+            if prevent_duplicates and not (
+                isinstance(error, urllib.error.URLError)
+                and isinstance(error.reason, (ConnectionRefusedError, socket.gaierror))
+            ):
+                raise UnconfirmedDelivery() from error
             if attempt == 2:
                 raise
+        except OSError as error:
+            if prevent_duplicates:
+                raise UnconfirmedDelivery() from error
+            raise
         time.sleep(2 ** (attempt + 1))
 
 
-def send_smtp(payload, username, password, invite, deadline):
+def send_smtp(payload, username, password, message_id, deadline, *, prevent_duplicates=False):
     """Gmail SMTP has no idempotency key; the Message-ID is stable per attempt but Gmail does not deduplicate on it."""
     message = EmailMessage()
     message['From'] = payload['from']
     message['To'] = ', '.join(payload['to'])
     message['Subject'] = payload['subject']
-    domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'dryscope.invalid'
-    message['Message-ID'] = (
-        f'<invitation-{invite["invitation_id"]}-{invite["send_attempt"]}@{domain}>'
-    )
+    message['Message-ID'] = message_id
+    if payload.get('reply_to'):
+        message['Reply-To'] = payload['reply_to']
     message.set_content(payload['text'])
     message.add_alternative(payload['html'], subtype='html')
     # multipart/alternative [text, multipart/related [html, inline logo]] so Gmail and Outlook show it.
@@ -1519,8 +1602,9 @@ def send_smtp(payload, username, password, invite, deadline):
             disposition='inline',
         )
     if time.monotonic() >= deadline:
-        raise TimeoutError('Invitation email deadline passed.')
+        raise TimeoutError('Email deadline passed.')
     for attempt in range(3):
+        handed_off = False
         try:
             server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=min(8, deadline - time.monotonic()))
             watchdog = threading.Timer(deadline - time.monotonic(), stop_smtp, (server,))
@@ -1528,6 +1612,7 @@ def send_smtp(payload, username, password, invite, deadline):
             try:
                 server.starttls(context=ssl.create_default_context())
                 server.login(username, password)
+                handed_off = True
                 server.send_message(message)
             finally:
                 watchdog.cancel()
@@ -1540,16 +1625,20 @@ def send_smtp(payload, username, password, invite, deadline):
         except smtplib.SMTPResponseException as error:
             if not 400 <= error.smtp_code < 500 or attempt == 2:
                 raise
-        except smtplib.SMTPServerDisconnected:
+        except smtplib.SMTPServerDisconnected as error:
+            if prevent_duplicates and handed_off:
+                raise UnconfirmedDelivery() from error
             if attempt == 2:
                 raise
         except smtplib.SMTPException:
             raise
-        except OSError:
+        except OSError as error:
+            if prevent_duplicates and handed_off:
+                raise UnconfirmedDelivery() from error
             if attempt == 2:
                 raise
         if time.monotonic() + 2 ** (attempt + 1) >= deadline:
-            raise TimeoutError('Invitation email deadline passed.')
+            raise TimeoutError('Email deadline passed.')
         time.sleep(2 ** (attempt + 1))
 
 

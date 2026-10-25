@@ -75,6 +75,8 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             email=claims['email'],
             project='alert-disaster-field-2026',
             workspaces_enabled=True,
+            # The shared sender is near Gmail's daily limit; only owners are told.
+            email_notice=actor['role'] == 'owner' and await stored(workspace(store).email_notice),
             invitations=[
                 {
                     'invitation_id': i['invitation_id'],

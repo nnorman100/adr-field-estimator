@@ -1,6 +1,6 @@
 """Local-only production-code harness with fake cloud adapters and synthetic identity."""
 
-import sys, json, os, re
+import sys, json, os, re, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -320,6 +320,10 @@ async def workspaces_fixture(request: Request):
         )
     )
     store.create_inspection('test-owner-ws-estimator', 'ADR-INS-' + 'c' * 32, data)
+    if body.get('emails_today'):
+        store.db.records['_email_counts/daily'] = {
+            'sent': {'start': time.time(), 'count': body['emails_today']}
+        }
     if body.get('send_fail'):
 
         def sender(*args):
@@ -346,7 +350,13 @@ async def expire_signing_links():
 
 @bm.app.get('/__test/workspaces-stats')
 async def workspaces_stats():
-    return {'inspection_count': len([k for k in store.db.records if k.startswith('inspections/')])}
+    return {
+        'inspection_count': len([k for k in store.db.records if k.startswith('inspections/')]),
+        'delivery_count': len([k for k in store.db.records if k.startswith('_job_deliveries/')]),
+        'email_count': store.db.records.get('_email_counts/daily', {})
+        .get('sent', {})
+        .get('count', 0),
+    }
 
 
 @bm.app.get('/__test/support-events')
