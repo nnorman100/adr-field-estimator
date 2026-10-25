@@ -11,7 +11,8 @@ window.WorkspaceUI = (() => {
     initialized = false,
     supportUrls = [],
     deliveryJob = null,
-    deliveryView = undefined;
+    deliveryView = undefined,
+    ocrEditable = null;
   const POSITIONING_HEADLINE = 'Water & mold loss estimates, signed on site.',
     POSITIONING_LINE =
       'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.';
@@ -133,6 +134,10 @@ window.WorkspaceUI = (() => {
       ['saveDraft', 'scope'],
       ['fillScope', 'scope'],
       ['fillScopeProperty', 'scope'],
+      ['notesFillScope', 'scope'],
+      ['notesFillScopeWalk', 'scope'],
+      ['reviewVoiceNotes', 'scope'],
+      ['reviewVoiceNotesWalk', 'scope'],
       ['authorizeJob', 'sign'],
       ['sendHomeownerLink', 'sign'],
     ]) {
@@ -167,6 +172,10 @@ window.WorkspaceUI = (() => {
       ? 'Copy to new draft'
       : 'Copy to new draft (needs a connection)';
     document.body.classList.toggle('office-view', state.session.role === 'office');
+    const nextOcr = can('ocr') && !!state.draft && !state.signed && !confirmedAuthorization;
+    if (ocrEditable !== null && ocrEditable !== nextOcr && typeof renderPhotos === 'function')
+      renderPhotos();
+    ocrEditable = nextOcr;
     paintDelivery();
   }
   function branding() {

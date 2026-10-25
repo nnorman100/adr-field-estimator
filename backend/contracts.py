@@ -291,6 +291,12 @@ class PhotoShotUpdate(RevisionRequest):
     shot: Annotated[str, AfterValidator(known_shot)] | None
 
 
+class VoiceNoteId(StrictModel):
+    """A voice note already saved on the phone. Reserving it clears an unsigned estimate."""
+
+    note_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+
+
 class VoiceNoteUpload(StrictModel):
     """One offline voice note recorded on the phone; the audio is transcribed and never stored."""
 

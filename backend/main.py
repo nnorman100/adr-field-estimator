@@ -63,6 +63,7 @@ try:
         SigningLinkRequest,
         HomeownerSignature,
         VoiceNoteUpload,
+        VoiceNoteId,
         TranscriptionResult,
         ReadingUpload,
         QrTagRequest,
@@ -95,7 +96,13 @@ try:
     from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
-    from .inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
+    from .inspection_store import (
+        InspectionStore,
+        Conflict,
+        Limited,
+        TRANSCRIPT_LIMIT,
+        voice_notes_clear,
+    )
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
     from .cloud_log import event
 except ImportError:
@@ -115,6 +122,7 @@ except ImportError:
         SigningLinkRequest,
         HomeownerSignature,
         VoiceNoteUpload,
+        VoiceNoteId,
         TranscriptionResult,
         ReadingUpload,
         QrTagRequest,
@@ -148,7 +156,13 @@ except ImportError:
     from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
-    from inspection_store import InspectionStore, Conflict, Limited, TRANSCRIPT_LIMIT
+    from inspection_store import (
+        InspectionStore,
+        Conflict,
+        Limited,
+        TRANSCRIPT_LIMIT,
+        voice_notes_clear,
+    )
     from job_store import BUCKET, decode_image, IMAGE_WORKER
     from cloud_log import event
 
@@ -537,9 +551,19 @@ async def stored(method, *args, failure=None):
 NO_CLAIM = ClaimDetails().model_dump()
 
 
+def require_voice_notes_clear(record):
+    """Audit, scope fill and signing wait until every voice note is resolved or reviewed."""
+    if not voice_notes_clear(record):
+        raise HTTPException(
+            409, 'Finish voice notes and review their transcripts before continuing.'
+        )
+
+
 def reusable_audit(record, revision, identity, customer, claim=None):
     """The saved audit still matches this revision, company profile, customer, claim details and
-    proposal date."""
+    proposal date. An unresolved voice note makes the saved audit stale."""
+    if not voice_notes_clear(record):
+        return False
     audit = record.get('audit')
     if not audit or audit['revision'] != revision:
         return False
@@ -612,6 +636,8 @@ async def generate(
     wire_schema=None,
     thinking_level=None,
     timeout=100,
+    check=None,
+    invalid_detail=None,
 ):
     started = time.monotonic()
     outcome = 'cancelled'
@@ -634,8 +660,24 @@ async def generate(
             timeout=timeout,
         )
         result = schema.model_validate(parse_json_from_llm(response.text))
+        if check is not None:
+            # Domain rejection is logged with this call. The validator's message can quote the
+            # technician; only the fixed detail is returned, and the log line has no text.
+            try:
+                checked = check(result)
+            except (ValueError, ValidationError):
+                outcome = 'validation'
+                raise HTTPException(
+                    502,
+                    invalid_detail
+                    or 'AI returned an unavailable or invalid result. Retry; no document or reading was verified.',
+                )
+            if checked is not None:
+                result = checked
         outcome = 'ok'
         return result
+    except HTTPException:
+        raise
     except (asyncio.TimeoutError, TimeoutError):
         outcome = 'timeout'
         raise HTTPException(
@@ -1091,6 +1133,7 @@ async def suggest_scope(
     if record['revision'] != req.expected_revision or record['status'] == 'signed':
         raise HTTPException(409, 'Restore the latest unsigned draft before filling scope.')
     await stored(store._access, staff['uid'], record, 'scope')
+    require_voice_notes_clear(record)
     data = InspectionData.model_validate(record['data'])
     if not (data.technician_transcript.strip() or data.technician_notes.strip()):
         raise HTTPException(
@@ -1098,6 +1141,13 @@ async def suggest_scope(
         )
     await stored(store.quota, staff['uid'], 'scope', 6)
     claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
+
+    def verified(suggestion):
+        # Run inside the logged model call so a rejected quote is an ERROR, not INFO/ok.
+        # The filtered suggestion is applied once, after this call returns.
+        validate_suggestions(data, suggestion, claim)
+        return None
+
     result = await generate(
         ScopeSuggestions,
         [scope_prompt(data, claim)],
@@ -1106,21 +1156,20 @@ async def suggest_scope(
         inspection_id,
         wire_schema=scope_response_schema(),
         thinking_level=SCOPE_THINKING_LEVEL,
+        check=verified,
+        invalid_detail=(
+            'Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.'
+        ),
     )
-    try:
-        result = validate_suggestions(data, result, claim)
-    except (ValueError, ValidationError):
-        raise HTTPException(
-            502,
-            'Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.',
-        )
     latest = await stored(store.get_inspection, staff['uid'], inspection_id)
     await stored(store._access, staff['uid'], latest, 'scope')
+    require_voice_notes_clear(latest)
     if latest['revision'] != req.expected_revision or latest['status'] == 'signed':
         raise HTTPException(
             409,
             'The inspection changed while reading the walkthrough. Retry from the current draft.',
         )
+    result = validate_suggestions(data, result, claim)
     return dict(
         inspection_id=inspection_id,
         revision=req.expected_revision,
@@ -1161,6 +1210,80 @@ def voice_note_block(req, text):
     return f'{voice_note_marker(req.note_id)} · {room} · recorded {label} · transcribed later]\n{words}\n'
 
 
+async def revoke_moved_link(store, uid, inspection_id, moved):
+    """A new voice note drops the job's signing link. A revoke failure still keeps the reservation."""
+    if not moved:
+        return
+    with suppress(Exception):
+        await stored(signing_links.revoke, store, uid, inspection_id)
+
+
+async def _voice_note_ready(store, uid, inspection_id):
+    record = await stored(store.get_inspection, uid, inspection_id)
+    await stored(store._access, uid, record, 'scope')
+    if record['status'] == 'signed':
+        raise HTTPException(409, 'Signed inspections are immutable. Start a new inspection.')
+    return record
+
+
+@app.post('/api/inspections/{inspection_id}/voice-notes/pending')
+@rest_deadline
+async def reserve_voice_note(
+    inspection_id: str,
+    req: VoiceNoteId,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    """Records that a note is saved on the phone, before its audio is transcribed."""
+    await _voice_note_ready(store, staff['uid'], inspection_id)
+    saved, moved = await stored(
+        store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
+    )
+    await revoke_moved_link(store, staff['uid'], inspection_id, moved)
+    return await draft_record(store, staff['uid'], saved)
+
+
+def _checked_note_id(note_id):
+    if not re.fullmatch(r'[a-f0-9]{32}', note_id):
+        raise HTTPException(422, 'Voice note reference is not valid.')
+    return note_id
+
+
+@app.post('/api/inspections/{inspection_id}/voice-notes/{note_id}/review')
+@rest_deadline
+async def review_voice_note(
+    inspection_id: str,
+    note_id: str,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    """The technician has read the transcript of this note."""
+    _checked_note_id(note_id)
+    await _voice_note_ready(store, staff['uid'], inspection_id)
+    saved, _moved = await stored(
+        store.update_voice_note, staff['uid'], inspection_id, note_id, 'review'
+    )
+    return await draft_record(store, staff['uid'], saved)
+
+
+@app.post('/api/inspections/{inspection_id}/voice-notes/{note_id}/resolve')
+@rest_deadline
+async def resolve_voice_note(
+    inspection_id: str,
+    note_id: str,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    """The technician typed the key facts and removed a note that could not be transcribed."""
+    _checked_note_id(note_id)
+    await _voice_note_ready(store, staff['uid'], inspection_id)
+    saved, moved = await stored(
+        store.update_voice_note, staff['uid'], inspection_id, note_id, 'resolve'
+    )
+    await revoke_moved_link(store, staff['uid'], inspection_id, moved)
+    return await draft_record(store, staff['uid'], saved)
+
+
 @app.post('/api/inspections/{inspection_id}/voice-notes')
 @rest_deadline
 async def transcribe_voice_note(
@@ -1170,30 +1293,58 @@ async def transcribe_voice_note(
     store=Depends(get_job_store),
 ):
     """Transcribes an offline voice note into the walkthrough transcript; the audio is not kept."""
-    record = await stored(store.get_inspection, staff['uid'], inspection_id)
-    await stored(store._access, staff['uid'], record, 'scope')
-    if record['status'] == 'signed':
-        raise HTTPException(409, 'Signed inspections are immutable. Start a new inspection.')
+    record = await _voice_note_ready(store, staff['uid'], inspection_id)
     marker = voice_note_marker(req.note_id)
     if marker in record['data'].get('technician_transcript', ''):
-        return await draft_record(store, staff['uid'], record)
-    raw = voice_note_audio(req)
-    transcript = record['data'].get('technician_transcript', '')
+        return await draft_record(
+            store,
+            staff['uid'],
+            await stored(
+                store.append_transcript,
+                staff['uid'],
+                inspection_id,
+                marker,
+                '',
+                req.note_id,
+            )
+        )
+    saved, moved = await stored(
+        store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
+    )
+    await revoke_moved_link(store, staff['uid'], inspection_id, moved)
+
+    async def fail():
+        await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
+
+    try:
+        raw = voice_note_audio(req)
+    except HTTPException as error:
+        if error.status_code == 400:
+            await fail()
+        raise
+    transcript = saved['data'].get('technician_transcript', '')
     longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
     if len(transcript) + 1 + len(longest) > TRANSCRIPT_LIMIT:
+        await fail()
         raise HTTPException(
             400, 'Transcript storage is full. Type the remaining observations in notes.'
         )
+    # A quota 429 leaves the note pending so the phone can retry. A model failure marks it failed.
     await stored(store.quota, staff['uid'], 'transcribe', 10)
-    result = await generate(
-        TranscriptionResult,
-        [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS],
-        AUDIT_MODEL,
-        'transcribe',
-        inspection_id,
-        thinking_level=SCOPE_THINKING_LEVEL,
-        timeout=REST_DEADLINE_SECONDS - 5,
-    )
+    try:
+        result = await generate(
+            TranscriptionResult,
+            [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS],
+            AUDIT_MODEL,
+            'transcribe',
+            inspection_id,
+            thinking_level=SCOPE_THINKING_LEVEL,
+            timeout=REST_DEADLINE_SECONDS - 5,
+        )
+    except HTTPException as error:
+        if error.status_code != 429:
+            await fail()
+        raise
     return await draft_record(
         store,
         staff['uid'],
@@ -1203,7 +1354,8 @@ async def transcribe_voice_note(
             inspection_id,
             marker,
             voice_note_block(req, result.text),
-        ),
+            req.note_id,
+        )
     )
 
 
@@ -1213,9 +1365,11 @@ async def audit_inspection(
     req: AuditRequest, request: Request, staff=Depends(current_staff), store=Depends(get_job_store)
 ):
     started = time.monotonic()
-    await stored(store.quota, staff['uid'], 'audit', 3)
     record = await stored(store.get_inspection, staff['uid'], req.inspection_id)
     await stored(store._access, staff['uid'], record, 'audit')
+    # A note that is still open is not an audit attempt, so it does not use the audit quota.
+    require_voice_notes_clear(record)
+    await stored(store.quota, staff['uid'], 'audit', 3)
     workspace_client(request)
     if record['revision'] != req.expected_revision or record['status'] == 'signed':
         raise HTTPException(409, 'Restore the latest draft before auditing.')
@@ -1242,6 +1396,7 @@ async def audit_inspection(
         if record['data'] != inspection_payload(data):
             raise HTTPException(409, 'Inspection inputs changed while waiting for OCR.')
     # OCR may advance the revision; bind the resulting audit to that exact snapshot.
+    require_voice_notes_clear(record)
     revision = record['revision']
     identity = await stored(store.workspaces.snapshot, staff['uid']) if WORKSPACES_ENABLED else None
     customer = await stored(store.workspaces.customer_name, record) if WORKSPACES_ENABLED else ''
@@ -1756,6 +1911,32 @@ async def support_evidence(
     )
 
 
+def live_provider_code(error):
+    """Provider failure code for the Live alert, or None for an ordinary client rejection.
+
+    ConnectionClosed uses the upstream close code, or 1006 when the socket dropped without one.
+    HTTPException, ValueError and WebSocketDisconnect are client auth or input rejections and are
+    not given a code, even if the object has one. A provider error keeps its own code. A provider
+    timeout or connection error with no code is logged as 1006 so the alert filter can see it.
+    """
+    if isinstance(error, ConnectionClosed):
+        return error.rcvd.code if error.rcvd else 1006
+    if isinstance(error, (HTTPException, ValueError, WebSocketDisconnect)):
+        return None
+    code = getattr(error, 'code', None)
+    if code is not None:
+        return code
+    if isinstance(error, (TimeoutError, ConnectionError, OSError)):
+        return 1006
+    try:
+        from google.genai import errors as genai_errors
+    except ImportError:
+        genai_errors = None
+    if genai_errors is not None and isinstance(error, genai_errors.APIError):
+        return 1006
+    return None
+
+
 @app.websocket('/api/live')
 async def live_walkthrough(socket: WebSocket):
     if socket.headers.get('origin') not in ORIGINS:
@@ -2203,12 +2384,9 @@ async def live_walkthrough(socket: WebSocket):
             retain = False
         outcome = type(error).__name__
         status = getattr(error, 'status_code', None)
-        # Vertex's close code (1006 when its socket dropped without one, as the SDK reports it)
-        # or the SDK's API error code, so an upstream drop is attributable from the log.
-        if isinstance(error, ConnectionClosed):
-            provider_code = error.rcvd.code if error.rcvd else 1006
-        else:
-            provider_code = getattr(error, 'code', None)
+        # Vertex's close code, an SDK error code, or 1006 for a code-less provider timeout.
+        # Client auth and input rejections stay without a provider code and do not page.
+        provider_code = live_provider_code(error)
         message = {
             'type': 'error',
             'message': error.detail

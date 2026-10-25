@@ -156,8 +156,17 @@ test('offline notes record on the phone, survive a reload, then fill the transcr
     '2 voice notes waiting to upload. They upload when you have signal.',
   );
 
-  // Back online: both notes upload, join the transcript, and the scope fill lists what is missing.
+  // Back online: both notes upload and join the transcript. Scope fill waits until the
+  // technician reviews that transcript.
   await context.setOffline(false);
+  await expect(page.locator('#technicianTranscript')).toHaveValue(
+    /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
+    { timeout: 20000 },
+  );
+  await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+  await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+  await page.locator('#reviewVoiceNotesWalk').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible({ timeout: 20000 });
   await expect(page.locator('#technicianTranscript')).toHaveValue(
     /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
@@ -352,6 +361,10 @@ test.describe('controlled voice-note uploads', () => {
     await expect(page.locator('#technicianTranscript')).toHaveValue(
       /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
     );
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+    await page.locator('#reviewVoiceNotesWalk').click();
     await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
     // The note stays replayable on the phone.
     await walkthrough(page);
@@ -574,11 +587,14 @@ test.describe('controlled voice-note uploads', () => {
     await expect
       .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
       .toEqual(['done']);
-    // Reopening the first job shows the transcript and the note as added, with no conflict, and
-    // offers one tap to read it into the scope instead of filling the scope on its own.
+    // Reopening the first job shows the transcript and the note as added, with no conflict.
+    // Review comes first. The fill prompt is the one tap that reads it into the scope.
     await page.evaluate((id) => restoreDraft(id), first);
     await expect(page.locator('#conflictActions')).toBeHidden();
     await expect(page.locator('#technicianTranscript')).toHaveValue(/^\[Offline voice note /);
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await expect(page.locator('#notesFillScope')).toBeHidden();
+    await page.locator('#reviewVoiceNotes').click();
     const prompt = page.locator('#notesFillScope'),
       walkPrompt = page.locator('#notesFillScopeWalk'),
       text = '1 voice note transcribed - Fill scope and check for missing items';
@@ -680,7 +696,11 @@ test.describe('controlled voice-note uploads', () => {
     );
     await expect(page.locator('#technicianTranscript')).toHaveValue(noteBlock);
     await expect(page.locator('#conflictActions')).toBeHidden();
-    // The note reached the open job, so its scope is read as if the job had sent it.
+    // The note reached the open job. Review, then its scope is read as if the job had sent it.
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+    await page.locator('#reviewVoiceNotesWalk').click();
     await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
     await expect(page.locator('#notesFillScope')).toBeHidden();
     expect(calls).toBe(1);

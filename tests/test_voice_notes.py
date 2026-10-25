@@ -63,7 +63,8 @@ def test_voice_note_is_transcribed_into_the_walkthrough_and_audio_is_not_stored(
     result = send(client)
     assert result.status_code == 200, result.text
     saved = result.json()
-    assert saved['revision'] == record['revision'] + 1 and saved['status'] == 'draft'
+    assert saved['revision'] == record['revision'] + 2 and saved['status'] == 'draft'
+    assert saved['voice_notes'] == [{'id': NOTE, 'status': 'transcribed', 'reviewed': False}]
     assert saved['data']['technician_transcript'] == (
         'Kitchen category 1.\n'
         '[Offline voice note bbbbbbbb · Bedroom 2 · recorded Oct 16, 2:05 PM · transcribed later]\n'
@@ -105,7 +106,7 @@ def test_voice_note_appends_after_the_revision_moved_on(context, monkeypatch):
     )
     transcriber(monkeypatch)
     saved = send(client).json()
-    assert saved['revision'] == 3
+    assert saved['revision'] == 4
     assert saved['data']['labor_hours'] == 5
     assert saved['data']['technician_transcript'].startswith('[Offline voice note bbbbbbbb')
 
@@ -141,9 +142,16 @@ def test_invalid_voice_notes_are_refused_without_a_model_call(context, monkeypat
     client, store = context
     record = prepared(client)
     calls = transcriber(monkeypatch)
-    assert send(client, note(**changes)).status_code in (400, 422)
+    result = send(client, note(**changes))
+    assert result.status_code in (400, 422)
     assert calls == []
-    assert bm.public_record(store.get_inspection('owner', ID)) == record
+    saved = bm.public_record(store.get_inspection('owner', ID))
+    if result.status_code == 422:
+        assert saved == record
+    else:
+        assert saved['data'] == record['data']
+        assert saved['voice_notes'] == [{'id': NOTE, 'status': 'failed', 'reviewed': False}]
+        assert saved['revision'] == record['revision'] + 1
 
 
 def test_oversized_voice_note_is_refused(context, monkeypatch):
@@ -164,7 +172,10 @@ def test_provider_failure_leaves_the_transcript_unchanged(context, monkeypatch):
     record = prepared(client)
     transcriber(monkeypatch, fail=True)
     assert send(client).status_code == 502
-    assert bm.public_record(store.get_inspection('owner', ID)) == record
+    saved = bm.public_record(store.get_inspection('owner', ID))
+    assert saved['data'] == record['data']
+    assert saved['voice_notes'] == [{'id': NOTE, 'status': 'failed', 'reviewed': False}]
+    assert 'audio' not in json.dumps(saved)
 
 
 def test_full_transcript_refuses_the_note(context, monkeypatch):
@@ -206,3 +217,7 @@ def test_voice_notes_have_a_daily_cap_and_a_per_minute_limit(context, monkeypatc
         assert send(client, note(note_id=str(i) * 32)).status_code == 200
     limited = send(client, note(note_id='c' * 32))
     assert limited.status_code == 429 and limited.headers['Retry-After']
+    # Quota leaves the note pending so the phone can retry. It is not a failed transcription.
+    assert [row for row in store.get_inspection('owner', ID)['voice_notes'] if row['id'] == 'c' * 32] == [
+        {'id': 'c' * 32, 'status': 'pending', 'reviewed': False}
+    ]

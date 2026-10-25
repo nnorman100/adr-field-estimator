@@ -4,6 +4,7 @@ import asyncio, json, time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from google.genai import errors
@@ -331,6 +332,9 @@ def test_failed_upload_cleanup_logs_operation_and_error_class_without_uid_or_pat
         ),
         # google-genai 2.29 turns a close seen while receiving into an API error carrying the code.
         (errors.APIError(1008, {'error': {'message': 'policy violation'}}, None), 'APIError', 1008),
+        (errors.APIError(429, {'error': {'message': 'rate limit'}}, None), 'APIError', 429),
+        (errors.APIError(401, {'error': {'message': 'provider auth'}}, None), 'APIError', 401),
+        (TimeoutError(), 'TimeoutError', 1006),
     ],
 )
 def test_live_session_end_logs_the_provider_close_code(
@@ -398,5 +402,70 @@ def test_live_session_end_logs_the_provider_close_code(
         'internal error',
         'keepalive ping timeout',
         'policy violation',
+        'rate limit',
+        'provider auth',
     ):
         assert secret not in output
+
+
+def test_live_client_rejection_does_not_set_a_provider_code(monkeypatch, capsys):
+    store = FakeStore()
+    store.create_inspection('owner', ID, InspectionData().model_dump())
+
+    class Session:
+        async def send_client_content(self, **kw):
+            pass
+
+        async def send_realtime_input(self, **kw):
+            pass
+
+        async def receive(self):
+            raise HTTPException(401, 'client-rejected-secret')
+            yield  # pragma: no cover
+
+    @asynccontextmanager
+    async def connect(**kw):
+        yield Session()
+
+    async def close():
+        pass
+
+    async def identity(token, **_):
+        return {'uid': 'owner', 'email': EMAIL, 'exp': time.time() + 600}
+
+    monkeypatch.setattr(bm, 'verify_staff', identity)
+    monkeypatch.setattr(bm, 'get_job_store', lambda: store)
+    monkeypatch.setattr(
+        bm.genai, 'Client', lambda **kw: NS(aio=NS(live=NS(connect=connect), aclose=close))
+    )
+    with (
+        TestClient(bm.app) as client,
+        client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
+    ):
+        socket.send_json(
+            dict(
+                type='authenticate',
+                token='secret-id-token',
+                inspection_id=ID,
+                protocol_version=2,
+                capture_id='e' * 32,
+            )
+        )
+        assert socket.receive_json()['type'] == 'ready'
+        message = socket.receive_json()
+        assert message['type'] == 'error' and message['status'] == 401
+        with pytest.raises(WebSocketDisconnect):
+            while True:
+                socket.receive_json()
+    output = capsys.readouterr().out
+    [entry] = [
+        json.loads(line)
+        for line in output.splitlines()
+        if line.startswith('{') and '"live"' in line
+    ]
+    assert entry['message'] == 'Live session ended' and entry['severity'] == 'WARNING'
+    assert 'provider_code' not in entry
+    assert 'client-rejected-secret' not in output and 'secret-id-token' not in output
+    assert bm.live_provider_code(HTTPException(403, 'no')) is None
+    assert bm.live_provider_code(TimeoutError()) == 1006
+    assert bm.live_provider_code(errors.APIError(429, {'error': {'message': 'rate'}}, None)) == 429

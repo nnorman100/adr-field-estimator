@@ -94,6 +94,7 @@ const ui = {
   starting: false,
   auditing: false,
   fillingScope: false,
+  settlingNotes: false,
   notesMode: false,
   documentSource: null,
   viewed: new Set(),
@@ -301,8 +302,13 @@ function renderControls() {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
     $(id).textContent = ui.fillingScope ? 'Reading walkthrough…' : 'Fill scope from walkthrough';
   }
-  for (const id of ['notesFillScope', 'notesFillScopeWalk'])
-    $(id).disabled = $('fillScope').disabled;
+  for (const id of [
+    'notesFillScope',
+    'notesFillScopeWalk',
+    'reviewVoiceNotes',
+    'reviewVoiceNotesWalk',
+  ])
+    if ($(id)) $(id).disabled = $('fillScope').disabled;
   window.TagsUI?.policy();
   window.WorkspaceUI?.policy();
 }
@@ -407,12 +413,37 @@ async function photoBytes(key) {
   );
 }
 // A draft's voice notes go with it (photoRange matches their [draft_key, ...] keys too).
-function deleteDraft(key) {
+// keepUnresolved retains a recording, queued, failed, or unreviewed note and its audio after the
+// signed record is restored, so a note that could not be transcribed is not discarded.
+function noteStillOpen(note) {
+  return (
+    note.status === 'recording' ||
+    note.status === 'saved' ||
+    note.status === 'failed' ||
+    (note.status === 'done' && !note.reviewed)
+  );
+}
+async function deleteDraft(key, keepUnresolved = false) {
+  const wipe = () =>
+    dbAction('readwrite', (drafts, photos, noteRows, audio) => {
+      photos.delete(photoRange(key));
+      noteRows.delete(photoRange(key));
+      audio.delete(photoRange(key));
+      return drafts.delete(key);
+    });
+  if (!keepUnresolved) return wipe();
+  const storedNotes = await dbAction('readonly', (drafts, photos, noteRows) =>
+    noteRows.getAll(photoRange(key)),
+  );
+  if (!storedNotes.some(noteStillOpen)) return wipe();
   return dbAction('readwrite', (drafts, photos, noteRows, audio) => {
     photos.delete(photoRange(key));
-    noteRows.delete(photoRange(key));
-    audio.delete(photoRange(key));
-    return drafts.delete(key);
+    drafts.delete(key);
+    for (const note of storedNotes) {
+      if (noteStillOpen(note)) continue;
+      noteRows.delete([key, note.id]);
+      audio.delete(IDBKeyRange.bound([key, note.id], [key, note.id, []]));
+    }
   });
 }
 function draftKey(id) {
@@ -652,6 +683,8 @@ function invalidate() {
   $('emailCopy').checked = true;
   $('documents').hidden = true;
   $('reviewEmpty').hidden = false;
+  $('authorizeJob').disabled = true;
+  $('sendHomeownerLink').disabled = true;
   clearSignature();
   clearSigningError('documentsConfirmedError');
 }
@@ -1004,7 +1037,7 @@ async function drainQueue() {
         row.ack = stable(row.draft.data);
       }
       if (record.status === 'signed') {
-        await deleteDraft(row.key);
+        await deleteDraft(row.key, true);
         continue;
       }
       if (stable(row.draft.data) !== row.ack) {
@@ -1086,6 +1119,22 @@ async function drainQueue() {
       const sent = await sendNotes(
         row.key,
         async (note) => {
+          if (!note.reserved) {
+            record = await request(path + '/voice-notes/pending', 'POST', { note_id: note.id });
+            note.reserved = true;
+            await saveNoteRow(note);
+            if (id === state.draft?.inspection_id) {
+              syncChain = syncChain
+                .catch(() => {})
+                .then(() => state.draft?.inspection_id === id && reconcile());
+              await syncChain.catch((e) => say(e.message, 'error'));
+            } else {
+              row.draft.data = record.data;
+              row.ack = stable(record.data);
+              row.record = record;
+              await saveRow(row);
+            }
+          }
           record = await request(path + '/voice-notes', 'POST', await notePayload(note));
           if (id === state.draft?.inspection_id) {
             syncChain = syncChain
@@ -1140,6 +1189,7 @@ async function drainQueue() {
   }
 }
 function startOCR(photo) {
+  if (!canEditDraft('ocr') || !navigator.onLine || !photo?.uploaded) return;
   const inspectionId = state.draft.inspection_id;
   if (state.ocr.has(photo.id)) return;
   const promise = (async () => {
@@ -1186,6 +1236,9 @@ async function fillScopeFromWalkthrough() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned inspection first.');
   if (!navigator.onLine) throw Error('Reading the walkthrough requires a connection.');
+  await settleVoiceNotes();
+  if (ui.fillingScope || ui.auditing || !state.draft || state.signed || confirmedAuthorization)
+    return;
   collect();
   clearScopePreview();
   ui.fillingScope = true;
@@ -2260,8 +2313,18 @@ function photoCard(p) {
   );
   if (p.ocr_status === 'verified')
     caption.append(node('div', p.ocr.meter_type + ': ' + p.ocr.value));
-  if (!state.signed && p.uploaded && ['failed', 'pending', 'no_meter'].includes(p.ocr_status))
-    caption.append(button('Retry recognition', () => startOCR(p)));
+  if (
+    canEditDraft('ocr') &&
+    p.uploaded &&
+    ['failed', 'pending', 'no_meter'].includes(p.ocr_status)
+  ) {
+    const retry = button('Retry recognition', () => startOCR(p));
+    if (!navigator.onLine) {
+      retry.disabled = true;
+      retry.title = 'Photo recognition needs a connection.';
+    }
+    caption.append(retry);
+  }
   if (canEditDraft('photos')) {
     const select = node('select', undefined, 'photo-room'),
       names = state.draft.data.rooms.map((room) => room.name);
@@ -2739,7 +2802,7 @@ async function restoreSigned(id) {
   await persist();
   const record = await jsonApi('/api/authorizations/' + encodeURIComponent(id));
   if (state.user?.uid !== uid) return;
-  if (record.inspection_id) await deleteDraft(draftKey(record.inspection_id));
+  if (record.inspection_id) await deleteDraft(draftKey(record.inspection_id), true);
   if (state.user?.uid !== uid) return;
   state.signed = record;
   state.record = null;
@@ -2833,6 +2896,8 @@ async function restoreSigned(id) {
     missing ? 'error' : 'success',
   );
   window.WorkspaceUI?.loadDelivery?.().catch((e) => say(e.message, 'error'));
+  renderControls();
+  renderNotes();
 }
 async function copySigned() {
   const id = state.signed?.auth_id || confirmedAuthorization;
@@ -2972,6 +3037,8 @@ function confirmReadiness() {
 async function finishAudit() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned draft first.');
+  await settleVoiceNotes();
+  if (!state.draft || state.signed || confirmedAuthorization) return;
   collect();
   if (!(await confirmReadiness())) return;
   if (!navigator.onLine)
@@ -3052,7 +3119,11 @@ function renderDocuments() {
   document.body.classList.toggle('has-documents', !!docs);
   $('documents').hidden = !docs;
   $('reviewEmpty').hidden = !!docs;
-  if (!docs) return;
+  if (!docs) {
+    $('authorizeJob').disabled = true;
+    $('sendHomeownerLink').disabled = true;
+    return;
+  }
   if (ui.documentSource !== docs) {
     ui.documentSource = docs;
     ui.viewed.clear();
@@ -3152,6 +3223,7 @@ function initSignature() {
 async function authorize() {
   if (confirmedAuthorization) return restoreSigned(confirmedAuthorization);
   if (!navigator.onLine) throw Error('Signing requires a connection.');
+  await settleVoiceNotes();
   if (!state.signature) {
     signingError(
       'signatureError',
@@ -3275,13 +3347,14 @@ async function restoreHomeownerLink() {
 }
 async function sendHomeownerLink() {
   if (!navigator.onLine) throw Error('Sending a signing link requires a connection.');
-  if (!state.documents?.signable || !state.record?.audit)
-    throw Error('Complete a valid current audit before sending a signing link.');
   const inspection = state.draft.inspection_id,
     documents = state.documents;
   $('sendHomeownerLink').disabled = true;
   $('homeownerLinkStatus').textContent = 'Creating a signing link…';
   try {
+    await settleVoiceNotes();
+    if (!state.documents?.signable || !state.record?.audit)
+      throw Error('Complete a valid current audit before sending a signing link.');
     const link = await jsonApi('/api/inspections/' + inspection + '/signing-links', 'POST', {
       expected_revision: state.record.revision,
       proposal_hash: state.record.audit.proposal_hash,
@@ -3926,6 +3999,8 @@ const notes = {
   active: null,
   retry: null,
   player: null,
+  offerFill: false,
+  insideSettle: false,
 };
 function showOffer(text) {
   $('offlineOfferText').textContent = text;
@@ -4076,8 +4151,12 @@ async function recordNote() {
     await saving;
     note.duration_ms = Date.now() - started;
     note.status = 'saved';
-    if (note.parts) await saveNote(note);
-    else
+    if (note.parts) {
+      await saveNote(note);
+      // A new recording cancels the estimate on screen immediately. The server drops the
+      // signing link when the note is reserved, which happens as soon as the phone is online.
+      if (state.documents) invalidate();
+    } else
       await dbAction('readwrite', (drafts, photos, stored) =>
         stored.delete([note.draft_key, note.id]),
       );
@@ -4147,6 +4226,30 @@ function noteStatus(note) {
 }
 async function removeNote(note) {
   if (notes.player) notes.player.pause();
+  // A failed note is an explicit resolution. Pending notes stay until they transcribe.
+  // A signed job cannot change the server record; removing the local copy only dismisses it.
+  if (
+    note.status === 'failed' &&
+    navigator.onLine &&
+    state.draft &&
+    !state.signed &&
+    !confirmedAuthorization
+  ) {
+    try {
+      absorb(
+        await jsonApi(
+          '/api/inspections/' +
+            state.draft.inspection_id +
+            '/voice-notes/' +
+            note.id +
+            '/resolve',
+          'POST',
+        ),
+      );
+    } catch (e) {
+      if (!(e.status === 409 && /not waiting/i.test(e.message || ''))) throw e;
+    }
+  }
   await dbAction('readwrite', (drafts, photos, stored, audio) => {
     audio.delete(IDBKeyRange.bound([note.draft_key, note.id], [note.draft_key, note.id, []]));
     return stored.delete([note.draft_key, note.id]);
@@ -4210,7 +4313,16 @@ async function renderNotes() {
       ? 'All voice notes and photos are uploaded.'
       : '';
   $('noteQueue').hidden = !rows.length;
-  const unread = rows.filter((note) => note.status === 'done' && note.scoped === false).length;
+  const unreviewed = rows.filter((note) => note.status === 'done' && !note.reviewed).length;
+  for (const id of ['reviewVoiceNotes', 'reviewVoiceNotesWalk']) {
+    const control = $(id);
+    if (!control) continue;
+    control.hidden = !unreviewed;
+    control.disabled = !navigator.onLine || !canEditDraft('scope');
+  }
+  const unread = rows.filter(
+    (note) => note.status === 'done' && note.reviewed && note.scoped === false,
+  ).length;
   for (const id of ['notesFillScope', 'notesFillScopeWalk']) {
     $(id).textContent =
       unread +
@@ -4241,6 +4353,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
       note.status = 'done';
       note.error = '';
       note.scoped = false;
+      note.reviewed = false;
       added++;
     } catch (e) {
       if (
@@ -4312,7 +4425,8 @@ async function processNotes(carried = 0) {
     return processNotes(state.draft === draft ? carried + sent.added : 0);
   }
   if (sent.retry && state.draft === draft) notes.retry = setTimeout(processNotes, sent.retry);
-  // Not while Live runs: the scope fill would stop it.
+  // Fill waits until the technician reviews the transcript. offerFill remembers that these
+  // notes arrived on the open idle draft, so the review click can fill afterwards.
   if (
     carried + sent.added &&
     state.draft === draft &&
@@ -4322,7 +4436,8 @@ async function processNotes(carried = 0) {
     !ui.fillingScope &&
     !ui.auditing
   )
-    fillScopeFromWalkthrough().catch((e) => say(e.message, 'error'));
+    notes.offerFill = true;
+  renderNotes();
 }
 async function notePayload(note) {
   const blob = await noteAudio(note);
@@ -4345,6 +4460,113 @@ async function notePayload(note) {
 // Runs in the sync chain so no draft save overlaps it: the draft is saved first, then the server
 // appends the transcribed note. The local transcript takes the server's text plus anything Live
 // appended while the note uploaded; typing in the transcript waits until then.
+async function reserveNote(note, draft) {
+  const record = await jsonApi(
+    '/api/inspections/' + draft.inspection_id + '/voice-notes/pending',
+    'POST',
+    { note_id: note.id },
+  );
+  note.reserved = true;
+  await saveNote(note);
+  if (state.draft === draft) absorb(record);
+  return record;
+}
+// Stops a recording, waits for this draft's transcription, and refuses to continue while a note
+// is still open or its transcript has not been reviewed. A desk estimate with no notes returns
+// immediately. The technician may remove a failed note after typing its key facts.
+async function settleVoiceNotes() {
+  if (notes.insideSettle || !state.draft || !state.user) return;
+  notes.insideSettle = true;
+  ui.settlingNotes = true;
+  try {
+    const open = (rows) =>
+      notes.recorder || rows.some((note) => note.status !== 'done' || !note.reviewed);
+    let rows = await draftNotes(noteKey());
+    if (!open(rows) && !notes.processing && !sendingNotes.size && !notes.again) return;
+    say('Saving and transcribing voice notes…');
+    if (notes.recorder) await stopNote();
+    if (navigator.onLine && state.draft && !state.signed && !confirmedAuthorization) {
+      for (const note of (await draftNotes(noteKey())).filter(
+        (item) => item.status === 'saved' && item.parts && !item.reserved && !sendingNotes.has(item.id),
+      )) {
+        try {
+          await reserveNote(note, state.draft);
+        } catch (e) {
+          if (
+            !e.draftSync &&
+            e.status >= 400 &&
+            e.status < 500 &&
+            e.status !== 409 &&
+            e.status !== 429
+          ) {
+            note.status = 'failed';
+            note.error = e.message;
+            await saveNote(note);
+          }
+        }
+      }
+    }
+    const deadline = Date.now() + 30000;
+    while ((notes.processing || sendingNotes.size) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    if (notes.again) await processNotes();
+    rows = await draftNotes(noteKey());
+    if (notes.recorder || rows.some((note) => note.status === 'recording'))
+      throw Error(
+        'Stop and save the voice note before continuing. It stays on this phone until it is transcribed.',
+      );
+    if (rows.some((note) => note.status === 'saved'))
+      throw Error(
+        navigator.onLine
+          ? 'A voice note is still uploading or being transcribed. It stays on this phone until that finishes.'
+          : 'A voice note is still on this phone and has not been transcribed. It uploads when you have a connection.',
+      );
+    const failed = rows.find((note) => note.status === 'failed');
+    if (failed) throw Error(noteStatus(failed));
+    if (rows.some((note) => note.status === 'done' && !note.reviewed))
+      throw Error(
+        'Review the voice-note transcript before filling scope, finishing, or signing.',
+      );
+  } finally {
+    notes.insideSettle = false;
+    ui.settlingNotes = false;
+    renderNotes();
+  }
+}
+async function reviewVoiceNotes() {
+  if (!state.draft || state.signed || confirmedAuthorization)
+    throw Error('Open an unsigned inspection first.');
+  if (!navigator.onLine) throw Error('Reviewing a transcript requires a connection.');
+  const rows = (await draftNotes(noteKey())).filter(
+    (note) => note.status === 'done' && !note.reviewed,
+  );
+  if (!rows.length) return;
+  for (const note of rows) {
+    const record = await jsonApi(
+      '/api/inspections/' + state.draft.inspection_id + '/voice-notes/' + note.id + '/review',
+      'POST',
+    );
+    if (state.draft) absorb(record);
+    note.reviewed = true;
+    await saveNote(note);
+  }
+  renderNotes();
+  say('Transcript reviewed.', 'success');
+  if (
+    notes.offerFill &&
+    state.draft?.data &&
+    !state.draft.data.scope_confirmed &&
+    !notes.recorder &&
+    !state.media &&
+    !ui.starting &&
+    !ui.fillingScope &&
+    !ui.auditing &&
+    !ui.settlingNotes
+  ) {
+    notes.offerFill = false;
+    await fillScopeFromWalkthrough();
+  }
+}
 async function uploadNote(note, draft) {
   const payload = await notePayload(note);
   const task = async () => {
@@ -4361,6 +4583,7 @@ async function uploadNote(note, draft) {
     if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
     if (state.conflict || !state.record || stable(draft.data) !== state.ack)
       throw Error('Save the draft first. The note stays on this phone.');
+    if (!note.reserved) await reserveNote(note, draft);
     $('technicianTranscript').readOnly = true;
     const base = draft.data.technician_transcript;
     try {
@@ -4397,6 +4620,7 @@ function connectivity() {
   renderControls();
   renderSaveStatus();
   renderNotes();
+  renderPhotos();
   window.DryingLog?.render();
   if (offline) {
     if (state.media) {
@@ -4735,6 +4959,8 @@ async function initialize() {
   };
   click('notesFillScope', fillFromNotes);
   click('notesFillScopeWalk', fillFromNotes);
+  click('reviewVoiceNotes', reviewVoiceNotes);
+  click('reviewVoiceNotesWalk', reviewVoiceNotes);
   click('confirmFilledScope', () => {
     if (
       !state.draft ||
