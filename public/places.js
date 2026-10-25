@@ -28,7 +28,8 @@ window.PlacesUI = (() => {
   }
   // Suggestions only help a technician who can edit this draft, with a connection, until the
   // server says the feature is unavailable.
-  const active = () => canEditDraft('places') && navigator.onLine && !off && Date.now() >= pausedUntil;
+  const active = () =>
+    canEditDraft('places') && navigator.onLine && !off && Date.now() >= pausedUntil;
   const placed = () => {
     const data = state.draft?.data;
     return data?.coordinates && data.coordinates.address === data.address ? data.coordinates : null;

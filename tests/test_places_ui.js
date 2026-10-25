@@ -12,10 +12,18 @@ function harness(endpoint, status) {
   const calls = [];
   let fail = true;
   const element = () => ({
-    value: 'Test address', hidden: true, children: [],
-    setAttribute() {}, removeAttribute() {}, focus() {},
-    replaceChildren(...children) { this.children = children; },
-    addEventListener(name, fn) { this[name] = fn; },
+    value: 'Test address',
+    hidden: true,
+    children: [],
+    setAttribute() {},
+    removeAttribute() {},
+    focus() {},
+    replaceChildren(...children) {
+      this.children = children;
+    },
+    addEventListener(name, fn) {
+      this[name] = fn;
+    },
   });
   const get = (id) => {
     if (!nodes.has(id)) nodes.set(id, element());
@@ -34,24 +42,46 @@ function harness(endpoint, status) {
         : { blob: async () => ({}) };
   };
   const context = {
-    $: get, canEditDraft: () => true, navigator: { onLine: true },
+    $: get,
+    canEditDraft: () => true,
+    navigator: { onLine: true },
     state: { draft: { inspection_id: 'job', data: { address: 'Test address' } } },
     document: { readyState: 'complete', createElement: element },
-    Date: { now: () => now }, Math, URL: { createObjectURL: () => 'blob:test' },
-    setTimeout(fn, delay) { timers.set(++nextTimer, { fn, at: now + delay }); return nextTimer; },
-    clearTimeout(id) { timers.delete(id); },
-    addEventListener(name, fn) { events[name] = fn; },
-    jsonApi: request, api: request, collect() {}, changed() {}, say() {},
+    Date: { now: () => now },
+    Math,
+    URL: { createObjectURL: () => 'blob:test' },
+    setTimeout(fn, delay) {
+      timers.set(++nextTimer, { fn, at: now + delay });
+      return nextTimer;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+    addEventListener(name, fn) {
+      events[name] = fn;
+    },
+    jsonApi: request,
+    api: request,
+    collect() {},
+    changed() {},
+    say() {},
   };
   context.window = context;
   vm.runInNewContext(fs.readFileSync('public/places.js', 'utf8'), context);
-  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  const flush = async () => {
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+  };
   return {
-    context, get, calls, events, flush,
+    context,
+    get,
+    calls,
+    events,
+    flush,
     async advance(ms) {
       const end = now + ms;
       while (true) {
-        const due = [...timers.entries()].filter(([, timer]) => timer.at <= end)
+        const due = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= end)
           .sort((a, b) => a[1].at - b[1].at)[0];
         if (!due) break;
         now = due[1].at;
@@ -72,7 +102,9 @@ for (const endpoint of ['autocomplete', 'details', 'map']) {
       h.context.PlacesUI.render();
       if (endpoint === 'map') {
         h.context.state.draft.data.coordinates = {
-          address: 'Test address', latitude: 35, longitude: -119,
+          address: 'Test address',
+          latitude: 35,
+          longitude: -119,
         };
         h.context.PlacesUI.render();
       } else {

@@ -16,9 +16,10 @@ const uid = (role) => 'test-owner-ws-' + role;
 
 async function ready(page) {
   const outside = [];
+  const localOrigin = new URL(test.info().project.use.baseURL).origin;
   page.on('request', (request) => {
     const url = new URL(request.url());
-    if (!['data:', 'blob:'].includes(url.protocol) && url.origin !== 'https://localhost:8765')
+    if (!['data:', 'blob:'].includes(url.protocol) && url.origin !== localOrigin)
       outside.push(request.url());
   });
   await page.goto('/app');
@@ -263,13 +264,21 @@ test.describe('company roles', () => {
 });
 
 for (const status of [429, 502, 403, 503]) {
-  test(`lookup ${status} ${status < 503 && status !== 403 ? 'recovers after Retry-After' : 'stays disabled for the page'}`, async ({ page, request }) => {
+  test(`lookup ${status} ${status < 503 && status !== 403 ? 'recovers after Retry-After' : 'stays disabled for the page'}`, async ({
+    page,
+    request,
+  }) => {
     await places(request);
     await ready(page);
     let count = 0;
-    await page.route('**/api/places/autocomplete', async route => {
+    await page.route('**/api/places/autocomplete', async (route) => {
       count++;
-      if (count === 1) return route.fulfill({ status, headers: { 'Retry-After': '2' }, json: { detail: 'Synthetic availability failure' } });
+      if (count === 1)
+        return route.fulfill({
+          status,
+          headers: { 'Retry-After': '2' },
+          json: { detail: 'Synthetic availability failure' },
+        });
       return route.continue();
     });
     await page.locator('#address').fill(TYPED);
@@ -292,8 +301,12 @@ for (const status of [429, 502, 403, 503]) {
 }
 
 for (const offline of [false, true]) {
-  test(`new manual job shows unavailable ${offline ? 'offline' : 'without a key'}`, async ({page, request, context}) => {
-    await places(request, {key: !offline ? false : true});
+  test(`new manual job shows unavailable ${offline ? 'offline' : 'without a key'}`, async ({
+    page,
+    request,
+    context,
+  }) => {
+    await places(request, { key: !offline ? false : true });
     await ready(page);
     if (offline) await context.setOffline(true);
     await page.locator('#address').fill('Manual synthetic property');
@@ -301,40 +314,58 @@ for (const offline of [false, true]) {
     await expect(page.locator('#jobMapStatus')).toBeVisible();
     await expect(page.locator('#jobMapImage')).toBeHidden();
     await expect(page.locator('#jobDirections')).toBeVisible();
-    await page.screenshot({path: test.info().outputPath('manual-unavailable.png')});
+    await page.screenshot({ path: test.info().outputPath('manual-unavailable.png') });
   });
 }
 
-test('newly generated proposal displays both approved location notices', async ({page, request}) => {
+test('newly generated proposal displays both approved location notices', async ({
+  page,
+  request,
+}) => {
   await places(request);
   await ready(page);
   await choose(page);
   await page.locator('#yearBuilt').fill('1998');
-  await page.locator('#technicianNotes').fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
+  await page
+    .locator('#technicianNotes')
+    .fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
   await page.locator('#fillScopeProperty').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await page.locator('#confirmFilledScope').click();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
-  await expect(page.locator('#proposalBody')).toContainText('When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.');
-  await expect(page.locator('#proposalBody')).toContainText("Photos taken during the inspection are stamped with the location reported by the technician's phone");
-  await page.locator('#proposalBody').screenshot({path: test.info().outputPath('proposal-privacy.png')});
+  await expect(page.locator('#proposalBody')).toContainText(
+    'When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.',
+  );
+  await expect(page.locator('#proposalBody')).toContainText(
+    "Photos taken during the inspection are stamped with the location reported by the technician's phone",
+  );
+  await page
+    .locator('#proposalBody')
+    .screenshot({ path: test.info().outputPath('proposal-privacy.png') });
 });
 
-test('lookup routes enforce sign-in and company roles before calling the provider', async ({request}) => {
-  await request.post('/__test/workspaces', {data: {enabled: true}});
+test('lookup routes enforce sign-in and company roles before calling the provider', async ({
+  request,
+}) => {
+  await request.post('/__test/workspaces', { data: { enabled: true } });
   await places(request);
   const endpoints = [
-    ['autocomplete', {input: TYPED, session: 'session_token_0001'}],
-    ['details', {place_id: 'ChIJsynthetic_place_id_0001', session: 'session_token_0001'}],
-    ['map', {latitude: 35, longitude: -119}],
+    ['autocomplete', { input: TYPED, session: 'session_token_0001' }],
+    ['details', { place_id: 'ChIJsynthetic_place_id_0001', session: 'session_token_0001' }],
+    ['map', { latitude: 35, longitude: -119 }],
   ];
   for (const role of [null, 'office', 'admin', 'stranger', 'owner', 'estimator', 'other']) {
     for (const [endpoint, data] of endpoints) {
       const response = await request.post('/api/places/' + endpoint, {
-        data, headers: role ? {Authorization: 'Bearer ' + uid(role), 'X-ADR-Workspace-Protocol': '1'} : {},
+        data,
+        headers: role
+          ? { Authorization: 'Bearer ' + uid(role), 'X-ADR-Workspace-Protocol': '1' }
+          : {},
       });
-      expect(response.status()).toBe(role === null ? 401 : ['office', 'admin', 'stranger'].includes(role) ? 403 : 200);
+      expect(response.status()).toBe(
+        role === null ? 401 : ['office', 'admin', 'stranger'].includes(role) ? 403 : 200,
+      );
     }
   }
   expect((await calls(request)).length).toBe(9);
