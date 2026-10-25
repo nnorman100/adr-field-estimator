@@ -22,6 +22,9 @@ class CompanyInspectionStore(InspectionStore):
         super().__init__(db, bucket)
         self.workspaces = WorkspaceStore(self.db, self._atomic)
 
+    def _sync_monitoring(self, inspection_id, log, tx):
+        self.workspaces.monitoring.sync(inspection_id, tx, log=log)
+
     def _access(self, uid, record, action='read', tx=None):
         self.workspaces.job_access(uid, record, action, tx)
 

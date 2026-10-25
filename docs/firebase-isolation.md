@@ -227,3 +227,16 @@ node scripts/verify_live_browser.js --headless --auth-smoke
 This check does not authenticate, create jobs or establish field-device acceptance.
 If the browser closes before sign-in, authenticated verification has not run; restart the
 helper and complete sign-in before changing traffic or Hosting.
+
+## Drying watch rollout
+
+Deploy the `_job_monitoring` indexes in `firestore.indexes.json` separately
+and verify them before enabling the feature:
+
+```bash
+firebase deploy --only firestore:indexes --project alert-disaster-field-2026
+```
+
+No rules or TTL policy change is needed. See [Drying watch](drying-watch.md)
+for feature and owner switches, quotas, retention, preview/backfill behavior
+and evaluation prerequisites.

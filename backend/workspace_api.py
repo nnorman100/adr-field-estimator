@@ -1,6 +1,9 @@
 """Authenticated workspace administration. Invitations and the temporary-password change do not require membership."""
 
-from fastapi import Depends, HTTPException, Request, Security
+import json
+import logging
+
+from fastapi import Depends, HTTPException, Query, Request, Security
 
 try:
     from .workspaces import (
@@ -16,6 +19,12 @@ try:
         PASSWORD_CHANGE_REQUIRED,
     )
     from .delivery import read_delivery, resend_delivery
+    from . import ai_features
+    from .monitoring_store import WatchAction, ReminderRequest
+    from .drying_watch import facts
+    from .drying_summary import DryingSummary, validate_summary, summary_options
+    from .prompts import DRYING_SUMMARY_INSTRUCTIONS
+    from .cloud_log import event
 except ImportError:
     from workspaces import (
         CompanyCreate,
@@ -30,6 +39,12 @@ except ImportError:
         PASSWORD_CHANGE_REQUIRED,
     )
     from delivery import read_delivery, resend_delivery
+    import ai_features
+    from monitoring_store import WatchAction, ReminderRequest
+    from drying_watch import facts
+    from drying_summary import DryingSummary, validate_summary, summary_options
+    from prompts import DRYING_SUMMARY_INSTRUCTIONS
+    from cloud_log import event
 
 
 OWNER_LOGIN_FAILED = 'The owner login could not be created. Try again or contact support.'
@@ -77,6 +92,104 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     # The temporary-password change is the one route a locked account can use.
     live_account = Security(account, scopes=live)
     failure_message = Depends(failure_for)
+
+    def monitoring(store):
+        if not ai_features.enabled('drying_watch') or not getattr(store, 'workspaces', None):
+            raise HTTPException(404, 'Drying watch is not enabled.')
+        return workspace(store).monitoring
+
+    @app.get('/api/companies/{company_id}/drying-watch')
+    async def company_watch(
+        company_id: str,
+        cursor: str | None = Query(default=None, max_length=80),
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        watch = monitoring(store)
+        actor = await stored(workspace(store).company_actor, claims['uid'], company_id)
+        if actor['role'] not in ('owner', 'office'):
+            raise HTTPException(403, 'Use My drying jobs for estimator access.')
+        return await stored(watch.listing, claims['uid'], company_id, False, cursor)
+
+    @app.get('/api/jobs/drying-watch')
+    async def my_watch(
+        cursor: str | None = Query(default=None, max_length=80),
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        return await stored(monitoring(store).listing, claims['uid'], None, False, cursor)
+
+    @app.get('/api/admin/companies/{company_id}/drying-watch')
+    async def support_watch(
+        company_id: str,
+        cursor: str | None = Query(default=None, max_length=80),
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        await stored(workspace(store).support_company, claims['uid'], company_id)
+        return await stored(monitoring(store).listing, claims['uid'], company_id, True, cursor)
+
+    @app.get('/api/jobs/{inspection_id}/drying-watch')
+    async def job_watch(inspection_id: str, claims=live_identity, store=Depends(get_store)):
+        return await stored(monitoring(store).view, claims['uid'], inspection_id)
+
+    @app.post('/api/jobs/{inspection_id}/drying-watch/summary')
+    async def drying_summary(inspection_id: str, claims=live_identity, store=Depends(get_store)):
+        try:
+            from . import main as bm
+        except ImportError:
+            import main as bm
+        watch = monitoring(store)
+        current = await stored(watch.view, claims['uid'], inspection_id)
+        if current.get('summary'):
+            return current
+        await stored(store.quota, claims['uid'], 'drying_summary', 6)
+        pack = facts(current)
+        result = await bm.generate(
+            DryingSummary,
+            DRYING_SUMMARY_INSTRUCTIONS
+            + '\n'
+            + json.dumps(dict(facts=pack, options=summary_options(pack))),
+            bm.AUDIT_MODEL,
+            'drying_watch',
+            inspection_id,
+            thinking_level='LOW',
+            timeout=25,
+        )
+        try:
+            validate_summary(result, pack)
+        except ValueError:
+            event(
+                'Drying summary rejected',
+                logging.ERROR,
+                operation='drying_watch',
+                outcome='invalid',
+                watch_status=current['status'],
+            )
+            raise HTTPException(502, 'Could not write the summary. Retry.') from None
+        await stored(
+            watch.save_summary, claims['uid'], inspection_id, current['facts_hash'], result
+        )
+        return await stored(watch.view, claims['uid'], inspection_id)
+
+    @app.post('/api/jobs/{inspection_id}/drying-watch/state')
+    async def drying_state(
+        inspection_id: str, req: WatchAction, claims=live_identity, store=Depends(get_store)
+    ):
+        watch = monitoring(store)
+        await stored(watch.access, claims['uid'], inspection_id)
+        await stored(store.quota, claims['uid'], 'drying_action', 10)
+        await stored(watch.change, claims['uid'], inspection_id, req)
+        return await stored(watch.view, claims['uid'], inspection_id)
+
+    @app.post('/api/jobs/{inspection_id}/drying-watch/remind')
+    async def drying_remind(
+        inspection_id: str, req: ReminderRequest, claims=live_identity, store=Depends(get_store)
+    ):
+        watch = monitoring(store)
+        await stored(watch.access, claims['uid'], inspection_id, 'coordination')
+        await stored(store.quota, claims['uid'], 'drying_reminder', 6)
+        return await stored(watch.remind, claims['uid'], inspection_id, req)
 
     @app.get('/api/access')
     async def access(claims=Depends(identity), store=Depends(get_store)):

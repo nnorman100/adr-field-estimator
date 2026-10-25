@@ -73,7 +73,7 @@ fi
 UPTIME_NAME='DryScope: API health'
 UPTIME_PATH=/api/health
 UPTIME_BODY=healthy # /api/health answers {"status": "healthy", ...}
-POLICIES=(site-down server-errors vertex-errors live-provider-errors email-send-failed email-delivery-failed email-volume)
+POLICIES=(site-down server-errors vertex-errors live-provider-errors email-send-failed email-delivery-failed drying-reminder-failed drying-summary-failed email-volume)
 
 cat <<EOF
 Project:  $PROJECT (signed in as $ACCOUNT)
@@ -171,6 +171,12 @@ policy email-send-failed 'DryScope: email send failed' \
 policy email-delivery-failed 'DryScope: document email failed' \
   '**What it means:** a document delivery email ended as failed (log line "Delivery entry" with status failed; the line has the delivery ID and recipient role, never an address).\n\n**What to do:** check the Gmail SMTP account and app password and the daily send limit. The entry stays retryable unless the outcome was unconfirmed.' \
   "$(log_condition 'Delivery entry failed' "$CLOUD_RUN AND jsonPayload.operation=\"delivery\" AND jsonPayload.status=\"failed\"")" "$LOG_RATE"
+policy drying-reminder-failed 'DryScope: drying reminder failed' \
+  'A human-approved drying reminder failed. Check the sender and retry only entries marked retryable. Logs contain status and reminder ID only.' \
+  "$(log_condition 'Drying reminder failed' "$CLOUD_RUN AND jsonPayload.operation=\"reminder\" AND jsonPayload.status=\"failed\"")" "$LOG_RATE"
+policy drying-summary-failed 'DryScope: drying summary rejected' \
+  'The drying summary validator refused a model output. Recorded facts remain visible; retry the summary and review the staged evaluation before enabling the feature.' \
+  "$(log_condition 'Drying summary rejected' "$CLOUD_RUN AND jsonPayload.operation=\"drying_watch\" AND jsonPayload.outcome=\"invalid\" AND severity>=ERROR")" "$LOG_RATE"
 policy email-volume 'DryScope: daily email count high' \
   '**What it means:** the service sent more than 400 emails in its 24-hour window, near the Gmail limit.\n\n**What to do:** expect invitations or documents to be refused by Gmail until the window resets. Check for a send loop.' \
   "$(log_condition 'Daily email count passed the warning level' "$CLOUD_RUN AND jsonPayload.operation=\"email\" AND jsonPayload.status=\"daily_warning\"")" "$LOG_RATE"

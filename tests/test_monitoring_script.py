@@ -59,7 +59,7 @@ def preview(tmp_path):
 
 def test_preview_targets_project_service_and_notification_address(preview):
     commands, policies = preview
-    assert len(commands) == 9
+    assert len(commands) == 11
     for command in commands:
         assert command[0] == 'gcloud'
         assert [arg for arg in command if arg.startswith('--project=')] == [f'--project={PROJECT}']
@@ -84,6 +84,8 @@ def test_preview_targets_project_service_and_notification_address(preview):
         'live-provider-errors',
         'email-send-failed',
         'email-delivery-failed',
+        'drying-reminder-failed',
+        'drying-summary-failed',
         'email-volume',
     }
     assert len(creates) == len(policies)
@@ -151,6 +153,17 @@ def matches(filter_text, entry):
     'key,message,fields',
     [
         ('vertex-errors', 'Vertex AI call', {'operation': 'audit'}),
+        ('vertex-errors', 'Vertex AI call', {'operation': 'drying_watch'}),
+        (
+            'drying-reminder-failed',
+            'Drying reminder',
+            {'operation': 'reminder', 'status': 'failed'},
+        ),
+        (
+            'drying-summary-failed',
+            'Drying summary rejected',
+            {'operation': 'drying_watch', 'outcome': 'invalid'},
+        ),
         ('email-send-failed', 'Email send failed', {'operation': 'email', 'status': 'send_failed'}),
         ('email-delivery-failed', 'Delivery entry', {'operation': 'delivery', 'status': 'failed'}),
         ('email-volume', 'Daily email count', {'operation': 'email', 'status': 'daily_warning'}),

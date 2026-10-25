@@ -390,6 +390,7 @@ window.DryingLog = (() => {
       if (gen === dialogGen) closeDialog();
       render();
       say('Reading saved.', 'success');
+      window.DryingWatch?.refresh().catch(() => {});
     } catch (e) {
       if (gen !== dialogGen) return say(e.message, 'error');
       $('readingError').textContent = e.message;
@@ -408,6 +409,7 @@ window.DryingLog = (() => {
       if (!result) return;
       render();
       say('Reading removed.', 'success');
+      window.DryingWatch?.refresh().catch(() => {});
     } catch (e) {
       say(e.message, 'error');
     } finally {

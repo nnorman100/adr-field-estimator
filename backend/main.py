@@ -67,7 +67,7 @@ try:
         ReadingUpload,
         QrTagRequest,
     )
-    from . import places, signing_links
+    from . import places, signing_links, ai_features
     from .delivery import Deliveries
     from . import document_links
     from . import tags as qr_tags
@@ -120,6 +120,7 @@ except ImportError:
         QrTagRequest,
     )
     import places
+    import ai_features
     import signing_links
     from delivery import Deliveries
     import document_links
@@ -182,9 +183,6 @@ LIVE_REPLY_WAIT_SECONDS = 5
 LIVE_VOICE = os.getenv('LIVE_VOICE', 'Charon')
 LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live'
 ORIGINS = list(DOCUMENT_ORIGINS)
-AI_FEATURES = frozenset(
-    x.strip().lower() for x in os.getenv('AI_FEATURES', '').split(',') if x.strip()
-)
 
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED', 'false').lower() == 'true'
 STAFF_EMAILS = {
@@ -565,7 +563,7 @@ def public_record(record, *, readiness_state=None):
         except ValidationError:
             return result
         result['equipment_sizing'] = equipment_sizing(data)
-        if 'readiness' in AI_FEATURES and readiness_state is not None:
+        if ai_features.enabled('readiness') and readiness_state is not None:
             result['readiness'] = readiness_state
     return result
 
@@ -585,7 +583,7 @@ async def saved_readiness(store, uid, record):
 async def draft_record(store, uid, record):
     state = None
     if (
-        'readiness' in AI_FEATURES
+        ai_features.enabled('readiness')
         and 'data' in record
         and 'auth_id' not in record
         and record.get('status') != 'signed'
@@ -788,7 +786,7 @@ async def session_info(staff=Depends(current_staff)):
         live_voice=LIVE_VOICE,
         workspaces_enabled=WORKSPACES_ENABLED,
         workspace_protocol_version=1,
-        ai_features=sorted(AI_FEATURES),
+        ai_features=sorted(ai_features.AI_FEATURES),
     )
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, staff['uid'])
@@ -1737,7 +1735,12 @@ async def support_authorization(
     record, job, delivery = await stored(
         store.support_authorization, staff['uid'], company_id, auth_id
     )
-    return {'authorization': public_record(record), 'job': job, 'delivery': delivery}
+    result = {'authorization': public_record(record), 'job': job, 'delivery': delivery}
+    if ai_features.enabled('drying_watch') and (record.get('inspection') or {}).get('drying_days'):
+        result['monitoring'] = await stored(
+            store.workspaces.monitoring.view, staff['uid'], job['job_id'], company_id
+        )
+    return result
 
 
 @app.get('/api/admin/companies/{company_id}/authorizations/{auth_id}/evidence/{name}')
@@ -1857,7 +1860,7 @@ async def live_walkthrough(socket: WebSocket):
                     claim,
                     record['photos'],
                     readiness_state=(await saved_readiness(store, uid, record))
-                    if 'readiness' in AI_FEATURES
+                    if ai_features.enabled('readiness')
                     else None,
                 ),
                 LIVE_VOICE,
@@ -1892,7 +1895,7 @@ async def live_walkthrough(socket: WebSocket):
                                 claim,
                                 record['photos'],
                                 readiness_state=(await saved_readiness(store, uid, record))
-                                if 'readiness' in AI_FEATURES
+                                if ai_features.enabled('readiness')
                                 else None,
                             ),
                             LIVE_VOICE,
@@ -1950,7 +1953,7 @@ async def live_walkthrough(socket: WebSocket):
                         continue
                     status = shot_status_json(current['data'], current['photos'])
                     parts = [types.Part(text=SHOT_STATUS_UPDATE + status)]
-                    if 'readiness' in AI_FEATURES:
+                    if ai_features.enabled('readiness'):
                         state = await saved_readiness(store, uid, current)
                         parts.append(types.Part(text=READINESS_UPDATE + json.dumps(state)))
                     if replying() or finishing:
