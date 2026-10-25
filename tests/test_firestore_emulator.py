@@ -737,6 +737,7 @@ def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypat
 
     db = client()
     job = 'ADR-INS-' + 'd' * 32
+    db.document('_companies/adr').set({'profile': {'document_delivery': True}})
     db.document('_workspace_jobs/' + job).set(
         dict(job_id=job, company_id='adr', auth_id='auth-' + 'd' * 32, status='signed')
     )
