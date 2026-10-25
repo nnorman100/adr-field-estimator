@@ -52,11 +52,11 @@ def test_unknown_readings_and_untrusted_content_never_fill_anything():
 
 def test_flag_gates_session_and_draft_and_gaps_never_block_signing(context, monkeypatch):
     client, store = context
-    monkeypatch.setattr(bm, 'AI_FEATURES', frozenset())
+    monkeypatch.setattr(bm.ai_features, 'AI_FEATURES', frozenset())
     record = inspect(client)
     assert client.get('/api/session').json()['ai_features'] == []
     assert 'readiness' not in record
-    monkeypatch.setattr(bm, 'AI_FEATURES', frozenset({'readiness'}))
+    monkeypatch.setattr(bm.ai_features, 'AI_FEATURES', frozenset({'readiness'}))
     before = deepcopy(store.db.records)
     read = client.get('/api/inspections/' + ID).json()
     assert client.get('/api/session').json()['ai_features'] == ['readiness']
@@ -71,7 +71,7 @@ def test_flag_gates_session_and_draft_and_gaps_never_block_signing(context, monk
 
 def test_readiness_uses_saved_claim_and_readings_with_job_access(api, monkeypatch):
     client, actor, store = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', frozenset({'readiness'}))
+    monkeypatch.setattr(bm.ai_features, 'AI_FEATURES', frozenset({'readiness'}))
     store.create_inspection('estimator', ID, data())
     job = store.db.records['_workspace_jobs/' + ID]
     job['claim'] = {'carrier': 'Private Carrier'}
@@ -113,7 +113,7 @@ def test_live_readiness_after_claim_and_reading_saves_waits_for_reply(api, monke
     from backend.prompts import READINESS_UPDATE
 
     client, actor, store = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', frozenset({'readiness'}))
+    monkeypatch.setattr(bm.ai_features, 'AI_FEATURES', frozenset({'readiness'}))
     store.create_inspection('owner', ID, data())
 
     async def identity(token, **_):

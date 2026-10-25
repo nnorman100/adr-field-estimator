@@ -2,7 +2,9 @@
 
 import os
 
-AI_FEATURES = frozenset(filter(None, (v.strip() for v in os.getenv('AI_FEATURES', '').split(','))))
+AI_FEATURES = frozenset(
+    filter(None, (v.strip().lower() for v in os.getenv('AI_FEATURES', '').split(',')))
+)
 
 
 def enabled(feature):

@@ -13,7 +13,7 @@ from backend.drying_summary import DryingSummary, validate_summary
 from backend.monitoring_store import ReminderRequest, WatchAction
 from backend.inspection_store import Conflict, Limited, DAILY_LIMITS
 from backend.workspaces import CoordinationUpdate, UnconfirmedDelivery, AccessDenied
-from tests.test_workspaces import store, api, ID, signed_job
+from tests.test_workspaces import store, api, ID, signed_job, data
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / 'tests/fixtures/drying-watch'
@@ -112,6 +112,24 @@ def test_read_roles_and_feature_gate(watched, monkeypatch, uid, expected):
     monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset())
     assert client.get(f'/api/jobs/{ID}/drying-watch').status_code == 404
     assert client.get('/api/session').json().get('ai_features') == [] if uid != 'admin' else True
+
+
+@pytest.mark.parametrize(
+    'companions', [set(), {'readiness'}, {'readiness', 'job_summary', 'ai_usage'}]
+)
+def test_shared_feature_flags_preserve_drying_watch_and_readiness(watched, monkeypatch, companions):
+    client, actor, store, watch = watched
+    actor['uid'] = 'owner'
+    features = companions | {'drying_watch'}
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset(features))
+    assert client.get('/api/session').json()['ai_features'] == sorted(features)
+    assert client.get(f'/api/jobs/{ID}/drying-watch').status_code == 200
+    draft_id = 'ADR-INS-' + 'c' * 32
+    store.create_inspection('owner', draft_id, data())
+    draft = client.get('/api/inspections/' + draft_id)
+    assert draft.status_code == 200
+    assert ('readiness' in draft.json()) == ('readiness' in companions)
+    assert 'readiness' not in client.get('/api/inspections/' + ID).json()
 
 
 def test_lists_are_company_scoped_and_support_is_read_only(watched):

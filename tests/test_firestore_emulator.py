@@ -771,7 +771,6 @@ def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypat
         assert browser_request('GET', path, browser_token('owner')) == 403, path
 
 
-<<<<<<< HEAD
 def test_readiness_derives_from_existing_log_without_source_writes():
     from backend.readiness import readiness
 
@@ -801,7 +800,8 @@ def test_readiness_derives_from_existing_log_without_source_writes():
     assert not stored(store.db, '_limits/owner')
     with pytest.raises((PermissionError, LookupError)):
         store.drying_log('other', ID)
-=======
+
+
 def test_monitoring_reading_assignment_transactions_reminder_reservation_and_retention(monkeypatch):
     from backend import ai_features, monitoring_store
     from backend.monitoring_store import ReminderRequest
@@ -910,4 +910,3 @@ def test_monitoring_sidecar_failure_rolls_back_reading(monkeypatch):
         )
     assert stored(store.db, 'drying_logs/' + ID) is None
     assert stored(store.db, '_job_monitoring/' + ID) is None
->>>>>>> 6d10f99 (Add gated drying watch for signed jobs)

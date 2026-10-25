@@ -2874,7 +2874,6 @@ footer {
   }
 }
 
-<<<<<<< HEAD
 /* Readiness is advisory and works on the narrowest field phones. */
 #readinessDialog {
   max-height: 85dvh;
@@ -2896,7 +2895,8 @@ footer {
     align-items: flex-start;
     flex-direction: column;
   }
-=======
+}
+
 /* Drying watch: wrap measurements and recipient addresses on the narrowest field phones. */
 .drying-watch-card,
 .watch-row,
@@ -2937,5 +2937,4 @@ footer {
 .watch-row {
   padding-block: 1rem;
   border-bottom: 1px solid #d7e0e8;
->>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
 }

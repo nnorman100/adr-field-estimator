@@ -2623,7 +2623,6 @@ function openHelp() {
     : 'How to use the field estimator. Sign in to see the topics for your role first.';
   helpTopics ??= [...document.querySelectorAll('#helpDialog [data-help-roles]')];
   for (const topic of helpTopics) {
-<<<<<<< HEAD
     if (topic.dataset.helpTopic === 'readiness') {
       topic.hidden =
         !state.session?.ai_features?.includes('readiness') ||
@@ -2632,11 +2631,10 @@ function openHelp() {
         topic.remove();
         continue;
       }
-=======
+    }
     if (topic.dataset.helpTopic === 'drying-watch' && !window.DryingWatch?.enabled()) {
       topic.remove();
       continue;
->>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
     }
     const yours = topic.dataset.helpRoles.split(' ').some((role) => roles.includes(role));
     $(yours ? 'helpYours' : 'helpOther').append(topic);

@@ -283,11 +283,7 @@ async def password_claims(uid: str):
 async def workspaces_fixture(request: Request):
     global store, accounts
     body = await request.json()
-<<<<<<< HEAD
-    bm.AI_FEATURES = frozenset(body.get('ai_features', []))
-=======
     ai_features.AI_FEATURES = frozenset(body.get('ai_features', []))
->>>>>>> 6d10f99 (Add gated drying watch for signed jobs)
     if not body.get('enabled'):
         store = legacy_store
         bm.WORKSPACES_ENABLED = False
