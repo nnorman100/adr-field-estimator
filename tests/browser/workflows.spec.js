@@ -155,7 +155,12 @@ test('AI notes stay out of the proposal and the technician signs after the propo
     );
   await page.locator('#documentsConfirmed').check();
   await draw(page);
+  await expect(page.locator('#emailCopy')).toBeChecked();
+  const posted = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().includes('/api/authorize'),
+  );
   await page.locator('#authorizeJob').click();
+  expect((await posted).postDataJSON().email_copy).toBe(true);
   await expect(page.locator('#saveStatus')).toHaveText('Signed');
 });
 
@@ -326,13 +331,20 @@ test('failed audit stays unsigned and failed save keeps retry reference', async 
   await expect(page.locator('#documents')).toBeVisible();
   await page.locator('#documentsConfirmed').check();
   await draw(page);
+  const choices = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/authorize')
+      choices.push(request.postDataJSON().email_copy);
+  });
   await fault(page, { authorize: 1 });
   await page.locator('#authorizeJob').click();
   await expect(page.locator('#authorizationStatus')).toContainText('Save not confirmed');
+  await page.locator('#emailCopy').uncheck();
   await page.locator('#authorizeJob').click();
   await expect(page.locator('#saveStatus')).toHaveText('Signed');
   const { references } = await fault(page, {});
   expect(references[0]).toBe(references[1]);
+  expect(choices).toEqual([true, false]);
 });
 async function fault(page, faults) {
   return page.evaluate(

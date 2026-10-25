@@ -505,33 +505,25 @@ def test_signing_queues_crew_after_receipt_without_sending(
             documents_confirmed=True,
         )
         submit = lambda: client.post('/api/authorize', json=payload)
-    original_queue = Deliveries.queue
+    from tests.fakes import Tx
+
+    original_create = Tx.create
     if queue_error:
 
-        def unavailable(self, job_id, skipped):
-            job = store.db.records['_workspace_jobs/' + job_id]
-            assert 'authorizations/' + job['auth_id'] in store.db.records
-            raise RuntimeError('Synthetic delivery outage')
+        def unavailable(tx, ref, value):
+            if ref.key.startswith('_job_deliveries/'):
+                raise RuntimeError('Synthetic delivery outage')
+            return original_create(tx, ref, value)
 
-        monkeypatch.setattr(Deliveries, 'queue', unavailable)
+        monkeypatch.setattr(Tx, 'create', unavailable)
+        response = submit()
+        assert response.status_code == 503
+        assert not any(key.startswith('authorizations/') for key in store.db.records)
+        assert not store.db.records['_workspace_jobs/' + ID].get('auth_id')
+        assert '_job_deliveries/' + ID not in store.db.records
+        monkeypatch.setattr(Tx, 'create', original_create)
     response = submit()
     assert response.status_code == 200, response.text
-    if queue_error:
-        assert response.json()['status'] == 'success'
-        assert response.json()['delivery_error'] == (
-            'Your agreement is saved, but document delivery could not be queued.'
-        )
-        assert 'authorizations/' + response.json()['auth_id'] in store.db.records
-        assert store.db.records['_workspace_jobs/' + ID]['status'] == 'signed'
-        assert '_job_deliveries/' + ID not in store.db.records
-        repeated = submit()
-        assert repeated.status_code == 200 and repeated.json() == response.json()
-        monkeypatch.setattr(Deliveries, 'queue', original_queue)
-        recovered = submit()
-        assert recovered.status_code == 200 and recovered.json()['delivery_error'] is None
-        assert recovered.json()['auth_id'] == response.json()['auth_id']
-    else:
-        assert response.json()['delivery_error'] is None
     queued = deepcopy(store.db.records['_job_deliveries/' + ID])
     assert queued['auth_id'] == response.json()['auth_id']
     assert 'authorizations/' + queued['auth_id'] in store.db.records

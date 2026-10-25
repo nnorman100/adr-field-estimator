@@ -646,6 +646,7 @@ function invalidate() {
   stopHomeownerLink();
   document.body.classList.remove('has-documents');
   $('documentsConfirmed').checked = false;
+  $('emailCopy').checked = true;
   $('documents').hidden = true;
   $('reviewEmpty').hidden = false;
   clearSignature();
@@ -663,6 +664,7 @@ function clearDisplayedInspection() {
   clearSigningError('documentsConfirmedError');
   $('inspectionForm').before($('validationFeedback'));
   $('inspectionForm').reset();
+  $('emailCopy').checked = true;
   $('scopeConfirmNotice').hidden = true;
   $('coordinationForm').reset();
   $('claimForm').reset();
@@ -3033,6 +3035,7 @@ async function authorize() {
     signature_png: state.signature,
     documents_confirmed: true,
   };
+  payload.email_copy = $('emailCopy').checked;
   state.pendingAuthorization = payload;
   $('authorizeJob').disabled = true;
   $('authorizationStatus').textContent = 'Saving signed agreement…';

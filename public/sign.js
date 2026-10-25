@@ -315,6 +315,7 @@
       consent_version: page.view.consent.version,
       signature_png: page.signature,
     };
+    body.email_copy = $('emailCopy').checked;
     page.pending = body;
     $('submitSignature').disabled = true;
     status('Saving your signature…');

@@ -6,10 +6,12 @@ import re
 from google.cloud import firestore
 
 try:
+    from .delivery import Deliveries, homeowner_skips, skip_reasons
     from .cloud_log import event
     from .inspection_store import InspectionStore, Conflict
     from .workspaces import WorkspaceStore, AccessDenied
 except ImportError:
+    from delivery import Deliveries, homeowner_skips, skip_reasons
     from cloud_log import event
     from inspection_store import InspectionStore, Conflict
     from workspaces import WorkspaceStore, AccessDenied
@@ -46,6 +48,13 @@ class CompanyInspectionStore(InspectionStore):
 
     def _commit_authorization(self, uid, record, body, tx):
         job, actor = self.workspaces.job_access(uid, record, 'sign', tx)
+        company = self.workspaces.read('_companies', job['company_id'], tx)
+        skipped = skip_reasons(company, homeowner_skips(job, body))
+        deliveries = Deliveries(self.workspaces)
+        tx.create(
+            deliveries.ref(job['job_id']),
+            deliveries.record({**job, 'auth_id': body['auth_id']}, skipped),
+        )
         tx.create(
             self.workspaces.ref('_workspace_authorizations', body['auth_id']),
             {'job_id': job['job_id'], 'company_id': actor['company_id']},

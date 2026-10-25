@@ -119,7 +119,12 @@ test('signing help requires company delivery and an adjuster email and says noth
     'When the company delivery switch is on and the claim details include an adjuster email, DryScope emails that adjuster a private link to the itemized claim, the scope defense letter and the scope-code JSON.',
   );
   await expect(topic).toContainText('Nothing is attached.');
-  await expect(topic).toContainText('The homeowner is not emailed and no text is sent.');
+  await expect(topic).toContainText('Email me a copy of my signed documents.');
+  await expect(topic).toContainText(
+    'Leave it checked to email the signed proposal and photo log to the customer email saved on the job.',
+  );
+  await expect(topic).toContainText('Uncheck it to skip that email.');
+  await expect(topic).toContainText('The app sends no text.');
 });
 
 test('signed-out screen says what the app is for before sign-in', async ({ page }) => {

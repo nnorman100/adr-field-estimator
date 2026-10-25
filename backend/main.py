@@ -90,7 +90,7 @@ try:
         AUDIO_ACK_EVERY,
     )
     from .company_store import CompanyInspectionStore
-    from .delivery import DOCUMENT_ORIGINS, adjuster_recipient, deliver_signed_adjuster
+    from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
@@ -142,7 +142,7 @@ except ImportError:
         AUDIO_ACK_EVERY,
     )
     from company_store import CompanyInspectionStore
-    from delivery import DOCUMENT_ORIGINS, adjuster_recipient, deliver_signed_adjuster
+    from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
@@ -1218,24 +1218,6 @@ async def audit_inspection(
     return public_record(saved)
 
 
-async def queue_signed_delivery(store, record, origin):
-    if WORKSPACES_ENABLED and record.get('inspection_id'):
-        try:
-            _, reason = adjuster_recipient(record.get('documents') or {})
-            skipped = {'homeowner': 'Homeowner email is not switched on.'}
-            if reason:
-                skipped['adjuster'] = reason
-            await stored(
-                Deliveries(store.workspaces).queue,
-                record['inspection_id'],
-                skipped,
-            )
-            await stored(deliver_signed_adjuster, store, record, origin)
-        except Exception:
-            return 'Your agreement is saved, but document delivery could not be queued.'
-    return None
-
-
 @app.post('/api/authorize')
 async def authorize_estimate(
     request: Request,
@@ -1288,15 +1270,43 @@ async def authorize_estimate(
                 422,
                 'Signing requires the current inspection revision, proposal hash, document confirmation and PNG signature.',
             )
-        record = await stored(store.authorize, staff['uid'], req.model_dump(mode='json'))
-    delivery_error = await queue_signed_delivery(store, record, document_origin(request))
+        # The checkbox is stored with the signature, not in the hashed agreement, so a client that
+        # does not send it still retries an agreement it already saved.
+        payload = req.model_dump(mode='json')
+        choice = payload.pop('email_copy', None)
+        record = await stored(
+            store.authorize,
+            staff['uid'],
+            payload,
+            None if choice is None else {'email_copy': choice},
+        )
+    await email_signed_copy(store, record, request)
+    await stored(deliver_signed_adjuster, store, record, document_origin(request))
     return dict(
-        delivery_error=delivery_error,
         status='success',
         auth_id=record['auth_id'],
         timestamp=record['created_at'],
         message='Signed agreement and private evidence saved.',
     )
+
+
+async def email_signed_copy(store, record, request):
+    """After the receipt is durable. A send failure is recorded on the delivery entry and the
+    signature response still succeeds. Agreements signed before the checkbox are left alone."""
+    if not WORKSPACES_ENABLED or not isinstance(record, dict) or 'email_copy' not in record:
+        return
+    origin = request.headers.get('origin')
+    if origin not in ORIGINS:
+        origin = ORIGINS[0]
+    try:
+        await run_in_threadpool(deliver_homeowner, store, record, origin)
+    except Exception:
+        event(
+            'Delivery entry',
+            operation='delivery',
+            recipient_role='homeowner',
+            status='failed',
+        )
 
 
 # A homeowner signing link's single credential; it never goes in Authorization or the URL path.
@@ -1504,9 +1514,9 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
             user_agent=request.headers.get('user-agent', '')[:512],
         ),
     )
-    delivery_error = await queue_signed_delivery(store, record, document_origin(request))
+    await email_signed_copy(store, record, request)
+    await stored(deliver_signed_adjuster, store, record, document_origin(request))
     return dict(
-        delivery_error=delivery_error,
         status='success',
         auth_id=record['auth_id'],
         timestamp=record['created_at'],
@@ -1514,8 +1524,8 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
     )
 
 
-# Read-only document links: one signed agreement, one document set, no signing. Signing mints the
-# adjuster's link when it emails one (delivery.deliver_signed_adjuster). Nothing else creates one.
+# Read-only document links: one signed agreement, one document set, no signing. The homeowner
+# and adjuster emails mint their own sets after signing; no route creates a link on request.
 @app.get('/api/documents')
 async def document_link_view(request: Request, store=Depends(get_job_store)):
     token = await document_link(request, store)

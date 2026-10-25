@@ -1,7 +1,7 @@
 """Delivery of the signed paperwork. Each job has one delivery sidecar, beside its coordination record
 and never inside the signed agreement, with one entry per recipient role. A durable signature queues
 one record and sends the adjuster a private link when the signed claim details include an adjuster
-email. Crew-lead mail is queued; homeowner mail stays skipped until its own step. Nothing scans older jobs."""
+email. Crew-lead mail is queued; homeowner mail is sent when requested. Nothing scans older jobs."""
 
 import html
 import time
@@ -41,10 +41,6 @@ except ImportError:
     )
 
 RECIPIENTS = ('homeowner', 'adjuster', 'crew_lead')
-# Later steps replace these. A skipped entry is never sent, so they are decided once, at queue time.
-NOT_SWITCHED_ON = {
-    'homeowner': 'Homeowner email is not switched on.',
-}
 NO_ADJUSTER_EMAIL = 'No adjuster email.'
 INVALID_ADJUSTER_EMAIL = 'The adjuster email is not a valid address.'
 # Same hosts as main.ORIGINS. A request Origin outside this list never becomes a link.
@@ -56,6 +52,8 @@ DOCUMENT_ORIGINS = (
 # concurrent retry never opens a second Gmail session for an attempt still in flight.
 RESERVATION_SECONDS = 30
 FAILED = 'The email could not be sent. A retry sends it again.'
+NOT_ASKED = 'The homeowner did not ask for an emailed copy.'
+NO_CUSTOMER_EMAIL = 'No customer email is saved on the job.'
 # Gmail does not deduplicate, so an attempt that never recorded its outcome is not sent again.
 UNCONFIRMED = (
     'Sending stopped before it was confirmed, so the email may have arrived. '
@@ -151,26 +149,7 @@ class Deliveries:
             if not job or not job.get('auth_id'):
                 raise LookupError('Signed job not found.')
             company = self.w.read('_companies', job['company_id'], tx)
-            reasons = skip_reasons(company, skipped)
-            record = dict(
-                delivery_id=uuid4().hex,
-                job_id=job_id,
-                auth_id=job['auth_id'],
-                company_id=job['company_id'],
-                created_at=now(),
-                entries={
-                    role: dict(
-                        status='skipped' if role in reasons else 'queued',
-                        reason=reasons.get(role, ''),
-                        retryable=False,
-                        attempt='',
-                        send_started=0,
-                        message_id=None,
-                        updated_at=now(),
-                    )
-                    for role in RECIPIENTS
-                },
-            )
+            record = self.record(job, skip_reasons(company, skipped))
             tx.create(self.ref(job_id), record)
             return record, True
 
@@ -178,6 +157,29 @@ class Deliveries:
         if created:
             for role in RECIPIENTS:
                 logged(record, role)
+        return record
+
+    @staticmethod
+    def record(job, skipped):
+        record = dict(
+            delivery_id=uuid4().hex,
+            job_id=job['job_id'],
+            auth_id=job['auth_id'],
+            company_id=job['company_id'],
+            created_at=now(),
+            entries={
+                role: dict(
+                    status='skipped' if role in skipped else 'queued',
+                    reason=skipped.get(role, ''),
+                    retryable=False,
+                    attempt='',
+                    send_started=0,
+                    message_id=None,
+                    updated_at=now(),
+                )
+                for role in RECIPIENTS
+            },
+        )
         return record
 
     def send(self, job_id, compose, roles=RECIPIENTS):
@@ -258,7 +260,7 @@ class Deliveries:
     def _deliver_adjuster(self, store, agreement, origin):
         documents = agreement.get('documents') or {}
         recipient, reason = adjuster_recipient(documents)
-        skipped = dict(NOT_SWITCHED_ON)
+        skipped = {'homeowner': 'Homeowner email is not switched on.'}
         if reason:
             skipped['adjuster'] = reason
         record = self.queue(agreement['inspection_id'], skipped)
@@ -316,6 +318,65 @@ class Deliveries:
         entry.update(status='sending', attempt=attempt, send_started=time.time(), updated_at=now())
         tx.set(self.ref(job_id), record)
         return record, attempt, False
+
+
+def homeowner_skips(job, record):
+    skipped = {}
+    _recipient, reason = adjuster_recipient(record.get('documents') or {})
+    if reason:
+        skipped['adjuster'] = reason
+    if 'email_copy' not in record:
+        skipped['homeowner'] = 'Homeowner email is not switched on.'
+    elif not record['email_copy']:
+        skipped['homeowner'] = NOT_ASKED
+    else:
+        try:
+            email_address(job.get('customer_email') or '')
+        except ValueError:
+            skipped['homeowner'] = NO_CUSTOMER_EMAIL
+    return skipped
+
+
+def deliver_homeowner(store, record, origin):
+    """Send the homeowner's private document link.
+
+    The choice recorded on the signature wins: True sends when customer_email is a real address,
+    False or a missing address skips with a reason, and a signature with no choice (signed before
+    the checkbox) is left alone. Other recipient entries are handled separately. Sending is idempotent
+    through Deliveries.send. A send failure is stored
+    on the entry and does not propagate."""
+    if (
+        not isinstance(record, dict)
+        or 'email_copy' not in record
+        or not hasattr(store, 'workspaces')
+    ):
+        return None
+    job = store.workspaces.job_for(record)
+    deliveries = Deliveries(store.workspaces)
+    queued = store.workspaces.read('_job_deliveries', job['job_id'])
+    if queued['entries']['homeowner']['status'] == 'skipped':
+        return queued
+    to = email_address(job.get('customer_email') or '')
+    company = store.workspaces.company_actor(record['owner_uid'])['company']
+    name = company['profile']['name']
+
+    def compose(role, _delivery):
+        token, _expires = document_links.mint(
+            store, record['owner_uid'], record['auth_id'], 'homeowner'
+        )
+        url = origin + '/documents#' + token
+        return delivery_email(
+            company,
+            to,
+            'Your signed documents from ' + name,
+            [
+                'Your signed proposal and photo log are ready.',
+                'Open them with the private link below. Nothing is attached.',
+            ],
+            [('View your signed documents', url)],
+        )
+
+    return deliveries.send(job['job_id'], compose, roles=('homeowner',))
 
 
 def logged(record, role):
