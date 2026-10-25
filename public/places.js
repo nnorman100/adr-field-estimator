@@ -12,6 +12,8 @@ window.PlacesUI = (() => {
     run = 0,
     timer = null,
     off = false,
+    pausedUntil = 0,
+    retryTimer = null,
     items = [],
     highlighted = -1,
     shownFor = null;
@@ -25,7 +27,7 @@ window.PlacesUI = (() => {
   }
   // Suggestions only help a technician who can edit this draft, with a connection, until the
   // server says the feature is unavailable.
-  const active = () => canEditDraft('places') && navigator.onLine && !off;
+  const active = () => canEditDraft('places') && navigator.onLine && !off && Date.now() >= pausedUntil;
   const placed = () => {
     const data = state.draft?.data;
     return data?.coordinates && data.coordinates.address === data.address ? data.coordinates : null;
@@ -73,12 +75,20 @@ window.PlacesUI = (() => {
     say(error.message, 'error');
   }
 
-  // The server said no key, no permission or a spent daily cap: stay a plain text box.
   function failed(error) {
     hide();
     if (error.status === 429)
       setHint('Address suggestions are paused for now. Keep typing the address.');
-    if ([403, 429, 502, 503].includes(error.status)) off = true;
+    if ([403, 503].includes(error.status)) off = true;
+    if ([429, 502].includes(error.status)) {
+      const seconds = Number(error.retryAfter);
+      pausedUntil = Math.max(
+        pausedUntil,
+        Date.now() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 1) * 1000,
+      );
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(resume, pausedUntil - Date.now());
+    }
   }
   function typed() {
     clearTimeout(timer);
@@ -156,7 +166,7 @@ window.PlacesUI = (() => {
       remember(key, URL.createObjectURL(await response.blob()));
       fetches.delete(key);
     } catch (error) {
-      if ([403, 429, 502, 503].includes(error.status)) off = true;
+      failed(error);
       fetches.set(key, 'failed');
     }
     render();
@@ -198,12 +208,18 @@ window.PlacesUI = (() => {
       image.src = images.get(key);
       image.hidden = false;
       status.hidden = true;
-    } else if (off || fetches.get(key) === 'failed') {
+    } else if (off || Date.now() < pausedUntil || fetches.get(key) === 'failed') {
       status.textContent = 'Map unavailable offline';
     } else {
       status.textContent = 'Loading map…';
       if (!fetches.has(key)) loadMap(coordinates);
     }
+  }
+  function resume() {
+    if (Date.now() < pausedUntil) return;
+    for (const [key, status] of fetches) if (status === 'failed') fetches.delete(key);
+    render();
+    typed();
   }
   function init() {
     field().setAttribute('role', 'combobox');
@@ -213,10 +229,7 @@ window.PlacesUI = (() => {
     field().addEventListener('input', typed);
     field().addEventListener('keydown', keys);
     field().addEventListener('blur', () => setTimeout(hide, 150));
-    window.addEventListener('online', () => {
-      for (const [key, status] of fetches) if (status === 'failed') fetches.delete(key);
-      render();
-    });
+    window.addEventListener('online', resume);
     window.addEventListener('offline', () => {
       hide();
       render();
