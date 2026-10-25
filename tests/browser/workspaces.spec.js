@@ -528,11 +528,19 @@ test('the owner sets the crew-lead email and delivery switch', async ({ page }) 
   await expect(page.locator('#message')).toContainText('Company details saved');
   await expect(form.locator('input[name=crew_lead_email]')).toHaveValue('lead@example.invalid');
   await expect(form.locator('input[name=document_delivery]')).toBeChecked();
+  await page.screenshot({
+    path: test.info().outputPath('crew-delivery-settings.png'),
+    fullPage: true,
+  });
   await page.context().setOffline(true);
   const save = page.getByRole('button', { name: /Save company details/ });
   await expect(save).toBeDisabled();
   await expect(save).toHaveText('Save company details (needs a connection)');
   await expect(form.locator('input[name=crew_lead_email]')).toBeDisabled();
+  await page.screenshot({
+    path: test.info().outputPath('crew-delivery-offline.png'),
+    fullPage: true,
+  });
   await page.context().setOffline(false);
   await navigate(page, 'dashboardJobs');
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
