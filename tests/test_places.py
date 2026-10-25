@@ -310,6 +310,21 @@ def test_coordinates_save_with_the_draft_and_older_drafts_keep_their_shape(conte
     assert again.status_code == 200 and 'coordinates' not in again.json()['data']
 
 
+def test_new_manual_location_marker_survives_save_and_reload(context):
+    client, _ = context
+    record = inspect(client)
+    saved = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': record['revision'], 'data': data(coordinates=None)},
+    )
+    assert saved.status_code == 200
+    assert 'coordinates' in saved.json()['data']
+    assert saved.json()['data']['coordinates'] is None
+    reopened = client.get('/api/inspections/' + ID).json()
+    assert 'coordinates' in reopened['data']
+    assert reopened['data']['coordinates'] is None
+
+
 @pytest.mark.parametrize(
     'changes',
     [

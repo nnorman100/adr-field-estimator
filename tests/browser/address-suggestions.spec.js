@@ -90,7 +90,7 @@ test('editing the address after choosing drops the saved location', async ({ pag
   await page.locator('#yearBuilt').fill('1998');
   await saveDraft(page);
   await expect.poll(async () => (await saved(page))?.address).toBe(FULL + ' Unit 2');
-  expect('coordinates' in (await saved(page))).toBe(false);
+  expect((await saved(page)).coordinates).toBeNull();
 });
 
 test('arrow keys and Enter choose a suggestion; Escape closes the list', async ({

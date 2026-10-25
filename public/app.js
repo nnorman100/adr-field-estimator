@@ -1500,7 +1500,7 @@ function collect() {
     data[key] = el.type === 'number' ? (el.value === '' ? null : Number(el.value)) : el.value;
   }
   // Coordinates describe the address they were chosen for; editing the text drops them.
-  if (data.coordinates && data.coordinates.address !== data.address) delete data.coordinates;
+  if (data.coordinates && data.coordinates.address !== data.address) data.coordinates = null;
   // The sizing check's rating stays absent until stated, so older drafts keep their saved shape.
   const rating = $('dehumidifierPpd').value;
   if (rating === '' || !(Number(rating) > 0)) delete data.dehumidifier_ppd;
@@ -2413,7 +2413,7 @@ async function openNew(data = null, photos = []) {
   state.photoUrls.clear();
   state.draft = {
     inspection_id: 'ADR-INS-' + newId(),
-    data: structuredClone(data),
+    data: { ...structuredClone(data), coordinates: data.coordinates ?? null },
     photos: structuredClone(photos),
   };
   confirmedAuthorization = null;

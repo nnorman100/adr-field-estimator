@@ -799,7 +799,7 @@ def inspection_payload(data):
                 room.pop(key, None)
     if not result.get('equipment_scans'):
         result.pop('equipment_scans', None)
-    if result.get('coordinates') is None:
+    if result.get('coordinates') is None and 'coordinates' not in data.model_fields_set:
         result.pop('coordinates', None)
     return result
 

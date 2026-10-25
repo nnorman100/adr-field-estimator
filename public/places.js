@@ -89,6 +89,7 @@ window.PlacesUI = (() => {
       clearTimeout(retryTimer);
       retryTimer = setTimeout(resume, pausedUntil - Date.now());
     }
+    render();
   }
   function typed() {
     clearTimeout(timer);
@@ -199,7 +200,17 @@ window.PlacesUI = (() => {
     // A job saved before coordinates existed, or a role without lookup access, has no map.
     const mapped = !!coordinates && (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('places'));
     image.hidden = status.hidden = true;
-    if (!mapped) return;
+    if (!mapped) {
+      if (
+        Object.hasOwn(data, 'coordinates') &&
+        (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('places')) &&
+        (!navigator.onLine || off)
+      ) {
+        status.hidden = false;
+        status.textContent = 'Map unavailable offline';
+      }
+      return;
+    }
     status.hidden = false;
     const key = coordKey(coordinates);
     if (!navigator.onLine) {

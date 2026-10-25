@@ -103,3 +103,25 @@ for (const endpoint of ['autocomplete', 'details', 'map']) {
     });
   }
 }
+
+for (const legacy of [false, true]) {
+  for (const offline of [false, true]) {
+    test(`coordinate-free ${legacy ? 'older' : 'new'} job ${offline ? 'offline' : 'keyless'}`, async () => {
+      const h = harness('autocomplete', 503);
+      if (!legacy) h.context.state.draft.data.coordinates = null;
+      h.context.PlacesUI.render();
+      if (offline) {
+        h.context.navigator.onLine = false;
+        h.events.offline();
+      } else {
+        h.get('address').input();
+        await h.advance(350);
+      }
+      assert.equal(h.get('jobMapStatus').hidden, legacy);
+      if (!legacy) assert.equal(h.get('jobMapStatus').textContent, 'Map unavailable offline');
+      assert.equal(h.get('jobMapImage').hidden, true);
+      assert.match(h.get('jobDirections').href, /destination=Test%20address$/);
+      assert.equal(h.get('jobMap').hidden, false);
+    });
+  }
+}
