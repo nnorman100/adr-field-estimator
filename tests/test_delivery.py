@@ -218,6 +218,7 @@ def test_invitations_and_deliveries_share_the_daily_count_and_warn_past_400(send
     ).json()
     assert invited['delivery_status'] == 'sent'
     assert not client.get('/api/access').json()['email_notice']
+    assert not client.get('/api/session').json()['email_notice']
     deliveries.queue(ID, {'adjuster': 'Skipped.', 'crew_lead': 'Skipped.'})
     deliveries.send(ID, compose)
     assert store.db.records['_email_counts/daily']['sent']['count'] == 401
@@ -243,6 +244,7 @@ def test_invitations_and_deliveries_share_the_daily_count_and_warn_past_400(send
     ]:
         current['uid'] = uid
         assert client.get('/api/access').json()['email_notice'] is notice
+        assert client.get('/api/session').json()['email_notice'] is notice
     # A day after the count started, the notice clears and counting starts again.
     store.db.records['_email_counts/daily']['sent']['start'] -= 86400
     assert not store.workspaces.email_notice()

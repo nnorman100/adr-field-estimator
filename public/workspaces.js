@@ -308,12 +308,15 @@ window.WorkspaceUI = (() => {
         invalidate();
         clearDisplayedInspection();
       }
+      const noticeChanged = !!state.session.email_notice !== !!access.email_notice;
       state.session = { ...state.session, ...access };
       state.queuePaused = !access.role;
       await ready();
       if (previous !== next) {
         say('Your company access changed. Local drafts are retained for authorized recovery.');
         await landing();
+      } else if (noticeChanged && $('dashboardHome').getAttribute('aria-current') === 'page') {
+        await home();
       } else if (!claim && state.draft?.inspection_id && !$('claimDetails').hidden)
         // A job started offline has claim details once its first save reaches the server.
         await loadClaim();

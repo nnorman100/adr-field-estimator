@@ -758,6 +758,9 @@ async def session_info(staff=Depends(current_staff)):
         if actor['password_change_required']:
             raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
         result.update(actor)
+        result['email_notice'] = actor['role'] == 'owner' and await stored(
+            get_job_store().workspaces.email_notice
+        )
     return result
 
 

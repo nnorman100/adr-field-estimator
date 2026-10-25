@@ -553,6 +553,12 @@ test('owners alone see the notice once the day passes 400 emails', async ({ page
     'DryScope has sent more than 400 emails today, close to its daily limit of about 500. ' +
       'Invitations may not send until tomorrow; resend any that fail then.',
   );
+  await request.post('/__test/workspaces', { data: { enabled: true, emails_today: 400 } });
+  await page.evaluate(() => WorkspaceUI.refresh());
+  await expect(notice).toHaveCount(0);
+  await request.post('/__test/workspaces', { data: { enabled: true, emails_today: 401 } });
+  await page.evaluate(() => WorkspaceUI.refresh());
+  await expect(notice).toBeVisible();
   await start(page, 'office');
   await expect(page.locator('#dashboardContent .dashboard-card').first()).toBeVisible();
   await expect(notice).toHaveCount(0);
