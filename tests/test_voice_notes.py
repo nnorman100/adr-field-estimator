@@ -218,6 +218,6 @@ def test_voice_notes_have_a_daily_cap_and_a_per_minute_limit(context, monkeypatc
     limited = send(client, note(note_id='c' * 32))
     assert limited.status_code == 429 and limited.headers['Retry-After']
     # Quota leaves the note pending so the phone can retry. It is not a failed transcription.
-    assert [row for row in store.get_inspection('owner', ID)['voice_notes'] if row['id'] == 'c' * 32] == [
-        {'id': 'c' * 32, 'status': 'pending', 'reviewed': False}
-    ]
+    assert [
+        row for row in store.get_inspection('owner', ID)['voice_notes'] if row['id'] == 'c' * 32
+    ] == [{'id': 'c' * 32, 'status': 'pending', 'reviewed': False}]
