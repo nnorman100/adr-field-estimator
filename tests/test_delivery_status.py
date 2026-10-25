@@ -186,6 +186,8 @@ def test_status_expires_interrupted_sends_without_retrying(smtp, api, monkeypatc
     for _ in range(2):
         resent = client.post('/api/jobs/' + ID + '/delivery/resend')
         assert resent.status_code == 200, resent.text
-        returned = next(item for item in resent.json()['delivery']['entries'] if item['role'] == role)
+        returned = next(
+            item for item in resent.json()['delivery']['entries'] if item['role'] == role
+        )
         assert returned == entry
     assert connections == []
