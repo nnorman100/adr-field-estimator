@@ -2615,6 +2615,7 @@ async function restoreDraft(id) {
     await restoreSigned(remote.authorization_id);
     return;
   }
+  await loadHomeownerLinkStatus().catch((e) => say(e.message, 'error'));
   await persist();
   await syncDraft();
   await window.WorkspaceUI?.editor();
@@ -3332,6 +3333,25 @@ function showHomeownerLink(inspection, link) {
     (link.url ? '' : ' Send a new link to show its QR code again.');
   homeownerLink.timer = setInterval(() => checkHomeownerLink().catch(() => {}), 10000);
 }
+async function loadHomeownerLinkStatus() {
+  if (
+    !navigator.onLine ||
+    !state.draft ||
+    !state.record ||
+    state.signed ||
+    confirmedAuthorization
+  )
+    return;
+  const draft = state.draft,
+    revision = state.record?.revision;
+  delete draft.homeowner_link_pending;
+  await persist();
+  const link = await jsonApi('/api/inspections/' + draft.inspection_id + '/signing-links');
+  if (state.draft !== draft || state.record?.revision !== revision) return;
+  draft.homeowner_link_pending = link.status === 'pending';
+  await persist();
+  return link;
+}
 // Once per displayed audit, the Review tab picks up a link sent before a reload or job switch.
 async function restoreHomeownerLink() {
   const inspection = state.draft?.inspection_id,
@@ -3349,17 +3369,13 @@ async function restoreHomeownerLink() {
   homeownerLink.checked = documents;
   let link;
   try {
-    link = await jsonApi('/api/inspections/' + inspection + '/signing-links');
+    link = await loadHomeownerLinkStatus();
   } catch (e) {
     if (homeownerLink.checked === documents) homeownerLink.checked = null;
     throw e;
   }
-  if (state.draft?.inspection_id === inspection && state.documents === documents) {
-    state.draft.homeowner_link_pending = link.status === 'pending';
-    await persist();
-  }
   if (
-    link.status !== 'pending' ||
+    link?.status !== 'pending' ||
     homeownerLink.inspection ||
     state.draft?.inspection_id !== inspection ||
     state.documents !== documents
@@ -4105,11 +4121,17 @@ async function noteAudio(note) {
     { type: note.mime_type },
   );
 }
+function voiceNoteNeedsLinkCancellation(draft) {
+  return (
+    draft.homeowner_link_pending === true ||
+    (draft.homeowner_link_pending !== false && !!state.record?.audit)
+  );
+}
 async function recordNote() {
   if (notes.recorder) return stopNote();
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned inspection first.');
-  if (!navigator.onLine && state.draft.homeowner_link_pending)
+  if (!navigator.onLine && voiceNoteNeedsLinkCancellation(state.draft))
     throw Error(
       'A homeowner signing link is open. Connect to cancel it before recording new notes.',
     );
@@ -4160,7 +4182,7 @@ async function recordNote() {
       };
       syncChain = syncChain.catch(() => {}).then(task);
       await syncChain;
-    } else if (draft.homeowner_link_pending)
+    } else if (voiceNoteNeedsLinkCancellation(draft))
       throw Error(
         'A homeowner signing link is open. Connect to cancel it before recording new notes.',
       );
@@ -5106,6 +5128,7 @@ async function initialize() {
     $('conflictActions').hidden = true;
     invalidate();
     fillForm();
+    await loadHomeownerLinkStatus().catch((e) => say(e.message, 'error'));
     await persist();
     await loadPhotoUrls('/api/inspections/' + record.inspection_id + '/photos/');
   });

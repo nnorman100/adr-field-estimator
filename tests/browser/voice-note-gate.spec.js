@@ -351,3 +351,40 @@ test('a saved inspection offers transcript review without any voice notes stored
   );
   await expect(page.locator('#reviewVoiceNotesWalk')).toBeHidden();
 });
+
+
+test('a signing link sent on another device blocks offline recording without visiting Review', async ({
+  page,
+  browser,
+}) => {
+  await page.goto('/app');
+  await ready(page);
+  await deskFinish(page);
+  await page.locator('#sendHomeownerLink').click();
+  await expect(page.locator('#homeownerLinkPanel')).toBeVisible();
+  const id = await page.evaluate(() => state.draft.inspection_id);
+  const uid = await page.evaluate(() => sessionStorage.getItem('synthetic-uid'));
+  const second = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block' });
+  try {
+    await second.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid);
+    const other = await second.newPage();
+    await fakeRecorder(other);
+    await other.goto(page.url());
+    await ready(other);
+    await other.evaluate(async (inspection) => {
+      await restoreDraft(inspection);
+      showTask('walkthrough', false);
+    }, id);
+    expect(await other.evaluate(() => state.draft.homeowner_link_pending)).toBe(true);
+    await second.setOffline(true);
+    await other.locator('#startNotes').click();
+    await other.locator('#recordNote').click();
+    await expect(other.locator('#message')).toContainText(
+      'Connect to cancel it before recording new notes.',
+    );
+    expect(await savedParts(other)).toBe(0);
+    expect(await other.evaluate(() => !!notes.recorder)).toBe(false);
+  } finally {
+    await second.close();
+  }
+});

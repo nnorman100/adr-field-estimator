@@ -237,6 +237,34 @@ vm.runInContext(fs.readFileSync('public/app.js', 'utf8'), context);
   assert.equal(context.reservationRefused, false);
   assert.equal(context.reservationConflict.scope_confirmed, true);
   assert.equal(context.reservationConflict.labor_hours, 4);
+  await vm.runInContext(
+    `(async () => {
+    navigator.onLine = true;
+    state.record = { revision: 10, audit: {} };
+    state.draft.homeowner_link_pending = false;
+    globalThis.linkStatusRequests = [];
+    jsonApi = async (url) => { linkStatusRequests.push(url); return { status: 'pending' }; };
+    await loadHomeownerLinkStatus();
+    navigator.onLine = false;
+  })()`,
+    context,
+  );
+  assert.deepEqual(Array.from(context.linkStatusRequests), ['/api/inspections/job/signing-links']);
+  await assert.rejects(vm.runInContext('recordNote()', context), /Connect to cancel it/);
+  await vm.runInContext('delete state.draft.homeowner_link_pending;', context);
+  await assert.rejects(vm.runInContext('recordNote()', context), /Connect to cancel it/);
+  await vm.runInContext(
+    `(async () => {
+    navigator.onLine = true;
+    jsonApi = async () => ({ status: 'revoked' });
+    await loadHomeownerLinkStatus();
+    navigator.onLine = false;
+  })()`,
+    context,
+  );
+  assert.equal(vm.runInContext('voiceNoteNeedsLinkCancellation(state.draft)', context), false);
+  await vm.runInContext('delete state.draft.homeowner_link_pending; state.record.audit = null;', context);
+  assert.equal(vm.runInContext('voiceNoteNeedsLinkCancellation(state.draft)', context), false);
   console.log('PASS: voice-note lifecycle and lost-response confirmation recovery');
 })().catch((error) => {
   console.error(error);
