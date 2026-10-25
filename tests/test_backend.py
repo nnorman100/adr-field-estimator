@@ -23,9 +23,12 @@ def data(**changes):
         technician_notes='Localized clean water damage. Proposed drying and drywall removal.',
         **changes,
     ).model_dump(mode='json')
-    # The app sends the tag-scan list only once a tag was scanned, as the server stores it.
+    # The app sends the tag-scan list only once a tag was scanned, and coordinates only once an
+    # address suggestion was chosen or the caller explicitly marked a new manual address.
     if not payload['equipment_scans']:
         payload.pop('equipment_scans')
+    if payload['coordinates'] is None and 'coordinates' not in changes:
+        payload.pop('coordinates')
     return payload
 
 

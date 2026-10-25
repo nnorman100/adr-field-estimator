@@ -134,6 +134,8 @@ def scope_fingerprint(data):
             'assistant_transcript',
             'capture_metadata',
             'scope_confirmed',
+            # The model never sees coordinates, so choosing a place is not a scope change.
+            'coordinates',
         )
     }
     if 'rooms' in fields:

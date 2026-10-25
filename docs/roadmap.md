@@ -71,12 +71,13 @@ Source files are in `nnorman100/Dryscope`; read them with `gh api`. Rebuild each
    - **Offline:** location works with no signal and is saved with the photo on the phone, then synced.
    - **Privacy:** never log coordinates. Nate approved the exact proposal wording on Oct 24, 2026: "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log." New proposals include it; saved signed documents remain unchanged. Include this owner approval in the GPS PR description.
    - **Permission:** the browser asks for location the first time. If the technician says no, photos still save, labeled "Location not shared".
-3. **Address autocomplete and job map (M, Medium risk; needs Nate to approve a Maps key).**
+3. **Address autocomplete and job map (M, Medium risk; Maps key approved).**
+   - **Status (Oct 24, 2026):** implemented on branch `fm/dry-places`; not released. The key, the quota caps and the $25 budget alert are set up (recorded in [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map)); `scripts/deploy_backend.py` mounts the secret. Still open: Nate's phone check (check 8) and the Phase 1 release. Role access is defined in [company-workspaces.md](company-workspaces.md). Check 7: Nate approved the exact additional proposal wording: "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job." Newly generated proposals include it alongside the approved photo-location notice; saved signed documents remain unchanged.
    - Add a backend proxy route, e.g. `/api/places/autocomplete` and `/api/places/details`, that calls the Places API (New). Keep the key in Secret Manager. Check the user's identity and membership, and cap calls per user per day like the other AI and API calls.
    - The address field (`public/app.html:60`) suggests addresses and fills city, state, ZIP and coordinates. With no key it stays plain text.
    - Map: a static map image fetched through the backend, plus a keyless directions link. The browser never loads Google's scripts, which keeps VISION's same-origin rule.
    - Reference: Dryscope `components/maps/*` and `lib/maps-config.ts`.
-   - **Before turning it on (Nate):** create the key, set a monthly budget alert, and cap requests per day on each API in the Cloud console quotas. Record the cap in `docs/firebase-isolation.md`.
+   - **Key setup:** complete; see [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map) for the key, budget alert and quota caps.
    - **Offline / no key:** the field stays a normal text box. The map panel says "Map unavailable offline".
    - **Data:** save the chosen place's coordinates on the draft. Older jobs have none and show no map, only the directions link built from the address.
    - **Logs:** never log the typed address or the coordinates.
@@ -122,7 +123,7 @@ Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox
 
 ## Risks and dependencies
 - **Gmail SMTP from Nate's account:** Gmail allows about 500 emails a day, and the sender is personal. Fine for ADR now. Before other companies send at volume, plan a move to a transactional email service with its own domain (needs Nate's decision).
-- **Maps key:** Phase 1.3 needs a Google Maps Platform key with billing in `alert-disaster-field-2026`, which Nate must approve.
+- **Maps key:** approved and configured; key handling and limits are recorded in [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map).
 - **Data compatibility:** new photo GPS fields and delivery records mean rolling back to an older revision makes jobs lose those features, so fixing forward is the safer option. Note this in each release's rollback section, as #122 did.
 
 ## Verification

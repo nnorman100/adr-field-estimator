@@ -23,6 +23,11 @@ class CompanyInspectionStore(InspectionStore):
     def _access(self, uid, record, action='read', tx=None):
         self.workspaces.job_access(uid, record, action, tx)
 
+    def places_access(self, uid):
+        # Superadmin support access is read-only and holds no company capabilities.
+        if 'places' not in self.workspaces.company_actor(uid)['capabilities']:
+            raise AccessDenied('Address lookup is not allowed.')
+
     def _create_access(self, uid, record, tx):
         self.workspaces.create_job(uid, record, tx)
 

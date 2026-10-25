@@ -15,6 +15,7 @@ const ASSETS = [
   '/psychrometrics.js?v=' + VERSION,
   '/drying.js?v=' + VERSION,
   '/tags.js?v=' + VERSION,
+  '/places.js?v=' + VERSION,
   '/audio-worklet.js?v=' + VERSION,
   '/vendor/firebase/13.0.0/firebase-app.js',
   '/vendor/firebase/13.0.0/firebase-auth.js',

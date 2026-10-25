@@ -12,9 +12,10 @@ ID = 'ADR-INS-' + 'c' * 32
 
 
 def saved_shape(inspection):
-    """A record as the server stores it: an empty tag-scan list is left out (inspection_payload)."""
+    """A record as the server stores it: an empty tag-scan list and unset coordinates are left out (inspection_payload)."""
     data = inspection.model_dump(mode='json')
     data.pop('equipment_scans')
+    data.pop('coordinates')
     return data
 
 

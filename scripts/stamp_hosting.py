@@ -30,7 +30,7 @@ TARGETS = {
     'public/sw.js': [(WORKER, 1, 'marker')],
     'public/index.html': [(ASSET, 2, 'marker')],
     'index.html': [(ASSET, 2, 'marker')],
-    'public/app.html': [(ASSET, 8, 'marker'), (DISPLAY, 1, 'display')],
+    'public/app.html': [(ASSET, 9, 'marker'), (DISPLAY, 1, 'display')],
     'public/app.js': [(ASSET, 1, 'marker')],
     'public/sign.html': [(ASSET, 4, 'marker')],
 }

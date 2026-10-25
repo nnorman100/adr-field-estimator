@@ -67,7 +67,7 @@ try:
         ReadingUpload,
         QrTagRequest,
     )
-    from . import signing_links
+    from . import places, signing_links
     from . import tags as qr_tags
     from .claims import make_documents, price_scope, proposal_date
     from .sizing import equipment_sizing
@@ -115,6 +115,7 @@ except ImportError:
         ReadingUpload,
         QrTagRequest,
     )
+    import places
     import signing_links
     import tags as qr_tags
     from claims import make_documents, price_scope, proposal_date
@@ -798,6 +799,8 @@ def inspection_payload(data):
                 room.pop(key, None)
     if not result.get('equipment_scans'):
         result.pop('equipment_scans', None)
+    if result.get('coordinates') is None and 'coordinates' not in data.model_fields_set:
+        result.pop('coordinates', None)
     return result
 
 
@@ -1373,6 +1376,50 @@ async def qr_tag_sheet(
     except ValueError as error:
         raise HTTPException(422, str(error))
     return {'tags': tags}
+
+
+async def place_lookup(store, staff, action, per_minute, call, *args):
+    """Address suggestions, place details and the map share one gate: a member with the places
+    capability, a configured key, then the per-user minute and daily caps. Neither the typed
+    address nor the coordinates reach a log, and every provider failure reads the same."""
+    await stored(store.places_access, staff['uid'])
+    if not places.configured():
+        raise HTTPException(503, 'Address suggestions are not set up.')
+    await stored(store.quota, staff['uid'], action, per_minute)
+    try:
+        return await run_in_threadpool(call, *args)
+    except places.ProviderError:
+        raise HTTPException(502, 'Address lookup is unavailable. Type the address instead.')
+
+
+# The typed address and the coordinates travel in POST bodies, never in a URL that request logs keep.
+@app.post('/api/places/autocomplete')
+async def place_suggestions(
+    req: places.SuggestRequest, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    found = await place_lookup(
+        store, staff, 'places_suggest', 30, places.suggest, req.input, req.session
+    )
+    return {'suggestions': found}
+
+
+@app.post('/api/places/details')
+async def place_details(
+    req: places.DetailsRequest, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    return await place_lookup(
+        store, staff, 'places_details', 10, places.details, req.place_id, req.session
+    )
+
+
+@app.post('/api/places/map')
+async def place_map(
+    req: places.MapRequest, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    image = await place_lookup(
+        store, staff, 'places_map', 20, places.static_map, req.latitude, req.longitude
+    )
+    return Response(image, media_type='image/png', headers={'Cache-Control': 'private, no-store'})
 
 
 @app.get('/api/sign')

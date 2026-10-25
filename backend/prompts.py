@@ -98,8 +98,11 @@ def company_instructions(template, identity):
 
 def prompt_inspection(data):
     """The inspection as the models see it. Equipment tag scans record where equipment stands and
-    are stored and shown only; wiring them into guidance or documents is separate work."""
-    return {key: value for key, value in data.items() if key != 'equipment_scans'}
+    are stored and shown only; wiring them into guidance or documents is separate work. Address
+    coordinates are location data used for the map and are never sent to a model."""
+    return {
+        key: value for key, value in data.items() if key not in ('equipment_scans', 'coordinates')
+    }
 
 
 # Prefix of the context update sent when tagged photos change during a walkthrough.

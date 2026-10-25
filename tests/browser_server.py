@@ -19,6 +19,7 @@ import uvicorn
 from fastapi import Request, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
+from backend import places
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
@@ -171,6 +172,64 @@ async def generate(**kwargs):
 bm.get_ai_client = lambda: SimpleNamespace(
     aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
 )
+
+
+# Address suggestions: the real routes and caps run; only the network call to Google is replaced.
+# No key unless a spec turns one on, so other specs see the plain address box.
+places_fixture = {'key': False, 'fail': None, 'calls': []}
+
+
+def synthetic_png():
+    from PIL import Image
+    import io
+
+    output = io.BytesIO()
+    Image.new('RGB', (1200, 600), (124, 196, 232)).save(output, format='PNG')
+    return output.getvalue()
+
+
+def synthetic_places(request):
+    places_fixture['calls'].append(request.full_url.split('?')[0].rsplit('/', 1)[-1])
+    if places_fixture['fail']:
+        raise places.ProviderError(places_fixture['fail'])
+    if request.full_url.endswith('places:autocomplete'):
+        return 'application/json', json.dumps(
+            {
+                'suggestions': [
+                    {
+                        'placePrediction': {
+                            'placeId': 'ChIJsynthetic_place_id_0001',
+                            'text': {'text': '4821 Zephyr Hollow Lane, Bakersfield, CA, USA'},
+                        }
+                    }
+                ]
+            }
+        ).encode()
+    if '/places/' in request.full_url:
+        return 'application/json', json.dumps(
+            {
+                'formattedAddress': '4821 Zephyr Hollow Lane, Bakersfield, CA 93301, USA',
+                'location': {'latitude': 35.373292, 'longitude': -119.018712},
+                'addressComponents': [],
+            }
+        ).encode()
+    return 'image/png', synthetic_png()
+
+
+places.send = synthetic_places
+places.api_key = lambda: 'synthetic-maps-key' if places_fixture['key'] else ''
+
+
+@bm.app.post('/__test/places')
+async def places_settings(request: Request):
+    body = await request.json()
+    places_fixture.update(key=body.get('key', False), fail=body.get('fail'), calls=[])
+    return places_fixture
+
+
+@bm.app.get('/__test/places')
+async def places_calls():
+    return places_fixture['calls']
 
 
 @bm.app.post('/__test/fault')
