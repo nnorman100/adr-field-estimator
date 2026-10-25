@@ -62,10 +62,7 @@ def workspace_protocol(request):
         from . import main as backend_main
     except ImportError:
         import main as backend_main
-    if (
-        backend_main.WORKSPACES_ENABLED
-        and request.headers.get('X-ADR-Workspace-Protocol') != '1'
-    ):
+    if backend_main.WORKSPACES_ENABLED and request.headers.get('X-ADR-Workspace-Protocol') != '1':
         raise HTTPException(
             409, 'Update the app before generating or opening company-branded documents.'
         )
