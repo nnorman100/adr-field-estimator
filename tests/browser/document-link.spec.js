@@ -315,12 +315,16 @@ test('tampering with a token cannot open documents', async ({ page, browser }) =
   await reader.context.close();
 });
 
-test('offline reload does not expose cached signed documents', async ({ page, browser }) => {
-  const reader = await recipient(browser, await mint(page, 'homeowner'));
+test('offline revisit does not expose cached signed documents', async ({ page, browser }) => {
+  const url = await mint(page, 'homeowner');
+  const reader = await recipient(browser, url);
   await expect(reader.page.locator('#documents')).toBeVisible();
+  // A failed WebKit reload can retain the already rendered document. Start a fresh
+  // navigation while keeping this context's HTTP cache and storage intact.
+  await reader.page.goto('about:blank');
   await reader.context.setOffline(true);
   try {
-    await reader.page.reload();
+    await reader.page.goto(url);
   } catch (error) {
     expect(String(error)).toMatch(/ERR_INTERNET_DISCONNECTED|WebKit encountered an internal error/);
   }
