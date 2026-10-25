@@ -49,6 +49,7 @@ def sending(smtp):
     store.db.records['authorizations/auth-' + 'c' * 32] = {'signed': 'record'}
     # The sender tests run with delivery on. A company without the switch still reads as off.
     store.db.records['_companies/adr']['profile']['document_delivery'] = True
+    store.db.records['_companies/adr']['profile']['crew_lead_email'] = 'lead@example.invalid'
     return client, store, sent, connections, plan, Deliveries(store.workspaces)
 
 
@@ -386,13 +387,13 @@ def test_delivery_off_skips_every_role_and_stays_skipped(sending, capsys):
     profile = store.db.records['_companies/adr']['profile']
     profile['crew_lead_email'] = 'lead@crew.example.invalid'
     profile['document_delivery'] = False
-    record = deliveries.queue(ID, {'homeowner': 'Checkbox off.'}, apply_policy=True)
+    record = deliveries.queue(ID, {'homeowner': 'Checkbox off.'})
     assert entries(store) == dict.fromkeys(RECIPIENTS, 'skipped')
     for entry in record['entries'].values():
         assert entry['reason'] == DELIVERY_OFF
     deliveries.send(ID, compose)
     profile['document_delivery'] = True
-    assert deliveries.queue(ID, {}, apply_policy=True) == record
+    assert deliveries.queue(ID, {}) == record
     deliveries.send(ID, compose)
     assert not connections
     output = capsys.readouterr().out
@@ -405,7 +406,7 @@ def test_a_company_saved_before_the_switch_skips_every_recipient(sending):
     profile = store.db.records['_companies/adr']['profile']
     profile.pop('document_delivery')
     profile.pop('crew_lead_email', None)
-    record = deliveries.queue(ID, {}, apply_policy=True)
+    record = deliveries.queue(ID, {})
     assert entries(store) == dict.fromkeys(RECIPIENTS, 'skipped')
     assert {entry['reason'] for entry in record['entries'].values()} == {DELIVERY_OFF}
     deliveries.send(ID, compose)
@@ -416,7 +417,7 @@ def test_delivery_on_without_a_crew_email_skips_only_that_role(sending):
     client, store, sent, connections, plan, deliveries = sending
     profile = store.db.records['_companies/adr']['profile']
     profile.pop('crew_lead_email', None)
-    deliveries.queue(ID, {}, apply_policy=True)
+    deliveries.queue(ID, {})
     assert entries(store) == dict(homeowner='queued', adjuster='queued', crew_lead='skipped')
     assert (
         store.db.records['_job_deliveries/' + ID]['entries']['crew_lead']['reason'] == NO_CREW_LEAD
@@ -433,7 +434,7 @@ def test_crew_lead_email_is_the_summary_and_turning_delivery_off_stops_a_queued_
     profile['crew_lead_email'] = 'Lead@Crew.example.invalid'
     payload = job_scope()
     record = deliveries.queue(
-        ID, {'homeowner': 'Not switched on.', 'adjuster': 'No adjuster email.'}, apply_policy=True
+        ID, {'homeowner': 'Not switched on.', 'adjuster': 'No adjuster email.'}
     )
     assert entries(store)['crew_lead'] == 'queued'
     assert record['entries']['homeowner']['reason'] == 'Not switched on.'
@@ -468,3 +469,43 @@ def test_crew_lead_email_is_the_summary_and_turning_delivery_off_stops_a_queued_
         store.db.records['_job_deliveries/' + ID]['entries']['adjuster']['reason'] == DELIVERY_OFF
     )
     assert len(connections) == 1
+
+
+@pytest.mark.parametrize('channel', ['device', 'link'])
+@pytest.mark.parametrize('enabled,email', [(True, 'lead@example.invalid'), (True, ''), (False, '')])
+def test_signing_queues_crew_after_receipt_without_sending(api, channel, enabled, email):
+    from tests.fakes import png
+    from tests.test_workspaces import data
+    from tests.test_signing_links import mint, token, sign
+
+    client, current, store = api
+    current['uid'] = 'estimator'
+    store.db.records['_companies/adr']['profile'].update(
+        document_delivery=enabled, crew_lead_email=email
+    )
+    assert client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).status_code == 200
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    assert '_job_deliveries/' + ID not in store.db.records
+    if channel == 'link':
+        value = token(mint(client, record))
+        submit = lambda: sign(value)
+    else:
+        payload = dict(
+            inspection_id=ID, expected_revision=1, auth_id='ADR-AUTH-crew123456',
+            proposal_hash=record['audit']['proposal_hash'], signature_png=png(),
+            documents_confirmed=True,
+        )
+        submit = lambda: client.post('/api/authorize', json=payload)
+    response = submit()
+    assert response.status_code == 200, response.text
+    queued = deepcopy(store.db.records['_job_deliveries/' + ID])
+    assert queued['auth_id'] == response.json()['auth_id']
+    assert 'authorizations/' + queued['auth_id'] in store.db.records
+    crew = queued['entries']['crew_lead']
+    assert crew['status'] == ('queued' if enabled and email else 'skipped')
+    assert crew['reason'] == ('' if enabled and email else NO_CREW_LEAD if enabled else DELIVERY_OFF)
+    assert queued['entries']['homeowner']['status'] == 'skipped'
+    assert queued['entries']['adjuster']['status'] == 'skipped'
+    assert '_email_counts/daily' not in store.db.records
+    assert submit().status_code == 200
+    assert store.db.records['_job_deliveries/' + ID] == queued

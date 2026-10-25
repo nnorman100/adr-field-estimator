@@ -68,6 +68,7 @@ try:
         QrTagRequest,
     )
     from . import places, signing_links
+    from .delivery import Deliveries
     from . import document_links
     from . import tags as qr_tags
     from .claims import make_documents, price_scope, proposal_date
@@ -119,6 +120,7 @@ except ImportError:
     )
     import places
     import signing_links
+    from delivery import Deliveries
     import document_links
     import tags as qr_tags
     from claims import make_documents, price_scope, proposal_date
@@ -1216,6 +1218,18 @@ async def audit_inspection(
     return public_record(saved)
 
 
+async def queue_signed_delivery(store, record):
+    if WORKSPACES_ENABLED and record.get('inspection_id'):
+        await stored(
+            Deliveries(store.workspaces).queue,
+            record['inspection_id'],
+            {
+                'homeowner': 'Homeowner document email is not enabled yet.',
+                'adjuster': 'Adjuster document email is not enabled yet.',
+            },
+        )
+
+
 @app.post('/api/authorize')
 async def authorize_estimate(
     request: Request,
@@ -1269,8 +1283,7 @@ async def authorize_estimate(
                 'Signing requires the current inspection revision, proposal hash, document confirmation and PNG signature.',
             )
         record = await stored(store.authorize, staff['uid'], req.model_dump(mode='json'))
-        # The signature is already durable. A failed or skipped email does not change this response.
-        await stored(deliver_signed_adjuster, store, record, document_origin(request))
+    await queue_signed_delivery(store, record)
     return dict(
         status='success',
         auth_id=record['auth_id'],
@@ -1484,7 +1497,7 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
             user_agent=request.headers.get('user-agent', '')[:512],
         ),
     )
-    await stored(deliver_signed_adjuster, store, record, document_origin(request))
+    await queue_signed_delivery(store, record)
     return dict(
         status='success',
         auth_id=record['auth_id'],

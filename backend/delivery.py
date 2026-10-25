@@ -138,11 +138,10 @@ class Deliveries:
     def ref(self, job_id):
         return self.w.ref('_job_deliveries', job_id)
 
-    def queue(self, job_id, skipped, *, apply_policy=False):
+    def queue(self, job_id, skipped):
         """Creates the signed job's delivery record once; repeating it returns the record unchanged.
         skipped maps each role that will not be sent to its reason; every other role is queued.
-        apply_policy reads the company: delivery off skips every role, and no crew-lead email skips
-        that role. Other steps pass their own reasons in skipped."""
+        Company policy always applies. Other steps pass their own reasons in skipped."""
 
         def create(tx):
             current = self.w.read('_job_deliveries', job_id, tx)
@@ -151,10 +150,8 @@ class Deliveries:
             job = self.w.read('_workspace_jobs', job_id, tx)
             if not job or not job.get('auth_id'):
                 raise LookupError('Signed job not found.')
-            reasons = skipped
-            if apply_policy:
-                company = self.w.read('_companies', job['company_id'], tx)
-                reasons = skip_reasons(company, skipped)
+            company = self.w.read('_companies', job['company_id'], tx)
+            reasons = skip_reasons(company, skipped)
             record = dict(
                 delivery_id=uuid4().hex,
                 job_id=job_id,
