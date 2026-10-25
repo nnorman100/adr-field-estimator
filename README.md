@@ -84,6 +84,7 @@ Routing: `firebase.json` rewrites exactly `/app` to `public/app.html`, redirects
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
 | `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 | `scripts/deploy_backend.py`, `stamp_hosting.py`, `RELEASES.md` | Source-commit stamping of each release and the release log |
+| `scripts/ensure_firestore_ttls.py` | Read-only check, and owner-run `--apply`, of the Firestore TTL policies that delete expired link and counter records (run the check every release) |
 | `tests/fixtures/` | Small synthetic inputs shared by tests and release verifiers (for example the 16 kHz Live prompt) |
 
 ### Release-helper environment
@@ -92,7 +93,7 @@ The scripts under `scripts/` run on Linux, macOS and Windows and resolve tools f
 
 | Variable | Used by | Resolution when unset |
 | --- | --- | --- |
-| `ADR_GCLOUD` | `verify_live_release.py`, `record_live_release.py` | `gcloud` on `PATH` (including `gcloud.cmd` on Windows) |
+| `ADR_GCLOUD` | `verify_live_release.py`, `record_live_release.py`, `ensure_firestore_ttls.py` | `gcloud` on `PATH` (including `gcloud.cmd` on Windows) |
 | `ADR_TEST_PYTHON` | `verify_live_browser.js` | `.venv` in the repository, then `python3` (`python` on Windows) |
 | `ADR_CHROME_PATH` | `manual_chrome.js` (used by `verify_live_browser.js`) | Platform install locations, then `google-chrome`/`chromium` on `PATH` |
 

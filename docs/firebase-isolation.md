@@ -46,17 +46,9 @@ Limits: 60 document reads per minute per link, 10 signing attempts per link in t
 
 The signed record adds `signing_channel: link`, the typed name and role (`owner` or `authorized_representative`), the consent statements the page displayed with their version (`homeowner-link-v1`), the link digest, creator and creation time, and the client's IP address and user agent. `client_ip` in `backend/main.py` takes the address `TRUSTED_FORWARDED_HOPS` (2) entries from the right of `X-Forwarded-For`: the entry Hosting appends before the Cloud Run front end appends Hosting's own address. Client-supplied leading entries are ignored, and a shorter chain records no address. The same address keys the per-address limit. A request sent straight to the `run.app` URL can still choose that entry. The token, addresses and user agent never reach the log. The consent wording should be confirmed with counsel before customer use.
 
-`expire_at` on `_signing_links` is a Firestore TTL field (the link's expiry, then 30 days after signing). Expiry is enforced on every use; enable physical deletion once with:
+`expire_at` on `_signing_links` is a Firestore TTL field (the link's expiry, then 30 days after signing). Expiry is enforced on every use; physical deletion is enabled by `scripts/ensure_firestore_ttls.py` (see [Firestore TTL policies](#firestore-ttl-policies)).
 
-```powershell
-gcloud firestore fields ttls update expire_at --collection-group=_signing_links --enable-ttl --project=alert-disaster-field-2026
-```
-
-The per-address counters use the same field name in `_limits`; only those documents carry it, so per-user counters are unaffected. Enable their deletion once as a release step:
-
-```powershell
-gcloud firestore fields ttls update expire_at --collection-group=_limits --enable-ttl --project=alert-disaster-field-2026
-```
+The per-address counters use the same field name in `_limits`; only those documents carry it, so per-user counters are unaffected.
 
 The release verifiers create links on synthetic jobs, read and sign them with no sign-in, check that a replaced link and a link left unused before an on-device signature are refused, and remove the tracked `_signing_links` and `_signing_link_jobs` records with the jobs. The browser verifier opens the link in a separate signed-out browser context and confirms the routed technician tab switches to the signed agreement.
 
@@ -78,11 +70,7 @@ A document link (`backend/document_links.py`) opens one signed agreement's docum
 
 `GET /api/documents`, `GET /api/documents/photos/{photo_id}` and `GET /api/documents/signature` are anonymous like the signing-link routes and read only the `X-ADR-Document-Link` header; the token stays in the URL fragment. The view returns the set's documents with the other set's documents emptied (the adjuster's copy keeps only the customer, property and date of the proposal), never the estimator's AI notes, plus the receipt (reference, time, channel and, for a link signature, the signer's name and role). Photos and the signature are served only to the homeowner set. Every document, photo and signature read goes through `store.get` as the link's creator and rechecks that user's `sign` permission, so losing either job access or signing permission disables their links; the signed record is never changed. Unknown, tampered, expired, revoked and inaccessible links, and a signing-link token sent to these routes, all answer 404 "This document link is not available". Document-view requests count against a 60-per-minute per-link limit; all three routes count against the shared 120-per-minute per-address counter described under [homeowner signing links](#homeowner-signing-links). Tokens, digests, addresses, user agents and customer names never reach the log.
 
-The page is `public/sign.html` and `sign.js` under the `/documents` rewrite, with the same `no-store`, `noindex` and `Permissions-Policy: tools=()` headers as `/sign`: the signing area stays off, only the set's tabs show and only its included documents print, and the adjuster's set offers **Download scope JSON**. It needs a connection; offline it shows the connection error and nothing is stored on the device. `expire_at` on `_document_links` is a Firestore TTL field like the signing links'. Enable physical deletion once with:
-
-```powershell
-gcloud firestore fields ttls update expire_at --collection-group=_document_links --enable-ttl --project=alert-disaster-field-2026
-```
+The page is `public/sign.html` and `sign.js` under the `/documents` rewrite, with the same `no-store`, `noindex` and `Permissions-Policy: tools=()` headers as `/sign`: the signing area stays off, only the set's tabs show and only its included documents print, and the adjuster's set offers **Download scope JSON**. It needs a connection; offline it shows the connection error and nothing is stored on the device. `expire_at` on `_document_links` is a Firestore TTL field like the signing links'. Physical deletion is enabled by the same script (see [Firestore TTL policies](#firestore-ttl-policies)).
 
 ## Cutover and historical data
 
@@ -121,6 +109,30 @@ python scripts/stamp_hosting.py --reset
 ```
 
 The backend rejects a different project ID or evidence bucket. Production never enables local demo fallbacks.
+
+### Firestore TTL policies
+
+Four collection groups carry an `expire_at` Firestore TTL field. Each expiry is also enforced in code on every use, so a record that has not been deleted yet is already refused; deletion only trims the leftovers. Firestore deletes asynchronously, typically within about a day of the time (not at it), and a policy is per collection group in the `(default)` database.
+
+| Collection group | Documents that carry `expire_at` | Value | Why deleting at that time is safe |
+| --- | --- | --- | --- |
+| `_live_resume` | the Live checkpoint per technician | 600 s after the last update | The checkpoint is refused after its `expires`; Stop/Finish deletes it anyway. |
+| `_signing_links` | every signing link | the link's expiry (7 days after creation), moved to 30 days after signing | The link is refused at `expires`, and for a signed link after the 30-day view window. A deleted link reads as unknown (404), and the job's pointer to it reads as `none`, so a new link can still be made. The signed agreement is a separate record. |
+| `_limits` | only per-address counters (`ip-<HMAC>`) | 1 hour after the address's last request | Every counter window is a minute, so an hour-idle counter holds nothing a limit needs. Per-user counters (AI, places, link creation) never set the field. |
+| `_document_links` | every document link | 30 days after creation, the link's expiry | A deleted link reads as unknown (404) and its pointer as `none`; the signed agreement is untouched. |
+
+`tests/test_firestore_ttls.py` pins these values, limits `expire_at` writers to the three backend modules above, and checks that a deleted link behaves as an unknown one. A new collection group, or a new document in one of these groups, that sets `expire_at` needs the same review before its policy is enabled.
+
+`scripts/ensure_firestore_ttls.py` is the one owner-run step for all four policies. It always targets `alert-disaster-field-2026` and needs `gcloud` signed in with a Firestore admin role (`datastore.indexAdmin` or owner); the runtime service account does not hold one and this step grants no IAM.
+
+```powershell
+# Read-only: prints match or missing per policy; exits 1 if any is missing (2 if gcloud failed).
+python scripts/ensure_firestore_ttls.py
+# Owner-run, once per project: enables only the missing policies. A re-run changes nothing.
+python scripts/ensure_firestore_ttls.py --apply
+```
+
+A new policy reports `CREATING` while Firestore backfills, then `ACTIVE`; the script counts both as in place. Run the read-only check in every release (see [RELEASES.md](../RELEASES.md)) and `--apply` only when it reports `missing`. Do not enable a policy by hand with `gcloud firestore fields ttls update`.
 
 ## Verification and review scope
 

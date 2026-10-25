@@ -30,6 +30,12 @@ the revision that serves traffic instead.
    `hosting:alert-disaster`, fill in the Hosting version, append the row, then run
    `python scripts/stamp_hosting.py --reset`.
 
+### Firestore TTL policies
+
+Before promoting a backend, run `python scripts/ensure_firestore_ttls.py` (read-only) and confirm
+every policy reads `match`. If one is `missing`, the owner runs it again with `--apply`; it enables
+only the missing policies. See [docs/firebase-isolation.md](docs/firebase-isolation.md#firestore-ttl-policies).
+
 The seed rows below were reconstructed from the narrative records in `docs/` and the pull request
 named in their notes; none of those releases was stamped. Where a deploy itself was not recorded, the
 date is the read-only check that observed it.
