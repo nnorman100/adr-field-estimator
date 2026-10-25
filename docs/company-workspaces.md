@@ -140,12 +140,5 @@ Physical iPhone/Bluetooth acceptance remains open. This feature does not add bil
 
 ## Drying watch
 
-When `AI_FEATURES` includes `drying_watch`, signed jobs have a private monitoring
-sidecar. Owners and office staff see the company list; estimators see their
-authorized jobs. Owners and office staff can confirm a reminder, extend the
-plan with a note, or close monitoring with a reason. The job's estimator can
-also mark it dry with a reason. Superadmin support is audited and read-only.
-The owner must separately enable drying reminders in Company settings. Nothing
-is emailed on a schedule. The signed agreement never changes; extra billable
-days go through Copy to new draft. See [Drying watch](drying-watch.md) for
-thresholds, offline behavior, retention and the rollout checks.
+See [Drying watch](drying-watch.md) for monitoring permissions, owner reminder
+settings, signed-job actions, offline behavior and retention.

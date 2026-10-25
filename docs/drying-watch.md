@@ -14,7 +14,7 @@ and the facts hash reviewed. A stale hash asks the person to reload.
 
 The owner separately enables **Allow drying reminders after an office or owner
 confirmation** in Company settings. It defaults off and is independent of
-document delivery. Each confirmed reminder sends one email to the assigned
+document delivery (`profile.drying_reminders`). Each confirmed reminder sends one email to the assigned
 active estimator's membership email or the company's crew-lead email. The
 preview states the recipient, address, signed drying day and reading gap.
 The company Reply-To and existing sender/counter are reused. No customer name,
@@ -50,7 +50,12 @@ The model receives a small fact pack with material/air measurements, day counts,
 missing rooms and flags. No customer, address, transcript, notes, email or price
 is sent. The model returns closed room/trend/fact selections, never narrative text. The server
 validates each selection against the facts and renders fixed sentences with its own
-measurements. Legacy text-only caches are discarded; money and advice have no output field.
+measurements. Material coverage and reading presence are separate: a fresh partial
+material log is not “no new reading.” Each room’s air trend uses its own recorded
+affected-air readings even without a reference; reference-based air measurements
+and progress are available only when a reference exists. Room reading times and
+recency are tracked independently of coverage and dry-standard status.
+Legacy text-only caches are discarded; money and advice have no output field.
 Summaries cache on `facts_hash` plus log update time; repeat views use the cache.
 Provider or validation failure leaves facts visible with **Retry summary**.
 Calls are limited to 6/minute and 60/day per user; state changes to 10/minute
@@ -78,8 +83,8 @@ rule and retention checks. `scripts/verify_drying_summaries.py --dry-run` makes
 no model calls. Its explicit `--live` mode is a later operator release gate:
 five unchanged validated outputs from the dedicated Vertex project before the
 feature is enabled. Real-service email/Vertex checks and physical iPhone
-observations are separate, still-open release checks. Deploy indexes separately
-before enabling the backend; follow `firebase-isolation.md` for isolated release.
+observations are separate, still-open release checks. Follow [Drying watch rollout](firebase-isolation.md#drying-watch-rollout) for
+index deployment before enabling the backend and the isolated release procedure.
 
 Kun's input: deterministic status calculations keep monitoring independent of
 model availability. Explicit approval provenance and idempotent reservations
