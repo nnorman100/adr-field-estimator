@@ -745,7 +745,9 @@ def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypat
     monkeypatch.setattr(
         delivery,
         'send_email',
-        lambda settings, payload, kind, key, deadline: sends.append(key) or '<' + key + '>',
+        lambda settings, payload, kind, key, deadline, *, prevent_duplicates: (
+            sends.append(key) or '<' + key + '>'
+        ),
     )
     stores = [delivery.Deliveries(WorkspaceStore(client())) for _ in range(2)]
     stores[0].queue(job, {'crew_lead': 'Not switched on.'})
@@ -756,7 +758,7 @@ def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypat
     entries = stored(db, '_job_deliveries/' + job)['entries']
     roles = [key.split('/')[1] for key in sends]
     # Never twice. An emulator lock timeout can abort a finish, leaving its entry reserved.
-    assert len(roles) == len(set(roles)) and set(roles) <= {'homeowner', 'adjuster'}
+    assert sorted(roles) == ['adjuster', 'homeowner']
     assert entries['crew_lead']['status'] == 'skipped'
     sent = [role for role, e in entries.items() if e['status'] == 'sent']
     assert set(sent) <= set(roles)
