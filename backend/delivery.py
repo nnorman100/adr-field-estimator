@@ -1,7 +1,7 @@
 """Delivery of the signed paperwork. Each job has one delivery sidecar, beside its coordination record
 and never inside the signed agreement, with one entry per recipient role. A durable signature queues
 one record and sends the adjuster a private link when the signed claim details include an adjuster
-email. Homeowner and crew-lead mail stay skipped until their own steps. Nothing scans older jobs."""
+email. Crew-lead mail is queued; homeowner mail stays skipped until its own step. Nothing scans older jobs."""
 
 import html
 import time
@@ -44,7 +44,6 @@ RECIPIENTS = ('homeowner', 'adjuster', 'crew_lead')
 # Later steps replace these. A skipped entry is never sent, so they are decided once, at queue time.
 NOT_SWITCHED_ON = {
     'homeowner': 'Homeowner email is not switched on.',
-    'crew_lead': 'Crew-lead email is not switched on.',
 }
 NO_ADJUSTER_EMAIL = 'No adjuster email.'
 INVALID_ADJUSTER_EMAIL = 'The adjuster email is not a valid address.'
@@ -181,12 +180,12 @@ class Deliveries:
                 logged(record, role)
         return record
 
-    def send(self, job_id, compose):
+    def send(self, job_id, compose, roles=RECIPIENTS):
         """Sends queued entries and retryable failures; uncertain outcomes are never retried.
         Sent and skipped entries are never sent again. compose(role, record) builds that role's
         message with delivery_email."""
         record = None
-        for role in RECIPIENTS:
+        for role in roles:
             record, attempt, stale = self.w._run(
                 lambda tx, role=role: self.reserve(tx, job_id, role)
             )
@@ -286,7 +285,7 @@ class Deliveries:
                 host + '/documents#' + token,
             )
 
-        return self.send(agreement['inspection_id'], compose)
+        return self.send(agreement['inspection_id'], compose, roles=('adjuster',))
 
     def reserve(self, tx, job_id, role):
         """Returns the record, a new attempt ID when this entry should be sent now (else None), and

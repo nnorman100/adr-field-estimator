@@ -10,7 +10,7 @@ The new build adds isolated company workspaces with superadmin, owner, estimator
 
 Company workspaces are enabled in production since October 15, 2026; the serving backend and Hosting release are recorded in [RELEASES.md](RELEASES.md). Invitations are sent by Gmail SMTP. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
 
-After signing, DryScope can email the adjuster the claim documents through a private link. See the workflow below and [document delivery](docs/company-workspaces.md#document-delivery) for recipient eligibility, retries, sender identity and the shared daily email warning.
+Owners can save a crew-lead email and the delivery switch in Company settings. Both signing paths queue the crew-lead summary after the durable receipt; automatic crew sending remains pending. After signing, DryScope can email the adjuster the claim documents through a private link. See the workflow below and [document delivery](docs/company-workspaces.md#document-delivery) for recipient eligibility, retries, sender identity and the shared daily email warning.
 
 ## Inspection workflow
 
