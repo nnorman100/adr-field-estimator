@@ -135,7 +135,7 @@ test('a delayed transcription holds Finish, a signing link and on-device signing
   expect(audits).toBe(0);
   await page.reload();
   await ready(page);
-  await expect(page.locator('#scopeConfirmed')).toBeChecked();
+  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
   await task(page, 'walkthrough');
   await expect(page.locator('#voiceNotes li')).toHaveCount(1);
   expect(await savedParts(page)).toBeGreaterThan(0);
@@ -145,7 +145,15 @@ test('a delayed transcription holds Finish, a signing link and on-device signing
   await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
   await page.locator('#reviewVoiceNotesWalk').click();
   await expect(page.locator('#message')).toContainText('Transcript reviewed.');
-  await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeHidden();
+  expect(audits).toBe(0);
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('10');
+  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+  await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
+  await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
+  await page.locator('#confirmFilledScope').click();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
   expect(audits).toBe(1);
@@ -206,10 +214,48 @@ test('a failed transcription blocks Finish and signing until the technician reso
   await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
   await expect(page.locator('#voiceNotes li')).toHaveCount(0);
   expect(resolves).toBe(1);
-  await expect(page.locator('#scopeConfirmed')).toBeChecked();
+  await task(page, 'property');
+  await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+  await page.locator('#scopeConfirmed').check();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();
   await page.locator('#sendHomeownerLink').click();
   await expect(page.locator('#homeownerLinkPanel')).toBeVisible();
   await signOnDevice(page);
+});
+
+test('an outstanding homeowner link blocks offline voice recording and survives reload', async ({
+  page,
+  context,
+}) => {
+  await fakeRecorder(page);
+  await page.goto('/app');
+  await ready(page);
+  await deskFinish(page);
+  await page.locator('#sendHomeownerLink').click();
+  await expect(page.locator('#homeownerLinkPanel')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => state.draft.homeowner_link_pending)).toBe(true);
+  await page.reload();
+  await ready(page);
+  await context.setOffline(true);
+  await task(page, 'walkthrough');
+  await page.locator('#startNotes').click();
+  await page.locator('#recordNote').click();
+  await expect(page.locator('#message')).toContainText(
+    'Connect to cancel it before recording new notes.',
+  );
+  expect(await savedParts(page)).toBe(0);
+  expect(await page.evaluate(() => !!notes.recorder)).toBe(false);
+  await page.locator('#typedNote').fill('Offline observation remains available.');
+  await page.locator('#addTypedNote').click();
+  await expect(page.locator('#technicianNotes')).toHaveValue(/Offline observation remains available/);
+  await page.locator('#recordNote').click();
+  await expect(page.locator('#message')).toContainText(
+    'Connect to cancel it before recording new notes.',
+  );
+  await context.setOffline(false);
+  await page.locator('#recordNote').click();
+  await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+  expect(await page.evaluate(() => state.draft.homeowner_link_pending)).toBe(false);
+  await page.locator('#recordNote').click();
 });

@@ -149,7 +149,7 @@ def test_invalid_voice_notes_are_refused_without_a_model_call(context, monkeypat
     if result.status_code == 422:
         assert saved == record
     else:
-        assert saved['data'] == record['data']
+        assert saved['data'] == dict(record['data'], scope_confirmed=False)
         assert saved['voice_notes'] == [{'id': NOTE, 'status': 'failed', 'reviewed': False}]
         assert saved['revision'] == record['revision'] + 1
 

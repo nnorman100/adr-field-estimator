@@ -644,6 +644,7 @@ function absorb(record) {
   )
     invalidate();
   state.record = record;
+  if (!record.audit) state.draft.homeowner_link_pending = false;
   for (const remote of record.photos) {
     const photo = state.draft.photos.find((p) => p.id === remote.id);
     if (!photo) {
@@ -3301,6 +3302,8 @@ function stopHomeownerLink(status = '') {
 function showHomeownerLink(inspection, link) {
   stopHomeownerLink();
   Object.assign(homeownerLink, { inspection, url: link.url || '' });
+  state.draft.homeowner_link_pending = true;
+  persist().catch((e) => say(e.message, 'error'));
   if (link.url) $('homeownerQr').src = link.qr_svg;
   $('homeownerLinkUrl').value = homeownerLink.url;
   for (const id of ['homeownerQr', 'copyHomeownerLink']) $(id).hidden = !link.url;
@@ -3335,6 +3338,10 @@ async function restoreHomeownerLink() {
   } catch (e) {
     if (homeownerLink.checked === documents) homeownerLink.checked = null;
     throw e;
+  }
+  if (state.draft?.inspection_id === inspection && state.documents === documents) {
+    state.draft.homeowner_link_pending = link.status === 'pending';
+    await persist();
   }
   if (
     link.status !== 'pending' ||
@@ -3389,6 +3396,8 @@ async function revokeHomeownerLink() {
   const result = await jsonApi('/api/inspections/' + inspection + '/signing-links/revoke', 'POST');
   if (homeownerLink.inspection !== inspection) return;
   if (result.status === 'used') return checkHomeownerLink();
+  state.draft.homeowner_link_pending = false;
+  await persist();
   stopHomeownerLink('Signing link revoked. Send a new link or sign on this device.');
 }
 async function copyHomeownerLink() {
@@ -4085,6 +4094,8 @@ async function recordNote() {
   if (notes.recorder) return stopNote();
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned inspection first.');
+  if (!navigator.onLine && state.draft.homeowner_link_pending)
+    throw Error('A homeowner signing link is open. Connect to cancel it before recording new notes.');
   const format = window.MediaRecorder && noteFormat((type) => MediaRecorder.isTypeSupported(type));
   if (!format) throw Error('This browser cannot record voice notes. Type your notes instead.');
   if (notes.note) return;
@@ -4132,10 +4143,12 @@ async function recordNote() {
       };
       syncChain = syncChain.catch(() => {}).then(task);
       await syncChain;
-    }
+    } else if (draft.homeowner_link_pending)
+      throw Error('A homeowner signing link is open. Connect to cancel it before recording new notes.');
     if (state.draft !== draft || state.signed || confirmedAuthorization)
       throw Error('Open an unsigned inspection first.');
-    if (state.documents) invalidate();
+    changed();
+    await persist();
   } catch (e) {
     note.status = 'failed';
     note.error = e.message;
@@ -4486,7 +4499,11 @@ async function reserveNote(note, draft) {
   );
   note.reserved = true;
   await saveNote(note);
-  if (state.draft === draft) absorb(record);
+  if (state.draft === draft) {
+    draft.homeowner_link_pending = false;
+    absorb(record);
+    await persist();
+  }
   return record;
 }
 // Stops a recording, waits for this draft's transcription, and refuses to continue while a note
@@ -4623,8 +4640,8 @@ async function uploadNote(note, draft) {
       $('technicianTranscript').value = draft.data.technician_transcript;
       state.ack = stable(record.data);
       // Fields edited while the note uploaded still need saving.
-      if (stable(draft.data) !== state.ack) changed(false);
-      else await persist();
+      changed();
+      await persist();
       renderSaveStatus();
     } finally {
       $('technicianTranscript').readOnly = false;

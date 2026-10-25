@@ -459,6 +459,7 @@ class InspectionStore(JobStore):
                         'Transcript storage is full. Type the remaining observations in notes.'
                     )
                 record['data']['technician_transcript'] = joined
+                record['data']['scope_confirmed'] = False
                 record.update(
                     revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
                 )
@@ -526,6 +527,7 @@ class InspectionStore(JobStore):
             if action == 'reserve':
                 if row is None:
                     rows().append({'id': note_id, 'status': 'pending', 'reviewed': False})
+                    record['data']['scope_confirmed'] = False
                     clear_audit()
                     self._write_note(record, ref, tx)
                 return record, moved

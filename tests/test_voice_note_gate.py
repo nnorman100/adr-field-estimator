@@ -30,6 +30,16 @@ def audit_at(client, record):
     )
 
 
+def reconfirm(client, record):
+    payload = dict(record['data'], scope_confirmed=True)
+    saved = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': record['revision'], 'data': payload},
+    )
+    assert saved.status_code == 200, saved.text
+    return saved.json()
+
+
 def test_desk_estimate_without_voice_notes_still_audits(context):
     client, _store = context
     audited = audit(client, inspect(client))
@@ -45,6 +55,7 @@ def test_pending_failed_and_unreviewed_notes_block_the_estimate(context, monkeyp
     reserved = pending(client)
     assert reserved.status_code == 200, reserved.text
     body = reserved.json()
+    assert body['data']['scope_confirmed'] is False
     assert body['audit'] is None and body['revision'] == audited['revision'] + 1
     assert body['voice_notes'] == [{'id': NOTE, 'status': 'pending', 'reviewed': False}]
     assert client.get('/api/inspections/' + ID + '/signing-links').json()['status'] == 'revoked'
@@ -72,7 +83,8 @@ def test_pending_failed_and_unreviewed_notes_block_the_estimate(context, monkeyp
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()['voice_notes'] == [{'id': NOTE, 'status': 'resolved', 'reviewed': False}]
     monkeypatch.setattr(bm, 'get_ai_client', audit_model)
-    assert audit(client, cleared.json())['status'] == 'audited'
+    assert audit_at(client, cleared.json()).status_code == 400
+    assert audit(client, reconfirm(client, cleared.json()))['status'] == 'audited'
 
 
 def test_a_legacy_transcript_without_a_ledger_still_audits(context):
@@ -97,6 +109,9 @@ def test_a_legacy_transcript_without_a_ledger_still_audits(context):
 def test_a_transcribed_note_blocks_until_its_transcript_is_reviewed(context, monkeypatch):
     client, _store = context
     prepared(client)
+    reserved = pending(client).json()
+    assert reserved['data']['scope_confirmed'] is False
+    reconfirm(client, reserved)
     audit_model = bm.get_ai_client
     transcriber(monkeypatch)
     saved = send(client)
@@ -118,9 +133,11 @@ def test_a_transcribed_note_blocks_until_its_transcript_is_reviewed(context, mon
         {'id': NOTE, 'status': 'transcribed', 'reviewed': True}
     ]
     monkeypatch.setattr(bm, 'get_ai_client', audit_model)
-    assert audit(client, reviewed.json())['status'] == 'audited'
-    # Reviewing again does not move the signed-ready revision.
-    assert review(client).json()['revision'] == reviewed.json()['revision']
+    assert reviewed.json()['data']['scope_confirmed'] is False
+    assert audit_at(client, reviewed.json()).status_code == 400
+    confirmed = reconfirm(client, reviewed.json())
+    assert audit(client, confirmed)['status'] == 'audited'
+    assert review(client).json()['revision'] == confirmed['revision']
 
 
 def test_transcription_failure_logs_no_transcript_or_audio(context, monkeypatch, capsys):
