@@ -1524,7 +1524,11 @@ def send_email(settings, payload, kind, key, deadline, *, prevent_duplicates=Fal
         domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'dryscope.invalid'
         message_id = f'<{kind}-{key.replace("/", "-")}@{domain}>'
         return send_smtp(
-            payload, settings['username'], settings['password'], message_id, deadline,
+            payload,
+            settings['username'],
+            settings['password'],
+            message_id,
+            deadline,
             prevent_duplicates=prevent_duplicates,
         )
     request = urllib.request.Request(

@@ -260,7 +260,9 @@ def test_a_failed_send_is_not_counted(smtp):
     assert '_email_counts/daily' not in store.db.records
 
 
-@pytest.mark.parametrize('error', [smtplib.SMTPServerDisconnected('Lost reply'), OSError('Lost socket'), TimeoutError()])
+@pytest.mark.parametrize(
+    'error', [smtplib.SMTPServerDisconnected('Lost reply'), OSError('Lost socket'), TimeoutError()]
+)
 def test_uncertain_smtp_delivery_is_never_retried(sending, error):
     client, store, sent, connections, plan, deliveries = sending
     deliveries.queue(ID, {'adjuster': 'Skipped.', 'crew_lead': 'Skipped.'})

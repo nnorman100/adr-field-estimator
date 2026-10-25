@@ -111,7 +111,11 @@ class Deliveries:
                 settings = mail_settings()
                 key = record['delivery_id'] + '/' + role + '/' + attempt
                 message_id = send_email(
-                    settings, compose(role, record), 'delivery', key, deadline,
+                    settings,
+                    compose(role, record),
+                    'delivery',
+                    key,
+                    deadline,
                     prevent_duplicates=True,
                 )
                 status, reason, retryable = 'sent', '', False
@@ -123,8 +127,13 @@ class Deliveries:
                 status, reason, retryable = 'failed', FAILED, True
 
             def finish(
-                tx, role=role, attempt=attempt, status=status, message_id=message_id,
-                reason=reason, retryable=retryable,
+                tx,
+                role=role,
+                attempt=attempt,
+                status=status,
+                message_id=message_id,
+                reason=reason,
+                retryable=retryable,
             ):
                 current = self.w.read('_job_deliveries', job_id, tx)
                 counter = self.w.email_count(tx) if status == 'sent' else None

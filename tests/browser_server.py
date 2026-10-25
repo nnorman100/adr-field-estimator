@@ -294,7 +294,9 @@ async def workspaces_stats():
     return {
         'inspection_count': len([k for k in store.db.records if k.startswith('inspections/')]),
         'delivery_count': len([k for k in store.db.records if k.startswith('_job_deliveries/')]),
-        'email_count': store.db.records.get('_email_counts/daily', {}).get('sent', {}).get('count', 0),
+        'email_count': store.db.records.get('_email_counts/daily', {})
+        .get('sent', {})
+        .get('count', 0),
     }
 
 
