@@ -73,7 +73,7 @@ fi
 UPTIME_NAME='DryScope: API health'
 UPTIME_PATH=/api/health
 UPTIME_BODY=healthy # /api/health answers {"status": "healthy", ...}
-POLICIES=(site-down server-errors vertex-errors email-send-failed email-delivery-failed email-volume)
+POLICIES=(site-down server-errors vertex-errors live-provider-errors email-send-failed email-delivery-failed email-volume)
 
 cat <<EOF
 Project:  $PROJECT (signed in as $ACCOUNT)
@@ -162,6 +162,9 @@ policy server-errors 'DryScope: server errors' \
 policy vertex-errors 'DryScope: Vertex AI call failed' \
   '**What it means:** an audit, OCR or scope model call failed or timed out (log line "Vertex AI call" at ERROR; the line has the model, operation, outcome and provider status only).\n\n**What to do:** read provider_status and provider_code in the log line. A technician sees a retry message; check the Vertex AI quota and status page if it repeats.' \
   "$(log_condition 'Vertex AI call logged an error' "$CLOUD_RUN AND jsonPayload.message=\"Vertex AI call\" AND severity>=ERROR")" "$LOG_RATE"
+policy live-provider-errors 'DryScope: Live provider failed' \
+  '**What it means:** a Live session ended with an SDK 5xx error or an abnormal upstream WebSocket closure (1006, 1011 or 1013). Normal session endings do not alert.\n\n**What to do:** check provider_code in the log, Vertex AI availability and quotas. The technician can reconnect with the preserved draft.' \
+  "$(log_condition 'Live provider failure' "$CLOUD_RUN AND jsonPayload.operation=\"live\" AND severity>=WARNING AND jsonPayload.provider_code=~\"^(5[0-9]{2}|1006|1011|1013)$\"")" "$LOG_RATE"
 policy email-send-failed 'DryScope: email send failed' \
   '**What it means:** an invitation email send failed. The ERROR log contains only the failure class.\n\n**What to do:** check the email transport configuration, credentials and provider status; retry the invitation after correcting the failure.' \
   "$(log_condition 'Email send failed' "$CLOUD_RUN AND jsonPayload.operation=\"email\" AND jsonPayload.status=\"send_failed\" AND severity>=ERROR")" "$LOG_RATE"

@@ -23,13 +23,14 @@ Alert policies are billed per condition and uptime checks per run; at this size 
 | `DryScope: health check failing` | The check fails from at least two regions for a minute. | Open the site, then the Cloud Run service `alert-disaster-field-estimator` (`us-west2`) and its latest revision. Roll traffic back if it began with a deploy. |
 | `DryScope: server errors` | More than 5 Cloud Run responses with a 5xx status in 10 minutes. | Filter Logs Explorer for the service at `severity>=ERROR`; roll back if it began with a deploy. |
 | `DryScope: Vertex AI call failed` | A log line `Vertex AI call` at ERROR (audit, OCR or scope model call failed or timed out). | Read `provider_status`, `provider_code` and `outcome` in the line; check Vertex AI quota and status if it repeats. Technicians see a retry message. |
+| `DryScope: Live provider failed` | A WARNING-or-higher Live event with `operation=live` and `provider_code` 500–599 (SDK error), 1006 (abnormal socket closure), 1011 (server error) or 1013 (try again later). | Check Vertex AI availability, quotas and the logged code; reconnect with the preserved draft. |
 | `DryScope: email send failed` | An ERROR log with `operation=email` and `status=send_failed` from invitation delivery. Only the failure class is logged. | Check email transport configuration, credentials and provider status, then retry the invitation. |
 | `DryScope: document email failed` | A log line `Delivery entry` with `operation=delivery` and `status=failed`. | Check the Gmail SMTP account, its app password and the daily limit. The entry stays retryable unless its outcome was unconfirmed. |
 | `DryScope: daily email count high` | A log line with `operation=email` and `status=daily_warning`: more than 400 emails in the 24-hour window. | Gmail may refuse sends until the window resets; look for a send loop. |
 
 The log alerts send at most one email an hour each and close themselves after 24 hours. They match only fields on the backend's allowlist (`LOG_FIELDS` in `backend/cloud_log.py`), which carries no prompts, addresses, links, tokens or coordinates. The document delivery alert stays quiet until document delivery is switched on.
 
-Live session endings (`Live session ended` at WARNING) have no alert.
+Normal Live endings (`finished`, `rollover`, `disconnected`, `closed`) emit INFO and do not trigger the Live provider alert. Other codes and failures without a provider code are outside this policy.
 
 ## Test it
 

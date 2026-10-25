@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 
@@ -44,7 +45,7 @@ def preview(tmp_path):
 
 def test_preview_targets_project_service_and_notification_address(preview):
     commands, policies = preview
-    assert len(commands) == 8
+    assert len(commands) == 9
     for command in commands:
         assert command[0] == 'gcloud'
         assert [arg for arg in command if arg.startswith('--project=')] == [f'--project={PROJECT}']
@@ -57,7 +58,7 @@ def test_preview_targets_project_service_and_notification_address(preview):
                  '--period=5', '--regions=usa-iowa,usa-oregon,usa-virginia',
                  '--matcher-content=healthy'):
         assert flag in uptime
-    assert set(policies) == {'site-down', 'server-errors', 'vertex-errors',
+    assert set(policies) == {'site-down', 'server-errors', 'vertex-errors', 'live-provider-errors',
                              'email-send-failed', 'email-delivery-failed', 'email-volume'}
     assert len(creates) == len(policies)
     for command in creates:
@@ -84,8 +85,13 @@ def matches(filter_text, entry):
               'resource.labels.service_name': SERVICE,
               **{f'jsonPayload.{key}': value for key, value in entry.items()}}
     for clause in filter_text.split(' AND '):
-        if clause == 'severity>=ERROR':
-            if entry['severity'] not in ('ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'):
+        if clause.startswith('severity>='):
+            levels = ['DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY']
+            if levels.index(entry['severity']) < levels.index(clause.split('>=', 1)[1]):
+                return False
+        elif '=~' in clause:
+            key, pattern = clause.split('=~', 1)
+            if key not in fields or not re.search(json.loads(pattern), str(fields[key])):
                 return False
         else:
             key, value = clause.split('=', 1)
@@ -114,3 +120,34 @@ def test_log_policy_matches_structured_events(preview, capsys, key, message, fie
 def test_script_rejects_missing_or_invalid_email(args):
     result = subprocess.run(['bash', str(SCRIPT), '--dry-run', *args], capture_output=True, text=True)
     assert result.returncode != 0
+
+
+@pytest.mark.parametrize('code', [500, 503, 599, 1006, 1011, 1013])
+def test_live_provider_failures_match(preview, capsys, code):
+    policy = preview[1]['live-provider-errors']
+    event('Live session ended', logging.WARNING, operation='live',
+          outcome='ServerError', provider_code=code)
+    entry = json.loads(capsys.readouterr().out)
+    condition = policy['conditions'][0]['conditionMatchedLog']['filter']
+    assert matches(condition, entry)
+    assert not matches(condition, {**entry, 'operation': 'audit'})
+    assert policy['alertStrategy']['notificationRateLimit']['period'] == '3600s'
+
+
+@pytest.mark.parametrize('outcome', ['finished', 'rollover', 'disconnected', 'closed'])
+@pytest.mark.parametrize('code', [None, 1000, 503])
+def test_normal_live_endings_do_not_match(preview, capsys, outcome, code):
+    event('Live session ended', logging.INFO, operation='live',
+          outcome=outcome, provider_code=code)
+    entry = json.loads(capsys.readouterr().out)
+    condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
+    assert not matches(condition, entry)
+
+
+@pytest.mark.parametrize('code', [None, 1000, 1001, 499, 600, 1503])
+def test_live_other_codes_do_not_match(preview, capsys, code):
+    event('Live session ended', logging.WARNING, operation='live',
+          outcome='ConnectionClosed', provider_code=code)
+    entry = json.loads(capsys.readouterr().out)
+    condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
+    assert not matches(condition, entry)
