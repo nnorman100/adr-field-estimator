@@ -4059,14 +4059,17 @@ async function draftNotes(key) {
       for (const note of all.result)
         if (note.status === 'recording' && notes.note?.id !== note.id) {
           note.status = 'saved';
-          if (note.parts) stored.put(note);
-          else stored.delete([key, note.id]);
+          if (!note.parts) {
+            note.status = 'failed';
+            note.error = 'Recording ended before audio was saved.';
+          }
+          stored.put(note);
         }
     };
     return all;
   });
   return rows
-    .filter((note) => note.parts || note.status === 'recording')
+    .filter((note) => note.parts || ['recording', 'failed'].includes(note.status))
     .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
 }
 async function noteAudio(note) {
@@ -4121,7 +4124,22 @@ async function recordNote() {
   notes.note = note;
   try {
     await saveNote(note);
+    if (navigator.onLine) {
+      const task = async () => {
+        await doSync();
+        if (state.draft !== draft) throw Error('Another job is open.');
+        await reserveNote(note, draft);
+      };
+      syncChain = syncChain.catch(() => {}).then(task);
+      await syncChain;
+    }
+    if (state.draft !== draft || state.signed || confirmedAuthorization)
+      throw Error('Open an unsigned inspection first.');
+    if (state.documents) invalidate();
   } catch (e) {
+    note.status = 'failed';
+    note.error = e.message;
+    await saveNote(note);
     notes.note = null;
     stream.getTracks().forEach((track) => track.stop());
     throw e;
@@ -4151,15 +4169,11 @@ async function recordNote() {
     await saving;
     note.duration_ms = Date.now() - started;
     note.status = 'saved';
-    if (note.parts) {
-      await saveNote(note);
-      // A new recording cancels the estimate on screen immediately. The server drops the
-      // signing link when the note is reserved, which happens as soon as the phone is online.
-      if (state.documents) invalidate();
-    } else
-      await dbAction('readwrite', (drafts, photos, stored) =>
-        stored.delete([note.draft_key, note.id]),
-      );
+    if (!note.parts) {
+      note.status = 'failed';
+      note.error = 'Recording ended before audio was saved.';
+    }
+    await saveNote(note);
     notes.recorder = null;
     notes.note = null;
     $('recordingStatus').textContent = note.parts
@@ -4230,25 +4244,18 @@ async function removeNote(note) {
   // A signed job cannot change the server record; removing the local copy only dismisses it.
   if (
     note.status === 'failed' &&
-    navigator.onLine &&
     state.draft &&
     !state.signed &&
     !confirmedAuthorization
   ) {
-    try {
-      absorb(
-        await jsonApi(
-          '/api/inspections/' +
-            state.draft.inspection_id +
-            '/voice-notes/' +
-            note.id +
-            '/resolve',
-          'POST',
-        ),
-      );
-    } catch (e) {
-      if (!(e.status === 409 && /not waiting/i.test(e.message || ''))) throw e;
-    }
+    if (!navigator.onLine) throw Error('Removing a failed voice note requires a connection.');
+    if (!note.reserved) await reserveNote(note, state.draft);
+    absorb(
+      await jsonApi(
+        '/api/inspections/' + state.draft.inspection_id + '/voice-notes/' + note.id + '/resolve',
+        'POST',
+      ),
+    );
   }
   await dbAction('readwrite', (drafts, photos, stored, audio) => {
     audio.delete(IDBKeyRange.bound([note.draft_key, note.id], [note.draft_key, note.id, []]));
@@ -4265,6 +4272,17 @@ async function playNote(note) {
   await player.play();
 }
 // Lists the open draft's voice notes and what is still waiting to upload.
+function unreviewedVoiceNotes(rows) {
+  const pending = new Map(
+    rows.filter((note) => note.status === 'done' && !note.reviewed).map((note) => [note.id, note]),
+  );
+  for (const note of state.record?.voice_notes || []) {
+    if (note.status === 'transcribed' && !note.reviewed)
+      pending.set(note.id, pending.get(note.id) || note);
+    else if (note.reviewed || note.status === 'resolved') pending.delete(note.id);
+  }
+  return [...pending.values()];
+}
 async function renderNotes() {
   if (!state.draft || !state.user) return;
   const draft = state.draft,
@@ -4313,7 +4331,7 @@ async function renderNotes() {
       ? 'All voice notes and photos are uploaded.'
       : '';
   $('noteQueue').hidden = !rows.length;
-  const unreviewed = rows.filter((note) => note.status === 'done' && !note.reviewed).length;
+  const unreviewed = unreviewedVoiceNotes(rows).length;
   for (const id of ['reviewVoiceNotes', 'reviewVoiceNotesWalk']) {
     const control = $(id);
     if (!control) continue;
@@ -4480,7 +4498,10 @@ async function settleVoiceNotes() {
   ui.settlingNotes = true;
   try {
     const open = (rows) =>
-      notes.recorder || rows.some((note) => note.status !== 'done' || !note.reviewed);
+      notes.note ||
+      notes.recorder ||
+      rows.some((note) => note.status !== 'done') ||
+      unreviewedVoiceNotes(rows).length;
     let rows = await draftNotes(noteKey());
     if (!open(rows) && !notes.processing && !sendingNotes.size && !notes.again) return;
     say('Saving and transcribing voice notes…');
@@ -4511,7 +4532,7 @@ async function settleVoiceNotes() {
       await new Promise((resolve) => setTimeout(resolve, 30));
     if (notes.again) await processNotes();
     rows = await draftNotes(noteKey());
-    if (notes.recorder || rows.some((note) => note.status === 'recording'))
+    if (notes.note || notes.recorder || rows.some((note) => note.status === 'recording'))
       throw Error(
         'Stop and save the voice note before continuing. It stays on this phone until it is transcribed.',
       );
@@ -4523,7 +4544,7 @@ async function settleVoiceNotes() {
       );
     const failed = rows.find((note) => note.status === 'failed');
     if (failed) throw Error(noteStatus(failed));
-    if (rows.some((note) => note.status === 'done' && !note.reviewed))
+    if (unreviewedVoiceNotes(rows).length)
       throw Error(
         'Review the voice-note transcript before filling scope, finishing, or signing.',
       );
@@ -4537,18 +4558,20 @@ async function reviewVoiceNotes() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned inspection first.');
   if (!navigator.onLine) throw Error('Reviewing a transcript requires a connection.');
-  const rows = (await draftNotes(noteKey())).filter(
-    (note) => note.status === 'done' && !note.reviewed,
-  );
+  const draft = state.draft;
+  const rows = unreviewedVoiceNotes(await draftNotes(noteKey()));
   if (!rows.length) return;
   for (const note of rows) {
     const record = await jsonApi(
-      '/api/inspections/' + state.draft.inspection_id + '/voice-notes/' + note.id + '/review',
+      '/api/inspections/' + draft.inspection_id + '/voice-notes/' + note.id + '/review',
       'POST',
     );
-    if (state.draft) absorb(record);
-    note.reviewed = true;
-    await saveNote(note);
+    if (state.draft !== draft) return;
+    absorb(record);
+    if (note.draft_key) {
+      note.reviewed = true;
+      await saveNote(note);
+    }
   }
   renderNotes();
   say('Transcript reviewed.', 'success');

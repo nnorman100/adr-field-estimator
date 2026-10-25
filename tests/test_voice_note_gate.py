@@ -55,8 +55,6 @@ def test_pending_failed_and_unreviewed_notes_block_the_estimate(context, monkeyp
     # A second reserve is idempotent and does not move the revision again.
     again = pending(client)
     assert again.status_code == 200 and again.json()['revision'] == body['revision']
-    refused = resolve(client)
-    assert refused.status_code == 409 and 'not waiting' in refused.json()['detail']
     failed = client.post(
         '/api/inspections/' + ID + '/voice-notes/' + NOTE + '/review',
     )
@@ -157,3 +155,12 @@ def test_a_missing_note_cannot_be_resolved_or_reviewed(context):
     reviewed = review(client, missing)
     assert reviewed.status_code == 409 and 'not waiting' in reviewed.json()['detail']
     assert 'voice_notes' not in client.get('/api/inspections/' + ID).json()
+
+
+def test_empty_reserved_recording_can_be_explicitly_removed(context):
+    client, _store = context
+    prepared(client)
+    assert pending(client).status_code == 200
+    cleared = resolve(client)
+    assert cleared.status_code == 200
+    assert cleared.json()['voice_notes'][0]['status'] == 'resolved'

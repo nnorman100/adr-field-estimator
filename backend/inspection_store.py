@@ -496,7 +496,7 @@ class InspectionStore(JobStore):
 
         reserve inserts a pending row and clears an audit. fail marks a pending or missing note
         failed and does not downgrade a transcribed or resolved note. resolve accepts only a
-        failed note. review accepts only a transcribed note and does not move the revision.
+        pending or failed note. review accepts only a transcribed note and does not move the revision.
         """
         if not NOTE_ID_RE.fullmatch(note_id or ''):
             raise ValueError('Voice note reference is not valid.')
@@ -542,7 +542,7 @@ class InspectionStore(JobStore):
                 self._write_note(record, ref, tx)
                 return record, moved
             if action == 'resolve':
-                if row is None or row.get('status') not in ('failed', 'resolved'):
+                if row is None or row.get('status') not in ('pending', 'failed', 'resolved'):
                     raise Conflict('This voice note is not waiting to be resolved.')
                 if row.get('status') == 'resolved':
                     return record, False
