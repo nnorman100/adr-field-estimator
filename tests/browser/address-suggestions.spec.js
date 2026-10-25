@@ -170,11 +170,17 @@ test('offline the address is plain text and makes no lookups', async ({
   await saveDraft(page);
   await expect.poll(async () => (await saved(page))?.coordinates?.address).toBe(FULL);
   await context.setOffline(true);
+  await expect(page.locator('#jobMapStatus')).toBeVisible();
+  await expect(page.locator('#jobMapStatus')).toHaveText('Map unavailable offline');
+  await expect(page.locator('#jobMapImage')).toBeHidden();
+  await expect(page.locator('#jobDirections')).toBeVisible();
   const before = (await calls(request)).length;
   await page.locator('#address').fill(FULL);
   await page.waitForTimeout(600);
   await expect(page.locator('#addressSuggestions')).toBeHidden();
   await context.setOffline(false);
+  await expect(page.locator('#jobMapImage')).toBeVisible();
+  await expect(page.locator('#jobMapStatus')).toBeHidden();
   expect((await calls(request)).length).toBe(before);
 });
 

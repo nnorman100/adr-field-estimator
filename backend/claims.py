@@ -35,6 +35,7 @@ JOB_CODES = (
 )
 SCOPE_EXCLUDED = {code for code, _, _, _, _ in BASELINE} | {'ADR-AFTER'}
 PHOTO_LOCATION_PRIVACY = "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log."
+ADDRESS_LOCATION_PRIVACY = "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job."
 PRETEST = '(this does not include the pretest for lead/asbestos)'
 # Standard estimate wording; {company} is the issuing company's name.
 TESTING = "Testing is required under California State Law due to the home's construction year. A third-party company will conduct lead and asbestos testing to determine their presence. If the results are negative, remediation can proceed as outlined below. However, if lead or asbestos is detected, we will discuss the necessary abatement steps with the homeowner, and a price adjustment will be made accordingly."
@@ -382,7 +383,7 @@ def make_documents(
             lead_notice_required=before,
             findings=observations,
             recommendations=recommendations,
-            disclaimers=[PHOTO_LOCATION_PRIVACY] + clauses,
+            disclaimers=[PHOTO_LOCATION_PRIVACY, ADDRESS_LOCATION_PRIVACY] + clauses,
         ),
         xactimate_scope=items,
         xactimate_total=total,

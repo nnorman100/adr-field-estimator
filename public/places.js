@@ -192,11 +192,13 @@ window.PlacesUI = (() => {
     if (!mapped) return;
     status.hidden = false;
     const key = coordKey(coordinates);
-    if (images.has(key)) {
+    if (!navigator.onLine) {
+      status.textContent = 'Map unavailable offline';
+    } else if (images.has(key)) {
       image.src = images.get(key);
       image.hidden = false;
       status.hidden = true;
-    } else if (!navigator.onLine || off || fetches.get(key) === 'failed') {
+    } else if (off || fetches.get(key) === 'failed') {
       status.textContent = 'Map unavailable offline';
     } else {
       status.textContent = 'Loading map…';

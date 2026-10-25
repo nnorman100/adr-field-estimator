@@ -9,6 +9,7 @@ from backend.claims import (
     ADDITIONAL,
     PRETEST,
     PHOTO_LOCATION_PRIVACY,
+    ADDRESS_LOCATION_PRIVACY,
     REPRICE,
     TESTING,
     VALIDITY,
@@ -90,6 +91,7 @@ def test_standard_estimate_clauses_follow_property_age():
     ]
     assert proposal['disclaimers'] == [
         PHOTO_LOCATION_PRIVACY,
+        ADDRESS_LOCATION_PRIVACY,
         PRETEST,
         'NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Alert Disaster Restoration. This estimate does not include testing of any kind.',
         REPRICE,
@@ -507,7 +509,7 @@ def test_defense_letter_prints_the_sizing_check_only_when_available():
 @pytest.mark.parametrize('year_built', [1960, 2000])
 @pytest.mark.parametrize('identity', [None, ADR_PROFILE, {'name': 'Other Company'}])
 @pytest.mark.parametrize('source', [None, 'not_shared', 'not_available', 'device'])
-def test_new_proposals_include_owner_approved_photo_privacy(year_built, identity, source):
+def test_new_proposals_include_owner_approved_location_privacy(year_built, identity, source):
     photos = [
         {
             'id': 'photo',
@@ -536,3 +538,4 @@ def test_new_proposals_include_owner_approved_photo_privacy(year_built, identity
         )
         == 1
     )
+    assert docs['adr_estimate']['disclaimers'][1] == 'When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.'
