@@ -501,7 +501,7 @@ test.describe('controlled voice-note uploads', () => {
     await page.locator('#typedNote').fill('Use 3 fans.');
     await page.locator('#addTypedNote').click();
     await page.locator('#recordNote').click();
-    await expect(page.locator('#message')).toContainText('Failed to fetch');
+    await expect(page.locator('#message')).toContainText(/Failed to fetch|Load failed/);
     expect(await savedParts(page)).toBe(0);
     expect(await page.evaluate(() => !!notes.recorder)).toBe(false);
     drop = false;
