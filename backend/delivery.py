@@ -94,9 +94,9 @@ class Deliveries:
         return record
 
     def send(self, job_id, compose):
-        """Sends each queued entry, and each failed one, once; sent and skipped entries are never sent
-        again, so repeating this is the retry. compose(role, record) builds that role's message with
-        delivery_email."""
+        """Sends queued entries and retryable failures; uncertain outcomes are never retried.
+        Sent and skipped entries are never sent again. compose(role, record) builds that role's
+        message with delivery_email."""
         record = None
         for role in RECIPIENTS:
             record, attempt, stale = self.w._run(

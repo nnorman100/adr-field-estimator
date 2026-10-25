@@ -560,6 +560,7 @@ test('owners alone see the notice once the day passes 400 emails', async ({ page
   await page.evaluate(() => WorkspaceUI.refresh());
   await expect(notice).toBeVisible();
   await start(page, 'office');
+  await navigate(page, 'dashboardHome');
   await expect(page.locator('#dashboardContent .dashboard-card').first()).toBeVisible();
   await expect(notice).toHaveCount(0);
 });
@@ -639,6 +640,9 @@ test('other company branding and signing snapshots stay isolated from ADR', asyn
   await page.mouse.up();
   await page.locator('#authorizeJob').click();
   await expect(page.locator('#savedSignature')).toBeVisible();
+  const deliveryStats = await (await page.request.get('/__test/workspaces-stats')).json();
+  expect(deliveryStats.delivery_count).toBe(0);
+  expect(deliveryStats.email_count).toBe(0);
   await page.reload();
   await navigate(page, 'dashboardJobs');
   await page.getByRole('button', { name: /Other company synthetic property.*Signed/s }).click();
