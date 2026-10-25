@@ -83,7 +83,7 @@ def test_adjuster_email_sends_one_private_link_and_a_repeat_does_not(api, smtp, 
     assert saved.status_code == 200, saved.text
     assert saved.json()['auth_id'] == AUTH
     assert statuses(store) == {'homeowner': 'skipped', 'adjuster': 'sent', 'crew_lead': 'skipped'}
-    assert record(store)['entries']['homeowner']['reason'] == NOT_SWITCHED_ON['homeowner']
+    assert record(store)['entries']['homeowner']['reason'] == 'Homeowner email is not switched on.'
     assert record(store)['entries']['crew_lead']['reason'] == NO_CREW_LEAD
     assert len(connections) == 1
     message = connections[0]['server'].message
