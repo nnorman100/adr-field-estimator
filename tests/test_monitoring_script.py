@@ -91,7 +91,13 @@ def matches(filter_text, entry):
                 return False
         elif '=~' in clause:
             key, pattern = clause.split('=~', 1)
-            if key not in fields or not re.search(json.loads(pattern), str(fields[key])):
+            if key.startswith('CAST(') and key.endswith(', STRING)'):
+                value = fields.get(key[5:-9])
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    value = json.dumps(value)
+            else:
+                value = fields.get(key)
+            if not isinstance(value, str) or not re.search(json.loads(pattern), value):
                 return False
         else:
             key, value = clause.split('=', 1)
@@ -151,3 +157,14 @@ def test_live_other_codes_do_not_match(preview, capsys, code):
     entry = json.loads(capsys.readouterr().out)
     condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
     assert not matches(condition, entry)
+
+
+@pytest.mark.parametrize('code', [503, 1006])
+def test_regex_requires_string_field_or_explicit_cast(capsys, code):
+    event('Live session ended', logging.WARNING, operation='live', provider_code=code)
+    entry = json.loads(capsys.readouterr().out)
+    assert isinstance(entry['provider_code'], int)
+    pattern = '"^(5[0-9]{2}|1006|1011|1013)$"'
+    assert not matches('jsonPayload.provider_code=~' + pattern, entry)
+    assert matches('CAST(jsonPayload.provider_code, STRING)=~' + pattern, entry)
+    assert matches('jsonPayload.provider_code=~' + pattern, {'provider_code': json.dumps(code)})
