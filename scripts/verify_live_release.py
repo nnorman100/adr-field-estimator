@@ -32,6 +32,7 @@ STAGED = 'https://live-reliable---alert-disaster-field-estimator-ecyxym3iqa-wl.a
 WORKSPACE_STAGE = 'https://workspaces---alert-disaster-field-estimator-ecyxym3iqa-wl.a.run.app'
 SERVICE = None
 EXPECTED_COMMIT = None
+READINESS_AUDIO = None
 # One lookup per Live window avoids ~30 s WSL2 interop calls; gcloud may hand back a nearly expired token.
 TOKEN_LIFETIME = 45 * 60
 TOKEN_MARGIN = 2 * 60
@@ -202,6 +203,77 @@ def live_connection(target):
             return exc
 
     return NoRedirectConnect(target, origin=URL)
+
+
+async def readiness_live(token, iid):
+    """Opt-in staged eval: caller supplies a 16 kHz mono PCM WAV asking for one missing item.
+
+    Run only with release authorization, after enabling readiness on the staged backend.
+    Each of three new sessions receives saved readiness before the supplied question.
+    """
+    from scripts.readiness_eval import check_reply
+
+    session = check('GET', '/api/session', token)
+    assert 'readiness' in session.get('ai_features', []), 'Enable readiness on the candidate first'
+    with wave.open(str(READINESS_AUDIO), 'rb') as recording:
+        assert (recording.getframerate(), recording.getnchannels(), recording.getsampwidth()) == (
+            16000,
+            1,
+            2,
+        )
+        audio = recording.readframes(recording.getnframes())
+    assert 0 < len(audio) <= 32000 * 20, 'Use a question no longer than 20 seconds'
+    for run in range(3):
+        state = check('GET', '/api/inspections/' + iid, token)['readiness']
+        assert state['gaps'], 'Synthetic eval job must have listed gaps'
+        async with live_connection(SERVICE.replace('https:', 'wss:') + '/api/live') as socket:
+            await socket.send(
+                json.dumps(
+                    dict(
+                        type='authenticate',
+                        token=token,
+                        inspection_id=iid,
+                        protocol_version=2,
+                        workspace_protocol_version=1,
+                        capture_id=uuid4().hex,
+                    )
+                )
+            )
+            try:
+                ready = json.loads(await asyncio.wait_for(socket.recv(), 40))
+                assert ready['type'] == 'ready'
+                # Drain the greeting before the saved readiness signal and technician question.
+                while True:
+                    packet = json.loads(await asyncio.wait_for(socket.recv(), 40))
+                    assert packet['type'] != 'error'
+                    if packet['type'] == 'turn_complete':
+                        break
+                await socket.send(json.dumps({'type': 'shots'}))
+                await asyncio.sleep(1.2)
+                for offset in range(0, len(audio), 3200):
+                    await socket.send(
+                        json.dumps(
+                            {
+                                'type': 'audio',
+                                'data': base64.b64encode(audio[offset : offset + 3200]).decode(),
+                            }
+                        )
+                    )
+                    await asyncio.sleep(0.1)
+                await socket.send(json.dumps({'type': 'pause'}))
+                reply = []
+                while True:
+                    packet = json.loads(await asyncio.wait_for(socket.recv(), 40))
+                    assert packet['type'] != 'error'
+                    if packet['type'] == 'transcript' and packet.get('speaker') == 'assistant':
+                        reply.append(packet['text'])
+                    if packet['type'] == 'turn_complete' and reply:
+                        break
+                check_reply(state, ' '.join(reply))
+            finally:
+                await socket.send(json.dumps({'type': 'end'}))
+                await finished(socket)
+        print('PASS: readiness reply ' + str(run + 1) + '/3 asks for one listed gap', flush=True)
 
 
 async def live(token, iid, uid):
@@ -641,6 +713,8 @@ def main():
         record = check('POST', f'/api/inspections/{iid}/photos/{pid}/ocr', token, {})
         assert record['photos'][0]['ocr_status'] == 'no_meter'
         asyncio.run(live(token, iid, uid))
+        if READINESS_AUDIO:
+            asyncio.run(readiness_live(token, iid))
         record = check(
             'POST',
             '/api/audit',
@@ -766,7 +840,7 @@ def commit_hash(value):
 
 
 def cli():
-    global SERVICE, EXPECTED_COMMIT
+    global SERVICE, EXPECTED_COMMIT, READINESS_AUDIO
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
         'service',
@@ -788,7 +862,17 @@ def cli():
         type=commit_hash,
         help='Fail unless the backend reports this source_commit (see RELEASES.md).',
     )
+    parser.add_argument(
+        '--readiness-audio',
+        type=Path,
+        help='Opt-in pre-enable eval: WAV asking for one missing item; runs three staged Live sessions.',
+    )
     modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument(
+        '--readiness-dry-run',
+        action='store_true',
+        help='Run synthetic readiness transcript checks without any network calls.',
+    )
     modes.add_argument('--public', action='store_true')
     modes.add_argument('--cleanup-stdin', action='store_true')
     modes.add_argument(
@@ -797,6 +881,14 @@ def cli():
         help='Read a Firebase ID token from a private stdin pipe.',
     )
     args = parser.parse_args()
+    if args.readiness_dry_run:
+        from scripts.readiness_eval import dry_run
+
+        dry_run()
+        return
+    READINESS_AUDIO = args.readiness_audio
+    if READINESS_AUDIO and (args.production or args.service == PRODUCTION or not args.token_stdin):
+        parser.error('Readiness eval requires a staged backend and --token-stdin.')
     targets = (
         ([args.service] if args.service else [])
         + (args.backend_tag or [])

@@ -2873,3 +2873,26 @@ footer {
     border-radius: 0;
   }
 }
+
+/* Readiness is advisory and works on the narrowest field phones. */
+#readinessDialog {
+  max-height: 85dvh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.readiness-gap {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0.75rem 0;
+}
+.readiness-gap button {
+  flex: 0 0 auto;
+}
+@media (max-width: 350px) {
+  .readiness-gap {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

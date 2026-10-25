@@ -530,6 +530,20 @@ console.log(
   assert.equal(core.shotLabel('equipment'), 'Equipment as placed');
   data.rooms = [];
   assert.deepEqual(core.missingItems(data), ['No affected rooms']);
+  // The same twelve readiness fixtures run through Python and the device implementation.
+  for (const f of require('./fixtures/readiness.json')) {
+    const result = core.readiness(f.data, f.photos, f.claim, f.readings);
+    assert.deepEqual(
+      result.gaps.map((g) => g.code),
+      f.expected_codes,
+      f.name,
+    );
+    assert.equal(result.ready, f.name === 'fully ready', f.name);
+    assert.deepEqual(
+      core.missingItems(f.data, f.photos, f.claim, f.readings),
+      result.gaps.map((g) => (g.room ? g.room + ': ' : '') + g.text),
+    );
+  }
   // iPhone Safari records MP4; Chrome falls back to WebM Opus; nothing supported means typing only.
   assert.deepEqual(
     core.noteFormat((type) => type === 'audio/mp4'),

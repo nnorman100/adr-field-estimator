@@ -769,3 +769,34 @@ def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypat
     )
     for path in ('_job_deliveries/' + job, '_job_deliveries', '_email_counts/daily'):
         assert browser_request('GET', path, browser_token('owner')) == 403, path
+
+
+def test_readiness_derives_from_existing_log_without_source_writes():
+    from backend.readiness import readiness
+
+    store = instances(count=1)[0]
+    record = store.create_inspection('owner', ID, data())
+    before = stored(store.db, 'inspections/' + ID)
+    state = readiness(
+        record['data'], record['photos'], {}, store.drying_log('owner', ID)['readings']
+    )
+    assert 'setup_readings' in [g['code'] for g in state['gaps']]
+    log = store.add_reading(
+        'owner',
+        'owner@example.invalid',
+        ID,
+        {
+            'kind': 'air',
+            'zone': 'affected',
+            'room': 'Bathroom',
+            'taken_at': '2026-10-25T10:00:00Z',
+            'temperature_f': 70,
+            'relative_humidity': 50,
+        },
+    )
+    after = readiness(record['data'], record['photos'], {}, log['readings'])
+    assert 'setup_readings' not in [g['code'] for g in after['gaps']]
+    assert stored(store.db, 'inspections/' + ID) == before
+    assert not stored(store.db, '_limits/owner')
+    with pytest.raises((PermissionError, LookupError)):
+        store.drying_log('other', ID)

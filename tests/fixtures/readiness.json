@@ -1,0 +1,603 @@
+[
+  {
+    "data": {
+      "rooms": []
+    },
+    "photos": [],
+    "claim": {},
+    "readings": [],
+    "name": "empty job",
+    "expected_codes": [
+      "address",
+      "year_built",
+      "rooms",
+      "equipment",
+      "scope_confirmed"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 0,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "no demolition",
+    "expected_codes": [
+      "demolition"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "water sizing missing",
+    "expected_codes": [
+      "floor_sf",
+      "ceiling_height_ft",
+      "water_class"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "mold",
+          "category": 3,
+          "finished_sf": 0,
+          "unfinished_sf": 0,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "mold only outside sizing",
+    "expected_codes": [
+      "demolition"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 2,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "two surfaces one photo",
+    "expected_codes": [
+      "shot:surface"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {
+      "carrier": "Synthetic Mutual",
+      "claim_number": "SYN-12",
+      "date_of_loss": "2026-10-20",
+      "adjuster_name": "Synthetic Adjuster"
+    },
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "partial insurance claim",
+    "expected_codes": [
+      "claim:policy_number",
+      "claim:loss_cause",
+      "claim:adjuster_email",
+      "claim:adjuster_phone",
+      "claim:deductible"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [],
+    "name": "equipment without setup readings",
+    "expected_codes": [
+      "setup_readings"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "pending"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "pending OCR",
+    "expected_codes": [
+      "ocr"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": false
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "scope unconfirmed",
+    "expected_codes": [
+      "scope_confirmed"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "dehumidifiers without AHAM",
+    "expected_codes": [
+      "dehumidifier_ppd"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "category": 3,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "legacy loss",
+    "expected_codes": [
+      "loss"
+    ]
+  },
+  {
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 1,
+          "finished_sf": 10,
+          "unfinished_sf": 0,
+          "floor_sf": 100,
+          "ceiling_height_ft": 8,
+          "water_class": 2,
+          "affected_surfaces": 1,
+          "wet_materials": 1
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "photos": [
+      {
+        "room": "Kitchen",
+        "shot": "overview",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "surface",
+        "ocr_status": "complete"
+      },
+      {
+        "room": "Kitchen",
+        "shot": "meter",
+        "ocr_status": "complete"
+      }
+    ],
+    "claim": {},
+    "readings": [
+      {
+        "kind": "air",
+        "zone": "affected",
+        "room": "Kitchen",
+        "taken_at": "2026-10-25T10:00:00Z"
+      }
+    ],
+    "name": "fully ready",
+    "expected_codes": []
+  }
+]

@@ -1381,6 +1381,7 @@ window.WorkspaceUI = (() => {
     );
     renderClaimEdits();
     policy();
+    renderReadiness();
   }
   async function loadClaim() {
     claim = null;
@@ -1428,6 +1429,8 @@ window.WorkspaceUI = (() => {
     });
     if (!current()) return null;
     showClaim(view, shown);
+    renderReadiness();
+    if (readinessEnabled()) notifyLiveShots(true);
     // A change clears unsigned documents on the server; pick that up so stale ones cannot be signed.
     if (!state.signed && state.record?.audit) {
       const record = await jsonApi('/api/inspections/' + id);
@@ -1629,6 +1632,7 @@ window.WorkspaceUI = (() => {
     scopeAddressChanged,
     loadClaim,
     fillClaim,
+    readinessClaim: () => (claim?.job_id === state.draft?.inspection_id ? claim.claim : {}),
     loadDelivery,
   };
 })();
