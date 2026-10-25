@@ -1060,6 +1060,7 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('POST', '/api/invitations/{invitation_id}/accept'),
         ('PUT', '/api/jobs/{inspection_id}/coordination'),
         ('PUT', '/api/jobs/{inspection_id}/claim'),
+        ('POST', '/api/jobs/{inspection_id}/delivery/resend'),
     }
 
 
