@@ -819,9 +819,18 @@ function renderSaveStatus() {
 // that is the only difference from the acknowledged data, takes the server's transcript plus the
 // local additions, marks those notes done and returns true; otherwise leaves everything unchanged.
 async function takeLostNotes(key, ack, local, remote, save = saveNote) {
-  const base = JSON.parse(ack).technician_transcript,
+  const acknowledged = JSON.parse(ack),
+    base = acknowledged.technician_transcript,
     text = remote.technician_transcript;
-  if (!text.startsWith(base) || stable({ ...remote, technician_transcript: base }) !== ack)
+  if (
+    !text.startsWith(base) ||
+    stable({
+      ...remote,
+      technician_transcript: base,
+      scope_confirmed:
+        remote.scope_confirmed === false ? acknowledged.scope_confirmed : remote.scope_confirmed,
+    }) !== ack
+  )
     return false;
   const tail = text.slice(base.length).replace(/^\n/, ''),
     ids = [...tail.matchAll(/\[Offline voice note ([a-f0-9]{8})/g)].map((m) => m[1]),
@@ -834,6 +843,7 @@ async function takeLostNotes(key, ack, local, remote, save = saveNote) {
   )
     return false;
   local.technician_transcript = text + mine.slice(base.length).replace(/^\n/, '');
+  if (remote.scope_confirmed === false) local.scope_confirmed = false;
   for (const note of own.filter((n) => ids.includes(n.id.slice(0, 8)) && n.status !== 'done'))
     await save({ ...note, status: 'done', error: '', scoped: false });
   return true;
@@ -842,6 +852,7 @@ async function absorbNotes(remote) {
   const draft = state.draft;
   if (!(await takeLostNotes(noteKey(), state.ack, draft.data, remote.data))) return;
   $('technicianTranscript').value = draft.data.technician_transcript;
+  $('scopeConfirmed').checked = draft.data.scope_confirmed;
   state.ack = stable(remote.data);
   await persist();
   renderNotes();

@@ -81,5 +81,74 @@ vm.runInContext(fs.readFileSync('public/app.js', 'utf8'), context);
   await vm.runInContext('notes.recorder = null; notes.note = null; navigator.onLine = false; state.draft.homeowner_link_pending = true; events.length = 0;', context);
   await assert.rejects(vm.runInContext('recordNote()', context), /Connect to cancel it/);
   assert.equal(context.events.length, 0);
-  console.log('PASS: recording reservation, failed-note retention and server transcript review');
+  await vm.runInContext(`(async () => {
+    globalThis.recoveryBase = {
+      technician_transcript: '', scope_confirmed: true, labor_hours: 1,
+    };
+    globalThis.recoveryRemote = {
+      ...recoveryBase,
+      technician_transcript: '[Offline voice note abcdef01 · Room]\\n80 SF drywall.\\n',
+      scope_confirmed: false,
+    };
+    globalThis.recoveryLocal = { ...recoveryBase, labor_hours: 5 };
+    localRows = [{ id: 'abcdef01' + 'a'.repeat(24), status: 'saved', error: 'lost response' }];
+    globalThis.recoveredNotes = [];
+    globalThis.recovered = await takeLostNotes(
+      'job', stable(recoveryBase), recoveryLocal, recoveryRemote,
+      async (note) => recoveredNotes.push(note),
+    );
+  })()`, context);
+  assert.equal(context.recovered, true);
+  assert.equal(context.recoveryLocal.scope_confirmed, false);
+  assert.equal(context.recoveryLocal.labor_hours, 5);
+  assert.equal(context.recoveryLocal.technician_transcript, context.recoveryRemote.technician_transcript);
+  assert.equal(context.recoveredNotes[0].status, 'done');
+  await vm.runInContext(`(async () => {
+    state.draft.data = { ...recoveryBase, labor_hours: 7 };
+    state.ack = stable(recoveryBase);
+    $('scopeConfirmed').checked = true;
+    await absorbNotes({ data: recoveryRemote });
+  })()`, context);
+  assert.equal(element('scopeConfirmed').checked, false);
+  assert.equal(vm.runInContext('state.draft.data.labor_hours', context), 7);
+  assert.equal(vm.runInContext('state.ack === stable(recoveryRemote)', context), true);
+  await vm.runInContext(`(async () => {
+    globalThis.conflictingLocal = { ...recoveryBase, labor_hours: 9 };
+    globalThis.refused = await takeLostNotes(
+      'job', stable(recoveryBase), conflictingLocal,
+      { ...recoveryRemote, labor_hours: 2 },
+    );
+  })()`, context);
+  assert.equal(context.refused, false);
+  assert.equal(context.conflictingLocal.scope_confirmed, true);
+  assert.equal(context.conflictingLocal.technician_transcript, '');
+  for (const confirmed of [false, true]) {
+    context.confirmed = confirmed;
+    await vm.runInContext(`(async () => {
+      const base = { ...recoveryBase, scope_confirmed: confirmed };
+      globalThis.withLocalText = {
+        ...base, scope_confirmed: true, technician_transcript: 'Additional local observation.',
+      };
+      globalThis.merged = await takeLostNotes(
+        'job', stable(base), withLocalText, recoveryRemote, async () => {},
+      );
+    })()`, context);
+    assert.equal(context.merged, true);
+    assert.equal(context.withLocalText.scope_confirmed, false);
+    assert.equal(
+      context.withLocalText.technician_transcript,
+      context.recoveryRemote.technician_transcript + 'Additional local observation.',
+    );
+  }
+  await vm.runInContext(`(async () => {
+    globalThis.ordinary = { ...recoveryBase, labor_hours: 3 };
+    globalThis.ordinaryMerged = await takeLostNotes(
+      'job', stable(recoveryBase), ordinary,
+      { ...recoveryRemote, scope_confirmed: true }, async () => {},
+    );
+  })()`, context);
+  assert.equal(context.ordinaryMerged, true);
+  assert.equal(context.ordinary.scope_confirmed, true);
+  assert.equal(context.ordinary.labor_hours, 3);
+  console.log('PASS: voice-note lifecycle and lost-response confirmation recovery');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
