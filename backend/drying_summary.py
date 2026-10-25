@@ -20,14 +20,7 @@ class DryingSummary(StrictModel):
 
 
 def room_names(facts):
-    return list(
-        dict.fromkeys(
-            [m['room'] for m in facts['materials']]
-            + [a['room'] for a in facts['air']]
-            + facts['missing_rooms']
-            + list(facts['room_readings'])
-        )
-    ) or [None]
+    return facts['signed_rooms']
 
 
 def summary_options(facts):
@@ -73,7 +66,7 @@ def validate_summary(result, facts):
         if selection.trend != option['trend'] or selection.mention not in option['mentions']:
             raise ValueError('Summary selection does not match recorded facts.')
         seen.add(index)
-        clause = f'Room {index + 1}: {labels[selection.trend]}'
+        clause = f'Room {index + 1} ({names[index]}): {labels[selection.trend]}'
         if selection.mention == 'moisture':
             material = next(m for m in facts['materials'] if m['room'] == names[index])
             reference = material['dry_standard']
@@ -87,4 +80,7 @@ def validate_summary(result, facts):
             else:
                 clause += f'; progress {air["percent"]}%'
         clauses.append(clause)
-    return f'Day {facts["day_number"]} of {facts["planned_days"]}. ' + '; '.join(clauses) + '.'
+    text = f'Day {facts["day_number"]} of {facts["planned_days"]}. ' + '; '.join(clauses) + '.'
+    if len(text.split()) > 60:
+        raise ValueError('The summary exceeds 60 words.')
+    return text

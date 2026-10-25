@@ -215,6 +215,7 @@ def watch_state(data, log, setup_at, previous=None, at=None):
     return dict(
         status=status,
         planned_days=data['drying_days'],
+        signed_rooms=[room['name'] for room in data.get('rooms', [])],
         day_number=number,
         setup_at=setup_at,
         last_reading_at=last,
@@ -239,6 +240,7 @@ def facts(watch):
         for k in (
             'status',
             'planned_days',
+            'signed_rooms',
             'day_number',
             'flags',
             'materials',

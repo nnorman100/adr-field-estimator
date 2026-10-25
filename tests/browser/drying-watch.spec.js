@@ -24,7 +24,7 @@ async function open(page, role) {
   await list.getByRole('button', { name: 'Assigned bathroom', exact: true }).click();
   await expect(page.locator('#dryingWatch')).toBeVisible();
   await expect(page.locator('#dryingWatch .watch-summary')).toHaveText(
-    /Day \d+ of 3\. Room 1: no new reading\./,
+    /Day \d+ of 3\. Room 1 \(Bathroom\): no new reading\./,
   );
 }
 
@@ -147,7 +147,7 @@ test('loading, failed summary, rate limit and retry keep deterministic facts vis
   await expect(card.getByRole('button', { name: 'Retry summary', exact: true })).toBeEnabled();
   await card.getByRole('button', { name: 'Retry summary', exact: true }).click();
   await expect(card.locator('.watch-summary')).toHaveText(
-    /Day \d+ of 3\. Room 1: no new reading\./,
+    /Day \d+ of 3\. Room 1 \(Bathroom\): no new reading\./,
   );
 });
 

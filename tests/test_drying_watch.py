@@ -650,7 +650,9 @@ def test_room_trends_use_own_readings(watched, monkeypatch, stalled_room, improv
     )
     watch.save_summary('office', ID, current['facts_hash'], selection)
     cached = watch.view('office', ID)['summary']['text']
-    assert cached.endswith('Room 1: stalled; Room 2: improving.')
+    assert cached.endswith(
+        f'Room 1 ({stalled_room}): stalled; Room 2 ({improving_room}): improving.'
+    )
 
     wrong = deepcopy(selection)
     wrong['rooms'][1]['trend'] = 'stalled'
@@ -763,10 +765,70 @@ def test_reading_presence_is_independent_of_coverage_and_reference(watched, monk
         case['expected_trend'],
         case['expected_trend'],
     )
-    assert text.endswith(f'Room {index + 1}: {label}.')
+    assert text.endswith(f'Room {index + 1} (Bath): {label}.')
     wrong = deepcopy(selected)
     wrong['rooms'][0]['trend'] = (
         'recorded' if case['expected_trend'] == 'no_new_reading' else 'no_new_reading'
     )
     with pytest.raises(ValueError, match='does not match'):
         watch.save_summary('office', ID, current['facts_hash'], wrong)
+
+
+def test_summary_room_identity_uses_signed_order(watched, monkeypatch):
+    from backend.drying_summary import summary_options
+
+    _, _, store, watch = watched
+    job = store.db.records['_workspace_jobs/' + ID]
+    data = store.db.records['authorizations/' + job['auth_id']]['inspection']
+    data['rooms'] = [dict(name='Kitchen', wet_materials=1), dict(name='Bath', wet_materials=1)]
+    bath = dict(
+        kind='material',
+        room='Bath',
+        material='Drywall',
+        unit='%WME',
+        moisture=22,
+        dry_standard=12,
+        affected=True,
+        taken_at='2026-10-23T16:00:00Z',
+    )
+    log = dict(readings=[bath], updated_at='2026-10-23T17:00:00Z')
+    store.db.records['drying_logs/' + ID] = log
+    monkeypatch.setattr(
+        monitoring_store,
+        'watch_state',
+        lambda data, log, setup, previous: watch_state(
+            data, log, setup, previous, at=instant('2026-10-24T16:00:00Z')
+        ),
+    )
+    selection = dict(rooms=[dict(room_index=1, trend='recorded', mention='moisture')])
+    first = watch.view('office', ID)
+    assert first['signed_rooms'] == ['Kitchen', 'Bath']
+    assert summary_options(first)[1]['room_index'] == 1
+    watch.save_summary('office', ID, first['facts_hash'], selection)
+    text = watch.view('office', ID)['summary']['text']
+    assert text.endswith('Room 2 (Bath): readings recorded; moisture 22, reference 12.')
+
+    kitchen = dict(bath, room='Kitchen', moisture=30, taken_at='2026-10-22T16:00:00Z')
+    log['readings'].append(kitchen)
+    log['updated_at'] = '2026-10-24T16:00:00Z'
+    second = watch.view('office', ID)
+    assert not second.get('summary')
+    assert second['signed_rooms'] == ['Kitchen', 'Bath']
+    assert summary_options(second)[1] == summary_options(first)[1]
+    watch.save_summary('office', ID, second['facts_hash'], selection)
+    assert watch.view('office', ID)['summary']['text'] == text
+    kitchen_selection = dict(rooms=[dict(room_index=0, trend='recorded', mention='moisture')])
+    watch.save_summary('office', ID, second['facts_hash'], kitchen_selection)
+    assert watch.view('office', ID)['summary']['text'].endswith(
+        'Room 1 (Kitchen): readings recorded; moisture 30, reference 12.'
+    )
+
+
+def test_summary_enforces_word_limit_with_signed_room_names():
+    pack = deepcopy(SUMMARIES[1]['facts'])
+    name = ' '.join(['Long'] * 60)
+    pack['signed_rooms'] = [name]
+    pack['room_readings'] = {name: dict(last_reading_at='2026-10-23T16:00:00Z')}
+    selected = dict(rooms=[dict(room_index=0, trend='recorded', mention='status')])
+    with pytest.raises(ValueError, match='60 words'):
+        validate_summary(selected, pack)
