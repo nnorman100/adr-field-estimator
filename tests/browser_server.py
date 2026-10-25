@@ -365,6 +365,23 @@ async def mint_document_link(request: Request):
     return {'url': origin + '/documents#' + token, 'expires_at': document_links.iso(expires)}
 
 
+@bm.app.post('/__test/old-document-record')
+async def old_document_record(request: Request):
+    body = await request.json()
+    agreement = store.db.records['authorizations/' + body['auth_id']]
+    agreement.pop('signing_channel', None)
+    agreement['documents'].pop('claim', None)
+    for photo in agreement['documents']['photo_audit_log']:
+        photo.pop('location', None)
+    return {'prepared': True}
+
+
+@bm.app.post('/__test/revoke-document-links')
+async def revoke_document_links(request: Request):
+    body = await request.json()
+    return document_links.revoke(store, body['uid'], body['auth_id'])
+
+
 @bm.app.post('/__test/expire-document-links')
 async def expire_document_links():
     expired = 0

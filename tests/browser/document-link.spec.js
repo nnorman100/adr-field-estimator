@@ -160,6 +160,8 @@ test('the homeowner link shows the signed proposal and photo log, read-only, wit
     await expect(view.locator('#doc-' + name)).toBeVisible();
   for (const name of ['claim', 'defense'])
     await expect(view.locator('#doc-' + name)).toBeHidden();
+  await view.screenshot({ path: test.info().outputPath('homeowner-print.png'), fullPage: true });
+  await expect(view.locator('#homeownerSigning')).toBeHidden();
   await home.context.close();
 });
 
@@ -215,6 +217,8 @@ test('the adjuster link shows the claim and letter with the scope JSON, and noth
     await expect(view.locator('#doc-' + name)).toBeVisible();
   for (const name of ['proposal', 'photos'])
     await expect(view.locator('#doc-' + name)).toBeHidden();
+  await view.screenshot({ path: test.info().outputPath('adjuster-print.png'), fullPage: true });
+  await expect(view.locator('#homeownerSigning')).toBeHidden();
   await office.context.close();
 });
 
@@ -247,4 +251,74 @@ test('expired, replaced, broken and wrong-kind links are refused', async ({ page
     'This signing link is not available. Ask your technician for a new link.',
   );
   for (const home of [replaced, expired, broken, wrongKind]) await home.context.close();
+});
+
+test('revoking both active sets refuses both recipients', async ({ page, browser }) => {
+  const urls = [await mint(page, 'homeowner'), await mint(page, 'adjuster')];
+  const readers = [];
+  for (const url of urls) {
+    const reader = await recipient(browser, url);
+    await expect(reader.page.locator('#documents')).toBeVisible();
+    readers.push(reader);
+  }
+  const revoked = await page.request.post('/__test/revoke-document-links', {
+    data: { uid: uid('estimator'), auth_id: AUTH },
+  });
+  expect(await revoked.json()).toEqual({ homeowner: 'revoked', adjuster: 'revoked' });
+  for (const reader of readers) {
+    await reader.page.reload();
+    await expect(reader.page.locator('#signStatus')).toHaveText(UNAVAILABLE);
+    await reader.context.close();
+  }
+});
+
+test('role downgrade stops documents, photos and signatures; other roles cannot mint', async ({ page, browser }) => {
+  for (const role of ['office', 'admin', 'other']) {
+    const denied = await page.request.post('/__test/document-links', {
+      data: { uid: uid(role), auth_id: AUTH, document_set: 'homeowner' },
+    });
+    expect(denied.status()).toBe(404);
+  }
+  const url = await mint(page, 'homeowner');
+  const reader = await recipient(browser, url);
+  await expect(reader.page.locator('#documents')).toBeVisible();
+  const changed = await call(page, '/api/companies/adr/team/' + uid('estimator'), 'PUT',
+    { expected_version: 1, role: 'office', status: 'active' }, 'owner');
+  expect(changed.status(), await changed.text()).toBe(200);
+  for (const path of ['/api/documents', '/api/documents/signature', '/api/documents/photos/' + PHOTO]) {
+    const denied = await page.request.get(path, { headers: { 'X-ADR-Document-Link': url.split('#')[1] } });
+    expect(denied.status()).toBe(404);
+  }
+  await reader.page.reload();
+  await expect(reader.page.locator('#signStatus')).toHaveText(UNAVAILABLE);
+  await reader.context.close();
+});
+
+test('tampering with a token cannot open documents', async ({ page, browser }) => {
+  const url = await mint(page, 'homeowner');
+  const bad = url.slice(0, -1) + (url.endsWith('A') ? 'B' : 'A');
+  const reader = await recipient(browser, bad);
+  await expect(reader.page.locator('#signStatus')).toHaveText(UNAVAILABLE);
+  await expect(reader.page.locator('#signMain')).toBeHidden();
+  await reader.context.close();
+});
+
+test('offline reload does not expose cached signed documents', async ({ page, browser }) => {
+  const reader = await recipient(browser, await mint(page, 'homeowner'));
+  await expect(reader.page.locator('#documents')).toBeVisible();
+  await reader.context.setOffline(true);
+  try { await reader.page.reload(); } catch (error) {
+    expect(String(error)).toMatch(/ERR_INTERNET_DISCONNECTED/);
+  }
+  await expect(reader.page.locator('#documents')).toHaveCount(0);
+  await reader.context.close();
+});
+
+test('older signed records open without invented claim details or locations', async ({ page, browser }) => {
+  expect((await page.request.post('/__test/old-document-record', { data: { auth_id: AUTH } })).ok()).toBe(true);
+  const reader = await recipient(browser, await mint(page, 'homeowner'));
+  await expect(reader.page.locator('#signedReceipt')).toBeVisible();
+  await reader.page.locator('[data-tab="photos"]').click();
+  await expect(reader.page.locator('#photoAuditLog')).toContainText('No location recorded');
+  await reader.context.close();
 });

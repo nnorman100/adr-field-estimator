@@ -2467,6 +2467,7 @@ footer {
 }
 @media print {
   .sign-header,
+  #homeownerSigning[hidden],
   .homeowner-receipt {
     display: none !important;
   }
