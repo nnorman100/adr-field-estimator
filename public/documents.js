@@ -55,10 +55,11 @@
       node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
       node('p', 'Itemized scope total: ' + money(docs.xactimate_total)),
     );
+    // A read-only document link outside the proposal's set delivers the proposal emptied.
     body.append(node('h3', 'Findings'));
-    paragraphs(body, p.findings);
+    paragraphs(body, p.findings || []);
     body.append(node('h3', 'Proposed scope'));
-    paragraphs(body, p.recommendations);
+    paragraphs(body, p.recommendations || []);
     paragraphs(body, p.disclaimers || []);
     // AI notes are for the estimator only: the signing page has no #auditNotes and never shows them.
     const notes = $('auditNotesBody');
@@ -77,7 +78,8 @@
     $('claimParty').replaceChildren();
     paragraphs($('claimParty'), [...customer, 'Property: ' + p.property_address, ...claim]);
     $('claimItems').replaceChildren();
-    for (const item of docs.xactimate_scope) {
+    const scope = docs.xactimate_scope || [];
+    for (const item of scope) {
       const row = node('tr');
       for (const text of [
         item.code + ' · ' + (item.description || item.desc),
@@ -90,7 +92,7 @@
       $('claimItems').append(row);
     }
     $('claimCards').replaceChildren();
-    for (const item of docs.xactimate_scope) {
+    for (const item of scope) {
       const card = node('section', undefined, 'claim-card');
       card.append(
         node('span', item.code, 'claim-code'),
@@ -109,7 +111,7 @@
       $('claimCards').append(card);
     }
     $('claimTotal').textContent = 'Itemized claim total: ' + money(docs.xactimate_total);
-    $('defenseBody').textContent = docs.iicrc_defense_letter;
+    $('defenseBody').textContent = docs.iicrc_defense_letter || '';
     $('photoParty').replaceChildren();
     paragraphs($('photoParty'), claim);
     $('photoAuditLog').replaceChildren();

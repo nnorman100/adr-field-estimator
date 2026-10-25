@@ -2447,6 +2447,11 @@ footer {
   flex-wrap: wrap;
   margin-top: 1rem;
 }
+/* The document page's print and scope-JSON buttons sit beside the heading. */
+.section-head .sign-actions {
+  margin-top: 0;
+  justify-content: flex-end;
+}
 .signed-notice {
   font-family: Lato, Arial, sans-serif;
   font-size: 1rem;

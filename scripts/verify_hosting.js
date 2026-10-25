@@ -56,10 +56,24 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     'Signing page asset URLs carry another marker',
   );
   assert.equal(unstamp(signingPage), unstamp(localSigning));
-  // Without a link the anonymous route answers with the link-specific 404, not a missing route.
+  // The read-only document page is the same shell under its own rewrite and headers.
+  const documents = await fetch(base + '/documents');
+  assert.match(
+    documents.headers.get('cache-control') || '',
+    /\bno-store\b/,
+    'The document page can stay stale in a browser',
+  );
+  assert.equal(documents.headers.get('x-robots-tag'), 'noindex, nofollow');
+  assert.equal(documents.headers.get('permissions-policy'), 'tools=()');
+  assert.equal(unstamp(await documents.text()), unstamp(localSigning));
+  // Without a link the anonymous routes answer with the link-specific 404, not a missing route.
   assert.equal(
     (await (await fetch(base + '/api/sign')).json()).detail,
     'This signing link is not available. Ask your technician for a new link.',
+  );
+  assert.equal(
+    (await (await fetch(base + '/api/documents')).json()).detail,
+    'This document link is not available. Ask your restoration company for a new link.',
   );
   assert(
     shell.includes(

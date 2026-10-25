@@ -3866,8 +3866,8 @@ def member_routes():
         if (
             not path.startswith('/api/')
             or not getattr(route, 'methods', None)
-            or path in ('/api/health', '/api/sign', '/api/account/password')
-            or path.startswith('/api/sign/')
+            or path in ('/api/health', '/api/sign', '/api/documents', '/api/account/password')
+            or path.startswith(('/api/sign/', '/api/documents/'))
         ):
             continue
         for method in route.methods - {'HEAD'}:

@@ -277,6 +277,18 @@ test('the homeowner signing page keeps its route, noindex and no tools', async (
   );
 });
 
+test('the read-only document page keeps its route, noindex and no tools', async ({ page }) => {
+  const response = await page.goto('/documents');
+  expect(response.headers()['x-robots-tag']).toBe('noindex, nofollow');
+  expect(response.headers()['permissions-policy']).toBe('tools=()');
+  await expect(page.locator('.sign-header h1')).toHaveText('Your signed estimate documents');
+  await expect(page.locator('#homeownerSigning')).toBeHidden();
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', /noindex/);
+  await expect(page.locator('#landingHeading, #headerLogin, #authPanel, [toolname]')).toHaveCount(
+    0,
+  );
+});
+
 test('crawling files: robots.txt, the one-page sitemap and the 404 page', async ({ page }) => {
   const robots = await page.request.get('/robots.txt');
   expect(robots.status()).toBe(200);

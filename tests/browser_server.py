@@ -24,6 +24,7 @@ from backend import places
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
 import backend.workspaces as wm
+import backend.document_links as document_links
 from backend.contracts import InspectionData
 from copy import deepcopy
 
@@ -348,6 +349,32 @@ async def expire_signing_links():
     return {'expired': expired}
 
 
+@bm.app.post('/__test/document-links')
+async def mint_document_link(request: Request):
+    # Stands in for the delivery step that will mint links after signing (roadmap Phase 2); the
+    # app has no action for it yet. Acts as the synthetic staff user the body names.
+    body = await request.json()
+    uid = body['uid']
+    if not uid.startswith('test-owner-'):
+        raise HTTPException(400, 'Synthetic identity required.')
+    try:
+        token, expires = document_links.mint(store, uid, body['auth_id'], body['document_set'])
+    except (LookupError, wm.AccessDenied) as error:
+        raise HTTPException(404, str(error))
+    origin = f'https://localhost:{BROWSER_PORT}'
+    return {'url': origin + '/documents#' + token, 'expires_at': document_links.iso(expires)}
+
+
+@bm.app.post('/__test/expire-document-links')
+async def expire_document_links():
+    expired = 0
+    for key, link in store.db.records.items():
+        if key.startswith('_document_links/') and link['status'] == 'active':
+            link['expires'] = 0
+            expired += 1
+    return {'expired': expired}
+
+
 @bm.app.get('/__test/workspaces-stats')
 async def workspaces_stats():
     return {
@@ -420,8 +447,9 @@ def auth_sdk(version: str):
 
 
 @bm.app.get('/sign')
+@bm.app.get('/documents')
 def signing_page():
-    # Mirrors the /sign rewrite in firebase.json.
+    # Mirrors the /sign and /documents rewrites in firebase.json: one shell, two links.
     return Response(
         (ROOT / 'public/sign.html').read_bytes(),
         media_type='text/html',

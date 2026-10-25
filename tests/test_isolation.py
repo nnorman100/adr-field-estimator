@@ -39,15 +39,18 @@ def test_hosting_and_database_use_dedicated_project():
     assert api['source'] == '/api/**'
     assert api['run']['serviceId'] == 'alert-disaster-field-estimator'
     assert api['run']['region'] == 'us-west2'
-    # The site root is the static landing page; the homeowner signing page and the app shell have
-    # their own rewrites and no catch-all, so unknown paths get the 404 page instead of the app.
+    # The site root is the static landing page; the homeowner signing page, the read-only document
+    # page (the same shell) and the app shell have their own rewrites and no catch-all, so unknown
+    # paths get the 404 page instead of the app.
     assert [r['source'] for r in config['hosting']['rewrites']] == [
         '/api/**',
         '/sign',
+        '/documents',
         '/app',
     ]
     assert config['hosting']['rewrites'][1]['destination'] == '/sign.html'
-    assert config['hosting']['rewrites'][2]['destination'] == '/app.html'
+    assert config['hosting']['rewrites'][2]['destination'] == '/sign.html'
+    assert config['hosting']['rewrites'][3]['destination'] == '/app.html'
     assert config['hosting']['redirects'] == [
         {'source': '/app.html', 'destination': '/app', 'type': 301}
     ]
@@ -60,7 +63,7 @@ def test_hosting_and_database_use_dedicated_project():
             if {'key': key, 'value': value} in h['headers']
         }
 
-    app_and_signing = {'/app', '/app.html', '/sign', '/sign.html'}
+    app_and_signing = {'/app', '/app.html', '/sign', '/sign.html', '/documents'}
     assert {'/', '/index.html', '/sw.js', '/manifest.webmanifest'} | app_and_signing <= sources(
         'Cache-Control', 'no-store'
     )
