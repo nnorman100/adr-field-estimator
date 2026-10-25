@@ -192,6 +192,51 @@ vm.runInContext(fs.readFileSync('public/app.js', 'utf8'), context);
   assert.equal(context.ordinaryMerged, true);
   assert.equal(context.ordinary.scope_confirmed, true);
   assert.equal(context.ordinary.labor_hours, 3);
+  await vm.runInContext(
+    `(async () => {
+    globalThis.reservationRemote = { ...recoveryBase, scope_confirmed: false };
+    globalThis.reservationLocal = {
+      ...recoveryBase, labor_hours: 6, technician_transcript: 'Edited local observations.',
+    };
+    globalThis.reservationSaves = [];
+    globalThis.reservationRecovered = await takeLostNotes(
+      'background-job', stable(recoveryBase), reservationLocal, reservationRemote,
+      async (note) => reservationSaves.push(note),
+    );
+  })()`,
+    context,
+  );
+  assert.equal(context.reservationRecovered, true);
+  assert.equal(context.reservationLocal.scope_confirmed, false);
+  assert.equal(context.reservationLocal.labor_hours, 6);
+  assert.equal(context.reservationLocal.technician_transcript, 'Edited local observations.');
+  assert.equal(context.reservationSaves.length, 0);
+  assert.equal(context.localRows[0].status, 'saved');
+  await vm.runInContext(
+    `(async () => {
+    state.draft.data = { ...recoveryBase, labor_hours: 8 };
+    state.ack = stable(recoveryBase);
+    $('scopeConfirmed').checked = true;
+    await absorbNotes({ data: reservationRemote });
+  })()`,
+    context,
+  );
+  assert.equal(element('scopeConfirmed').checked, false);
+  assert.equal(vm.runInContext('state.draft.data.labor_hours', context), 8);
+  assert.equal(vm.runInContext('state.ack === stable(reservationRemote)', context), true);
+  await vm.runInContext(
+    `(async () => {
+    globalThis.reservationConflict = { ...recoveryBase, labor_hours: 4 };
+    globalThis.reservationRefused = await takeLostNotes(
+      'background-job', stable(recoveryBase), reservationConflict,
+      { ...reservationRemote, labor_hours: 2 },
+    );
+  })()`,
+    context,
+  );
+  assert.equal(context.reservationRefused, false);
+  assert.equal(context.reservationConflict.scope_confirmed, true);
+  assert.equal(context.reservationConflict.labor_hours, 4);
   console.log('PASS: voice-note lifecycle and lost-response confirmation recovery');
 })().catch((error) => {
   console.error(error);

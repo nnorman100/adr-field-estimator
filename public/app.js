@@ -832,6 +832,10 @@ async function takeLostNotes(key, ack, local, remote, save = saveNote) {
     }) !== ack
   )
     return false;
+  if (text === base && remote.scope_confirmed === false) {
+    local.scope_confirmed = false;
+    return true;
+  }
   const tail = text.slice(base.length).replace(/^\n/, ''),
     ids = [...tail.matchAll(/\[Offline voice note ([a-f0-9]{8})/g)].map((m) => m[1]),
     own = await draftNotes(key),
