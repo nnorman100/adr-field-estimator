@@ -182,13 +182,11 @@ test.describe('page-routed link status', () => {
     );
     await page.reload();
     await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
-    await task(page, 'review');
-    await expect(page.locator('#documents')).toBeVisible();
-    // A failed status read is retried when the Review tab is reopened.
+    // Loading the saved job makes the first status read before Review is opened.
     await expect.poll(() => failed).toBe(1);
     await expect(page.locator('#homeownerLinkPanel')).toBeHidden();
-    await task(page, 'property');
     await task(page, 'review');
+    await expect(page.locator('#documents')).toBeVisible();
     await expect(page.locator('#homeownerLinkStatus')).toContainText('Waiting for the homeowner');
     await expect(page.locator('#revokeHomeownerLink')).toBeVisible();
     // The token is never returned again, so only a new link shows a QR code.
