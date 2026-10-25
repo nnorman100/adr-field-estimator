@@ -50,7 +50,9 @@ The model receives a small fact pack with material/air measurements, day counts,
 missing rooms and flags. No customer, address, transcript, notes, email or price
 is sent. The model returns closed room/trend/fact selections, never narrative text. The server
 validates each selection against the facts and renders fixed sentences with its own
-measurements. Material coverage and reading presence are separate: a fresh partial
+measurements. Room indices follow the signed room order, and each rendered room
+reference includes its signed name; adding readings does not change that mapping.
+Material coverage and reading presence are separate: a fresh partial
 material log is not “no new reading.” Each room’s air trend uses its own recorded
 affected-air readings even without a reference; reference-based air measurements
 and progress are available only when a reference exists. Room reading times and
