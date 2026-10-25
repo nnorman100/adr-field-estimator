@@ -103,7 +103,7 @@ Design:
 
 Steps, each its own PR:
 1. Shared SMTP sender plus the delivery record and retry, with no emails switched on yet. High risk, because it touches the invitation path; release with Nate's go.
-   - Each email sets Reply-To to the company's contact email and shows the company's name, address and phone number.
+   - Each document-delivery email sets Reply-To to the company's contact email and shows the company's name, address and phone number. The step 1 PR keeps invitation headers and templates unchanged, with no new Reply-To; this identity requirement applies only to Phase 2 document-delivery emails.
    - Count emails sent per day. When the count passes 400 (Gmail's limit is about 500), log a warning and show owners a notice.
    - Logs carry only the delivery ID, recipient role and status. Never the email address.
 2. Read-only document link and the read-only page.
