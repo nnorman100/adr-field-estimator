@@ -84,7 +84,7 @@ Routing: `firebase.json` rewrites exactly `/app` to `public/app.html`, redirects
 | `tests/` | Synthetic behavioral tests; browser harness never ships |
 | `scripts/verify_live_release.py`, `verify_live_browser.js` | Real dedicated infrastructure acceptance with normal staff sign-in and scoped synthetic cleanup |
 | `scripts/deploy_backend.py`, `stamp_hosting.py`, `RELEASES.md` | Source-commit stamping of each release and the release log |
-| `scripts/ensure_firestore_ttls.py` | Read-only check, and owner-run `--apply`, of the Firestore TTL policies that delete expired link and counter records (run the check every release) |
+| `scripts/ensure_firestore_ttls.py` | [Firestore TTL policy checks and setup](docs/firebase-isolation.md#firestore-ttl-policies) |
 | `tests/fixtures/` | Small synthetic inputs shared by tests and release verifiers (for example the 16 kHz Live prompt) |
 
 ### Release-helper environment

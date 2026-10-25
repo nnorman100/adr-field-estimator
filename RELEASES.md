@@ -32,9 +32,8 @@ the revision that serves traffic instead.
 
 ### Firestore TTL policies
 
-Before promoting a backend, run `python scripts/ensure_firestore_ttls.py` (read-only) and confirm
-every policy reads `match`. If one is `missing`, the owner runs it again with `--apply`; it enables
-only the missing policies. See [docs/firebase-isolation.md](docs/firebase-isolation.md#firestore-ttl-policies).
+Before promoting a backend, complete the
+[Firestore TTL policy check](docs/firebase-isolation.md#firestore-ttl-policies).
 
 The seed rows below were reconstructed from the narrative records in `docs/` and the pull request
 named in their notes; none of those releases was stamped. Where a deploy itself was not recorded, the
