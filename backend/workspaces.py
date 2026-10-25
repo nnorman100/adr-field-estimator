@@ -1511,7 +1511,11 @@ def logo_attachment(logo):
     }
 
 
-def send_email(settings, payload, kind, key, deadline):
+class UnconfirmedDelivery(RuntimeError):
+    pass
+
+
+def send_email(settings, payload, kind, key, deadline, *, prevent_duplicates=False):
     """The one sender for invitations and document delivery. key names this send attempt: Resend's
     Idempotency-Key and, as <kind>-<key with - for />@<sender domain>, the SMTP Message-ID.
     payload may carry reply_to, one address."""
@@ -1519,7 +1523,10 @@ def send_email(settings, payload, kind, key, deadline):
     if settings['transport'] == 'smtp':
         domain = parseaddr(payload['from'])[1].rpartition('@')[2] or 'dryscope.invalid'
         message_id = f'<{kind}-{key.replace("/", "-")}@{domain}>'
-        return send_smtp(payload, settings['username'], settings['password'], message_id, deadline)
+        return send_smtp(
+            payload, settings['username'], settings['password'], message_id, deadline,
+            prevent_duplicates=prevent_duplicates,
+        )
     request = urllib.request.Request(
         'https://api.resend.com/emails',
         data=json.dumps(payload).encode(),
@@ -1533,20 +1540,40 @@ def send_email(settings, payload, kind, key, deadline):
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=8) as response:
-                result = json.loads(response.read(65536))
+                try:
+                    result = json.loads(response.read(65536))
+                except Exception as error:
+                    if prevent_duplicates:
+                        raise UnconfirmedDelivery() from error
+                    raise
+                if prevent_duplicates and (not isinstance(result, dict) or not result.get('id')):
+                    raise UnconfirmedDelivery()
                 if not isinstance(result.get('id'), str):
+                    if prevent_duplicates:
+                        raise UnconfirmedDelivery()
                     raise RuntimeError('Unconfirmed email delivery.')
                 return result['id']
         except urllib.error.HTTPError as error:
+            if prevent_duplicates and (error.code == 408 or error.code >= 500):
+                raise UnconfirmedDelivery() from error
             if error.code not in (408, 429, 500, 502, 503, 504) or attempt == 2:
                 raise
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError) as error:
+            if prevent_duplicates and not (
+                isinstance(error, urllib.error.URLError)
+                and isinstance(error.reason, (ConnectionRefusedError, socket.gaierror))
+            ):
+                raise UnconfirmedDelivery() from error
             if attempt == 2:
                 raise
+        except OSError as error:
+            if prevent_duplicates:
+                raise UnconfirmedDelivery() from error
+            raise
         time.sleep(2 ** (attempt + 1))
 
 
-def send_smtp(payload, username, password, message_id, deadline):
+def send_smtp(payload, username, password, message_id, deadline, *, prevent_duplicates=False):
     """Gmail SMTP has no idempotency key; the Message-ID is stable per attempt but Gmail does not deduplicate on it."""
     message = EmailMessage()
     message['From'] = payload['from']
@@ -1571,6 +1598,7 @@ def send_smtp(payload, username, password, message_id, deadline):
     if time.monotonic() >= deadline:
         raise TimeoutError('Email deadline passed.')
     for attempt in range(3):
+        handed_off = False
         try:
             server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=min(8, deadline - time.monotonic()))
             watchdog = threading.Timer(deadline - time.monotonic(), stop_smtp, (server,))
@@ -1578,6 +1606,7 @@ def send_smtp(payload, username, password, message_id, deadline):
             try:
                 server.starttls(context=ssl.create_default_context())
                 server.login(username, password)
+                handed_off = True
                 server.send_message(message)
             finally:
                 watchdog.cancel()
@@ -1590,12 +1619,16 @@ def send_smtp(payload, username, password, message_id, deadline):
         except smtplib.SMTPResponseException as error:
             if not 400 <= error.smtp_code < 500 or attempt == 2:
                 raise
-        except smtplib.SMTPServerDisconnected:
+        except smtplib.SMTPServerDisconnected as error:
+            if prevent_duplicates and handed_off:
+                raise UnconfirmedDelivery() from error
             if attempt == 2:
                 raise
         except smtplib.SMTPException:
             raise
-        except OSError:
+        except OSError as error:
+            if prevent_duplicates and handed_off:
+                raise UnconfirmedDelivery() from error
             if attempt == 2:
                 raise
         if time.monotonic() + 2 ** (attempt + 1) >= deadline:

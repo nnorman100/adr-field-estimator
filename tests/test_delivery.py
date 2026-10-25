@@ -4,6 +4,7 @@ fake Resend endpoint; no real account, project or inbox is contacted."""
 import json
 import smtplib
 import time
+import urllib.error
 from copy import deepcopy
 import pytest
 import backend.workspaces as workspaces
@@ -255,3 +256,58 @@ def test_a_failed_send_is_not_counted(smtp):
     ).json()
     assert invited['delivery_status'] == 'failed'
     assert '_email_counts/daily' not in store.db.records
+
+
+@pytest.mark.parametrize('error', [smtplib.SMTPServerDisconnected('Lost reply'), OSError('Lost socket'), TimeoutError()])
+def test_uncertain_smtp_delivery_is_never_retried(sending, error):
+    client, store, sent, connections, plan, deliveries = sending
+    deliveries.queue(ID, {'adjuster': 'Skipped.', 'crew_lead': 'Skipped.'})
+    plan.append(('send', error))
+    entry = deliveries.send(ID, compose)['entries']['homeowner']
+    assert (entry['status'], entry['reason'], entry['retryable']) == ('failed', UNCONFIRMED, False)
+    deliveries.send(ID, compose)
+    assert len(connections) == 1
+    assert '_email_counts/daily' not in store.db.records
+
+
+def test_smtp_failure_before_handoff_can_retry(sending):
+    client, store, sent, connections, plan, deliveries = sending
+    deliveries.queue(ID, {'adjuster': 'Skipped.', 'crew_lead': 'Skipped.'})
+    plan.append(('login', smtplib.SMTPServerDisconnected('Not sent')))
+    assert deliveries.send(ID, compose)['entries']['homeowner']['status'] == 'sent'
+    deliveries.send(ID, compose)
+    assert len(connections) == 2
+    assert sum('send' in c['server'].steps for c in connections) == 1
+    assert store.db.records['_email_counts/daily']['sent']['count'] == 1
+
+
+@pytest.mark.parametrize('outcome', ['timeout', 'server_error', 'unconfirmed', 'malformed'])
+def test_uncertain_resend_delivery_is_never_retried(sending, monkeypatch, outcome):
+    client, store, sent, connections, plan, deliveries = sending
+    monkeypatch.setenv('INVITATION_TRANSPORT', 'resend')
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, limit):
+            return b'{}' if outcome == 'unconfirmed' else b'not json'
+
+    def request(*args, **kwargs):
+        calls.append(args)
+        if outcome == 'timeout':
+            raise TimeoutError()
+        if outcome == 'server_error':
+            raise urllib.error.HTTPError('https://example.invalid', 503, 'Unavailable', {}, None)
+        return Response()
+
+    monkeypatch.setattr(workspaces.urllib.request, 'urlopen', request)
+    deliveries.queue(ID, {'adjuster': 'Skipped.', 'crew_lead': 'Skipped.'})
+    entry = deliveries.send(ID, compose)['entries']['homeowner']
+    assert (entry['status'], entry['reason'], entry['retryable']) == ('failed', UNCONFIRMED, False)
+    deliveries.send(ID, compose)
+    assert len(calls) == 1

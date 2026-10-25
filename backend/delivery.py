@@ -12,6 +12,7 @@ try:
     from .workspaces import (
         LOGO_CID,
         SMTP_DEADLINE,
+        UnconfirmedDelivery,
         email_address,
         emails_sent,
         invitation_logo,
@@ -25,6 +26,7 @@ except ImportError:
     from workspaces import (
         LOGO_CID,
         SMTP_DEADLINE,
+        UnconfirmedDelivery,
         email_address,
         emails_sent,
         invitation_logo,
@@ -108,13 +110,22 @@ class Deliveries:
             try:
                 settings = mail_settings()
                 key = record['delivery_id'] + '/' + role + '/' + attempt
-                message_id = send_email(settings, compose(role, record), 'delivery', key, deadline)
-                status = 'sent'
+                message_id = send_email(
+                    settings, compose(role, record), 'delivery', key, deadline,
+                    prevent_duplicates=True,
+                )
+                status, reason, retryable = 'sent', '', False
+            except UnconfirmedDelivery:
+                message_id = None
+                status, reason, retryable = 'failed', UNCONFIRMED, False
             except Exception:
                 message_id = None
-                status = 'failed'
+                status, reason, retryable = 'failed', FAILED, True
 
-            def finish(tx, role=role, attempt=attempt, status=status, message_id=message_id):
+            def finish(
+                tx, role=role, attempt=attempt, status=status, message_id=message_id,
+                reason=reason, retryable=retryable,
+            ):
                 current = self.w.read('_job_deliveries', job_id, tx)
                 counter = self.w.email_count(tx) if status == 'sent' else None
                 entry = current['entries'][role]
@@ -122,8 +133,8 @@ class Deliveries:
                 if entry['attempt'] == attempt:
                     entry.update(
                         status=status,
-                        reason='' if status == 'sent' else FAILED,
-                        retryable=status == 'failed',
+                        reason=reason,
+                        retryable=retryable,
                         message_id=message_id,
                         updated_at=now(),
                     )
