@@ -111,7 +111,7 @@ Steps, each its own PR:
 3. Homeowner email. Implemented, not released. Nate approved the wording "Email me a copy of my signed documents." Current checkbox behavior and delivery rules are described in [Document delivery](company-workspaces.md#document-delivery) and the [inspection workflow](../README.md#inspection-workflow).
 4. Adjuster email. Implemented, not released. Current recipient rules and document sets are described in [Document delivery](company-workspaces.md#document-delivery).
 5. Crew-lead email and the delivery switch for each company.
-6. Delivery status and Resend on the job, visible to owner and office. Superadmin support sees the status read-only, and the server refuses Resend there. Resend needs a connection. Add a Help how-to ("Sending documents") and update `README.md` ("the app sends no email" changes).
+6. Delivery status and Resend. Implemented, not released, including the Help how-to "Sending documents". Current permissions, offline behavior and retry rules are described in [Document delivery](company-workspaces.md#document-delivery). Nate's real-phone check remains open.
 
 Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox's plus-addresses, then do one real ADR job with Nate.
 
