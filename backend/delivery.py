@@ -41,10 +41,6 @@ except ImportError:
     )
 
 RECIPIENTS = ('homeowner', 'adjuster', 'crew_lead')
-# Later steps replace these. A skipped entry is never sent, so they are decided once, at queue time.
-NOT_SWITCHED_ON = {
-    'homeowner': 'Homeowner email is not switched on.',
-}
 NO_ADJUSTER_EMAIL = 'No adjuster email.'
 INVALID_ADJUSTER_EMAIL = 'The adjuster email is not a valid address.'
 # Same hosts as main.ORIGINS. A request Origin outside this list never becomes a link.
@@ -59,7 +55,6 @@ FAILED = 'The email could not be sent. A retry sends it again.'
 NOT_ASKED = 'The homeowner did not ask for an emailed copy.'
 NO_CUSTOMER_EMAIL = 'No customer email is saved on the job.'
 NOT_SWITCHED_ON = {
-    'adjuster': 'Adjuster email is not switched on.',
     'crew_lead': 'Crew-lead email is not switched on.',
 }
 # Gmail does not deduplicate, so an attempt that never recorded its outcome is not sent again.
@@ -268,7 +263,7 @@ class Deliveries:
     def _deliver_adjuster(self, store, agreement, origin):
         documents = agreement.get('documents') or {}
         recipient, reason = adjuster_recipient(documents)
-        skipped = dict(NOT_SWITCHED_ON)
+        skipped = dict(NOT_SWITCHED_ON, homeowner='Homeowner email is not switched on.')
         if reason:
             skipped['adjuster'] = reason
         record = self.queue(agreement['inspection_id'], skipped)
@@ -330,7 +325,12 @@ class Deliveries:
 
 def homeowner_skips(job, record):
     skipped = dict(NOT_SWITCHED_ON)
-    if not record['email_copy']:
+    _recipient, reason = adjuster_recipient(record.get('documents') or {})
+    if reason:
+        skipped['adjuster'] = reason
+    if 'email_copy' not in record:
+        skipped['homeowner'] = 'Homeowner email is not switched on.'
+    elif not record['email_copy']:
         skipped['homeowner'] = NOT_ASKED
     else:
         try:
@@ -345,7 +345,7 @@ def deliver_homeowner(store, record, origin):
 
     The choice recorded on the signature wins: True sends when customer_email is a real address,
     False or a missing address skips with a reason, and a signature with no choice (signed before
-    the checkbox) is left alone. Adjuster and crew-lead entries are skipped. Sending is idempotent
+    the checkbox) is left alone. Other recipient entries are handled separately. Sending is idempotent
     through Deliveries.send. A send failure is stored
     on the entry and does not propagate."""
     if (
@@ -379,7 +379,7 @@ def deliver_homeowner(store, record, origin):
             [('View your signed documents', url)],
         )
 
-    return deliveries.send(job['job_id'], compose)
+    return deliveries.send(job['job_id'], compose, roles=('homeowner',))
 
 
 def logged(record, role):

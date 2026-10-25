@@ -1299,6 +1299,7 @@ async def authorize_estimate(
             None if choice is None else {'email_copy': choice},
         )
     await email_signed_copy(store, record, request)
+    await stored(deliver_signed_adjuster, store, record, document_origin(request))
     return dict(
         delivery_error=delivery_error,
         status='success',
@@ -1533,6 +1534,7 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
         ),
     )
     await email_signed_copy(store, record, request)
+    await stored(deliver_signed_adjuster, store, record, document_origin(request))
     return dict(
         delivery_error=delivery_error,
         status='success',
@@ -1543,7 +1545,7 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
 
 
 # Read-only document links: one signed agreement, one document set, no signing. The homeowner
-# email mints the homeowner set after signing; there is still no route or app action to create one.
+# and adjuster emails mint their own sets after signing; no route creates a link on request.
 @app.get('/api/documents')
 async def document_link_view(request: Request, store=Depends(get_job_store)):
     token = await document_link(request, store)

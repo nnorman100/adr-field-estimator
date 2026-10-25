@@ -48,12 +48,11 @@ class CompanyInspectionStore(InspectionStore):
 
     def _commit_authorization(self, uid, record, body, tx):
         job, actor = self.workspaces.job_access(uid, record, 'sign', tx)
-        if 'email_copy' in body:
-            deliveries = Deliveries(self.workspaces)
-            tx.create(
-                deliveries.ref(job['job_id']),
-                deliveries.record({**job, 'auth_id': body['auth_id']}, homeowner_skips(job, body)),
-            )
+        deliveries = Deliveries(self.workspaces)
+        tx.create(
+            deliveries.ref(job['job_id']),
+            deliveries.record({**job, 'auth_id': body['auth_id']}, homeowner_skips(job, body)),
+        )
         tx.create(
             self.workspaces.ref('_workspace_authorizations', body['auth_id']),
             {'job_id': job['job_id'], 'company_id': actor['company_id']},
