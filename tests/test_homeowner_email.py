@@ -191,11 +191,14 @@ def test_an_agreement_signed_without_the_choice_is_not_backfilled(smtp):
     assert first.status_code == 200, first.text
     saved = client.get('/api/authorizations/ADR-AUTH-homeowner1').json()
     assert 'email_copy' not in saved
-    assert '_job_deliveries/' + ID not in store.db.records and not connections
-    # Asking on a retry of that same signature does not invent a delivery.
+    entry = delivery(store)['entries']['homeowner']
+    assert (entry['status'], entry['reason']) == ('skipped', 'Homeowner email is not switched on.')
+    assert not connections
     assert authorize(client, record, email_copy=True).json() == first.json()
     assert 'email_copy' not in client.get('/api/authorizations/ADR-AUTH-homeowner1').json()
-    assert '_job_deliveries/' + ID not in store.db.records and not connections
+    entry = delivery(store)['entries']['homeowner']
+    assert (entry['status'], entry['reason']) == ('skipped', 'Homeowner email is not switched on.')
+    assert not connections
 
 
 def test_a_signing_link_emails_the_same_copy(smtp):
