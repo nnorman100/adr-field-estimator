@@ -73,7 +73,7 @@ fi
 UPTIME_NAME='DryScope: API health'
 UPTIME_PATH=/api/health
 UPTIME_BODY=healthy # /api/health answers {"status": "healthy", ...}
-POLICIES=(site-down server-errors vertex-errors email-delivery-failed email-volume)
+POLICIES=(site-down server-errors vertex-errors email-send-failed email-delivery-failed email-volume)
 
 cat <<EOF
 Project:  $PROJECT (signed in as $ACCOUNT)
@@ -162,8 +162,11 @@ policy server-errors 'DryScope: server errors' \
 policy vertex-errors 'DryScope: Vertex AI call failed' \
   '**What it means:** an audit, OCR or scope model call failed or timed out (log line "Vertex AI call" at ERROR; the line has the model, operation, outcome and provider status only).\n\n**What to do:** read provider_status and provider_code in the log line. A technician sees a retry message; check the Vertex AI quota and status page if it repeats.' \
   "$(log_condition 'Vertex AI call logged an error' "$CLOUD_RUN AND jsonPayload.message=\"Vertex AI call\" AND severity>=ERROR")" "$LOG_RATE"
+policy email-send-failed 'DryScope: email send failed' \
+  '**What it means:** an invitation email send failed. The ERROR log contains only the failure class.\n\n**What to do:** check the email transport configuration, credentials and provider status; retry the invitation after correcting the failure.' \
+  "$(log_condition 'Email send failed' "$CLOUD_RUN AND jsonPayload.operation=\"email\" AND jsonPayload.status=\"send_failed\" AND severity>=ERROR")" "$LOG_RATE"
 policy email-delivery-failed 'DryScope: document email failed' \
-  '**What it means:** a document delivery email ended as failed (log line "Delivery entry" with status failed; the line has the delivery ID and recipient role, never an address).\n\n**What to do:** check the Gmail SMTP account and app password and the daily send limit. The entry stays retryable unless the outcome was unconfirmed. Invitation email failures are not logged.' \
+  '**What it means:** a document delivery email ended as failed (log line "Delivery entry" with status failed; the line has the delivery ID and recipient role, never an address).\n\n**What to do:** check the Gmail SMTP account and app password and the daily send limit. The entry stays retryable unless the outcome was unconfirmed.' \
   "$(log_condition 'Delivery entry failed' "$CLOUD_RUN AND jsonPayload.operation=\"delivery\" AND jsonPayload.status=\"failed\"")" "$LOG_RATE"
 policy email-volume 'DryScope: daily email count high' \
   '**What it means:** the service sent more than 400 emails in its 24-hour window, near the Gmail limit.\n\n**What to do:** expect invitations or documents to be refused by Gmail until the window resets. Check for a send loop.' \

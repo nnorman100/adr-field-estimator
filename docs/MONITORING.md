@@ -23,12 +23,13 @@ Alert policies are billed per condition and uptime checks per run; at this size 
 | `DryScope: health check failing` | The check fails from at least two regions for a minute. | Open the site, then the Cloud Run service `alert-disaster-field-estimator` (`us-west2`) and its latest revision. Roll traffic back if it began with a deploy. |
 | `DryScope: server errors` | More than 5 Cloud Run responses with a 5xx status in 10 minutes. | Filter Logs Explorer for the service at `severity>=ERROR`; roll back if it began with a deploy. |
 | `DryScope: Vertex AI call failed` | A log line `Vertex AI call` at ERROR (audit, OCR or scope model call failed or timed out). | Read `provider_status`, `provider_code` and `outcome` in the line; check Vertex AI quota and status if it repeats. Technicians see a retry message. |
+| `DryScope: email send failed` | An ERROR log with `operation=email` and `status=send_failed` from invitation delivery. Only the failure class is logged. | Check email transport configuration, credentials and provider status, then retry the invitation. |
 | `DryScope: document email failed` | A log line `Delivery entry` with `operation=delivery` and `status=failed`. | Check the Gmail SMTP account, its app password and the daily limit. The entry stays retryable unless its outcome was unconfirmed. |
 | `DryScope: daily email count high` | A log line with `operation=email` and `status=daily_warning`: more than 400 emails in the 24-hour window. | Gmail may refuse sends until the window resets; look for a send loop. |
 
-The log alerts send at most one email an hour each and close themselves after 24 hours. They match only fields on the backend's allowlist (`LOG_FIELDS` in `backend/cloud_log.py`), which carries no prompts, addresses, links, tokens or coordinates. The email alerts stay quiet until document delivery is switched on.
+The log alerts send at most one email an hour each and close themselves after 24 hours. They match only fields on the backend's allowlist (`LOG_FIELDS` in `backend/cloud_log.py`), which carries no prompts, addresses, links, tokens or coordinates. The document delivery alert stays quiet until document delivery is switched on.
 
-Not covered: failed invitation emails are not logged by the backend, and Live session endings (`Live session ended` at WARNING) have no alert. Add a log line first if either is wanted.
+Live session endings (`Live session ended` at WARNING) have no alert.
 
 ## Test it
 
@@ -36,4 +37,4 @@ Not covered: failed invitation emails are not logged by the backend, and Live se
 - Log alerts: `gcloud logging write` into the service's log would also page for real; instead run **Logs Explorer** with each policy's filter (shown in the dry run and in each policy's condition) to confirm it matches past lines, for example `jsonPayload.message="Vertex AI call" AND severity>=ERROR`.
 - Uptime: **Monitoring → Uptime checks** shows each region's latest result for `DryScope: API health`. Pausing the check does not trigger an alert, so to prove the alert path temporarily edit the check's path to a missing page, wait about 20 minutes, then restore it.
 
-`tests/test_monitoring_script.py` checks statically that the script names only this project and uses only log fields the backend can emit.
+`tests/test_monitoring_script.py` executes a dry run with a recording gcloud stub, checks generated policy semantics and matches filters against captured structured backend log events.

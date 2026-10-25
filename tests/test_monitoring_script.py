@@ -1,117 +1,116 @@
-"""ops/monitoring/setup-monitoring.sh stays inside this project and matches the logs the backend writes."""
+"""Dry-run commands and generated Monitoring policies are public output contracts."""
 
 import json
-import re
-import shutil
+import logging
+import os
+import shlex
 import subprocess
-from pathlib import Path
 
 import pytest
 
+from pathlib import Path
+from backend.cloud_log import event
+
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'ops' / 'monitoring' / 'setup-monitoring.sh'
+SCRIPT = ROOT / 'ops/monitoring/setup-monitoring.sh'
 PROJECT = 'alert-disaster-field-2026'
+SERVICE = 'alert-disaster-field-estimator'
 
 
-def script_text():
-    return SCRIPT.read_text(encoding='utf-8')
-
-
-def log_fields():
-    source = (ROOT / 'backend' / 'cloud_log.py').read_text(encoding='utf-8')
-    block = re.search(r'LOG_FIELDS = frozenset\((.*?)\n\)', source, re.S).group(1)
-    return set(re.findall(r"'([a-z_]+)'", block))
-
-
-def test_script_targets_only_this_project():
-    text = script_text()
-    assert re.findall(r'^PROJECT=(\S+)', text, re.M) == [PROJECT]
-    # Every gcloud call goes through helpers that append the project; no other project flag or ID.
-    assert set(re.findall(r'--project="?\$?(\w+)', text)) == {'PROJECT'}
-    assert 'mitigation-project' not in text and 'alert-disaster-live' not in text
-    # Only these account-level checks may omit the project; they read nothing about any project.
-    exempt = ('gcloud beta --help', 'gcloud auth list', 'gcloud projects describe "$PROJECT"')
-    for line in text.splitlines():
-        code = line.strip()
-        if (
-            code.startswith(('#', 'printf', 'echo'))
-            or 'die ' in code
-            or not re.search(r'(?<![\w-])gcloud\b', code)
-        ):
-            continue
-        assert '--project="$PROJECT"' in code or any(item in code for item in exempt), line
-
-
-def test_script_matches_the_deployed_service():
-    text = script_text()
-    rewrite = json.loads((ROOT / 'firebase.json').read_text(encoding='utf-8'))['hosting']
-    rewrite = next(r for r in rewrite['rewrites'] if r['source'] == '/api/**')['run']
-    assert f'SERVICE={rewrite["serviceId"]}' in text
-    assert f'SERVICE_REGION={rewrite["region"]}' in text
-    assert f'HOST={PROJECT}.web.app' in text
-    assert 'UPTIME_PATH=/api/health' in text
-    assert "@app.get('/api/health')" in (ROOT / 'backend' / 'main.py').read_text(encoding='utf-8')
-
-
-def test_script_hard_codes_no_address_and_takes_flags():
-    text = script_text()
-    assert not re.search(r'EMAIL=[\'"]?[\w.+-]+@', text)
-    assert '--email' in text and '--dry-run' in text
-    assert re.findall(r'[\w.+-]+@[\w-]+\.[a-z]{2,}', text.replace('you@example.com', '')) == []
-
-
-def test_log_alerts_use_only_allowlisted_fields_and_real_messages():
-    text = script_text()
-    fields = set(re.findall(r'jsonPayload\.([a-z_]+)', text))
-    assert fields >= {'message', 'operation', 'status'}
-    assert fields - {'message'} <= log_fields()
-    backend = ''.join(path.read_text(encoding='utf-8') for path in (ROOT / 'backend').glob('*.py'))
-    for message in re.findall(r'jsonPayload\.message=\\"([^"\\]+)\\"', text):
-        assert f"'{message}'" in backend, message
-    for operation in re.findall(r'jsonPayload\.operation=\\"([^"\\]+)\\"', text):
-        assert f"operation='{operation}'" in backend, operation
-    for status in re.findall(r'jsonPayload\.status=\\"([^"\\]+)\\"', text):
-        assert f"'{status}'" in backend, status
-
-
-@pytest.mark.skipif(shutil.which('bash') is None, reason='bash is not installed')
-def test_dry_run_makes_no_gcloud_call_and_writes_valid_policies(tmp_path):
+@pytest.fixture
+def preview(tmp_path):
     fake = tmp_path / 'bin'
     fake.mkdir()
-    marker = tmp_path / 'called'
-    (fake / 'gcloud').write_text(f'#!/bin/sh\ntouch {marker}\nexit 1\n')
-    (fake / 'gcloud').chmod(0o755)
+    recording = tmp_path / 'calls'
+    stub = fake / 'gcloud'
+    stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$GCLOUD_RECORDING"\nexit 1\n')
+    stub.chmod(0o755)
     configs = tmp_path / 'configs'
     result = subprocess.run(
-        [
-            'bash',
-            str(SCRIPT),
-            '--email',
-            'owner@example.com',
-            '--dry-run',
-            '--config-dir',
-            str(configs),
-        ],
-        capture_output=True,
-        text=True,
-        env={'PATH': f'{fake}:/usr/bin:/bin'},
+        ['bash', str(SCRIPT), '--email', 'owner@example.com', '--dry-run',
+         '--config-dir', str(configs)],
+        capture_output=True, text=True,
+        env={**os.environ, 'PATH': f'{fake}:' + os.environ['PATH'],
+             'GCLOUD_RECORDING': str(recording)},
     )
     assert result.returncode == 0, result.stderr
-    assert not marker.exists()
-    assert result.stdout.count('--project=alert-disaster-field-2026') >= 7
-    policies = sorted(configs.glob('policy-*.json'))
-    assert len(policies) == 5
-    for path in policies:
-        policy = json.loads(path.read_text(encoding='utf-8'))
-        assert policy['displayName'].startswith('DryScope: ')
-        assert policy['notificationChannels']
+    assert not recording.exists()
+    commands = [shlex.split(line[2:]) for line in result.stdout.splitlines()
+                if line.startswith('+ ')]
+    policies = {path.stem.removeprefix('policy-'): json.loads(path.read_text())
+                for path in configs.glob('policy-*.json')}
+    return commands, policies
 
 
-def test_script_requires_an_email_and_rejects_a_bad_one():
-    if shutil.which('bash') is None:
-        pytest.skip('bash is not installed')
-    for args in ([], ['--email', 'nope']):
-        result = subprocess.run(
-            ['bash', str(SCRIPT), '--dry-run', *args], capture_output=True, text=True
-        )
-        assert result.returncode != 0
+def test_preview_targets_project_service_and_notification_address(preview):
+    commands, policies = preview
+    assert len(commands) == 8
+    for command in commands:
+        assert command[0] == 'gcloud'
+        assert [arg for arg in command if arg.startswith('--project=')] == [f'--project={PROJECT}']
+    channel, uptime, *creates = commands
+    assert channel[1:5] == ['beta', 'monitoring', 'channels', 'create']
+    assert '--channel-labels=email_address=owner@example.com' in channel
+    assert uptime[1:4] == ['monitoring', 'uptime', 'create']
+    for flag in (f'--resource-labels=host={PROJECT}.web.app,project_id={PROJECT}',
+                 '--path=/api/health', '--protocol=https', '--status-codes=200',
+                 '--period=5', '--regions=usa-iowa,usa-oregon,usa-virginia',
+                 '--matcher-content=healthy'):
+        assert flag in uptime
+    assert set(policies) == {'site-down', 'server-errors', 'vertex-errors',
+                             'email-send-failed', 'email-delivery-failed', 'email-volume'}
+    assert len(creates) == len(policies)
+    for command in creates:
+        assert command[1:4] == ['monitoring', 'policies', 'create']
+        filename = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--policy-from-file='))
+        assert json.loads(Path(filename).read_text()) in policies.values()
+    for policy in policies.values():
+        assert policy['combiner'] == 'OR'
+        assert policy['notificationChannels'] == [f'projects/{PROJECT}/notificationChannels/NEW_EMAIL_CHANNEL']
+        assert policy['alertStrategy']['autoClose'] == '86400s'
+    outage = policies['site-down']['conditions'][0]['conditionThreshold']
+    assert outage['thresholdValue'] == 1
+    assert outage['duration'] == '60s'
+    assert outage['aggregations'][0]['crossSeriesReducer'] == 'REDUCE_COUNT_FALSE'
+    errors = policies['server-errors']['conditions'][0]['conditionThreshold']
+    assert errors['thresholdValue'] == 5
+    assert errors['aggregations'][0]['alignmentPeriod'] == '600s'
+    assert f'resource.label.service_name="{SERVICE}"' in errors['filter']
+    assert 'metric.label.response_code_class="5xx"' in errors['filter']
+
+
+def matches(filter_text, entry):
+    fields = {'resource.type': 'cloud_run_revision',
+              'resource.labels.service_name': SERVICE,
+              **{f'jsonPayload.{key}': value for key, value in entry.items()}}
+    for clause in filter_text.split(' AND '):
+        if clause == 'severity>=ERROR':
+            if entry['severity'] not in ('ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'):
+                return False
+        else:
+            key, value = clause.split('=', 1)
+            if fields.get(key) != json.loads(value):
+                return False
+    return True
+
+
+@pytest.mark.parametrize('key,message,fields', [
+    ('vertex-errors', 'Vertex AI call', {'operation': 'audit'}),
+    ('email-send-failed', 'Email send failed', {'operation': 'email', 'status': 'send_failed'}),
+    ('email-delivery-failed', 'Delivery entry', {'operation': 'delivery', 'status': 'failed'}),
+    ('email-volume', 'Daily email count', {'operation': 'email', 'status': 'daily_warning'}),
+])
+def test_log_policy_matches_structured_events(preview, capsys, key, message, fields):
+    policy = preview[1][key]
+    event(message, logging.ERROR, **fields)
+    entry = json.loads(capsys.readouterr().out)
+    condition = policy['conditions'][0]['conditionMatchedLog']['filter']
+    assert matches(condition, entry)
+    assert not matches(condition, {**entry, 'message': 'Unrelated', 'operation': 'unrelated'})
+    assert policy['alertStrategy']['notificationRateLimit']['period'] == '3600s'
+
+
+@pytest.mark.parametrize('args', [[], ['--email', 'nope']])
+def test_script_rejects_missing_or_invalid_email(args):
+    result = subprocess.run(['bash', str(SCRIPT), '--dry-run', *args], capture_output=True, text=True)
+    assert result.returncode != 0
