@@ -121,7 +121,7 @@ Four collection groups carry an `expire_at` Firestore TTL field. Each expiry is 
 | `_limits` | only per-address counters (`ip-<HMAC>`) | 1 hour after the address's last request | Every counter window is a minute, so an hour-idle counter holds nothing a limit needs. Per-user counters (AI, places, link creation) never set the field. |
 | `_document_links` | every document link | 30 days after creation, the link's expiry | A deleted link reads as unknown (404) and its pointer as `none`; the signed agreement is untouched. |
 
-`tests/test_firestore_ttls.py` pins these values, limits `expire_at` writers to the three backend modules above, and checks that a deleted link behaves as an unknown one. A new collection group, or a new document in one of these groups, that sets `expire_at` needs the same review before its policy is enabled.
+A new collection group, or a new document in one of these groups, that sets `expire_at` needs the same review before its policy is enabled.
 
 `scripts/ensure_firestore_ttls.py` is the one owner-run step for all four policies. It always targets `alert-disaster-field-2026` and needs `gcloud` signed in with a Firestore admin role (`datastore.indexAdmin` or owner); the runtime service account does not hold one and this step grants no IAM.
 

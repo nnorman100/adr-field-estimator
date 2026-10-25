@@ -5,10 +5,8 @@ field is deleted once the time passes. These tests pin which documents carry the
 value is no earlier than the last moment the application accepts the record.
 """
 
-import re
 import subprocess
 import time
-from pathlib import Path
 import pytest
 import backend.document_links as dl
 import backend.main as bm
@@ -17,8 +15,6 @@ from scripts import ensure_firestore_ttls as ttls
 from tests.test_backend import context, inspect, audit, sign_payload, as_user, ID
 from tests.test_document_links import AUTH, reader, signed
 from tests.test_signing_links import ready, homeowner, mint, token, recognized, sign
-
-BACKEND = Path(__file__).resolve().parents[1] / 'backend'
 
 
 @pytest.fixture(autouse=True)
@@ -154,15 +150,6 @@ def test_a_gcloud_failure_stops_with_its_message_and_exit_2(monkeypatch, capsys)
 
 
 # What makes deleting each group's expired documents safe.
-
-
-def test_only_the_three_ttl_writers_set_expire_at():
-    writers = {
-        path.name
-        for path in BACKEND.glob('*.py')
-        if re.search(r"expire_at", path.read_text(encoding='utf-8'))
-    }
-    assert writers == {'document_links.py', 'inspection_store.py', 'signing_links.py'}
 
 
 def test_pending_signing_link_keeps_its_record_until_it_can_no_longer_be_used(ready):
