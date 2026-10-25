@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from backend.delivery import DELIVERY_OFF
+from backend.delivery import DELIVERY_OFF, RECIPIENTS, RESERVATION_SECONDS, UNCONFIRMED
 from tests.fakes import ADR_PROFILE, png
 from tests.test_workspaces import ID, SIGNED, data, signed_job  # noqa: F401
 from tests.test_workspaces import api, mail, smtp, store  # noqa: F401
@@ -150,3 +150,42 @@ def test_a_failed_entry_is_resent_once(smtp):
     again = client.post('/api/jobs/' + ID + '/delivery/resend')
     assert again.status_code == 200 and statuses(again.json())['homeowner'] == 'sent'
     assert len(connections) == failed_attempts + 1
+
+
+@pytest.mark.parametrize('uid', ['owner', 'office', 'admin'])
+@pytest.mark.parametrize('role', RECIPIENTS)
+@pytest.mark.parametrize('age', [RESERVATION_SECONDS - 1, RESERVATION_SECONDS])
+def test_status_expires_interrupted_sends_without_retrying(smtp, api, monkeypatch, uid, role, age):
+    client, store, _accounts, _sent, _writes, connections, _plan, _sleeps = smtp
+    _client, current, _store = api
+    enable(client, document_delivery=True)
+    signed_job(client, current, store)
+    record = store.db.records['_job_deliveries/' + ID]
+    record['entries'][role].update(
+        status='sending', send_started=1000, attempt='interrupted', retryable=False, reason=''
+    )
+    monkeypatch.setattr('backend.delivery.time.time', lambda: 1000 + age)
+    current['uid'] = uid
+    path = (
+        '/api/admin/companies/adr/authorizations/' + SIGNED
+        if uid == 'admin'
+        else '/api/jobs/' + ID + '/delivery'
+    )
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    entry = next(item for item in response.json()['delivery']['entries'] if item['role'] == role)
+    expired = age >= RESERVATION_SECONDS
+    assert entry == {
+        'role': role,
+        'status': 'failed' if expired else 'sending',
+        'reason': UNCONFIRMED if expired else '',
+        'retryable': False,
+    }
+    assert record['entries'][role]['status'] == 'sending'
+    current['uid'] = 'owner'
+    for _ in range(2):
+        resent = client.post('/api/jobs/' + ID + '/delivery/resend')
+        assert resent.status_code == 200, resent.text
+        returned = next(item for item in resent.json()['delivery']['entries'] if item['role'] == role)
+        assert returned == entry
+    assert connections == []

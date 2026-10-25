@@ -432,17 +432,22 @@ def public_delivery(record):
     """What the job may show. No address, message id, attempt or link."""
     if not record:
         return None
-    return {
-        'entries': [
+    entries = []
+    for role in RECIPIENTS:
+        entry = record['entries'][role]
+        expired = (
+            entry['status'] == 'sending'
+            and time.time() - entry['send_started'] >= RESERVATION_SECONDS
+        )
+        entries.append(
             {
                 'role': role,
-                'status': record['entries'][role]['status'],
-                'reason': record['entries'][role].get('reason') or '',
-                'retryable': bool(record['entries'][role].get('retryable')),
+                'status': 'failed' if expired else entry['status'],
+                'reason': UNCONFIRMED if expired else entry.get('reason') or '',
+                'retryable': False if expired else bool(entry.get('retryable')),
             }
-            for role in RECIPIENTS
-        ]
-    }
+        )
+    return {'entries': entries}
 
 
 def logged(record, role):
