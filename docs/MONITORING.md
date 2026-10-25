@@ -5,13 +5,13 @@
 ## Run it
 
 1. Sign in as a project owner: `gcloud auth login`
-2. Preview. A dry run signs in to nothing and changes nothing; it prints every command and config file:
+2. Preview. A dry run makes no cloud calls; it prints the planned creation commands and generated policy files. Files are temporary unless you pass `--config-dir DIR` to keep them locally:
    `bash ops/monitoring/setup-monitoring.sh --email <alert address> --dry-run`
 3. Create:
    `bash ops/monitoring/setup-monitoring.sh --email <alert address>` and type `yes` (or pass `--confirm` where there is no terminal).
 4. Google emails the address a verification link. Confirm it, or alerts are not delivered.
 
-The address is always an argument; no address is stored in the repository. The script targets only `alert-disaster-field-2026`: every `gcloud` call goes through one helper that appends `--project=alert-disaster-field-2026`. It never deletes anything, grants IAM roles, enables APIs or changes billing, and stops with a message if `gcloud` is missing or signed out, the project cannot be opened, the Monitoring or Logging API is off, or the Cloud Run service is missing. Re-running is safe: an email channel for the same address and the uptime check are kept, and alert policies are updated in place by display name.
+The address is always an argument; no address is stored in the repository. The script targets only `alert-disaster-field-2026`: resource lookups and changes select that project explicitly; CLI availability and active-account checks are not project-scoped. It never deletes cloud resources, grants IAM roles, enables APIs or changes billing, and stops with a message if `gcloud` is missing or signed out, the project cannot be opened, the Monitoring or Logging API is off, or the Cloud Run service is missing. Re-running keeps an email channel for the same address and the existing uptime check, and updates alert policies in place by display name; it does not repair drift in a retained channel or uptime check.
 
 Alert policies are billed per condition and uptime checks per run; at this size that is small, but check [Cloud Monitoring pricing](https://cloud.google.com/monitoring/pricing) first.
 
