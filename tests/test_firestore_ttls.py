@@ -35,8 +35,11 @@ def fake_gcloud(states):
         assert argv[1:5] == ['firestore', 'fields', 'ttls', 'list']
         assert '--project=alert-disaster-field-2026' in argv
         base = 'projects/alert-disaster-field-2026/databases/(default)/collectionGroups/'
-        fields = [{'name': base + group + '/fields/expire_at', 'ttlConfig': {'state': state}}
-                  for group, state in states.items() if state]
+        fields = [
+            {'name': base + group + '/fields/expire_at', 'ttlConfig': {'state': state}}
+            for group, state in states.items()
+            if state
+        ]
         # Another field in the same group, and a group with an unrelated field, never match.
         fields.append({'name': base + '_limits/fields/other', 'ttlConfig': {'state': 'ACTIVE'}})
         fields.append({'name': base + 'jobs/fields/expire_at'})
