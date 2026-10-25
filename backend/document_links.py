@@ -122,10 +122,13 @@ def revoke(store, uid, auth_id, document_set=None):
         links = pointer.to_dict().get('links', {}) if pointer.exists else {}
         moment = time.time()
         result = {}
+        selected = []
         for name in wanted:
             key = links.get(name)
             link_ref = _links(store).document(key) if key else None
             link = link_ref.get(transaction=tx).to_dict() if link_ref else None
+            selected.append((name, link_ref, link))
+        for name, link_ref, link in selected:
             if not link:
                 result[name] = 'none'
             elif link['status'] != 'active':
@@ -157,7 +160,9 @@ def _resolve(store, key, count=False):
     link = store._atomic(check)
     try:
         agreement = store.get(link['owner_uid'], link['auth_id'])
-    except AccessDenied:
+        if agreement:
+            store._access(link['owner_uid'], agreement, 'sign')
+    except (AccessDenied, LookupError):
         agreement = None
     if not agreement:
         raise LookupError(UNAVAILABLE)

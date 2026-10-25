@@ -292,3 +292,43 @@ def test_company_links_follow_the_job_sign_permission(api):
     assert reader(value).get('/api/documents/photos/' + 'b' * 32).status_code == 404
     assert reader(owner_link).get('/api/documents').status_code == 200
     assert store.db.records['authorizations/' + AUTH] == agreement
+
+
+def test_revoke_all_active_sets_reads_before_writing(signed, monkeypatch):
+    from tests.fakes import Ref, Tx
+
+    _, store, _ = signed
+    tokens = [dl.mint(store, 'owner', AUTH, name)[0] for name in dl.SETS]
+    original_get = Ref.get
+
+    def get(ref, transaction=None):
+        assert not transaction or not getattr(transaction, 'written', False)
+        return original_get(ref, transaction)
+
+    class StrictTx(Tx):
+        written = False
+
+        def update(self, *args, **kwargs):
+            self.written = True
+            return super().update(*args, **kwargs)
+
+    monkeypatch.setattr(Ref, 'get', get)
+    monkeypatch.setattr(store, '_atomic', lambda callback: callback(StrictTx()))
+    assert dl.revoke(store, 'owner', AUTH) == dict.fromkeys(dl.SETS, 'revoked')
+    for token in tokens:
+        assert reader(token).get('/api/documents').status_code == 404
+
+
+def test_links_stop_when_creator_becomes_office(api):
+    client, current, store = api
+    company_signed(client, current, store)
+    tokens = [dl.mint(store, 'estimator', AUTH, name)[0] for name in dl.SETS]
+    for token in tokens:
+        assert reader(token).get('/api/documents').status_code == 200
+    store.db.records['_memberships/estimator']['role'] = 'office'
+    assert store.get('estimator', AUTH)
+    paths = ['/api/documents', '/api/documents/signature', '/api/documents/photos/' + 'b' * 32]
+    for token in tokens:
+        for path in paths:
+            response = reader(token).get(path)
+            assert response.status_code == 404 and response.json()['detail'] == dl.UNAVAILABLE

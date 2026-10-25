@@ -1934,6 +1934,9 @@ footer {
     max-width: none;
     font-size: 12pt;
   }
+  .doc.document-excluded {
+    display: none !important;
+  }
   .doc:first-of-type {
     break-before: auto;
   }

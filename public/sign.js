@@ -72,6 +72,8 @@
     document.querySelectorAll('[data-tab]').forEach((tab) => {
       tab.hidden = !shown.includes(tab.dataset.tab);
     });
+    for (const name of Object.keys(TAB_TITLES))
+      $('doc-' + name).classList.toggle('document-excluded', !shown.includes(name));
     document.querySelector('#documents .section-head h2').textContent = shown
       .map((name) => TAB_TITLES[name])
       .join(' and ');

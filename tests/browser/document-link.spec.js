@@ -155,6 +155,11 @@ test('the homeowner link shows the signed proposal and photo log, read-only, wit
   await view.reload();
   await expect(view.locator('#signedReceipt')).toBeVisible();
   await expect(view.locator('#homeownerSigning')).toBeHidden();
+  await view.emulateMedia({ media: 'print' });
+  for (const name of ['proposal', 'photos'])
+    await expect(view.locator('#doc-' + name)).toBeVisible();
+  for (const name of ['claim', 'defense'])
+    await expect(view.locator('#doc-' + name)).toBeHidden();
   await home.context.close();
 });
 
@@ -205,6 +210,11 @@ test('the adjuster link shows the claim and letter with the scope JSON, and noth
     [404, UNAVAILABLE],
     [404, UNAVAILABLE],
   ]);
+  await view.emulateMedia({ media: 'print' });
+  for (const name of ['claim', 'defense'])
+    await expect(view.locator('#doc-' + name)).toBeVisible();
+  for (const name of ['proposal', 'photos'])
+    await expect(view.locator('#doc-' + name)).toBeHidden();
   await office.context.close();
 });
 
