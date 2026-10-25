@@ -147,7 +147,9 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         pack = facts(current)
         result = await bm.generate(
             DryingSummary,
-            DRYING_SUMMARY_INSTRUCTIONS + '\n' + json.dumps(dict(facts=pack, options=summary_options(pack))),
+            DRYING_SUMMARY_INSTRUCTIONS
+            + '\n'
+            + json.dumps(dict(facts=pack, options=summary_options(pack))),
             bm.AUDIT_MODEL,
             'drying_watch',
             inspection_id,
@@ -165,7 +167,9 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
                 watch_status=current['status'],
             )
             raise HTTPException(502, 'Could not write the summary. Retry.') from None
-        await stored(watch.save_summary, claims['uid'], inspection_id, current['facts_hash'], result)
+        await stored(
+            watch.save_summary, claims['uid'], inspection_id, current['facts_hash'], result
+        )
         return await stored(watch.view, claims['uid'], inspection_id)
 
     @app.post('/api/jobs/{inspection_id}/drying-watch/state')

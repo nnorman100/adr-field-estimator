@@ -36,7 +36,9 @@ def main():
             for pack in packs[:5]:
                 result = await generate(
                     DryingSummary,
-                    DRYING_SUMMARY_INSTRUCTIONS + '\n' + json.dumps(dict(facts=pack['facts'], options=summary_options(pack['facts']))),
+                    DRYING_SUMMARY_INSTRUCTIONS
+                    + '\n'
+                    + json.dumps(dict(facts=pack['facts'], options=summary_options(pack['facts']))),
                     AUDIT_MODEL,
                     'drying_watch',
                     'synthetic-eval',
@@ -49,7 +51,10 @@ def main():
         print('live: 5/5 summaries passed unchanged')
     else:
         for pack in packs:
-            assert validate_summary(DryingSummary.model_validate(pack['valid']), pack['facts']) == pack['expected']
+            assert (
+                validate_summary(DryingSummary.model_validate(pack['valid']), pack['facts'])
+                == pack['expected']
+            )
             for invalid in pack.get('invalid', []):
                 try:
                     validate_summary(invalid, pack['facts'])

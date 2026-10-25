@@ -96,11 +96,22 @@ async def generate(**kwargs):
     schema = kwargs['config'].response_schema
     if schema.__name__ == 'DryingSummary' if isinstance(schema, type) else False:
         from backend.drying_summary import summary_options
+
         pack = json.loads(str(kwargs['contents']).split('\n')[-1])
         option = summary_options(pack['facts'])[0]
-        return SimpleNamespace(text=json.dumps({'rooms': [{
-            'room_index': option['room_index'], 'trend': option['trend'], 'mention': 'status',
-        }]}))
+        return SimpleNamespace(
+            text=json.dumps(
+                {
+                    'rooms': [
+                        {
+                            'room_index': option['room_index'],
+                            'trend': option['trend'],
+                            'mention': 'status',
+                        }
+                    ]
+                }
+            )
+        )
     if isinstance(schema, dict) and schema == bm.scope_response_schema():
         kitchen = 'Kitchen, category 2, 80 SF drywall' in str(kwargs['contents'])
         room = 'Kitchen' if kitchen else 'Room 1'

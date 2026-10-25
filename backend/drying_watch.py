@@ -161,7 +161,8 @@ def watch_state(data, log, setup_at, previous=None, at=None):
     missing_rooms = [
         r['name']
         for r in data.get('rooms', [])
-        if len([m for m in latest if m['room'] == r['name']]) < (r['wet_materials'] if r.get('wet_materials') is not None else 1)
+        if len([m for m in latest if m['room'] == r['name']])
+        < (r['wet_materials'] if r.get('wet_materials') is not None else 1)
     ]
     dry = (
         bool(data.get('rooms'))
@@ -196,9 +197,7 @@ def watch_state(data, log, setup_at, previous=None, at=None):
         improving = len(air_days) >= 2 and (
             air_days[-1]['affected']['gpp'] < air_days[-2]['affected']['gpp']
         )
-        air_trends[g['room']] = (
-            'stalled' if stalled else 'improving' if improving else 'recorded'
-        )
+        air_trends[g['room']] = 'stalled' if stalled else 'improving' if improving else 'recorded'
     if 'stalled' in air_trends.values():
         flags.append('stalled')
     status = 'dry_standard_met' if dry else 'active'

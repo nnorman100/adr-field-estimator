@@ -144,8 +144,10 @@ class Monitoring:
                 reminders_enabled=company['profile'].get('drying_reminders') is True,
                 estimator=recipient,
                 crew_lead=self.recipient(company, job, assignee, 'crew_lead', required=False),
-                recipient_hashes={role: self.recipient_hash(company, job, assignee, role)
-                                  for role in ('estimator', 'crew_lead')},
+                recipient_hashes={
+                    role: self.recipient_hash(company, job, assignee, role)
+                    for role in ('estimator', 'crew_lead')
+                },
             )
             # Reservation internals never leave the server.
             result['reminders'] = [
@@ -214,10 +216,12 @@ class Monitoring:
         if support:
             self.w.support_audit(uid, company_id, 'view_drying_watch', 'drying-watch')
         else:
+
             def recheck(tx):
                 self.w.company_actor(uid, company_id, tx=tx)
                 for row in rows[:50]:
                     self.access(uid, row.to_dict()['job_id'], tx=tx)
+
             self.w._run(recheck)
         return dict(
             jobs=records,

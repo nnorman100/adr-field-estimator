@@ -40,7 +40,10 @@ def test_deterministic_status_and_browser_parity(case):
 
 @pytest.mark.parametrize('case', SUMMARIES, ids=lambda c: c['name'])
 def test_summary_fact_packs(case):
-    assert validate_summary(DryingSummary.model_validate(case['valid']), case['facts']) == case['expected']
+    assert (
+        validate_summary(DryingSummary.model_validate(case['valid']), case['facts'])
+        == case['expected']
+    )
     for text in case.get('invalid', []):
         with pytest.raises(ValueError):
             validate_summary(text, case['facts'])
@@ -385,7 +388,9 @@ def test_old_agreement_without_saved_plan_does_not_break_list(watched):
         watch.view('owner', ID)
 
 
-@pytest.mark.parametrize('count,expected', [(0, 'dry_standard_met'), (None, 'active'), (1, 'active')])
+@pytest.mark.parametrize(
+    'count,expected', [(0, 'dry_standard_met'), (None, 'active'), (1, 'active')]
+)
 def test_reference_room_material_count(count, expected):
     case = deepcopy(STATES[0])
     case['data']['rooms'].append(dict(name='Reference', wet_materials=count))
@@ -395,9 +400,14 @@ def test_reference_room_material_count(count, expected):
     assert ('Reference' in result['missing_rooms']) == (count != 0)
 
 
-@pytest.mark.parametrize('recipient,change', [
-    ('estimator', 'assignment'), ('estimator', 'email'), ('crew_lead', 'email'),
-])
+@pytest.mark.parametrize(
+    'recipient,change',
+    [
+        ('estimator', 'assignment'),
+        ('estimator', 'email'),
+        ('crew_lead', 'email'),
+    ],
+)
 @pytest.mark.parametrize('retry', [False, True])
 def test_reminder_recipient_approval(watched, monkeypatch, recipient, change, retry):
     _, _, store, watch = watched
@@ -442,11 +452,14 @@ def test_list_rechecks_each_job_after_role_downgrade(watched, monkeypatch, route
     assert 'Synthetic' not in response.text
 
 
-@pytest.mark.parametrize('text', [
-    'Continue drying for 3 more days.',
-    'Drying for 3 more days is advised.',
-    '€22.',
-])
+@pytest.mark.parametrize(
+    'text',
+    [
+        'Continue drying for 3 more days.',
+        'Drying for 3 more days is advised.',
+        '€22.',
+    ],
+)
 def test_free_text_summary_never_reaches_cache_or_response(watched, monkeypatch, text):
     client, actor, store, watch = watched
     actor['uid'] = 'office'
@@ -465,7 +478,9 @@ def test_legacy_text_cache_is_not_displayed(watched):
     _, _, store, watch = watched
     current = watch.view('office', ID)
     store.db.records['_job_monitoring/' + ID]['summary'] = dict(
-        text='€22.', facts_hash=current['facts_hash'], generated_at='old',
+        text='€22.',
+        facts_hash=current['facts_hash'],
+        generated_at='old',
     )
     assert not watch.view('office', ID).get('summary')
 
@@ -480,25 +495,36 @@ def test_structured_summary_mentions_air_and_progress():
         selection = dict(rooms=[dict(room_index=0, trend='recorded', mention=mention)])
         assert expected in validate_summary(selection, pack)
     with pytest.raises(ValueError):
-        validate_summary(dict(rooms=[
-            dict(room_index=0, trend='recorded', mention='status'),
-            dict(room_index=0, trend='recorded', mention='status'),
-        ]), pack)
+        validate_summary(
+            dict(
+                rooms=[
+                    dict(room_index=0, trend='recorded', mention='status'),
+                    dict(room_index=0, trend='recorded', mention='status'),
+                ]
+            ),
+            pack,
+        )
 
 
 def test_worker_update_fixture_preserves_offline_asset_urls():
     import sys
 
     served = subprocess.run(
-        [sys.executable, '-c', """
+        [
+            sys.executable,
+            '-c',
+            """
 import json
 from tests import browser_server as server
 before = server.worker().body.decode()
 server.worker_suffix = 'test-owner-update'
 after = server.worker().body.decode()
 print(json.dumps([before, after]))
-"""],
-        text=True, capture_output=True, check=True,
+""",
+        ],
+        text=True,
+        capture_output=True,
+        check=True,
     )
     consumer = """
 const vm = require('node:vm');
@@ -537,8 +563,11 @@ const sources = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 })().catch(() => process.exit(1));
 """
     run = subprocess.run(
-        ['node', '-e', consumer], input=served.stdout,
-        text=True, capture_output=True, check=True,
+        ['node', '-e', consumer],
+        input=served.stdout,
+        text=True,
+        capture_output=True,
+        check=True,
     )
     before, after = json.loads(run.stdout)
     assert before['cache'] != after['cache']
@@ -550,19 +579,36 @@ const sources = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 def test_room_trends_use_own_readings(watched, monkeypatch, stalled_room, improving_room):
     _, _, store, watch = watched
     rooms = [stalled_room, improving_room]
-    data = dict(address='Synthetic property', drying_days=3,
-                rooms=[dict(name=room, wet_materials=1) for room in rooms])
+    data = dict(
+        address='Synthetic property',
+        drying_days=3,
+        rooms=[dict(name=room, wet_materials=1) for room in rooms],
+    )
     readings = []
     for room, values in [(stalled_room, [70, 70, 70]), (improving_room, [90, 70, 50])]:
         for day, gpp in zip([21, 22, 23], values):
-            readings.append(dict(
-                kind='air', room=room, zone='affected', gpp=gpp,
-                vapor_pressure_inhg=0.4, taken_at=f'2026-10-{day}T16:00:00Z',
-            ))
-        readings.append(dict(
-            kind='material', room=room, material='Drywall', unit='%WME',
-            moisture=22, dry_standard=12, affected=True, taken_at='2026-10-23T16:00:00Z',
-        ))
+            readings.append(
+                dict(
+                    kind='air',
+                    room=room,
+                    zone='affected',
+                    gpp=gpp,
+                    vapor_pressure_inhg=0.4,
+                    taken_at=f'2026-10-{day}T16:00:00Z',
+                )
+            )
+        readings.append(
+            dict(
+                kind='material',
+                room=room,
+                material='Drywall',
+                unit='%WME',
+                moisture=22,
+                dry_standard=12,
+                affected=True,
+                taken_at='2026-10-23T16:00:00Z',
+            )
+        )
     log = dict(readings=readings, updated_at='2026-10-23T17:00:00Z')
     at = instant('2026-10-23T17:00:00Z')
     state = watch_state(data, log, '2026-10-21T16:00:00Z', at=at)
@@ -572,13 +618,18 @@ def test_room_trends_use_own_readings(watched, monkeypatch, stalled_room, improv
     job = store.db.records['_workspace_jobs/' + ID]
     store.db.records['authorizations/' + job['auth_id']]['inspection'] = data
     store.db.records['drying_logs/' + ID] = log
-    monkeypatch.setattr(monitoring_store, 'watch_state', lambda data, log, setup, previous:
-                        watch_state(data, log, setup, previous, at=at))
+    monkeypatch.setattr(
+        monitoring_store,
+        'watch_state',
+        lambda data, log, setup, previous: watch_state(data, log, setup, previous, at=at),
+    )
     current = watch.view('office', ID)
-    selection = dict(rooms=[
-        dict(room_index=0, trend='stalled', mention='status'),
-        dict(room_index=1, trend='improving', mention='status'),
-    ])
+    selection = dict(
+        rooms=[
+            dict(room_index=0, trend='stalled', mention='status'),
+            dict(room_index=1, trend='improving', mention='status'),
+        ]
+    )
     watch.save_summary('office', ID, current['facts_hash'], selection)
     cached = watch.view('office', ID)['summary']['text']
     assert cached.endswith('Room 1: stalled; Room 2: improving.')
@@ -596,38 +647,70 @@ def test_room_trends_use_own_readings(watched, monkeypatch, stalled_room, improv
 
 
 @pytest.mark.parametrize(
-    'case', json.loads((FIXTURES / 'reading-presence.json').read_text()), ids=lambda c: c['name'],
+    'case',
+    json.loads((FIXTURES / 'reading-presence.json').read_text()),
+    ids=lambda c: c['name'],
 )
 def test_reading_presence_is_independent_of_coverage_and_reference(watched, monkeypatch, case):
     from backend.drying_summary import room_names, summary_options
 
     _, _, store, watch = watched
-    data = dict(address='Synthetic property', drying_days=3, rooms=[
-        dict(name='Kitchen', wet_materials=0), dict(name='Bath', wet_materials=2),
-    ])
+    data = dict(
+        address='Synthetic property',
+        drying_days=3,
+        rooms=[
+            dict(name='Kitchen', wet_materials=0),
+            dict(name='Bath', wet_materials=2),
+        ],
+    )
     readings = []
     for room, values in [('Kitchen', [70, 70, 70]), ('Bath', case['air'])]:
         for day, gpp in zip([21, 22, 23], values):
-            readings.append(dict(
-                kind='air', room=room, zone='affected', gpp=gpp,
-                vapor_pressure_inhg=0.4, taken_at=f'2026-10-{day}T16:00:00Z',
-            ))
+            readings.append(
+                dict(
+                    kind='air',
+                    room=room,
+                    zone='affected',
+                    gpp=gpp,
+                    vapor_pressure_inhg=0.4,
+                    taken_at=f'2026-10-{day}T16:00:00Z',
+                )
+            )
     for index in range(case['materials']):
-        readings.append(dict(
-            kind='material', room='Bath', material=f'Material {index}', unit='%WME',
-            moisture=22, dry_standard=12, affected=True, taken_at='2026-10-23T16:00:00Z',
-        ))
+        readings.append(
+            dict(
+                kind='material',
+                room='Bath',
+                material=f'Material {index}',
+                unit='%WME',
+                moisture=22,
+                dry_standard=12,
+                affected=True,
+                taken_at='2026-10-23T16:00:00Z',
+            )
+        )
     if case['reference']:
-        readings.append(dict(
-            kind='air', room='Bath', zone='unaffected', gpp=40,
-            vapor_pressure_inhg=0.3, taken_at='2026-10-21T15:00:00Z',
-        ))
+        readings.append(
+            dict(
+                kind='air',
+                room='Bath',
+                zone='unaffected',
+                gpp=40,
+                vapor_pressure_inhg=0.3,
+                taken_at='2026-10-21T15:00:00Z',
+            )
+        )
     log = dict(readings=readings, updated_at='2026-10-23T17:00:00Z')
     job = store.db.records['_workspace_jobs/' + ID]
     store.db.records['authorizations/' + job['auth_id']]['inspection'] = data
     store.db.records['drying_logs/' + ID] = log
-    monkeypatch.setattr(monitoring_store, 'watch_state', lambda data, log, setup, previous:
-                        watch_state(data, log, setup, previous, at=instant(case['at'])))
+    monkeypatch.setattr(
+        monitoring_store,
+        'watch_state',
+        lambda data, log, setup, previous: watch_state(
+            data, log, setup, previous, at=instant(case['at'])
+        ),
+    )
     current = watch.view('office', ID)
     assert current['status'] == 'active'
     assert ('Bath' in current['missing_rooms']) == case['expected_missing']
@@ -647,13 +730,20 @@ def test_reading_presence_is_independent_of_coverage_and_reference(watched, monk
     assert option['trend'] == case['expected_trend']
     assert ('air' in option['mentions']) == case['reference']
     assert ('progress' in option['mentions']) == case['reference']
-    selected = dict(rooms=[dict(
-        room_index=index, trend=case['expected_trend'], mention='status',
-    )])
+    selected = dict(
+        rooms=[
+            dict(
+                room_index=index,
+                trend=case['expected_trend'],
+                mention='status',
+            )
+        ]
+    )
     watch.save_summary('office', ID, current['facts_hash'], selected)
     text = watch.view('office', ID)['summary']['text']
     label = {'recorded': 'readings recorded', 'no_new_reading': 'no new reading'}.get(
-        case['expected_trend'], case['expected_trend'],
+        case['expected_trend'],
+        case['expected_trend'],
     )
     assert text.endswith(f'Room {index + 1}: {label}.')
     wrong = deepcopy(selected)
