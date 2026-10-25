@@ -68,6 +68,7 @@ try:
         QrTagRequest,
     )
     from . import places, signing_links
+    from . import document_links
     from . import tags as qr_tags
     from .claims import make_documents, price_scope, proposal_date
     from .sizing import equipment_sizing
@@ -117,6 +118,7 @@ except ImportError:
     )
     import places
     import signing_links
+    import document_links
     import tags as qr_tags
     from claims import make_documents, price_scope, proposal_date
     from sizing import equipment_sizing
@@ -1278,7 +1280,9 @@ async def authorize_estimate(
 
 # A homeowner signing link's single credential; it never goes in Authorization or the URL path.
 SIGNING_LINK_HEADER = 'X-ADR-Signing-Link'
-# Per client IP across the anonymous signing-link routes.
+# A read-only document link's single credential, carried the same way.
+DOCUMENT_LINK_HEADER = 'X-ADR-Document-Link'
+# Per client IP across the anonymous signing-link and document-link routes.
 LINK_REQUESTS_PER_MINUTE = 120
 # Google's front ends append to X-Forwarded-For rather than replace it
 # (https://cloud.google.com/load-balancing/docs/https#x-forwarded-for_header). Behind the
@@ -1304,21 +1308,30 @@ def client_ip(request):
         return None
 
 
-async def signing_link(request, store):
+async def anonymous_link(request, store, header):
+    """The link token from its header, after the shared per-address limit for anonymous routes."""
     key = await stored(signing_links.address_key, store, client_ip(request) or 'unknown')
     await stored(
         store.quota, key, 'sign_link', LINK_REQUESTS_PER_MINUTE, signing_links.ADDRESS_LIMIT_SECONDS
     )
-    return request.headers.get(SIGNING_LINK_HEADER, '')
+    return request.headers.get(header, '')
 
 
-async def linked(method, *args):
+async def signing_link(request, store):
+    return await anonymous_link(request, store, SIGNING_LINK_HEADER)
+
+
+async def document_link(request, store):
+    return await anonymous_link(request, store, DOCUMENT_LINK_HEADER)
+
+
+async def linked(method, *args, unavailable=signing_links.UNAVAILABLE):
     """Unknown, expired, revoked and inaccessible links all answer with the same 404."""
     try:
         return await stored(method, *args)
     except HTTPException as error:
         if error.status_code in (403, 404):
-            raise HTTPException(404, signing_links.UNAVAILABLE)
+            raise HTTPException(404, unavailable)
         raise
 
 
@@ -1470,6 +1483,32 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
         timestamp=record['created_at'],
         message='Signed agreement saved.',
     )
+
+
+# Read-only document links: one signed agreement, one document set, no signing. The server mints
+# them after signing (document_links.mint); there is no route or app action to create one yet.
+@app.get('/api/documents')
+async def document_link_view(request: Request, store=Depends(get_job_store)):
+    token = await document_link(request, store)
+    return await linked(document_links.view, store, token, unavailable=document_links.UNAVAILABLE)
+
+
+@app.get('/api/documents/photos/{photo_id}')
+async def document_link_photo(photo_id: str, request: Request, store=Depends(get_job_store)):
+    token = await document_link(request, store)
+    raw, media_type = await linked(
+        document_links.photo, store, token, photo_id, unavailable=document_links.UNAVAILABLE
+    )
+    return Response(raw, media_type=media_type, headers={'Cache-Control': 'private, no-store'})
+
+
+@app.get('/api/documents/signature')
+async def document_link_signature(request: Request, store=Depends(get_job_store)):
+    token = await document_link(request, store)
+    raw, media_type = await linked(
+        document_links.signature, store, token, unavailable=document_links.UNAVAILABLE
+    )
+    return Response(raw, media_type=media_type, headers={'Cache-Control': 'private, no-store'})
 
 
 @app.get('/api/authorizations')
