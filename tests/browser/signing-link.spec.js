@@ -336,7 +336,6 @@ test.describe('company workspaces', () => {
   });
 });
 
-
 test('homeowner retry submits the current email choice', async ({ page, browser }) => {
   await technician(page);
   await audit(page);

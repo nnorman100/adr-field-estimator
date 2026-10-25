@@ -287,7 +287,11 @@ def test_queue_failure_cannot_commit_a_signature(smtp, monkeypatch, channel):
             return authorize(client, record, email_copy=True)
         return homeowner(token(link)).post(
             '/api/sign',
-            json={**SIGNER, 'signature_png': sign_payload(record)['signature_png'], 'email_copy': True},
+            json={
+                **SIGNER,
+                'signature_png': sign_payload(record)['signature_png'],
+                'email_copy': True,
+            },
         )
 
     response = submit()
@@ -317,7 +321,11 @@ def test_delivery_is_durable_before_transport_starts(smtp, monkeypatch, channel)
         link = mint(client, record)
         response = homeowner(token(link)).post(
             '/api/sign',
-            json={**SIGNER, 'signature_png': sign_payload(record)['signature_png'], 'email_copy': True},
+            json={
+                **SIGNER,
+                'signature_png': sign_payload(record)['signature_png'],
+                'email_copy': True,
+            },
         )
     assert response.status_code == 200
     assert store.db.records['authorizations/' + response.json()['auth_id']]['email_copy'] is True
