@@ -106,7 +106,9 @@ test.describe('signed out', () => {
     );
 });
 
-test('signing help requires company delivery and an adjuster email and says nothing is attached', async ({ page }) => {
+test('signing help requires company delivery and an adjuster email and says nothing is attached', async ({
+  page,
+}) => {
   await page.addInitScript(() => sessionStorage.setItem('synthetic-signed-out', '1'));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/app');
