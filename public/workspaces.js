@@ -146,6 +146,13 @@ window.WorkspaceUI = (() => {
       'form input,form select,form textarea,form button',
     ))
       control.disabled = !navigator.onLine;
+    const saveCompany = $('dashboardContent').querySelector(
+      'form.dashboard-form button[type=submit]',
+    );
+    if (saveCompany && saveCompany.textContent.startsWith('Save company details'))
+      saveCompany.textContent = navigator.onLine
+        ? 'Save company details'
+        : 'Save company details (needs a connection)';
     const claimEditable =
       !!claim?.editable && navigator.onLine && claim.job_id === state.draft?.inspection_id;
     for (const control of $('claimForm').querySelectorAll('input,button'))
@@ -846,10 +853,38 @@ window.WorkspaceUI = (() => {
       ].includes(key);
     const logo = formField(form, 'Optional logo (PNG or JPEG, up to 1 MB)', 'logo', '', 'file');
     logo.accept = 'image/png,image/jpeg';
+    if (can('delivery_manage')) {
+      const crew = formField(
+        form,
+        'Crew-lead email',
+        'crew_lead_email',
+        p.crew_lead_email || '',
+        'email',
+      );
+      crew.maxLength = 254;
+      crew.autocomplete = 'off';
+      const delivery = node('label');
+      const box = node('input');
+      box.type = 'checkbox';
+      box.name = 'document_delivery';
+      box.checked = p.document_delivery === true;
+      delivery.append(box, ' Send document emails after signing');
+      form.append(
+        delivery,
+        node(
+          'p',
+          'Off skips every document email. The crew lead receives a job summary of the address, rooms, equipment and drying days, with no prices. Saving needs a connection.',
+        ),
+      );
+    }
     submit(form, 'Save company details', async (values) => {
       const updated = { ...p };
       for (const key of ['name', 'address', 'phone', 'email', 'license', 'signoff'])
         if (values.has(key)) updated[key] = values.get(key);
+      if (can('delivery_manage')) {
+        updated.crew_lead_email = (values.get('crew_lead_email') || '').trim();
+        updated.document_delivery = values.get('document_delivery') === 'on';
+      }
       if (logo.files[0]) {
         if (logo.files[0].size > 1000000) throw Error('Logo exceeds 1 MB.');
         updated.logo_data_url = await new Promise((resolve, reject) => {

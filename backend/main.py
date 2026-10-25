@@ -68,6 +68,7 @@ try:
         QrTagRequest,
     )
     from . import places, signing_links
+    from .delivery import Deliveries
     from . import document_links
     from . import tags as qr_tags
     from .claims import make_documents, price_scope, proposal_date
@@ -89,7 +90,7 @@ try:
         AUDIO_ACK_EVERY,
     )
     from .company_store import CompanyInspectionStore
-    from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster
+    from .delivery import DOCUMENT_ORIGINS, adjuster_recipient, deliver_signed_adjuster
     from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
@@ -119,6 +120,7 @@ except ImportError:
     )
     import places
     import signing_links
+    from delivery import Deliveries
     import document_links
     import tags as qr_tags
     from claims import make_documents, price_scope, proposal_date
@@ -140,7 +142,7 @@ except ImportError:
         AUDIO_ACK_EVERY,
     )
     from company_store import CompanyInspectionStore
-    from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster
+    from delivery import DOCUMENT_ORIGINS, adjuster_recipient, deliver_signed_adjuster
     from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
@@ -1216,6 +1218,24 @@ async def audit_inspection(
     return public_record(saved)
 
 
+async def queue_signed_delivery(store, record, origin):
+    if WORKSPACES_ENABLED and record.get('inspection_id'):
+        try:
+            _, reason = adjuster_recipient(record.get('documents') or {})
+            skipped = {'homeowner': 'Homeowner email is not switched on.'}
+            if reason:
+                skipped['adjuster'] = reason
+            await stored(
+                Deliveries(store.workspaces).queue,
+                record['inspection_id'],
+                skipped,
+            )
+            await stored(deliver_signed_adjuster, store, record, origin)
+        except Exception:
+            return 'Your agreement is saved, but document delivery could not be queued.'
+    return None
+
+
 @app.post('/api/authorize')
 async def authorize_estimate(
     request: Request,
@@ -1269,9 +1289,9 @@ async def authorize_estimate(
                 'Signing requires the current inspection revision, proposal hash, document confirmation and PNG signature.',
             )
         record = await stored(store.authorize, staff['uid'], req.model_dump(mode='json'))
-        # The signature is already durable. A failed or skipped email does not change this response.
-        await stored(deliver_signed_adjuster, store, record, document_origin(request))
+    delivery_error = await queue_signed_delivery(store, record, document_origin(request))
     return dict(
+        delivery_error=delivery_error,
         status='success',
         auth_id=record['auth_id'],
         timestamp=record['created_at'],
@@ -1484,8 +1504,9 @@ async def sign_with_link(request: Request, store=Depends(get_job_store)):
             user_agent=request.headers.get('user-agent', '')[:512],
         ),
     )
-    await stored(deliver_signed_adjuster, store, record, document_origin(request))
+    delivery_error = await queue_signed_delivery(store, record, document_origin(request))
     return dict(
+        delivery_error=delivery_error,
         status='success',
         auth_id=record['auth_id'],
         timestamp=record['created_at'],

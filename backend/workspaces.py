@@ -24,7 +24,7 @@ import firebase_admin
 from firebase_admin import auth as firebase_auth
 from PIL import Image, ImageOps
 from google.cloud import firestore
-from pydantic import AfterValidator, Field, SecretStr, field_validator
+from pydantic import AfterValidator, BeforeValidator, Field, SecretStr, field_validator
 from typing import Annotated, Literal
 
 try:
@@ -53,6 +53,7 @@ CAPABILITIES = {
         'live',
         'team_manage',
         'profile_manage',
+        'delivery_manage',
     ],
     'estimator': [
         'jobs_read',
@@ -124,6 +125,13 @@ def company_name(value):
 CompanyName = Annotated[str, Field(min_length=1), AfterValidator(company_name)]
 
 
+def delivery_switch(value):
+    # Reject coerced strings so a form token cannot turn delivery on.
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValueError('Document delivery must be on or off.')
+
+
 class CompanyProfile(StrictModel):
     name: CompanyName
     address: str = Field(default='', max_length=500)
@@ -134,6 +142,9 @@ class CompanyProfile(StrictModel):
     logo_data_url: str = Field(default='', max_length=1400000)
     # Retired; accepted so older profiles still save, but no longer stored.
     water_heater_notice: str = Field(default='', max_length=1500)
+    # None on a save leaves the stored value. Profiles saved before these fields omit them.
+    crew_lead_email: str | None = Field(default=None, max_length=254)
+    document_delivery: Annotated[bool | None, BeforeValidator(delivery_switch)] = None
 
 
 class CompanyCreate(StrictModel):
@@ -196,6 +207,42 @@ def email_address(value):
     if len(value) > 254 or not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', value):
         raise ValueError('Enter a valid email address.')
     return value
+
+
+# Letterhead fields travel onto signed documents. These stay on the company profile only.
+PROFILE_NOT_ON_DOCUMENTS = frozenset(
+    {'water_heater_notice', 'crew_lead_email', 'document_delivery'}
+)
+
+
+def delivery_state(profile):
+    return ((profile.get('crew_lead_email') or ''), profile.get('document_delivery') is True)
+
+
+def delivery_settings(actor, stored, profile, incoming):
+    """Copies or replaces the crew-lead email and the delivery switch. A field left unset keeps
+    the stored value, so an older client cannot clear them by omitting them."""
+    if incoming.crew_lead_email is None:
+        if 'crew_lead_email' in stored:
+            profile['crew_lead_email'] = stored['crew_lead_email']
+    else:
+        text = incoming.crew_lead_email.strip()
+        if text:
+            try:
+                text = email_address(text)
+            except ValueError:
+                raise ValueError('Enter a valid crew-lead email address.') from None
+        profile['crew_lead_email'] = text
+    if incoming.document_delivery is None:
+        if 'document_delivery' in stored:
+            profile['document_delivery'] = stored['document_delivery'] is True
+    else:
+        profile['document_delivery'] = incoming.document_delivery
+    if delivery_state(profile) != delivery_state(stored) and (
+        'delivery_manage' not in actor['capabilities']
+    ):
+        raise AccessDenied('Only the company owner can change document delivery.')
+    return profile
 
 
 def check_password(value):
@@ -390,6 +437,9 @@ class WorkspaceStore:
             'license': '',
             'signoff': '',
             'logo_data_url': '',
+            # Off until an owner turns it on. No company, ADR included, is switched on in code.
+            'crew_lead_email': '',
+            'document_delivery': False,
         }
         if not profile['name']:
             raise ValueError('Enter the company name.')
@@ -601,7 +651,7 @@ class WorkspaceStore:
             if isinstance(req, StatusUpdate):
                 self.admin(uid, tx)
             else:
-                self.company_actor(uid, company_id, True, tx)
+                actor = self.company_actor(uid, company_id, True, tx)
             company = self.read('_companies', company_id, tx)
             if not company:
                 raise LookupError('Company not found.')
@@ -611,13 +661,18 @@ class WorkspaceStore:
             if isinstance(req, StatusUpdate):
                 company['status'] = req.status
             else:
-                profile = req.profile.model_dump(exclude={'water_heater_notice'})
+                profile = req.profile.model_dump(
+                    exclude={'water_heater_notice', 'crew_lead_email', 'document_delivery'}
+                )
                 profile['name'] = profile['name'].strip()
                 if not profile['name']:
                     raise ValueError('Enter a company name.')
                 if profile['email']:
                     profile['email'] = email_address(profile['email'])
                 profile['logo_data_url'] = clean_logo(profile['logo_data_url'])
+                profile = delivery_settings(
+                    actor, company.get('profile') or {}, profile, req.profile
+                )
                 company['profile'] = profile
             company.update(version=company['version'] + 1, updated_at=now())
             tx.set(self.ref('_companies', company_id), company)
@@ -1093,8 +1148,8 @@ class WorkspaceStore:
     def snapshot(self, uid):
         actor = self.company_actor(uid)
         company = actor['company']
-        # Older profiles may still store the retired water-heater notice.
-        profile = {k: v for k, v in company['profile'].items() if k != 'water_heater_notice'}
+        # Letterhead only. Delivery settings and the retired notice stay off the signed documents.
+        profile = {k: v for k, v in company['profile'].items() if k not in PROFILE_NOT_ON_DOCUMENTS}
         return {
             **profile,
             'company_id': company['company_id'],

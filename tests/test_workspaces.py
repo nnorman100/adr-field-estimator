@@ -619,8 +619,17 @@ def test_migration_preview_idempotency_and_signed_payload_unchanged():
     )
     assert report['create'] == 6 and again['create'] == 0
     # The migration seeds only the given name; the owner enters the rest in Company settings.
+    # Delivery starts off, with no crew-lead email, and is not turned on for the migrated company.
     assert original.db.records['_companies/adr']['profile'] == dict(
-        name='Legacy Co', address='', phone='', email='', license='', signoff='', logo_data_url=''
+        name='Legacy Co',
+        address='',
+        phone='',
+        email='',
+        license='',
+        signoff='',
+        logo_data_url='',
+        crew_lead_email='',
+        document_delivery=False,
     )
     for key, value in before.items():
         assert original.db.records[key] == value
@@ -4303,6 +4312,200 @@ def test_copy_to_new_draft_is_refused_for_older_records_without_a_saved_scope(ap
     assert response.status_code == 400 and 'older signed job' in response.json()['detail']
     assert 'inspections/' + COPY not in store.db.records
     assert copy_request(client, 'ADR-AUTH-missing').status_code == 404
+
+
+def test_a_new_company_starts_with_delivery_off_and_no_crew_lead_email():
+    profile = workspaces.WorkspaceStore.new_company('Valley Dry')['profile']
+    assert profile['document_delivery'] is False and profile['crew_lead_email'] == ''
+
+
+def test_older_company_profiles_gain_no_delivery_settings_until_the_owner_sets_them(api):
+    client, current, store = api
+    profile = client.get('/api/companies/adr').json()['profile']
+    assert 'crew_lead_email' not in profile and 'document_delivery' not in profile
+    response = client.put(
+        '/api/companies/adr',
+        json={'expected_version': 1, 'profile': {**ADR_PROFILE, 'phone': '555-0102'}},
+    )
+    assert response.status_code == 200, response.text
+    saved = store.db.records['_companies/adr']['profile']
+    assert saved['phone'] == '555-0102'
+    assert 'crew_lead_email' not in saved and 'document_delivery' not in saved
+
+
+def test_omitted_delivery_fields_keep_stored_values_and_a_bad_email_is_refused(api):
+    client, current, store = api
+    turned_on = {
+        **ADR_PROFILE,
+        'crew_lead_email': ' Lead@Crew.example.invalid ',
+        'document_delivery': True,
+    }
+    assert (
+        client.put(
+            '/api/companies/adr', json={'expected_version': 1, 'profile': turned_on}
+        ).status_code
+        == 200
+    )
+    older = {**ADR_PROFILE, 'phone': '555-0199'}
+    response = client.put('/api/companies/adr', json={'expected_version': 2, 'profile': older})
+    assert response.status_code == 200, response.text
+    saved = store.db.records['_companies/adr']['profile']
+    assert saved['phone'] == '555-0199'
+    assert saved['crew_lead_email'] == 'lead@crew.example.invalid'
+    assert saved['document_delivery'] is True
+    bad = {**ADR_PROFILE, 'crew_lead_email': 'not an email', 'document_delivery': False}
+    response = client.put('/api/companies/adr', json={'expected_version': 3, 'profile': bad})
+    assert response.status_code == 400
+    assert response.json()['detail'] == 'Enter a valid crew-lead email address.'
+    assert 'not an email' not in response.text
+    assert saved['crew_lead_email'] == 'lead@crew.example.invalid'
+    assert saved['document_delivery'] is True
+    response = client.put(
+        '/api/companies/adr',
+        json={
+            'expected_version': 3,
+            'profile': {**ADR_PROFILE, 'document_delivery': 'true'},
+        },
+    )
+    assert response.status_code == 422
+    assert saved['document_delivery'] is True
+
+
+def test_delivery_manage_is_required_to_change_the_switch_but_not_the_letterhead(api, monkeypatch):
+    client, current, store = api
+    monkeypatch.setitem(
+        workspaces.CAPABILITIES,
+        'owner',
+        [cap for cap in workspaces.CAPABILITIES['owner'] if cap != 'delivery_manage'],
+    )
+    assert (
+        client.put(
+            '/api/companies/adr',
+            json={'expected_version': 1, 'profile': {**ADR_PROFILE, 'phone': '555-0100'}},
+        ).status_code
+        == 200
+    )
+    response = client.put(
+        '/api/companies/adr',
+        json={
+            'expected_version': 2,
+            'profile': {
+                **ADR_PROFILE,
+                'phone': '555-0100',
+                'document_delivery': True,
+                'crew_lead_email': 'a@b.example.invalid',
+            },
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()['detail'] == 'Only the company owner can change document delivery.'
+    saved = store.db.records['_companies/adr']['profile']
+    assert saved['phone'] == '555-0100'
+    assert 'document_delivery' not in saved and 'crew_lead_email' not in saved
+
+
+@pytest.mark.parametrize(
+    'uid, allowed',
+    [
+        ('owner', True),
+        ('office', False),
+        ('estimator', False),
+        ('estimator2', False),
+        ('admin', False),
+        ('other-owner', False),
+    ],
+)
+def test_only_the_owning_company_owner_sets_delivery(api, uid, allowed):
+    client, current, store = api
+    current['uid'] = uid
+    response = client.put(
+        '/api/companies/adr',
+        json={
+            'expected_version': 1,
+            'profile': {
+                **ADR_PROFILE,
+                'crew_lead_email': 'Lead@Crew.example.invalid',
+                'document_delivery': True,
+            },
+        },
+    )
+    session = client.get('/api/session').json()
+    assert ('delivery_manage' in session['capabilities']) is (session.get('role') == 'owner')
+    profile = store.db.records['_companies/adr']['profile']
+    if allowed:
+        assert response.status_code == 200, response.text
+        assert profile['crew_lead_email'] == 'lead@crew.example.invalid'
+        assert profile['document_delivery'] is True
+        identity = store.workspaces.snapshot('owner')
+        assert 'crew_lead_email' not in identity and 'document_delivery' not in identity
+        events = [
+            value
+            for key, value in store.db.records.items()
+            if key.startswith('_admin_events/') and value['action'] == 'company_profile'
+        ]
+        assert events[-1]['details'] == {'version': 2}
+        assert 'lead@crew' not in json.dumps(events[-1])
+    else:
+        assert response.status_code in (403, 404)
+        assert 'crew_lead_email' not in profile and 'document_delivery' not in profile
+
+
+def test_another_companys_owner_sets_only_its_own_delivery_switch(api):
+    client, current, store = api
+    current['uid'] = 'other-owner'
+    other = store.db.records['_companies/other']['profile']
+    response = client.put(
+        '/api/companies/other',
+        json={
+            'expected_version': 1,
+            'profile': {
+                **other,
+                'crew_lead_email': 'other-lead@example.invalid',
+                'document_delivery': True,
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert store.db.records['_companies/other']['profile']['document_delivery'] is True
+    assert store.db.records['_companies/other']['profile']['crew_lead_email'] == (
+        'other-lead@example.invalid'
+    )
+    adr = store.db.records['_companies/adr']['profile']
+    assert 'document_delivery' not in adr and 'crew_lead_email' not in adr
+    current['uid'] = 'owner'
+    assert 'crew_lead_email' not in store.workspaces.snapshot('estimator')
+
+
+def test_delivery_settings_do_not_enter_an_audit(api, monkeypatch):
+    client, current, store = api
+
+    async def generate(schema, *args, **kwargs):
+        return AIResult(summary='Confirmed scope.', suggestions=[], unpriced_work=[])
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    store.create_inspection('estimator', ID, data())
+    current['uid'] = 'owner'
+    saved = client.put(
+        '/api/companies/adr',
+        json={
+            'expected_version': 1,
+            'profile': {
+                **ADR_PROFILE,
+                'crew_lead_email': 'lead@crew.example.invalid',
+                'document_delivery': True,
+            },
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    current['uid'] = 'estimator'
+    documents = client.post(
+        '/api/audit', json={'inspection_id': ID, 'expected_revision': 1}
+    ).json()['audit']['documents']
+    identity = documents['company_identity']
+    assert 'crew_lead_email' not in identity and 'document_delivery' not in identity
+    assert 'lead@crew.example.invalid' not in json.dumps(documents)
+    assert '$' in documents['iicrc_defense_letter']
+    assert documents['adr_estimate']['proposed_cost'] > 0
 
 
 def test_copy_to_new_draft_drops_the_original_walkthrough_record(api):
