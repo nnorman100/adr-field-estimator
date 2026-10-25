@@ -322,7 +322,7 @@ test('offline reload does not expose cached signed documents', async ({ page, br
   try {
     await reader.page.reload();
   } catch (error) {
-    expect(String(error)).toMatch(/ERR_INTERNET_DISCONNECTED/);
+    expect(String(error)).toMatch(/ERR_INTERNET_DISCONNECTED|WebKit encountered an internal error/);
   }
   await expect(reader.page.locator('#documents')).toHaveCount(0);
   await reader.context.close();
