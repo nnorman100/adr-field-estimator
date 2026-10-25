@@ -1656,7 +1656,8 @@ function renderRooms() {
       radio.dataset.roomKey = 'loss';
       radio.checked = roomLoss(room) === value;
       radio.disabled = !!state.signed;
-      radio.addEventListener('change', () => {
+      radio.addEventListener('click', () => {
+        if (room.loss === value) return;
         room.loss = value;
         if (value !== 'water') {
           room.category = 3;
@@ -3478,6 +3479,7 @@ function shotSignature(record) {
       ...Object.keys(ROOM_SHOT_COUNTS).map((key) => room[key] ?? null),
     ]),
     record.photos.filter((photo) => photo.shot).map((photo) => [photo.room, photo.shot]),
+    state.session?.ai_features?.includes('readiness') ? record.readiness : null,
   ]);
 }
 // After the server stores a tag or room answer, the relay re-reads the saved record and gives

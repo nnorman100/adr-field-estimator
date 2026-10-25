@@ -223,3 +223,27 @@ test('Fix for unknown offline readings does not open an online-only entry form',
   await expect(page.locator('#readingDialog')).toBeHidden();
   await expect(page.locator('#addReading')).toBeDisabled();
 });
+
+for (const category of [1, 2, 3]) {
+  test(`legacy displayed loss can be confirmed without repricing category ${category}`, async ({
+    page,
+  }) => {
+    await open(page, 'estimator');
+    await page.evaluate((category) => {
+      const room = state.draft.data.rooms[0];
+      delete room.loss;
+      room.category = category;
+      renderRooms();
+    }, category);
+    const selected = page.locator('[data-room-key="loss"]:checked').first();
+    const displayed = await selected.inputValue();
+    await selected.click();
+    await expect.poll(() => page.evaluate(() => state.draft.data.rooms[0].loss)).toBe(displayed);
+    expect(await page.evaluate(() => state.draft.data.rooms[0].category)).toBe(category);
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await expect.poll(() => page.evaluate(() => state.record.data.rooms[0].loss)).toBe(displayed);
+    expect(
+      await page.evaluate(() => state.record.readiness.gaps.some((gap) => gap.code === 'loss')),
+    ).toBe(false);
+  });
+}
