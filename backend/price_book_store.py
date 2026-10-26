@@ -578,7 +578,6 @@ class PriceBookStore:
 
     def ensure_pin(self, uid, inspection_id):
         """Create the job pin once. Later audits reuse it. A signed job is never pinned again."""
-        self._require()
 
         def pin(tx):
             record = (

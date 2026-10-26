@@ -1441,7 +1441,7 @@ async def audit_inspection(
     await stored(store._access, staff['uid'], record, 'audit')
     # A note that is still open is not an audit attempt, so it does not use the audit quota.
     require_voice_notes_clear(record)
-    await stored(store.quota, staff['uid'], 'audit', 3)
+    await stored(store.quota, staff['uid'], 'audit_attempt', 3)
     workspace_client(request)
     if record['revision'] != req.expected_revision or record['status'] == 'signed':
         raise HTTPException(409, 'Restore the latest draft before auditing.')
@@ -1459,7 +1459,7 @@ async def audit_inspection(
         raise HTTPException(400, 'Enter the address, year built and rooms before auditing.')
     pin = None
     basis = None
-    if WORKSPACES_ENABLED and price_books_enabled() and getattr(store, 'workspaces', None):
+    if WORKSPACES_ENABLED and getattr(store, 'workspaces', None):
         pin = await stored(store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id)
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
     items, total = price_scope(data, None if pin is None else pin['rates'])
@@ -1482,6 +1482,7 @@ async def audit_inspection(
     if reusable_audit(record, revision, identity, customer, claim, basis):
         # Every input edit clears the audit, so a second Finish & review returns the saved result.
         return await draft_record(store, staff['uid'], record)
+    await stored(store.quota, staff['uid'], 'audit')
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
     contents = [prompt]
     for photo in record['photos']:
