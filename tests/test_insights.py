@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from backend import ai_features, main as bm
+from backend import ai_features, delivery, main as bm
 from backend.insights import Insights, JobSummary, validate_summary, fact_pack, sentences
 from backend.inspection_store import Conflict
 from tests.test_workspaces import store, api, ID, data, signed_job
@@ -317,7 +317,9 @@ def test_changed_delivery_claim_photo_and_readings_invalidate_facts(insights, mo
     store.db.records['drying_logs/' + ID] = {'readings': [{'kind': 'material', 'affected': True}]}
     fourth = insight.view('owner', ID)
     assert fourth['facts_hash'] != third['facts_hash']
-    store.db.records['_job_deliveries/' + ID] = {'entries': {'homeowner': {'status': 'failed'}}}
+    store.db.records['_job_deliveries/' + ID] = {
+        'entries': {role: {'status': 'failed'} for role in delivery.RECIPIENTS}
+    }
     assert insight.view('owner', ID)['facts_hash'] != fourth['facts_hash']
 
 
@@ -327,3 +329,48 @@ def test_legacy_missing_equipment_and_delivery_are_not_invented():
     assert 'air movers not recorded' in text and 'dehumidifiers not recorded' in text
     assert 'No document delivery record is available.' in text
     assert '0 sent' not in text and '0 air movers' not in text
+
+
+@pytest.mark.parametrize(
+    'loss,category,expected',
+    [('both', 1, 1), ('mold', 3, 1), ('water', 3, 0), (None, 3, 1), (None, 1, 0)],
+)
+def test_mold_room_facts_and_narrative(insights, loss, category, expected):
+    client, actor, store, calls = insights
+    room = store.db.records['inspections/' + ID]['data']['rooms'][0]
+    room.update(loss=loss, category=category)
+    result = client.get(f'/api/jobs/{ID}/insight').json()
+    assert result['facts']['mold_rooms'] == expected
+    phrase = f'{expected} room' + ('s' if expected != 1 else '') + ' recorded as mold.'
+    assert phrase in result['narrative']
+    assert any(phrase in line for line in result['fact_lines'])
+
+
+def test_expired_delivery_invalidates_cached_summary(api, monkeypatch):
+    client, actor, store = api
+    signed_job(client, actor, store)
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset({'job_summary'}))
+    moment = time.time()
+    monkeypatch.setattr(delivery.time, 'time', lambda: moment)
+    record = {'entries': {role: {'status': 'skipped'} for role in delivery.RECIPIENTS}}
+    record['entries']['homeowner'] = {'status': 'sending', 'send_started': moment}
+    store.db.records['_job_deliveries/' + ID] = record
+    before = deepcopy(record)
+
+    async def generate(*args, **kwargs):
+        return JobSummary(topics=['delivery'])
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    path = f'/api/jobs/{ID}/insight'
+    first = client.get(path).json()
+    assert first['facts']['delivery']['sending'] == 1
+    assert '1 sending' in first['narrative']
+    moment += delivery.RESERVATION_SECONDS
+    expired = client.get(path + '?facts_only=true').json()
+    assert expired['facts']['delivery']['sending'] == 0
+    assert expired['facts']['delivery']['failed'] == 1
+    assert expired['facts_hash'] != first['facts_hash']
+    assert expired['stale'] and expired['narrative'] is None
+    assert any('1 failed' in line for line in expired['fact_lines'])
+    assert '1 failed' in client.get(path).json()['narrative']
+    assert record == before

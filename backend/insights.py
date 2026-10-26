@@ -13,6 +13,7 @@ try:
     from .claims import JSON_TERM, FIELD_NAME
     from .readiness import readiness
     from .sizing import equipment_sizing, count
+    from .delivery import public_delivery
     from .inspection_store import Conflict
     from . import ai_features
 except ImportError:
@@ -20,6 +21,7 @@ except ImportError:
     from claims import JSON_TERM, FIELD_NAME
     from readiness import readiness
     from sizing import equipment_sizing, count
+    from delivery import public_delivery
     from inspection_store import Conflict
     import ai_features
 
@@ -50,6 +52,7 @@ def fact_pack(job, record, log, delivery, monitoring):
     claim = (docs.get('claim') if signed else job.get('claim')) or {}
     photos = record.get('photos') or []
     rooms = data.get('rooms') or []
+    delivery_entries = (public_delivery(delivery) or {}).get('entries', [])
     pack = dict(
         version=1,
         status='signed' if signed else 'draft',
@@ -62,7 +65,8 @@ def fact_pack(job, record, log, delivery, monitoring):
         ],
         categories=sorted({r['category'] for r in rooms if r.get('category') in (1, 2, 3)}),
         mold_rooms=sum(
-            (r.get('loss') or ('mold' if r.get('category') == 3 else 'water')) == 'mold'
+            (r.get('loss') or ('mold' if r.get('category') == 3 else 'water'))
+            in ('mold', 'both')
             for r in rooms
         ),
         air_movers=data.get('air_movers'),
@@ -77,9 +81,7 @@ def fact_pack(job, record, log, delivery, monitoring):
         scope_confirmed=bool(data.get('scope_confirmed')),
         delivery_recorded=bool(delivery),
         delivery={
-            status: sum(
-                e.get('status') == status for e in (delivery or {}).get('entries', {}).values()
-            )
+            status: sum(e['status'] == status for e in delivery_entries)
             for status in ('queued', 'sending', 'sent', 'failed', 'skipped')
         },
     )

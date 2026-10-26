@@ -36,6 +36,7 @@ window.InsightUI = (() => {
       key = [requested, company || '', job].join('|');
     let value = cache.get(key),
       busy = false,
+      pending = false,
       error = '',
       until = 0,
       timer,
@@ -85,6 +86,7 @@ window.InsightUI = (() => {
       target.append(refresh);
     }
     async function load(factsOnly = false) {
+      if (busy && factsOnly) pending = true;
       if (busy || !navigator.onLine || Date.now() < until) {
         render();
         return;
@@ -123,6 +125,10 @@ window.InsightUI = (() => {
         if (valid(generation)) {
           busy = false;
           render();
+          if (pending) {
+            pending = false;
+            load(true);
+          }
         }
       }
     }
