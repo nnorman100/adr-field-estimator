@@ -1,6 +1,6 @@
 # DryScope vault backup
 
-Firebase Auth has no backup. Evidence photos and signature images live in one private bucket with a 7-day soft delete and no second copy. This job copies both into a separate project once a day.
+Before this job is deployed and verified, Firebase Auth has no backup, and evidence photos and signature images live in one private bucket with a 7-day soft delete and no second copy. This job exports logins and copies evidence into a separate project once a day.
 
 Transcripts stay in Firestore, which already has point-in-time recovery (7 days), delete protection, and a daily backup kept for 98 days. Live audio and voice recordings are not stored. This job does not read Firestore and does not try to back up audio that was never written.
 
@@ -34,7 +34,7 @@ Lifecycle age is 90 days from when that vault object was created. After deletion
 
 The UTC date is chosen once at the start of the task and used for the auth object and the manifest, including when a run crosses midnight. A same-day rerun keeps the existing auth object and manifest. Users added after that day's object was created appear in the next day's auth file. Photo copies still proceed on the rerun: missing generations are created. If any photo is created but the dated manifest already exists, the run fails because the existing manifest cannot record the new receipts.
 
-Each write is accepted only when the upload or rewrite response names the intended bucket and object, a positive generation, and the byte size. Evidence responses must also echo the source `crc32c` (and `md5Hash` when the listing had one). The job does not read the object back. Logs contain counts and outcomes only: no emails, password hashes, photo bytes, user IDs, or storage paths. `stage=export` means the account download failed, or a password account had no usable hash (including a hash firebase-tools would drop because `version` is not 0). The task exits non-zero, so Cloud Run retries and, after the retries, marks the execution failed.
+Each write is accepted only when the upload or rewrite response names the intended bucket and object, a positive generation, and the byte size. Evidence responses must also echo the source `crc32c` (and `md5Hash` when the listing had one). The job does not read the object back. Logs contain outcomes, counts, the destination bucket, dated auth and manifest object names, and their response generations and sizes. They omit emails, password hashes, photo bytes, user IDs, evidence paths, checksums, and SDK error bodies. `stage=export` means the account download failed, or a password account had no usable hash (including a hash firebase-tools would drop because `version` is not 0). The task exits non-zero, so Cloud Run retries and, after the retries, marks the execution failed.
 
 | `outcome` | Meaning |
 | --- | --- |
@@ -204,9 +204,9 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
      --format='yaml(timestamp,jsonPayload)'
    ```
 
-   Require `outcome: created`, `bucket: alert-disaster-vault-backups`, today's UTC `auth_object` and `manifest_object`, and positive `auth_generation`, `manifest_generation`, `auth_bytes`, and `manifest_bytes`. `copied` plus `already_present` is the evidence listing size. `failed`, a missing outcome, or a missing generation is not acceptance. If today's auth object already existed before this deploy, `already_exists` can be a honest rerun and does not prove the new image; run again on the next UTC day and require `created`.
+   Require `outcome: created`, `bucket: alert-disaster-vault-backups`, today's UTC `auth_object` and `manifest_object`, and positive `auth_generation`, `manifest_generation`, `auth_bytes`, and `manifest_bytes`. `copied` plus `already_present` is the evidence listing size. `failed`, a missing outcome, or a missing generation is not acceptance. If today's auth object already existed before this deploy, `already_exists` can be an honest rerun and does not prove the new image; run again on the next UTC day and require `created`.
 
-3. Describe the two dated objects and one evidence object. This prints metadata only.
+3. Describe the two dated objects and list evidence metadata. This prints metadata only; compare individual evidence objects with the manifest receipts below.
 
    ```sh
    gcloud storage objects describe "gs://alert-disaster-vault-backups/auth/<YYYY-MM-DD>.json" \
@@ -226,7 +226,7 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
    bash ops/monitoring/setup-monitoring.sh --email you@example.com
    ```
 
-   The policy `DryScope: vault backup failed or missing` pages when an execution fails, or when no execution has succeeded in about 25 hours (23 hours of silence plus a 2 hour alignment bucket). Details are in [MONITORING.md](MONITORING.md).
+   The policy behavior and response guidance are in [MONITORING.md](MONITORING.md).
 
 ## Restore logins
 
