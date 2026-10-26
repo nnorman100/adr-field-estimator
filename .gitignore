@@ -35,6 +35,10 @@ Thumbs.db
 # Private PDF review intermediates
 tmp/pdfs/
 
+# Linter and test caches
+.ruff_cache/
+.pytest_cache/
+
 # Release stamp written by scripts/deploy_backend.py during a deploy
 backend/SOURCE_COMMIT
 

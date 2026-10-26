@@ -1,5 +1,7 @@
 # Gemini Live build review
 
+> **Historical (October 7, 2026).** This review is kept for its reasoning. File and line references (for example `backend/main.py:36–45`) and the recommendations reflect the code at that date and may have drifted; check the current code and `RELEASES.md` before relying on them.
+
 Reviewed October 7, 2026. Scope: the nine supplied Gemini Developer API guides, current Vertex model guidance, and the local implementation. This review recommends build work; it does not change application code, invoke a model, upload inspection evidence, or deploy anything.
 
 ## Build direction
