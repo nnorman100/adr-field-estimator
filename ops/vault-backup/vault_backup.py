@@ -10,7 +10,7 @@ ifGenerationMatch=0 makes an unchanged generation a precondition failure rather
 than an overwrite. ifSourceGenerationMatch pins the copy to the listed
 generation, so a replacement cannot be stored under the old generation's name.
 Photo bytes stay in Cloud Storage; this process lists metadata and uploads two
-JSON objects. Logs are counts and outcomes only.
+JSON objects. See docs/VAULT-BACKUP.md for the permitted log fields.
 
 See docs/VAULT-BACKUP.md. Merging this file does not update a deployed job.
 """

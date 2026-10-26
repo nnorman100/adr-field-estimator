@@ -28,7 +28,7 @@ Nothing in this file is run by the app or by CI. The commands are for the projec
 
 Evidence is in `us-west2`. The vault bucket is in `us-central1` so a single-region outage does not take both copies. Cross-region copy has an egress charge. The job runs in `us-west2` next to the evidence bucket and tells Cloud Storage to rewrite objects. It does not download photo bytes.
 
-The source object name is kept after the generation directory. Photos and signatures are normally written once under a unique name. The evidence bucket has no object versioning, so a later replacement is a new generation and the previous bytes are gone from that bucket. The generation directory makes that replacement a new create-only object. Each rewrite asks for that listed generation with `sourceGeneration` and `ifSourceGenerationMatch`, and creates the vault object with `ifGenerationMatch=0`. An unchanged generation hits the destination precondition, Storage returns `412 conditionNotMet`, and the job counts it as already present only after a metadata read of the source still shows that same generation. If the source generation no longer matches, the run fails and does not count a copy. The next run lists the new generation and copies it under a new key. The job never deletes or overwrites a vault object. It cannot read the vault; Object Creator has no get or list. A `412` with any other reason fails the run.
+The source object name is kept after the generation directory. Photos and signatures are normally written once under a unique name. The evidence bucket has no object versioning, so a later replacement is a new generation and the previous bytes are gone from that bucket. The generation directory makes that replacement a new create-only object. Each rewrite asks for that listed generation with `sourceGeneration` and `ifSourceGenerationMatch`, and creates the vault object with `ifGenerationMatch=0`. On the first rewrite request, a `412` whose reasons are all `conditionNotMet` counts as already present only after a source metadata read of generation returns HTTP 200 and still shows the listed generation. A different generation or an unsuccessful source read fails the run without another rewrite attempt. A `412` on a rewrite continuation fails immediately without a source read. These failures do not count a copy. The next run lists the new generation and copies it under a new key. The job never deletes or overwrites a vault object. It cannot read the vault; Object Creator has no get or list. A `412` with any other reason fails the run.
 
 Lifecycle age is 90 days from when that vault object was created. After deletion, the next successful run copies a source object that is still live, because a soft-deleted vault object does not satisfy `ifGenerationMatch=0`. Soft delete then keeps the removed vault generation for 7 days. A generation the job has not yet copied exists only in the evidence bucket (and in that bucket's own 7-day soft delete if it was removed there).
 
@@ -206,15 +206,13 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
 
    Require `outcome: created`, `bucket: alert-disaster-vault-backups`, today's UTC `auth_object` and `manifest_object`, and positive `auth_generation`, `manifest_generation`, `auth_bytes`, and `manifest_bytes`. `copied` plus `already_present` is the evidence listing size. `failed`, a missing outcome, or a missing generation is not acceptance. If today's auth object already existed before this deploy, `already_exists` can be an honest rerun and does not prove the new image; run again on the next UTC day and require `created`.
 
-3. Describe the two dated objects and list evidence metadata. This prints metadata only; compare individual evidence objects with the manifest receipts below.
+3. Describe the two dated objects, then use the verifier below for evidence metadata.
 
    ```sh
    gcloud storage objects describe "gs://alert-disaster-vault-backups/auth/<YYYY-MM-DD>.json" \
      --project=alert-disaster-vault --format='yaml(bucket,name,generation,size,timeCreated)'
    gcloud storage objects describe "gs://alert-disaster-vault-backups/manifests/<YYYY-MM-DD>.json" \
      --project=alert-disaster-vault --format='yaml(bucket,name,generation,size,timeCreated)'
-   gcloud storage ls --long --recursive 'gs://alert-disaster-vault-backups/evidence/**' \
-     --project=alert-disaster-vault
    ```
 
    Auth and manifest bucket, name, generation, and size match the log. `timeCreated` falls in this execution. Already-present copies have no new receipt and do not prove a new copy. Compare the photo receipts with the vault metadata. This reads the vault as the owner, not as the backup service account, and prints counts only:
@@ -223,7 +221,7 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
    python3 ops/vault-backup/verify_vault.py --date <YYYY-MM-DD>
    ```
 
-   Acceptance is `failed=0` and `passed` equal to `checked`, with a zero exit. Any other result is not acceptance. The script does not print object names or checksums and does not download photo bytes. Each receipt carries `source_name`, `source_generation`, and `source_crc32c` (and `source_md5Hash` when the source had one) plus the vault object's `name`, `generation`, `size`, `crc32c`, and `md5Hash`. The script checks those fields against the vault object's metadata, including that the object name is `evidence/<source_generation>/<source_name>`. The next 11:15 UTC run needs its own dated auth object and manifest before the schedule counts as restored.
+   Acceptance is `failed=0` and `passed` equal to `checked`, with a zero exit. Any other result is not acceptance. The owner command uses the active `gcloud` account's access token and is not included in the job image; do not grant the backup identity vault read access. An unreadable or malformed manifest prints `checked=0 passed=0 failed=1` and exits nonzero. All receipts are structurally validated before any photo metadata is fetched or comparisons are counted. The script does not print object names or checksums and does not download photo bytes. Each receipt carries `source_name`, `source_generation`, and `source_crc32c` (and `source_md5Hash` when the source had one) plus the vault object's `name`, `generation`, `size`, and `crc32c`, with `md5Hash` when the rewrite response included it. The script checks those fields against the vault object's metadata, including that the object name is `evidence/<source_generation>/<source_name>`. The next 11:15 UTC run needs its own dated auth object and manifest before the schedule counts as restored.
 
 4. Install the alert after that first successful check, so the absence condition does not page for a job that has never succeeded. Re-run the monitoring script (it updates policies in place and does not deploy this job):
 
@@ -282,6 +280,6 @@ If the live name already exists, pick a new object name or confirm the checksums
 
 ## Tests
 
-`python -m pytest tests/test_vault_backup.py tests/test_monitoring_script.py -q -p no:cacheprovider`
+`python -m pytest tests/test_vault_backup.py tests/test_verify_vault.py tests/test_monitoring_script.py -q -p no:cacheprovider`
 
 The tests call the job module with a fake HTTP transport. They do not contact Google.
