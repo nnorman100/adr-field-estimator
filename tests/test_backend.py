@@ -1073,6 +1073,23 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('POST', '/api/jobs/{inspection_id}/drying-watch/summary'),
         ('POST', '/api/jobs/{inspection_id}/drying-watch/state'),
         ('POST', '/api/jobs/{inspection_id}/drying-watch/remind'),
+        ('GET', '/api/companies/{company_id}/prices'),
+        ('GET', '/api/companies/{company_id}/prices/versions'),
+        ('GET', '/api/companies/{company_id}/prices/versions/{version_id}'),
+        ('GET', '/api/companies/{company_id}/prices/history'),
+        ('GET', '/api/companies/{company_id}/prices/export'),
+        ('POST', '/api/companies/{company_id}/prices/preview'),
+        ('POST', '/api/companies/{company_id}/prices/import-preview'),
+        ('POST', '/api/companies/{company_id}/prices/publish'),
+        ('POST', '/api/companies/{company_id}/prices/versions/{version_id}/restore'),
+        ('GET', '/api/admin/companies/{company_id}/prices'),
+        ('GET', '/api/admin/companies/{company_id}/prices/versions'),
+        ('GET', '/api/admin/companies/{company_id}/prices/versions/{version_id}'),
+        ('GET', '/api/admin/companies/{company_id}/prices/history'),
+        ('GET', '/api/admin/companies/{company_id}/prices/export'),
+        ('GET', '/api/inspections/{inspection_id}/pricing'),
+        ('POST', '/api/inspections/{inspection_id}/pricing/reprice-preview'),
+        ('POST', '/api/inspections/{inspection_id}/pricing/reprice'),
     }
 
 

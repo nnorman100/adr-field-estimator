@@ -147,7 +147,21 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "_admin_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "company_id", "order": "ASCENDING" },
+        { "fieldPath": "domain", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    { "collectionGroup": "_price_book_versions", "fieldPath": "rates", "indexes": [] },
+    { "collectionGroup": "_job_pricing", "fieldPath": "rates", "indexes": [] },
+    { "collectionGroup": "_price_book_previews", "fieldPath": "rates", "indexes": [] },
+    { "collectionGroup": "_price_book_previews", "fieldPath": "diff", "indexes": [] }
+  ]
 }

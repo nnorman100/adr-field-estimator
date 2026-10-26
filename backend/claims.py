@@ -8,27 +8,38 @@ from zoneinfo import ZoneInfo
 try:
     from .extras import wording
     from .contracts import InspectionData, AIResult, AuditDocuments
+    from .price_books import seed_rates
     from .sizing import equipment_sizing, letter_paragraph
 except ImportError:
     from extras import wording
     from contracts import InspectionData, AIResult, AuditDocuments
+    from price_books import seed_rates
     from sizing import equipment_sizing, letter_paragraph
 
 CENT = Decimal('0.01')
-RATES = {1: ('1.21', '2.78'), 2: ('1.52', '2.89'), 3: ('2.48', '8.39')}
+# Category -> (unfinished key, finished key). The numbers live in the seed book.
+RATES = {
+    1: ('demo_cat1_unfinished', 'demo_cat1_finished'),
+    2: ('demo_cat2_unfinished', 'demo_cat2_finished'),
+    3: ('demo_cat3_unfinished', 'demo_cat3_finished'),
+}
 BASELINE = [
-    ('ADR-TRIP', 'Emergency call / trip charge', 'emergency_calls', 'EA', '133.95'),
-    ('ADR-MON', 'Equipment monitoring', 'monitoring_hours', 'HR', '47.46'),
-    ('ADR-HAUL', 'Haul debris & disposal', 'haul_loads', 'load', '159.53'),
-    ('ADR-SCRUB', 'Air scrubber daily rental', 'air_scrubbers', 'day', '74.75'),
-    ('ADR-HEPA', 'HEPA replacement filter', 'hepa_filters', 'EA', '183.12'),
+    ('ADR-TRIP', 'Emergency call / trip charge', 'emergency_calls', 'EA', 'emergency_call'),
+    ('ADR-MON', 'Equipment monitoring', 'monitoring_hours', 'HR', 'monitoring_hourly'),
+    ('ADR-HAUL', 'Haul debris & disposal', 'haul_loads', 'load', 'haul_pickup_load'),
+    ('ADR-SCRUB', 'Air scrubber daily rental', 'air_scrubbers', 'day', 'air_scrubber_daily'),
+    ('ADR-HEPA', 'HEPA replacement filter', 'hepa_filters', 'EA', 'hepa_filter'),
 ]
-AFTER_HOURS_CHARGE = '200.00'
 OPTIONAL_CHARGES = [
-    ('ADR-MATTERPORT', 'Matterport scan', 'matterport_scans', '250.00'),
-    ('ADR-DUMP', 'Single-axle dump truck load', 'dump_truck_loads', '286.78'),
-    ('ADR-DECON', 'Drying equipment decontamination', 'equipment_decon', '27.72'),
-    ('ADR-POWER', 'Power distribution', 'power_distribution', '66.74'),
+    ('ADR-MATTERPORT', 'Matterport scan', 'matterport_scans', 'matterport_scan'),
+    ('ADR-DUMP', 'Single-axle dump truck load', 'dump_truck_loads', 'dump_truck_load'),
+    (
+        'ADR-DECON',
+        'Drying equipment decontamination',
+        'equipment_decon',
+        'equipment_decontamination',
+    ),
+    ('ADR-POWER', 'Power distribution', 'power_distribution', 'power_distribution'),
 ]
 JOB_CODES = (
     {code for code, _, _, _, _ in BASELINE}
@@ -82,26 +93,30 @@ def line(code, description, quantity, unit, rate, waste=0):
     )
 
 
-def price_scope(data: InspectionData):
+def price_scope(data: InspectionData, rates=None):
+    """Price saved quantities. `rates` defaults to the frozen ADR seed, never a company's latest book."""
+    book = rates or seed_rates()
     items = [
-        line(code, text, getattr(data, field), unit, rate)
-        for code, text, field, unit, rate in BASELINE
+        line(code, text, getattr(data, field), unit, book[key])
+        for code, text, field, unit, key in BASELINE
         if getattr(data, field)
     ]
     if data.is_after_hours:
-        items.append(line('ADR-AFTER', 'After-hours job charge', 1, 'EA', AFTER_HOURS_CHARGE))
-    for code, description, field, rate in OPTIONAL_CHARGES:
+        items.append(
+            line('ADR-AFTER', 'After-hours job charge', 1, 'EA', book['after_hours_job_charge'])
+        )
+    for code, description, field, key in OPTIONAL_CHARGES:
         quantity = getattr(data, field)
         if quantity:
-            items.append(line(code, description, quantity, 'EA', rate))
+            items.append(line(code, description, quantity, 'EA', book[key]))
     for room in data.rooms:
-        rates = RATES[room.category]
-        for qty, rate, finish in [
-            (room.unfinished_sf, rates[0], 'unfinished/subfloor'),
-            (room.finished_sf, rates[1], 'finished/drywall/trim'),
+        keys = RATES[room.category]
+        for qty, key, finish in [
+            (room.unfinished_sf, keys[0], 'unfinished/subfloor'),
+            (room.finished_sf, keys[1], 'finished/drywall/trim'),
         ]:
             if qty:
-                price = Decimal(rate) * (
+                price = Decimal(book[key]) * (
                     2
                     if finish.startswith('finished')
                     and room.category == 3
@@ -125,7 +140,7 @@ def price_scope(data: InspectionData):
                 'Axial air movers',
                 data.air_movers * data.drying_days,
                 'unit-day',
-                '29.25',
+                book['air_mover_daily'],
             )
         )
     if data.dehumidifiers:
@@ -135,7 +150,7 @@ def price_scope(data: InspectionData):
                 'Commercial LGR dehumidifiers',
                 data.dehumidifiers * data.drying_days,
                 'unit-day',
-                '101.25',
+                book['dehumidifier_daily'],
             )
         )
     if data.wood_floor_systems:
@@ -145,7 +160,7 @@ def price_scope(data: InspectionData):
                 'Wood-floor drying system / heater',
                 data.wood_floor_systems * data.wood_floor_days,
                 'unit-day',
-                '180.00',
+                book['wood_floor_daily'],
             )
         )
     if data.labor_hours:
@@ -155,7 +170,7 @@ def price_scope(data: InspectionData):
                 'Content manipulation / additional labor',
                 data.labor_hours,
                 'HR',
-                '47.46',
+                book['sheet_labor_hourly'],
             )
         )
     for extra in data.extras:
@@ -279,7 +294,14 @@ def addressee(claim):
 
 
 def make_documents(
-    data: InspectionData, photos, ai: AIResult, identity=None, customer_name='', claim=None
+    data: InspectionData,
+    photos,
+    ai: AIResult,
+    identity=None,
+    customer_name='',
+    claim=None,
+    rates=None,
+    price_basis=None,
 ):
     # Company details come only from the issuing company's profile; empty fields print nothing.
     company = identity or {}
@@ -307,7 +329,7 @@ def make_documents(
         raise ValueError('Enter the address, year built and rooms before auditing.')
     if data.package_price is not None:
         raise ValueError('Update the app and clear the old package-tier selection before auditing.')
-    items, total = price_scope(data)
+    items, total = price_scope(data, rates)
     approved = [extra for extra in data.extras if extra.approval]
     for item, extra in zip((i for i in items if i['code'] == 'ADR-EXTRA'), approved):
         item['description'] = wording(extra, clause_company)
@@ -429,6 +451,7 @@ def make_documents(
         ],
         unpriced_work=[plain(text) for text in unpriced],
         pending_extras=pending,
+        price_basis=price_basis,
         signable=bool(
             not setup
             and data.scope_confirmed

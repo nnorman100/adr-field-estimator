@@ -14,6 +14,7 @@ const ASSETS = [
   '/documents.js?v=' + VERSION,
   '/app.js?v=' + VERSION,
   '/workspaces.js?v=' + VERSION,
+  '/prices.js?v=' + VERSION,
   '/drying-watch.js?v=' + VERSION,
   '/insights.js?v=' + VERSION,
   '/psychrometrics.js?v=' + VERSION,

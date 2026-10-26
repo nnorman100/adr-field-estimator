@@ -3024,3 +3024,55 @@ footer {
 #aiQuota {
   white-space: normal;
 }
+
+
+/* Company prices: stacked cards, 16px fields, no sideways scroll on a 320px phone. */
+.price-grid,
+.price-card,
+.price-row,
+.price-actions,
+#jobPricing {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.price-grid {
+  display: grid;
+  gap: 1rem;
+}
+.price-card {
+  padding: 1rem;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 12px;
+}
+.price-row,
+.price-card label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.price-card input,
+.price-card textarea,
+.price-actions input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px;
+  min-height: 44px;
+}
+.price-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+.price-actions button {
+  min-height: 44px;
+  white-space: normal;
+}
+#jobPricing {
+  margin: 0.75rem 0;
+}
+@media (max-width: 390px) {
+  .price-row {
+    grid-template-columns: 1fr;
+  }
+}

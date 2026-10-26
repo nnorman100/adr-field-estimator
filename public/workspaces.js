@@ -152,7 +152,7 @@ window.WorkspaceUI = (() => {
     for (const control of $('dashboardContent').querySelectorAll(
       'form input,form select,form textarea,form button',
     ))
-      control.disabled = !navigator.onLine;
+      control.disabled = !navigator.onLine || control.dataset.locked === 'true';
     const saveCompany = $('dashboardContent').querySelector(
       'form.dashboard-form button[type=submit]',
     );
@@ -230,6 +230,7 @@ window.WorkspaceUI = (() => {
         ['dashboardJobs', jobs],
         ['dashboardTeam', team],
         ['dashboardProfile', profile],
+        ['dashboardPrices', () => window.Prices.open()],
         ['dashboardAdmin', companies],
       ])
         $(id).addEventListener('click', () => {
@@ -295,6 +296,7 @@ window.WorkspaceUI = (() => {
       state.session.role === 'estimator' ? 'My jobs' : 'Company jobs';
     $('dashboardTeam').hidden = !can('team_manage');
     $('dashboardProfile').hidden = !can('profile_manage');
+    $('dashboardPrices').hidden = !(state.session.price_books_enabled && can('prices_read'));
     $('dashboardAdmin').hidden = !state.session.superadmin;
     branding();
     window.InsightUI?.account();
@@ -880,23 +882,32 @@ window.WorkspaceUI = (() => {
         'signoff',
       ].includes(key);
     if (state.session.ai_features?.includes('priced_extras')) {
-      const rate = formField(
-        form,
-        'Additional work hourly rate ($/h)',
-        'additional_work_rate',
-        p.additional_work_rate ?? (cid === 'adr' ? '47.46' : ''),
-        'number',
-      );
-      rate.min = '0.01';
-      rate.max = '10000';
-      rate.step = '0.01';
-      rate.inputMode = 'decimal';
-      form.append(
-        node(
-          'p',
-          'Used when you approve additional work outside the price sheet. Approved and signed extras keep their saved rates.',
-        ),
-      );
+      if (can('prices_manage')) {
+        form.append(
+          node(
+            'p',
+            'The additional-work hourly rate is edited under Company prices. Approved and signed extras keep their saved rates.',
+          ),
+        );
+      } else {
+        const rate = formField(
+          form,
+          'Additional work hourly rate ($/h)',
+          'additional_work_rate',
+          p.additional_work_rate ?? (cid === 'adr' ? '47.46' : ''),
+          'number',
+        );
+        rate.min = '0.01';
+        rate.max = '10000';
+        rate.step = '0.01';
+        rate.inputMode = 'decimal';
+        form.append(
+          node(
+            'p',
+            'Used when you approve additional work outside the price sheet. Approved and signed extras keep their saved rates.',
+          ),
+        );
+      }
     }
     const logo = formField(form, 'Optional logo (PNG or JPEG, up to 1 MB)', 'logo', '', 'file');
     logo.accept = 'image/png,image/jpeg';
@@ -935,9 +946,12 @@ window.WorkspaceUI = (() => {
     }
     submit(form, 'Save company details', async (values) => {
       const updated = { ...p };
-      delete updated.additional_work_rate;
-      if (values.get('additional_work_rate'))
-        updated.additional_work_rate = values.get('additional_work_rate');
+      // Company prices owns this rate. Omitting it lets the server keep the canonical value.
+      if (!can('prices_manage')) {
+        delete updated.additional_work_rate;
+        if (values.get('additional_work_rate'))
+          updated.additional_work_rate = values.get('additional_work_rate');
+      } else delete updated.additional_work_rate;
       for (const key of ['name', 'address', 'phone', 'email', 'license', 'signoff'])
         if (values.has(key)) updated[key] = values.get(key);
       if (can('delivery_manage')) {
@@ -1105,8 +1119,14 @@ window.WorkspaceUI = (() => {
       node('p', SUPPORT_NOTE, 'support-note'),
       node('p', 'Company status: ' + company.status),
       button('Back to company administration', () => companyAdmin(cid)),
-      node('h2', 'Jobs and documents'),
     );
+    if (state.session.price_books_enabled)
+      content.append(
+        button('Company prices (read only)', () =>
+          window.Prices.openSupport(cid).catch((e) => say(e.message, 'error')),
+        ),
+      );
+    content.append(node('h2', 'Jobs and documents'));
     // Signed jobs are listed once, as their agreements.
     const rows = [
       ...drafts.inspections
@@ -1693,6 +1713,12 @@ window.WorkspaceUI = (() => {
       paintDelivery();
     }
   }
+  function openPage(id, title, description, eyebrow) {
+    const epoch = show(title, description, eyebrow);
+    current(id);
+    menu(false);
+    return epoch;
+  }
   function documentBranding() {
     if (!state.documents) return;
     ADRDocuments.brand(state.documents);
@@ -1713,6 +1739,8 @@ window.WorkspaceUI = (() => {
     scopeAddressChanged,
     loadClaim,
     fillClaim,
+    openPage,
+    pageEpoch: () => viewEpoch,
     readinessClaim: () => (claim?.job_id === state.draft?.inspection_id ? claim.claim : {}),
     loadDelivery,
   };

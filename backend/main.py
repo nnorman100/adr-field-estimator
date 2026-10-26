@@ -97,6 +97,9 @@ try:
     from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
+    from .price_book_api import register_price_book_routes
+    from .price_book_store import Expired
+    from .price_books import price_books_enabled
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import (
         InspectionStore,
@@ -160,6 +163,9 @@ except ImportError:
     from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
+    from price_book_api import register_price_book_routes
+    from price_book_store import Expired
+    from price_books import price_books_enabled
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import (
         InspectionStore,
@@ -399,6 +405,8 @@ BODY_LIMITS = [
     ('POST', re.compile(r'/api/authorize'), int(3.5 * MB)),
     ('POST', re.compile(r'/api/sign'), int(3.5 * MB)),
     ('PUT', re.compile(r'/api/companies/[^/]+'), 2 * MB),
+    # One fixed-template workbook plus the multipart reason fields. The parser caps the file itself.
+    ('POST', re.compile(r'/api/companies/[^/]+/prices/import-preview'), MB + 64 * 1024),
 ]
 BODY_READ_SECONDS = 50  # Below Firebase Hosting's 60-second request timeout.
 
@@ -538,7 +546,15 @@ async def stored(method, *args, failure=None):
         raise HTTPException(409, str(error))
     except LookupError:
         raise HTTPException(404, 'Record not found.')
+    except Expired as error:
+        raise HTTPException(410, str(error))
     except ValueError as error:
+        try:
+            from .price_book_import import SizeLimit
+        except ImportError:
+            from price_book_import import SizeLimit
+        if isinstance(error, SizeLimit):
+            raise HTTPException(413, str(error))
         raise HTTPException(400, str(error))
     except Exception as error:
         event(
@@ -561,13 +577,24 @@ def require_voice_notes_clear(record):
         )
 
 
-def reusable_audit(record, revision, identity, customer, claim=None):
+def reusable_audit(record, revision, identity, customer, claim=None, price_basis=None):
     """The saved audit still matches this revision, company profile, customer, claim details and
-    proposal date. An unresolved voice note makes the saved audit stale."""
+    proposal date. An unresolved voice note makes the saved audit stale.
+
+    A saved price basis must match the job pin. Audits from before price books have none and
+    stay reusable; this does not rewrite them.
+    """
     if not voice_notes_clear(record):
         return False
     audit = record.get('audit')
     if not audit or audit['revision'] != revision:
+        return False
+    saved_basis = audit['documents'].get('price_basis')
+    if saved_basis and (
+        not price_basis
+        or saved_basis.get('content_sha256') != price_basis.get('content_sha256')
+        or saved_basis.get('version_id') != price_basis.get('version_id')
+    ):
         return False
     saved, current = audit['documents'].get('company_identity') or {}, identity or {}
     proposal = audit['documents']['adr_estimate']
@@ -833,6 +860,7 @@ async def session_info(staff=Depends(current_staff)):
         workspaces_enabled=WORKSPACES_ENABLED,
         workspace_protocol_version=1,
         ai_features=sorted(ai_features.AI_FEATURES),
+        price_books_enabled=bool(WORKSPACES_ENABLED and price_books_enabled()),
     )
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, staff['uid'])
@@ -853,6 +881,7 @@ async def session_info(staff=Depends(current_staff)):
 register_workspace_routes(
     app, current_identity, get_job_store, stored, LIVE_REVOCATION, account_identity
 )
+register_price_book_routes(app, current_identity, get_job_store, stored, LIVE_REVOCATION)
 
 
 def workspace_client(request):
@@ -1429,7 +1458,12 @@ async def audit_inspection(
         )
     if not data.address.strip() or data.year_built is None or not data.rooms:
         raise HTTPException(400, 'Enter the address, year built and rooms before auditing.')
-    items, total = price_scope(data)
+    pin = None
+    basis = None
+    if WORKSPACES_ENABLED and price_books_enabled() and getattr(store, 'workspaces', None):
+        pin = await stored(store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id)
+        basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
+    items, total = price_scope(data, None if pin is None else pin['rates'])
     if total <= 0:
         raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
     deadline = time.monotonic() + 30
@@ -1446,7 +1480,7 @@ async def audit_inspection(
     identity = await stored(store.workspaces.snapshot, staff['uid']) if WORKSPACES_ENABLED else None
     customer = await stored(store.workspaces.customer_name, record) if WORKSPACES_ENABLED else ''
     claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
-    if reusable_audit(record, revision, identity, customer, claim):
+    if reusable_audit(record, revision, identity, customer, claim, basis):
         # Every input edit clears the audit, so a second Finish & review returns the saved result.
         return await draft_record(store, staff['uid'], record)
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
@@ -1456,7 +1490,16 @@ async def audit_inspection(
         contents.append(await run_in_threadpool(model_image, raw))
     ai = await generate_audit(contents, req.inspection_id, started)
     try:
-        documents = make_documents(data, record['photos'], ai, identity, customer, claim)
+        documents = make_documents(
+            data,
+            record['photos'],
+            ai,
+            identity,
+            customer,
+            claim,
+            None if pin is None else pin['rates'],
+            basis,
+        )
     except (ValueError, ValidationError):
         raise HTTPException(
             400, 'The scope could not be priced. Review the inspection inputs and retry.'

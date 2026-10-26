@@ -32,7 +32,8 @@ class CompanyInspectionStore(InspectionStore):
         _, actor = self.workspaces.job_access(uid, record, 'scope')
         if record['status'] == 'signed':
             raise Conflict('Signed inspections are immutable. Copy to a new draft.')
-        return quote(actor['company'], hours)
+        source = self.workspaces.prices.approval_source(actor['company'])
+        return quote(actor['company'], hours, source)
 
     def approve_extra(self, uid, inspection_id, extra_id, request):
         ref = self._ref(inspection_id)
@@ -57,7 +58,15 @@ class CompanyInspectionStore(InspectionStore):
                 raise LookupError('Extra not found.')
             if extra.get('approval'):
                 return record
-            price = quote(company, extra['hours'])
+            source = self.workspaces.prices.approval_source(company, tx)
+            price = quote(company, extra['hours'], source)
+            fingerprint = price.pop('price_rate_fingerprint', None)
+            if source is not None and (
+                not request.expected_price_hash or request.expected_price_hash != fingerprint
+            ):
+                raise Conflict(
+                    'The additional-work rate changed. Review the current price before approving.'
+                )
             extra['approval'] = dict(
                 accepted_by_uid=uid,
                 accepted_by_name=name,
@@ -103,6 +112,8 @@ class CompanyInspectionStore(InspectionStore):
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
             self.workspaces.check_customer(record, documents['adr_estimate'], tx)
             self.workspaces.check_claim(record, documents, tx)
+            if documents.get('price_basis'):
+                self.workspaces.prices.assert_pin(record, documents['price_basis'], tx)
 
     def _company_id(self, uid, record, tx=None):
         return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']

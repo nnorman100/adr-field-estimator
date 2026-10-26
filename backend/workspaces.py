@@ -113,6 +113,22 @@ class AccessDenied(PermissionError):
     pass
 
 
+def _capabilities(role):
+    """Copy the role list. Price-book capabilities are added only while that feature is on."""
+    caps = list(CAPABILITIES.get(role, []))
+    if not role:
+        return caps
+    try:
+        from .price_books import price_books_enabled
+    except ImportError:
+        from price_books import price_books_enabled
+    if price_books_enabled():
+        caps.append('prices_read')
+        if role == 'owner':
+            caps.append('prices_manage')
+    return caps
+
+
 class PasswordChangeRequired(AccessDenied):
     def __init__(self):
         super().__init__(PASSWORD_CHANGE_REQUIRED)
@@ -328,6 +344,11 @@ class WorkspaceStore:
         except ImportError:
             from monitoring_store import Monitoring
         self.monitoring = Monitoring(self)
+        try:
+            from .price_book_store import PriceBookStore
+        except ImportError:
+            from price_book_store import PriceBookStore
+        self.prices = PriceBookStore(self)
 
     def _atomic(self, callback):
         return firestore.transactional(callback)(self.db.transaction())
@@ -358,7 +379,7 @@ class WorkspaceStore:
             superadmin=bool(not locked and admin and admin.get('active')),
             company_id=member['company_id'] if member else None,
             role=role,
-            capabilities=CAPABILITIES.get(role, []),
+            capabilities=_capabilities(role),
             company=company if active else None,
             membership_version=member.get('version') if member else None,
             password_change_required=locked,
@@ -711,10 +732,27 @@ class WorkspaceStore:
                     actor, company.get('profile') or {}, profile, req.profile
                 )
                 rate = req.profile.additional_work_rate
-                if rate is not None:
+                current_rate = (company.get('profile') or {}).get('additional_work_rate')
+                try:
+                    from .price_books import price_books_enabled
+                except ImportError:
+                    from price_books import price_books_enabled
+                if price_books_enabled():
+                    baseline = (
+                        current_rate if current_rate else ('47.46' if company_id == 'adr' else None)
+                    )
+                    if rate is not None and f'{rate:.2f}' != (baseline or ''):
+                        raise Conflict(
+                            'Update the app and change the additional-work rate under Company prices.'
+                        )
+                    if current_rate:
+                        profile['additional_work_rate'] = current_rate
+                    elif company_id == 'adr':
+                        profile['additional_work_rate'] = '47.46'
+                elif rate is not None:
                     profile['additional_work_rate'] = f'{rate:.2f}'
-                elif 'additional_work_rate' in company['profile']:
-                    profile['additional_work_rate'] = company['profile']['additional_work_rate']
+                elif current_rate:
+                    profile['additional_work_rate'] = current_rate
                 elif company_id == 'adr':
                     profile['additional_work_rate'] = '47.46'
                 company['profile'] = profile

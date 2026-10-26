@@ -121,7 +121,7 @@ Five collection groups carry an `expire_at` Firestore TTL field. Each expiry is 
 | `_document_links` | every document link | 30 days after creation, the link's expiry | A deleted link reads as unknown (404) and its pointer as `none`; the signed agreement is untouched. |
 | `_job_insights` | internal, regenerable job summaries | 30 days after generation | Expired summaries are ignored on reads even before TTL deletion. A missing cache is regenerated against current authorized facts; inspections and signed agreements are separate and unchanged. |
 
-A new collection group, or a new document in one of these groups, that sets `expire_at` needs the same review before its policy is enabled.
+A new collection group, or a new document in one of these groups, that sets `expire_at` needs the same review before its policy is enabled. Company price-book previews expire in code on the field `expires` and are not a new TTL group.
 
 `scripts/ensure_firestore_ttls.py` is the one owner-run step for all five policies. It always targets `alert-disaster-field-2026` and needs `gcloud` signed in with a Firestore admin role (`datastore.indexAdmin` or owner); the runtime service account does not hold one and this step grants no IAM.
 

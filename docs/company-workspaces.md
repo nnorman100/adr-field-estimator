@@ -123,6 +123,14 @@ The My jobs and Company jobs list has **All**, **Drafts** and **Signed** tabs wi
 
 Draft keys include user/company/inspection. Legacy local drafts recover only after online confirmation of ADR membership. Access/context changes stop capture, clear visible records, pause queued writes and retain local drafts for authorized recovery. Offline coordination/admin mutation controls are disabled. Cached role data never authorizes a server operation; online synchronization revalidates access.
 
+## Company prices
+
+`PRICE_BOOKS_ENABLED` defaults off. While it is off, every company prices from the ADR workbook seed, quote JSON and documents omit a price basis, and the price routes answer 404 (a non-superadmin support call still answers 403). While it is on, an owner edits the 21 unit prices (the workbook rates plus the additional-work hourly rate) from Company prices. Formulas, factors, default quantities, and mandatory wording stay fixed. There is no minimum charge. Zero is allowed only for the trip charge and the after-hours job charge, and only with an explicit acknowledgement.
+
+Publishing takes effect immediately at a server timestamp. It does not change a saved draft, a signed agreement, or the company identity version. The owner reviews one draft and applies the new prices to that draft; estimators cannot reprice, and there is no bulk reprice. The first online pricing pins the draft. A draft created before publication, or one that already has an audit, keeps the seed (including a customized additional-work rate) instead of jumping to a later book. Copies do not copy the pin.
+
+Import and export use one fixed CSV/XLSX template. The preview the owner confirms is the snapshot that publish stores. Failed imports change nothing. Additional work stays locked when priced extras are off, so a spreadsheet cannot turn that feature on. Price-only changes are audited in `_admin_events` with `domain` `pricing`. The private collections `_company_price_books`, `_price_book_versions`, `_job_pricing`, and `_price_book_previews` are server-only, like the other company collections. `scripts/migrate_price_books.py` is a dry run until `--apply`, and it requires the dedicated project and a manifest. It does not rewrite inspections, audits, authorizations, evidence, or identity versions.
+
 ## Migration and release
 
 1. Run the required Python, Node and browser suites, compare both HTML copies and verify standalone uvicorn main:app imports the new modules. Capture mock results separately from real services.

@@ -696,6 +696,7 @@ function absorb(record) {
   renderPhotos();
   renderSaveStatus();
   notifyLiveShots();
+  window.Prices?.noteJob();
 }
 function invalidate() {
   clearScopePreview();
@@ -1578,11 +1579,17 @@ function renderWalkthroughEdits() {
 function renderJobChargesSummary() {
   const data = state.draft?.data,
     defaults = emptyData();
-  $('jobChargesSummary').textContent =
+  const sheetQuantities =
     data &&
     ['emergency_calls', 'monitoring_hours', 'haul_loads', 'air_scrubbers', 'hepa_filters'].every(
       (key) => Number(data[key]) === defaults[key],
-    )
+    );
+  // A published company book replaces those unit prices, so the seed dollar total is not claimed.
+  $('jobChargesSummary').textContent = window.Prices?.usesCustomRates?.()
+    ? sheetQuantities
+      ? '· sheet quantities'
+      : '· quantities adjusted from the sheet'
+    : sheetQuantities
       ? '· $1,180.20 at sheet quantities'
       : "· adjusted from the sheet's $1,180.20";
 }
@@ -1674,6 +1681,7 @@ function fillForm() {
   }))
     $(id).checked = !!data[key];
   renderJobChargesSummary();
+  window.Prices?.noteJob();
   $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
   window.PlacesUI?.render();
@@ -2770,6 +2778,13 @@ function openHelp() {
       topic.remove();
       continue;
     }
+    if (
+      ['prices', 'prices-member', 'prices-support'].includes(topic.dataset.helpTopic) &&
+      !window.Prices?.enabled()
+    ) {
+      topic.remove();
+      continue;
+    }
     const yours = topic.dataset.helpRoles.split(' ').some((role) => roles.includes(role));
     $(yours ? 'helpYours' : 'helpOther').append(topic);
   }
@@ -3395,6 +3410,7 @@ async function saveExtra(event) {
         {
           expected_revision: state.record.revision,
           expected_company_version: approvedQuote.company_version,
+          expected_price_hash: approvedQuote.price_content_sha256 || '',
           owner_name: $('extraOwnerName').value.trim(),
         },
       );

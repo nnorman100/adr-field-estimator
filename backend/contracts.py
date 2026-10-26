@@ -109,6 +109,9 @@ class ExtraApproval(StrictModel):
     total: Decimal = Field(ge=0, le=2000000, decimal_places=2)
     company_id: str
     company_version: int = Field(ge=1)
+    # Present when the approval was priced from a company price book. Older approvals omit them.
+    price_version_id: str = ''
+    price_content_sha256: str = ''
 
 
 class Extra(StrictModel):
@@ -137,6 +140,8 @@ class ExtraApprove(StrictModel):
     expected_revision: int = Field(ge=1)
     expected_company_version: int = Field(ge=1)
     owner_name: str = Field(min_length=1, max_length=150)
+    # The additional-work rate the owner just reviewed. Empty on clients that predate price books.
+    expected_price_hash: str = Field(default='', max_length=64)
 
 
 class InspectionData(StrictModel):
@@ -460,6 +465,18 @@ class CompanyIdentity(StrictModel):
     water_heater_notice: str = ''
 
 
+class PriceBasis(StrictModel):
+    """Rates that produced one audit. Absent on documents priced before company price books."""
+
+    company_id: str = Field(min_length=1, max_length=128)
+    version_id: str = Field(min_length=1, max_length=128)
+    sequence: int = Field(ge=0)
+    content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    calculation_version: Literal['adr-residential-v1']
+    priced_at: str = Field(min_length=1, max_length=40)
+    rates: dict[str, str]
+
+
 class AuditDocuments(StrictModel):
     schema_version: Literal[3] = 3
     company_identity: CompanyIdentity | None = None
@@ -477,3 +494,4 @@ class AuditDocuments(StrictModel):
     unpriced_work: list[str]
     signable: bool
     pending_extras: int = 0
+    price_basis: PriceBasis | None = None

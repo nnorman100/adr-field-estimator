@@ -263,11 +263,16 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         if actor['password_change_required']:
             raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
         invitations = await stored(workspace(store).pending, claims)
+        try:
+            from .price_books import price_books_enabled
+        except ImportError:
+            from price_books import price_books_enabled
         return dict(
             **actor,
             email=claims['email'],
             project='alert-disaster-field-2026',
             workspaces_enabled=True,
+            price_books_enabled=bool(price_books_enabled()),
             # The shared sender is near Gmail's daily limit; only owners are told.
             email_notice=actor['role'] == 'owner' and await stored(workspace(store).email_notice),
             invitations=[
