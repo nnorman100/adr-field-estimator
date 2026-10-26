@@ -11,12 +11,14 @@ try:
     from .inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
     from .extras import quote
     from .workspaces import WorkspaceStore, AccessDenied
+    from .price_books import saved_basis
 except ImportError:
     from delivery import Deliveries, homeowner_skips, public_delivery, skip_reasons
     from cloud_log import event
     from inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
     from extras import quote
     from workspaces import WorkspaceStore, AccessDenied
+    from price_books import saved_basis
 
 
 class CompanyInspectionStore(InspectionStore):
@@ -32,7 +34,8 @@ class CompanyInspectionStore(InspectionStore):
         _, actor = self.workspaces.job_access(uid, record, 'scope')
         if record['status'] == 'signed':
             raise Conflict('Signed inspections are immutable. Copy to a new draft.')
-        return quote(actor['company'], hours)
+        source = self.workspaces.prices.approval_source(actor['company'])
+        return quote(actor['company'], hours, source)
 
     def approve_extra(self, uid, inspection_id, extra_id, request):
         ref = self._ref(inspection_id)
@@ -57,7 +60,15 @@ class CompanyInspectionStore(InspectionStore):
                 raise LookupError('Extra not found.')
             if extra.get('approval'):
                 return record
-            price = quote(company, extra['hours'])
+            source = self.workspaces.prices.approval_source(company, tx)
+            price = quote(company, extra['hours'], source)
+            fingerprint = price.pop('price_rate_fingerprint', None)
+            if source is not None and (
+                not request.expected_price_hash or request.expected_price_hash != fingerprint
+            ):
+                raise Conflict(
+                    'The additional-work rate changed. Review the current price before approving.'
+                )
             extra['approval'] = dict(
                 accepted_by_uid=uid,
                 accepted_by_name=name,
@@ -97,12 +108,15 @@ class CompanyInspectionStore(InspectionStore):
     def _sync_access(self, record, tx):
         self.workspaces.sync_job(record, tx)
 
-    def _check_documents(self, uid, record, tx=None):
+    def _check_documents(self, uid, record, tx=None, signing=True):
         if record.get('audit'):
             documents = record['audit']['documents']
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
             self.workspaces.check_customer(record, documents['adr_estimate'], tx)
             self.workspaces.check_claim(record, documents, tx)
+            basis = saved_basis(record['audit'])
+            if signing or basis:
+                self.workspaces.prices.assert_pin(record, basis, tx)
 
     def _company_id(self, uid, record, tx=None):
         return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']

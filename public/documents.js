@@ -55,6 +55,12 @@
       node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
       node('p', 'Itemized scope total: ' + money(docs.xactimate_total)),
     );
+    if (docs.price_basis) {
+      const sequence = Number(docs.price_basis.sequence) || 0;
+      body.append(
+        node('p', 'Priced from ' + (sequence ? 'Prices v' + sequence : 'workbook seed') + '.'),
+      );
+    }
     // A read-only document link outside the proposal's set delivers the proposal emptied.
     body.append(node('h3', 'Findings'));
     paragraphs(body, p.findings || []);

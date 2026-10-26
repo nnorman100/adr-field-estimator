@@ -3,7 +3,15 @@
 from decimal import Decimal, ROUND_HALF_UP
 
 
-def rate_for(company):
+def rate_for(company, source=None):
+    """The hourly rate for a new approval. A price-book source wins over the profile projection."""
+    if source is not None:
+        value = source['rates'].get('additional_work_hourly')
+        if not value:
+            raise ValueError(
+                'The company owner must set an additional-work hourly rate in Company prices.'
+            )
+        return Decimal(str(value))
     value = company['profile'].get('additional_work_rate')
     if value is None and company['company_id'] == 'adr':
         value = '47.46'  # Residential Estimate Tool E24; existing ADR profile seed.
@@ -14,10 +22,21 @@ def rate_for(company):
     return Decimal(str(value))
 
 
-def quote(company, hours):
-    rate = rate_for(company)
+def quote(company, hours, source=None):
+    rate = rate_for(company, source)
     total = (Decimal(str(hours)) * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    return dict(rate=f'{rate:.2f}', total=f'{total:.2f}', company_version=company['version'])
+    priced = dict(rate=f'{rate:.2f}', total=f'{total:.2f}', company_version=company['version'])
+    if source is not None:
+        try:
+            from .price_books import rate_fingerprint
+        except ImportError:
+            from price_books import rate_fingerprint
+        priced.update(
+            price_version_id=source['version_id'],
+            price_content_sha256=source['content_sha256'],
+            price_rate_fingerprint=rate_fingerprint(source['rates']),
+        )
+    return priced
 
 
 def validate_edits(previous, incoming):

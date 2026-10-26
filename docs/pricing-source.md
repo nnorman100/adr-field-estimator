@@ -22,4 +22,6 @@ The workbook lists an $83.45 after-hours labor rate in `G24`, but its estimate r
 
 For pricing work outside the workbook and its treatment in the estimate range, see [Priced additional work](priced-extras.md).
 
+Company price books, behind the default-off `PRICE_BOOKS_ENABLED` flag, let an owner replace the unit prices above. The formulas, waste and range factors, default quantities, and mandatory wording stay in code. ADR's seed rates remain the rates on this page. A published book applies to new pricing from the server's publication time. An existing draft keeps the rates it was first priced with until the owner reviews and applies the new prices to that one draft. See [Company workspaces](company-workspaces.md#company-prices).
+
 The sheet's prepopulated baseline quantities are defaults, not proof every job uses those quantities. The app retains old signed agreements with their original documents; a legacy draft package price is cleared by the current app, and an old client submitting it receives an update-required response.

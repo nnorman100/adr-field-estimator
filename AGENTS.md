@@ -67,7 +67,7 @@ The app prepopulates the workbook's quantities. The technician can confirm or ad
 
 ### D. Labor Rates
 - **Additional labor used by estimate formulas**: \$47.46 / hr (cell E24, referenced by F24 and E17).
-- **Listed after-hours rate**: \$83.45 / hr (cell G24). The workbook's estimate formula does not reference this amount. The user explicitly chose to mirror the workbook formula, so current estimates use \$47.46 / hr for added labor even when the after-hours loss flag is set.
+- **Listed after-hours rate**: \$83.45 / hr (cell G24). The workbook's estimate formula does not reference this amount. The user explicitly chose to mirror the workbook formula, so the seed and default estimates use \$47.46 / hr for added labor even when the after-hours loss flag is set.
 
 ### E. Customer Estimate Range
 The workbook calculates a low and high estimate from job charges, equipment, and the labor/material subtotal (demolition plus additional labor). For after-hours jobs, add the workbook's \$200 job charge and multiply the labor/material subtotal by 1.2. The high end further multiplies that subtotal by 1.5 below 1,001 affected SF, or 1.2 at 1,001 SF and above. Round displayed currency to cents and keep the itemized base-rate sum visible beside the range. New audits ignore legacy tier prices and require an app update if an old client submits one.

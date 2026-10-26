@@ -714,6 +714,11 @@ def test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims
         ('PATCH', '_companies/adr', {'fields': {'status': {'stringValue': 'suspended'}}}),
         ('PATCH', '_memberships/office', {'fields': {'role': {'stringValue': 'owner'}}}),
         ('GET', '_invitations', None),
+        ('GET', '_company_price_books/adr', None),
+        ('PATCH', '_company_price_books/adr', {'fields': {'generation': {'integerValue': '2'}}}),
+        ('GET', '_price_book_versions/seed', None),
+        ('GET', '_job_pricing/adr', None),
+        ('GET', '_price_book_previews/seed', None),
     ]
     forged = dict(superadmin=True, admin=True, role='superadmin', platform_admin=True)
     for uid in ('office', 'admin', 'outsider'):
@@ -1033,3 +1038,62 @@ def test_job_summary_daily_limit_and_usage_reads_share_transactional_counters(cl
     clock[0] += 86400
     assert first.usage('owner')['job_summary'] == dict(used=0, limit=60, remaining=60)
     assert stored(first.db, '_limits/owner') == before
+
+
+def test_price_publish_rolls_back_and_two_publishes_keep_one_generation():
+    """A failure before the audit event commits nothing, and two publishes cannot both win."""
+    from backend import price_books
+
+    def stop():
+        raise RuntimeError('stop before the event')
+
+    price_books.set_enabled(True)
+    try:
+        stores = instances(CompanyInspectionStore)
+        seed_company(stores[0].db)
+        books = stores[0].workspaces.prices
+        changed = dict(price_books.seed_rates(), emergency_call='150.00')
+        other = dict(price_books.seed_rates(), emergency_call='160.00')
+        payload = {
+            'rates': changed,
+            'acknowledgements': [],
+            'change_reason': 'Trip charge review',
+            'source': 'manual',
+        }
+        preview = books.preview('owner', 'adr', payload)
+        books._before_event = stop
+        with pytest.raises(RuntimeError):
+            books.publish('owner', 'adr', preview['preview_id'], preview['generation'])
+        assert list(stores[0].db.collection('_price_book_versions').stream()) == []
+        assert stored(stores[0].db, '_company_price_books/adr') is None
+        assert stored(stores[0].db, '_companies/adr')['version'] == 1
+        books._before_event = None
+        first = books.preview('owner', 'adr', payload)
+        second = stores[1].workspaces.prices.preview(
+            'owner',
+            'adr',
+            {
+                'rates': other,
+                'acknowledgements': [],
+                'change_reason': 'A competing trip charge',
+                'source': 'manual',
+            },
+        )
+        outcomes(
+            concurrently(
+                [
+                    lambda: books.publish('owner', 'adr', first['preview_id'], first['generation']),
+                    lambda: stores[1].workspaces.prices.publish(
+                        'owner', 'adr', second['preview_id'], second['generation']
+                    ),
+                ]
+            ),
+            refused=Conflict,
+        )
+        if not list(stores[0].db.collection('_price_book_versions').stream()):
+            books.publish('owner', 'adr', first['preview_id'], 0)
+        assert len(list(stores[0].db.collection('_price_book_versions').stream())) == 1
+        assert stored(stores[0].db, '_company_price_books/adr')['generation'] == 1
+        assert stored(stores[0].db, '_companies/adr')['version'] == 1
+    finally:
+        price_books.set_enabled(None)

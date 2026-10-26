@@ -19,7 +19,7 @@ import uvicorn
 from fastapi import Request, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
-from backend import places, ai_features, monitoring_store
+from backend import places, ai_features, monitoring_store, price_books
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
@@ -302,6 +302,8 @@ async def workspaces_fixture(request: Request):
     global store, accounts
     body = await request.json()
     ai_features.AI_FEATURES = frozenset(body.get('ai_features', []))
+    # Absent means off, so other specs keep the settings rate field and the seed prices.
+    price_books.set_enabled(bool(body.get('price_books')) if body.get('enabled') else False)
     if not body.get('enabled'):
         store = legacy_store
         bm.WORKSPACES_ENABLED = False
