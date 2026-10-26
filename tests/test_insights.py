@@ -374,3 +374,57 @@ def test_expired_delivery_invalidates_cached_summary(api, monkeypatch):
     assert any('1 failed' in line for line in expired['fact_lines'])
     assert '1 failed' in client.get(path).json()['narrative']
     assert record == before
+
+
+def test_signed_summary_uses_current_claim_without_changing_signed_source(api, monkeypatch):
+    client, actor, store = api
+    signed_job(client, actor, store)
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset({'job_summary'}))
+
+    async def generate(*args, **kwargs):
+        return JobSummary(topics=['claim'])
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    auth_id = store.db.records['_workspace_jobs/' + ID]['auth_id']
+    signed_source = deepcopy(store.db.records['authorizations/' + auth_id])
+    inspection = deepcopy(store.db.records['inspections/' + ID])
+    path = f'/api/jobs/{ID}/insight'
+    first = client.get(path).json()
+    assert not first['facts']['claim_recorded']
+    assert not first['facts']['adjuster_recorded']
+    assert 'Insurance claim details are not recorded.' in first['narrative']
+    actor['uid'] = 'office'
+    claim_path = f'/api/jobs/{ID}/claim'
+    view = client.get(claim_path).json()
+    updated = client.put(
+        claim_path,
+        json={
+            'expected_version': view['claim_version'],
+            'claim': {'carrier': 'Synthetic carrier', 'adjuster_name': 'Synthetic adjuster'},
+        },
+    )
+    assert updated.status_code == 200
+    stale = client.get(path + '?facts_only=true').json()
+    assert stale['facts']['claim_recorded'] and stale['facts']['adjuster_recorded']
+    assert stale['facts_hash'] != first['facts_hash']
+    assert stale['stale'] and stale['narrative'] is None
+    assert any('adjuster details are recorded.' in line for line in stale['fact_lines'])
+    assert client.get(f'/api/jobs/{auth_id}/insight?facts_only=true').json() == stale
+    actor['uid'] = 'admin'
+    support = client.get(f'/api/admin/companies/adr/jobs/{ID}/insight').json()
+    assert support == stale
+    actor['uid'] = 'office'
+    current = client.get(path).json()
+    assert 'adjuster details are recorded.' in current['narrative']
+    assert current['facts_hash'] == stale['facts_hash']
+    cleared = client.put(
+        claim_path,
+        json={'expected_version': updated.json()['claim_version'], 'claim': {}},
+    )
+    assert cleared.status_code == 200
+    removed = client.get(path + '?facts_only=true').json()
+    assert not removed['facts']['claim_recorded'] and not removed['facts']['adjuster_recorded']
+    assert removed['facts_hash'] == first['facts_hash']
+    assert removed['stale'] and removed['narrative'] is None
+    assert store.db.records['authorizations/' + auth_id] == signed_source
+    assert store.db.records['inspections/' + ID] == inspection

@@ -49,7 +49,7 @@ def fact_pack(job, record, log, delivery, monitoring):
     docs = (
         record.get('documents') if signed else (record.get('audit') or {}).get('documents')
     ) or {}
-    claim = (docs.get('claim') if signed else job.get('claim')) or {}
+    claim = job.get('claim') or {}
     photos = record.get('photos') or []
     rooms = data.get('rooms') or []
     delivery_entries = (public_delivery(delivery) or {}).get('entries', [])
