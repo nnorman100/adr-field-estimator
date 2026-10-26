@@ -81,6 +81,7 @@ class Gateway:
         fail=None,
         receipt=None,
         rewrite_parts=1,
+        live_generations=None,
     ):
         self.auth_pages = [{'users': [ACCOUNT]}] if auth_pages is None else auth_pages
         self.source_pages = [{'items': [PHOTO_A]}] if source_pages is None else source_pages
@@ -88,6 +89,7 @@ class Gateway:
         self.fail = fail
         self.receipt = receipt
         self.rewrite_parts = rewrite_parts
+        self.live_generations = {} if live_generations is None else dict(live_generations)
         self.rewrite_counts = {}
         self.calls = []
         self.stored = []
@@ -102,7 +104,10 @@ class Gateway:
         if 'downloadAccount' in url:
             return self._auth()
         if method == 'GET' and '/storage/v1/b/' in url:
-            return self._list()
+            path = url.split('?', 1)[0]
+            if path.rstrip('/').endswith('/o'):
+                return self._list()
+            return self._object_get(url)
         if '/rewriteTo/' in url:
             return self._rewrite(url)
         if url.startswith('https://storage.googleapis.com/upload/'):
@@ -147,6 +152,16 @@ class Gateway:
         self.list_i += 1
         return 200, json.dumps(page).encode()
 
+    def _object_get(self, url):
+        encoded = url.split('?', 1)[0].split('/o/', 1)[1]
+        name = urllib.parse.unquote(encoded)
+        for page in self.source_pages:
+            for item in page.get('items', []):
+                if item['name'] == name:
+                    generation = str(self.live_generations.get(name, item['generation']))
+                    return 200, json.dumps({'generation': generation}).encode()
+        return 404, b'missing'
+
     def _source_for_dest(self, dest):
         _prefix, _, rest = dest.partition('/')
         generation, _, name = rest.partition('/')
@@ -165,9 +180,13 @@ class Gateway:
         dest = urllib.parse.unquote(encoded)
         params = urllib.parse.parse_qs(query)
         item = self._source_for_dest(dest)
+        live = str(self.live_generations.get(item['name'], item['generation']))
         if params.get('sourceGeneration') != [str(item['generation'])]:
             return 404, b'source-generation-missing'
-        assert 'ifSourceGenerationMatch' not in params
+        if params.get('ifSourceGenerationMatch') != [live]:
+            if 'ifSourceGenerationMatch' not in params:
+                return 400, b'missing-source-precondition'
+            return self._precondition()
         if 'ifGenerationMatch=0' not in query:
             return 400, b'missing-precondition'
         if 'rewriteToken=' not in query and dest in self.existing:
@@ -329,9 +348,20 @@ def test_incremental_copy_and_a_later_generation():
             'size': item['size'],
             'crc32c': item['crc32c'],
             'md5Hash': item['md5Hash'],
+            'source_name': item['name'],
+            'source_generation': item['generation'],
+            'source_crc32c': item['crc32c'],
+            'source_md5Hash': item['md5Hash'],
         }
         for i, item in enumerate([PHOTO_B, PHOTO_A])
     ]
+    for call in gateway.calls:
+        if '/rewriteTo/' not in call['url']:
+            continue
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(call['url']).query)
+        assert params['ifGenerationMatch'] == ['0']
+        assert params['ifSourceGenerationMatch'] == params['sourceGeneration']
+        assert params['sourceGeneration'][0] in {PHOTO_A['generation'], PHOTO_B['generation']}
 
     changed = {**PHOTO_B, 'generation': '33', 'size': '251', 'crc32c': 'crc32c-PRIVATE-C'}
     second = Gateway(
@@ -624,6 +654,18 @@ def test_lifecycle_retention_policy():
     assert lifecycle == {
         'lifecycle': {'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 90}}]}
     }
+
+
+def test_replaced_source_is_not_copied_under_the_old_generation():
+    code, logs, errors, gateway = run(Gateway(live_generations={PHOTO_A['name']: '99'}))
+    assert code == 1 and logs == []
+    assert errors[0]['stage'] == 'copy'
+    assert errors[0]['http_status'] == 412
+    assert errors[0]['copied'] == 0
+    assert errors[0]['already_present'] == 0
+    assert gateway.stored == ['auth/2026-10-26.json']
+    assert not any(name.startswith('evidence/') for name in gateway.stored)
+    assert_private(logs, errors)
 
 
 def test_missing_source_generation_fails_without_committing_a_copy():

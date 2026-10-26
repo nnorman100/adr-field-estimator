@@ -7,8 +7,10 @@ objects with the Storage rewrite API, and writes manifests/YYYY-MM-DD.json.
 The backup identity can create vault objects and cannot read them, so a changed
 source object is a new key evidence/<source-generation>/<source-object-name>.
 ifGenerationMatch=0 makes an unchanged generation a precondition failure rather
-than an overwrite. Photo bytes stay in Cloud Storage; this process lists
-metadata and uploads two JSON objects. Logs are counts and outcomes only.
+than an overwrite. ifSourceGenerationMatch pins the copy to the listed
+generation, so a replacement cannot be stored under the old generation's name.
+Photo bytes stay in Cloud Storage; this process lists metadata and uploads two
+JSON objects. Logs are counts and outcomes only.
 
 See docs/VAULT-BACKUP.md. Merging this file does not update a deployed job.
 """
@@ -317,31 +319,70 @@ def _prove(resource, *, bucket, name, size, stage, crc32c=None, md5=None):
         raise BackupError(stage)
 
 
-def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
-    source = urllib.parse.quote(obj['name'], safe='')
-    dest = urllib.parse.quote(obj['dest'], safe='')
-    url = (
+def _source_metadata_url(name):
+    return (
         'https://storage.googleapis.com/storage/v1/b/'
         + urllib.parse.quote(SOURCE_BUCKET, safe='')
         + '/o/'
-        + source
+        + urllib.parse.quote(name, safe='')
+        + '?'
+        + urllib.parse.urlencode({'fields': 'generation'})
+    )
+
+
+def _listed_generation_still_live(transport, token, obj):
+    status, raw = transport('GET', _source_metadata_url(obj['name']), _headers(token), None)
+    if status != 200:
+        raise BackupError('copy', status)
+    payload = _json_object(raw, 'copy', status)
+    return _generation(payload.get('generation'), 'copy') == obj['generation']
+
+
+def _rewrite_url(obj, rewrite_token=None):
+    query = {
+        'ifGenerationMatch': '0',
+        'ifSourceGenerationMatch': obj['generation'],
+        'sourceGeneration': obj['generation'],
+    }
+    if rewrite_token:
+        query['rewriteToken'] = rewrite_token
+    return (
+        'https://storage.googleapis.com/storage/v1/b/'
+        + urllib.parse.quote(SOURCE_BUCKET, safe='')
+        + '/o/'
+        + urllib.parse.quote(obj['name'], safe='')
         + '/rewriteTo/b/'
         + urllib.parse.quote(VAULT_BUCKET, safe='')
         + '/o/'
-        + dest
-        + '?ifGenerationMatch=0&sourceGeneration='
-        + obj['generation']
+        + urllib.parse.quote(obj['dest'], safe='')
+        + '?'
+        + urllib.parse.urlencode(query)
     )
+
+
+def _receipt(obj, resource):
+    receipt = {
+        'name': resource['name'],
+        'generation': resource['generation'],
+        'size': resource['size'],
+        'crc32c': resource['crc32c'],
+        'source_name': obj['name'],
+        'source_generation': obj['generation'],
+        'source_crc32c': obj['crc32c'],
+    }
+    if 'md5Hash' in resource:
+        receipt['md5Hash'] = resource['md5Hash']
+    if obj['md5'] is not None:
+        receipt['source_md5Hash'] = obj['md5']
+    return receipt
+
+
+def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
     rewrite_token = None
     for _ in range(rewrite_limit):
-        request_url = (
-            url
-            if not rewrite_token
-            else url + '&rewriteToken=' + urllib.parse.quote(rewrite_token, safe='')
-        )
-        status, raw = transport('POST', request_url, _headers(token), b'')
+        status, raw = transport('POST', _rewrite_url(obj, rewrite_token), _headers(token), b'')
         if _condition_not_met(status, raw):
-            if rewrite_token:
+            if rewrite_token or not _listed_generation_still_live(transport, token, obj):
                 raise BackupError('copy', status)
             return None
         if status != 200:
@@ -357,11 +398,7 @@ def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
                 crc32c=obj['crc32c'],
                 md5=obj['md5'],
             )
-            resource = payload['resource']
-            receipt = {key: resource[key] for key in ('name', 'generation', 'size', 'crc32c')}
-            if 'md5Hash' in resource:
-                receipt['md5Hash'] = resource['md5Hash']
-            return receipt
+            return _receipt(obj, payload['resource'])
         token_value = payload.get('rewriteToken')
         if not isinstance(token_value, str) or not token_value:
             raise BackupError('copy', status)

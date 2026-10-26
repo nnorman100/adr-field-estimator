@@ -28,7 +28,7 @@ Nothing in this file is run by the app or by CI. The commands are for the projec
 
 Evidence is in `us-west2`. The vault bucket is in `us-central1` so a single-region outage does not take both copies. Cross-region copy has an egress charge. The job runs in `us-west2` next to the evidence bucket and tells Cloud Storage to rewrite objects. It does not download photo bytes.
 
-The source object name is kept after the generation directory. Photos and signatures are normally written once under a unique name. The evidence bucket has no object versioning, so a later replacement is a new generation and the previous bytes are gone from that bucket. The generation directory makes that replacement a new create-only object. An unchanged generation hits `ifGenerationMatch=0`, Storage returns `412 conditionNotMet`, and the job counts it as already present. The job never deletes or overwrites a vault object. It cannot read the vault; Object Creator has no get or list. A `412` with any other reason fails the run.
+The source object name is kept after the generation directory. Photos and signatures are normally written once under a unique name. The evidence bucket has no object versioning, so a later replacement is a new generation and the previous bytes are gone from that bucket. The generation directory makes that replacement a new create-only object. Each rewrite asks for that listed generation with `sourceGeneration` and `ifSourceGenerationMatch`, and creates the vault object with `ifGenerationMatch=0`. An unchanged generation hits the destination precondition, Storage returns `412 conditionNotMet`, and the job counts it as already present only after a metadata read of the source still shows that same generation. If the source generation no longer matches, the run fails and does not count a copy. The next run lists the new generation and copies it under a new key. The job never deletes or overwrites a vault object. It cannot read the vault; Object Creator has no get or list. A `412` with any other reason fails the run.
 
 Lifecycle age is 90 days from when that vault object was created. After deletion, the next successful run copies a source object that is still live, because a soft-deleted vault object does not satisfy `ifGenerationMatch=0`. Soft delete then keeps the removed vault generation for 7 days. A generation the job has not yet copied exists only in the evidence bucket (and in that bucket's own 7-day soft delete if it was removed there).
 
@@ -217,7 +217,13 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
      --project=alert-disaster-vault
    ```
 
-   Auth and manifest bucket, name, generation, and size match the log. `timeCreated` falls in this execution. Privately download the dated manifest as the owner. Its `evidence.receipts` records each newly copied photo's `name`, destination `generation`, `size`, `crc32c`, and `md5Hash` when returned. For each receipt, describe the vault object with `--format='yaml(bucket,name,generation,size,crc32c,md5Hash,timeCreated)'` and compare every receipt field and the vault bucket. Do not download photo bytes. Already-present copies have no new receipt and do not prove a new copy. The next 11:15 UTC run needs its own dated auth object and manifest before the schedule counts as restored.
+   Auth and manifest bucket, name, generation, and size match the log. `timeCreated` falls in this execution. Already-present copies have no new receipt and do not prove a new copy. Compare the photo receipts with the vault metadata. This reads the vault as the owner, not as the backup service account, and prints counts only:
+
+   ```sh
+   python3 ops/vault-backup/verify_vault.py --date <YYYY-MM-DD>
+   ```
+
+   Acceptance is `failed=0` and `passed` equal to `checked`, with a zero exit. Any other result is not acceptance. The script does not print object names or checksums and does not download photo bytes. Each receipt carries `source_name`, `source_generation`, and `source_crc32c` (and `source_md5Hash` when the source had one) plus the vault object's `name`, `generation`, `size`, `crc32c`, and `md5Hash`. The script checks those fields against the vault object's metadata, including that the object name is `evidence/<source_generation>/<source_name>`. The next 11:15 UTC run needs its own dated auth object and manifest before the schedule counts as restored.
 
 4. Install the alert after that first successful check, so the absence condition does not page for a job that has never succeeded. Re-run the monitoring script (it updates policies in place and does not deploy this job):
 
