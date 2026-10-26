@@ -145,6 +145,9 @@
     if (!photos.length)
       $('photoAuditLog').append(node('p', 'No photographs were attached to this inspection.'));
     const warnings = [
+      ...(docs.pending_extras
+        ? [docs.pending_extras + ' additional-work extra(s) need owner approval before signing.']
+        : []),
       ...(docs.company_setup_missing || []).map((text) => 'Company setup required: ' + text),
       ...(docs.unpriced_work || []).map((text) => 'Unpriced work: ' + text),
       ...log

@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import re
+from decimal import Decimal
 import smtplib
 import socket
 import ssl
@@ -154,6 +155,7 @@ class CompanyProfile(StrictModel):
     crew_lead_email: str | None = Field(default=None, max_length=254)
     document_delivery: Annotated[bool | None, BeforeValidator(delivery_switch)] = None
     drying_reminders: Annotated[bool | None, BeforeValidator(delivery_switch)] = None
+    additional_work_rate: Decimal | None = Field(default=None, gt=0, le=10000, decimal_places=2)
 
 
 class CompanyCreate(StrictModel):
@@ -220,7 +222,13 @@ def email_address(value):
 
 # Letterhead fields travel onto signed documents. These stay on the company profile only.
 PROFILE_NOT_ON_DOCUMENTS = frozenset(
-    {'water_heater_notice', 'crew_lead_email', 'document_delivery', 'drying_reminders'}
+    {
+        'water_heater_notice',
+        'crew_lead_email',
+        'document_delivery',
+        'drying_reminders',
+        'additional_work_rate',
+    }
 )
 
 
@@ -690,6 +698,7 @@ class WorkspaceStore:
                         'crew_lead_email',
                         'document_delivery',
                         'drying_reminders',
+                        'additional_work_rate',
                     }
                 )
                 profile['name'] = profile['name'].strip()
@@ -701,6 +710,13 @@ class WorkspaceStore:
                 profile = delivery_settings(
                     actor, company.get('profile') or {}, profile, req.profile
                 )
+                rate = req.profile.additional_work_rate
+                if rate is not None:
+                    profile['additional_work_rate'] = f'{rate:.2f}'
+                elif 'additional_work_rate' in company['profile']:
+                    profile['additional_work_rate'] = company['profile']['additional_work_rate']
+                elif company_id == 'adr':
+                    profile['additional_work_rate'] = '47.46'
                 company['profile'] = profile
             company.update(version=company['version'] + 1, updated_at=now())
             tx.set(self.ref('_companies', company_id), company)
@@ -1142,7 +1158,10 @@ class WorkspaceStore:
             )
             # Saved payloads leave out an empty tag-scan list (inspection_payload).
             defaults.pop('equipment_scans')
+            defaults.pop('extras')
             actual = {k: v for k, v in record['data'].items() if v is not None}
+            if not actual.get('extras'):
+                actual.pop('extras', None)
             if actual != defaults:
                 raise AccessDenied('Office-created jobs must start with empty scope.')
         job = dict(

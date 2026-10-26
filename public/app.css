@@ -2938,3 +2938,60 @@ footer {
   padding-block: 1rem;
   border-bottom: 1px solid #d7e0e8;
 }
+
+/* Additional work stays readable on narrow field phones. */
+.extras-panel {
+  padding: 1rem;
+  margin: 1rem 0;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 12px;
+}
+.extra-row {
+  padding: 0.8rem 0;
+  border-bottom: 1px solid #ddd;
+  overflow-wrap: anywhere;
+}
+.extra-row .button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+#extraDialog {
+  width: min(480px, calc(100vw - 24px));
+  box-sizing: border-box;
+}
+#extraDialog form {
+  display: grid;
+  gap: 1rem;
+}
+#extraDialog label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+#extraDialog textarea,
+#extraDialog input {
+  width: 100%;
+  box-sizing: border-box;
+}
+#extraDialog .button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.extra-quantity {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 1rem;
+  align-items: center;
+}
+#extraSource,
+#extraStatus,
+#extraQuote {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 350px) {
+  .extra-quantity {
+    grid-template-columns: 1fr;
+  }
+}

@@ -297,6 +297,7 @@ function renderControls() {
   $('finishAudit').disabled =
     !editable || (!navigator.onLine && !readinessEnabled()) || ui.auditing || ui.fillingScope;
   renderReadiness();
+  renderExtras();
   renderDraftActions();
   for (const id of ['fillScope', 'fillScopeProperty']) {
     $(id).disabled = !editable || !navigator.onLine || ui.fillingScope || ui.auditing;
@@ -663,6 +664,9 @@ function clearDisplayedInspection() {
   stopHomeownerLink();
   roomRemoval = null;
   $('removeRoomDialog').close();
+  $('extraDialog').close();
+  extraEditor = null;
+  $('additionalWork').hidden = $('priceUnpriced').hidden = true;
   $('readinessDialog').close();
   $('readinessGaps').replaceChildren();
   $('removeRoomDescription').textContent = '';
@@ -2436,6 +2440,14 @@ async function openNew(data = null, photos = []) {
     data: { ...structuredClone(data), coordinates: data.coordinates ?? null },
     photos: structuredClone(photos),
   };
+  if (state.draft.data.extras?.length) {
+    // An approval belongs to its original inspection, including during conflict recovery.
+    state.draft.data.extras = state.draft.data.extras.map((extra) => ({
+      ...extra,
+      approval: null,
+    }));
+    state.draft.data.scope_confirmed = false;
+  }
   confirmedAuthorization = null;
   $('retrySavedEvidence').hidden = true;
   $('signedEvidenceStatus').textContent = '';
@@ -2623,6 +2635,13 @@ function openHelp() {
     : 'How to use the field estimator. Sign in to see the topics for your role first.';
   helpTopics ??= [...document.querySelectorAll('#helpDialog [data-help-roles]')];
   for (const topic of helpTopics) {
+    if (topic.dataset.helpTopic === 'extras') {
+      topic.hidden = !extrasEnabled() || !roles.some((r) => ['owner', 'estimator'].includes(r));
+      if (topic.hidden) {
+        topic.remove();
+        continue;
+      }
+    }
     if (topic.dataset.helpTopic === 'readiness') {
       topic.hidden =
         !state.session?.ai_features?.includes('readiness') ||
@@ -3057,7 +3076,289 @@ async function finishAudit() {
     renderControls();
   }
 }
+// Extras use the same private draft queue as scope. Only approval needs a connection.
+let extraEditor = null;
+function extrasEnabled() {
+  return state.session?.workspaces_enabled && state.session?.ai_features?.includes('priced_extras');
+}
+function renderExtras() {
+  if (state.draft && state.documents && !state.signed)
+    state.draft.unpricedItems = state.documents.unpriced_work || [];
+  const extras = state.draft?.data.extras || [],
+    editable = extrasEnabled() && canEditDraft('scope') && !state.conflict,
+    unpriced = state.documents?.unpriced_work || state.draft?.unpricedItems || [];
+  $('additionalWork').hidden = !state.draft || (!editable && !extras.length);
+  $('newExtra').hidden = !editable;
+  $('newExtra').disabled = extras.length >= 30;
+  $('priceUnpriced').hidden = !editable || (!extras.length && !unpriced.length);
+  for (const id of ['extrasList', 'reviewExtrasList']) {
+    const list = $(id);
+    list.replaceChildren();
+    for (const extra of extras) {
+      const row = node('div', undefined, 'extra-row'),
+        approval = extra.approval;
+      row.append(node('strong', extra.description), node('p', Number(extra.hours) + ' h'));
+      row.append(
+        node(
+          'p',
+          approval
+            ? '$' +
+                approval.total +
+                ' · $' +
+                approval.rate +
+                '/h · Approved by ' +
+                approval.accepted_by_name +
+                ' on ' +
+                approval.accepted_at.slice(0, 10)
+            : 'Pending owner approval · cannot sign yet',
+        ),
+      );
+      if (editable) {
+        const actions = node('div', undefined, 'button-row');
+        if (!approval && state.session.role === 'owner') {
+          const approve = button('Review & approve', () => openExtra(extra, true));
+          approve.disabled = !navigator.onLine;
+          actions.append(approve);
+        }
+        actions.append(
+          button('Edit extra', () => openExtra(extra)),
+          button('Remove extra', () => {
+            state.draft.data.extras = extras.filter((e) => e.id !== extra.id);
+            changed();
+            renderExtras();
+          }),
+        );
+        row.append(actions);
+      }
+      list.append(row);
+    }
+    if (extras.length && !navigator.onLine)
+      list.append(
+        node('p', 'Offline · draft edits save on this phone. Connect to price or approve.', 'hint'),
+      );
+  }
+  $('unpricedItems').replaceChildren();
+  for (const text of unpriced) {
+    const row = node('div', undefined, 'extra-row');
+    row.append(node('p', text));
+    const added = extras.find((e) => e.unpriced_item === text);
+    if (added)
+      row.append(
+        node(
+          'p',
+          added.approval
+            ? 'Approved below · Finish & review again.'
+            : 'Added below · owner approval required.',
+        ),
+      );
+    else row.append(button('Add as extra', () => openExtra(null, false, text)));
+    row.append(
+      button('Not in this scope', () => {
+        showTask('property');
+        $('technicianNotes').focus();
+        say(
+          'Clarify what is excluded in your observations, then confirm scope and Finish & review again.',
+        );
+      }),
+    );
+    $('unpricedItems').append(row);
+  }
+  if (extraEditor && (!editable || extraEditor.draft !== state.draft)) {
+    $('extraDialog').close();
+    extraEditor = null;
+  }
+}
+function extraContext(editor) {
+  return (
+    extraEditor === editor &&
+    state.draft === editor.draft &&
+    window.WorkspaceUI?.context() === editor.context &&
+    extrasEnabled() &&
+    canEditDraft('scope')
+  );
+}
+function openExtra(extra = null, approve = false, source = '') {
+  if (!extrasEnabled() || !canEditDraft('scope')) return;
+  extraEditor = {
+    draft: state.draft,
+    context: window.WorkspaceUI?.context(),
+    extra,
+    approve,
+    source: extra?.unpriced_item || source,
+    quote: null,
+    sequence: 0,
+  };
+  $('extraDescription').value = extra?.description || source.slice(0, 300);
+  $('extraHours').value = extra?.hours || '';
+  $('extraDescription').readOnly = $('extraHours').readOnly = approve;
+  $('extraOwnerLabel').hidden = !approve;
+  $('extraOwnerName').required = approve;
+  $('extraOwnerName').value = state.user?.displayName || '';
+  $('extraSource').textContent = extraEditor.source
+    ? 'Covers audit item: ' + extraEditor.source
+    : '';
+  $('extraDialogHeading').textContent = approve ? 'Approve additional work' : 'Additional work';
+  $('saveExtra').textContent = approve
+    ? 'Approve extra at this price'
+    : 'Save extra for owner approval';
+  $('extraStatus').textContent =
+    extra?.approval && !approve ? 'Editing requires fresh owner approval.' : '';
+  $('extraDialog').showModal();
+  refreshExtraQuote();
+}
+async function refreshExtraQuote() {
+  const editor = extraEditor;
+  if (!editor) return;
+  const sequence = ++editor.sequence;
+  editor.quote = null;
+  $('saveExtra').disabled = editor.approve;
+  $('retryExtraQuote').disabled = !navigator.onLine;
+  if (!navigator.onLine) {
+    $('extraQuote').textContent =
+      'Offline · save your draft now; connect for a price and owner approval.';
+    return;
+  }
+  if (!$('extraHours').value || !$('extraHours').checkValidity()) {
+    $('extraQuote').textContent = 'Enter 0.25 to 200 hours (up to two decimal places).';
+    return;
+  }
+  const hours = $('extraHours').value;
+  $('extraQuote').textContent = 'Getting company price…';
+  try {
+    await syncDraft();
+    if (!extraContext(editor) || editor.sequence !== sequence) return;
+    if (!state.record || state.conflict) throw Error('Save or restore the draft before pricing.');
+    const price = await jsonApi(
+      '/api/inspections/' + editor.draft.inspection_id + '/extras/quote',
+      'POST',
+      { hours },
+    );
+    if (!extraContext(editor) || editor.sequence !== sequence) return;
+    editor.quote = price;
+    $('extraQuote').textContent =
+      hours +
+      ' h at $' +
+      price.rate +
+      '/h = $' +
+      price.total +
+      ' at base rate. The estimate range applies sheet allowances.';
+    $('saveExtra').disabled = !!editor.saving;
+  } catch (e) {
+    if (!extraContext(editor) || editor.sequence !== sequence) return;
+    $('extraQuote').textContent =
+      e.message +
+      (e.retryAfter ? ' Retry in ' + e.retryAfter + ' seconds.' : ' Retry with Refresh price.');
+  }
+}
+async function saveExtra(event) {
+  event.preventDefault();
+  const editor = extraEditor;
+  if (!editor || editor.saving || !$('extraForm').reportValidity() || !extraContext(editor)) return;
+  editor.saving = true;
+  $('saveExtra').disabled = true;
+  try {
+    if (editor.approve) {
+      if (!navigator.onLine || !editor.quote)
+        throw Error('Connect and refresh the price before approving.');
+      const approvedQuote = editor.quote;
+      await syncDraft();
+      if (!extraContext(editor)) return;
+      if (state.conflict || stable(state.draft.data) !== state.ack)
+        throw Error('Save or restore the latest draft before approving.');
+      const record = await jsonApi(
+        '/api/inspections/' +
+          editor.draft.inspection_id +
+          '/extras/' +
+          editor.extra.id +
+          '/approve',
+        'POST',
+        {
+          expected_revision: state.record.revision,
+          expected_company_version: approvedQuote.company_version,
+          owner_name: $('extraOwnerName').value.trim(),
+        },
+      );
+      if (!extraContext(editor)) return;
+      // Preserve any unrelated capture update while this request was in flight.
+      const approved = record.data.extras.find((e) => e.id === editor.extra.id);
+      editor.draft.data.extras = editor.draft.data.extras.map((e) =>
+        e.id === approved.id ? approved : e,
+      );
+      state.ack = stable(record.data);
+      absorb(record);
+      invalidate();
+      await persist();
+      say(
+        'Extra approved. Confirm scope and Finish & review to generate current documents.',
+        'success',
+      );
+    } else {
+      const extras = editor.draft.data.extras || [];
+      if (!editor.extra && extras.length >= 30) throw Error('At most 30 extras are supported.');
+      const extra = {
+        id: editor.extra?.id || crypto.randomUUID().replaceAll('-', ''),
+        description: $('extraDescription').value.trim().replace(/\s+/g, ' '),
+        hours: $('extraHours').value,
+        origin: 'manual',
+        unpriced_item: editor.source,
+        approval: null,
+      };
+      editor.draft.data.extras = editor.extra
+        ? extras.map((e) => (e.id === extra.id ? extra : e))
+        : [...extras, extra];
+      changed();
+      await persist();
+      say(
+        navigator.onLine
+          ? 'Extra saved on this phone. Owner approval required before signing.'
+          : 'Extra saved offline on this phone. Reconnect to sync and ask the owner to approve.',
+        'success',
+      );
+    }
+    $('extraDialog').close();
+    extraEditor = null;
+    renderExtras();
+  } catch (e) {
+    if (extraContext(editor)) {
+      $('extraStatus').textContent =
+        e.message +
+        (e.retryAfter ? ' Retry in ' + e.retryAfter + ' seconds.' : ' Your draft is preserved.');
+      if (editor.approve) {
+        editor.quote = null;
+        $('extraQuote').textContent =
+          'Refresh the price before retrying. If approval succeeded but the response was lost, restore the latest draft.';
+      }
+    }
+  } finally {
+    editor.saving = false;
+    if (extraContext(editor)) $('saveExtra').disabled = editor.approve && !editor.quote;
+  }
+}
+function initExtras() {
+  $('newExtra').onclick = () => openExtra();
+  $('extraForm').onsubmit = saveExtra;
+  $('extraHours').onchange = refreshExtraQuote;
+  $('extraHours').oninput = () => {
+    if (extraEditor) {
+      extraEditor.sequence++;
+      extraEditor.quote = null;
+    }
+    $('extraQuote').textContent = navigator.onLine
+      ? 'Refresh price after entering hours.'
+      : 'Offline · save your draft now; connect for a price and owner approval.';
+  };
+  $('retryExtraQuote').onclick = refreshExtraQuote;
+  $('cancelExtra').onclick = () => {
+    $('extraDialog').close();
+    extraEditor = null;
+  };
+  $('extraDialog').addEventListener('close', () => {
+    extraEditor = null;
+  });
+}
+
 function renderDocuments() {
+  renderExtras();
   const docs = state.documents;
   document.body.classList.toggle('has-documents', !!docs);
   $('documents').hidden = !docs;
@@ -4399,6 +4700,7 @@ async function uploadNote(note, draft) {
   return syncChain;
 }
 function connectivity() {
+  if (extraEditor) refreshExtraQuote();
   const offline = !navigator.onLine;
   $('offlineBanner').hidden = !offline;
   $('authorizeJob').disabled =
@@ -4462,6 +4764,7 @@ async function leaveForCanonical() {
   return true;
 }
 async function initialize() {
+  initExtras();
   if (canonical) {
     if (await leaveForCanonical()) return;
     $('hostSyncNotice').hidden = false;

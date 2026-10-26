@@ -16,12 +16,14 @@ try:
     from .job_store import JobStore, decode_image, IMAGE_WORKER
     from .cloud_log import event
     from .scope import default_photo_rename
+    from .extras import validate_edits
     from .contracts import InspectionData
     from .psychrometrics import psychrometrics
 except ImportError:
     from job_store import JobStore, decode_image, IMAGE_WORKER
     from cloud_log import event
     from scope import default_photo_rename
+    from extras import validate_edits
     from contracts import InspectionData
     from psychrometrics import psychrometrics
 
@@ -167,6 +169,7 @@ class InspectionStore(JobStore):
         return self._page('inspections', uid, 'updated_at', 'inspection_id', cursor)
 
     def create_inspection(self, uid, inspection_id, data, copied_from=None):
+        validate_edits([], data.get('extras', []))
         checked_metadata(data)
         ref = self._ref(inspection_id)
         changed = []
@@ -220,6 +223,7 @@ class InspectionStore(JobStore):
                 assistant_transcript='',
                 capture_metadata=None,
                 equipment_scans=[],
+                extras=[e.model_copy(update={'approval': None}) for e in data.extras],
                 scope_confirmed=False,
                 package_price=None,
             )
@@ -251,6 +255,9 @@ class InspectionStore(JobStore):
         changed = []
 
         def update(record):
+            if record['data'].get('extras') and 'extras' not in data:
+                raise Conflict('Update the app before editing a draft with additional work.')
+            validate_edits(record['data'].get('extras', []), data.get('extras', []))
             # Recomputed on each transaction attempt; the log line reports the committed one.
             changed[:] = changed_fields(record['data'], data)
             if record['data'] != data:

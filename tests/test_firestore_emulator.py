@@ -910,3 +910,49 @@ def test_monitoring_sidecar_failure_rolls_back_reading(monkeypatch):
         )
     assert stored(store.db, 'drying_logs/' + ID) is None
     assert stored(store.db, '_job_monitoring/' + ID) is None
+
+
+def test_extras_approval_is_atomic_private_and_revision_bound():
+    from backend.contracts import ExtraApprove
+    from tests.test_extras import proposed, EXTRA_ID
+
+    first, second = instances(CompanyInspectionStore)
+    seed_company(first.db)
+    payload = data()
+    payload['extras'] = [proposed()]
+    record = first.create_inspection('owner', ID, payload)
+    request = ExtraApprove(
+        expected_revision=record['revision'],
+        expected_company_version=1,
+        owner_name='Synthetic Owner',
+    )
+    results = concurrently(
+        [
+            lambda: first.approve_extra('owner', ID, EXTRA_ID, request),
+            lambda: second.approve_extra('owner', ID, EXTRA_ID, request),
+        ]
+    )
+    outcomes(results, refused=Conflict)
+    current = first.get_inspection('owner', ID)
+    assert current['revision'] == 2 and current['audit'] is None
+    assert current['data']['extras'][0]['approval']['total'] == '118.65'
+    entries = [snap.to_dict() for snap in first.db.collection('_admin_events').stream()]
+    assert len([entry for entry in entries if entry['action'] == 'extra_approved']) == 1
+    for token in (browser_token('owner'), browser_token('owner', role='owner', admin=True)):
+        assert browser_request('GET', 'inspections/' + ID, token) == 403
+        assert (
+            browser_request(
+                'PATCH', 'inspections/' + ID, token, {'fields': {'extras': {'arrayValue': {}}}}
+            )
+            == 403
+        )
+        assert (
+            browser_request(
+                'PATCH',
+                '_companies/adr',
+                token,
+                {'fields': {'additional_work_rate': {'doubleValue': 1}}},
+            )
+            == 403
+        )
+    assert first.get_inspection('owner', ID)['data']['extras'][0]['approval']['total'] == '118.65'

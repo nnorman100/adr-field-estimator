@@ -136,9 +136,13 @@ Draft keys include user/company/inspection. Legacy local drafts recover only aft
 
 Prior matched production pair at start: backend alert-disaster-field-estimator-00006-yer; frontend live-reliable-20261007-1; Hosting version 0350de7b1566a1b5 (release 1791398669068000). Source baseline was preserved under review-artifacts/workspaces-20261007/baseline, which is no longer tracked (git history before its removal still holds it). Capture a fresh pair before promotion. Stop workspace writes before rollback, disable workspace authorization, and restore the matched original owner-only backend/frontend. Sidecars are retained but ignored in that mode; raw customer documents and evidence are not deleted. New-company memberships are unavailable in owner-only rollback, and staff-signed/assigned jobs need reconciliation before reactivation.
 
-Physical iPhone/Bluetooth acceptance remains open. This feature does not add billing, company rates, other-state rules, multiple-company membership, Live tools, Cloud Vision or automatic invitation background retries.
+Physical iPhone/Bluetooth acceptance remains open. This feature does not add billing, other-state rules, multiple-company membership, Live tools, Cloud Vision or automatic invitation background retries.
 
 ## Drying watch
 
 See [Drying watch](drying-watch.md) for monitoring permissions, owner reminder
 settings, signed-job actions, offline behavior and retention.
+
+## Priced additional work
+
+With `AI_FEATURES=priced_extras`, Company settings includes an owner-only additional-work hourly rate. Estimators propose descriptions and hours; the company owner must approve each extra at the current server-calculated rate before signing. Approved rates remain fixed. [Priced additional work](priced-extras.md) describes the field workflow, immutable approval snapshots, offline behavior and release gates.

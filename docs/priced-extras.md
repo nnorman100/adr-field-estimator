@@ -1,0 +1,25 @@
+# Priced additional work (F2)
+
+`AI_FEATURES=priced_extras` enables manual additional work in company workspaces. It is off by default; `/api/session` reports the enabled features. This feature makes no new model calls and does not suggest hours or prices. F3 is separate.
+
+An estimator or owner with scope access can choose **Add as extra** beside an audit's unpriced item, or **Additional work** on Check scope. They enter a description and 0.25–200 hours, with at most two decimal places, and save for owner approval. At most 30 extras belong to one inspection. Draft entries save in the existing private offline queue. Price lookup and approval need a connection. Office and superadmin support can read saved extras but cannot edit or approve them; superadmin status grants no company editing rights.
+
+The company owner sets **Additional work hourly rate ($/h)** in Company settings. ADR's absent rate defaults to $47.46, the workbook E24 added-labor rate; its next profile save persists that default. Other companies must set their own rate before pricing or approving extras. Rates must be positive, at most $10,000, with at most two decimal places. Older profile saves that omit the rate preserve it. Profile updates remain owner-only and audited; a new rate requires unsigned documents to be regenerated but never changes an approved extra's saved rate.
+
+The owner opens the job and chooses **Review & approve**, reviews the description, hours, server-calculated total and current company rate, enters their name and explicitly approves. The server rechecks the current company membership, owner role, job access, unsigned status, inspection revision and company version in one Firestore transaction. That transaction saves an approval containing the owner's authenticated UID, entered name, timestamp (shown as an ISO UTC approval date), company/version, rate and Decimal total; advances the revision; clears the audit; and appends an `extra_approved` event to the private audit trail. A changed rate makes an old quote fail with a request to refresh. A failed response preserves the local draft; if the approval committed but the response was lost, restore the latest draft before continuing.
+
+Every extra must be approved before signing. An approval covers the explicitly selected audit item and an exact description match; other unpriced work still blocks signing. The audit also sees the priced `ADR-EXTRA` lines and is instructed to avoid flagging the same covered task again. Different or expanded wording remains subject to review; there is no fuzzy matching that silently clears unrelated tasks.
+
+The server computes each line in Decimal (`2.5 × 47.46 = 118.65`), rounds cents with half-up rounding, and includes it in the workbook labor/material subtotal. The low/high range therefore applies the same after-hours and area factors as other labor/material work. The base-rate sum remains visible beside the customer range. Each approved extra is a separate proposal scope and itemized claim line:
+
+> Additional work, not in [Company] price sheet: [description], [hours] h at $[rate]/h, approved by [owner name] on [date].
+
+The defense letter includes the same proposed scope. No AI-suggested-hours label appears in F2. Homeowner and exported documents use the saved document snapshot and the same renderer.
+
+Extras live in `inspections/{id}.data.extras`, then `authorizations/{id}.inspection.extras` on signing. They participate in the inspection revision, audit and proposal hash. An ordinary scope save cannot create or alter approval provenance. Editing an extra removes its approval; editing or removing scope clears the audit and unsigned signatures/links. Clients predating extras cannot silently remove them by omitting the key. Signed sources are immutable. Both **Copy to new draft** and saving local changes as a new inspection during conflict recovery copy the quantities with all approvals cleared.
+
+No new collection, query, index, TTL or database rule is needed. The existing deny-all Firestore rules cover draft extras, company rates and approval events. No migration or signed-record backfill is needed. No deployment, migration, production call or email is part of this build. Turning off the flag hides new entry/approval/rate controls and refuses pricing/approval routes and new saves or audits carrying extras; saved documents and extras remain readable. Do not roll back to a pre-extras backend after use; fix forward to preserve the schema and immutable signed snapshots.
+
+Validation uses fake-service API and browser tests plus local Firestore emulator transaction/rules tests. `scripts/verify_estimate_prompts.py --extras-only` provides a separate, explicit staging check: three real audit runs must recognize a priced toilet-reset task. It is not a CI test and has not been run as part of this build. Physical iPhone and real-provider acceptance remain separate from local evidence.
+
+Kun's input: reuse the existing revision and signature boundary, keep F2 to manual entry and explicit owner approval, and test observable pricing, authorization and offline behavior instead of implementation text.

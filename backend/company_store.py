@@ -8,12 +8,14 @@ from google.cloud import firestore
 try:
     from .delivery import Deliveries, homeowner_skips, public_delivery, skip_reasons
     from .cloud_log import event
-    from .inspection_store import InspectionStore, Conflict
+    from .inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
+    from .extras import quote
     from .workspaces import WorkspaceStore, AccessDenied
 except ImportError:
     from delivery import Deliveries, homeowner_skips, public_delivery, skip_reasons
     from cloud_log import event
-    from inspection_store import InspectionStore, Conflict
+    from inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
+    from extras import quote
     from workspaces import WorkspaceStore, AccessDenied
 
 
@@ -24,6 +26,62 @@ class CompanyInspectionStore(InspectionStore):
 
     def _sync_monitoring(self, inspection_id, log, tx):
         self.workspaces.monitoring.sync(inspection_id, tx, log=log)
+
+    def quote_extra(self, uid, inspection_id, hours):
+        record = self.get_inspection(uid, inspection_id)
+        _, actor = self.workspaces.job_access(uid, record, 'scope')
+        if record['status'] == 'signed':
+            raise Conflict('Signed inspections are immutable. Copy to a new draft.')
+        return quote(actor['company'], hours)
+
+    def approve_extra(self, uid, inspection_id, extra_id, request):
+        ref = self._ref(inspection_id)
+        name = ' '.join(request.owner_name.split())
+        if not name or any(not c.isprintable() for c in name):
+            raise ValueError('Enter your name to approve the extra.')
+
+        def approve(tx):
+            record = self._owned(ref.get(transaction=tx), uid, 'scope', tx)
+            job, actor = self.workspaces.job_access(uid, record, 'scope', tx)
+            if actor['role'] != 'owner':
+                raise AccessDenied('Only the company owner can approve additional work.')
+            if record['status'] == 'signed' or record['revision'] != request.expected_revision:
+                raise Conflict('Restore the latest unsigned draft before approving.')
+            company = actor['company']
+            if company['version'] != request.expected_company_version:
+                raise Conflict(
+                    'The company rate changed. Review the current price before approving.'
+                )
+            extra = next((e for e in record['data'].get('extras', []) if e['id'] == extra_id), None)
+            if not extra:
+                raise LookupError('Extra not found.')
+            if extra.get('approval'):
+                return record
+            price = quote(company, extra['hours'])
+            extra['approval'] = dict(
+                accepted_by_uid=uid,
+                accepted_by_name=name,
+                accepted_at=now(),
+                company_id=job['company_id'],
+                **price,
+            )
+            record.update(
+                revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
+            )
+            checked_metadata(record)
+            self._sync_access(record, tx)
+            tx.set(ref, record)
+            self.workspaces.event(
+                tx,
+                uid,
+                'extra_approved',
+                job['company_id'],
+                {'revision': record['revision'], 'extra_id': extra_id},
+                'job/' + inspection_id,
+            )
+            return record
+
+        return saved(inspection_id, self._atomic(approve), ['extras'])
 
     def _access(self, uid, record, action='read', tx=None):
         self.workspaces.job_access(uid, record, action, tx)

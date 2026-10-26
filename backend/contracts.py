@@ -1,6 +1,7 @@
-"""Validated inspection inputs; money is calculated exclusively by the rate book."""
+"""Validated inspection inputs; server pricing uses workbook and owner-approved extra rates."""
 
 import re
+from decimal import Decimal
 from datetime import date, datetime, timedelta
 from typing import Literal, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
@@ -100,6 +101,44 @@ class Coordinates(StrictModel):
     address: str = Field(min_length=1, max_length=500)
 
 
+class ExtraApproval(StrictModel):
+    accepted_by_uid: str = Field(min_length=1, max_length=128)
+    accepted_by_name: str = Field(min_length=1, max_length=150)
+    accepted_at: datetime
+    rate: Decimal = Field(gt=0, le=10000, decimal_places=2)
+    total: Decimal = Field(ge=0, le=2000000, decimal_places=2)
+    company_id: str
+    company_version: int = Field(ge=1)
+
+
+class Extra(StrictModel):
+    """Manual quantity plus an optional server-owned approval snapshot."""
+
+    id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    description: str = Field(min_length=1, max_length=300)
+    hours: Decimal = Field(ge=Decimal('0.25'), le=200, decimal_places=2)
+    origin: Literal['manual'] = 'manual'
+    unpriced_item: str = Field(default='', max_length=1000)
+    approval: ExtraApproval | None = None
+
+    @model_validator(mode='after')
+    def clean_description(self):
+        self.description = ' '.join(self.description.split())
+        if not self.description or any(not c.isprintable() for c in self.description):
+            raise ValueError('Describe the additional work.')
+        return self
+
+
+class ExtraQuote(StrictModel):
+    hours: Decimal = Field(ge=Decimal('0.25'), le=200, decimal_places=2)
+
+
+class ExtraApprove(StrictModel):
+    expected_revision: int = Field(ge=1)
+    expected_company_version: int = Field(ge=1)
+    owner_name: str = Field(min_length=1, max_length=150)
+
+
 class InspectionData(StrictModel):
     address: str = Field(default='', max_length=500)
     # Added with address suggestions; drafts saved before it stay without the key (see inspection_payload).
@@ -137,6 +176,8 @@ class InspectionData(StrictModel):
     assistant_transcript: str = Field(default='', max_length=80000)
     scope_confirmed: bool = False
     capture_metadata: CaptureMetadata | None = None
+    # Absent on older drafts; clients retain approvals verbatim until they change an extra.
+    extras: list[Extra] = Field(default_factory=list, max_length=30)
     # Added with QR tags; drafts saved before it stay without the key (see inspection_payload).
     equipment_scans: list[EquipmentScan] = Field(default_factory=list, max_length=200)
 
@@ -429,3 +470,4 @@ class AuditDocuments(StrictModel):
     ai_suggestions: list[str]
     unpriced_work: list[str]
     signable: bool
+    pending_extras: int = 0

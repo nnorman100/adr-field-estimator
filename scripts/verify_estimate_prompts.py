@@ -75,6 +75,46 @@ async def audit_specialty():
     )
 
 
+async def audit_priced_extra():
+    """Release-only real-model evidence: run explicitly on staging, never in CI."""
+    data = InspectionData(
+        address='Synthetic extras property',
+        year_built=2000,
+        rooms=[{'name': 'Bathroom', 'finished_sf': 10}],
+        scope_confirmed=True,
+        technician_notes='The proposed additional work is to move and reset the toilet.',
+        extras=[
+            dict(
+                id='e' * 32,
+                description='Move and reset toilet',
+                hours='2.5',
+                origin='manual',
+                unpriced_item='Move and reset toilet',
+                approval=dict(
+                    accepted_by_uid='synthetic-owner',
+                    accepted_by_name='Synthetic Owner',
+                    accepted_at='2026-10-25T12:00:00Z',
+                    rate='47.46',
+                    total='118.65',
+                    company_id='synthetic',
+                    company_version=1,
+                ),
+            )
+        ],
+    )
+    for attempt in range(3):
+        result = await generate_audit(
+            [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
+            'synthetic-extras-check',
+            time.monotonic(),
+        )
+        assert not result.unpriced_work, result.unpriced_work
+        documents = make_documents(data, [], result)
+        assert documents['signable']
+        assert documents['xactimate_scope'][-1]['total'] == 118.65
+        print(f'PASS: owner-approved toilet extra covered, run {attempt + 1}/3')
+
+
 async def audit_cleaning_only():
     data = InspectionData(
         address='Synthetic new-build property',
@@ -223,7 +263,10 @@ async def check():
 
 async def main():
     try:
-        await (attic_extraction() if '--attic-only' in sys.argv else check())
+        if '--extras-only' in sys.argv:
+            await audit_priced_extra()
+        else:
+            await (attic_extraction() if '--attic-only' in sys.argv else check())
     finally:
         await get_ai_client().aio.aclose()
 

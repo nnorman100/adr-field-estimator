@@ -49,6 +49,8 @@ from websockets.exceptions import ConnectionClosed
 try:
     from .contracts import (
         CopyRequest,
+        ExtraQuote,
+        ExtraApprove,
         CreateInspection,
         UpdateInspection,
         ClaimDetails,
@@ -101,6 +103,8 @@ try:
 except ImportError:
     from contracts import (
         CopyRequest,
+        ExtraQuote,
+        ExtraApprove,
         CreateInspection,
         UpdateInspection,
         ClaimDetails,
@@ -834,6 +838,8 @@ def inspection_payload(data):
         ):
             if room.get(key) is None:
                 room.pop(key, None)
+    if not result.get('extras') and 'extras' not in data.model_fields_set:
+        result.pop('extras', None)
     if not result.get('equipment_scans'):
         result.pop('equipment_scans', None)
     if result.get('coordinates') is None and 'coordinates' not in data.model_fields_set:
@@ -841,10 +847,44 @@ def inspection_payload(data):
     return result
 
 
+def extras_enabled():
+    if not WORKSPACES_ENABLED or 'priced_extras' not in AI_FEATURES:
+        raise HTTPException(404, 'Priced extras are not enabled.')
+
+
+def check_extras_input(data):
+    if data.extras:
+        extras_enabled()
+
+
+@app.post('/api/inspections/{inspection_id}/extras/quote')
+async def quote_extra(
+    inspection_id: str, req: ExtraQuote, staff=Depends(current_staff), store=Depends(get_job_store)
+):
+    extras_enabled()
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    return await stored(store.quote_extra, staff['uid'], inspection_id, req.hours)
+
+
+@app.post('/api/inspections/{inspection_id}/extras/{extra_id}/approve')
+async def approve_extra(
+    inspection_id: str,
+    extra_id: str,
+    req: ExtraApprove,
+    staff=Security(current_staff, scopes=LIVE_REVOCATION),
+    store=Depends(get_job_store),
+):
+    extras_enabled()
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    record = await stored(store.approve_extra, staff['uid'], inspection_id, extra_id, req)
+    return await draft_record(store, staff['uid'], record)
+
+
 @app.post('/api/inspections')
 async def create_inspection(
     req: CreateInspection, staff=Depends(current_staff), store=Depends(get_job_store)
 ):
+    check_extras_input(req.data)
     await stored(store.quota, staff['uid'], 'draft', 60)
     return await draft_record(
         store,
@@ -921,6 +961,7 @@ async def update_inspection(
     staff=Depends(current_staff),
     store=Depends(get_job_store),
 ):
+    check_extras_input(req.data)
     await stored(store.quota, staff['uid'], 'draft', 60)
     return await draft_record(
         store,
@@ -1218,6 +1259,7 @@ async def audit_inspection(
     if record['revision'] != req.expected_revision or record['status'] == 'signed':
         raise HTTPException(409, 'Restore the latest draft before auditing.')
     data = InspectionData.model_validate(record['data'])
+    check_extras_input(data)
     if data.package_price is not None:
         raise HTTPException(
             409, 'Update the app and clear the old package-tier selection before auditing.'

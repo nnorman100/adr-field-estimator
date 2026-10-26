@@ -6,9 +6,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 try:
+    from .extras import wording
     from .contracts import InspectionData, AIResult, AuditDocuments
     from .sizing import equipment_sizing, letter_paragraph
 except ImportError:
+    from extras import wording
     from contracts import InspectionData, AIResult, AuditDocuments
     from sizing import equipment_sizing, letter_paragraph
 
@@ -156,6 +158,11 @@ def price_scope(data: InspectionData):
                 '47.46',
             )
         )
+    for extra in data.extras:
+        if extra.approval:
+            items.append(
+                line('ADR-EXTRA', extra.description, extra.hours, 'HR', extra.approval.rate)
+            )
     return items, float(sum((amount(i['total']) for i in items), Decimal(0)))
 
 
@@ -163,7 +170,11 @@ def proposal_range(data: InspectionData, items):
     """The estimating sheet's low/high labor-material allowances over priced scope."""
     job = sum((amount(item['total']) for item in items if item['code'] in JOB_CODES), Decimal(0))
     labor_material = sum(
-        (amount(item['total']) for item in items if item['code'] in {'ADR-DEMO', 'ADR-LABOR'}),
+        (
+            amount(item['total'])
+            for item in items
+            if item['code'] in {'ADR-DEMO', 'ADR-LABOR', 'ADR-EXTRA'}
+        ),
         Decimal(0),
     )
     equipment = sum(
@@ -297,6 +308,14 @@ def make_documents(
     if data.package_price is not None:
         raise ValueError('Update the app and clear the old package-tier selection before auditing.')
     items, total = price_scope(data)
+    approved = [extra for extra in data.extras if extra.approval]
+    for item, extra in zip((i for i in items if i['code'] == 'ADR-EXTRA'), approved):
+        item['description'] = wording(extra, clause_company)
+    covered = {text for extra in approved for text in (extra.unpriced_item, extra.description)} - {
+        ''
+    }
+    unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
+    pending = sum(extra.approval is None for extra in data.extras)
     estimate_low, estimate_high = proposal_range(data, items)
     before = data.year_built < 1978
     age = (
@@ -368,6 +387,7 @@ def make_documents(
         or data.dehumidifiers
         or data.wood_floor_systems
         or data.labor_hours
+        or approved
         or any(getattr(data, field) for _, _, field, _ in OPTIONAL_CHARGES)
     )
     documents = AuditDocuments(
@@ -409,12 +429,14 @@ def make_documents(
         ai_suggestions=[
             plain(text) for text in ai.suggestions + (ai.testing_advice if before else [])
         ],
-        unpriced_work=[plain(text) for text in ai.unpriced_work],
+        unpriced_work=[plain(text) for text in unpriced],
+        pending_extras=pending,
         signable=bool(
             not setup
             and data.scope_confirmed
             and has_work
-            and not ai.unpriced_work
+            and not unpriced
+            and not pending
             and not any(p.get('ocr_status') == 'pending' for p in photos)
         ),
     )
