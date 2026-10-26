@@ -848,7 +848,7 @@ def inspection_payload(data):
 
 
 def extras_enabled():
-    if not WORKSPACES_ENABLED or 'priced_extras' not in AI_FEATURES:
+    if not WORKSPACES_ENABLED or not ai_features.enabled('priced_extras'):
         raise HTTPException(404, 'Priced extras are not enabled.')
 
 

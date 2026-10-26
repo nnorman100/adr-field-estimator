@@ -4,7 +4,7 @@ from copy import deepcopy
 from decimal import Decimal
 import pytest
 from pydantic import ValidationError
-import backend.main as bm
+from backend import ai_features
 from backend.claims import make_documents, price_scope, proposal_range
 from backend.contracts import Extra, ExtraApprove, InspectionData, AIResult
 from backend.cloud_log import LOG_FIELDS
@@ -147,7 +147,7 @@ def audit(client, record):
 
 def test_role_matrix_and_pending_signing(api, monkeypatch):
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     record = create(client, current)
     quote = client.post(f'/api/inspections/{ID}/extras/quote', json={'hours': '2.5'})
     assert quote.json() == {'rate': '47.46', 'total': '118.65', 'company_version': 1}
@@ -188,7 +188,7 @@ def test_role_matrix_and_pending_signing(api, monkeypatch):
 
 def test_rate_change_keeps_approved_rate_and_copies_require_approval(api, monkeypatch):
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     record = create(client, current)
     current['uid'] = 'owner'
     record = approve(client, record).json()
@@ -209,7 +209,7 @@ def test_rate_change_keeps_approved_rate_and_copies_require_approval(api, monkey
 
 def test_approval_cannot_be_forged_or_changed_in_draft(api, monkeypatch):
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     current['uid'] = 'owner'
     result = client.post(
         '/api/inspections', json={'inspection_id': ID, 'data': dict(data(), extras=[approved()])}
@@ -254,7 +254,7 @@ def test_approval_cannot_be_forged_or_changed_in_draft(api, monkeypatch):
 
 def test_flag_rate_roles_unconfigured_company_and_rate_conflict(api, monkeypatch):
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', set())
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', set())
     result = client.post(
         '/api/inspections', json={'inspection_id': ID, 'data': dict(data(), extras=[proposed()])}
     )
@@ -262,7 +262,7 @@ def test_flag_rate_roles_unconfigured_company_and_rate_conflict(api, monkeypatch
     assert (
         client.post(f'/api/inspections/{ID}/extras/quote', json={'hours': 2.5}).status_code == 404
     )
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     record = create(client, current)
     profile = dict(db.workspaces.company('owner', 'adr')['profile'], additional_work_rate='80')
     for uid in ('estimator', 'office', 'admin', 'other-owner'):
@@ -293,7 +293,7 @@ def test_approval_logs_only_allowlisted_fields(api, monkeypatch, capsys):
     import json
 
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     record = create(client, current)
     current['uid'] = 'owner'
     capsys.readouterr()
@@ -311,7 +311,7 @@ def test_approval_logs_only_allowlisted_fields(api, monkeypatch, capsys):
 
 def test_tiny_rate_rounding_is_still_a_valid_approval(api, monkeypatch):
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     values = dict(data(), extras=[dict(proposed(), hours='0.25')])
     response = client.post('/api/inspections', json=dict(inspection_id=ID, data=values))
     profile = dict(db.workspaces.company('owner', 'adr')['profile'], additional_work_rate='0.01')
@@ -326,7 +326,7 @@ def test_tiny_rate_rounding_is_still_a_valid_approval(api, monkeypatch):
 
 def test_signed_snapshot_unchanged_after_rate_edit_and_duplicate_ids_refused(api, monkeypatch):
     client, current, db = api
-    monkeypatch.setattr(bm, 'AI_FEATURES', {'priced_extras'})
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     values = dict(data(), extras=[proposed(), proposed()])
     assert (
         client.post('/api/inspections', json=dict(inspection_id=ID, data=values)).status_code == 400
