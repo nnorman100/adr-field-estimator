@@ -83,6 +83,18 @@ def test_hosting_and_database_use_dedicated_project():
     assert [loc.text for loc in urls.iter(namespace + 'loc')] == [SITE + '/']
     manifest = json.loads((ROOT / 'public/manifest.webmanifest').read_text(encoding='utf8'))
     assert (manifest['id'], manifest['start_url'], manifest['scope']) == ('/', '/app', '/')
+    policy = next(
+        header['value']
+        for rule in config['hosting']['headers']
+        if rule['source'] == '**'
+        for header in rule['headers']
+        if header['key'] == 'Content-Security-Policy'
+    )
+    connect = next(part for part in policy.split(';') if part.strip().startswith('connect-src'))
+    # Exact origin only. https://*.googleapis.com does not match apis.google.com, and the
+    # sign-in library fetches https://apis.google.com/js/gen_204 under connect-src.
+    assert 'https://apis.google.com' in connect.split()
+    assert 'https://*.google.com' not in connect and 'https://apis.google.com/' not in connect
 
 
 def test_service_rejects_another_project_before_initializing_ai(monkeypatch):
