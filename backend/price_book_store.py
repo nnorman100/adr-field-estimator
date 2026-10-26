@@ -593,11 +593,13 @@ class PriceBookStore:
                 raise Conflict('Signed inspections keep the prices they were signed with.')
             existing = self._pin(inspection_id, tx)
             if existing:
-                if existing.get('calculation_version') != CALCULATION_VERSION:
-                    raise Conflict('This draft uses a price calculation this app cannot read.')
-                if existing.get('content_sha256') != content_hash(existing['rates']):
-                    raise Conflict("This draft's saved prices are damaged. Contact support.")
+                self.basis_for(existing, job['company_id'])
+                basis = ((current.get('audit') or {}).get('documents') or {}).get('price_basis')
+                if basis:
+                    self.assert_pin(current, basis, tx)
                 return existing
+            if ((current.get('audit') or {}).get('documents') or {}).get('price_basis'):
+                raise Conflict("This draft's saved prices are missing. Contact support.")
             company = self.ws.read('_companies', job['company_id'], tx)
             book = self.effective(company, tx)
             created = _stamp(current.get('created_at'))
@@ -644,6 +646,8 @@ class PriceBookStore:
             not pin
             or pin.get('company_id') != company_id
             or pin.get('calculation_version') != CALCULATION_VERSION
+            or not isinstance(pin.get('rates'), dict)
+            or set(pin['rates']) != set(KEYS)
             or content_hash(pin['rates']) != pin.get('content_sha256')
         ):
             raise Conflict("This draft's saved prices are missing. Contact support.")
@@ -659,9 +663,9 @@ class PriceBookStore:
 
     def assert_pin(self, record, basis, tx=None):
         pin = self._pin(record['inspection_id'], tx)
+        self.basis_for(pin, basis.get('company_id'))
         if (
-            not pin
-            or pin.get('content_sha256') != basis.get('content_sha256')
+            pin.get('content_sha256') != basis.get('content_sha256')
             or pin.get('calculation_version') != basis.get('calculation_version')
             or pin.get('version_id') != basis.get('version_id')
         ):

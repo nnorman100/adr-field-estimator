@@ -174,7 +174,14 @@ def _parse_xlsx(raw):
             raise ValueError('The spreadsheet must contain one Prices sheet.')
         _reject_external(archive)
         _reject_extra_sheets(archive)
-        return _cells(archive.read('xl/worksheets/sheet1.xml'))
+        strings = []
+        if 'xl/sharedStrings.xml' in names:
+            root = _xml(archive.read('xl/sharedStrings.xml'))
+            strings = [
+                ''.join(node.text or '' for node in item.findall('.//m:t', NS))
+                for item in root.findall('m:si', NS)
+            ]
+        return _cells(archive.read('xl/worksheets/sheet1.xml'), strings)
 
 
 def _xml(raw):
@@ -217,7 +224,7 @@ def _reject_extra_sheets(archive):
             raise ValueError('The spreadsheet must contain one Prices sheet.')
 
 
-def _cells(raw):
+def _cells(raw, strings):
     root = _xml(raw)
     rows = []
     for row in root.findall('m:sheetData/m:row', NS):
@@ -236,7 +243,7 @@ def _cells(raw):
                 raise ValueError('The file has too many columns.')
             if index >= len(COLUMNS):
                 raise ValueError('The file must use the DryScope price template columns.')
-            text = _cell_text(cell)
+            text = _cell_text(cell, strings)
             if len(text) > CELL_LIMIT:
                 raise ValueError(f'Row {number} has a value that is too long.')
             values[index] = text.strip()
@@ -262,9 +269,15 @@ def _column_index(letters):
     return index - 1
 
 
-def _cell_text(cell):
+def _cell_text(cell, strings):
     kind = cell.attrib.get('t')
-    if kind in ('b', 'e', 'str', 's'):
+    if kind == 's':
+        node = cell.find('m:v', NS)
+        value = '' if node is None else node.text or ''
+        if not value.isascii() or not value.isdigit() or int(value) >= len(strings):
+            raise ValueError('The spreadsheet has an invalid shared string.')
+        return strings[int(value)]
+    if kind in ('b', 'e', 'str'):
         raise ValueError('Spreadsheet formulas and non-numeric prices are not accepted.')
     if kind == 'inlineStr':
         node = cell.find('m:is/m:t', NS)

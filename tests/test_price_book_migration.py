@@ -75,3 +75,55 @@ def test_a_company_without_a_rate_keeps_the_blank_instead_of_adr_default():
         store.db.records['_price_book_versions/migrate-other-v1']['rates']['additional_work_hourly']
         == ''
     )
+
+
+@pytest.mark.parametrize('change', ['signed', 'association', 'rate'])
+def test_apply_rechecks_current_state_before_writing(change):
+    store = company()
+    plan = build_plan(store.db, ['adr'])
+    if change == 'signed':
+        store.db.records['inspections/' + ID]['status'] = 'signed'
+    elif change == 'association':
+        store.db.records['_workspace_jobs/' + ID]['company_id'] = 'other'
+    else:
+        store.db.records['_companies/adr']['profile']['additional_work_rate'] = '60.00'
+    before = deepcopy(store.db.records)
+    with pytest.raises(RuntimeError):
+        apply_plan(store, plan, True)
+    assert store.db.records == before
+
+
+def test_migration_reads_before_writes_and_keeps_seed_unpublished(monkeypatch):
+    from tests.fakes import Ref, Tx
+
+    store = company()
+    plan = build_plan(store.db, ['adr', 'other'])
+    writing = False
+    original_get = Ref.get
+    original_create, original_set = Tx.create, Tx.set
+
+    def read(ref, transaction=None):
+        assert not writing
+        return original_get(ref, transaction)
+
+    def create(tx, ref, value):
+        nonlocal writing
+        writing = True
+        return original_create(tx, ref, value)
+
+    def write(tx, ref, value, merge=False):
+        nonlocal writing
+        writing = True
+        return original_set(tx, ref, value, merge)
+
+    monkeypatch.setattr(Ref, 'get', read)
+    monkeypatch.setattr(Tx, 'create', create)
+    monkeypatch.setattr(Tx, 'set', write)
+    apply_plan(store, plan, True)
+    for row in plan['companies']:
+        version = store.db.records['_price_book_versions/' + row['version_id']]
+        assert version['sequence'] == 0
+        assert version['published_at'] is None and version['effective_from'] is None
+        head = store.db.records['_company_price_books/' + row['company_id']]
+        assert head['generation'] == 0 and head['next_sequence'] == 1
+    assert store.db.records['_job_pricing/' + ID]['sequence'] == 0

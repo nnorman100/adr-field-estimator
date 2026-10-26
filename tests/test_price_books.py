@@ -480,3 +480,41 @@ def test_zero_acknowledgement_large_change_and_expired_preview(api, enabled):
         ).status_code
         == 413
     )
+
+
+def test_missing_pin_blocks_repeat_audit(api, enabled):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    before = deepcopy(store.db.records['inspections/' + ID])
+    del store.db.records['_job_pricing/' + ID]
+    result = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert result.status_code == 409, result.text
+    assert '_job_pricing/' + ID not in store.db.records
+    assert store.db.records['inspections/' + ID] == before
+
+
+def test_corrupt_pin_blocks_signing(api, enabled):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    store.db.records['_job_pricing/' + ID]['rates']['emergency_call'] = '999.00'
+    current['uid'] = 'owner'
+    result = client.post('/api/authorize', json=sign_payload(audited.json()))
+    assert result.status_code == 409, result.text
+    assert not any(key.startswith('authorizations/') for key in store.db.records)
+
+
+def test_first_publication_after_migration_is_version_one(api, enabled):
+    from backend.price_book_migration import apply_plan, build_plan
+
+    client, current, store = api
+    apply_plan(store, build_plan(store.db, ['adr']), True)
+    current['uid'] = 'owner'
+    published = publish(client, rates(emergency_call='150.00'))
+    assert published['sequence'] == 1
+    assert published['published_at'] and published['effective_from']

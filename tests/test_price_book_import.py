@@ -95,3 +95,32 @@ def test_xlsx_rejects_formulas_macros_links_entities_and_extra_sheets():
         archive.writestr('xl/worksheets/sheet1.xml', b'x' * (5 * 1024 * 1024 + 1))
     with pytest.raises(ValueError, match='too large'):
         parsed(bomb.getvalue(), XLSX)
+
+
+def test_excel_shared_strings_round_trip_and_edited_price():
+    from xml.etree import ElementTree as ET
+    from backend.price_book_import import NS
+
+    book = seed_rates()
+    raw = export_xlsx('adr', 'seed', 0, book)
+    output = io.BytesIO()
+    strings = ET.Element('sst', xmlns=NS['m'])
+    with zipfile.ZipFile(io.BytesIO(raw)) as source, zipfile.ZipFile(output, 'w') as archive:
+        sheet = ET.fromstring(source.read('xl/worksheets/sheet1.xml'))
+        for index, cell in enumerate(sheet.findall('.//m:c', NS)):
+            text = cell.find('m:is/m:t', NS).text
+            if text == '133.95':
+                text = '150.25'
+            ET.SubElement(ET.SubElement(strings, 'si'), 't').text = text
+            cell.clear()
+            cell.set('r', f'{chr(65 + index % 9)}{index // 9 + 1}')
+            cell.set('t', 's')
+            ET.SubElement(cell, '{' + NS['m'] + '}v').text = str(index)
+        for info in source.infolist():
+            archive.writestr(
+                info.filename,
+                ET.tostring(sheet) if info.filename == 'xl/worksheets/sheet1.xml' else source.read(info),
+            )
+        archive.writestr('xl/sharedStrings.xml', ET.tostring(strings))
+    book['emergency_call'] = '150.25'
+    assert parsed(output.getvalue(), XLSX) == book

@@ -3410,7 +3410,7 @@ async function saveExtra(event) {
         {
           expected_revision: state.record.revision,
           expected_company_version: approvedQuote.company_version,
-          expected_price_hash: approvedQuote.price_content_sha256 || '',
+          expected_price_hash: approvedQuote.price_rate_fingerprint || '',
           owner_name: $('extraOwnerName').value.trim(),
         },
       );

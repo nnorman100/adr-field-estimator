@@ -88,7 +88,7 @@ def build_plan(db, company_ids):
                     head['latest_version_id'],
                     current['rates'],
                     digest,
-                    current.get('sequence', 1),
+                    current.get('sequence', 0),
                 )
             else:
                 # A later price change stays on the book. Existing drafts keep the base values.
@@ -103,7 +103,7 @@ def build_plan(db, company_ids):
                     'rates': rates,
                 }
             )
-            pin_version, pin_rates, pin_hash, pin_sequence = version_id, rates, digest, 1
+            pin_version, pin_rates, pin_hash, pin_sequence = version_id, rates, digest, 0
         for snapshot in db.collection('_workspace_jobs').stream():
             job = snapshot.to_dict() or {}
             if job.get('company_id') != company_id or job.get('kind') not in (None, 'inspection'):
@@ -185,18 +185,54 @@ def apply_plan(store, plan, write):
     ws = store.workspaces if hasattr(store, 'workspaces') else store
 
     def commit(tx):
+        heads = {}
+        for row in plan['companies']:
+            company_id = row['company_id']
+            company = ws.read('_companies', company_id, tx)
+            if not company:
+                raise RuntimeError('The company no longer exists.')
+            heads[company_id] = ws.read(HEAD, company_id, tx)
+            current_version = (heads[company_id] or {}).get('latest_version_id')
+            if current_version and current_version != row['version_id']:
+                raise RuntimeError('The company price book changed after planning.')
+            if row['action'] == 'create' and content_hash(planned_rates(company)) != row['content_sha256']:
+                raise RuntimeError('The company additional-work rate changed after planning.')
+        eligible = []
+        for row in plan['pins']:
+            if row['action'] != 'create':
+                continue
+            identifier = row['inspection_id']
+            pin = ws.read(PINS, identifier, tx)
+            job = ws.read('_workspace_jobs', identifier, tx)
+            inspection = ws.read('inspections', identifier, tx)
+            if pin:
+                continue
+            if (
+                not job or not inspection
+                or job.get('company_id') != row['company_id']
+                or job.get('job_id') != identifier
+                or job.get('kind') not in (None, 'inspection')
+                or job.get('auth_exists') or job.get('status') == 'signed'
+                or inspection.get('status') == 'signed'
+                or (inspection.get('data') or {}).get('package_price') is not None
+            ):
+                raise RuntimeError('The draft changed after migration planning.')
+            company = ws.read('_companies', row['company_id'], tx)
+            if planned_rates(company)['additional_work_hourly'] != row['rates']['additional_work_hourly']:
+                raise RuntimeError('The company additional-work rate changed after planning.')
+            eligible.append(row)
         for row in plan['companies']:
             if row['action'] != 'create':
                 continue
             company_id = row['company_id']
-            head = ws.read(HEAD, company_id, tx)
+            head = heads[company_id]
             if head and head.get('latest_version_id'):
                 continue
             published = now()
             version = {
                 'version_id': row['version_id'],
                 'company_id': company_id,
-                'sequence': 1,
+                'sequence': 0,
                 'parent_version_id': None,
                 'catalog_version': CATALOG_VERSION,
                 'calculation_version': CALCULATION_VERSION,
@@ -204,8 +240,8 @@ def apply_plan(store, plan, write):
                 'rates': row['rates'],
                 'content_sha256': row['content_sha256'],
                 'published_by_uid': '',
-                'published_at': published,
-                'effective_from': published,
+                'published_at': None,
+                'effective_from': None,
                 'source': 'seed',
                 'change_reason': 'Workbook seed',
                 'import_digest': None,
@@ -216,17 +252,13 @@ def apply_plan(store, plan, write):
                 {
                     'company_id': company_id,
                     'schema_version': 1,
-                    'generation': 1,
+                    'generation': 0,
                     'latest_version_id': row['version_id'],
-                    'next_sequence': 2,
+                    'next_sequence': 1,
                     'updated_at': published,
                 },
             )
-        for row in plan['pins']:
-            if row['action'] != 'create':
-                continue
-            if ws.read(PINS, row['inspection_id'], tx):
-                continue
+        for row in eligible:
             tx.create(
                 ws.ref(PINS, row['inspection_id']),
                 {
@@ -234,7 +266,7 @@ def apply_plan(store, plan, write):
                     'company_id': row['company_id'],
                     'pin_version': 1,
                     'version_id': row['version_id'],
-                    'sequence': row.get('sequence') or 1,
+                    'sequence': row.get('sequence', 0),
                     'content_sha256': row['content_sha256'],
                     'calculation_version': CALCULATION_VERSION,
                     'rates': dict(row['rates']),
