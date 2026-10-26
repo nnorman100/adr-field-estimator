@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 import pytest
 
@@ -90,11 +91,16 @@ def test_hosting_and_database_use_dedicated_project():
         for header in rule['headers']
         if header['key'] == 'Content-Security-Policy'
     )
-    connect = next(part for part in policy.split(';') if part.strip().startswith('connect-src'))
+    directives = [part.split() for part in policy.split(';') if part.strip()]
+    connect = next(parts[1:] for parts in directives if parts[0] == 'connect-src')
     # Exact origin only. https://*.googleapis.com does not match apis.google.com, and the
     # sign-in library fetches https://apis.google.com/js/gen_204 under connect-src.
-    assert 'https://apis.google.com' in connect.split()
-    assert 'https://*.google.com' not in connect and 'https://apis.google.com/' not in connect
+    google_sources = {
+        urlsplit(source)
+        for source in connect
+        if urlsplit(source).hostname in {'apis.google.com', '*.google.com'}
+    }
+    assert google_sources == {urlsplit('https://apis.google.com')}
 
 
 def test_service_rejects_another_project_before_initializing_ai(monkeypatch):
