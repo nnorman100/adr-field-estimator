@@ -36,6 +36,11 @@ def authorize(client, record):
 def assert_blocked(client, current, signed_against):
     refused = audit_at(client, current)
     assert refused.status_code == 409 and HOLD in refused.json()['detail']
+    scope = client.post(
+        '/api/inspections/' + ID + '/scope-suggestions',
+        json={'inspection_id': ID, 'expected_revision': current['revision']},
+    )
+    assert scope.status_code == 409 and HOLD in scope.json()['detail']
     signed = authorize(client, signed_against)
     assert signed.status_code == 409 and SIGNING_HOLD in signed.json()['detail']
     link = mint(client, signed_against)

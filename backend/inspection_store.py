@@ -458,6 +458,8 @@ class InspectionStore(JobStore):
         """Appends a transcribed offline voice note once. A retried note whose marker is already
         in the transcript does not append again and does not invent a ledger row for text stored
         before the ledger; a pending or failed row for that note is settled to transcribed.
+        New text on a resolved note reopens that note as transcribed and unreviewed. A retry
+        that adds nothing does not reopen a resolved or reviewed note.
         The append does not refuse a revision that moved on (for example a finished OCR)."""
         ref = self._ref(inspection_id)
 
@@ -491,10 +493,11 @@ class InspectionStore(JobStore):
                             {'id': note_id, 'status': 'transcribed', 'reviewed': False}
                         )
                         changed = True
-                    elif (
-                        not (row.get('status') == 'transcribed' and row.get('reviewed'))
-                        and row.get('status') != 'resolved'
-                    ):
+                    elif row.get('status') == 'resolved':
+                        row['status'] = 'transcribed'
+                        row['reviewed'] = False
+                        changed = True
+                    elif not (row.get('status') == 'transcribed' and row.get('reviewed')):
                         row['status'] = 'transcribed'
                         if not row.get('reviewed'):
                             row['reviewed'] = False
