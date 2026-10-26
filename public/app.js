@@ -618,7 +618,10 @@ async function api(path, options = {}) {
   }
 }
 async function jsonApi(path, method = 'GET', body) {
-  return (
+  const id = state.draft?.inspection_id,
+    uid = state.user?.uid,
+    workspace = window.WorkspaceUI?.context();
+  const result = await (
     await api(path, {
       method,
       ...(body === undefined
@@ -626,6 +629,24 @@ async function jsonApi(path, method = 'GET', body) {
         : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
   ).json();
+  const route = path.split('?')[0],
+    jobPath = '/api/jobs/' + encodeURIComponent(id),
+    inspectionPath = '/api/inspections/' + encodeURIComponent(id),
+    belongs =
+      body?.inspection_id === id ||
+      route === inspectionPath ||
+      route.startsWith(inspectionPath + '/') ||
+      route.startsWith(jobPath + '/');
+  if (
+    id &&
+    id === state.draft?.inspection_id &&
+    uid === state.user?.uid &&
+    workspace === window.WorkspaceUI?.context() &&
+    belongs &&
+    (method !== 'GET' || route === jobPath + '/delivery')
+  )
+    window.InsightUI?.job(true);
+  return result;
 }
 const roomWrites = new Set();
 async function writeRoom(photo, request) {

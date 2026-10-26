@@ -52,6 +52,7 @@ function harness(withRestores = false) {
     vm.runInNewContext(
       fs.readFileSync('public/app.js', 'utf8') + `
         Object.assign(state, initialState, {user: {uid: 'reader'}});
+        globalThis.mutationApi = jsonApi;
         jsonApi = request;
         node = makeNode;
         button = makeButton;
@@ -72,6 +73,7 @@ function harness(withRestores = false) {
   return {
     ui: context.InsightUI,
     restores: context.restoreHooks,
+    context,
     requests,
     target,
     text: () => target.children.find((child) => child.tag === 'p' && child.text !== 'AI summary').text,
@@ -160,5 +162,97 @@ for (const transition of ['draft', 'signed']) {
     h.requests[4].resolve(facts(current));
     await h.flush();
     assert.equal(h.text(), current);
+  });
+}
+
+
+const factMutations = [
+  ['audit completion', '/api/audit', 'POST', { inspection_id: 'job' }],
+  ['claim save', '/api/jobs/job/claim', 'PUT', {}],
+  ['reading add', '/api/inspections/job/readings', 'POST', {}],
+  ['reading remove', '/api/inspections/job/readings/reading', 'DELETE'],
+  ['monitoring change', '/api/jobs/job/drying-watch/state', 'POST', {}],
+  ['delivery resend', '/api/jobs/job/delivery/resend', 'POST'],
+  ['delivery reload', '/api/jobs/job/delivery', 'GET'],
+  ['coordination save', '/api/jobs/job/coordination', 'PUT', {}],
+  ['scope save', '/api/inspections/job', 'PUT', {}],
+  ['photo upload', '/api/inspections/job/photos', 'POST', {}],
+  ['photo OCR', '/api/inspections/job/photos/photo/ocr', 'POST'],
+];
+for (const [name, path, method, body] of factMutations) {
+  test(`${name} revalidates facts independently of inspection revision`, async () => {
+    const h = harness(true);
+    h.restores.state.record = { revision: 1 };
+    h.ui.job();
+    h.requests[0].resolve(facts('Draft scope. Previous saved facts.'));
+    await h.flush();
+    const saved = { revision: 1, saved: true };
+    h.context.api = async () => ({ json: async () => saved });
+    assert.equal(await h.context.mutationApi(path, method, body), saved);
+    assert.equal(h.restores.state.record.revision, 1);
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.requests[1].path, '/api/jobs/job/insight?facts_only=true');
+    h.requests[1].resolve(facts(null, true));
+    await h.flush();
+    assert.equal(h.text(), 'Facts changed. Refresh the summary.');
+  });
+}
+
+test('mutation completion during a summary load drains through the pending refresh', async () => {
+  const h = harness(true);
+  h.ui.job();
+  h.requests[0].resolve(facts());
+  await h.flush();
+  h.context.api = async () => ({ json: async () => ({ saved: true }) });
+  await h.context.mutationApi('/api/jobs/job/claim', 'PUT', {});
+  assert.equal(h.requests.length, 2);
+  h.requests[1].resolve(facts('Draft scope. Old claim.'));
+  await h.flush();
+  assert.equal(h.requests[2].path, '/api/jobs/job/insight?facts_only=true');
+  h.requests[2].resolve(facts(null, true));
+  await h.flush();
+  assert.equal(h.text(), 'Facts changed. Refresh the summary.');
+});
+
+for (const scenario of ['failed', 'other job', 'switched job', 'switched account', 'read only']) {
+  test(`${scenario} request does not invalidate the current summary`, async () => {
+    const h = harness(true);
+    h.ui.job();
+    h.requests[0].resolve(facts('Draft scope. Current facts.'));
+    await h.flush();
+    h.context.api = async () => {
+      if (scenario === 'failed') throw Object.assign(Error('Rejected'), { status: 403 });
+      if (scenario === 'switched job') h.restores.state.draft.inspection_id = 'new-job';
+      if (scenario === 'switched account') h.restores.state.user = { uid: 'other' };
+      return { json: async () => ({ saved: true }) };
+    };
+    const result = h.context.mutationApi(
+      scenario === 'other job' ? '/api/jobs/other/claim' : '/api/jobs/job/claim',
+      scenario === 'read only' ? 'GET' : 'PUT',
+      {},
+    );
+    if (scenario === 'failed') await assert.rejects(result);
+    else await result;
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.text(), 'Draft scope. Current facts.');
+  });
+}
+
+for (const blocked of ['offline', 'cooldown']) {
+  test(`fact invalidation preserves the ${blocked} request guard`, async () => {
+    const h = harness(true);
+    h.context.setTimeout = () => 0;
+    h.ui.job();
+    if (blocked === 'cooldown') {
+      h.requests[0].reject(Object.assign(Error('Limit reached'), { status: 429, retryAfter: 60 }));
+    } else {
+      h.requests[0].resolve(facts('Draft scope. Last loaded facts.'));
+    }
+    await h.flush();
+    if (blocked === 'offline') h.context.navigator.onLine = false;
+    h.context.api = async () => ({ json: async () => ({ saved: true }) });
+    await h.context.mutationApi('/api/jobs/job/claim', 'PUT', {});
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.target.children.at(-1).disabled, true);
   });
 }
