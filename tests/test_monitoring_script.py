@@ -61,7 +61,7 @@ def preview(tmp_path):
 
 def test_preview_targets_project_service_and_notification_address(preview):
     commands, policies = preview
-    assert len(commands) == 11
+    assert len(commands) == 12
     for command in commands:
         assert command[0] == 'gcloud'
         assert [arg for arg in command if arg.startswith('--project=')] == [f'--project={PROJECT}']
@@ -89,6 +89,7 @@ def test_preview_targets_project_service_and_notification_address(preview):
         'drying-reminder-failed',
         'drying-summary-failed',
         'email-volume',
+        'vault-backup',
     }
     assert len(creates) == len(policies)
     for command in creates:
@@ -229,6 +230,26 @@ def test_live_other_codes_do_not_match(preview, capsys, code):
     entry = json.loads(capsys.readouterr().out)
     condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
     assert not matches(condition, entry)
+
+
+def test_vault_backup_alert_covers_failure_and_a_missed_day(preview):
+    policy = preview[1]['vault-backup']
+    assert policy['displayName'] == 'DryScope: vault backup failed or missing'
+    assert 'notificationRateLimit' not in policy['alertStrategy']
+    failed, absent = policy['conditions']
+    threshold = failed['conditionThreshold']
+    assert threshold['thresholdValue'] == 0
+    assert threshold['duration'] == '0s'
+    assert 'resource.type="cloud_run_job"' in threshold['filter']
+    assert 'resource.label.job_name="dryscope-vault-backup"' in threshold['filter']
+    assert 'metric.label.result="failed"' in threshold['filter']
+    assert 'run.googleapis.com/job/completed_execution_count' in threshold['filter']
+    missing = absent['conditionAbsent']
+    assert missing['duration'] == '82800s'
+    assert missing['aggregations'][0]['alignmentPeriod'] == '7200s'
+    assert missing['aggregations'][0]['perSeriesAligner'] == 'ALIGN_COUNT'
+    assert 'metric.label.result="succeeded"' in missing['filter']
+    assert 'dryscope-vault-backup' in missing['filter']
 
 
 def test_rejected_scope_suggestion_matches_the_vertex_alert(preview, context, monkeypatch, capsys):

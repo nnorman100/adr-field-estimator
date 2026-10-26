@@ -11,6 +11,7 @@ PROJECT=alert-disaster-field-2026
 HOST=alert-disaster-field-2026.web.app # Firebase Hosting site; /api/** rewrites to the Cloud Run service
 SERVICE=alert-disaster-field-estimator
 SERVICE_REGION=us-west2
+VAULT_JOB=dryscope-vault-backup
 EMAIL='' DRY_RUN=0 CONFIRM=0 CONFIG_DIR=''
 
 usage() {
@@ -65,6 +66,9 @@ if [ "$DRY_RUN" = 0 ]; then
   done
   gcloud run services describe "$SERVICE" --region="$SERVICE_REGION" --project="$PROJECT" --format='value(metadata.name)' >/dev/null 2>&1 ||
     die "Cloud Run service $SERVICE was not found in $SERVICE_REGION."
+  if ! gcloud run jobs describe "$VAULT_JOB" --region="$SERVICE_REGION" --project="$PROJECT" --format='value(metadata.name)' >/dev/null 2>&1; then
+    echo "Warning: Cloud Run job $VAULT_JOB was not found in $SERVICE_REGION. The vault alert stays quiet until that job exists (docs/VAULT-BACKUP.md)." >&2
+  fi
 else
   ACCOUNT='(dry run: no sign-in checked)'
 fi
@@ -73,12 +77,13 @@ fi
 UPTIME_NAME='DryScope: API health'
 UPTIME_PATH=/api/health
 UPTIME_BODY=healthy # /api/health answers {"status": "healthy", ...}
-POLICIES=(site-down server-errors vertex-errors live-provider-errors email-send-failed email-delivery-failed drying-reminder-failed drying-summary-failed email-volume)
+POLICIES=(site-down server-errors vertex-errors live-provider-errors email-send-failed email-delivery-failed drying-reminder-failed drying-summary-failed email-volume vault-backup)
 
 cat <<EOF
 Project:  $PROJECT (signed in as $ACCOUNT)
 Alerts to: $EMAIL
 Site:     https://$HOST (Cloud Run service $SERVICE in $SERVICE_REGION)
+Vault job: $VAULT_JOB (alert only; deploy is docs/VAULT-BACKUP.md)
 
 This will create, or update if they already exist:
   - 1 email notification channel to $EMAIL
@@ -128,6 +133,9 @@ CHECK_ID=${CHECK_ID##*/}
 CLOUD_RUN="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\""
 RUN_METRIC="metric.type=\\\"run.googleapis.com"
 RUN_SERVICE="resource.type=\\\"cloud_run_revision\\\" AND resource.label.service_name=\\\"$SERVICE\\\""
+# Cloud Monitoring caps absence duration at 23h30m, and duration plus alignment at 25h.
+# 23h of silence plus a 2h bucket leaves a little room after the 11:15 UTC vault run.
+VAULT_JOB_FILTER="resource.type=\\\"cloud_run_job\\\" AND resource.label.job_name=\\\"$VAULT_JOB\\\""
 
 policy() { # file key, display name, documentation, conditions (JSON list), alert strategy extra
   cat >"$CONFIG_DIR/policy-$1.json" <<EOF
@@ -180,6 +188,16 @@ policy drying-summary-failed 'DryScope: drying summary rejected' \
 policy email-volume 'DryScope: daily email count high' \
   '**What it means:** the service sent more than 400 emails in its 24-hour window, near the Gmail limit.\n\n**What to do:** expect invitations or documents to be refused by Gmail until the window resets. Check for a send loop.' \
   "$(log_condition 'Daily email count passed the warning level' "$CLOUD_RUN AND jsonPayload.operation=\"email\" AND jsonPayload.status=\"daily_warning\"")" "$LOG_RATE"
+policy vault-backup 'DryScope: vault backup failed or missing' \
+  '**What it means:** the daily vault backup job failed, or has not succeeded in about 25 hours (23h of silence plus a 2h alignment bucket). The job runs at 11:15 UTC.\n\n**What to do:** open Cloud Run job dryscope-vault-backup in us-west2, read the vault_backup log, and run the job again. A green execution is not enough; match the log to vault object metadata (docs/VAULT-BACKUP.md).' \
+  "[{\"displayName\": \"Vault backup execution failed\", \"conditionThreshold\": {
+    \"filter\": \"$RUN_METRIC/job/completed_execution_count\\\" AND $VAULT_JOB_FILTER AND metric.label.result=\\\"failed\\\"\",
+    \"aggregations\": [{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_SUM\", \"crossSeriesReducer\": \"REDUCE_SUM\", \"groupByFields\": []}],
+    \"comparison\": \"COMPARISON_GT\", \"thresholdValue\": 0, \"duration\": \"0s\", \"trigger\": {\"count\": 1}}},
+    {\"displayName\": \"No successful vault backup in about 25 hours (23h silence + 2h bucket)\", \"conditionAbsent\": {
+    \"filter\": \"$RUN_METRIC/job/completed_execution_count\\\" AND $VAULT_JOB_FILTER AND metric.label.result=\\\"succeeded\\\"\",
+    \"aggregations\": [{\"alignmentPeriod\": \"7200s\", \"perSeriesAligner\": \"ALIGN_COUNT\"}],
+    \"duration\": \"82800s\", \"trigger\": {\"count\": 1}}}]" ''
 
 for p in "${POLICIES[@]}"; do
   file="$CONFIG_DIR/policy-$p.json"
