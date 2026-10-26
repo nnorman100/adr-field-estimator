@@ -323,8 +323,13 @@ def test_incremental_copy_and_a_later_generation():
     assert manifest['auth']['users'] == 1
     assert_private(logs, errors)
     assert manifest['evidence']['receipts'] == [
-        {'name': dest_of(item), 'generation': str(2001 + i), 'size': item['size'],
-         'crc32c': item['crc32c'], 'md5Hash': item['md5Hash']}
+        {
+            'name': dest_of(item),
+            'generation': str(2001 + i),
+            'size': item['size'],
+            'crc32c': item['crc32c'],
+            'md5Hash': item['md5Hash'],
+        }
         for i, item in enumerate([PHOTO_B, PHOTO_A])
     ]
 
@@ -649,9 +654,15 @@ def test_incomplete_rewrite_requires_a_token_and_respects_the_limit():
 
 def test_continuation_precondition_failure_is_not_already_present():
     body = json.dumps({'error': {'errors': [{'reason': 'conditionNotMet'}]}})
-    gateway = Gateway(rewrite_parts=3, fail={
-        'match': 'copy', 'on': 2, 'status': 412, 'body': body,
-    })
+    gateway = Gateway(
+        rewrite_parts=3,
+        fail={
+            'match': 'copy',
+            'on': 2,
+            'status': 412,
+            'body': body,
+        },
+    )
     code, logs, errors, gateway = run(gateway)
     assert code == 1 and logs == []
     assert errors[0]['stage'] == 'copy'

@@ -329,7 +329,8 @@ def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
         + urllib.parse.quote(VAULT_BUCKET, safe='')
         + '/o/'
         + dest
-        + '?ifGenerationMatch=0&sourceGeneration=' + obj['generation']
+        + '?ifGenerationMatch=0&sourceGeneration='
+        + obj['generation']
     )
     rewrite_token = None
     for _ in range(rewrite_limit):
