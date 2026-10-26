@@ -72,7 +72,7 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       ADR_BROWSER_PORT: '8876'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -90,9 +90,35 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
+      - id: playwright-version
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/playwright'].version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}-${{ hashFiles('package-lock.json') }}
       - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - name: Install Playwright system deps and browsers
+        run: |
+          retry() {
+            local attempt=1
+            local max_attempts=3
+            local delay=10
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Command failed after ${max_attempts} attempts: $*"
+                return 1
+              fi
+              echo "Attempt ${attempt} failed, retrying in ${delay}s: $*"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
+          }
+          retry npx playwright install-deps chromium webkit
+          retry npx playwright install chromium webkit
       - run: npm run test:browser -- --config=playwright.isolated.config.js
         env:
           ADR_BROWSER_ARTIFACTS: ${{ runner.temp }}/adr-browser
