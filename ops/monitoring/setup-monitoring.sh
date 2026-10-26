@@ -192,6 +192,6 @@ done
 
 cat <<EOF
 
-Done. Google sends a verification email to $EMAIL; confirm it or alerts are not delivered.
-Then send a test notification (docs/MONITORING.md): Monitoring > Alerting > Notification channels.
+Done. Email channels need no verification.
+To confirm $EMAIL receives alerts, use Send test notification (docs/MONITORING.md): Monitoring > Alerting > Notification channels.
 EOF

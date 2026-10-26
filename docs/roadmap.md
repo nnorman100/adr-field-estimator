@@ -2,30 +2,34 @@
 
 The approved plan (Oct 24, 2026) for making this repository the complete DryScope product. Any tool or person picking up the work starts at **Handoff**, then works the phases in order. `RELEASES.md` stays the one record of what is live; this file records what is planned and why.
 
-## Handoff (Oct 24, 2026)
-- **Repo state:** `master` includes PR #130 (jobs list tabs and search, `c1bc7d7`, merged Oct 24). No PRs are open. Not released: production is still commit `0b5dbae` (see `RELEASES.md`).
-- **Next for Nate:** Phase 0, items 1–3 (phone test 2, ADR company profile, invitation check). Approve a release of PR #130 together with the Phase 1 batch.
-- **Next for an agent:** Phase 0 item 6 (the local SMTP test), then Phase 1.2 (GPS stamp). The Phase 1.1 Help and read-only support-list follow-ups are implemented; Nate's phone check remains open. Each item is one small PR that passes the eight checks below.
+## Handoff (updated Oct 26, 2026)
+- **What is live:** read the newest rows of `RELEASES.md`. It is the one record of the serving backend revision, Hosting release and source commit; this file does not copy them. Check `git log origin/master` and `gh-axi pr list` for what has merged since.
+- **Merged and released:** all of Phase 1 and all six Phase 2 steps (see the Oct 24–25 rows in `RELEASES.md`). Phase 0 items 1–4 and 6 are not recorded as done; item 6 (the local SMTP timeout test fails on Windows, passes in CI) is still open.
+- **Merged on `master`, not yet released:** Phase 3a readiness checks and Live coaching (F1, #147), post-signing Drying watch (A1, #149), the AI gap fixes that gate estimates and signing on voice-note review (#148), and owner-approved priced extras (F2, #150). Compare each merge commit with the source commit of the newest `live` row in `RELEASES.md`; anything newer is unreleased.
+- **In flight:** O1 + O3 (job summaries and AI usage counts, PR #151) and the price editor. Check their PRs before touching the files they change (`public/app.js`, `backend/main.py`).
+- **Next for Nate:** phone checks that are still open (check 8 below, including a physical iPhone), the ADR company profile and invitation check (Phase 0 items 1–3), and a go for the next production release. Every production release needs his go.
+- **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
   - Agents may merge Low or Medium risk PRs with green CI. High risk PRs and every production deploy need Nate's go.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
-- **Local note (Windows):** `tests/test_workspaces.py::test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry` fails locally on `master` and passes in CI (Phase 0 item 6).
+- **Code pointers:** this file names functions, not line numbers, because lines drift. Search for the function.
 
 ## Context
 Nate wants one product, **DryScope**, built on the live field estimator (`nnorman100/adr-field-estimator`, local `C:\Users\nnorm\adr-field-estimator`). The Next.js app `nnorman100/Dryscope` (AI Studio build, Firebase `dryscope-d6f72`) is only a source of features. Its features are rebuilt in the field estimator's own style, not its look (PRs #115 and #117). "DryScope" is the name inside the app only: no repo rename and no domain (Nate, Oct 24). The Firebase project stays `alert-disaster-field-2026`.
 
 Goal: finish the Dryscope ports Nate picked, then build the first missing VISION.md piece he chose, **delivery after signing**.
 
-## Where we are (Oct 24, 2026)
-- Live: backend `00065-bat`, Hosting `1792708536426000`, commit `0b5dbae` (`RELEASES.md`). Master is `a6d1794`. There are no open PRs or issues.
+## Where we are (Oct 26, 2026)
+- Deployed state lives only in `RELEASES.md`. As of this edit, `master` holds Phase 1, Phase 2 and the merged Phase 3a items listed in the Handoff; the Phase 3a items are not released.
 - Shipped Oct 19–22: walkthrough-first flow, owner logins, QR tags (#115), drying log with psychrometrics and thermal readings (#117), claim and loss details (#118), IICRC sizing (#119), photo shot list (#121), landing page at `/` with the app at `/app` (#124), built-in ADR branding removed (#127).
+- Shipped Oct 24–25: jobs list tabs and search (#130), GPS stamp (#134), address autocomplete and map (#136), copy to draft (#133), and Phase 2 document delivery through delivery status and Resend (#144).
 - Already ported or better in the field estimator, so skipped: dictation to scope, the Live bar, documents, superadmin, owner/office dashboards, new job intake, and Dryscope pricing (it doesn't match the workbook).
-- Never observed on a device: every release since Oct 18 was checked signed-out only. Still open: phone test 2 of the new features, a physical iPhone, a Google-account invitee, and invitation email in Gmail and Outlook. WebKit tests were not run locally.
-- ADR has no company profile or logo since #127; the app shows its name only.
-- Wiki notes `projects/adr-field-estimator.md` (stops at Oct 18) and `projects/dryscope.md` (calls the Next.js repo "the successor") are out of date.
+- Never observed on a device: releases have been checked signed-out only. Still open: phone checks of the newer features, a physical iPhone, a Google-account invitee, and invitation email in Gmail and Outlook. The local WebKit install is missing, so WebKit results come from CI.
+- ADR has no company profile or logo since #127; the app shows its name only until Nate uploads one (Phase 0 item 2).
+- Wiki notes `projects/adr-field-estimator.md` and `projects/dryscope.md` were last updated Oct 24 and do not cover the releases above.
 
 ## How every item ships
 - One small PR per item, each with a test that fails without the change (VISION "Proven before it is claimed").
@@ -63,8 +67,8 @@ Goal: finish the Dryscope ports Nate picked, then build the first missing VISION
 ## Phase 1: Port the four Dryscope features
 Source files are in `nnorman100/Dryscope`; read them with `gh api`. Rebuild each in the field estimator's static frontend (`public/*.js`, no build step) and Python backend (`backend/`).
 
-1. **Jobs list filters and search (S, Low risk).** Add status tabs with counts, and search by client, address or claim number on the company jobs list (`public/workspaces.js:420-470`, `public/app.js:~2575`). It filters on the device, over what `/api/inspections` and `/api/authorizations` already return. Status comes from the coordination record (`backend/workspace_api.py:226`). Totals use the server's `estimateLabel`, never a price worked out on the device. Reference: Dryscope `components/dashboards/TechPipelineDashboard.tsx`.
-   - **Status:** merged as PR #130 (`c1bc7d7`, Oct 24); not released yet.
+1. **Jobs list filters and search (S, Low risk).** Add status tabs with counts, and search by client, address or claim number on the company jobs list (the company jobs list in `public/workspaces.js` and `showJobs` in `public/app.js`). It filters on the device, over what `/api/inspections` and `/api/authorizations` already return. Status comes from the coordination record (see `backend/workspace_api.py`). Totals use the server's `estimateLabel`, never a price worked out on the device. Reference: Dryscope `components/dashboards/TechPipelineDashboard.tsx`.
+   - **Status:** merged as PR #130 (`c1bc7d7`, Oct 24) and released; see `RELEASES.md`.
    - **Follow-up before the Phase 1 release:** the Help how-to ("Find a job") for owner, office and estimator and the shared read-only support-list tabs and search are implemented (see [workspace list behavior](company-workspaces.md#company-documents-and-offline-drafts)). Nate still needs to try search on his phone (check 8).
 2. **GPS stamp on photos (S–M, Medium risk).** When a photo is taken, record `navigator.geolocation` with its accuracy and a source label ("device" or "not available"; never guess). Store it with the photo metadata in `backend/inspection_store.py` and the photo save path in `backend/main.py`. Print it in the photo moisture log (`public/documents.js`), plus a keyless Google Maps link. A failed or refused location fix is shown as missing, not hidden. Location is part of the evidence, so a signed record's GPS never changes. Reference: Dryscope `TechFieldDashboard.tsx` and the photo log column in `DocumentSuiteModal.tsx`.
    - **Older photos:** photos saved before this show "No location recorded". Nothing is backfilled.
@@ -72,9 +76,9 @@ Source files are in `nnorman100/Dryscope`; read them with `gh api`. Rebuild each
    - **Privacy:** never log coordinates. Nate approved the exact proposal wording on Oct 24, 2026: "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log." New proposals include it; saved signed documents remain unchanged. Include this owner approval in the GPS PR description.
    - **Permission:** the browser asks for location the first time. If the technician says no, photos still save, labeled "Location not shared".
 3. **Address autocomplete and job map (M, Medium risk; Maps key approved).**
-   - **Status (Oct 24, 2026):** implemented on branch `fm/dry-places`; not released. The key, the quota caps and the $25 budget alert are set up (recorded in [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map)); `scripts/deploy_backend.py` mounts the secret. Still open: Nate's phone check (check 8) and the Phase 1 release. Role access is defined in [company-workspaces.md](company-workspaces.md). Check 7: Nate approved the exact additional proposal wording: "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job." Newly generated proposals include it alongside the approved photo-location notice; saved signed documents remain unchanged.
+   - **Status:** merged and released; see `RELEASES.md`. The key, the quota caps and the $25 budget alert are set up (recorded in [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map)); `scripts/deploy_backend.py` mounts the secret. Still open: Nate's phone check (check 8). Role access is defined in [company-workspaces.md](company-workspaces.md). Check 7: Nate approved the exact additional proposal wording: "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job." Newly generated proposals include it alongside the approved photo-location notice; saved signed documents remain unchanged.
    - Add a backend proxy route, e.g. `/api/places/autocomplete` and `/api/places/details`, that calls the Places API (New). Keep the key in Secret Manager. Check the user's identity and membership, and cap calls per user per day like the other AI and API calls.
-   - The address field (`public/app.html:60`) suggests addresses and fills city, state, ZIP and coordinates. With no key it stays plain text.
+   - The address field in `public/app.html` suggests addresses and fills city, state, ZIP and coordinates. With no key it stays plain text.
    - Map: a static map image fetched through the backend, plus a keyless directions link. The browser never loads Google's scripts, which keeps VISION's same-origin rule.
    - Reference: Dryscope `components/maps/*` and `lib/maps-config.ts`.
    - **Key setup:** complete; see [firebase-isolation.md](firebase-isolation.md#address-suggestions-and-the-job-map) for the key, budget alert and quota caps.
@@ -92,9 +96,9 @@ Then release Phase 1, with a short phone check of the four features.
 Decisions (Nate, Oct 24): the emails hold **private links, not PDF attachments**. The crew lead gets **email now, with texting later**.
 
 Design:
-- **Delivery record:** a new sidecar holding one entry per recipient (homeowner, adjuster, crew lead) with its status: queued, sent, failed or skipped, plus the reason. It lives beside the job's coordination record, never inside the signed agreement. A retry sends only the entries that haven't been sent, so repeating it never sends a second copy. Gmail SMTP doesn't deduplicate (see `backend/workspaces.py:1478`).
-- **When it fires:** after a durable signing receipt, both on site (`POST /api/authorize`, `main.py:1183`) and by link (`POST /api/sign`, `main.py:1369`). If sending fails, the signature still stands. The job shows "Delivery failed: Resend".
-- **Sending:** reuse the invitation SMTP code (`send_invitation` and `send_smtp`, `backend/workspaces.py:1415-1530`). Pull the shared sending part into one function both callers use, and keep the existing secrets and deadline. Emails carry the company's branding and are signed off as "Powered by DryScope".
+- **Delivery record:** a new sidecar holding one entry per recipient (homeowner, adjuster, crew lead) with its status: queued, sent, failed or skipped, plus the reason. It lives beside the job's coordination record, never inside the signed agreement. A retry sends only the entries that haven't been sent, so repeating it never sends a second copy. Gmail SMTP doesn't deduplicate (see `send_smtp` in `backend/workspaces.py`).
+- **When it fires:** after a durable signing receipt, both on site (`POST /api/authorize`, `authorize_estimate` in `backend/main.py`) and by link (`POST /api/sign`, `sign_with_link` in `backend/main.py`). If sending fails, the signature still stands. The job shows "Delivery failed: Resend".
+- **Sending:** reuse the invitation SMTP code (`send_invitation` and `send_smtp` in `backend/workspaces.py`). Pull the shared sending part into one function both callers use, and keep the existing secrets and deadline. Emails carry the company's branding and are signed off as "Powered by DryScope".
 - **Private document links:** a new read-only token type (pattern: `backend/signing_links.py`). Each token is bound to one signed authorization and one set of documents, expires (30 days, which Nate can change), can be revoked, and works for more than one view. A new read-only view reuses `public/sign.html`/`sign.js` and `public/documents.js` rendering, with the signing area turned off and photos fetched through the token. The page is `noindex` and sends `Permissions-Policy: tools=()`, like `/sign`.
 - **Who gets what:**
   - Homeowner: the signed proposal and photo log.
@@ -108,10 +112,10 @@ Steps, each its own PR:
    - Count emails sent per day. When the count passes 400 (Gmail's limit is about 500), log a warning and show owners a notice.
    - Logs carry only the delivery ID, recipient role and status. Never the email address.
 2. Read-only document link and the read-only page.
-3. Homeowner email. Implemented, not released. Nate approved the wording "Email me a copy of my signed documents." Current checkbox behavior and delivery rules are described in [Document delivery](company-workspaces.md#document-delivery) and the [inspection workflow](../README.md#inspection-workflow).
-4. Adjuster email. Implemented, not released. Current recipient rules and document sets are described in [Document delivery](company-workspaces.md#document-delivery).
+3. Homeowner email. Merged and released. Nate approved the wording "Email me a copy of my signed documents." Current checkbox behavior and delivery rules are described in [Document delivery](company-workspaces.md#document-delivery) and the [inspection workflow](../README.md#inspection-workflow).
+4. Adjuster email. Merged and released. Current recipient rules and document sets are described in [Document delivery](company-workspaces.md#document-delivery).
 5. Crew-lead email and the delivery switch for each company.
-6. Delivery status and Resend. Implemented, not released, including the Help how-to "Sending documents". Current permissions, offline behavior and retry rules are described in [Document delivery](company-workspaces.md#document-delivery). Nate's real-phone check remains open.
+6. Delivery status and Resend. Merged and released (Oct 25), including the Help how-to "Sending documents". Current permissions, offline behavior and retry rules are described in [Document delivery](company-workspaces.md#document-delivery). Nate's real-phone check remains open.
 
 Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox's plus-addresses, then do one real ADR job with Nate.
 

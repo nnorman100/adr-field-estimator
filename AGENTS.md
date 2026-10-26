@@ -32,7 +32,7 @@ This document specifies the operational protocols, business rules, architectural
 - **Input**: Walkthrough transcript, timestamped photos, property address, year built, and equipment counts.
 - **Output**: Structured JSON strictly conforming to the 4-document claims hub schema:
   1. Official proposal, headed "[Company] · Official proposal" ("Proposal" tab; sheet-derived low–high estimate + e-signature).
-  2. Itemized Xactimate Line Items with waste factors.
+  2. Itemized claim (ADR scope codes, not Xactimate codes) with waste factors.
   3. Formal IICRC S500 / S520 insurance claim defense letter.
   4. Photo Moisture Audit Log.
 - Configure models with `AUDIT_MODEL`, `OCR_MODEL` and `LIVE_MODEL`; verify them in the dedicated project before enabling a different model. Pricing and mandatory wording are server calculations, never model output.
