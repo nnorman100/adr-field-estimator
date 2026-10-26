@@ -618,7 +618,10 @@ async function api(path, options = {}) {
   }
 }
 async function jsonApi(path, method = 'GET', body) {
-  return (
+  const id = state.draft?.inspection_id,
+    uid = state.user?.uid,
+    workspace = window.WorkspaceUI?.context();
+  const result = await (
     await api(path, {
       method,
       ...(body === undefined
@@ -626,6 +629,24 @@ async function jsonApi(path, method = 'GET', body) {
         : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
   ).json();
+  const route = path.split('?')[0],
+    jobPath = '/api/jobs/' + encodeURIComponent(id),
+    inspectionPath = '/api/inspections/' + encodeURIComponent(id),
+    belongs =
+      body?.inspection_id === id ||
+      route === inspectionPath ||
+      route.startsWith(inspectionPath + '/') ||
+      route.startsWith(jobPath + '/');
+  if (
+    id &&
+    id === state.draft?.inspection_id &&
+    uid === state.user?.uid &&
+    workspace === window.WorkspaceUI?.context() &&
+    belongs &&
+    (method !== 'GET' || route === jobPath + '/delivery')
+  )
+    window.InsightUI?.job(true);
+  return result;
 }
 const roomWrites = new Set();
 async function writeRoom(photo, request) {
@@ -645,8 +666,11 @@ function absorb(record) {
     (!record.audit || record.audit.revision !== record.revision)
   )
     invalidate();
+  const insightChanged = state.record?.revision !== record.revision;
   state.record = record;
   if (!record.audit) state.draft.homeowner_link_pending = false;
+
+  window.InsightUI?.job(insightChanged);
   for (const remote of record.photos) {
     const photo = state.draft.photos.find((p) => p.id === remote.id);
     if (!photo) {
@@ -759,6 +783,7 @@ function clearDisplayedInspection() {
   $('retrySavedEvidence').hidden = true;
   window.DryingLog?.clear();
   window.DryingWatch?.clear();
+  window.InsightUI?.reset();
   renderPhotos();
   window.TagsUI?.render();
   renderSaveStatus();
@@ -2548,6 +2573,7 @@ async function openNew(data = null, photos = []) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
+  window.InsightUI?.job();
   renderNotes();
   drainQueue();
 }
@@ -2637,6 +2663,7 @@ async function restoreDraft(id) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
+  window.InsightUI?.job(true);
   processNotes();
   drainQueue();
 }
@@ -2730,6 +2757,14 @@ function openHelp() {
         topic.remove();
         continue;
       }
+    }
+    if (
+      topic.dataset.helpTopic === 'insight' &&
+      !window.InsightUI?.enabled('job_summary') &&
+      !window.InsightUI?.enabled('ai_usage')
+    ) {
+      topic.remove();
+      continue;
     }
     if (topic.dataset.helpTopic === 'drying-watch' && !window.DryingWatch?.enabled()) {
       topic.remove();
@@ -2892,6 +2927,7 @@ async function restoreSigned(id) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
+  window.InsightUI?.job(true);
   const draft = state.draft,
     current = () => state.user?.uid === uid && state.signed === record && state.draft === draft;
   let missing = 0;

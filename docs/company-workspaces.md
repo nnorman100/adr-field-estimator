@@ -146,3 +146,8 @@ settings, signed-job actions, offline behavior and retention.
 ## Priced additional work
 
 See [Priced additional work](priced-extras.md) for company rate settings, permissions, the field workflow, immutable approval snapshots, offline behavior and release gates.
+
+## Internal job summaries and AI counts (rollout off)
+
+See [Job summaries and usage counts](job-insights.md) for feature switches, role permissions,
+audited support access and read-only boundaries.

@@ -956,3 +956,80 @@ def test_extras_approval_is_atomic_private_and_revision_bound():
             == 403
         )
     assert first.get_inspection('owner', ID)['data']['extras'][0]['approval']['total'] == '118.65'
+
+
+def test_insight_cache_transaction_rechecks_facts_access_and_expiry(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from backend import ai_features
+    from backend.insights import Insights, JobSummary
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', frozenset({'job_summary', 'ai_usage'}))
+    first, second = instances(CompanyInspectionStore)
+    seed_company(first.db)
+    first.create_inspection('owner', ID, data())
+    readers = [Insights(first), Insights(second)]
+    before = stored(first.db, 'inspections/' + ID)
+    current = readers[0].view('owner', ID)
+    selection = JobSummary(topics=['rooms', 'equipment'])
+    results = concurrently(
+        [lambda r=r: r.save('owner', ID, current['facts_hash'], selection) for r in readers]
+    )
+    outcomes(results, Conflict)
+    readers[0].save('owner', ID, current['facts_hash'], selection)
+    cached = stored(first.db, '_job_insights/' + ID)
+    assert cached['company_id'] == 'adr'
+    assert cached['expire_at'] - datetime.fromisoformat(cached['generated_at']) == timedelta(
+        days=30
+    )
+    assert readers[1].view('owner', ID)['narrative'] == cached['narrative']
+    assert stored(first.db, 'inspections/' + ID) == before
+    # A source update between generation and commit invalidates the candidate.
+    first.db.document('inspections/' + ID).update({'data.air_movers': 9})
+    with pytest.raises(Conflict):
+        readers[1].save('owner', ID, current['facts_hash'], selection)
+    assert stored(first.db, '_job_insights/' + ID) == cached
+    current = readers[1].view('owner', ID)
+    assert current['stale'] and current['narrative'] is None
+    readers[1].save('owner', ID, current['facts_hash'], selection)
+    first.db.document('_job_insights/' + ID).update(
+        {'expire_at': datetime.now(timezone.utc) - timedelta(seconds=1)}
+    )
+    assert readers[0].view('owner', ID)['narrative'] is None
+    # Emulators do not execute TTL deletion; simulate that lifecycle explicitly.
+    first.db.document('_job_insights/' + ID).delete()
+    assert readers[0].view('owner', ID)['narrative'] is None
+    readers[1].save('owner', ID, current['facts_hash'], selection)
+    for token in (browser_token('owner'), browser_token('owner', superadmin=True)):
+        for method, path, body in [
+            ('GET', '_job_insights/' + ID, None),
+            ('GET', '_job_insights', None),
+            ('PATCH', '_job_insights/' + ID, {'fields': {'narrative': {'stringValue': 'forged'}}}),
+            ('DELETE', '_job_insights/' + ID, None),
+        ]:
+            assert browser_request(method, path, token, body) == 403
+    first.db.document('_memberships/owner').update({'status': 'disabled'})
+    with pytest.raises(AccessDenied):
+        readers[0].save('owner', ID, current['facts_hash'], selection)
+    with pytest.raises(AccessDenied):
+        readers[1].view('owner', ID)
+
+
+def test_job_summary_daily_limit_and_usage_reads_share_transactional_counters(clock):
+    first, second = instances()
+    first.db.document('_limits/owner').set({'job_summary_day': {'start': clock[0], 'count': 59}})
+    admitted = len(
+        outcomes(
+            concurrently([lambda s=s: s.quota('owner', 'job_summary', 6) for s in (first, second)])
+        )
+    )
+    assert admitted <= 1
+    if not admitted:
+        first.quota('owner', 'job_summary', 6)
+    before = stored(first.db, '_limits/owner')
+    assert second.usage('owner')['job_summary'] == dict(used=60, limit=60, remaining=0)
+    with pytest.raises(Limited):
+        second.quota('owner', 'job_summary', 6)
+    assert stored(first.db, '_limits/owner') == before
+    clock[0] += 86400
+    assert first.usage('owner')['job_summary'] == dict(used=0, limit=60, remaining=60)
+    assert stored(first.db, '_limits/owner') == before

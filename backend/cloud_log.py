@@ -9,6 +9,7 @@ LOG_FIELDS = frozenset(
     {
         'model',
         'operation',
+        'cache_hit',
         'elapsed_ms',
         'duration_ms',
         'timeout_ms',

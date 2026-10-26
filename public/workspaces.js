@@ -297,6 +297,7 @@ window.WorkspaceUI = (() => {
     $('dashboardProfile').hidden = !can('profile_manage');
     $('dashboardAdmin').hidden = !state.session.superadmin;
     branding();
+    window.InsightUI?.account();
     policy();
   }
   async function refresh() {
@@ -375,6 +376,7 @@ window.WorkspaceUI = (() => {
       );
     content.append(grid);
     window.DryingWatch?.dashboard(content);
+    window.InsightUI?.usage(content);
     if (state.session.role) {
       const card = node('section', undefined, 'dashboard-card');
       card.append(
@@ -466,7 +468,7 @@ window.WorkspaceUI = (() => {
   // Tabs with counts, one search box and the job rows, shared by the company jobs list and the
   // read-only support view. Rows are { id, address, customer, claim, label, open }; `more` says
   // whether older drafts or agreements remain unloaded.
-  function jobBrowser(content, rows, more) {
+  function jobBrowser(content, rows, more, company = null) {
     const filters = { tab: 'all', query: '' };
     const tabs = node('nav', undefined, 'job-tabs'),
       search = node('input'),
@@ -502,19 +504,24 @@ window.WorkspaceUI = (() => {
       partial.hidden = !remaining.drafts && !remaining.signed;
       const shown = ADRCore.filterJobs(all, filters);
       list.replaceChildren(
-        ...shown.map((row) =>
-          Object.assign(
-            button(
-              (row.address || 'Untitled job') +
-                '\n' +
-                [row.label, row.customer, row.claim && 'Claim ' + row.claim]
-                  .filter(Boolean)
-                  .join(' · '),
-              row.open,
+        ...shown.map((row) => {
+          const wrapper = node('article');
+          wrapper.append(
+            Object.assign(
+              button(
+                (row.address || 'Untitled job') +
+                  '\n' +
+                  [row.label, row.customer, row.claim && 'Claim ' + row.claim]
+                    .filter(Boolean)
+                    .join(' · '),
+                row.open,
+              ),
+              { className: 'job-link' },
             ),
-            { className: 'job-link' },
-          ),
-        ),
+          );
+          if (row.kind !== 'local') window.InsightUI?.row(wrapper, row.id, company);
+          return wrapper;
+        }),
       );
       if (!shown.length)
         list.append(node('p', all.length ? 'No jobs match.' : 'No jobs saved yet.'));
@@ -1130,10 +1137,12 @@ window.WorkspaceUI = (() => {
         drafts: !!drafts.next_cursor,
         signed: !!signed.next_cursor,
       }),
+      cid,
     );
     if (drafts.next_cursor || signed.next_cursor)
       older.append(node('p', 'Showing the 100 most recent drafts and agreements.'));
     render();
+    window.InsightUI?.usage(content, cid);
     window.DryingWatch?.dashboard(content, cid, (authId) => supportRecord(cid, authId, true));
     content.append(node('h2', 'Team'));
     const grid = node('div', undefined, 'dashboard-grid');
@@ -1186,6 +1195,7 @@ window.WorkspaceUI = (() => {
       node('p', SUPPORT_NOTE, 'support-note'),
       button('Back to support view', () => support(cid)),
     );
+    window.InsightUI?.support(content, job.job_id, cid);
     const facts = node('section', undefined, 'dashboard-card');
     facts.append(node('h2', record.address || scope.address || 'Untitled job'));
     for (const line of [

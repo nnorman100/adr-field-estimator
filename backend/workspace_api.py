@@ -25,6 +25,9 @@ try:
     from .drying_summary import DryingSummary, validate_summary, summary_options
     from .prompts import DRYING_SUMMARY_INSTRUCTIONS
     from .cloud_log import event
+    from .insights import Insights, JobSummary, validate_summary as validate_insight, sentences
+    from .ai_usage import company_usage
+    from .prompts import JOB_SUMMARY_INSTRUCTIONS
 except ImportError:
     from workspaces import (
         CompanyCreate,
@@ -45,6 +48,9 @@ except ImportError:
     from drying_summary import DryingSummary, validate_summary, summary_options
     from prompts import DRYING_SUMMARY_INSTRUCTIONS
     from cloud_log import event
+    from insights import Insights, JobSummary, validate_summary as validate_insight, sentences
+    from ai_usage import company_usage
+    from prompts import JOB_SUMMARY_INSTRUCTIONS
 
 
 OWNER_LOGIN_FAILED = 'The owner login could not be created. Try again or contact support.'
@@ -92,6 +98,66 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     # The temporary-password change is the one route a locked account can use.
     live_account = Security(account, scopes=live)
     failure_message = Depends(failure_for)
+
+    def ai_store(store, feature):
+        if not ai_features.enabled(feature) or not getattr(store, 'workspaces', None):
+            raise HTTPException(404, 'This AI feature is not enabled.')
+        return store
+
+    @app.get('/api/jobs/{job_id}/insight')
+    async def job_insight(
+        job_id: str, facts_only: bool = False, claims=live_identity, store=Depends(get_store)
+    ):
+        try:
+            from . import main as bm
+        except ImportError:
+            import main as bm
+        insight = Insights(ai_store(store, 'job_summary'))
+        current = await stored(insight.view, claims['uid'], job_id)
+        event('Job insight read', operation='job_summary', cache_hit=bool(current['narrative']))
+        if facts_only or current['narrative']:
+            return current
+        await stored(store.quota, claims['uid'], 'job_summary', 6)
+        pack = {
+            k: v for k, v in current['facts'].items() if k not in ('customer', 'address', 'rooms')
+        }
+        result = await bm.generate(
+            JobSummary,
+            JOB_SUMMARY_INSTRUCTIONS
+            + '\n'
+            + json.dumps(dict(facts=pack, topics=list(sentences(pack)))),
+            bm.AUDIT_MODEL,
+            'job_summary',
+            current['job_id'],
+            thinking_level='LOW',
+            timeout=25,
+        )
+        try:
+            validate_insight(result, current['facts'])
+        except ValueError:
+            event('Vertex AI call', logging.ERROR, operation='job_summary', outcome='invalid')
+            raise HTTPException(502, 'Could not write the summary. Retry.') from None
+        return await stored(insight.save, claims['uid'], job_id, current['facts_hash'], result)
+
+    @app.get('/api/admin/companies/{company_id}/jobs/{job_id}/insight')
+    async def support_insight(
+        company_id: str, job_id: str, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(workspace(store).support_company, claims['uid'], company_id)
+        return await stored(
+            Insights(ai_store(store, 'job_summary')).view, claims['uid'], job_id, company_id
+        )
+
+    @app.get('/api/companies/{company_id}/ai-usage')
+    async def ai_usage(company_id: str, claims=live_identity, store=Depends(get_store)):
+        return await stored(company_usage, ai_store(store, 'ai_usage'), claims['uid'], company_id)
+
+    @app.get('/api/admin/companies/{company_id}/ai-usage')
+    async def support_ai_usage(company_id: str, claims=live_identity, store=Depends(get_store)):
+        await stored(workspace(store).support_company, claims['uid'], company_id)
+        return await stored(
+            company_usage, ai_store(store, 'ai_usage'), claims['uid'], company_id, True
+        )
 
     def monitoring(store):
         if not ai_features.enabled('drying_watch') or not getattr(store, 'workspaces', None):
