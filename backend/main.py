@@ -842,6 +842,11 @@ async def session_info(staff=Depends(current_staff)):
         result['email_notice'] = actor['role'] == 'owner' and await stored(
             get_job_store().workspaces.email_notice
         )
+    if ai_features.enabled('ai_usage'):
+        try:
+            result['quota'] = await stored(get_job_store().usage, staff['uid'])
+        except HTTPException:
+            result['quota'] = None
     return result
 
 

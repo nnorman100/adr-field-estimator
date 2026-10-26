@@ -33,6 +33,7 @@ DAILY_LIMITS = {
     'audit': 60,
     'scope': 120,
     'drying_summary': 60,
+    'job_summary': 60,
     'drying_action': 120,
     'drying_reminder': 60,
     'live': 40,
@@ -747,6 +748,28 @@ class InspectionStore(JobStore):
             raise Conflict(
                 'The scope changed or requires review. Complete a new audit before signing.'
             )
+
+    def usage(self, uid):
+        """Read paid-operation counts without reserving slots or changing window start times."""
+        snapshot = self.db.collection('_limits').document(uid).get()
+        counters = snapshot.to_dict() if snapshot.exists else {}
+        moment = time.time()
+        result = {}
+        for operation in (
+            'ocr',
+            'audit',
+            'scope',
+            'live',
+            'transcribe',
+            'drying_summary',
+            'job_summary',
+        ):
+            counter = counters.get(operation + '_day') or {}
+            active = 0 <= moment - counter.get('start', 0) < 86400
+            used = max(0, int(counter.get('count', 0))) if active else 0
+            limit = DAILY_LIMITS[operation]
+            result[operation] = dict(used=used, limit=limit, remaining=max(0, limit - used))
+        return result
 
     def quota(self, uid, action, maximum=None, ttl=None):
         """ttl sets expire_at, the _limits TTL field, so an idle counter document is deleted."""

@@ -155,6 +155,8 @@ def matches(filter_text, entry):
     'key,message,fields',
     [
         ('vertex-errors', 'Vertex AI call', {'operation': 'audit'}),
+        ('vertex-errors', 'Vertex AI call', {'operation': 'job_summary'}),
+        ('vertex-errors', 'Vertex AI call', {'operation': 'job_summary', 'outcome': 'invalid'}),
         ('vertex-errors', 'Vertex AI call', {'operation': 'drying_watch'}),
         (
             'drying-reminder-failed',

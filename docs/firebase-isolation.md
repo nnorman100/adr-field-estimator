@@ -111,7 +111,7 @@ The backend rejects a different project ID or evidence bucket. Production never 
 
 ### Firestore TTL policies
 
-Four collection groups carry an `expire_at` Firestore TTL field. Each expiry is also enforced in code on every use, so a record that has not been deleted yet is already refused; deletion only trims the leftovers. Firestore deletes asynchronously, typically within about a day of the time (not at it), and a policy is per collection group in the `(default)` database.
+Five collection groups carry an `expire_at` Firestore TTL field. Each expiry is also enforced in code on every use, so a record that has not been deleted yet is already refused; deletion only trims the leftovers. Firestore deletes asynchronously, typically within about a day of the time (not at it), and a policy is per collection group in the `(default)` database.
 
 | Collection group | Documents that carry `expire_at` | Value | Why deleting at that time is safe |
 | --- | --- | --- | --- |
@@ -119,10 +119,11 @@ Four collection groups carry an `expire_at` Firestore TTL field. Each expiry is 
 | `_signing_links` | every signing link | the link's expiry (7 days after creation), moved to 30 days after signing | The link is refused at `expires`, and for a signed link after the 30-day view window. A deleted link reads as unknown (404), and the job's pointer to it reads as `none`, so a new link can still be made. The signed agreement is a separate record. |
 | `_limits` | only per-address counters (`ip-<HMAC>`) | 1 hour after the address's last request | Every counter window is a minute, so an hour-idle counter holds nothing a limit needs. Per-user counters (AI, places, link creation) never set the field. |
 | `_document_links` | every document link | 30 days after creation, the link's expiry | A deleted link reads as unknown (404) and its pointer as `none`; the signed agreement is untouched. |
+| `_job_insights` | internal, regenerable job summaries | 30 days after generation | Expired summaries are ignored on reads even before TTL deletion. A missing cache is regenerated against current authorized facts; inspections and signed agreements are separate and unchanged. |
 
 A new collection group, or a new document in one of these groups, that sets `expire_at` needs the same review before its policy is enabled.
 
-`scripts/ensure_firestore_ttls.py` is the one owner-run step for all four policies. It always targets `alert-disaster-field-2026` and needs `gcloud` signed in with a Firestore admin role (`datastore.indexAdmin` or owner); the runtime service account does not hold one and this step grants no IAM.
+`scripts/ensure_firestore_ttls.py` is the one owner-run step for all five policies. It always targets `alert-disaster-field-2026` and needs `gcloud` signed in with a Firestore admin role (`datastore.indexAdmin` or owner); the runtime service account does not hold one and this step grants no IAM.
 
 ```powershell
 # Read-only: prints match or missing per policy; exits 1 if any is missing (2 if gcloud failed).

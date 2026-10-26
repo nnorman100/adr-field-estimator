@@ -54,6 +54,16 @@ async def identity(request: Request):
         if matched and fault.get(name):
             fault[name] -= 1
             raise HTTPException(503, 'Synthetic saved evidence load failure')
+    if (
+        request.url.path.endswith('/insight')
+        and not request.query_params.get('facts_only')
+        and fault.get('job_summary')
+    ):
+        fault['job_summary'] -= 1
+        raise HTTPException(502, 'Synthetic provider failure')
+    if request.url.path.endswith('/ai-usage') and fault.get('ai_usage'):
+        fault['ai_usage'] -= 1
+        raise HTTPException(503, 'Synthetic usage failure')
     if request.url.path.endswith('/drying-watch/summary') and fault.get('drying_summary'):
         fault['drying_summary'] -= 1
         raise HTTPException(502, 'Synthetic provider failure')
@@ -96,6 +106,8 @@ CLAIM_WORDS = 'Synthetic Mutual claim number CLM 0042 77.'
 
 async def generate(**kwargs):
     schema = kwargs['config'].response_schema
+    if isinstance(schema, type) and schema.__name__ == 'JobSummary':
+        return SimpleNamespace(text=json.dumps({'topics': ['rooms', 'equipment', 'review']}))
     if schema.__name__ == 'DryingSummary' if isinstance(schema, type) else False:
         from backend.drying_summary import summary_options
 
@@ -497,8 +509,8 @@ def worker():
         (ROOT / 'public/sw.js')
         .read_text()
         .replace(
-            "const CACHE='dryscope-extras-v1-'+VERSION;",
-            "const CACHE='dryscope-extras-v1-'+VERSION+'" + worker_suffix + "';",
+            "const CACHE='dryscope-o1-o3-'+VERSION;",
+            "const CACHE='dryscope-o1-o3-'+VERSION+'" + worker_suffix + "';",
         ),
         media_type='text/javascript',
         headers={'Cache-Control': 'no-store'},

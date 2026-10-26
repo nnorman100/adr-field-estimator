@@ -1,0 +1,645 @@
+[
+  {
+    "name": "empty draft",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "rooms",
+        "review"
+      ]
+    },
+    "expected": "Draft scope. 0 affected rooms; categories not recorded; 0 rooms recorded as mold. The scope review has not been saved.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "confirmed water job",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 2,
+      "categories": [
+        1,
+        2
+      ],
+      "mold_rooms": 0,
+      "air_movers": 4,
+      "dehumidifiers": 1,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": true,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "rooms",
+        "equipment"
+      ]
+    },
+    "expected": "Draft scope. 2 affected rooms; categories 1, 2; 0 rooms recorded as mold. Planned equipment: 4 air movers and 1 dehumidifier for 3 days.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "mold job",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 1,
+      "categories": [
+        3
+      ],
+      "mold_rooms": 1,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "sizing_status": "not_applicable",
+      "sizing_flags": 0,
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "rooms",
+        "sizing"
+      ]
+    },
+    "expected": "Draft scope. 1 affected room; categories 3; 1 room recorded as mold. The drying equipment check does not apply to the recorded rooms.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "signed job delivering",
+    "facts": {
+      "version": 1,
+      "status": "signed",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 1,
+        "sending": 1,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 1
+      },
+      "delivery_recorded": true
+    },
+    "valid": {
+      "topics": [
+        "delivery"
+      ]
+    },
+    "expected": "Signed agreement. Document delivery: 1 queued, 1 sending, 0 sent, 0 failed, 1 skipped.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "signed job stalled",
+    "facts": {
+      "version": 1,
+      "status": "signed",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "monitoring_status": "active",
+      "monitoring_flags": [
+        "stalled",
+        "overdue"
+      ],
+      "day_number": 4,
+      "planned_days": 3,
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "monitoring"
+      ]
+    },
+    "expected": "Signed agreement. Day 4 of 3 signed days: monitoring active; stalled readings, reading overdue.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "unpriced work",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": true,
+      "unpriced_count": 2,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "review"
+      ]
+    },
+    "expected": "Draft scope. The scope review lists 2 unpriced items.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "insurance claim with adjuster",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": true,
+      "adjuster_recorded": true,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "claim"
+      ]
+    },
+    "expected": "Draft scope. Insurance claim details are recorded; adjuster details are recorded.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "copied job",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 1,
+      "categories": [
+        2
+      ],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 3,
+      "unverified_photos": 1,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "evidence",
+        "review"
+      ]
+    },
+    "expected": "Draft scope. 3 photos; 1 awaiting reading verification. The scope review has not been saved.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "legacy without claim",
+    "facts": {
+      "version": 1,
+      "status": "signed",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": null,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "claim",
+        "equipment"
+      ]
+    },
+    "expected": "Signed agreement. Insurance claim details are not recorded. Planned equipment: 0 air movers and 0 dehumidifiers; drying days not recorded.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  },
+  {
+    "name": "office created empty job",
+    "facts": {
+      "version": 1,
+      "status": "draft",
+      "revision": 1,
+      "customer": "Synthetic customer",
+      "address": "Synthetic address",
+      "room_count": 0,
+      "categories": [],
+      "mold_rooms": 0,
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "photo_count": 0,
+      "unverified_photos": 0,
+      "claim_recorded": false,
+      "adjuster_recorded": false,
+      "reviewed": false,
+      "unpriced_count": 0,
+      "scope_confirmed": false,
+      "delivery": {
+        "queued": 0,
+        "sending": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0
+      },
+      "readiness_gaps": 5,
+      "delivery_recorded": false
+    },
+    "valid": {
+      "topics": [
+        "readiness",
+        "claim"
+      ]
+    },
+    "expected": "Draft scope. Readiness: 5 advisory gaps. Insurance claim details are not recorded.",
+    "invalid": [
+      {
+        "text": "Charge $999. Work completed."
+      },
+      {
+        "topics": [
+          "rooms",
+          "rooms"
+        ]
+      },
+      {
+        "topics": [
+          "unknown"
+        ]
+      },
+      {
+        "topics": [
+          "rooms"
+        ],
+        "text": "safe to occupy"
+      },
+      {
+        "topics": []
+      }
+    ]
+  }
+]

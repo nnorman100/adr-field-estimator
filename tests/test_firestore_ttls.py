@@ -53,6 +53,7 @@ ALL_ACTIVE = {group: 'ACTIVE' for group in ttls.COLLECTION_GROUPS}
 
 def test_the_policies_cover_exactly_the_documented_collection_groups():
     assert list(ttls.COLLECTION_GROUPS) == [
+        '_job_insights',
         '_live_resume',
         '_signing_links',
         '_limits',
@@ -67,8 +68,8 @@ def test_the_check_is_read_only_and_reports_match_and_missing():
     states = {**ALL_ACTIVE, '_limits': None, '_document_links': 'NEEDS_REPAIR'}
     missing = ttls.ensure(False, fake_gcloud(states), enabled.append, lines.append)
     assert missing == 2 and enabled == []
-    assert [line.split()[0] for line in lines] == ['match', 'match', 'missing', 'missing']
-    assert 'MISSING' in lines[2] and 'NEEDS_REPAIR' in lines[3]
+    assert [line.split()[0] for line in lines] == ['match', 'match', 'match', 'missing', 'missing']
+    assert 'MISSING' in lines[3] and 'NEEDS_REPAIR' in lines[4]
 
 
 def test_a_policy_that_is_still_backfilling_counts_as_in_place():
@@ -87,18 +88,30 @@ def test_apply_enables_only_the_missing_policies_and_a_rerun_changes_nothing():
 
     lines = []
     assert ttls.ensure(True, fake_gcloud(states), enable, lines.append) == 0
-    assert enabled == ['_signing_links', '_limits', '_document_links']
-    assert [line.split()[0] for line in lines] == ['match', 'enabled', 'enabled', 'enabled']
+    assert enabled == ['_job_insights', '_signing_links', '_limits', '_document_links']
+    assert [line.split()[0] for line in lines] == [
+        'enabled',
+        'match',
+        'enabled',
+        'enabled',
+        'enabled',
+    ]
     enabled.clear()
     assert ttls.ensure(True, fake_gcloud(states), enable, lambda line: None) == 0
     assert enabled == []
-    assert list(states) == ['_live_resume', '_signing_links', '_limits', '_document_links']
+    assert list(states) == [
+        '_live_resume',
+        '_job_insights',
+        '_signing_links',
+        '_limits',
+        '_document_links',
+    ]
 
 
 def test_apply_reports_a_policy_that_did_not_take():
     lines = []
     missing = ttls.ensure(True, fake_gcloud({}), lambda group: None, lines.append)
-    assert missing == 4 and all(line.startswith('FAILED') for line in lines)
+    assert missing == 5 and all(line.startswith('FAILED') for line in lines)
 
 
 def test_the_enable_command_targets_one_group_in_the_dedicated_project(monkeypatch):

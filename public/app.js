@@ -645,8 +645,11 @@ function absorb(record) {
     (!record.audit || record.audit.revision !== record.revision)
   )
     invalidate();
+  const insightChanged = state.record?.revision !== record.revision;
   state.record = record;
   if (!record.audit) state.draft.homeowner_link_pending = false;
+
+  window.InsightUI?.job(insightChanged);
   for (const remote of record.photos) {
     const photo = state.draft.photos.find((p) => p.id === remote.id);
     if (!photo) {
@@ -759,6 +762,7 @@ function clearDisplayedInspection() {
   $('retrySavedEvidence').hidden = true;
   window.DryingLog?.clear();
   window.DryingWatch?.clear();
+  window.InsightUI?.reset();
   renderPhotos();
   window.TagsUI?.render();
   renderSaveStatus();
@@ -2548,6 +2552,7 @@ async function openNew(data = null, photos = []) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
+  window.InsightUI?.job();
   renderNotes();
   drainQueue();
 }
@@ -2637,6 +2642,7 @@ async function restoreDraft(id) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
+  window.InsightUI?.job();
   processNotes();
   drainQueue();
 }
@@ -2730,6 +2736,14 @@ function openHelp() {
         topic.remove();
         continue;
       }
+    }
+    if (
+      topic.dataset.helpTopic === 'insight' &&
+      !window.InsightUI?.enabled('job_summary') &&
+      !window.InsightUI?.enabled('ai_usage')
+    ) {
+      topic.remove();
+      continue;
     }
     if (topic.dataset.helpTopic === 'drying-watch' && !window.DryingWatch?.enabled()) {
       topic.remove();
@@ -2892,6 +2906,7 @@ async function restoreSigned(id) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
+  window.InsightUI?.job();
   const draft = state.draft,
     current = () => state.user?.uid === uid && state.signed === record && state.draft === draft;
   let missing = 0;

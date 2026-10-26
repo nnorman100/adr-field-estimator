@@ -23,6 +23,7 @@ from scripts.verify_common import PROJECT, gcloud
 FIELD = 'expire_at'
 # What each collection group holds that carries the field; see docs/firebase-isolation.md.
 COLLECTION_GROUPS = {
+    '_job_insights': 'Regenerable job summary caches; expire 30 days after generation.',
     '_live_resume': 'Live resume checkpoint, 600 s after the last update',
     '_signing_links': 'homeowner signing link: its expiry, then 30 days after signing',
     '_limits': 'per-address anonymous request counter, 1 hour after its last request',
