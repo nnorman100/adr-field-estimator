@@ -176,7 +176,7 @@ class InspectionStore(JobStore):
     def _commit_authorization(self, uid, record, body, tx):
         pass
 
-    def _check_documents(self, uid, record, tx=None):
+    def _check_documents(self, uid, record, tx=None, signing=True):
         pass
 
     def _company_id(self, uid, record, tx=None):
@@ -267,7 +267,7 @@ class InspectionStore(JobStore):
             record = transform(record)
             checked_metadata(record)
             record['updated_at'] = now()
-            self._check_documents(uid, record, tx)
+            self._check_documents(uid, record, tx, signing=False)
             self._sync_access(record, tx)
             tx.set(ref, record)
             return record

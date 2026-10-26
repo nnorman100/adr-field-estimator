@@ -581,19 +581,18 @@ def reusable_audit(record, revision, identity, customer, claim=None, price_basis
     """The saved audit still matches this revision, company profile, customer, claim details and
     proposal date. An unresolved voice note makes the saved audit stale.
 
-    A saved price basis must match the job pin. Audits from before price books have none and
-    stay reusable; this does not rewrite them.
+    The saved price basis must match the job pin. An audit without one is reusable only while
+    the job has no pin.
     """
     if not voice_notes_clear(record):
         return False
     audit = record.get('audit')
     if not audit or audit['revision'] != revision:
         return False
-    saved_basis = audit['documents'].get('price_basis')
-    if saved_basis and (
-        not price_basis
-        or saved_basis.get('content_sha256') != price_basis.get('content_sha256')
-        or saved_basis.get('version_id') != price_basis.get('version_id')
+    saved_basis, pinned = audit['documents'].get('price_basis') or {}, price_basis or {}
+    if (saved_basis.get('content_sha256'), saved_basis.get('version_id')) != (
+        pinned.get('content_sha256'),
+        pinned.get('version_id'),
     ):
         return False
     saved, current = audit['documents'].get('company_identity') or {}, identity or {}

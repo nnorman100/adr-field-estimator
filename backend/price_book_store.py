@@ -663,6 +663,12 @@ class PriceBookStore:
 
     def assert_pin(self, record, basis, tx=None):
         pin = self._pin(record['inspection_id'], tx)
+        if not basis:
+            if pin:
+                raise Conflict(
+                    'Run Finish & review again to price this draft from its saved prices.'
+                )
+            return
         self.basis_for(pin, basis.get('company_id'))
         if (
             pin.get('content_sha256') != basis.get('content_sha256')

@@ -518,3 +518,40 @@ def test_first_publication_after_migration_is_version_one(api, enabled):
     published = publish(client, rates(emergency_call='150.00'))
     assert published['sequence'] == 1
     assert published['published_at'] and published['effective_from']
+
+
+def test_flag_rollback_audit_cannot_be_reused_or_signed_on_a_pinned_job(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    publish(client, rates(emergency_call='150.00'))
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    pinned = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()['audit']['documents']['xactimate_scope'][0]['unit_price'] == 150
+    price_books.set_enabled(False)
+    edited = client.put(
+        '/api/inspections/' + ID, json={'expected_revision': 1, 'data': data('Edited property')}
+    )
+    assert edited.status_code == 200, edited.text
+    rollback = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 2})
+    assert rollback.status_code == 200, rollback.text
+    documents = rollback.json()['audit']['documents']
+    assert 'price_basis' not in documents
+    assert documents['xactimate_scope'][0]['unit_price'] == 133.95
+    current['uid'] = 'owner'
+    assert client.post('/api/authorize', json=sign_payload(rollback.json())).status_code == 409
+    price_books.set_enabled(True)
+    refused = client.post('/api/authorize', json=sign_payload(rollback.json()))
+    assert refused.status_code == 409, refused.text
+    assert not any(key.startswith('authorizations/') for key in store.db.records)
+    current['uid'] = 'estimator'
+    fresh = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 2})
+    assert fresh.status_code == 200, fresh.text
+    renewed = fresh.json()['audit']
+    assert renewed['proposal_hash'] != rollback.json()['audit']['proposal_hash']
+    assert renewed['documents']['price_basis']['rates']['emergency_call'] == '150.00'
+    assert renewed['documents']['xactimate_scope'][0]['unit_price'] == 150
+    current['uid'] = 'owner'
+    signed = client.post('/api/authorize', json=sign_payload(fresh.json()))
+    assert signed.status_code == 200, signed.text

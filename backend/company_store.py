@@ -106,14 +106,14 @@ class CompanyInspectionStore(InspectionStore):
     def _sync_access(self, record, tx):
         self.workspaces.sync_job(record, tx)
 
-    def _check_documents(self, uid, record, tx=None):
+    def _check_documents(self, uid, record, tx=None, signing=True):
         if record.get('audit'):
             documents = record['audit']['documents']
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
             self.workspaces.check_customer(record, documents['adr_estimate'], tx)
             self.workspaces.check_claim(record, documents, tx)
-            if documents.get('price_basis'):
-                self.workspaces.prices.assert_pin(record, documents['price_basis'], tx)
+            if signing or documents.get('price_basis'):
+                self.workspaces.prices.assert_pin(record, documents.get('price_basis'), tx)
 
     def _company_id(self, uid, record, tx=None):
         return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']
