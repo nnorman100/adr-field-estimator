@@ -957,6 +957,7 @@ def test_extras_approval_is_atomic_private_and_revision_bound():
         )
     assert first.get_inspection('owner', ID)['data']['extras'][0]['approval']['total'] == '118.65'
 
+
 def test_insight_cache_transaction_rechecks_facts_access_and_expiry(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from backend import ai_features
