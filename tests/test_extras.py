@@ -356,3 +356,29 @@ def test_manual_extra_without_link_covers_only_its_exact_description():
     assert make_documents(scope, [], ai)['signable']
     ai.unpriced_work = ['Move and reset toilet and replace plumbing']
     assert not make_documents(scope, [], ai)['signable']
+
+
+@pytest.mark.parametrize(
+    'source,description',
+    [
+        ('Move/reset toilet and replace supply line', 'Move/reset toilet'),
+        ('Remove damaged cabinetry ' + 'x' * 300 + ' and replace supply line', None),
+    ],
+    ids=['narrowed-description', 'truncated-prefill'],
+)
+def test_source_item_cannot_clear_work_beyond_approved_description(source, description):
+    extra = approved()
+    extra.update(unpriced_item=source, description=description or source[:300])
+    scope = InspectionData.model_validate(dict(data(), extras=[extra]))
+    ai = AIResult(summary='Proposed work', suggestions=[], unpriced_work=[source])
+    docs = make_documents(scope, [], ai)
+    assert docs['unpriced_work'] == [source]
+    assert not docs['signable']
+    ai.unpriced_work = [extra['description'], source]
+    docs = make_documents(scope, [], ai)
+    assert docs['unpriced_work'] == [source]
+    assert not docs['signable']
+    ai.unpriced_work = [extra['description']]
+    docs = make_documents(scope, [], ai)
+    assert docs['unpriced_work'] == []
+    assert docs['signable']

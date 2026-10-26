@@ -311,9 +311,7 @@ def make_documents(
     approved = [extra for extra in data.extras if extra.approval]
     for item, extra in zip((i for i in items if i['code'] == 'ADR-EXTRA'), approved):
         item['description'] = wording(extra, clause_company)
-    covered = {text for extra in approved for text in (extra.unpriced_item, extra.description)} - {
-        ''
-    }
+    covered = {extra.description for extra in approved}
     unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
     pending = sum(extra.approval is None for extra in data.extras)
     estimate_low, estimate_high = proposal_range(data, items)
