@@ -118,6 +118,32 @@ for (const stage of ['facts', 'summary']) {
   });
 }
 
+test('pending fact refresh preserves provider failure until a successful retry', async () => {
+  const h = harness();
+  h.ui.job();
+  h.requests[0].resolve(facts());
+  await h.flush();
+  h.ui.job(true);
+  h.requests[1].reject(Object.assign(Error('Provider unavailable'), { status: 502 }));
+  await h.flush();
+  assert.equal(h.requests[2].path, '/api/jobs/job/insight?facts_only=true');
+  h.requests[2].resolve({ ...facts(), fact_lines: ['Updated saved facts'] });
+  await h.flush();
+  assert.equal(h.text(), 'Could not write the summary. Retry.');
+  assert.equal(h.target.children.at(-2).children[1].children[0].text, 'Updated saved facts');
+  const retry = h.target.children.at(-1);
+  assert.equal(retry.text, 'Retry summary');
+  assert.equal(retry.disabled, false);
+  retry.click();
+  h.requests[3].resolve(facts());
+  await h.flush();
+  assert.equal(h.requests[4].path, '/api/jobs/job/insight');
+  h.requests[4].resolve(facts('Draft scope. Current facts.'));
+  await h.flush();
+  assert.equal(h.text(), 'Draft scope. Current facts.');
+  assert.equal(h.target.children.at(-1).text, 'Refresh');
+});
+
 test('cancelled cards do not drain pending revision loads', async () => {
   const h = harness();
   h.ui.job();

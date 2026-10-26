@@ -93,7 +93,7 @@ window.InsightUI = (() => {
       }
       const generation = ++epoch;
       busy = true;
-      error = '';
+      if (!factsOnly) error = '';
       render();
       try {
         const facts = await jsonApi(path + (company ? '' : '?facts_only=true'));
