@@ -11,6 +11,8 @@ import pytest
 
 from pathlib import Path
 from backend.cloud_log import event
+from tests.test_backend import context
+from tests.test_scope import change, prepared, provider, suggest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'ops/monitoring/setup-monitoring.sh'
@@ -187,7 +189,7 @@ def test_script_rejects_missing_or_invalid_email(args):
     assert result.returncode != 0
 
 
-@pytest.mark.parametrize('code', [500, 503, 599, 1006, 1011, 1013])
+@pytest.mark.parametrize('code', [429, 401, 403, 404, 500, 503, 599, 1006, 1011, 1013])
 def test_live_provider_failures_match(preview, capsys, code):
     policy = preview[1]['live-provider-errors']
     event(
@@ -213,7 +215,7 @@ def test_normal_live_endings_do_not_match(preview, capsys, outcome, code):
     assert not matches(condition, entry)
 
 
-@pytest.mark.parametrize('code', [None, 1000, 1001, 499, 600, 1503])
+@pytest.mark.parametrize('code', [None, 1000, 1001, 1008, 499, 600, 1503])
 def test_live_other_codes_do_not_match(preview, capsys, code):
     event(
         'Live session ended',
@@ -225,6 +227,28 @@ def test_live_other_codes_do_not_match(preview, capsys, code):
     entry = json.loads(capsys.readouterr().out)
     condition = preview[1]['live-provider-errors']['conditions'][0]['conditionMatchedLog']['filter']
     assert not matches(condition, entry)
+
+
+def test_rejected_scope_suggestion_matches_the_vertex_alert(preview, context, monkeypatch, capsys):
+    client, _store = context
+    prepared(client)
+    provider(monkeypatch, [change('air_movers', 99, quote='Invented statement')])
+    capsys.readouterr()
+    result = suggest(client)
+    assert result.status_code == 502, result.text
+    assert 'Invented' not in result.text
+    entries = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith('{') and 'Vertex AI call' in line
+    ]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry['severity'] == 'ERROR'
+    assert entry['outcome'] == 'validation' and entry['operation'] == 'scope'
+    assert 'Invented' not in json.dumps(entry)
+    condition = preview[1]['vertex-errors']['conditions'][0]['conditionMatchedLog']['filter']
+    assert matches(condition, entry)
 
 
 @pytest.mark.parametrize('code', [503, 1006])

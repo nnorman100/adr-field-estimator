@@ -41,6 +41,27 @@ DAILY_LIMITS = {
     'places_map': 60,
 }
 TRANSCRIPT_LIMIT = 80000
+NOTE_ID_RE = re.compile(r'^[a-f0-9]{32}$')
+
+
+def voice_notes_clear(record):
+    """True when every ledger row is resolved, or transcribed and reviewed.
+
+    No ledger means clear: a desk estimate and a transcript saved before the ledger
+    are not blocked. A pending, failed, or unreviewed note is not.
+    """
+    for row in record.get('voice_notes') or []:
+        status = row.get('status')
+        if status == 'resolved':
+            continue
+        if status == 'transcribed' and row.get('reviewed'):
+            continue
+        return False
+    return True
+
+
+def _note_row(record, note_id):
+    return next((row for row in record.get('voice_notes') or [] if row.get('id') == note_id), None)
 
 
 class Conflict(ValueError):
@@ -419,10 +440,16 @@ class InspectionStore(JobStore):
 
         return self._change(uid, inspection_id, revision, update, 'photos')
 
-    def append_transcript(self, uid, inspection_id, marker, block):
-        """Appends a transcribed offline voice note once; a retried note whose marker is already
-        in the transcript returns the record unchanged. It is an append, so a revision that moved
-        on (for example a finished OCR) does not refuse it."""
+    def _write_note(self, record, ref, tx):
+        checked_metadata(record)
+        self._sync_access(record, tx)
+        tx.set(ref, record)
+
+    def append_transcript(self, uid, inspection_id, marker, block, note_id=None):
+        """Appends a transcribed offline voice note once. A retried note whose marker is already
+        in the transcript does not append again and does not invent a ledger row for text stored
+        before the ledger; a pending or failed row for that note is settled to transcribed.
+        The append does not refuse a revision that moved on (for example a finished OCR)."""
         ref = self._ref(inspection_id)
 
         def update(tx):
@@ -430,22 +457,126 @@ class InspectionStore(JobStore):
             if record['status'] == 'signed':
                 raise Conflict('Signed inspections are immutable. Start a new inspection.')
             transcript = record['data'].get('technician_transcript', '')
-            if marker in transcript:
-                return record
-            joined = transcript + ('\n' if transcript and not transcript.endswith('\n') else '')
-            joined += block
-            if len(joined) > TRANSCRIPT_LIMIT:
-                raise ValueError(
-                    'Transcript storage is full. Type the remaining observations in notes.'
+            present = marker in transcript
+            changed = False
+            if not present:
+                joined = transcript + ('\n' if transcript and not transcript.endswith('\n') else '')
+                joined += block
+                if len(joined) > TRANSCRIPT_LIMIT:
+                    raise ValueError(
+                        'Transcript storage is full. Type the remaining observations in notes.'
+                    )
+                record['data']['technician_transcript'] = joined
+                record['data']['scope_confirmed'] = False
+                record.update(
+                    revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
                 )
-            record['data']['technician_transcript'] = joined
-            record.update(
-                revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
-            )
-            checked_metadata(record)
-            self._sync_access(record, tx)
-            tx.set(ref, record)
+                changed = True
+            if note_id and NOTE_ID_RE.fullmatch(note_id):
+                row = _note_row(record, note_id)
+                if not present:
+                    if record.get('voice_notes') is None:
+                        record['voice_notes'] = []
+                    if row is None:
+                        record['voice_notes'].append(
+                            {'id': note_id, 'status': 'transcribed', 'reviewed': False}
+                        )
+                        changed = True
+                    elif (
+                        not (row.get('status') == 'transcribed' and row.get('reviewed'))
+                        and row.get('status') != 'resolved'
+                    ):
+                        row['status'] = 'transcribed'
+                        if not row.get('reviewed'):
+                            row['reviewed'] = False
+                        changed = True
+                elif row and row.get('status') in ('pending', 'failed'):
+                    row['reviewed'] = bool(row.get('reviewed'))
+                    row['status'] = 'transcribed'
+                    changed = True
+            if changed:
+                self._write_note(record, ref, tx)
             return record
+
+        return self._atomic(update)
+
+    def update_voice_note(self, uid, inspection_id, note_id, action):
+        """reserve, fail, resolve or review one voice note. Returns (record, revision_moved).
+
+        reserve inserts a pending row and clears an audit. fail marks a pending or missing note
+        failed and does not downgrade a transcribed or resolved note. resolve accepts only a
+        pending or failed note. review accepts only a transcribed note and does not move the revision.
+        """
+        if not NOTE_ID_RE.fullmatch(note_id or ''):
+            raise ValueError('Voice note reference is not valid.')
+        if action not in ('reserve', 'fail', 'resolve', 'review'):
+            raise ValueError('Voice note action is not valid.')
+        ref = self._ref(inspection_id)
+
+        def update(tx):
+            record = self._owned(ref.get(transaction=tx), uid, 'scope', tx)
+            if record['status'] == 'signed':
+                raise Conflict('Signed inspections are immutable. Start a new inspection.')
+            row = _note_row(record, note_id)
+            moved = False
+
+            def rows():
+                if record.get('voice_notes') is None:
+                    record['voice_notes'] = []
+                return record['voice_notes']
+
+            def clear_audit():
+                nonlocal moved
+                record.update(
+                    revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
+                )
+                moved = True
+
+            if action == 'reserve':
+                if row is None:
+                    rows().append({'id': note_id, 'status': 'pending', 'reviewed': False})
+                    record['data']['scope_confirmed'] = False
+                    clear_audit()
+                    self._write_note(record, ref, tx)
+                return record, moved
+            if action == 'fail':
+                if row and row.get('status') in ('transcribed', 'resolved'):
+                    return record, False
+                if row is None:
+                    rows().append({'id': note_id, 'status': 'failed', 'reviewed': False})
+                elif row.get('status') != 'failed':
+                    row['status'] = 'failed'
+                    row['reviewed'] = False
+                if record.get('audit'):
+                    clear_audit()
+                self._write_note(record, ref, tx)
+                return record, moved
+            if action == 'resolve':
+                if row is None or row.get('status') not in ('pending', 'failed', 'resolved'):
+                    raise Conflict('This voice note is not waiting to be resolved.')
+                if row.get('status') == 'resolved':
+                    return record, False
+                row['status'] = 'resolved'
+                if record.get('audit'):
+                    clear_audit()
+                self._write_note(record, ref, tx)
+                return record, moved
+            marker = '[Offline voice note ' + note_id[:8]
+            if row is None:
+                if marker not in record['data'].get('technician_transcript', ''):
+                    raise Conflict('This voice note is not waiting for review.')
+                rows().append({'id': note_id, 'status': 'transcribed', 'reviewed': True})
+                self._write_note(record, ref, tx)
+                return record, False
+            if row.get('status') == 'resolved' or (
+                row.get('status') == 'transcribed' and row.get('reviewed')
+            ):
+                return record, False
+            if row.get('status') != 'transcribed':
+                raise Conflict('This voice note is not waiting for review.')
+            row['reviewed'] = True
+            self._write_note(record, ref, tx)
+            return record, False
 
         return self._atomic(update)
 
@@ -596,6 +727,8 @@ class InspectionStore(JobStore):
 
     @staticmethod
     def _signable(record, payload):
+        if not voice_notes_clear(record):
+            raise Conflict('Finish voice notes and review their transcripts before signing.')
         audit = record.get('audit')
         if (
             not audit

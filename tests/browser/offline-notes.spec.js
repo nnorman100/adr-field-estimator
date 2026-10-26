@@ -156,8 +156,17 @@ test('offline notes record on the phone, survive a reload, then fill the transcr
     '2 voice notes waiting to upload. They upload when you have signal.',
   );
 
-  // Back online: both notes upload, join the transcript, and the scope fill lists what is missing.
+  // Back online: both notes upload and join the transcript. Scope fill waits until the
+  // technician reviews that transcript.
   await context.setOffline(false);
+  await expect(page.locator('#technicianTranscript')).toHaveValue(
+    /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
+    { timeout: 20000 },
+  );
+  await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+  await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+  await page.locator('#reviewVoiceNotesWalk').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible({ timeout: 20000 });
   await expect(page.locator('#technicianTranscript')).toHaveValue(
     /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
@@ -352,6 +361,10 @@ test.describe('controlled voice-note uploads', () => {
     await expect(page.locator('#technicianTranscript')).toHaveValue(
       /^\[Offline voice note [0-9a-f]{8} · Room 1 · recorded .+ · transcribed later\]\nRoom 1, category 2, 80 square feet of drywall\.\n$/,
     );
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+    await page.locator('#reviewVoiceNotesWalk').click();
     await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
     // The note stays replayable on the phone.
     await walkthrough(page);
@@ -442,9 +455,7 @@ test.describe('controlled voice-note uploads', () => {
     );
     expect(await savedParts(page)).toBeLessThan(before);
   });
-  test('a draft save the server refuses leaves the voice note waiting instead of refused', async ({
-    page,
-  }) => {
+  test('a refused draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let refuse = true;
     await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>
@@ -463,21 +474,21 @@ test.describe('controlled voice-note uploads', () => {
     await page.locator('#typedNote').fill('Use 3 fans.');
     await page.locator('#addTypedNote').click();
     await page.locator('#recordNote').click();
+    await expect(page.locator('#message')).toContainText('Enter a valid address.');
+    expect(await savedParts(page)).toBe(0);
+    expect(await page.evaluate(() => !!notes.recorder)).toBe(false);
+    refuse = false;
+    await page.locator('#finishAudit').click();
+    await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(0);
+    await page.locator('#recordNote').click();
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
-    await expect(page.locator('#voiceNotes li')).toContainText(
-      'Not uploaded yet: The draft has not saved yet: Enter a valid address.',
-    );
-    await expect(page.locator('#notesQueue')).toHaveText('1 voice note waiting to upload.');
-    refuse = false;
-    await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await expect(page.locator('#voiceNotes li')).toContainText(
       'Added to the walkthrough transcript',
     );
   });
-  test('a draft save that loses its connection leaves the voice note waiting with the connection message', async ({
-    page,
-  }) => {
+  test('a lost draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let drop = true;
     await page.route(/\/api\/inspections\/ADR-INS-[0-9a-f]+$/, (route) =>
@@ -490,14 +501,16 @@ test.describe('controlled voice-note uploads', () => {
     await page.locator('#typedNote').fill('Use 3 fans.');
     await page.locator('#addTypedNote').click();
     await page.locator('#recordNote').click();
+    await expect(page.locator('#message')).toContainText(/Failed to fetch|Load failed/);
+    expect(await savedParts(page)).toBe(0);
+    expect(await page.evaluate(() => !!notes.recorder)).toBe(false);
+    drop = false;
+    await page.locator('#finishAudit').click();
+    await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(0);
+    await page.locator('#recordNote').click();
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
-    await expect(page.locator('#voiceNotes li')).toContainText(
-      'Not uploaded yet: no connection to the server, retrying',
-    );
-    await expect(page.locator('#notesQueue')).toHaveText('1 voice note waiting to upload.');
-    drop = false;
-    await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await expect(page.locator('#voiceNotes li')).toContainText(
       'Added to the walkthrough transcript',
     );
@@ -519,12 +532,14 @@ test.describe('controlled voice-note uploads', () => {
     await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
     await page.locator('#recordNote').click();
     await expect(page.locator('#voiceNotes li')).toContainText('Uploading and transcribing…');
+    const firstParts = await savedParts(page);
     await page.locator('#recordNote').click();
-    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    // The next recording waits for the serialized server reservation before capturing audio.
+    expect(await savedParts(page)).toBe(firstParts);
+    release();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(firstParts + 1);
     await page.locator('#recordNote').click();
     await expect(page.locator('#voiceNotes li')).toHaveCount(2);
-    await expect(page.locator('#voiceNotes li').nth(1)).toContainText('Waiting to upload');
-    release();
     await expect(page.locator('#voiceNotes li').nth(0)).toContainText(
       'Added to the walkthrough transcript',
     );
@@ -574,11 +589,14 @@ test.describe('controlled voice-note uploads', () => {
     await expect
       .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
       .toEqual(['done']);
-    // Reopening the first job shows the transcript and the note as added, with no conflict, and
-    // offers one tap to read it into the scope instead of filling the scope on its own.
+    // Reopening the first job shows the transcript and the note as added, with no conflict.
+    // Review comes first. The fill prompt is the one tap that reads it into the scope.
     await page.evaluate((id) => restoreDraft(id), first);
     await expect(page.locator('#conflictActions')).toBeHidden();
     await expect(page.locator('#technicianTranscript')).toHaveValue(/^\[Offline voice note /);
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await expect(page.locator('#notesFillScope')).toBeHidden();
+    await page.locator('#reviewVoiceNotes').click();
     const prompt = page.locator('#notesFillScope'),
       walkPrompt = page.locator('#notesFillScopeWalk'),
       text = '1 voice note transcribed - Fill scope and check for missing items';
@@ -680,7 +698,11 @@ test.describe('controlled voice-note uploads', () => {
     );
     await expect(page.locator('#technicianTranscript')).toHaveValue(noteBlock);
     await expect(page.locator('#conflictActions')).toBeHidden();
-    // The note reached the open job, so its scope is read as if the job had sent it.
+    // The note reached the open job. Review, then its scope is read as if the job had sent it.
+    await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+    await expect(page.locator('#reviewVoiceNotesWalk')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => notes.processing)).toBe(false);
+    await page.locator('#reviewVoiceNotesWalk').click();
     await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
     await expect(page.locator('#notesFillScope')).toBeHidden();
     expect(calls).toBe(1);

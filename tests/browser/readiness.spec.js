@@ -6,6 +6,7 @@ test.beforeEach(async ({ request }) => {
   await request.post('/__test/workspaces', { data: { enabled: true, ai_features: ['readiness'] } });
 });
 test.afterEach(async ({ request }) => {
+  await request.post('/__test/fault', { data: { uid: uid('estimator'), faults: {} } });
   await request.post('/__test/workspaces', { data: { enabled: false } });
 });
 async function open(page, role) {
@@ -96,8 +97,8 @@ test('offline list, failed audit retry, and flag off', async ({ page, context, r
   await request.post('/__test/fault', { data: { uid: uid('estimator'), faults: { audit: 1 } } });
   await page.locator('#finishAudit').click();
   // Newly known setup gap replaces offline unknown, so it is shown once.
-  if (await page.locator('#readinessDialog').isVisible())
-    await page.locator('#readinessContinue').click();
+  await expect(page.locator('#readinessDialog')).toBeVisible();
+  await page.locator('#readinessContinue').click();
   await expect(page.locator('#message')).toContainText(/retry|unavailable|fail/i);
   await page.locator('#finishAudit').click();
   await expect(page.locator('#documents')).toBeVisible();

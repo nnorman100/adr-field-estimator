@@ -22,8 +22,8 @@ Alert policies are billed per condition and uptime checks per run; at this size 
 | Uptime check `DryScope: API health` | Every 5 minutes from Iowa, Oregon and Virginia, `https://alert-disaster-field-2026.web.app/api/health` must return 200 containing `healthy`. This goes through Hosting's `/api/**` Cloud Run rewrite, so it tests the real public path. | Used by the next alert. |
 | `DryScope: health check failing` | The check fails from at least two regions for a minute. | Open the site, then the Cloud Run service `alert-disaster-field-estimator` (`us-west2`) and its latest revision. Roll traffic back if it began with a deploy. |
 | `DryScope: server errors` | More than 5 Cloud Run responses with a 5xx status in 10 minutes. | Filter Logs Explorer for the service at `severity>=ERROR`; roll back if it began with a deploy. |
-| `DryScope: Vertex AI call failed` | A log line `Vertex AI call` at ERROR (audit, OCR or scope model call failed or timed out). | Read `provider_status`, `provider_code` and `outcome` in the line; check Vertex AI quota and status if it repeats. Technicians see a retry message. |
-| `DryScope: Live provider failed` | A WARNING-or-higher Live event with `operation=live` and `provider_code` 500–599 (SDK error), 1006 (abnormal socket closure), 1011 (server error) or 1013 (try again later). | Check Vertex AI availability, quotas and the logged code; reconnect with the preserved draft. |
+| `DryScope: Vertex AI call failed` | A log line `Vertex AI call` at ERROR. That is an audit, OCR, scope or voice-transcription call that failed or timed out (transcription is operation `transcribe`), or a scope suggestion rejected by grounding checks (`outcome` `validation`). | Read `provider_status`, `provider_code` and `outcome` in the line; check Vertex AI quota and status if it repeats. Technicians see a retry message. |
+| `DryScope: Live provider failed` | A WARNING-or-higher Live event with `operation=live` and `provider_code` 429 (rate limit), 401, 403 or 404 (provider auth or model configuration), 500–599 (SDK error), 1006 (abnormal socket closure, also a provider timeout that had no code), 1011 (server error) or 1013 (try again later). | Check Vertex AI availability, quotas and the logged code; reconnect with the preserved draft. |
 | `DryScope: email send failed` | An ERROR log with `operation=email` and `status=send_failed` from invitation delivery. Only the failure class is logged. | Check email transport configuration, credentials and provider status, then retry the invitation. |
 | `DryScope: document email failed` | A log line `Delivery entry` with `operation=delivery` and `status=failed`. | Check the Gmail SMTP account, its app password and the daily limit. The entry stays retryable unless its outcome was unconfirmed. |
 | `DryScope: drying reminder failed` | A failed human-approved reminder (`operation=reminder`, `status=failed`). | Check the sender; retry only entries marked retryable. Unconfirmed sends cannot retry. |
@@ -32,7 +32,9 @@ Alert policies are billed per condition and uptime checks per run; at this size 
 
 The log alerts send at most one email an hour each and close themselves after 24 hours. They match only fields on the backend's allowlist (`LOG_FIELDS` in `backend/cloud_log.py`), which carries no prompts, addresses, links, tokens or coordinates. The document delivery alert stays quiet until document delivery is switched on.
 
-Normal Live endings (`finished`, `rollover`, `disconnected`, `closed`) emit INFO and do not trigger the Live provider alert. Other codes and failures without a provider code are outside this policy.
+Normal Live endings (`finished`, `rollover`, `disconnected`, `closed`) emit INFO and do not trigger the Live provider alert. Ordinary client auth and input rejections are logged without a provider code and do not page. Other provider codes are outside this policy. Not every AI failure alerts: only the `Vertex AI call` ERROR line and the Live provider codes above.
+
+After a release that changes these filters, run `bash ops/monitoring/setup-monitoring.sh` again. Re-running updates the policies in place by display name.
 
 ## Test it
 
