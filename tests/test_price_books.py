@@ -521,7 +521,7 @@ def test_first_publication_after_migration_is_version_one(api, enabled):
     assert published['published_at'] and published['effective_from']
 
 
-STANDALONE = '''
+STANDALONE = """
 import json, sys
 import price_books, price_book_store
 from workspaces import AccessDenied
@@ -568,7 +568,7 @@ except ValueError:
     outcomes.append('invalid')
 outcomes.append(books.reprice_preview('u', record)['after']['itemized'])
 print(json.dumps(outcomes))
-'''
+"""
 
 
 def test_owner_paths_run_in_the_deployed_top_level_layout():

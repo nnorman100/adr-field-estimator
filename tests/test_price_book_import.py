@@ -119,7 +119,9 @@ def test_excel_shared_strings_round_trip_and_edited_price():
         for info in source.infolist():
             archive.writestr(
                 info.filename,
-                ET.tostring(sheet) if info.filename == 'xl/worksheets/sheet1.xml' else source.read(info),
+                ET.tostring(sheet)
+                if info.filename == 'xl/worksheets/sheet1.xml'
+                else source.read(info),
             )
         archive.writestr('xl/sharedStrings.xml', ET.tostring(strings))
     book['emergency_call'] = '150.25'

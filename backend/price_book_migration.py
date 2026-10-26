@@ -225,7 +225,10 @@ def apply_plan(store, plan, write):
             current_version = (heads[company_id] or {}).get('latest_version_id')
             if current_version and current_version != row['version_id']:
                 raise RuntimeError('The company price book changed after planning.')
-            if row['action'] == 'create' and content_hash(planned_rates(company)) != row['content_sha256']:
+            if (
+                row['action'] == 'create'
+                and content_hash(planned_rates(company)) != row['content_sha256']
+            ):
                 raise RuntimeError('The company additional-work rate changed after planning.')
         eligible = []
         for row in plan['pins']:
@@ -238,18 +241,23 @@ def apply_plan(store, plan, write):
             if pin:
                 continue
             if (
-                not job or not inspection
+                not job
+                or not inspection
                 or job.get('company_id') != row['company_id']
                 or job.get('job_id') != identifier
                 or job.get('kind') not in (None, 'inspection')
-                or job.get('auth_exists') or job.get('status') == 'signed'
+                or job.get('auth_exists')
+                or job.get('status') == 'signed'
                 or inspection.get('status') == 'signed'
                 or (inspection.get('data') or {}).get('package_price') is not None
                 or _legacy_audit(inspection) != bool(row.get('audit_basis'))
             ):
                 raise RuntimeError('The draft changed after migration planning.')
             company = ws.read('_companies', row['company_id'], tx)
-            if planned_rates(company)['additional_work_hourly'] != row['rates']['additional_work_hourly']:
+            if (
+                planned_rates(company)['additional_work_hourly']
+                != row['rates']['additional_work_hourly']
+            ):
                 raise RuntimeError('The company additional-work rate changed after planning.')
             eligible.append((row, inspection))
         for row in plan['companies']:
