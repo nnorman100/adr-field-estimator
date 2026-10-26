@@ -2642,7 +2642,7 @@ async function restoreDraft(id) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
-  window.InsightUI?.job();
+  window.InsightUI?.job(true);
   processNotes();
   drainQueue();
 }
@@ -2906,7 +2906,7 @@ async function restoreSigned(id) {
   await window.WorkspaceUI?.editor();
   window.DryingLog?.load().catch(() => {});
   window.DryingWatch?.refresh().catch(() => {});
-  window.InsightUI?.job();
+  window.InsightUI?.job(true);
   const draft = state.draft,
     current = () => state.user?.uid === uid && state.signed === record && state.draft === draft;
   let missing = 0;
