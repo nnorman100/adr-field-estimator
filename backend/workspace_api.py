@@ -284,6 +284,12 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     async def profile(
         company_id: str, req: ProfileUpdate, claims=live_identity, store=Depends(get_store)
     ):
+        if req.profile.additional_work_rate is not None:
+            try:
+                from .main import extras_enabled
+            except ImportError:
+                from main import extras_enabled
+            extras_enabled()
         await stored(store.quota, claims['uid'], 'team', 20)
         return await stored(workspace(store).update_company, claims['uid'], company_id, req)
 

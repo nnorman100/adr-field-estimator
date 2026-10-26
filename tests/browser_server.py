@@ -47,6 +47,8 @@ async def identity(request: Request):
     fault = faults.get(uid, {})
     for name, matched in [
         ('evidence', '/evidence/' in request.url.path),
+        ('extra_approve', '/extras/' in request.url.path and request.url.path.endswith('/approve')),
+        ('extra_quote', request.url.path.endswith('/extras/quote')),
         ('record', request.method == 'GET' and request.url.path.startswith('/api/authorizations/')),
     ]:
         if matched and fault.get(name):
@@ -176,7 +178,11 @@ async def generate(**kwargs):
             'unpriced_work': (
                 ['One dehumidifier rental for 3 days was described but omitted from the form.']
                 if omitted
-                else []
+                else (
+                    ['Move and reset toilet']
+                    if 'Move and reset toilet' in inspection.get('technician_notes', '')
+                    else []
+                )
             ),
         }
         if schema is bm.AIResult
@@ -491,8 +497,8 @@ def worker():
         (ROOT / 'public/sw.js')
         .read_text()
         .replace(
-            "const CACHE='dryscope-a1-'+VERSION;",
-            "const CACHE='dryscope-a1-'+VERSION+'" + worker_suffix + "';",
+            "const CACHE='dryscope-extras-v1-'+VERSION;",
+            "const CACHE='dryscope-extras-v1-'+VERSION+'" + worker_suffix + "';",
         ),
         media_type='text/javascript',
         headers={'Cache-Control': 'no-store'},

@@ -872,6 +872,25 @@ window.WorkspaceUI = (() => {
         'license',
         'signoff',
       ].includes(key);
+    if (state.session.ai_features?.includes('priced_extras')) {
+      const rate = formField(
+        form,
+        'Additional work hourly rate ($/h)',
+        'additional_work_rate',
+        p.additional_work_rate ?? (cid === 'adr' ? '47.46' : ''),
+        'number',
+      );
+      rate.min = '0.01';
+      rate.max = '10000';
+      rate.step = '0.01';
+      rate.inputMode = 'decimal';
+      form.append(
+        node(
+          'p',
+          'Used when you approve additional work outside the price sheet. Approved and signed extras keep their saved rates.',
+        ),
+      );
+    }
     const logo = formField(form, 'Optional logo (PNG or JPEG, up to 1 MB)', 'logo', '', 'file');
     logo.accept = 'image/png,image/jpeg';
     if (can('delivery_manage')) {
@@ -909,6 +928,9 @@ window.WorkspaceUI = (() => {
     }
     submit(form, 'Save company details', async (values) => {
       const updated = { ...p };
+      delete updated.additional_work_rate;
+      if (values.get('additional_work_rate'))
+        updated.additional_work_rate = values.get('additional_work_rate');
       for (const key of ['name', 'address', 'phone', 'email', 'license', 'signoff'])
         if (values.has(key)) updated[key] = values.get(key);
       if (can('delivery_manage')) {
@@ -1196,6 +1218,31 @@ window.WorkspaceUI = (() => {
       );
     if (!scope.rooms?.length) rooms.append(node('p', 'No rooms entered.'));
     content.append(rooms);
+    if (scope.extras?.length) {
+      const extras = node('section', undefined, 'dashboard-card');
+      extras.append(node('h2', 'Additional work · read-only'));
+      for (const extra of scope.extras) {
+        const approval = extra.approval;
+        extras.append(
+          node(
+            'p',
+            extra.description +
+              ' · ' +
+              Number(extra.hours) +
+              ' h · ' +
+              (approval
+                ? '$' +
+                  approval.total +
+                  ' · Approved by ' +
+                  approval.accepted_by_name +
+                  ' on ' +
+                  approval.accepted_at.slice(0, 10)
+                : 'Pending owner approval'),
+          ),
+        );
+      }
+      content.append(extras);
+    }
     const documents = node('section', undefined, 'dashboard-card');
     documents.append(node('h2', 'Documents'));
     if (docs) {

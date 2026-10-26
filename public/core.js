@@ -512,10 +512,15 @@
       ),
       list = (items) =>
         items.length < 2 ? items.join('') : items.slice(0, -1).join(', ') + ' and ' + items.at(-1),
-      count = setup.length + unpriced.length + pending.length;
+      count = setup.length + unpriced.length + pending.length + (docs.pending_extras || 0);
     if (!count)
       return "Can't sign yet: no measured demolition, drying equipment or labor is entered. Add the work on 2. Check Scope, then Finish & review again.";
     const lines = ["Can't sign yet: " + count + (count === 1 ? ' item' : ' items') + ' to fix.'];
+    if (docs.pending_extras)
+      lines.push(
+        docs.pending_extras +
+          ' additional-work extra(s) need company owner approval. Open Additional work on Check scope, then Finish & review again.',
+      );
     if (unpriced.length)
       lines.push(
         ...unpriced.map(

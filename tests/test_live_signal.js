@@ -10,6 +10,7 @@ const element = (id) => {
       hidden: false,
       className: '',
       classList: { toggle() {}, remove() {} },
+      replaceChildren() {},
     });
   return elements.get(id);
 };
