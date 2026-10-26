@@ -329,7 +329,7 @@ def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
         + urllib.parse.quote(VAULT_BUCKET, safe='')
         + '/o/'
         + dest
-        + '?ifGenerationMatch=0'
+        + '?ifGenerationMatch=0&sourceGeneration=' + obj['generation']
     )
     rewrite_token = None
     for _ in range(rewrite_limit):
@@ -342,7 +342,7 @@ def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
         if _condition_not_met(status, raw):
             if rewrite_token:
                 raise BackupError('copy', status)
-            return 'already_present'
+            return None
         if status != 200:
             raise BackupError('copy', status)
         payload = _json_object(raw, 'copy', status)
@@ -356,9 +356,13 @@ def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
                 crc32c=obj['crc32c'],
                 md5=obj['md5'],
             )
-            return 'copied'
+            resource = payload['resource']
+            receipt = {key: resource[key] for key in ('name', 'generation', 'size', 'crc32c')}
+            if 'md5Hash' in resource:
+                receipt['md5Hash'] = resource['md5Hash']
+            return receipt
         token_value = payload.get('rewriteToken')
-        if not isinstance(token_value, str) or not token_value or token_value == rewrite_token:
+        if not isinstance(token_value, str) or not token_value:
             raise BackupError('copy', status)
         rewrite_token = token_value
     raise BackupError('copy')
@@ -366,9 +370,12 @@ def _rewrite(transport, token, obj, rewrite_limit=REWRITE_LIMIT):
 
 def _copy_all(transport, token, objects):
     copied = already = bytes_copied = 0
+    receipts = []
     try:
         for obj in objects:
-            if _rewrite(transport, token, obj) == 'copied':
+            receipt = _rewrite(transport, token, obj)
+            if receipt is not None:
+                receipts.append(receipt)
                 copied += 1
                 bytes_copied += obj['size']
             else:
@@ -376,7 +383,7 @@ def _copy_all(transport, token, objects):
     except BackupError as error:
         error.counts.update(copied=copied, already_present=already, bytes_copied=bytes_copied)
         raise
-    return copied, already, bytes_copied
+    return copied, already, bytes_copied, receipts
 
 
 def _upload_json(transport, token, name, body, upload_stage, verify_stage):
@@ -408,6 +415,7 @@ def _manifest(
     copied,
     already,
     bytes_copied,
+    receipts,
 ):
     auth = {'object': auth_name, 'outcome': auth_outcome, 'users': user_count}
     if auth_generation is not None:
@@ -425,6 +433,7 @@ def _manifest(
             'copied': copied,
             'already_present': already,
             'bytes_copied': bytes_copied,
+            'receipts': receipts,
         },
         'outcome': 'ok',
     }
@@ -450,7 +459,7 @@ def run_backup(transport, *, token, now, page_limit=PAGE_LIMIT):
         raise
     try:
         objects = _list_source(transport, token, page_limit=page_limit)
-        copied, already, bytes_copied = _copy_all(transport, token, objects)
+        copied, already, bytes_copied, receipts = _copy_all(transport, token, objects)
     except BackupError as error:
         error.counts.setdefault('users', len(users))
         raise
@@ -467,6 +476,7 @@ def run_backup(transport, *, token, now, page_limit=PAGE_LIMIT):
             copied,
             already,
             bytes_copied,
+            receipts,
         ),
         separators=(',', ':'),
         sort_keys=True,
@@ -475,6 +485,8 @@ def run_backup(transport, *, token, now, page_limit=PAGE_LIMIT):
         manifest_outcome, manifest_generation, manifest_bytes = _upload_json(
             transport, token, manifest_name, manifest_body, 'upload_manifest', 'verify_manifest'
         )
+        if copied and manifest_outcome == 'already_exists':
+            raise BackupError('upload_manifest', 412)
     except BackupError as error:
         error.counts.update(
             copied=copied,

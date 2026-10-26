@@ -32,7 +32,7 @@ The source object name is kept after the generation directory. Photos and signat
 
 Lifecycle age is 90 days from when that vault object was created. After deletion, the next successful run copies a source object that is still live, because a soft-deleted vault object does not satisfy `ifGenerationMatch=0`. Soft delete then keeps the removed vault generation for 7 days. A generation the job has not yet copied exists only in the evidence bucket (and in that bucket's own 7-day soft delete if it was removed there).
 
-The UTC date is chosen once at the start of the task and used for the auth object and the manifest, including when a run crosses midnight. A same-day rerun keeps the existing auth object and manifest. Users added after that day's object was created appear in the next day's auth file. Photo copies still proceed on the rerun: missing generations are created, and the existing manifest is left as it was.
+The UTC date is chosen once at the start of the task and used for the auth object and the manifest, including when a run crosses midnight. A same-day rerun keeps the existing auth object and manifest. Users added after that day's object was created appear in the next day's auth file. Photo copies still proceed on the rerun: missing generations are created. If any photo is created but the dated manifest already exists, the run fails because the existing manifest cannot record the new receipts.
 
 Each write is accepted only when the upload or rewrite response names the intended bucket and object, a positive generation, and the byte size. Evidence responses must also echo the source `crc32c` (and `md5Hash` when the listing had one). The job does not read the object back. Logs contain counts and outcomes only: no emails, password hashes, photo bytes, user IDs, or storage paths. `stage=export` means the account download failed, or a password account had no usable hash (including a hash firebase-tools would drop because `version` is not 0). The task exits non-zero, so Cloud Run retries and, after the retries, marks the execution failed.
 
@@ -217,7 +217,7 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
      --project=alert-disaster-vault
    ```
 
-   Auth and manifest bucket, name, generation, and size match the log. `timeCreated` falls in this execution. The evidence listing shows sizes and creation times and does not need a download. The next 11:15 UTC run needs its own dated auth object and manifest before the schedule counts as restored.
+   Auth and manifest bucket, name, generation, and size match the log. `timeCreated` falls in this execution. Privately download the dated manifest as the owner. Its `evidence.receipts` records each newly copied photo's `name`, destination `generation`, `size`, `crc32c`, and `md5Hash` when returned. For each receipt, describe the vault object with `--format='yaml(bucket,name,generation,size,crc32c,md5Hash,timeCreated)'` and compare every receipt field and the vault bucket. Do not download photo bytes. Already-present copies have no new receipt and do not prove a new copy. The next 11:15 UTC run needs its own dated auth object and manifest before the schedule counts as restored.
 
 4. Install the alert after that first successful check, so the absence condition does not page for a job that has never succeeded. Re-run the monitoring script (it updates policies in place and does not deploy this job):
 

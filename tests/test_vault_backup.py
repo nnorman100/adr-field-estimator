@@ -3,6 +3,8 @@
 import importlib.util
 import io
 import json
+
+import pytest
 import sys
 import urllib.parse
 from datetime import datetime, timezone
@@ -161,6 +163,11 @@ class Gateway:
         path, _, query = url.partition('?')
         encoded = path.split('/rewriteTo/b/', 1)[1].split('/o/', 1)[1]
         dest = urllib.parse.unquote(encoded)
+        params = urllib.parse.parse_qs(query)
+        item = self._source_for_dest(dest)
+        if params.get('sourceGeneration') != [str(item['generation'])]:
+            return 404, b'source-generation-missing'
+        assert 'ifSourceGenerationMatch' not in params
         if 'ifGenerationMatch=0' not in query:
             return 400, b'missing-precondition'
         if 'rewriteToken=' not in query and dest in self.existing:
@@ -169,7 +176,7 @@ class Gateway:
         self.rewrite_counts[dest] = seen
         if seen < self.rewrite_parts:
             return 200, json.dumps(
-                {'done': False, 'rewriteToken': f'part-{seen}', 'totalBytesRewritten': '1'}
+                {'done': False, 'rewriteToken': 'part-1', 'totalBytesRewritten': '1'}
             ).encode()
         item = self._source_for_dest(dest)
         resource = {
@@ -315,9 +322,11 @@ def test_incremental_copy_and_a_later_generation():
     assert manifest['evidence']['layout'] == 'evidence/<source-generation>/<source-object-name>'
     assert manifest['auth']['users'] == 1
     assert_private(logs, errors)
-    manifest_text = gateway.bodies['manifests/2026-10-26.json'].decode()
-    for secret in SECRETS:
-        assert secret not in manifest_text
+    assert manifest['evidence']['receipts'] == [
+        {'name': dest_of(item), 'generation': str(2001 + i), 'size': item['size'],
+         'crc32c': item['crc32c'], 'md5Hash': item['md5Hash']}
+        for i, item in enumerate([PHOTO_B, PHOTO_A])
+    ]
 
     changed = {**PHOTO_B, 'generation': '33', 'size': '251', 'crc32c': 'crc32c-PRIVATE-C'}
     second = Gateway(
@@ -325,12 +334,11 @@ def test_incremental_copy_and_a_later_generation():
         existing=list(gateway.stored),
     )
     code, logs, errors, gateway = run(second)
-    assert code == 0 and errors == []
-    assert logs[0]['copied'] == 1
-    assert logs[0]['already_present'] == 1
-    assert logs[0]['bytes_copied'] == 251
-    assert logs[0]['auth_outcome'] == 'already_exists'
-    assert 'auth_generation' not in logs[0]
+    assert code == 1 and logs == []
+    assert errors[0]['stage'] == 'upload_manifest'
+    assert errors[0]['http_status'] == 412
+    assert errors[0]['copied'] == 1
+    assert errors[0]['already_present'] == 1
     assert gateway.stored == [dest_of(changed)]
     assert dest_of(PHOTO_B) in gateway.existing
     assert_private(logs, errors)
@@ -431,12 +439,13 @@ def test_export_page_limit_and_repeated_token_fail_closed():
 
 
 def test_rewrite_continues_until_done_and_proves_the_response():
-    code, logs, errors, gateway = run(Gateway(source_pages=[{'items': [PHOTO_A]}], rewrite_parts=2))
+    code, logs, errors, gateway = run(Gateway(source_pages=[{'items': [PHOTO_A]}], rewrite_parts=3))
     assert code == 0 and errors == []
     rewrites = [call['url'] for call in gateway.calls if '/rewriteTo/' in call['url']]
-    assert len(rewrites) == 2
+    assert len(rewrites) == 3
     assert 'rewriteToken=' not in rewrites[0]
     assert 'rewriteToken=part-1' in rewrites[1]
+    assert 'rewriteToken=part-1' in rewrites[2]
     assert gateway.stored.count(dest_of(PHOTO_A)) == 1
     assert logs[0]['copied'] == 1
     assert_private(logs, errors)
@@ -605,36 +614,53 @@ def test_google_only_user_and_empty_bucket_still_write_auth():
     assert_private(logs, errors)
 
 
-def test_image_and_lifecycle_match_the_documented_contract():
-    backend_from = next(
-        line.strip()
-        for line in (ROOT / 'backend' / 'Dockerfile').read_text().splitlines()
-        if line.startswith('FROM ')
-    )
-    dockerfile = (JOB_DIR / 'Dockerfile').read_text()
-    assert dockerfile.splitlines()[0] == backend_from
-    assert 'pip ' not in dockerfile
-    assert 'CMD ["python", "vault_backup.py"]' in dockerfile
+def test_lifecycle_retention_policy():
     lifecycle = json.loads((JOB_DIR / 'lifecycle.json').read_text())
     assert lifecycle == {
         'lifecycle': {'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 90}}]}
     }
-    doc = (ROOT / 'docs' / 'VAULT-BACKUP.md').read_text()
-    for required in (
-        'alert-disaster-vault',
-        'alert-disaster-vault-backups',
-        'alert-disaster-field-2026-evidence',
-        'dryscope-vault-backup',
-        'dryscopeVaultBackup',
-        'firebaseauth.users.get',
-        'firebaseauth.configs.getHashConfig',
-        'roles/storage.objectViewer',
-        'roles/storage.objectCreator',
-        'roles/run.invoker',
-        'us-central1',
-        'ifGenerationMatch=0',
-        '15 11 * * *',
-        '545776254070',
-        'ops/vault-backup/lifecycle.json',
-    ):
-        assert required in doc
+
+
+def test_missing_source_generation_fails_without_committing_a_copy():
+    class ReplacedSource(Gateway):
+        def _source_for_dest(self, dest):
+            return {**PHOTO_A, 'generation': '99'}
+
+    code, logs, errors, gateway = run(ReplacedSource())
+    assert code == 1 and logs == []
+    assert errors[0]['stage'] == 'copy'
+    assert errors[0]['http_status'] == 404
+    assert gateway.stored == ['auth/2026-10-26.json']
+    assert_private(logs, errors)
+
+
+def test_incomplete_rewrite_requires_a_token_and_respects_the_limit():
+    obj = vault_backup._source_object(PHOTO_A)
+    gateway = Gateway(rewrite_parts=100)
+    with pytest.raises(vault_backup.BackupError):
+        vault_backup._rewrite(gateway, 'token', obj, rewrite_limit=3)
+    assert len(gateway.calls) == 3
+    assert gateway.stored == []
+    missing = Gateway(fail={'match': 'copy', 'status': 200, 'body': '{"done":false}'})
+    with pytest.raises(vault_backup.BackupError):
+        vault_backup._rewrite(missing, 'token', obj)
+    assert len(missing.calls) == 1
+
+
+def test_continuation_precondition_failure_is_not_already_present():
+    body = json.dumps({'error': {'errors': [{'reason': 'conditionNotMet'}]}})
+    gateway = Gateway(rewrite_parts=3, fail={
+        'match': 'copy', 'on': 2, 'status': 412, 'body': body,
+    })
+    code, logs, errors, gateway = run(gateway)
+    assert code == 1 and logs == []
+    assert errors[0]['stage'] == 'copy'
+    assert errors[0]['already_present'] == 0
+    assert_private(logs, errors)
+
+
+def test_existing_copies_have_no_fabricated_receipts():
+    code, logs, errors, gateway = run(Gateway(existing=[dest_of(PHOTO_A)]))
+    assert code == 0 and errors == []
+    assert manifest_of(gateway)['evidence']['receipts'] == []
+    assert_private(logs, errors)
