@@ -65,8 +65,7 @@ def fact_pack(job, record, log, delivery, monitoring):
         ],
         categories=sorted({r['category'] for r in rooms if r.get('category') in (1, 2, 3)}),
         mold_rooms=sum(
-            (r.get('loss') or ('mold' if r.get('category') == 3 else 'water'))
-            in ('mold', 'both')
+            (r.get('loss') or ('mold' if r.get('category') == 3 else 'water')) in ('mold', 'both')
             for r in rooms
         ),
         air_movers=data.get('air_movers'),

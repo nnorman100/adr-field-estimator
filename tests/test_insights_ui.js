@@ -37,8 +37,7 @@ function harness(withRestores = false) {
     addEventListener() {},
     setTimeout,
     clearTimeout,
-    jsonApi: (path) =>
-      new Promise((resolve, reject) => requests.push({ path, resolve, reject })),
+    jsonApi: (path) => new Promise((resolve, reject) => requests.push({ path, resolve, reject })),
   };
   context.window = context;
   if (withRestores) {
@@ -50,7 +49,8 @@ function harness(withRestores = false) {
     context.makeButton = context.button;
     context.initialState = context.state;
     vm.runInNewContext(
-      fs.readFileSync('public/app.js', 'utf8') + `
+      fs.readFileSync('public/app.js', 'utf8') +
+        `
         Object.assign(state, initialState, {user: {uid: 'reader'}});
         globalThis.mutationApi = jsonApi;
         jsonApi = request;
@@ -76,7 +76,8 @@ function harness(withRestores = false) {
     context,
     requests,
     target,
-    text: () => target.children.find((child) => child.tag === 'p' && child.text !== 'AI summary').text,
+    text: () =>
+      target.children.find((child) => child.tag === 'p' && child.text !== 'AI summary').text,
     flush: async () => {
       for (let i = 0; i < 12; i++) await Promise.resolve();
     },
@@ -155,7 +156,6 @@ test('cancelled cards do not drain pending revision loads', async () => {
   assert.equal(h.target.children.length, 0);
 });
 
-
 for (const transition of ['draft', 'signed']) {
   test(`same-job ${transition} restore revalidates summary facts`, async () => {
     const h = harness(true);
@@ -163,16 +163,20 @@ for (const transition of ['draft', 'signed']) {
     h.requests[0].resolve(facts('Draft scope. Original facts.'));
     await h.flush();
     assert.equal(h.text(), 'Draft scope. Original facts.');
-    const restoring = transition === 'draft'
-      ? h.restores.restoreDraft('job')
-      : h.restores.restoreSigned('authorization');
+    const restoring =
+      transition === 'draft'
+        ? h.restores.restoreDraft('job')
+        : h.restores.restoreSigned('authorization');
     await h.flush();
-    assert.equal(h.requests[1].path, transition === 'draft'
-      ? '/api/inspections/job'
-      : '/api/authorizations/authorization');
-    h.requests[1].resolve(transition === 'draft'
-      ? { inspection_id: 'job', revision: 2, data: { rooms: [], air_movers: 8 }, photos: [] }
-      : { inspection_id: 'job', inspection: { rooms: [] }, photos: [], documents: {} });
+    assert.equal(
+      h.requests[1].path,
+      transition === 'draft' ? '/api/inspections/job' : '/api/authorizations/authorization',
+    );
+    h.requests[1].resolve(
+      transition === 'draft'
+        ? { inspection_id: 'job', revision: 2, data: { rooms: [], air_movers: 8 }, photos: [] }
+        : { inspection_id: 'job', inspection: { rooms: [] }, photos: [], documents: {} },
+    );
     await restoring;
     assert.equal(h.requests.length, 3);
     assert.equal(h.requests[2].path, '/api/jobs/job/insight?facts_only=true');
@@ -182,15 +186,13 @@ for (const transition of ['draft', 'signed']) {
     h.target.children.at(-1).click();
     h.requests[3].resolve(facts());
     await h.flush();
-    const current = transition === 'draft'
-      ? 'Draft scope. 8 air movers.'
-      : 'Signed agreement. Current facts.';
+    const current =
+      transition === 'draft' ? 'Draft scope. 8 air movers.' : 'Signed agreement. Current facts.';
     h.requests[4].resolve(facts(current));
     await h.flush();
     assert.equal(h.text(), current);
   });
 }
-
 
 const factMutations = [
   ['audit completion', '/api/audit', 'POST', { inspection_id: 'job' }],
