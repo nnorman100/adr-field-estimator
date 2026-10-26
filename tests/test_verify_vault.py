@@ -104,10 +104,18 @@ def test_generation_mismatch_fails_without_naming_the_object():
     assert SECRET not in text
 
 
-@pytest.mark.parametrize('field', [
-    'name', 'generation', 'size', 'crc32c', 'source_name',
-    'source_generation', 'source_crc32c',
-])
+@pytest.mark.parametrize(
+    'field',
+    [
+        'name',
+        'generation',
+        'size',
+        'crc32c',
+        'source_name',
+        'source_generation',
+        'source_crc32c',
+    ],
+)
 def test_missing_required_field_is_unreadable(field):
     item = receipt()
     del item[field]
@@ -118,13 +126,24 @@ def test_missing_required_field_is_unreadable(field):
     assert len(store.calls) == 1
 
 
-@pytest.mark.parametrize('field, value', [
-    ('name', ''), ('generation', '0'), ('generation', True),
-    ('size', -1), ('size', None), ('size', True),
-    ('crc32c', 123), ('source_name', '/invalid'),
-    ('source_generation', ''), ('source_crc32c', None),
-    ('md5Hash', None), ('md5Hash', ''), ('source_md5Hash', 123),
-])
+@pytest.mark.parametrize(
+    'field, value',
+    [
+        ('name', ''),
+        ('generation', '0'),
+        ('generation', True),
+        ('size', -1),
+        ('size', None),
+        ('size', True),
+        ('crc32c', 123),
+        ('source_name', '/invalid'),
+        ('source_generation', ''),
+        ('source_crc32c', None),
+        ('md5Hash', None),
+        ('md5Hash', ''),
+        ('source_md5Hash', 123),
+    ],
+)
 def test_invalid_field_is_unreadable(field, value):
     item = receipt()
     item[field] = value
@@ -140,9 +159,7 @@ def test_validates_all_receipts_before_fetching_metadata():
     del invalid['source_generation']
     calls = []
     with pytest.raises(ValueError):
-        verify_vault.evaluate(
-            {'evidence': {'receipts': [receipt(), invalid]}}, calls.append
-        )
+        verify_vault.evaluate({'evidence': {'receipts': [receipt(), invalid]}}, calls.append)
     assert calls == []
 
 
@@ -154,7 +171,8 @@ def test_optional_md5_can_be_absent_with_zero_size():
     object_meta = meta()
     object_meta['size'] = '0'
     assert run_verify(Store(item=item, object_meta=object_meta)) == (
-        0, 'checked=1 passed=1 failed=0\n'
+        0,
+        'checked=1 passed=1 failed=0\n',
     )
 
 
