@@ -149,9 +149,5 @@ See [Priced additional work](priced-extras.md) for company rate settings, permis
 
 ## Internal job summaries and AI counts (rollout off)
 
-`AI_FEATURES=job_summary,ai_usage` separately enables [job summaries and usage counts](job-insights.md).
-Owners and office staff can summarize company jobs; estimators can summarize jobs they may read.
-Superadmins use audited support routes to read facts and current cached summaries, without generating
-or saving them. Only owners see company usage totals; support may read those totals through its audited
-route. Every signed source remains immutable. These internal features do not send messages or need
-an outward-facing owner switch.
+See [Job summaries and usage counts](job-insights.md) for feature switches, role permissions,
+audited support access and read-only boundaries.

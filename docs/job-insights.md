@@ -6,15 +6,16 @@ owner delivery switch is involved. Enabling either is a later release decision.
 
 Open At a glance in Company jobs/My jobs, or the card at the top of Check scope. AI summary is an
 internal description of saved facts; Saved job facts exposes its inputs. Refresh checks the cache and
-regenerates only if facts changed or the 30-day cache expired. Saving a new revision loads fresh facts
-and marks an obsolete summary for Refresh. Offline summaries last only for jobs opened this session;
+regenerates only if facts changed or the cache expired. Restoring a draft or signed job and successful
+fact-changing saves load fresh facts and mark an obsolete summary for Refresh, even without a new
+revision. Changes during an active load trigger a facts reload after it settles. Offline summaries last only for jobs opened this session;
 AI calls are never queued. Provider failure preserves the facts and offers Retry; 429 honors Retry-After.
 
 Owners and office may read company jobs; estimators read only accessible jobs. `GET /api/jobs/{id}/insight`
 checks job access before reading any sources and again inside the cache commit. IDs may be an inspection
 or a signed authorization, resolved to the same private job sidecar. `?facts_only=true` performs no model
-call. Signed facts use the immutable authorization snapshot, plus current delivery and monitoring
-sidecars. Readiness is optional for drafts; drying watch is optional for signed jobs. Unknown legacy
+call. Signed scope and review facts use the immutable authorization snapshot; claim facts use the
+current authorized job sidecar, alongside current delivery and monitoring sidecars. Readiness is optional for drafts; drying watch is optional for signed jobs. Unknown legacy
 inputs are shown as missing, not inferred. Other company access is refused.
 
 The model returns only one to four distinct topic enum values. The server renders every sentence from
@@ -27,11 +28,11 @@ and can be explicitly retried. Logs contain only operation, cache hit and existi
 Provider and validation failures use the existing Vertex AI call ERROR filter.
 
 `_job_insights/{job_id}` stores company ID, facts hash, closed selection, rendered narrative,
-generated_at and expire_at (30 days). Commits read access and facts in the same Firestore transaction;
+generated_at and expire_at. Commits read access and facts in the same Firestore transaction;
 a changed hash returns 409. Expiry is enforced before returning cached data. Deny-all rules already
 protect the new sidecar; single-document reads need no index. No migration/backfill is needed. The
-owner-run TTL script includes this collection group, but no policy was applied by this build. See
-[Firebase isolation](firebase-isolation.md#firestore-ttl-policies) before any release.
+owner-run TTL script includes this collection group, but no policy was applied by this build. Cache
+retention and TTL setup are owned by [Firebase isolation](firebase-isolation.md#firestore-ttl-policies).
 
 `/api/session.quota` reports each user’s paid-operation used, limit and remaining counts. The Account
 menu refreshes these when opened. `GET /api/companies/{id}/ai-usage` sums active members’ current
