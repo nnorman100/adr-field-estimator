@@ -37,7 +37,7 @@ Use the persistent **1. Walk & Photo / 2. Check Scope / 3. Review & Sign** step 
 
 The customer proposal shows the sheet-derived low–high estimate, with itemized base-rate charges shown separately as its calculation detail. ADR package tiers are not in the supplied sheet and are no longer accepted for new audits. Models cannot supply prices, override totals or remove conditional clauses. AI summaries and suggestions are labeled for technician review; suggestions do not become observed evidence or authorized work.
 
-With `AI_FEATURES=priced_extras` (off by default), **Price the unpriced work** lets an estimator enter a description and hours outside the sheet. The owner sets the company's additional-work rate and must approve every extra before signing. ADR starts at $47.46/h; each approval keeps its rate even after company settings change. Draft extras work offline; pricing and approval need a connection. See [priced additional work](docs/priced-extras.md).
+For work outside the sheet, see [priced additional work](docs/priced-extras.md) for the **Price the unpriced work** workflow, owner approval, company rates, offline behavior and feature availability.
 
 ## Equipment sizing check
 

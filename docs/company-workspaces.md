@@ -145,4 +145,4 @@ settings, signed-job actions, offline behavior and retention.
 
 ## Priced additional work
 
-With `AI_FEATURES=priced_extras`, Company settings includes an owner-only additional-work hourly rate. Estimators propose descriptions and hours; the company owner must approve each extra at the current server-calculated rate before signing. Approved rates remain fixed. [Priced additional work](priced-extras.md) describes the field workflow, immutable approval snapshots, offline behavior and release gates.
+See [Priced additional work](priced-extras.md) for company rate settings, permissions, the field workflow, immutable approval snapshots, offline behavior and release gates.

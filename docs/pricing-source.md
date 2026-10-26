@@ -20,4 +20,6 @@ The workbook's filled example is 140 unfinished and 5 finished Category 2 SF, af
 
 The workbook lists an $83.45 after-hours labor rate in `G24`, but its estimate references `F24`, which uses $47.46. The user explicitly chose the formula value. The workbook also has broken external/name references and `#REF!` in its job-information header (`A4`, `C4`); those do not feed the reviewed price cells. The app's waste percentage is an existing scope input absent from this workbook; it is applied to demolition before the range factors. The app uses technician-confirmed equipment counts and a shared drying duration for fans and dehumidifiers. If a job needs different durations or other work without a represented rate, the technician must record that scope for review before signing.
 
+For pricing work outside the workbook and its treatment in the estimate range, see [Priced additional work](priced-extras.md).
+
 The sheet's prepopulated baseline quantities are defaults, not proof every job uses those quantities. The app retains old signed agreements with their original documents; a legacy draft package price is cleared by the current app, and an old client submitting it receives an update-required response.
