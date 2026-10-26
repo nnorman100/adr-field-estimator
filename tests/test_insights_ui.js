@@ -57,9 +57,11 @@ function harness(withRestores = false) {
         node = makeNode;
         button = makeButton;
         leaveNotes = stopWalk = persist = syncDraft = loadPhotoUrls = async () => {};
+        loadHomeownerLinkStatus = async () => {};
         localDrafts = async () => [];
         deleteDraft = async () => {};
         fillForm = renderDocuments = renderPhotos = showTask = say = () => {};
+        renderControls = renderNotes = () => {};
         seedRoomLoss = processNotes = drainQueue = () => {};
         absorb = (record) => { state.record = record; };
         api = async () => { throw Error('Synthetic unavailable evidence'); };
