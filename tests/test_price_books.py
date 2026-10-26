@@ -521,6 +521,99 @@ def test_first_publication_after_migration_is_version_one(api, enabled):
     assert published['published_at'] and published['effective_from']
 
 
+STANDALONE = '''
+import json, sys
+import price_books, price_book_store
+from workspaces import AccessDenied
+
+price_books.set_enabled(True)
+record = json.loads(sys.stdin.read())
+seed = price_books.seed_rates()
+pin = dict(rates=seed, version_id='seed', content_sha256=price_books.content_hash(seed))
+
+
+class Workspaces:
+    role = 'estimator'
+
+    def company_actor(self, uid, company_id, manage=False, tx=None):
+        caps = ['prices_read', 'prices_manage'] if self.role == 'owner' else ['prices_read']
+        return dict(company={'company_id': company_id}, capabilities=caps)
+
+    def job_access(self, uid, record, need, tx=None):
+        return {'company_id': 'adr'}, {'role': self.role}
+
+    def read(self, collection, key, tx=None):
+        if collection == '_job_pricing':
+            return pin
+        if collection == '_companies':
+            return {'company_id': key}
+        return None
+
+
+ws = Workspaces()
+books = price_book_store.PriceBookStore(ws)
+outcomes = []
+for call in (
+    lambda: books.preview('u', 'adr', {'rates': seed}),
+    lambda: books.reprice_preview('u', record),
+):
+    try:
+        call()
+    except AccessDenied:
+        outcomes.append('denied')
+ws.role = 'owner'
+try:
+    books.preview('u', 'adr', {'rates': {**seed, 'emergency_call': '1.234'}})
+except ValueError:
+    outcomes.append('invalid')
+outcomes.append(books.reprice_preview('u', record)['after']['itemized'])
+print(json.dumps(outcomes))
+'''
+
+
+def test_owner_paths_run_in_the_deployed_top_level_layout():
+    import json
+    import subprocess
+    import sys
+
+    record = {'inspection_id': ID, 'revision': 1, 'status': 'draft', 'data': data()}
+    run = subprocess.run(
+        [sys.executable, '-c', STANDALONE],
+        cwd='backend',
+        input=json.dumps(record),
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    items, total = price_scope(InspectionData.model_validate(record['data']), seed_rates())
+    assert json.loads(run.stdout) == ['denied', 'denied', 'invalid', f'{total:.2f}']
+
+
+def test_draft_created_after_first_publication_pins_the_current_book(api, enabled):
+    client, current, store = api
+    early = 'ADR-INS-' + 'e' * 32
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': early, 'data': data()})
+    assert made.status_code == 200, made.text
+    current['uid'] = 'owner'
+    assert publish(client, rates(emergency_call='150.00'))['sequence'] == 1
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    current['uid'] = 'owner'
+    assert publish(client, rates(emergency_call='175.00'), 'Second trip charge')['sequence'] == 2
+    current['uid'] = 'estimator'
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    basis = audited.json()['audit']['documents']['price_basis']
+    assert basis['sequence'] == 2 and basis['rates']['emergency_call'] == '175.00'
+    assert store.db.records['_job_pricing/' + ID]['sequence'] == 2
+    older = client.post('/api/audit', json={'inspection_id': early, 'expected_revision': 1})
+    assert older.status_code == 200, older.text
+    assert older.json()['audit']['documents']['price_basis']['version_id'] == 'seed'
+    assert store.db.records['_job_pricing/' + early]['reason'] == 'legacy_rollout'
+
+
 def counting(monkeypatch):
     import backend.main as bm
 

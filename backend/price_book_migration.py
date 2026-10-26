@@ -286,6 +286,7 @@ def apply_plan(store, plan, write):
                     'generation': 0,
                     'latest_version_id': row['version_id'],
                     'next_sequence': 1,
+                    'started_at': published,
                     'updated_at': published,
                 },
             )

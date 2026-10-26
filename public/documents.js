@@ -58,10 +58,7 @@
     if (docs.price_basis) {
       const sequence = Number(docs.price_basis.sequence) || 0;
       body.append(
-        node(
-          'p',
-          'Priced from ' + (sequence ? 'Company prices v' + sequence : 'workbook seed') + '.',
-        ),
+        node('p', 'Priced from ' + (sequence ? 'Prices v' + sequence : 'workbook seed') + '.'),
       );
     }
     // A read-only document link outside the proposal's set delivers the proposal emptied.

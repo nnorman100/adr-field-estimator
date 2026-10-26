@@ -11,7 +11,9 @@ from uuid import uuid4
 from google.cloud import firestore
 
 try:
+    from .claims import price_scope, proposal_range
     from .cloud_log import event
+    from .contracts import InspectionData
     from .inspection_store import Conflict, now
     from .price_books import (
         CALCULATION_VERSION,
@@ -22,6 +24,7 @@ try:
         content_hash,
         diff_rates,
         label_for,
+        normalize_rates,
         price_books_enabled,
         public_rates,
         reason_text,
@@ -29,8 +32,11 @@ try:
         saved_basis,
         seed_rates,
     )
+    from .workspaces import AccessDenied
 except ImportError:
+    from claims import price_scope, proposal_range
     from cloud_log import event
+    from contracts import InspectionData
     from inspection_store import Conflict, now
     from price_books import (
         CALCULATION_VERSION,
@@ -41,6 +47,7 @@ except ImportError:
         content_hash,
         diff_rates,
         label_for,
+        normalize_rates,
         price_books_enabled,
         public_rates,
         reason_text,
@@ -48,6 +55,7 @@ except ImportError:
         saved_basis,
         seed_rates,
     )
+    from workspaces import AccessDenied
 
 PREVIEW_MINUTES = 30
 HEAD = '_company_price_books'
@@ -171,8 +179,6 @@ class PriceBookStore:
             return view
         actor = self.ws.company_actor(uid, company_id)
         if 'prices_read' not in actor['capabilities']:
-            from .workspaces import AccessDenied
-
             raise AccessDenied('Your role cannot view company prices.')
         company = self.ws.read('_companies', company_id)
         return self._view(actor, company)
@@ -213,8 +219,6 @@ class PriceBookStore:
 
     def _normalize(self, company, incoming, acknowledgements):
         current = self.effective(company)['rates']
-        from .price_books import normalize_rates
-
         return normalize_rates(
             incoming,
             acknowledgements,
@@ -227,8 +231,6 @@ class PriceBookStore:
         actor = self.ws.company_actor(uid, company_id, manage=True)
         company = actor['company']
         if 'prices_manage' not in actor['capabilities']:
-            from .workspaces import AccessDenied
-
             raise AccessDenied('Only the company owner can change prices.')
         rates = self._normalize(company, payload['rates'], payload.get('acknowledgements') or [])
         reason = reason_text(payload.get('change_reason', ''))
@@ -297,8 +299,6 @@ class PriceBookStore:
         def commit(tx):
             actor = self.ws.company_actor(uid, company_id, manage=True, tx=tx)
             if 'prices_manage' not in actor['capabilities']:
-                from .workspaces import AccessDenied
-
                 raise AccessDenied('Only the company owner can change prices.')
             company = self.ws.read('_companies', company_id, tx)
             if not company or company.get('status') != 'active':
@@ -332,8 +332,6 @@ class PriceBookStore:
                 raise Conflict('Prices changed. Review the new published values before publishing.')
             rates = preview['rates']
             # Repeat the guardrails inside the commit, against the rates stored at preview time.
-            from .price_books import normalize_rates
-
             rates = normalize_rates(
                 rates,
                 preview.get('acknowledgements') or [],
@@ -372,6 +370,7 @@ class PriceBookStore:
                     from price_book_import import SizeLimit
                 raise SizeLimit('The price book is too large.')
             tx.create(self.ws.ref(VERSIONS, preview_id), version)
+            head.setdefault('started_at', published)
             head.update(
                 generation=head['generation'] + 1,
                 latest_version_id=preview_id,
@@ -557,8 +556,6 @@ class PriceBookStore:
         else:
             actor = self.ws.company_actor(uid, company_id)
             if 'prices_read' not in actor['capabilities']:
-                from .workspaces import AccessDenied
-
                 raise AccessDenied('Your role cannot view company prices.')
             company = self.ws.read('_companies', company_id)
         if version_id and version_id != 'seed':
@@ -604,11 +601,11 @@ class PriceBookStore:
             company = self.ws.read('_companies', job['company_id'], tx)
             book = self.effective(company, tx)
             created = _stamp(current.get('created_at'))
-            published = _stamp(book.get('effective_from')) if book.get('effective_from') else None
+            started = _stamp((self._head(job['company_id'], tx) or {}).get('started_at'))
             grandfather = bool(current.get('audit')) or (
-                published is not None and (created is None or created < published)
+                started is not None and (created is None or created < started)
             )
-            if grandfather and book['version_id'] != 'seed':
+            if grandfather and book.get('source') != 'seed':
                 rates = seed_rates()
                 profile_rate = (company.get('profile') or {}).get('additional_work_rate')
                 if profile_rate:
@@ -719,8 +716,6 @@ class PriceBookStore:
         self._require()
         job, actor = self.ws.job_access(uid, record, 'read')
         if actor['role'] != 'owner':
-            from .workspaces import AccessDenied
-
             raise AccessDenied('Only the company owner can apply new prices to a draft.')
         if record.get('status') == 'signed':
             raise Conflict('Signed inspections keep the prices they were signed with.')
@@ -729,8 +724,6 @@ class PriceBookStore:
             raise Conflict('This draft has no saved prices yet. Finish and review it first.')
         company = self.ws.read('_companies', job['company_id'])
         book = self.effective(company)
-        from .contracts import InspectionData
-        from .claims import price_scope, proposal_range
 
         data = InspectionData.model_validate(record['data'])
         old_items, old_total = price_scope(data, pin['rates'])
@@ -769,8 +762,6 @@ class PriceBookStore:
                 raise LookupError('Inspection not found.')
             job, actor = self.ws.job_access(uid, record, 'scope', tx)
             if actor['role'] != 'owner' or 'prices_manage' not in actor['capabilities']:
-                from .workspaces import AccessDenied
-
                 raise AccessDenied('Only the company owner can apply new prices to a draft.')
             if (
                 record.get('status') == 'signed'

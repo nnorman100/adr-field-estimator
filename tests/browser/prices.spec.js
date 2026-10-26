@@ -54,6 +54,9 @@ test('owner publishes a price, keeps the saved draft, then applies it to that dr
   await page.getByRole('button', { name: 'Apply these prices to this job only' }).click();
   await expect(page.locator('#documents')).toBeHidden();
   await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+  await page.locator('#scopeConfirmed').check();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#proposalBody')).toContainText('Priced from Prices v1.');
   await page.locator('#helpButton').click();
   await expect(page.locator('[data-help-topic="prices"]')).toBeVisible();
   await page.locator('#closeHelp').click();
