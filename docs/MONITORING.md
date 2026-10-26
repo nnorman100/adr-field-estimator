@@ -29,12 +29,13 @@ Alert policies are billed per condition and uptime checks per run; at this size 
 | `DryScope: drying reminder failed` | A failed human-approved reminder (`operation=reminder`, `status=failed`). | Check the sender; retry only entries marked retryable. Unconfirmed sends cannot retry. |
 | `DryScope: drying summary rejected` | The validator rejects a model output (`operation=drying_watch`, `outcome=invalid`, ERROR). Provider failures use the existing Vertex alert. | The facts remain visible. Retry and inspect staged evaluation before enabling the feature. |
 | `DryScope: daily email count high` | A log line with `operation=email` and `status=daily_warning`: more than 400 emails in the 24-hour window. | Gmail may refuse sends until the window resets; look for a send loop. |
+| `DryScope: vault backup failed or missing` | Cloud Run job `dryscope-vault-backup` reports a failed execution, or no execution has succeeded in about 25 hours (23 hours of silence plus a 2 hour alignment bucket). The job is scheduled at 11:15 UTC. This policy reads execution metrics, not log text. | Open the job in `us-west2`, read the `vault_backup` log, and run it again. A succeeded execution still needs the log and the vault object's metadata to match. See [VAULT-BACKUP.md](VAULT-BACKUP.md). |
 
 The log alerts send at most one email an hour each and close themselves after 24 hours. They match only fields on the backend's allowlist (`LOG_FIELDS` in `backend/cloud_log.py`), which carries no prompts, addresses, links, tokens or coordinates. The document delivery alert stays quiet until document delivery is switched on.
 
 Normal Live endings (`finished`, `rollover`, `disconnected`, `closed`) emit INFO and do not trigger the Live provider alert. Ordinary client auth and input rejections are logged without a provider code and do not page. Other provider codes are outside this policy. Not every AI failure alerts: only the `Vertex AI call` ERROR line and the Live provider codes above.
 
-After a release that changes these filters, run `bash ops/monitoring/setup-monitoring.sh` again. Re-running updates the policies in place by display name.
+After a release that changes these filters, run `bash ops/monitoring/setup-monitoring.sh` again. Re-running updates the policies in place by display name. The vault policy is included. The script does not deploy the backup job. Create that alert after the first successful vault run so the absence condition is not paging for a job that has never succeeded; until the job exists the script prints a warning and still updates the other policies. See [VAULT-BACKUP.md](VAULT-BACKUP.md).
 
 ## Test it
 
