@@ -4,6 +4,8 @@ import importlib.util
 import io
 import json
 import sys
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,13 +104,58 @@ def test_generation_mismatch_fails_without_naming_the_object():
     assert SECRET not in text
 
 
-def test_missing_source_identity_fails():
+@pytest.mark.parametrize('field', [
+    'name', 'generation', 'size', 'crc32c', 'source_name',
+    'source_generation', 'source_crc32c',
+])
+def test_missing_required_field_is_unreadable(field):
     item = receipt()
-    del item['source_generation']
-    code, text = run_verify(Store(item=item))
+    del item[field]
+    store = Store(item=item)
+    code, text = run_verify(store)
     assert code == 1
-    assert text == 'checked=1 passed=0 failed=1\n'
-    assert SECRET not in text
+    assert text == 'checked=0 passed=0 failed=1\n'
+    assert len(store.calls) == 1
+
+
+@pytest.mark.parametrize('field, value', [
+    ('name', ''), ('generation', '0'), ('generation', True),
+    ('size', -1), ('size', None), ('size', True),
+    ('crc32c', 123), ('source_name', '/invalid'),
+    ('source_generation', ''), ('source_crc32c', None),
+    ('md5Hash', None), ('md5Hash', ''), ('source_md5Hash', 123),
+])
+def test_invalid_field_is_unreadable(field, value):
+    item = receipt()
+    item[field] = value
+    store = Store(item=item)
+    code, text = run_verify(store)
+    assert code == 1
+    assert text == 'checked=0 passed=0 failed=1\n'
+    assert len(store.calls) == 1
+
+
+def test_validates_all_receipts_before_fetching_metadata():
+    invalid = receipt()
+    del invalid['source_generation']
+    calls = []
+    with pytest.raises(ValueError):
+        verify_vault.evaluate(
+            {'evidence': {'receipts': [receipt(), invalid]}}, calls.append
+        )
+    assert calls == []
+
+
+def test_optional_md5_can_be_absent_with_zero_size():
+    item = receipt()
+    del item['md5Hash']
+    del item['source_md5Hash']
+    item['size'] = '0'
+    object_meta = meta()
+    object_meta['size'] = '0'
+    assert run_verify(Store(item=item, object_meta=object_meta)) == (
+        0, 'checked=1 passed=1 failed=0\n'
+    )
 
 
 def test_metadata_failure_is_a_failed_receipt():

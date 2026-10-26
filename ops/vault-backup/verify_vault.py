@@ -35,19 +35,34 @@ def _receipts(manifest):
     receipts = evidence.get('receipts')
     if not isinstance(receipts, list):
         return None
+    for item in receipts:
+        if not isinstance(item, dict):
+            return None
+        for field in ('name', 'crc32c', 'source_name', 'source_crc32c'):
+            if not isinstance(item.get(field), str) or not item[field]:
+                return None
+        if item['source_name'].startswith('/'):
+            return None
+        for field in ('generation', 'source_generation'):
+            if _generation(item.get(field)) is None:
+                return None
+        size = item.get('size')
+        if isinstance(size, bool) or not isinstance(size, (str, int)):
+            return None
+        if not str(size).isascii() or not str(size).isdigit():
+            return None
+        for field in ('md5Hash', 'source_md5Hash'):
+            if field in item and (not isinstance(item[field], str) or not item[field]):
+                return None
     return receipts
 
 
 def _matches(receipt, meta):
-    if not isinstance(receipt, dict) or not isinstance(meta, dict):
+    if not isinstance(meta, dict):
         return False
-    source_name = receipt.get('source_name')
-    source_generation = _generation(receipt.get('source_generation'))
-    source_crc = receipt.get('source_crc32c')
-    if not isinstance(source_name, str) or not source_name or source_name.startswith('/'):
-        return False
-    if source_generation is None or not isinstance(source_crc, str) or not source_crc:
-        return False
+    source_name = receipt['source_name']
+    source_generation = _generation(receipt['source_generation'])
+    source_crc = receipt['source_crc32c']
     expected = f'evidence/{source_generation}/{source_name}'
     if receipt.get('name') != expected or meta.get('name') != expected:
         return False
@@ -71,11 +86,10 @@ def _matches(receipt, meta):
 def evaluate(manifest, metadata_for):
     receipts = _receipts(manifest)
     if receipts is None:
-        return 0, 1
+        raise ValueError('manifest')
     passed = failed = 0
     for receipt in receipts:
-        name = receipt.get('name') if isinstance(receipt, dict) else None
-        meta = metadata_for(name) if isinstance(name, str) else None
+        meta = metadata_for(receipt['name'])
         if _matches(receipt, meta):
             passed += 1
         else:
