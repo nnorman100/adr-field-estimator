@@ -555,3 +555,59 @@ def test_flag_rollback_audit_cannot_be_reused_or_signed_on_a_pinned_job(api, ena
     current['uid'] = 'owner'
     signed = client.post('/api/authorize', json=sign_payload(fresh.json()))
     assert signed.status_code == 200, signed.text
+
+
+@pytest.mark.parametrize('flag', [False, True])
+def test_migrated_legacy_audits_stay_signable_without_a_new_audit(api, flag):
+    from backend.price_book_migration import apply_plan, build_plan
+    from tests.test_signing_links import mint, sign, token
+
+    client, current, store = api
+    linked, later = 'ADR-INS-' + 'e' * 32, 'ADR-INS-' + 'f' * 32
+    current['uid'] = 'estimator'
+    records = {}
+    for inspection_id in (ID, linked, later):
+        client.post('/api/inspections', json={'inspection_id': inspection_id, 'data': data()})
+        audited = client.post(
+            '/api/audit', json={'inspection_id': inspection_id, 'expected_revision': 1}
+        )
+        assert audited.status_code == 200, audited.text
+        assert 'price_basis' not in audited.json()['audit']['documents']
+        records[inspection_id] = audited.json()
+    issued = mint(client, records[linked], linked)
+    assert issued.status_code == 200, issued.text
+    before = {key: deepcopy(store.db.records['inspections/' + key]) for key in records}
+    price_books.set_enabled(flag)
+    try:
+        plan = build_plan(store.db, ['adr'])
+        planned = {row['inspection_id']: row for row in plan['pins']}
+        assert all(planned[key]['audit_basis']['version_id'] for key in records)
+        dry = deepcopy(store.db.records)
+        apply_plan(store, plan, False)
+        assert store.db.records == dry
+        apply_plan(store, plan, True)
+        for key, record in records.items():
+            saved = store.db.records['inspections/' + key]
+            pin = store.db.records['_job_pricing/' + key]
+            assert saved['audit']['price_basis'] == planned[key]['audit_basis']
+            assert saved['audit']['price_basis']['content_sha256'] == pin['content_sha256']
+            assert saved['audit']['documents'] == before[key]['audit']['documents']
+            assert saved['audit']['proposal_hash'] == record['audit']['proposal_hash']
+            assert {k: v for k, v in saved.items() if k != 'audit'} == {
+                k: v for k, v in before[key].items() if k != 'audit'
+            }
+        if flag:
+            reused = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+            assert reused.status_code == 200, reused.text
+            assert reused.json()['audit']['proposal_hash'] == records[ID]['audit']['proposal_hash']
+        assert sign(token(issued)).status_code == 200
+        fresh = mint(client, records[later], later)
+        assert fresh.status_code == 200, fresh.text
+        assert sign(token(fresh)).status_code == 200
+        current['uid'] = 'owner'
+        signed = client.post('/api/authorize', json=sign_payload(records[ID]))
+        assert signed.status_code == 200, signed.text
+        for key in records:
+            assert store.db.records['inspections/' + key]['status'] == 'signed'
+    finally:
+        price_books.set_enabled(None)

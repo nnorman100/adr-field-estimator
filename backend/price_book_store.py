@@ -26,6 +26,7 @@ try:
         public_rates,
         reason_text,
         sample_totals,
+        saved_basis,
         seed_rates,
     )
 except ImportError:
@@ -44,6 +45,7 @@ except ImportError:
         public_rates,
         reason_text,
         sample_totals,
+        saved_basis,
         seed_rates,
     )
 
@@ -594,11 +596,11 @@ class PriceBookStore:
             existing = self._pin(inspection_id, tx)
             if existing:
                 self.basis_for(existing, job['company_id'])
-                basis = ((current.get('audit') or {}).get('documents') or {}).get('price_basis')
+                basis = saved_basis(current.get('audit'))
                 if basis:
                     self.assert_pin(current, basis, tx)
                 return existing
-            if ((current.get('audit') or {}).get('documents') or {}).get('price_basis'):
+            if saved_basis(current.get('audit')):
                 raise Conflict("This draft's saved prices are missing. Contact support.")
             company = self.ws.read('_companies', job['company_id'], tx)
             book = self.effective(company, tx)

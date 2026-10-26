@@ -1,7 +1,8 @@
 """Seed one price book per named company and pin unsigned drafts. Dry-run writes nothing.
 
 Signed inspections, authorizations, evidence and company identity versions are not written.
-A draft that still carries a legacy package price is left unpinned.
+A draft that still carries a legacy package price is left unpinned. An audited draft keeps its
+documents and proposal hash; the seed basis is recorded beside them so the draft stays signable.
 """
 
 import hashlib
@@ -14,11 +15,19 @@ try:
         CATALOG_VERSION,
         CURRENCY,
         content_hash,
+        saved_basis,
         seed_rates,
     )
 except ImportError:
     from inspection_store import now
-    from price_books import CALCULATION_VERSION, CATALOG_VERSION, CURRENCY, content_hash, seed_rates
+    from price_books import (
+        CALCULATION_VERSION,
+        CATALOG_VERSION,
+        CURRENCY,
+        content_hash,
+        saved_basis,
+        seed_rates,
+    )
 
 HEAD = '_company_price_books'
 VERSIONS = '_price_book_versions'
@@ -50,9 +59,15 @@ def _read(db, collection, identifier):
     return snapshot.to_dict() if snapshot.exists else None
 
 
+def _legacy_audit(inspection):
+    audit = inspection.get('audit')
+    return bool(audit) and not saved_basis(audit)
+
+
 def build_plan(db, company_ids):
     if not company_ids:
         raise ValueError('Name at least one company.')
+    priced_at = now()
     companies = []
     pins = []
     ambiguous = []
@@ -125,17 +140,28 @@ def build_plan(db, company_ids):
             if pin:
                 pins.append({'inspection_id': inspection_id, 'action': 'noop'})
                 continue
-            pins.append(
-                {
-                    'inspection_id': inspection_id,
-                    'action': 'create',
+            row = {
+                'inspection_id': inspection_id,
+                'action': 'create',
+                'company_id': company_id,
+                'version_id': pin_version,
+                'sequence': pin_sequence,
+                'content_sha256': pin_hash,
+                'rates': pin_rates,
+                'priced_at': priced_at,
+                'audit_basis': None,
+            }
+            if _legacy_audit(inspection):
+                row['audit_basis'] = {
                     'company_id': company_id,
                     'version_id': pin_version,
                     'sequence': pin_sequence,
                     'content_sha256': pin_hash,
-                    'rates': pin_rates,
+                    'calculation_version': CALCULATION_VERSION,
+                    'priced_at': priced_at,
+                    'rates': dict(pin_rates),
                 }
-            )
+            pins.append(row)
     return {
         'companies': companies,
         'pins': pins,
@@ -152,6 +178,7 @@ def summary(plan):
         'books_unchanged': sum(1 for row in plan['companies'] if row['action'] == 'noop'),
         'pins_to_create': sum(1 for row in plan['pins'] if row['action'] == 'create'),
         'pins_unchanged': sum(1 for row in plan['pins'] if row['action'] == 'noop'),
+        'audit_bases_to_record': sum(1 for row in plan['pins'] if row.get('audit_basis')),
         'ambiguous_drafts': len(plan['ambiguous']),
         'signed_left_untouched': plan['signed_left_untouched'],
         'content_hashes': sorted(
@@ -165,6 +192,9 @@ def source_fingerprints(db):
     for collection in ('inspections', 'authorizations'):
         for snapshot in db.collection(collection).stream():
             data = snapshot.to_dict() or {}
+            if collection == 'inspections' and isinstance(data.get('audit'), dict):
+                audit = {key: value for key, value in data['audit'].items() if key != 'price_basis'}
+                data = {**data, 'audit': audit}
             if getattr(snapshot, 'reference', None) is not None:
                 key = snapshot.reference.path
             else:
@@ -215,12 +245,13 @@ def apply_plan(store, plan, write):
                 or job.get('auth_exists') or job.get('status') == 'signed'
                 or inspection.get('status') == 'signed'
                 or (inspection.get('data') or {}).get('package_price') is not None
+                or _legacy_audit(inspection) != bool(row.get('audit_basis'))
             ):
                 raise RuntimeError('The draft changed after migration planning.')
             company = ws.read('_companies', row['company_id'], tx)
             if planned_rates(company)['additional_work_hourly'] != row['rates']['additional_work_hourly']:
                 raise RuntimeError('The company additional-work rate changed after planning.')
-            eligible.append(row)
+            eligible.append((row, inspection))
         for row in plan['companies']:
             if row['action'] != 'create':
                 continue
@@ -258,7 +289,7 @@ def apply_plan(store, plan, write):
                     'updated_at': published,
                 },
             )
-        for row in eligible:
+        for row, inspection in eligible:
             tx.create(
                 ws.ref(PINS, row['inspection_id']),
                 {
@@ -270,10 +301,15 @@ def apply_plan(store, plan, write):
                     'content_sha256': row['content_sha256'],
                     'calculation_version': CALCULATION_VERSION,
                     'rates': dict(row['rates']),
-                    'priced_at': now(),
+                    'priced_at': row['priced_at'],
                     'reason': 'legacy_rollout',
                 },
             )
+            if row.get('audit_basis'):
+                tx.update(
+                    ws.ref('inspections', row['inspection_id']),
+                    {'audit': {**inspection['audit'], 'price_basis': row['audit_basis']}},
+                )
 
     ws._run(commit)
     return summary(plan)

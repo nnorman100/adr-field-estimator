@@ -11,12 +11,14 @@ try:
     from .inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
     from .extras import quote
     from .workspaces import WorkspaceStore, AccessDenied
+    from .price_books import saved_basis
 except ImportError:
     from delivery import Deliveries, homeowner_skips, public_delivery, skip_reasons
     from cloud_log import event
     from inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
     from extras import quote
     from workspaces import WorkspaceStore, AccessDenied
+    from price_books import saved_basis
 
 
 class CompanyInspectionStore(InspectionStore):
@@ -112,8 +114,9 @@ class CompanyInspectionStore(InspectionStore):
             self.workspaces.check_profile(uid, documents.get('company_identity'), tx)
             self.workspaces.check_customer(record, documents['adr_estimate'], tx)
             self.workspaces.check_claim(record, documents, tx)
-            if signing or documents.get('price_basis'):
-                self.workspaces.prices.assert_pin(record, documents.get('price_basis'), tx)
+            basis = saved_basis(record['audit'])
+            if signing or basis:
+                self.workspaces.prices.assert_pin(record, basis, tx)
 
     def _company_id(self, uid, record, tx=None):
         return self.workspaces.job_access(uid, record, 'sign', tx)[1]['company_id']

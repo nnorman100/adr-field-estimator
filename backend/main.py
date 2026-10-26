@@ -99,7 +99,7 @@ try:
     from .workspace_api import failure_for, register_workspace_routes
     from .price_book_api import register_price_book_routes
     from .price_book_store import Expired
-    from .price_books import price_books_enabled
+    from .price_books import price_books_enabled, saved_basis
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import (
         InspectionStore,
@@ -165,7 +165,7 @@ except ImportError:
     from workspace_api import failure_for, register_workspace_routes
     from price_book_api import register_price_book_routes
     from price_book_store import Expired
-    from price_books import price_books_enabled
+    from price_books import price_books_enabled, saved_basis
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import (
         InspectionStore,
@@ -589,8 +589,8 @@ def reusable_audit(record, revision, identity, customer, claim=None, price_basis
     audit = record.get('audit')
     if not audit or audit['revision'] != revision:
         return False
-    saved_basis, pinned = audit['documents'].get('price_basis') or {}, price_basis or {}
-    if (saved_basis.get('content_sha256'), saved_basis.get('version_id')) != (
+    basis, pinned = saved_basis(audit) or {}, price_basis or {}
+    if (basis.get('content_sha256'), basis.get('version_id')) != (
         pinned.get('content_sha256'),
         pinned.get('version_id'),
     ):

@@ -267,6 +267,12 @@ def calculation_policy():
     }
 
 
+def saved_basis(audit):
+    """Migration records the seed basis beside a legacy audit's documents, keeping its hash."""
+    audit = audit or {}
+    return (audit.get('documents') or {}).get('price_basis') or audit.get('price_basis')
+
+
 def content_hash(rates):
     payload = {
         'calculation_version': CALCULATION_VERSION,
