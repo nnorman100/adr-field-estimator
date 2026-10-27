@@ -394,6 +394,19 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             'invitations': await stored(workspace(store).invitations, claims['uid'], company_id)
         }
 
+    @app.post('/api/companies/{company_id}/invitations/clear')
+    async def clear_invitations(company_id: str, claims=live_identity, store=Depends(get_store)):
+        await stored(store.quota, claims['uid'], 'team', 20)
+        result = await stored(workspace(store).clear_invitations, claims['uid'], company_id)
+        # Count only. The allowlist drops ids, addresses and anything else this call could add.
+        event(
+            'Invitations cleared',
+            operation='invitation_clear',
+            outcome='cleared',
+            cleared=result['cleared'],
+        )
+        return result
+
     @app.post('/api/companies/{company_id}/invitations')
     async def invite(
         company_id: str, req: InviteCreate, claims=live_identity, store=Depends(get_store)

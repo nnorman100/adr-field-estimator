@@ -80,6 +80,11 @@ CAPABILITIES = {
 }
 
 INVITATION_DAILY_LIMIT = 50
+# The list query is a single company_id equality, which uses Firestore's automatic index.
+# Cleared rows stay in that result and are dropped in memory. A missing cleared_at must still
+# count as listed, so this does not filter on the field (equality would skip documents that
+# predate it) and it does not add an index.
+INVITATION_LIST_READ = 400
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_DEADLINE = 24
@@ -227,6 +232,16 @@ class ClaimUpdate(StrictModel):
     # Jobs saved before claim details have no claim_version; they start at 0.
     expected_version: int = Field(ge=0)
     claim: ClaimDetails
+
+
+def clearable_invitation(invitation, moment):
+    """Cancelled invitations, and pending ones whose expiry has passed. Accepted, pending
+    unexpired, and already-cleared rows are left exactly as they are."""
+    if not invitation or invitation.get('cleared_at') or invitation.get('status') == 'accepted':
+        return False
+    if invitation.get('status') == 'cancelled':
+        return True
+    return invitation.get('status') == 'pending' and invitation.get('expires_at', 0) <= moment
 
 
 def email_address(value):
@@ -926,20 +941,68 @@ class WorkspaceStore:
 
         return self._run(create)
 
+    def company_invitation_rows(self, company_id, tx=None):
+        return [
+            s.to_dict()
+            for s in self.db.collection('_invitations')
+            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+            .limit(INVITATION_LIST_READ)
+            .stream(transaction=tx)
+        ]
+
     def invitations(self, uid, company_id):
         support = self.supported(self.principal(uid), company_id, 'owner')
         if not support:
             self.company_actor(uid, company_id, True)
         invitations = [
-            s.to_dict()
-            for s in self.db.collection('_invitations')
-            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
-            .limit(100)
-            .stream()
+            row for row in self.company_invitation_rows(company_id) if not row.get('cleared_at')
         ]
         if support:
             self.support_audit(uid, company_id, 'view_invitations', 'invitations')
         return invitations
+
+    def invitation_manager(self, uid, company_id, tx):
+        """Who may resend, cancel, or clear. True when superadmin support, rather than ownership,
+        authorized the call. A suspended company refuses both, as invite_actor does."""
+        if self.supported(self.principal(uid, tx), company_id, 'owner'):
+            if self.support_company(uid, company_id, tx)['status'] != 'active':
+                raise AccessDenied('The company must be active to invite staff.')
+            return True
+        self.company_actor(uid, company_id, True, tx)
+        return False
+
+    def clear_invitations(self, uid, company_id):
+        """Hide cancelled and expired invitations from the company list without deleting them.
+        Client rules deny every write, so this server transaction is the only writer. Each row is
+        read again in the transaction before the first write; an acceptance or an earlier clear
+        that committed underneath this attempt is skipped instead of overwritten."""
+
+        def update(tx):
+            support = self.invitation_manager(uid, company_id, tx)
+            moment = time.time()
+            stamp = now()
+            chosen = []
+            for row in self.company_invitation_rows(company_id, tx):
+                current = self.read('_invitations', row['invitation_id'], tx)
+                if not clearable_invitation(current, moment):
+                    continue
+                current['cleared_at'] = stamp
+                current['cleared_by'] = uid
+                chosen.append(current)
+            for current in chosen:
+                tx.set(self.ref('_invitations', current['invitation_id']), current)
+            if chosen:
+                self.event(
+                    tx,
+                    uid,
+                    ('support_' if support else '') + 'invitation_clear',
+                    company_id,
+                    {'cleared': len(chosen)},
+                    'invitations' if support else None,
+                )
+            return {'cleared': len(chosen)}
+
+        return self._run(update)
 
     def pending(self, claims):
         email = email_address(claims['email'])

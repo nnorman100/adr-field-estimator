@@ -12,7 +12,8 @@ window.WorkspaceUI = (() => {
     supportUrls = [],
     deliveryJob = null,
     deliveryView = undefined,
-    ocrEditable = null;
+    ocrEditable = null,
+    clearNet = null;
   const POSITIONING_HEADLINE = 'Water & mold loss estimates, signed on site.',
     POSITIONING_LINE =
       'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.';
@@ -624,9 +625,87 @@ window.WorkspaceUI = (() => {
     if (epoch !== viewEpoch) return;
     render();
   }
+  function deadInvitation(invite) {
+    if (!invite || invite.cleared_at || invite.status === 'accepted') return false;
+    if (invite.status === 'cancelled') return true;
+    return invite.status === 'pending' && Number(invite.expires_at) <= Date.now() / 1000;
+  }
+  function bindClearNetwork(sync) {
+    if (clearNet) {
+      window.removeEventListener('online', clearNet);
+      window.removeEventListener('offline', clearNet);
+    }
+    clearNet = sync;
+    window.addEventListener('online', sync);
+    window.addEventListener('offline', sync);
+  }
+  function clearControl(companyId, after) {
+    const box = node('div', undefined, 'invite-clear');
+    let ask = null,
+      confirm = null;
+    const refreshList = () =>
+      after
+        ? after()
+        : state.session.role === 'owner' && companyId === state.session.company_id
+          ? team()
+          : companyAdmin(companyId);
+    const sync = () => {
+      if (!box.isConnected) {
+        window.removeEventListener('online', clearNet);
+        window.removeEventListener('offline', clearNet);
+        clearNet = null;
+        return;
+      }
+      const offline = !navigator.onLine;
+      if (ask) {
+        ask.disabled = offline;
+        ask.textContent = offline
+          ? 'Clear cancelled and expired (needs a connection)'
+          : 'Clear cancelled and expired';
+      }
+      if (confirm) confirm.disabled = offline;
+    };
+    const showAsk = () => {
+      confirm = null;
+      ask = button('Clear cancelled and expired', showConfirm);
+      box.replaceChildren(ask);
+      sync();
+    };
+    const showConfirm = () => {
+      ask = null;
+      const note = node(
+        'p',
+        'Hide cancelled and expired invitations from this list? Pending invitations stay. Nothing is deleted.',
+      );
+      confirm = button('Confirm clear', async () => {
+        if (!navigator.onLine) throw Error('You are offline. Reconnect to clear invitations.');
+        const result = await jsonApi(
+          '/api/companies/' + companyId + '/invitations/clear',
+          'POST',
+          {},
+        );
+        const count = result.cleared;
+        say(
+          count
+            ? 'Cleared ' + count + ' cancelled and expired invitation' + (count === 1 ? '.' : 's.')
+            : 'No cancelled or expired invitations to clear.',
+          'success',
+        );
+        await refreshList();
+      });
+      confirm.classList.add('primary');
+      const keep = button('Keep them', showAsk);
+      box.replaceChildren(note, confirm, keep);
+      sync();
+    };
+    showAsk();
+    bindClearNetwork(sync);
+    return box;
+  }
   function invitationList(container, invitations, companyId, after, actions = true) {
     const list = node('div', undefined, 'dashboard-list');
     container.append(list);
+    if (actions && invitations.some(deadInvitation)) list.append(clearControl(companyId, after));
     if (!invitations.length) list.append(node('p', 'No invitations yet.'));
     for (const invite of invitations) {
       const card = node('section', undefined, 'dashboard-card');

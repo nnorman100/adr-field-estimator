@@ -395,6 +395,152 @@ def test_invitation_requires_google_email_expiry_and_explicit_acceptance(store):
         w.accept(identity('other-owner'), other['invitation_id'])
 
 
+def test_clear_hides_cancelled_and_expired_invitations_without_deleting_them(api, capsys):
+    client, current, store = api
+    del store.db.records['_platform_admins/owner']
+    w = store.workspaces
+    pending = w.invite('owner', 'adr', 'pending@example.invalid', 'estimator')
+    cancelled = w.invite('owner', 'adr', 'cancelled@example.invalid', 'office')
+    w.invitation_action('owner', 'adr', cancelled['invitation_id'], 'cancel')
+    expired = w.invite('owner', 'adr', 'expired@example.invalid', 'office')
+    store.db.records['_invitations/' + expired['invitation_id']]['expires_at'] = 0
+    accepted = w.invite('owner', 'adr', 'accepted@example.invalid', 'estimator')
+    assert w.accept(identity('accepted'), accepted['invitation_id'])['role'] == 'estimator'
+    already = w.invite('owner', 'adr', 'already@example.invalid', 'office')
+    w.invitation_action('owner', 'adr', already['invitation_id'], 'cancel')
+    store.db.records['_invitations/' + already['invitation_id']].update(
+        cleared_at='2026-01-01T00:00:00+00:00', cleared_by='owner'
+    )
+    limits = deepcopy(store.db.records['_company_limits/adr'])
+    pending_record = deepcopy(store.db.records['_invitations/' + pending['invitation_id']])
+    accepted_record = deepcopy(store.db.records['_invitations/' + accepted['invitation_id']])
+    already_record = deepcopy(store.db.records['_invitations/' + already['invitation_id']])
+    listed = {
+        row['email'] for row in client.get('/api/companies/adr/invitations').json()['invitations']
+    }
+    assert listed == {
+        'pending@example.invalid',
+        'cancelled@example.invalid',
+        'expired@example.invalid',
+        'accepted@example.invalid',
+    }
+    capsys.readouterr()
+    response = client.post('/api/companies/adr/invitations/clear')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'cleared': 2}
+    logged = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if 'Invitations cleared' in line
+    ]
+    assert logged == [
+        {
+            'severity': 'INFO',
+            'message': 'Invitations cleared',
+            'operation': 'invitation_clear',
+            'outcome': 'cleared',
+            'cleared': 2,
+        }
+    ]
+    assert 'example.invalid' not in json.dumps(logged)
+    visible = {
+        row['email'] for row in client.get('/api/companies/adr/invitations').json()['invitations']
+    }
+    assert visible == {'pending@example.invalid', 'accepted@example.invalid'}
+    assert store.db.records['_company_limits/adr'] == limits
+    assert store.db.records['_invitations/' + pending['invitation_id']] == pending_record
+    assert store.db.records['_invitations/' + accepted['invitation_id']] == accepted_record
+    assert store.db.records['_invitations/' + already['invitation_id']] == already_record
+    for record, status in ((cancelled, 'cancelled'), (expired, 'pending')):
+        stored = store.db.records['_invitations/' + record['invitation_id']]
+        assert stored['status'] == status
+        assert stored['cleared_by'] == 'owner' and stored['cleared_at']
+        assert stored['email'] == record['email']
+    cleared_at = store.db.records['_invitations/' + cancelled['invitation_id']]['cleared_at']
+    owner_events = [
+        row for row in store.db.records.values() if row.get('action') == 'invitation_clear'
+    ]
+    assert len(owner_events) == 1
+    assert owner_events[0]['details'] == {'cleared': 2}
+    assert owner_events[0]['actor_uid'] == 'owner' and 'target' not in owner_events[0]
+    assert 'example.invalid' not in json.dumps(owner_events)
+    again = client.post('/api/companies/adr/invitations/clear')
+    assert again.status_code == 200 and again.json() == {'cleared': 0}
+    assert (
+        store.db.records['_invitations/' + cancelled['invitation_id']]['cleared_at'] == cleared_at
+    )
+    with pytest.raises(Conflict):
+        w.accept(identity('cancelled'), cancelled['invitation_id'])
+    with pytest.raises(Conflict):
+        w.accept(identity('expired'), expired['invitation_id'])
+    fresh = w.invite('owner', 'adr', 'cancelled@example.invalid', 'office')
+    assert fresh['invitation_id'] != cancelled['invitation_id']
+    assert store.db.records['_invitations/' + cancelled['invitation_id']]['status'] == 'cancelled'
+    snapshot = {
+        key: deepcopy(value)
+        for key, value in store.db.records.items()
+        if key.startswith('_invitations/') or key.startswith('_company_limits/')
+    }
+    for uid in ('estimator', 'office', 'other-owner', 'outsider'):
+        current['uid'] = uid
+        refused = client.post('/api/companies/adr/invitations/clear')
+        assert refused.status_code == 403, (uid, refused.text)
+        assert 'example.invalid' not in refused.text
+    assert {
+        key: value
+        for key, value in store.db.records.items()
+        if key.startswith('_invitations/') or key.startswith('_company_limits/')
+    } == snapshot
+    other = w.invite('other-owner', 'other', 'other-cancelled@example.invalid', 'office')
+    w.invitation_action('other-owner', 'other', other['invitation_id'], 'cancel')
+    current['uid'] = 'admin'
+    support = client.post('/api/companies/other/invitations/clear')
+    assert support.status_code == 200, support.text
+    assert support.json() == {'cleared': 1}
+    support_events = [
+        row for row in store.db.records.values() if row.get('action') == 'support_invitation_clear'
+    ]
+    assert len(support_events) == 1
+    assert (
+        support_events[0]['actor_uid'] == 'admin' and support_events[0]['target'] == 'invitations'
+    )
+    assert support_events[0]['details'] == {'cleared': 1}
+    assert 'example.invalid' not in json.dumps(support_events)
+    stored = deepcopy(store.db.records['_invitations/' + other['invitation_id']])
+    assert stored['status'] == 'cancelled' and stored['cleared_by'] == 'admin'
+    store.db.records['_companies/other']['status'] = 'suspended'
+    refused = client.post('/api/companies/other/invitations/clear')
+    assert refused.status_code == 403
+    assert store.db.records['_invitations/' + other['invitation_id']] == stored
+
+
+def test_clear_skips_an_invitation_accepted_after_the_list_read(api, monkeypatch):
+    """The transaction re-reads each row before writing, so an acceptance that lands after the
+    company query does not get a cleared stamp or lose its accepted status."""
+    client, current, store = api
+    w = store.workspaces
+    race = w.invite('owner', 'adr', 'race@example.invalid', 'office')
+    cancelled = w.invite('owner', 'adr', 'gone@example.invalid', 'office')
+    w.invitation_action('owner', 'adr', cancelled['invitation_id'], 'cancel')
+    original = w.company_invitation_rows
+
+    def accept_during_query(company_id, tx=None):
+        rows = original(company_id, tx)
+        record = store.db.records['_invitations/' + race['invitation_id']]
+        record['status'] = 'accepted'
+        record['accepted_by'] = 'race'
+        return rows
+
+    monkeypatch.setattr(w, 'company_invitation_rows', accept_during_query)
+    response = client.post('/api/companies/adr/invitations/clear')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'cleared': 1}
+    raced = store.db.records['_invitations/' + race['invitation_id']]
+    assert raced['status'] == 'accepted' and raced['accepted_by'] == 'race'
+    assert 'cleared_at' not in raced
+    assert store.db.records['_invitations/' + cancelled['invitation_id']]['cleared_by'] == 'owner'
+
+
 def test_no_owner_or_superadmin_escalation(store):
     w = store.workspaces
     with pytest.raises(AccessDenied):
@@ -2666,6 +2812,7 @@ def superadmin_tools(invites):
             200,
         ),
         ('cancel own company owner invitation', 'POST', adr_owner + '/cancel', None, 200),
+        ('clear cancelled invitations', 'POST', other + '/invitations/clear', None, 200),
         (
             'suspend own company',
             'PUT',
@@ -2803,6 +2950,7 @@ def revoked(records):
         'cancel staff invitation',
         'resend owner invitation',
         'cancel owner invitation',
+        'clear cancelled invitations',
         'replace owner',
         'suspend company',
         'reactivate suspended company',

@@ -42,6 +42,8 @@ LOG_FIELDS = frozenset(
         'recipient_role',
         'reminder_id',
         'watch_status',
+        # How many cancelled or expired invitations one clear hid. A count, never an address or id.
+        'cleared',
     }
 )
 

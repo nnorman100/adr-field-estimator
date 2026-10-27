@@ -431,6 +431,20 @@ async def drying_watch_fixture(request: Request):
     return {'job_id': job_id, 'auth_id': payload['auth_id']}
 
 
+@bm.app.post('/__test/expire-invitations')
+async def expire_invitations(request: Request):
+    # Lets the browser list show an expired invitation without waiting seven days.
+    body = await request.json()
+    identifier = body.get('invitation_id')
+    if not isinstance(identifier, str) or not identifier.isalnum():
+        raise HTTPException(400, 'Invitation not found.')
+    record = store.db.records.get('_invitations/' + identifier)
+    if not record:
+        raise HTTPException(404, 'Invitation not found.')
+    record['expires_at'] = 0
+    return {'expired': True}
+
+
 @bm.app.post('/__test/expire-signing-links')
 async def expire_signing_links():
     # Moves every outstanding link past its seven-day expiry.
@@ -511,8 +525,8 @@ def worker():
         (ROOT / 'public/sw.js')
         .read_text()
         .replace(
-            "const CACHE='dryscope-o1-o3-'+VERSION;",
-            "const CACHE='dryscope-o1-o3-'+VERSION+'" + worker_suffix + "';",
+            "const CACHE='dryscope-o1-o4-'+VERSION;",
+            "const CACHE='dryscope-o1-o4-'+VERSION+'" + worker_suffix + "';",
         ),
         media_type='text/javascript',
         headers={'Cache-Control': 'no-store'},

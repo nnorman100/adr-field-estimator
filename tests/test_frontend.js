@@ -26,7 +26,7 @@ assert.deepEqual(fs.readFileSync('index.html'), fs.readFileSync('public/index.ht
       },
       caches: {
         open: async (name) => {
-          assert.equal(name, 'dryscope-o1-o3-' + worker.version);
+          assert.equal(name, 'dryscope-o1-o4-' + worker.version);
           return { addAll: async (assets) => (precached = Array.from(assets)) };
         },
         keys: async () => ['alert-disaster-old', 'dryscope-old', worker.cache, 'unrelated'],
