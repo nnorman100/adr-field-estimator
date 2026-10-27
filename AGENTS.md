@@ -134,5 +134,7 @@ Agents must preserve the exact standard estimate clauses in `backend/claims.py`,
 
 ## 7. Acceptance checks
 
+- **Never weaken tests, evaluations or checks to make work pass.** Do not delete, skip or loosen a test, lower a scoring threshold, edit expected answers in eval fixtures, or change workflow files to get a green result. If a test looks wrong, stop and explain why in the pull request so the owner can decide. The Test guard check (`scripts/test-guard.mjs`) blocks these changes until the owner adds the `test-change-approved` label. Never add, remove or request that label yourself.
+- **Fix the code, not the test.** When a test fails, assume the code is wrong first. Adding new tests is always welcome.
 - Run `python -m pytest tests -q -p no:cacheprovider`, `npm test` and `npm run test:browser` for lifecycle changes. Keep the HTML copies identical.
 - Record synthetic real-service checks separately from mock tests. Physical iPhone camera, microphone, Bluetooth, reconnect, interruption, Finish cleanup and sub-second latency remain open until observed on the device. See `docs/review-repairs.md` for the guided test and current evidence.

@@ -1,0 +1,10 @@
+# Changes to these paths request a review from the owner.
+# Paired with the Test guard check, which blocks test weakening until the owner approves.
+/.github/ @nnorman100
+/scripts/test-guard.mjs @nnorman100
+/tests/ @nnorman100
+/scripts/readiness_eval.py @nnorman100
+/scripts/verify_*.py @nnorman100
+/playwright.config.js @nnorman100
+/playwright.isolated.config.js @nnorman100
+/firestore.rules @nnorman100

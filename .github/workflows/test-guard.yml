@@ -1,0 +1,33 @@
+name: Test guard
+
+# Fails a pull request that deletes or skips tests, removes test cases, or
+# changes scoring thresholds, eval files or workflow files, unless the owner
+# adds the "test-change-approved" label. Coding agents must never add it.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  test-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: lts/*
+      - name: Run the guard from the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Use the base branch's copy of the guard, so a pull request cannot
+          # edit the guard to let itself through.
+          if git show "$BASE_SHA:scripts/test-guard.mjs" > "$RUNNER_TEMP/test-guard.mjs" 2>/dev/null; then
+            node "$RUNNER_TEMP/test-guard.mjs" "$BASE_SHA"
+          else
+            node scripts/test-guard.mjs "$BASE_SHA"
+          fi
