@@ -30,9 +30,18 @@ def stamp_path(monkeypatch, tmp_path):
     return tmp_path / 'SOURCE_COMMIT'
 
 
+def env_flag(argv):
+    flags = [item for item in argv if item.startswith('--update-env-vars=')]
+    assert len(flags) == 1
+    return flags[0]
+
+
 def test_workspaces_off_is_explicit_and_receives_no_traffic():
     argv = deploy.command('off', 'workspaces-off-1', HEAD)
-    assert '--update-env-vars=WORKSPACES_ENABLED=false' in argv
+    assert env_flag(argv) == (
+        '--update-env-vars=^@^WORKSPACES_ENABLED=false'
+        '@AI_FEATURES=readiness@PRICE_BOOKS_ENABLED=false'
+    )
     assert '--no-traffic' in argv and '--tag=workspaces-off-1' in argv
     # The Maps key is mounted from its Secret Manager secret, never passed as a value.
     assert '--update-secrets=MAPS_API_KEY=dryscope-maps-api-key:latest' in argv
@@ -49,9 +58,64 @@ def test_workspaces_off_is_explicit_and_receives_no_traffic():
         '--update-labels=source-commit=' + HEAD,
     ):
         assert flag in argv
-    assert '--update-env-vars=WORKSPACES_ENABLED=true' in deploy.command(
-        'on', 'workspaces-on-1', HEAD
+    assert 'WORKSPACES_ENABLED=true' in env_flag(deploy.command('on', 'workspaces-on-1', HEAD))
+
+
+def test_feature_baseline_changes_only_when_asked():
+    overridden = deploy.command(
+        'on',
+        'features-on-1',
+        HEAD,
+        ai_features='drying_watch,readiness',
+        price_books='on',
     )
+    assert env_flag(overridden) == (
+        '--update-env-vars=^@^WORKSPACES_ENABLED=true'
+        '@AI_FEATURES=drying_watch,readiness@PRICE_BOOKS_ENABLED=true'
+    )
+    cleared = deploy.command('on', 'features-off-1', HEAD, ai_features='', price_books='off')
+    assert '@AI_FEATURES=@PRICE_BOOKS_ENABLED=false' in env_flag(cleared)
+
+
+def test_dry_run_prints_a_deliberate_feature_baseline(capsys):
+    never = lambda *args, **kwargs: pytest.fail('gcloud ran')
+    assert (
+        deploy.main(
+            [
+                '--workspaces',
+                'on',
+                '--tag',
+                'stage-1',
+                '--ai-features',
+                'none',
+                '--price-books',
+                'on',
+                '--dry-run',
+            ],
+            run=never,
+            git=fake_git(),
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert (
+        "Feature baseline: WORKSPACES_ENABLED=true AI_FEATURES='' PRICE_BOOKS_ENABLED=true" in out
+    )
+    assert '@AI_FEATURES=@PRICE_BOOKS_ENABLED=true' in out
+    with pytest.raises(SystemExit):
+        deploy.main(
+            [
+                '--workspaces',
+                'on',
+                '--tag',
+                'stage-1',
+                '--ai-features',
+                'not-a-feature',
+                '--dry-run',
+            ],
+            run=never,
+            git=fake_git(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -78,6 +142,10 @@ def test_dry_run_and_unconfirmed_deploy_run_nothing(capsys, stamp_path):
     )
     out = capsys.readouterr().out
     assert 'WORKSPACES_ENABLED=false' in out and 'source-commit=' + HEAD in out
+    assert (
+        'Feature baseline: WORKSPACES_ENABLED=false AI_FEATURES=readiness PRICE_BOOKS_ENABLED=false'
+        in out
+    )
     assert deploy.main(['--workspaces', 'off', '--tag', 'stage-1'], run=never, git=fake_git()) == 2
     assert not stamp_path.exists()
 

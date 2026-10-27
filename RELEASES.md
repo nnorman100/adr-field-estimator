@@ -22,8 +22,13 @@ the revision that serves traffic instead.
 
 ## Recording a release
 
-1. `python scripts/deploy_backend.py ... --yes` stamps the image and its `source-commit` label, then
-   prints a row for the staged revision. Fill in the revision suffix and append it.
+1. `python scripts/deploy_backend.py --workspaces on|off --tag <tag> ... --yes` stamps the image and
+   its `source-commit` label. Every deploy sets `WORKSPACES_ENABLED`, `AI_FEATURES` and
+   `PRICE_BOOKS_ENABLED` from this command, not from the latest Cloud Run template. The defaults are
+   the current production baseline: `AI_FEATURES=readiness` and `PRICE_BOOKS_ENABLED=false`. Pass
+   `--ai-features` (or `none`) and `--price-books on|off` only to change that baseline on purpose.
+   The command prints the baseline, then a row for the staged revision. Fill in the revision suffix
+   and append it.
 2. After `gcloud run services update-traffic ... --to-tags=<tag>=100`, append the same revision with
    `100% (promoted)`.
 3. `python scripts/stamp_hosting.py` stamps the Hosting shell and prints a row. Deploy only
