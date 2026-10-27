@@ -1,0 +1,13 @@
+{
+  "tests": ["tests/**"],
+  "protected": [
+    ".github/**",
+    "scripts/test-guard.mjs",
+    "tests/fixtures/**",
+    "scripts/readiness_eval.py",
+    "scripts/verify_*.py",
+    "playwright.config.js",
+    "playwright.isolated.config.js",
+    "firestore.rules"
+  ]
+}
