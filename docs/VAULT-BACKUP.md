@@ -1,6 +1,6 @@
 # DryScope vault backup
 
-Before this job is deployed and verified, Firebase Auth has no backup, and evidence photos and signature images live in one private bucket with a 7-day soft delete and no second copy. This job exports logins and copies evidence into a separate project once a day.
+This job exports Firebase Auth logins and copies evidence photos and signature images into a separate project once a day. The source evidence bucket also has a 7-day soft delete. See [RELEASES.md](../RELEASES.md) for the deployed image, setup record and verification results.
 
 Transcripts stay in Firestore, which already has point-in-time recovery (7 days), delete protection, and a daily backup kept for 98 days. Live audio and voice recordings are not stored. This job does not read Firestore and does not try to back up audio that was never written.
 
@@ -23,7 +23,7 @@ Nothing in this file is run by the app or by CI. The commands are for the projec
 | Auth output | `gs://alert-disaster-vault-backups/auth/YYYY-MM-DD.json` |
 | Evidence output | `gs://alert-disaster-vault-backups/evidence/<source-generation>/<source-object-name>` |
 | Manifest | `gs://alert-disaster-vault-backups/manifests/YYYY-MM-DD.json` |
-| Vault project | `alert-disaster-vault`, bucket location `us-central1` |
+| Vault project | `plumbupusa-vault` (shared vault project, separate DryScope bucket), bucket location `us-central1` |
 | Retention | Lifecycle deletes vault objects 90 days after they were created; soft delete keeps a deleted object for 7 more days |
 
 Evidence is in `us-west2`. The vault bucket is in `us-central1` so a single-region outage does not take both copies. Cross-region copy has an egress charge. The job runs in `us-west2` next to the evidence bucket and tells Cloud Storage to rewrite objects. It does not download photo bytes.
@@ -48,63 +48,48 @@ Each write is accepted only when the upload or rewrite response names the intend
 
 Auth files contain password hashes and emails. Evidence copies are the inspection photos and signature images. Treat the vault like a password store.
 
-The vault is a separate project because Editor on `alert-disaster-field-2026` includes Cloud Storage read, and these projects are not in a Google Cloud organization that could hold a deny policy. `alert-disaster-vault` has the owner as its only member and only the Storage API enabled. Enabling Cloud Run, Cloud Build, Firebase, Firestore, Compute, App Engine, or Container there can create a default service account with Editor. The backup identity is not a member of the vault project; its only vault grant is Object Creator on this bucket.
+The vault is a separate project because Editor on `alert-disaster-field-2026` includes Cloud Storage read, and these projects are not in a Google Cloud organization that could hold a deny policy. `plumbupusa-vault` is the existing owner-only vault project shared with PlumbUp; DryScope uses its own bucket, `alert-disaster-vault-backups`. Existing PlumbUp buckets and IAM are outside this setup. Storage is already enabled; leave the project's existing APIs unchanged. Enabling Cloud Run, Cloud Build, Firebase, Firestore, Compute, App Engine, or Container there can create a default service account with Editor. The backup identity is not a member of the vault project; its only vault grant is Object Creator on this bucket.
 
 The export is project-wide. It includes every Firebase Auth user and every live object in the evidence bucket, for every company workspace.
 
 ## Owner setup
 
-Run these from the repository root, signed in as the owner. Stop if a command wants a new permission, a key file, or an API in `alert-disaster-vault` other than Storage.
+Run these from the repository root, signed in as the owner. Stop if a command wants a new permission, a key file, or an API in `plumbupusa-vault` other than Storage.
 
-1. Create the vault project and attach the same billing account as DryScope. Confirm that account is the approved Citi account ending F05CC3 before linking.
+1. Use the existing shared vault project `plumbupusa-vault`, signed in as its owner. Confirm billing is enabled on the same approved Citi account ending F05CC3 as DryScope, and Storage is already enabled. Do not relink billing or enable or disable APIs.
 
    ```sh
-   gcloud projects create alert-disaster-vault --name='DryScope vault'
    gcloud billing projects describe alert-disaster-field-2026 --format='value(billingAccountName)'
-   gcloud billing projects link alert-disaster-vault --billing-account='BILLING_ACCOUNT_ID'
+   gcloud billing projects describe plumbupusa-vault --format='yaml(billingAccountName,billingEnabled)'
+   gcloud services list --enabled --project=plumbupusa-vault --format='value(config.name)'
    ```
 
-   `BILLING_ACCOUNT_ID` is the id at the end of `billingAccountName` (`billingAccounts/XXXX-XXXX-XXXX`). If the project id is already taken, pick another id. The bucket name below is global and is what the job uses; if that bucket name is taken, stop. A different bucket name requires a code change in `ops/vault-backup/vault_backup.py`.
+   Stop if billing differs, Storage is missing, or the enabled list includes `run.googleapis.com`, `cloudbuild.googleapis.com`, `firebase.googleapis.com`, `firestore.googleapis.com`, `compute.googleapis.com`, `appengine.googleapis.com`, or `container.googleapis.com`. Do not read or change existing PlumbUp buckets or IAM. Grant the DryScope identity access only on the new bucket below, never at project level. Preserve the shared project's existing deletion protection; do not change its liens.
 
-2. Enable Storage and check the project members and enabled APIs.
+   A separately approved new vault project must be created with `gcloud projects create ... --no-enable-cloud-apis`; otherwise the CLI enables `cloudapis.googleapis.com` by default. This setup reuses the existing project and does not create one.
 
-   ```sh
-   gcloud services enable storage.googleapis.com --project=alert-disaster-vault
-   gcloud services list --enabled --project=alert-disaster-vault --format='value(config.name)'
-   gcloud projects get-iam-policy alert-disaster-vault --format='yaml(bindings)'
-   ```
-
-   The member list should be the owner only. Stop if a default service account holds Editor. Stop if the enabled list includes `run.googleapis.com`, `cloudbuild.googleapis.com`, `firebase.googleapis.com`, `firestore.googleapis.com`, `compute.googleapis.com`, `appengine.googleapis.com`, or `container.googleapis.com`. Companion APIs that Storage enablement turns on, such as Service Management, can stay when they add no Editor account.
-
-3. Create the bucket in `us-central1` with uniform access, public access prevention, a 7-day soft delete, and the 90-day lifecycle file.
+2. Create the bucket in `us-central1` with uniform access, public access prevention, a 7-day soft delete, and the 90-day lifecycle file.
 
    ```sh
    gcloud storage buckets create gs://alert-disaster-vault-backups \
-     --project=alert-disaster-vault \
+     --project=plumbupusa-vault \
      --location=us-central1 \
      --uniform-bucket-level-access \
      --public-access-prevention \
      --soft-delete-duration=7d
    gcloud storage buckets update gs://alert-disaster-vault-backups \
-     --project=alert-disaster-vault \
+     --project=plumbupusa-vault \
      --lifecycle-file=ops/vault-backup/lifecycle.json
    gcloud storage buckets describe gs://alert-disaster-vault-backups \
+     --project=plumbupusa-vault --raw \
      --format='yaml(location,iamConfiguration,softDeletePolicy,lifecycle)'
    ```
 
+   If the globally unique bucket name is already taken, stop; a different bucket name requires a code change in `ops/vault-backup/vault_backup.py`.
+
    `iamConfiguration` should show uniform bucket-level access and public access prevention. `location` is `us-central1`. `softDeletePolicy.retentionDurationSeconds` is `604800`. The lifecycle rule deletes at age 90.
 
-4. Place a lien so the project is not deleted in passing.
-
-   ```sh
-   gcloud alpha resource-manager liens create \
-     --project=alert-disaster-vault \
-     --restrictions=resourcemanager.projects.delete \
-     --reason='DryScope vault holds the off-project copies of logins and evidence photos' \
-     --origin=dryscope-vault
-   ```
-
-5. Create the job identity in the DryScope project and grant only the backup permissions.
+3. Create the job identity in the DryScope project and grant only the backup permissions.
 
    ```sh
    gcloud iam service-accounts create dryscope-vault-backup \
@@ -124,21 +109,21 @@ Run these from the repository root, signed in as the owner. Stop if a command wa
      --member='serviceAccount:dryscope-vault-backup@alert-disaster-field-2026.iam.gserviceaccount.com' \
      --role='roles/storage.objectViewer'
    gcloud storage buckets add-iam-policy-binding gs://alert-disaster-vault-backups \
-     --project=alert-disaster-vault \
+     --project=plumbupusa-vault \
      --member='serviceAccount:dryscope-vault-backup@alert-disaster-field-2026.iam.gserviceaccount.com' \
      --role='roles/storage.objectCreator'
    ```
 
-   Do not grant this identity Object Viewer or Object Admin on the vault, and do not grant it a project role on `alert-disaster-vault`. Cloud Run collects stdout without `roles/logging.logWriter`.
+   Do not grant this identity Object Viewer or Object Admin on the vault, and do not grant it a project role on `plumbupusa-vault`. Cloud Run collects stdout without `roles/logging.logWriter`.
 
-6. Enable the scheduler in the DryScope project if it is not already enabled. Source deploy also uses Cloud Build and Artifact Registry there. Leave those APIs off in the vault.
+4. Enable the scheduler in the DryScope project if it is not already enabled. Source deploy also uses Cloud Build and Artifact Registry there. Leave those APIs off in the vault.
 
    ```sh
    gcloud services enable cloudscheduler.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
      --project=alert-disaster-field-2026
    ```
 
-7. Deploy the job from this directory. Then allow the same identity to start that job, and let the Cloud Scheduler service agent mint that identity's token.
+5. Deploy the job from this directory. Then allow the same identity to start that job, and let the Cloud Scheduler service agent mint that identity's token.
 
    ```sh
    gcloud run jobs deploy dryscope-vault-backup \
@@ -210,9 +195,9 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
 
    ```sh
    gcloud storage objects describe "gs://alert-disaster-vault-backups/auth/<YYYY-MM-DD>.json" \
-     --project=alert-disaster-vault --format='yaml(bucket,name,generation,size,timeCreated)'
+     --project=plumbupusa-vault --raw --format='yaml(bucket,name,generation,size,timeCreated)'
    gcloud storage objects describe "gs://alert-disaster-vault-backups/manifests/<YYYY-MM-DD>.json" \
-     --project=alert-disaster-vault --format='yaml(bucket,name,generation,size,timeCreated)'
+     --project=plumbupusa-vault --raw --format='yaml(bucket,name,generation,size,timeCreated)'
    ```
 
    Auth and manifest bucket, name, generation, and size match the log. `timeCreated` falls in this execution. Already-present copies have no new receipt and do not prove a new copy. Compare the photo receipts with the vault metadata. This reads the vault as the owner, not as the backup service account, and prints counts only:
@@ -227,7 +212,7 @@ Use metadata and log fields. Do not download `auth/*.json` or photo bytes to che
 
    ```sh
    bash ops/monitoring/setup-monitoring.sh --email you@example.com --dry-run
-   bash ops/monitoring/setup-monitoring.sh --email you@example.com
+   bash ops/monitoring/setup-monitoring.sh --email you@example.com --confirm
    ```
 
    The policy behavior and response guidance are in [MONITORING.md](MONITORING.md).
@@ -240,7 +225,7 @@ Restore was not rehearsed against the live project. The file matches the `fireba
 
    ```sh
    gcloud storage cp gs://alert-disaster-vault-backups/auth/<YYYY-MM-DD>.json auth-restore.json \
-     --project=alert-disaster-vault
+     --project=plumbupusa-vault
    ```
 
 2. In the Firebase console for `alert-disaster-field-2026`, open Authentication → Users → ⋮ → **Password hash parameters**. The import needs `base64_signer_key`, `base64_salt_separator`, `rounds`, and `mem_cost`.
@@ -265,11 +250,11 @@ List generations for the source name, then copy the chosen generation back. The 
 ```sh
 gcloud storage ls --long --recursive \
   'gs://alert-disaster-vault-backups/evidence/**/<source-object-name>' \
-  --project=alert-disaster-vault
+  --project=plumbupusa-vault
 gcloud storage cp \
   'gs://alert-disaster-vault-backups/evidence/<source-generation>/<source-object-name>' \
   ./restored-object \
-  --project=alert-disaster-vault
+  --project=plumbupusa-vault
 gcloud storage cp ./restored-object \
   'gs://alert-disaster-field-2026-evidence/<source-object-name>' \
   --project=alert-disaster-field-2026
