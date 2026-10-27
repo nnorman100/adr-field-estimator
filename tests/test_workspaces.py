@@ -2804,7 +2804,6 @@ def superadmin_tools(invites):
             200,
         ),
         ('cancel own company owner invitation', 'POST', adr_owner + '/cancel', None, 200),
-        ('clear cancelled invitations', 'POST', other + '/invitations/clear', None, 200),
         (
             'suspend own company',
             'PUT',
@@ -2942,7 +2941,6 @@ def revoked(records):
         'cancel staff invitation',
         'resend owner invitation',
         'cancel owner invitation',
-        'clear cancelled invitations',
         'replace owner',
         'suspend company',
         'reactivate suspended company',
