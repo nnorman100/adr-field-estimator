@@ -1463,11 +1463,7 @@ test.describe('invitation list clearing', () => {
     expect(emails).toContain('stay-pending@example.invalid');
     expect(emails).not.toContain('cancelled-staff@example.invalid');
     expect(emails).not.toContain('expired-staff@example.invalid');
-    const kept = await call(
-      page,
-      '/api/companies/adr/invitations/' + cancelledId + '/cancel',
-      'POST',
-    );
+    const kept = await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST');
     expect(kept.status()).toBe(409);
     expect(errors).toEqual([]);
   });
