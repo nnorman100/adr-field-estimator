@@ -495,22 +495,14 @@ def test_clear_hides_cancelled_and_expired_invitations_without_deleting_them(api
     w.invitation_action('other-owner', 'other', other['invitation_id'], 'cancel')
     current['uid'] = 'admin'
     support = client.post('/api/companies/other/invitations/clear')
-    assert support.status_code == 200, support.text
-    assert support.json() == {'cleared': 1}
-    support_events = [
-        row for row in store.db.records.values() if row.get('action') == 'support_invitation_clear'
-    ]
-    assert len(support_events) == 1
-    assert (
-        support_events[0]['actor_uid'] == 'admin' and support_events[0]['target'] == 'invitations'
-    )
-    assert support_events[0]['details'] == {'cleared': 1}
-    assert 'example.invalid' not in json.dumps(support_events)
+    assert support.status_code == 403
     stored = deepcopy(store.db.records['_invitations/' + other['invitation_id']])
-    assert stored['status'] == 'cancelled' and stored['cleared_by'] == 'admin'
+    assert 'cleared_at' not in stored
+    current['uid'] = 'other-owner'
+    assert client.post('/api/companies/other/invitations/clear').json() == {'cleared': 1}
+    stored = deepcopy(store.db.records['_invitations/' + other['invitation_id']])
     store.db.records['_companies/other']['status'] = 'suspended'
-    refused = client.post('/api/companies/other/invitations/clear')
-    assert refused.status_code == 403
+    assert client.post('/api/companies/other/invitations/clear').status_code == 403
     assert store.db.records['_invitations/' + other['invitation_id']] == stored
 
 
@@ -4747,3 +4739,32 @@ def test_copy_to_new_draft_checks_the_role_again_where_the_draft_is_created(api)
         store.create_inspection(
             'other-owner', COPY, data(), copied_from=dict(auth_id=SIGNED, inspection_id=ID)
         )
+
+
+def test_clear_paginates_past_hidden_rows_and_bounds_writes(store):
+    w = store.workspaces
+    template = w.invite('owner', 'adr', 'old@example.invalid', 'office')
+    del store.db.records['_invitations/' + template['invitation_id']]
+    for i in range(805):
+        row = dict(template, invitation_id=f'{i:032x}', expires_at=0)
+        store.db.records['_invitations/' + row['invitation_id']] = row
+    assert len(w.invitations('owner', 'adr')) == 805
+    assert w.clear_invitations('owner', 'adr') == {'cleared': 400}
+    assert len(w.invitations('owner', 'adr')) == 405
+    assert w.clear_invitations('owner', 'adr') == {'cleared': 400}
+    assert w.clear_invitations('owner', 'adr') == {'cleared': 5}
+    fresh = w.invite('owner', 'adr', 'fresh@example.invalid', 'office')
+    assert w.invitations('owner', 'adr') == [fresh]
+
+
+@pytest.mark.parametrize('actor', ['owner', 'admin'])
+def test_resend_restores_cleared_expired_invitation_visibility(store, actor):
+    w = store.workspaces
+    invite = w.invite('owner', 'adr', 'renewed@example.invalid', 'office')
+    store.db.records['_invitations/' + invite['invitation_id']]['expires_at'] = 0
+    assert w.clear_invitations('owner', 'adr') == {'cleared': 1}
+    renewed = w.invitation_action(actor, 'adr', invite['invitation_id'], 'resend')
+    assert renewed['expires_at'] > time.time()
+    assert 'cleared_at' not in renewed and 'cleared_by' not in renewed
+    assert w.invitations('owner', 'adr') == [renewed]
+    assert w.accept(identity('renewed'), invite['invitation_id'])['role'] == 'office'

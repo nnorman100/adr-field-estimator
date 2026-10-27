@@ -705,7 +705,13 @@ window.WorkspaceUI = (() => {
   function invitationList(container, invitations, companyId, after, actions = true) {
     const list = node('div', undefined, 'dashboard-list');
     container.append(list);
-    if (actions && invitations.some(deadInvitation)) list.append(clearControl(companyId, after));
+    if (
+      actions &&
+      state.session.role === 'owner' &&
+      companyId === state.session.company_id &&
+      invitations.some(deadInvitation)
+    )
+      list.append(clearControl(companyId, after));
     if (!invitations.length) list.append(node('p', 'No invitations yet.'));
     for (const invite of invitations) {
       const card = node('section', undefined, 'dashboard-card');

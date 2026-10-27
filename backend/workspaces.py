@@ -942,34 +942,28 @@ class WorkspaceStore:
         return self._run(create)
 
     def company_invitation_rows(self, company_id, tx=None):
-        return [
-            s.to_dict()
-            for s in self.db.collection('_invitations')
+        query = (
+            self.db.collection('_invitations')
             .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+            .order_by('invitation_id', direction=firestore.Query.DESCENDING)
             .limit(INVITATION_LIST_READ)
-            .stream(transaction=tx)
-        ]
+        )
+        rows = []
+        while True:
+            page = list(query.stream(transaction=tx))
+            rows.extend(s.to_dict() for s in page if not s.to_dict().get('cleared_at'))
+            if len(page) < INVITATION_LIST_READ:
+                return rows
+            query = query.start_after(page[-1])
 
     def invitations(self, uid, company_id):
         support = self.supported(self.principal(uid), company_id, 'owner')
         if not support:
             self.company_actor(uid, company_id, True)
-        invitations = [
-            row for row in self.company_invitation_rows(company_id) if not row.get('cleared_at')
-        ]
+        invitations = self.company_invitation_rows(company_id)
         if support:
             self.support_audit(uid, company_id, 'view_invitations', 'invitations')
         return invitations
-
-    def invitation_manager(self, uid, company_id, tx):
-        """Who may resend, cancel, or clear. True when superadmin support, rather than ownership,
-        authorized the call. A suspended company refuses both, as invite_actor does."""
-        if self.supported(self.principal(uid, tx), company_id, 'owner'):
-            if self.support_company(uid, company_id, tx)['status'] != 'active':
-                raise AccessDenied('The company must be active to invite staff.')
-            return True
-        self.company_actor(uid, company_id, True, tx)
-        return False
 
     def clear_invitations(self, uid, company_id):
         """Hide cancelled and expired invitations from the company list without deleting them.
@@ -978,7 +972,7 @@ class WorkspaceStore:
         that committed underneath this attempt is skipped instead of overwritten."""
 
         def update(tx):
-            support = self.invitation_manager(uid, company_id, tx)
+            self.company_actor(uid, company_id, True, tx)
             moment = time.time()
             stamp = now()
             chosen = []
@@ -989,16 +983,17 @@ class WorkspaceStore:
                 current['cleared_at'] = stamp
                 current['cleared_by'] = uid
                 chosen.append(current)
+                if len(chosen) == INVITATION_LIST_READ:
+                    break
             for current in chosen:
                 tx.set(self.ref('_invitations', current['invitation_id']), current)
             if chosen:
                 self.event(
                     tx,
                     uid,
-                    ('support_' if support else '') + 'invitation_clear',
+                    'invitation_clear',
                     company_id,
                     {'cleared': len(chosen)},
-                    'invitations' if support else None,
                 )
             return {'cleared': len(chosen)}
 
@@ -1122,6 +1117,8 @@ class WorkspaceStore:
             if action == 'cancel':
                 invitation['status'] = 'cancelled'
             elif action == 'resend':
+                invitation.pop('cleared_at', None)
+                invitation.pop('cleared_by', None)
                 tx.set(
                     self.ref('_company_limits', company_id), self.invitation_quota(company_id, tx)
                 )
