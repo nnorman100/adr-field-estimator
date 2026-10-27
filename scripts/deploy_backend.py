@@ -1,9 +1,12 @@
-"""Stage a dedicated backend revision with an explicit workspace flag and no traffic.
+"""Stage a dedicated backend revision with an explicit feature baseline and no traffic.
 
 Cloud Run copies environment variables from the service's latest template, which can be a staged
-revision that never received traffic. Setting WORKSPACES_ENABLED on every deploy prevents a release
-from silently inheriting the staged value. The same command mounts the Maps key secret by name, so a
-release never depends on a binding made by hand in the console. Promotion is a separate reviewed update-traffic step.
+revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES and
+PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting those staged values.
+The defaults are the current production baseline: AI_FEATURES=readiness and price books off. Pass
+--ai-features or --price-books only to change that baseline on purpose. The same command mounts the
+Maps key secret by name, so a release never depends on a binding made by hand in the console.
+Promotion is a separate reviewed update-traffic step.
 
 The deployed commit is written to backend/SOURCE_COMMIT inside the uploaded build context, so the
 image itself reports it as source_commit in /api/health; a later raw deploy cannot inherit it the way
@@ -27,9 +30,56 @@ PROJECT = 'alert-disaster-field-2026'
 # read, mounted as an environment variable. Without it the app keeps a plain address box.
 MAPS_SECRET = 'MAPS_API_KEY=dryscope-maps-api-key:latest'
 STAMP = ROOT / 'backend' / 'SOURCE_COMMIT'
+# Names the server actually reads. An unknown name would deploy as a silent no-op.
+KNOWN_AI_FEATURES = frozenset(
+    {'readiness', 'drying_watch', 'priced_extras', 'job_summary', 'ai_usage'}
+)
+DEFAULT_AI_FEATURES = 'readiness'
+_ON_OFF = {'on': 'true', 'off': 'false'}
 
 
-def command(workspaces, tag, commit):
+def ai_features_value(value):
+    """Normalize a deliberate AI_FEATURES list. 'none' or 'off' sets an empty list."""
+    text = value.strip().lower()
+    if text in ('none', 'off'):
+        return ''
+    names = []
+    known = ', '.join(sorted(KNOWN_AI_FEATURES))
+    for part in text.split(','):
+        name = part.strip()
+        if not name:
+            raise argparse.ArgumentTypeError(f'empty AI feature name; choose from {known}, or none')
+        if name not in KNOWN_AI_FEATURES:
+            raise argparse.ArgumentTypeError(
+                f'unknown AI feature {name!r}; choose from {known}, or none'
+            )
+        if name not in names:
+            names.append(name)
+    return ','.join(names)
+
+
+def env_assignments(workspaces, ai_features, price_books):
+    return {
+        'WORKSPACES_ENABLED': _ON_OFF[workspaces],
+        'AI_FEATURES': ai_features,
+        'PRICE_BOOKS_ENABLED': _ON_OFF[price_books],
+    }
+
+
+def update_env_flag(assignments):
+    # A caret delimiter keeps a comma inside AI_FEATURES from splitting the flag.
+    payload = '@'.join(f'{key}={value}' for key, value in assignments.items())
+    return '--update-env-vars=^@^' + payload
+
+
+def baseline_line(assignments):
+    parts = []
+    for key, value in assignments.items():
+        parts.append(key + '=' + (value or "''"))
+    return 'Feature baseline: ' + ' '.join(parts)
+
+
+def command(workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_books='off'):
     return [
         'gcloud',
         'run',
@@ -47,7 +97,7 @@ def command(workspaces, tag, commit):
         '--memory=1Gi',
         '--timeout=3600',
         '--allow-unauthenticated',
-        '--update-env-vars=WORKSPACES_ENABLED=' + {'on': 'true', 'off': 'false'}[workspaces],
+        update_env_flag(env_assignments(workspaces, ai_features, price_books)),
         '--update-secrets=' + MAPS_SECRET,
         '--update-labels=source-commit=' + commit,
         '--no-traffic',
@@ -66,6 +116,21 @@ def revision_tag(value):
 def main(argv=None, run=subprocess.run, git=subprocess.run):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--workspaces', choices=('on', 'off'), required=True)
+    parser.add_argument(
+        '--ai-features',
+        type=ai_features_value,
+        default=DEFAULT_AI_FEATURES,
+        help=(
+            'comma-separated AI_FEATURES to set on this revision '
+            f'(default: {DEFAULT_AI_FEATURES}; none turns every AI feature off)'
+        ),
+    )
+    parser.add_argument(
+        '--price-books',
+        choices=('on', 'off'),
+        default='off',
+        help='PRICE_BOOKS_ENABLED for this revision (default: off)',
+    )
     parser.add_argument(
         '--tag',
         type=revision_tag,
@@ -90,7 +155,9 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
             file=sys.stderr,
         )
         return 2
-    argv = command(args.workspaces, args.tag, commit)
+    assignments = env_assignments(args.workspaces, args.ai_features, args.price_books)
+    argv = command(args.workspaces, args.tag, commit, args.ai_features, args.price_books)
+    print(baseline_line(assignments))
     if args.dry_run:
         print(shlex.join(argv))
         return 0
@@ -112,7 +179,11 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
                 backend=f'`REVISION` (tag `{args.tag}`)',
                 commit=commit,
                 traffic='0% (staged)',
-                notes=f'workspaces {args.workspaces}',
+                notes=(
+                    f'workspaces {args.workspaces}; '
+                    f'AI_FEATURES={args.ai_features or "(none)"}; '
+                    f'price books {args.price_books}'
+                ),
             )
         )
     return code

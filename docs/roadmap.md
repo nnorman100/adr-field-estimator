@@ -2,11 +2,11 @@
 
 The approved plan (Oct 24, 2026) for making this repository the complete DryScope product. Any tool or person picking up the work starts at **Handoff**, then works the phases in order. `RELEASES.md` stays the one record of what is live; this file records what is planned and why.
 
-## Handoff (updated Oct 26, 2026)
+## Handoff (updated Oct 27, 2026)
 - **What is live:** read the newest rows of `RELEASES.md`. It is the one record of the serving backend revision, Hosting release and source commit; this file does not copy them. Check `git log origin/master` and `gh-axi pr list` for what has merged since.
 - **Merged and released:** all of Phase 1 and all six Phase 2 steps (see the Oct 24–25 rows in `RELEASES.md`). Phase 0 items 1–4 and 6 are not recorded as done; item 6 (the local SMTP timeout test fails on Windows, passes in CI) is still open.
-- **Merged on `master`, not yet released:** Phase 3a readiness checks and Live coaching (F1, #147), post-signing Drying watch (A1, #149), the AI gap fixes that gate estimates and signing on voice-note review (#148), owner-approved priced extras (F2, #150), and job summaries with AI usage counts (O1 + O3, #151). Compare each merge commit with the source commit of the newest `live` row in `RELEASES.md`; anything newer is unreleased.
-- **In flight:** the price editor. Check its PR before touching the files it changes (`public/app.js`, `backend/main.py`).
+- **In the serving revision:** Phase 3a readiness (F1, #147) is on. The newest 100% row in `RELEASES.md` records `AI_FEATURES=readiness`. The voice-note gate (#148) is in that revision and is not behind `AI_FEATURES`. Drying watch (A1, #149), priced extras (F2, #150), job summaries and AI usage (O1 + O3, #151), and the price editor (#153) are in that same revision and stay off: `AI_FEATURES` is only `readiness`, and `PRICE_BOOKS_ENABLED` is unset. Compare each later merge with the source commit of the newest `live` row. The rel5 commit was rolled back, so it is on `master` and is not serving.
+- **In flight:** the price editor is not an open PR. #153 is already in the serving revision, with the editor off until `PRICE_BOOKS_ENABLED` is set. Check `gh-axi pr list` before editing shared files.
 - **Next for Nate:** phone checks that are still open (check 8 below, including a physical iPhone), the ADR company profile and invitation check (Phase 0 items 1–3), and a go for the next production release. Every production release needs his go.
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
@@ -22,8 +22,8 @@ Nate wants one product, **DryScope**, built on the live field estimator (`nnorma
 
 Goal: finish the Dryscope ports Nate picked, then build the first missing VISION.md piece he chose, **delivery after signing**.
 
-## Where we are (Oct 26, 2026)
-- Deployed state lives only in `RELEASES.md`. As of this edit, `master` holds Phase 1, Phase 2 and the merged Phase 3a items listed in the Handoff; the Phase 3a items are not released.
+## Where we are (Oct 27, 2026)
+- Deployed state lives only in `RELEASES.md`. The serving revision includes Phase 1, Phase 2, and the Phase 3a items in the Handoff. Readiness is the only enabled `AI_FEATURES` entry. Drying watch, priced extras, job summaries, the usage meter, and the price editor are in that revision and stay off. A later backend release was rolled back; anything newer than the newest `live` row's source commit is unreleased.
 - Shipped Oct 19–22: walkthrough-first flow, owner logins, QR tags (#115), drying log with psychrometrics and thermal readings (#117), claim and loss details (#118), IICRC sizing (#119), photo shot list (#121), landing page at `/` with the app at `/app` (#124), built-in ADR branding removed (#127).
 - Shipped Oct 24–25: jobs list tabs and search (#130), GPS stamp (#134), address autocomplete and map (#136), copy to draft (#133), and Phase 2 document delivery through delivery status and Resend (#144).
 - Already ported or better in the field estimator, so skipped: dictation to scope, the Live bar, documents, superadmin, owner/office dashboards, new job intake, and Dryscope pricing (it doesn't match the workbook).
