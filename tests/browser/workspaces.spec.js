@@ -1393,9 +1393,7 @@ test.describe('invitation list clearing', () => {
     const cancelledId = (await cancelled.json()).invitation_id;
     const expiredId = (await expired.json()).invitation_id;
     expect(
-      (
-        await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST')
-      ).status(),
+      (await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST')).status(),
     ).toBe(200);
     expect(
       (
