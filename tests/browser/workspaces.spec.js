@@ -1370,100 +1370,105 @@ test('a token without the claim still lands on the set-password step from the se
   expect(await page.evaluate(() => window.__testEmails)).toEqual([{ type: 'reset', email }]);
 });
 
-test('owner clears cancelled and expired invitations and leaves pending ones', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  const pending = await call(page, '/api/companies/adr/invitations', 'POST', {
-    email: 'stay-pending@example.invalid',
-    role: 'estimator',
-  });
-  const cancelled = await call(page, '/api/companies/adr/invitations', 'POST', {
-    email: 'cancelled-staff@example.invalid',
-    role: 'office',
-  });
-  const expired = await call(page, '/api/companies/adr/invitations', 'POST', {
-    email: 'expired-staff@example.invalid',
-    role: 'office',
-  });
-  expect(pending.status()).toBe(200);
-  const cancelledId = (await cancelled.json()).invitation_id;
-  const expiredId = (await expired.json()).invitation_id;
-  expect(
-    (
-      await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST')
-    ).status(),
-  ).toBe(200);
-  expect(
-    (
-      await page.request.post('/__test/expire-invitations', { data: { invitation_id: expiredId } })
-    ).status(),
-  ).toBe(200);
-  await start(page, 'owner');
-  await navigate(page, 'dashboardTeam');
-  const content = page.locator('#dashboardContent');
-  const card = (email) =>
-    content.locator('.dashboard-card').filter({
-      has: page.getByRole('heading', { name: email, exact: true }),
+test.describe('invitation list clearing', () => {
+  // WebKit service workers can bypass page.route and send the mocked failure to the server.
+  test.use({ serviceWorkers: 'block' });
+
+  test('owner clears cancelled and expired invitations and leaves pending ones', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    const pending = await call(page, '/api/companies/adr/invitations', 'POST', {
+      email: 'stay-pending@example.invalid',
+      role: 'estimator',
     });
-  const pendingCard = card('stay-pending@example.invalid');
-  const cancelledCard = card('cancelled-staff@example.invalid');
-  const expiredCard = card('expired-staff@example.invalid');
-  await expect(pendingCard).toBeVisible();
-  await expect(cancelledCard).toContainText('cancelled');
-  await expect(expiredCard).toBeVisible();
-  await expect(pendingCard.getByRole('button', { name: 'Resend invitation' })).toBeVisible();
-  const clear = page.getByRole('button', { name: 'Clear cancelled and expired', exact: true });
-  await expect(clear).toBeVisible();
-  for (const width of [390, 320]) {
-    await page.setViewportSize({ width, height: 844 });
+    const cancelled = await call(page, '/api/companies/adr/invitations', 'POST', {
+      email: 'cancelled-staff@example.invalid',
+      role: 'office',
+    });
+    const expired = await call(page, '/api/companies/adr/invitations', 'POST', {
+      email: 'expired-staff@example.invalid',
+      role: 'office',
+    });
+    expect(pending.status()).toBe(200);
+    const cancelledId = (await cancelled.json()).invitation_id;
+    const expiredId = (await expired.json()).invitation_id;
+    expect(
+      (
+        await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST')
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await page.request.post('/__test/expire-invitations', { data: { invitation_id: expiredId } })
+      ).status(),
+    ).toBe(200);
+    await start(page, 'owner');
+    await navigate(page, 'dashboardTeam');
+    const content = page.locator('#dashboardContent');
+    const card = (email) =>
+      content.locator('.dashboard-card').filter({
+        has: page.getByRole('heading', { name: email, exact: true }),
+      });
+    const pendingCard = card('stay-pending@example.invalid');
+    const cancelledCard = card('cancelled-staff@example.invalid');
+    const expiredCard = card('expired-staff@example.invalid');
+    await expect(pendingCard).toBeVisible();
+    await expect(cancelledCard).toContainText('cancelled');
+    await expect(expiredCard).toBeVisible();
+    await expect(pendingCard.getByRole('button', { name: 'Resend invitation' })).toBeVisible();
+    const clear = page.getByRole('button', { name: 'Clear cancelled and expired', exact: true });
+    await expect(clear).toBeVisible();
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await fitsWidth(page);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await clear.click();
+    await expect(content).toContainText('Pending invitations stay. Nothing is deleted.');
+    await page.getByRole('button', { name: 'Keep them', exact: true }).click();
+    await expect(cancelledCard).toBeVisible();
+    await expect(clear).toBeVisible();
+    await page.context().setOffline(true);
+    const offlineClear = page.getByRole('button', {
+      name: 'Clear cancelled and expired (needs a connection)',
+    });
+    await expect(offlineClear).toBeDisabled();
     await fitsWidth(page);
-  }
-  await page.setViewportSize({ width: 390, height: 844 });
-  await clear.click();
-  await expect(content).toContainText('Pending invitations stay. Nothing is deleted.');
-  await page.getByRole('button', { name: 'Keep them', exact: true }).click();
-  await expect(cancelledCard).toBeVisible();
-  await expect(clear).toBeVisible();
-  await page.context().setOffline(true);
-  const offlineClear = page.getByRole('button', {
-    name: 'Clear cancelled and expired (needs a connection)',
+    await page.setViewportSize({ width: 320, height: 844 });
+    await fitsWidth(page);
+    await page.context().setOffline(false);
+    await expect(clear).toBeEnabled();
+    await page.route('**/api/companies/adr/invitations/clear', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'The invitation list could not be cleared.' }),
+      }),
+    );
+    await clear.click();
+    await page.getByRole('button', { name: 'Confirm clear', exact: true }).click();
+    await expect(page.locator('#message')).toHaveText('The invitation list could not be cleared.');
+    await expect(cancelledCard).toBeVisible();
+    await expect(expiredCard).toBeVisible();
+    await page.unroute('**/api/companies/adr/invitations/clear');
+    await page.getByRole('button', { name: 'Confirm clear', exact: true }).click();
+    await expect(page.locator('#message')).toHaveText('Cleared 2 cancelled and expired invitations.');
+    await expect(cancelledCard).toHaveCount(0);
+    await expect(expiredCard).toHaveCount(0);
+    await expect(pendingCard).toBeVisible();
+    await expect(pendingCard.getByRole('button', { name: 'Cancel invitation' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Clear cancelled and expired/ })).toHaveCount(0);
+    const hidden = await call(page, '/api/companies/adr/invitations');
+    const emails = (await hidden.json()).invitations.map((row) => row.email);
+    expect(emails).toContain('stay-pending@example.invalid');
+    expect(emails).not.toContain('cancelled-staff@example.invalid');
+    expect(emails).not.toContain('expired-staff@example.invalid');
+    const kept = await call(
+      page,
+      '/api/companies/adr/invitations/' + cancelledId + '/cancel',
+      'POST',
+    );
+    expect(kept.status()).toBe(409);
+    expect(errors).toEqual([]);
   });
-  await expect(offlineClear).toBeDisabled();
-  await fitsWidth(page);
-  await page.setViewportSize({ width: 320, height: 844 });
-  await fitsWidth(page);
-  await page.context().setOffline(false);
-  await expect(clear).toBeEnabled();
-  await page.route('**/api/companies/adr/invitations/clear', (route) =>
-    route.fulfill({
-      status: 500,
-      contentType: 'application/json',
-      body: JSON.stringify({ detail: 'The invitation list could not be cleared.' }),
-    }),
-  );
-  await clear.click();
-  await page.getByRole('button', { name: 'Confirm clear', exact: true }).click();
-  await expect(page.locator('#message')).toHaveText('The invitation list could not be cleared.');
-  await expect(cancelledCard).toBeVisible();
-  await expect(expiredCard).toBeVisible();
-  await page.unroute('**/api/companies/adr/invitations/clear');
-  await page.getByRole('button', { name: 'Confirm clear', exact: true }).click();
-  await expect(page.locator('#message')).toHaveText('Cleared 2 cancelled and expired invitations.');
-  await expect(cancelledCard).toHaveCount(0);
-  await expect(expiredCard).toHaveCount(0);
-  await expect(pendingCard).toBeVisible();
-  await expect(pendingCard.getByRole('button', { name: 'Cancel invitation' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Clear cancelled and expired/ })).toHaveCount(0);
-  const hidden = await call(page, '/api/companies/adr/invitations');
-  const emails = (await hidden.json()).invitations.map((row) => row.email);
-  expect(emails).toContain('stay-pending@example.invalid');
-  expect(emails).not.toContain('cancelled-staff@example.invalid');
-  expect(emails).not.toContain('expired-staff@example.invalid');
-  const kept = await call(
-    page,
-    '/api/companies/adr/invitations/' + cancelledId + '/cancel',
-    'POST',
-  );
-  expect(kept.status()).toBe(409);
-  expect(errors).toEqual([]);
 });
