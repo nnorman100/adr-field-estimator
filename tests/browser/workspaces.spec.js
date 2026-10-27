@@ -1374,7 +1374,9 @@ test.describe('invitation list clearing', () => {
   // WebKit service workers can bypass page.route and send the mocked failure to the server.
   test.use({ serviceWorkers: 'block' });
 
-  test('owner clears cancelled and expired invitations and leaves pending ones', async ({ page }) => {
+  test('owner clears cancelled and expired invitations and leaves pending ones', async ({
+    page,
+  }) => {
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     const pending = await call(page, '/api/companies/adr/invitations', 'POST', {
@@ -1393,11 +1395,15 @@ test.describe('invitation list clearing', () => {
     const cancelledId = (await cancelled.json()).invitation_id;
     const expiredId = (await expired.json()).invitation_id;
     expect(
-      (await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST')).status(),
+      (
+        await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST')
+      ).status(),
     ).toBe(200);
     expect(
       (
-        await page.request.post('/__test/expire-invitations', { data: { invitation_id: expiredId } })
+        await page.request.post('/__test/expire-invitations', {
+          data: { invitation_id: expiredId },
+        })
       ).status(),
     ).toBe(200);
     await start(page, 'owner');
@@ -1450,7 +1456,9 @@ test.describe('invitation list clearing', () => {
     await expect(expiredCard).toBeVisible();
     await page.unroute('**/api/companies/adr/invitations/clear');
     await page.getByRole('button', { name: 'Confirm clear', exact: true }).click();
-    await expect(page.locator('#message')).toHaveText('Cleared 2 cancelled and expired invitations.');
+    await expect(page.locator('#message')).toHaveText(
+      'Cleared 2 cancelled and expired invitations.',
+    );
     await expect(cancelledCard).toHaveCount(0);
     await expect(expiredCard).toHaveCount(0);
     await expect(pendingCard).toBeVisible();
@@ -1461,7 +1469,11 @@ test.describe('invitation list clearing', () => {
     expect(emails).toContain('stay-pending@example.invalid');
     expect(emails).not.toContain('cancelled-staff@example.invalid');
     expect(emails).not.toContain('expired-staff@example.invalid');
-    const kept = await call(page, '/api/companies/adr/invitations/' + cancelledId + '/cancel', 'POST');
+    const kept = await call(
+      page,
+      '/api/companies/adr/invitations/' + cancelledId + '/cancel',
+      'POST',
+    );
     expect(kept.status()).toBe(409);
     expect(errors).toEqual([]);
   });
