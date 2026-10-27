@@ -80,6 +80,10 @@ CAPABILITIES = {
 }
 
 INVITATION_DAILY_LIMIT = 50
+# The paginated company query uses the composite index in firestore.indexes.json.
+# Filter cleared rows in memory so records predating cleared_at remain visible, and
+# continue paging past cleared rows so they cannot hide later invitations.
+INVITATION_LIST_READ = 400
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
 SMTP_DEADLINE = 24
@@ -227,6 +231,16 @@ class ClaimUpdate(StrictModel):
     # Jobs saved before claim details have no claim_version; they start at 0.
     expected_version: int = Field(ge=0)
     claim: ClaimDetails
+
+
+def clearable_invitation(invitation, moment):
+    """Cancelled invitations, and pending ones whose expiry has passed. Accepted, pending
+    unexpired, and already-cleared rows are left exactly as they are."""
+    if not invitation or invitation.get('cleared_at') or invitation.get('status') == 'accepted':
+        return False
+    if invitation.get('status') == 'cancelled':
+        return True
+    return invitation.get('status') == 'pending' and invitation.get('expires_at', 0) <= moment
 
 
 def email_address(value):
@@ -926,20 +940,63 @@ class WorkspaceStore:
 
         return self._run(create)
 
+    def company_invitation_rows(self, company_id, tx=None):
+        query = (
+            self.db.collection('_invitations')
+            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+            .order_by('invitation_id', direction=firestore.Query.DESCENDING)
+            .limit(INVITATION_LIST_READ)
+        )
+        rows = []
+        while True:
+            page = list(query.stream(transaction=tx))
+            rows.extend(s.to_dict() for s in page if not s.to_dict().get('cleared_at'))
+            if len(page) < INVITATION_LIST_READ:
+                return rows
+            query = query.start_after(page[-1])
+
     def invitations(self, uid, company_id):
         support = self.supported(self.principal(uid), company_id, 'owner')
         if not support:
             self.company_actor(uid, company_id, True)
-        invitations = [
-            s.to_dict()
-            for s in self.db.collection('_invitations')
-            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
-            .limit(100)
-            .stream()
-        ]
+        invitations = self.company_invitation_rows(company_id)
         if support:
             self.support_audit(uid, company_id, 'view_invitations', 'invitations')
         return invitations
+
+    def clear_invitations(self, uid, company_id):
+        """Hide cancelled and expired invitations from the company list without deleting them.
+        Client rules deny every write, so this server transaction is the only writer. Each row is
+        read again in the transaction before the first write; an acceptance or an earlier clear
+        that committed underneath this attempt is skipped instead of overwritten."""
+
+        def update(tx):
+            self.company_actor(uid, company_id, True, tx)
+            moment = time.time()
+            stamp = now()
+            chosen = []
+            for row in self.company_invitation_rows(company_id, tx):
+                current = self.read('_invitations', row['invitation_id'], tx)
+                if not clearable_invitation(current, moment):
+                    continue
+                current['cleared_at'] = stamp
+                current['cleared_by'] = uid
+                chosen.append(current)
+                if len(chosen) == INVITATION_LIST_READ:
+                    break
+            for current in chosen:
+                tx.set(self.ref('_invitations', current['invitation_id']), current)
+            if chosen:
+                self.event(
+                    tx,
+                    uid,
+                    'invitation_clear',
+                    company_id,
+                    {'cleared': len(chosen)},
+                )
+            return {'cleared': len(chosen)}
+
+        return self._run(update)
 
     def pending(self, claims):
         email = email_address(claims['email'])
@@ -1059,6 +1116,8 @@ class WorkspaceStore:
             if action == 'cancel':
                 invitation['status'] = 'cancelled'
             elif action == 'resend':
+                invitation.pop('cleared_at', None)
+                invitation.pop('cleared_by', None)
                 tx.set(
                     self.ref('_company_limits', company_id), self.invitation_quota(company_id, tx)
                 )

@@ -1,9 +1,10 @@
 // prettier-ignore
 const VERSION='unstamped';
-// Priced extras and readiness use the app, core, documents and workspace assets precached below.
+// Priced extras, readiness and invitation-list clearing use the assets precached below.
+// o1-o4 retires the previous shell cache when this worker installs.
 // A Hosting deploy stamps VERSION with the commit; that stamp is the cache name phones update to.
 // prettier-ignore
-const CACHE='dryscope-o1-o3-'+VERSION;
+const CACHE='dryscope-o1-o4-'+VERSION;
 const ASSETS = [
   '/',
   '/landing.css?v=' + VERSION,

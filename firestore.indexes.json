@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "_invitations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "company_id", "order": "ASCENDING"},
+        {"fieldPath": "invitation_id", "order": "DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "inspections",
       "queryScope": "COLLECTION",
       "fields": [
