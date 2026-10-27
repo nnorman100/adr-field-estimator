@@ -133,7 +133,14 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
       'Deployed branding differs: ' + file,
     );
   }
-  assert(response.headers.get('content-security-policy').includes("object-src 'none'"));
+  const csp = response.headers.get('content-security-policy');
+  assert(csp.includes("object-src 'none'"));
+  // Google's sign-in library fetches https://apis.google.com/js/gen_204. script-src already
+  // names that origin; connect-src must name it too or the post-deploy browser check fails.
+  assert(
+    /connect-src[^;]* https:\/\/apis\.google\.com(?:\s|;|$)/.test(csp),
+    'connect-src must allow https://apis.google.com',
+  );
   const health = await (await fetch(base + '/api/health')).json();
   const {
     status,
