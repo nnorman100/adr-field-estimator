@@ -80,10 +80,9 @@ CAPABILITIES = {
 }
 
 INVITATION_DAILY_LIMIT = 50
-# The list query is a single company_id equality, which uses Firestore's automatic index.
-# Cleared rows stay in that result and are dropped in memory. A missing cleared_at must still
-# count as listed, so this does not filter on the field (equality would skip documents that
-# predate it) and it does not add an index.
+# The paginated company query uses the composite index in firestore.indexes.json.
+# Filter cleared rows in memory so records predating cleared_at remain visible, and
+# continue paging past cleared rows so they cannot hide later invitations.
 INVITATION_LIST_READ = 400
 SMTP_HOST = 'smtp.gmail.com'
 SMTP_PORT = 587
