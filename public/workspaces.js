@@ -7,6 +7,8 @@ window.WorkspaceUI = (() => {
     // the walkthrough last filled, each with the value Undo restores.
     claim = null,
     claimEdits = [],
+    // The open job's coordination record, for an estimator's customer name and phone.
+    customer = null,
     refreshing = false,
     initialized = false,
     supportUrls = [],
@@ -165,6 +167,10 @@ window.WorkspaceUI = (() => {
       !!claim?.editable && navigator.onLine && claim.job_id === state.draft?.inspection_id;
     for (const control of $('claimForm').querySelectorAll('input,button'))
       control.disabled = !claimEditable;
+    const customerEditable =
+      !!customer && navigator.onLine && customer.job_id === state.draft?.inspection_id;
+    for (const control of $('customerForm').querySelectorAll('input,button'))
+      control.disabled = !customerEditable;
     $('newInspection').disabled = !can('jobs_create');
     // Copying a signed job makes a new draft on the server, so it needs a connection.
     $('copyToDraft').hidden = !(state.signed || confirmedAuthorization) || !can('jobs_copy');
@@ -274,6 +280,16 @@ window.WorkspaceUI = (() => {
         });
       });
       $('claimForm').addEventListener('input', claimTyped);
+      $('customerForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        saveCustomer().catch((e) => {
+          $('customerStatus').textContent = e.message;
+          say(e.message, 'error');
+        });
+      });
+      $('archiveJob').addEventListener('click', () =>
+        archiveJob().catch((e) => say(e.message, 'error')),
+      );
       $('resendDelivery').addEventListener('click', () =>
         resendDelivery().catch((e) => {
           $('deliveryActionStatus').textContent = e.message;
@@ -1125,8 +1141,17 @@ window.WorkspaceUI = (() => {
     method.addEventListener('change', choose);
     choose();
     content.append(form);
-    const grid = node('div', undefined, 'dashboard-grid');
+    const grid = node('div', undefined, 'dashboard-grid'),
+      archived = result.companies.filter((company) => company.status === 'archived');
     content.append(grid);
+    // Archived companies are filed below the working list; each one can still be restored.
+    let archivedGrid = null;
+    if (archived.length) {
+      const folder = node('details', undefined, 'archived-companies');
+      archivedGrid = node('div', undefined, 'dashboard-grid');
+      folder.append(node('summary', 'Archived companies (' + archived.length + ')'), archivedGrid);
+      content.append(folder);
+    }
     for (const company of result.companies) {
       const card = node('section', undefined, 'dashboard-card');
       card.append(
@@ -1139,8 +1164,25 @@ window.WorkspaceUI = (() => {
         ),
         button('Manage company', () => companyAdmin(company.company_id)),
       );
-      grid.append(card);
+      (company.status === 'archived' ? archivedGrid : grid).append(card);
     }
+  }
+  // Resolves true only when the person confirms in the archive dialog.
+  function confirmArchive(title, description, action) {
+    const dialog = $('archiveDialog');
+    $('archiveTitle').textContent = title;
+    $('archiveDescription').textContent = description;
+    $('confirmArchive').textContent = action;
+    return new Promise((resolve) => {
+      let confirmed = false;
+      $('confirmArchive').onclick = () => {
+        confirmed = true;
+        dialog.close();
+      };
+      $('cancelArchive').onclick = () => dialog.close();
+      dialog.addEventListener('close', () => resolve(confirmed), { once: true });
+      dialog.showModal();
+    });
   }
   async function companyAdmin(cid) {
     const epoch = show('Company administration', 'Manage ownership and workspace availability.');
@@ -1151,18 +1193,43 @@ window.WorkspaceUI = (() => {
     if (epoch !== viewEpoch) return;
     $('dashboardHeading').textContent = company.profile.name;
     const content = $('dashboardContent');
+    const setStatus = (status) => async () => {
+      await jsonApi('/api/admin/companies/' + cid + '/status', 'PUT', {
+        expected_version: company.version,
+        status,
+      });
+      await refresh();
+      await companyAdmin(cid);
+    };
     content.append(
       node('p', 'Company status: ' + company.status),
       button('Open read-only support view', () => support(cid)),
-      button(company.status === 'active' ? 'Suspend company' : 'Reactivate company', async () => {
-        await jsonApi('/api/admin/companies/' + cid + '/status', 'PUT', {
-          expected_version: company.version,
-          status: company.status === 'active' ? 'suspended' : 'active',
-        });
-        await refresh();
-        await companyAdmin(cid);
-      }),
     );
+    if (company.status === 'archived')
+      content.append(button('Restore company (stays suspended)', setStatus('suspended')));
+    else
+      content.append(
+        button(
+          company.status === 'active' ? 'Suspend company' : 'Reactivate company',
+          setStatus(company.status === 'active' ? 'suspended' : 'active'),
+        ),
+      );
+    // Suspend first, so archiving never cuts off a company that is still working.
+    if (company.status === 'suspended') {
+      const archive = setStatus('archived');
+      content.append(
+        button('Archive company', async () => {
+          if (
+            await confirmArchive(
+              'Archive ' + company.profile.name + '?',
+              'Its staff stay signed out and it moves to Archived companies. Jobs and signed documents are kept, and you can restore it.',
+              'Archive company',
+            )
+          )
+            await archive();
+        }),
+      );
+    }
     if (company.status === 'active') {
       inviteForm(content, cid, true);
       ownerLoginForm(content, company);
@@ -1442,7 +1509,7 @@ window.WorkspaceUI = (() => {
     current(null);
     fold(false);
     policy();
-    await Promise.all([loadCoordination(), loadClaim()]);
+    await Promise.all([loadCoordination(), loadCustomer(), loadClaim()]);
   }
   async function loadCoordination() {
     coordination = null;
@@ -1479,7 +1546,90 @@ window.WorkspaceUI = (() => {
     $('coordEstimator').value = job.assigned_estimator_uid || '';
     $('jobCoordination').hidden = false;
     $('saveCoordination').disabled = false;
+    $('archiveJob').hidden = !can('jobs_archive') || job.status === 'signed' || job.auth_exists;
     $('coordinationStatus').textContent = '';
+  }
+  // Estimators keep the customer's name and phone on their own jobs; owners and office staff
+  // edit them in Job coordination instead.
+  async function loadCustomer() {
+    customer = null;
+    $('customerDetails').hidden = true;
+    if (
+      !enabled() ||
+      can('coordination') ||
+      !can('scope') ||
+      state.signed ||
+      !state.draft?.inspection_id ||
+      !navigator.onLine
+    )
+      return;
+    const id = state.draft.inspection_id,
+      key = context();
+    const job = await jsonApi('/api/jobs/' + id + '/coordination');
+    if (id !== state.draft?.inspection_id || key !== context()) return;
+    customer = job;
+    fillCustomer();
+    $('customerStatus').textContent = '';
+    $('customerDetails').hidden = false;
+  }
+  function fillCustomer() {
+    $('customerName').value = customer.customer_name;
+    $('customerPhone').value = customer.customer_phone;
+    $('customerSummary').textContent = customer.customer_name
+      ? '· ' + customer.customer_name
+      : '· none recorded';
+  }
+  async function saveCustomer() {
+    if (!customer || !$('customerForm').reportValidity()) return;
+    $('saveCustomer').disabled = true;
+    try {
+      await syncDraft();
+      const id = state.draft.inspection_id;
+      customer = await jsonApi('/api/jobs/' + id + '/customer', 'PUT', {
+        expected_version: customer.version,
+        customer_name: $('customerName').value,
+        customer_phone: $('customerPhone').value,
+      });
+      // A new name clears generated documents, so reload the draft the server now holds.
+      const record = await jsonApi('/api/inspections/' + id);
+      state.draft.data = record.data;
+      state.ack = stable(record.data);
+      absorb(record);
+      fillForm();
+      await persist();
+      fillCustomer();
+      $('customerStatus').textContent = 'Customer saved.';
+    } finally {
+      $('saveCustomer').disabled = !navigator.onLine;
+      policy();
+    }
+  }
+  async function archiveJob() {
+    if (!coordination || !state.draft?.inspection_id) return;
+    const id = state.draft.inspection_id,
+      name = state.draft.data.address || 'this draft';
+    if (
+      !(await confirmArchive(
+        'Archive ' + name + '?',
+        'The draft leaves every job list and can no longer be opened. Its photos and history are kept for the record. Signed jobs cannot be archived.',
+        'Archive draft',
+      ))
+    )
+      return;
+    $('archiveJob').disabled = true;
+    try {
+      await syncChain.catch(() => {});
+      await jsonApi('/api/jobs/' + id + '/archive', 'POST', {
+        expected_version: coordination.version,
+      });
+      coordination = null;
+      $('jobCoordination').hidden = true;
+      await closeArchivedJob(id);
+      say('Draft archived.', 'success');
+      await jobs();
+    } finally {
+      $('archiveJob').disabled = false;
+    }
   }
   function scopeAddressChanged() {
     if (
