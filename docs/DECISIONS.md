@@ -24,11 +24,14 @@ Status: accepted. All access goes through the backend, which checks company memb
 ### D-005: Emails hold private links, not PDFs; crew lead by email now, text later (Oct 24, 2026)
 Status: accepted.
 
-### D-006: Single production project, no separate dev project [confirm]
-Status: open. Releases are staged at 0% traffic on production instead. Decide whether a dev project is worth the cost, especially before other companies subscribe.
+### D-006: Add a separate test project before a second company subscribes (Oct 28, 2026)
+Status: accepted (owner). Until then, releases keep staging at 0% traffic in production. Adding the test project is a prerequisite for onboarding the second company.
 
-### D-007: Transactional email service before other companies send at volume
-Status: open. Production uses Gmail SMTP (`INVITATION_TRANSPORT=smtp`) from a personal account, capped near 500/day. The code already supports the Resend email service (`INVITATION_TRANSPORT=resend`, the default, with `RESEND_API_KEY` and `INVITATION_FROM`; see `mail_settings` in `backend/workspaces.py`). What remains is the owner's decision, a sending domain, the secret, and a release. Note the name clash: the in-app **Resend** button re-sends documents and is unrelated to the Resend service.
+### D-007: Switch email to Resend before a second company subscribes (Oct 28, 2026)
+Status: accepted (owner). Gmail stays for ADR until then. Background: production uses Gmail SMTP (`INVITATION_TRANSPORT=smtp`) from a personal account, capped near 500/day. The code already supports the Resend email service (`INVITATION_TRANSPORT=resend`, the default, with `RESEND_API_KEY` and `INVITATION_FROM`; see `mail_settings` in `backend/workspaces.py`). What remains is the owner's decision, a sending domain, the secret, and a release. Note the name clash: the in-app **Resend** button re-sends documents and is unrelated to the Resend service.
 
-### D-008: Relationship to the multi-tenant restoration platform repo
-Status: **open — owner decision.** Options: (a) stay standalone and sell DryScope separately; (b) fold into the platform later as a module; (c) rebuild on the platform. Billing for other companies does not exist here yet.
+### D-008: DryScope stays a standalone product for now (Oct 28, 2026)
+Status: accepted (owner). Options considered: stay standalone; fold into the platform later; rebuild on the platform. Keep shipping in this repo; revisit once DryScope has paying companies. Billing for other companies does not exist here yet.
+
+### D-009: Agents ask before merging any PR (Oct 28, 2026)
+Status: accepted (owner). Overrides the roadmap's earlier rule that agents may merge Low/Medium risk PRs with green CI. Enforced by the `gh pr merge` approval rule in `.claude/settings.json`.

@@ -12,7 +12,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
-  - Agents may merge Low or Medium risk PRs with green CI. High risk PRs and every production deploy need Nate's go.
+  - Agents do not merge PRs; Nate approves every merge (D-009 in `docs/DECISIONS.md`, Oct 28). Every production deploy needs Nate's go.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.

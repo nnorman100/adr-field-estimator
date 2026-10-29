@@ -43,7 +43,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Update `docs/STATUS.md` if a feature's state changes.
 
 ## Risk and merging
-Per `docs/roadmap.md`: an agent may merge a Low or Medium risk PR once CI is green. High-risk PRs and every production release need the owner's explicit go. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
+Agents do not merge PRs; the owner approves every merge (decision D-009, Oct 28, 2026). Every production release also needs the owner's explicit go. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
 
 ## How to work
 1. Read the relevant doc first (`docs/company-workspaces.md` for auth/workspaces, `docs/firebase-isolation.md` for cloud, `docs/pricing-source.md` for prices).

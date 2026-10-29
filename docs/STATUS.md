@@ -34,7 +34,7 @@ Company workbook upload; AI-suggested prices; crew calendar and reminders; per-v
 2. ADR company profile and logo — Phase 0 item 2.
 3. Invitation check to a Google and an Outlook address — Phase 0 item 3.
 4. Local SMTP timeout test on Windows — Phase 0 item 6.
-5. Decide D-006, D-007, D-008 in `docs/DECISIONS.md`.
+5. Before onboarding a second company: add a separate test project (D-006) and switch email to Resend with a company sending domain (D-007).
 6. Decide which flag-off features to switch on, one at a time, each with a phone check.
 
 ## Next steps for an agent
