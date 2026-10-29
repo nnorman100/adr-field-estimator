@@ -52,6 +52,7 @@ CAPABILITIES = {
         'audit',
         'sign',
         'live',
+        'jobs_archive',
         'team_manage',
         'profile_manage',
         'delivery_manage',
@@ -115,6 +116,10 @@ LOGIN_RESERVATION_SECONDS = 600
 
 class AccessDenied(PermissionError):
     pass
+
+
+class JobArchived(LookupError):
+    """The job was archived. Devices drop their local copy instead of recreating it."""
 
 
 def _capabilities(role):
@@ -203,7 +208,8 @@ class ProfileUpdate(StrictModel):
 
 class StatusUpdate(StrictModel):
     expected_version: int = Field(ge=1)
-    status: Literal['active', 'suspended']
+    # Archived works like suspended and also files the company away from the main list.
+    status: Literal['active', 'suspended', 'archived']
 
 
 class InviteCreate(StrictModel):
@@ -225,6 +231,16 @@ class CoordinationUpdate(StrictModel):
     office_notes: str = Field(default='', max_length=4000)
     assigned_estimator_uid: str | None = Field(default=None, max_length=128)
     address: str | None = Field(default=None, max_length=500)
+
+
+class ArchiveRequest(StrictModel):
+    expected_version: int = Field(ge=1)
+
+
+class CustomerUpdate(StrictModel):
+    expected_version: int = Field(ge=1)
+    customer_name: str = Field(default='', max_length=150)
+    customer_phone: str = Field(default='', max_length=80)
 
 
 class ClaimUpdate(StrictModel):
@@ -725,6 +741,9 @@ class WorkspaceStore:
             if company['version'] != expected:
                 raise Conflict('Company settings changed. Reload before saving.')
             if isinstance(req, StatusUpdate):
+                # Suspend first, so archiving never cuts off a company that is still working.
+                if req.status == 'archived' and company['status'] == 'active':
+                    raise Conflict('Suspend the company before archiving it.')
                 company['status'] = req.status
             else:
                 profile = req.profile.model_dump(
@@ -1231,6 +1250,8 @@ class WorkspaceStore:
             raise LookupError('Job not found.')
         if actor['role'] == 'estimator' and uid not in job['accessible_estimator_uids']:
             raise LookupError('Job not found.')
+        if job.get('archived_at'):
+            raise JobArchived('This job was archived.')
         capability = {'read': 'jobs_read', 'create': 'jobs_create'}.get(action, action)
         if capability not in actor['capabilities']:
             raise AccessDenied('Your role cannot perform this job action.')
@@ -1386,6 +1407,72 @@ class WorkspaceStore:
             tx.set(ref, job)
             self.event(tx, uid, 'job_claim', actor['company_id'], {'job_id': inspection_id})
             return self.claim_view(job, actor)
+
+        return self._run(update)
+
+    def archive_job(self, uid, inspection_id, req):
+        """Owners file away an unsigned draft, such as a test or duplicate job. The source record,
+        photos and audit trail stay; the job leaves every list and can no longer be opened."""
+        ref = self.ref('_workspace_jobs', inspection_id)
+
+        def archive(tx):
+            record = self.read('inspections', inspection_id, tx)
+            if not record:
+                raise LookupError('Inspection not found.')
+            job, actor = self.job_access(uid, record, 'jobs_archive', tx)
+            if record['status'] == 'signed' or job.get('auth_exists'):
+                raise Conflict('Signed jobs are kept. Only unsigned drafts can be archived.')
+            if job['version'] != req.expected_version:
+                raise Conflict('This job changed. Reload before archiving.')
+            job.update(
+                kind='archived_inspection',
+                archived_at=now(),
+                archived_by_uid=uid,
+                version=job['version'] + 1,
+            )
+            tx.set(ref, job)
+            self.event(
+                tx,
+                uid,
+                'job_archived',
+                actor['company_id'],
+                {'job_id': inspection_id},
+                'job/' + inspection_id,
+            )
+            return {'job_id': inspection_id, 'archived_at': job['archived_at']}
+
+        return self._run(archive)
+
+    def customer(self, uid, inspection_id, req):
+        """Estimators record and correct the customer's name and phone on their own unsigned jobs;
+        owners and office staff keep the full coordination form."""
+        ref = self.ref('_workspace_jobs', inspection_id)
+        inspection_ref = self.ref('inspections', inspection_id)
+
+        def update(tx):
+            record = self.read('inspections', inspection_id, tx)
+            if not record:
+                raise LookupError('Inspection not found.')
+            job, actor = self.job_access(uid, record, 'scope', tx)
+            if record['status'] == 'signed':
+                raise Conflict('A signed job keeps the customer it was signed with.')
+            if job['version'] != req.expected_version:
+                raise Conflict('Customer details changed. Reload before saving.')
+            name, phone = req.customer_name.strip(), req.customer_phone.strip()
+            # The documents name the customer, so a new name needs new documents.
+            if name != job.get('customer_name', '').strip() and record.get('audit') is not None:
+                record.update(audit=None, status='draft', updated_at=now())
+                tx.set(inspection_ref, record)
+            job.update(
+                customer_name=name,
+                customer_phone=phone,
+                version=job['version'] + 1,
+                status=record['status'],
+                updated_at=now(),
+            )
+            tx.set(ref, job)
+            self.event(tx, uid, 'job_customer', actor['company_id'], {'job_id': inspection_id})
+            return job
 
         return self._run(update)
 

@@ -95,7 +95,7 @@ try:
     )
     from .company_store import CompanyInspectionStore
     from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
-    from .workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
+    from .workspaces import AccessDenied, JobArchived, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
     from .price_book_api import register_price_book_routes
     from .price_book_store import Expired
@@ -161,7 +161,7 @@ except ImportError:
     )
     from company_store import CompanyInspectionStore
     from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
-    from workspaces import AccessDenied, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
+    from workspaces import AccessDenied, JobArchived, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
     from price_book_api import register_price_book_routes
     from price_book_store import Expired
@@ -544,6 +544,8 @@ async def stored(method, *args, failure=None):
         raise HTTPException(403, str(error))
     except Conflict as error:
         raise HTTPException(409, str(error))
+    except JobArchived as error:
+        raise HTTPException(410, str(error))
     except LookupError:
         raise HTTPException(404, 'Record not found.')
     except Expired as error:

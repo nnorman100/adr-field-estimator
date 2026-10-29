@@ -15,6 +15,8 @@ try:
         InviteCreate,
         MemberUpdate,
         CoordinationUpdate,
+        CustomerUpdate,
+        ArchiveRequest,
         ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
     )
@@ -38,6 +40,8 @@ except ImportError:
         InviteCreate,
         MemberUpdate,
         CoordinationUpdate,
+        CustomerUpdate,
+        ArchiveRequest,
         ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
     )
@@ -456,6 +460,20 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     ):
         await stored(store.quota, claims['uid'], 'draft', 60)
         return await stored(workspace(store).coordination, claims['uid'], inspection_id, req)
+
+    @app.put('/api/jobs/{inspection_id}/customer')
+    async def customer(
+        inspection_id: str, req: CustomerUpdate, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(store.quota, claims['uid'], 'draft', 60)
+        return await stored(workspace(store).customer, claims['uid'], inspection_id, req)
+
+    @app.post('/api/jobs/{inspection_id}/archive')
+    async def archive_job(
+        inspection_id: str, req: ArchiveRequest, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(store.quota, claims['uid'], 'draft', 60)
+        return await stored(workspace(store).archive_job, claims['uid'], inspection_id, req)
 
     @app.get('/api/jobs/{inspection_id}/claim')
     async def get_claim(inspection_id: str, claims=Depends(identity), store=Depends(get_store)):

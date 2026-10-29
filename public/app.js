@@ -448,6 +448,22 @@ async function deleteDraft(key, keepUnresolved = false) {
     }
   });
 }
+// After an owner archives the open draft: close it and drop this phone's copy.
+async function closeArchivedJob(id) {
+  await stopWalk();
+  clearTimeout(saveTimer);
+  clearTimeout(persistTimer);
+  await syncChain.catch(() => {});
+  if (state.draft?.inspection_id === id) {
+    state.draft = null;
+    state.record = null;
+    state.ack = null;
+    state.documents = null;
+    invalidate();
+    clearDisplayedInspection();
+  }
+  await deleteDraft(draftKey(id));
+}
 function draftKey(id) {
   return (
     state.user.uid +
@@ -738,6 +754,8 @@ function clearDisplayedInspection() {
   $('coordinationForm').reset();
   $('claimForm').reset();
   $('claimDetails').hidden = true;
+  $('customerForm').reset();
+  $('customerDetails').hidden = true;
   $('jobsDialog').close();
   window.TagsUI?.closeDialogs();
   for (const id of ['technicianTranscript', 'assistantTranscript']) $(id).value = '';
@@ -1077,6 +1095,11 @@ async function drainQueue() {
       try {
         record = await request(path);
       } catch (e) {
+        // An owner archived this job, so this phone drops its copy instead of recreating it.
+        if (e.status === 410) {
+          await deleteDraft(row.key, true);
+          continue;
+        }
         if (e.status !== 404) throw e;
         record = await request('/api/inspections', 'POST', {
           inspection_id: id,
@@ -3137,9 +3160,7 @@ async function finishAudit() {
   await settleVoiceNotes();
   if (!state.draft || state.signed || confirmedAuthorization) return;
   collect();
-  if (!(await confirmReadiness())) return;
-  if (!navigator.onLine)
-    throw Error('Connect to generate documents. Your draft is saved on this device.');
+  // Required fields first, so the advisory readiness list never lists a gap the form then blocks on.
   clearValidationFeedback();
   if (!$('inspectionForm').checkValidity()) {
     showTask('property', false);
@@ -3153,9 +3174,17 @@ async function finishAudit() {
     } finally {
       form.removeEventListener('invalid', inlineOnly, true);
     }
-    showValidationFeedback(invalid);
+    showValidationFeedback(
+      invalid,
+      invalid.id === 'yearBuilt' && invalid.validity.valueMissing
+        ? 'Enter the year built. Documents need it for the pre-1978 testing notice.'
+        : invalid.validationMessage,
+    );
     return;
   }
+  if (!(await confirmReadiness())) return;
+  if (!navigator.onLine)
+    throw Error('Connect to generate documents. Your draft is saved on this device.');
   if (!state.draft.data.scope_confirmed) {
     showTask('property', false);
     showValidationFeedback(
