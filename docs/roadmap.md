@@ -24,6 +24,7 @@ Nate wants one product, **DryScope**, built on the live field estimator (`nnorma
 Goal: finish the Dryscope ports Nate picked, then build the first missing VISION.md piece he chose, **delivery after signing**.
 
 ## Where we are (Oct 27, 2026)
+_History only. For current feature state use `docs/STATUS.md`; for what is serving use `RELEASES.md`._
 - Deployed state lives only in `RELEASES.md`. The serving revision includes Phase 1, Phase 2, and the Phase 3a items in the Handoff. Readiness is the only enabled `AI_FEATURES` entry. Drying watch, priced extras, job summaries, the usage meter, and the price editor are in that revision and stay off. A later backend release was rolled back; anything newer than the newest `live` row's source commit is unreleased.
 - Shipped Oct 19–22: walkthrough-first flow, owner logins, QR tags (#115), drying log with psychrometrics and thermal readings (#117), claim and loss details (#118), IICRC sizing (#119), photo shot list (#121), landing page at `/` with the app at `/app` (#124), built-in ADR branding removed (#127).
 - Shipped Oct 24–25: jobs list tabs and search (#130), GPS stamp (#134), address autocomplete and map (#136), copy to draft (#133), and Phase 2 document delivery through delivery status and Resend (#144).

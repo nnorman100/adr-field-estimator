@@ -26,7 +26,7 @@ Restore Cloud Run traffic to the recorded rollback revision (explicit project an
 |---|---|
 | Sign-in fails with `auth/unauthorized-domain` | Host has a trailing dot or wrong domain; use the canonical host |
 | Everyone gets 403 "Set your own password…" | Account has `password_change_required`; user must set a password |
-| Documents/emails not delivered | Delivery status on the job; company delivery switch; SMTP secret; daily email count (warning at 400) |
+| Documents/emails not delivered | Delivery status on the job; company delivery switch; `INVITATION_TRANSPORT` (production: `smtp`) and its secret; daily email count (warning at 400) |
 | Address suggestions blank | Maps key/secret, per-user daily cap, or offline |
 | Phone shows an old screen | Service worker cache; use **Save & update**; check `sw.js` version bump |
 | Post-deploy verifier fails on CSP | Compare with the Oct 26 Google telemetry fix in `RELEASES.md` |

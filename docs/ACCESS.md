@@ -42,6 +42,6 @@ Not a company role and not a membership. Can create/suspend/reactivate companies
 - **Server-only**: Cloud Run runtime service account `adr-runtime@…`; background jobs (vault backup, monitoring).
 
 ## Rules for adding a feature
-- Add a capability to `can()` **and** the server check; test owner, estimator, office, superadmin support, and a different company's user.
+- Add a capability key to `CAPABILITIES` in `backend/workspaces.py`, check it on the server route, mirror it in `can()` in `public/workspaces.js`, and add a row to the table above. Test owner, estimator, office, superadmin support, and a different company's user.
 - Refuse before reading when the caller lacks the role, so refusals cannot probe other companies.
 - Audit anything superadmins do.

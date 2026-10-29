@@ -28,7 +28,7 @@ Status: accepted.
 Status: open. Releases are staged at 0% traffic on production instead. Decide whether a dev project is worth the cost, especially before other companies subscribe.
 
 ### D-007: Transactional email service before other companies send at volume
-Status: open. Gmail SMTP from a personal account is capped near 500/day. Needs the owner's decision.
+Status: open. Production uses Gmail SMTP (`INVITATION_TRANSPORT=smtp`) from a personal account, capped near 500/day. The code already supports the Resend email service (`INVITATION_TRANSPORT=resend`, the default, with `RESEND_API_KEY` and `INVITATION_FROM`; see `mail_settings` in `backend/workspaces.py`). What remains is the owner's decision, a sending domain, the secret, and a release. Note the name clash: the in-app **Resend** button re-sends documents and is unrelated to the Resend service.
 
 ### D-008: Relationship to the multi-tenant restoration platform repo
 Status: **open — owner decision.** Options: (a) stay standalone and sell DryScope separately; (b) fold into the platform later as a module; (c) rebuild on the platform. Billing for other companies does not exist here yet.
