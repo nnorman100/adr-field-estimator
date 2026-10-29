@@ -29,6 +29,6 @@ Words as used in this repo. Entries marked [confirm] are my wording of industry 
 | Company workspace | One company's isolated area |
 | Owner / Estimator / Office / Superadmin | Roles; see `docs/ACCESS.md` |
 | Support view | Superadmin's audited read-only look at a company |
-| Slice | One small PR-sized piece of work with a spec |
+| Item / slice | One small PR-sized piece of work (the roadmap says "item"; the spec template and commands say "slice") |
 | Rollback pair | The previous backend revision and Hosting version kept for a release |
 | Pre-1978 rule | Older homes need third-party lead/asbestos testing before demolition; wording is mandatory |

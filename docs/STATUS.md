@@ -2,12 +2,14 @@
 
 One table of truth for each feature: **Built** (merged), **On** (enabled in production), **Phone-checked** (observed on a real phone by the owner). Last built from `docs/roadmap.md` and `RELEASES.md` on 2026-10-28. `RELEASES.md` stays the only record of what is serving; recheck it, do not copy from here.
 
-Legend: yes · no · flag off · unknown
+Legend: yes · no · partial · flag off. "no" under Phone-checked means no phone check is recorded in the repo; the roadmap says releases since Oct 19 were checked signed-out only.
+
+This file replaces the roadmap's old "Where we are" narrative. Update this table in the same PR that changes a feature, and keep `docs/roadmap.md` for the plan.
 
 | Feature | Built | On | Phone-checked | Notes |
 |---|---|---|---|---|
-| Walkthrough-first flow, Live, offline notes | yes | yes | unknown | Physical iPhone checks still open |
-| Company workspaces and roles | yes | yes (since Oct 15) | unknown | Google-account invitee not yet checked |
+| Walkthrough-first flow, Live, offline notes | yes | yes | partial | Owner's staged field workflow passed Oct 14; physical iPhone checks still open |
+| Company workspaces and roles | yes | yes (since Oct 15) | partial | One real invitation accepted Oct 14; Google-account invitee not yet checked |
 | Invitation clearing (owners) | yes | yes | no | #167 |
 | QR tags, drying log, claim details, sizing, shot list | yes | yes | no | |
 | Jobs list tabs and search | yes | yes | no | #130 |
@@ -20,7 +22,7 @@ Legend: yes · no · flag off · unknown
 | Drying watch | yes | flag off | no | |
 | Priced extras | yes | flag off | no | |
 | Job summaries and AI usage | yes | flag off | no | |
-| Price editor (company price books) | yes | `PRICE_BOOKS_ENABLED` — [confirm current value in RELEASES.md] | no | Arbitrary workbook upload not built |
+| Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built |
 | Vault backup | yes | yes | n/a | Verified Oct 27 |
 | Landing page at `/` | yes | yes | no | |
 

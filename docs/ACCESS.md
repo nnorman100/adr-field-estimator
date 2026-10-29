@@ -1,6 +1,6 @@
 # Access matrix
 
-Summary of who may do what. **Authoritative detail:** `docs/company-workspaces.md`. Code: `can()` in `public/workspaces.js` (convenience only) and the server checks in `backend/main.py`, `backend/workspace_api.py`, `backend/workspaces.py` (the real enforcement). If this file and the code disagree, the code wins; fix this file in the same PR.
+Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dictionary in `backend/workspaces.py`, enforced by `job_access` and the route checks. `can()` in `public/workspaces.js` only hides buttons. Prose detail: `docs/company-workspaces.md`. If this file and the code disagree, the code wins; fix this file in the same PR.
 
 ## Principles
 1. Identity = verified Firebase ID token (Google or password sign-in, email verified). Public sign-up stays **disabled**.
@@ -10,23 +10,31 @@ Summary of who may do what. **Authoritative detail:** `docs/company-workspaces.m
 5. One active owner and one company membership per user.
 6. Superadmin support access is read-only plus listed support actions, always audited, and is not a membership.
 
-## Roles
-| Capability | Superadmin | Owner | Estimator | Office |
+## Company roles (from `CAPABILITIES` in `backend/workspaces.py`, Oct 28, 2026)
+| Capability key | What it allows | Owner | Estimator | Office |
 |---|---|---|---|---|
-| Create/suspend companies, invite or replace owners | yes | no | no | no |
-| Company profile, team, invitations | support actions only | yes | no | no |
-| See jobs | any company, read-only | all company jobs | own or assigned | all company jobs |
-| Live walkthrough, scope, photos, OCR, audit | no | yes | yes | no |
-| Create job | no | yes | yes | empty-scope job only |
-| Sign (on site / send signing link) | no | yes | yes | no |
-| Coordination, assignments, claim details | read-only | yes | [confirm] | yes |
-| Copy signed job to new draft | no | yes | yes (jobs they can open) | yes |
-| Address suggestions and map (`places`) | no | yes | yes | no (directions link only) |
-| Document delivery status and Resend | read-only | yes | [confirm] | yes |
-| Archive unsigned draft | no | yes | no | no |
-| Read the team roster | yes | yes | no | active estimators only |
+| `jobs_read` | See jobs (estimator: only jobs they created or are assigned) | yes | yes | yes |
+| `jobs_create` | Start a job (office: empty scope only) | yes | yes | yes |
+| `jobs_copy` | Copy a signed job to a new draft | yes | yes | yes |
+| `coordination` | Job coordination and claim/loss details | yes | no | yes |
+| `assignment` | Assign estimators to jobs | yes | no | yes |
+| `scope` | Edit rooms, measurements, scope | yes | yes | no |
+| `places` | Address suggestions and job map | yes | yes | no |
+| `photos` | Add photos | yes | yes | no |
+| `ocr` | Meter-photo recognition | yes | yes | no |
+| `audit` | Finish & review (generate documents) | yes | yes | no |
+| `sign` | Capture signature / send signing link | yes | yes | no |
+| `live` | Live walkthrough | yes | yes | no |
+| `jobs_archive` | Archive unsigned drafts | yes | no | no |
+| `team_manage` | Team and invitations | yes | no | no |
+| `profile_manage` | Company profile and logo | yes | no | no |
+| `delivery_manage` | Company delivery settings | yes | no | no |
+| `delivery_resend` | Resend signed documents | yes | no | yes |
 
-Rows marked [confirm] are not stated in the docs I read; check `can()` and the server before relying on them.
+Office can read only active estimators' uid/email from the team, for assignment.
+
+## Superadmin
+Not a company role and not a membership. Can create/suspend/reactivate companies and invite or replace owners (or create an owner login with a temporary password). Read-only, audited support access to any company's jobs, documents, photos, team and invitations, plus listed support actions: resend or cancel a staff invitation, switch a non-owner between estimator and office, re-enable a disabled member. Never edits customer jobs.
 
 ## Non-role access
 - **Homeowner signing link** (`/api/sign*`): single-use token, expires in 7 days, stops working on any edit; acts as the technician who sent it.

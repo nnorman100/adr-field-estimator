@@ -3,7 +3,9 @@
 A phone web app where a restoration technician walks a water or mold loss once, and leaves with a priced, signable estimate. Serves Alert Disaster Restoration (ADR) first and other restoration companies as isolated company workspaces.
 
 **Read these first, in order:** `AGENTS.md` (rules, pricing, compliance, deployment guardrails — authoritative) → `VISION.md` (what the product is and is not) → `docs/roadmap.md` "Handoff" section → `docs/STATUS.md` (what is built, on, and checked on a phone).
-`AGENTS.md` wins any conflict with this file.
+`AGENTS.md` wins any conflict with this file. It is imported here so it loads every session:
+
+@AGENTS.md
 
 ## Stack (do not change without the owner's approval)
 - Frontend: static web app, **no build step**, plain JavaScript in `public/`, same-origin vendored dependencies only.
@@ -37,7 +39,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Update `docs/STATUS.md` if a feature's state changes.
 
 ## Risk and merging
-Low/Medium-risk PRs may be merged by an agent only with green CI and only if the owner has allowed it. High-risk PRs and every production release need the owner's explicit go. When unsure of risk, treat it as High.
+Per `docs/roadmap.md`: an agent may merge a Low or Medium risk PR once CI is green. High-risk PRs and every production release need the owner's explicit go. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
 
 ## How to work
 1. Read the relevant doc first (`docs/company-workspaces.md` for auth/workspaces, `docs/firebase-isolation.md` for cloud, `docs/pricing-source.md` for prices).
