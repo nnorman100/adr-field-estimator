@@ -635,7 +635,9 @@ window.WorkspaceUI = (() => {
           address: row.draft.data.address || 'Local draft',
           customer: '',
           claim: '',
-          label: 'Saved on this device',
+          label: row.archived
+            ? 'Archived by the owner · unsynced work saved on this device'
+            : 'Saved on this device',
           open: () => restoreDraft(row.draft.inspection_id),
         }));
     if (epoch !== viewEpoch) return;
@@ -1501,7 +1503,8 @@ window.WorkspaceUI = (() => {
     card.append(node('p', 'Resend is not available in the support view.'));
     return card;
   }
-  async function editor() {
+  // localOnly shows a job the server no longer serves (an archived job's copy on this phone).
+  async function editor(localOnly = false) {
     if (!enabled()) return;
     ++viewEpoch;
     document.body.classList.remove('dashboard-open');
@@ -1509,6 +1512,11 @@ window.WorkspaceUI = (() => {
     current(null);
     fold(false);
     policy();
+    if (localOnly) {
+      coordination = customer = claim = null;
+      $('jobCoordination').hidden = $('customerDetails').hidden = $('claimDetails').hidden = true;
+      return;
+    }
     await Promise.all([loadCoordination(), loadCustomer(), loadClaim()]);
   }
   async function loadCoordination() {

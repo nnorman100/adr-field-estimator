@@ -2236,6 +2236,7 @@ footer {
 .dashboard-open [data-panel],
 .dashboard-open .draft-actions,
 .dashboard-open #conflictActions,
+.dashboard-open #archivedActions,
 .dashboard-open #jobCoordination {
   display: none !important;
 }
@@ -2595,6 +2596,7 @@ footer {
 .login-page .workspace,
 .login-page #jobCoordination,
 .login-page #conflictActions,
+.login-page #archivedActions,
 .login-page .draft-actions {
   display: none !important;
 }
