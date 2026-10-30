@@ -337,3 +337,17 @@ def test_delivery_is_durable_before_transport_starts(smtp, monkeypatch, channel)
     assert store.db.records['authorizations/' + response.json()['auth_id']]['email_copy'] is True
     assert delivery(store)['entries']['homeowner']['status'] == 'queued'
     assert not connections
+
+
+def test_signing_link_names_the_masked_address_or_offers_no_copy(api, mail):
+    client, current, store = api
+    record = prepare(client, store)
+    link = mint(client, record)
+    assert homeowner(token(link)).get('/api/sign').json()['email_to'] == 'h•••@example.invalid'
+    job = client.get('/api/jobs/' + ID + '/coordination').json()
+    client.put(
+        '/api/jobs/' + ID + '/coordination',
+        json={'expected_version': job['version'], 'customer_name': 'Synthetic Customer'},
+    )
+    # The same name keeps the documents, so the link still reads, now with no copy to offer.
+    assert homeowner(token(link)).get('/api/sign').json()['email_to'] == ''

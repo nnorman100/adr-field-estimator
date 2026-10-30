@@ -16,6 +16,7 @@ try:
         MemberUpdate,
         CoordinationUpdate,
         CustomerUpdate,
+        customer_view,
         ArchiveRequest,
         ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
@@ -41,6 +42,7 @@ except ImportError:
         MemberUpdate,
         CoordinationUpdate,
         CustomerUpdate,
+        customer_view,
         ArchiveRequest,
         ClaimUpdate,
         PASSWORD_CHANGE_REQUIRED,
@@ -451,8 +453,8 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         inspection_id: str, claims=Depends(identity), store=Depends(get_store)
     ):
         record = await stored(store.get_inspection, claims['uid'], inspection_id)
-        job, _ = await stored(workspace(store).job_access, claims['uid'], record)
-        return job
+        job, actor = await stored(workspace(store).job_access, claims['uid'], record)
+        return job if 'coordination' in actor['capabilities'] else customer_view(job)
 
     @app.put('/api/jobs/{inspection_id}/coordination')
     async def coordination(

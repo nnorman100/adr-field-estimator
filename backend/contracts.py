@@ -187,9 +187,29 @@ class InspectionData(StrictModel):
     equipment_scans: list[EquipmentScan] = Field(default_factory=list, max_length=200)
 
 
+def distinct_rooms(data: InspectionData):
+    """Photos, shot lists and equipment scans are keyed by room name, so two rooms with one name
+    would share them. Checked on saves only: stored drafts and signed records load as they are.
+    Names compare as the app's roomKey does (public/core.js), ignoring case and extra spaces."""
+    seen = set()
+    for room in data.rooms:
+        key = ' '.join(room.name.split()).lower()
+        if key in seen:
+            raise ValueError(
+                f'Two rooms are named "{room.name.strip()}". Give each room its own name.'
+            )
+        seen.add(key)
+    return data
+
+
 class CreateInspection(StrictModel):
     inspection_id: str = Field(pattern=r'^ADR-INS-[a-f0-9]{32}$')
     data: InspectionData = Field(default_factory=InspectionData)
+
+    @model_validator(mode='after')
+    def rooms_distinct(self):
+        distinct_rooms(self.data)
+        return self
 
 
 class CopyRequest(StrictModel):
@@ -199,6 +219,11 @@ class CopyRequest(StrictModel):
 class UpdateInspection(StrictModel):
     expected_revision: int = Field(ge=1)
     data: InspectionData
+
+    @model_validator(mode='after')
+    def rooms_distinct(self):
+        distinct_rooms(self.data)
+        return self
 
 
 class RevisionRequest(StrictModel):

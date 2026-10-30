@@ -209,6 +209,30 @@ def test_stale_revision_changed_scope_and_forged_prices(context):
     )
 
 
+def test_saves_reject_two_rooms_with_one_name_but_stored_drafts_still_load(context):
+    client, _ = context
+    room = data()['rooms'][0]
+    rooms = [dict(room, name='Room 2'), dict(room, name=' room  2 ')]
+    named = lambda rooms: {**data(), 'rooms': rooms}
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': named(rooms)})
+    assert created.status_code == 422
+    assert 'Two rooms are named' in created.json()['detail'][0]['msg']
+    record = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).json()
+    update = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': record['revision'], 'data': named(rooms)},
+    )
+    assert update.status_code == 422
+    # A draft saved with duplicates before the check still validates when read back.
+    assert InspectionData.model_validate(named(rooms)).rooms[1].name == ' room  2 '
+    renamed = [dict(room, name='Room 2'), dict(room, name='Room 3')]
+    saved = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': record['revision'], 'data': named(renamed)},
+    )
+    assert saved.status_code == 200
+
+
 def test_room_loss_type_is_saved_only_when_set_and_old_rooms_keep_their_shape(context):
     client, _ = context
     legacy = data()

@@ -17,10 +17,10 @@ import qrcode.image.svg
 
 try:
     from .inspection_store import Conflict, canonical, reserve_slot
-    from .workspaces import AccessDenied
+    from .workspaces import AccessDenied, email_address
 except ImportError:
     from inspection_store import Conflict, canonical, reserve_slot
-    from workspaces import AccessDenied
+    from workspaces import AccessDenied, email_address
 
 LINK_SECONDS = 7 * 86400
 SIGNED_VIEW_SECONDS = 30 * 86400
@@ -235,6 +235,21 @@ def _agreement(store, link):
     return agreement
 
 
+def copy_address(store, record):
+    """Where the homeowner's emailed copy would go, partly hidden from anyone else holding the
+    link (p•••@example.com). Empty when the job has no valid customer email, so the page does not
+    offer a copy it cannot send; None without company workspaces, which send no copies."""
+    workspaces = getattr(store, 'workspaces', None)
+    if not workspaces:
+        return None
+    try:
+        address = email_address(workspaces.job_for(record).get('customer_email') or '')
+    except (LookupError, ValueError):
+        return ''
+    local, domain = address.split('@', 1)
+    return local[0] + '•••@' + domain
+
+
 def view(store, token):
     link, record = _resolve(store, link_id(token), count=True)
     result = dict(consent=dict(version=CONSENT_VERSION, statements=CONSENT))
@@ -244,6 +259,7 @@ def view(store, token):
             status='pending',
             expires_at=iso(link['expires']),
             documents=record['audit']['documents'],
+            email_to=copy_address(store, record),
         )
     agreement = _agreement(store, link)
     return dict(

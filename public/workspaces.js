@@ -1539,6 +1539,7 @@ window.WorkspaceUI = (() => {
     $('coordPhone').value = job.customer_phone;
     $('coordEmail').value = job.customer_email;
     $('coordNotes').value = job.office_notes;
+    renderEmailCopy();
     $('coordEstimator').replaceChildren();
     const empty = node('option', 'Unassigned');
     empty.value = '';
@@ -1580,9 +1581,17 @@ window.WorkspaceUI = (() => {
     $('customerStatus').textContent = '';
     $('customerDetails').hidden = false;
   }
+  // The open job's saved customer email: '' when none, null until the job's customer has loaded.
+  function customerEmail() {
+    const job = coordination || customer;
+    if (!job || job.job_id !== state.draft?.inspection_id) return null;
+    return job.customer_email || '';
+  }
   function fillCustomer() {
     $('customerName').value = customer.customer_name;
     $('customerPhone').value = customer.customer_phone;
+    $('customerEmail').value = customer.customer_email || '';
+    renderEmailCopy();
     $('customerSummary').textContent = customer.customer_name
       ? '· ' + customer.customer_name
       : '· none recorded';
@@ -1597,6 +1606,7 @@ window.WorkspaceUI = (() => {
         expected_version: customer.version,
         customer_name: $('customerName').value,
         customer_phone: $('customerPhone').value,
+        customer_email: $('customerEmail').value,
       });
       // A new name clears generated documents, so reload the draft the server now holds.
       const record = await jsonApi('/api/inspections/' + id);
@@ -1669,6 +1679,7 @@ window.WorkspaceUI = (() => {
         office_notes: $('coordNotes').value,
       });
       mirroredAddress = coordination.address;
+      renderEmailCopy();
       if (!state.signed) {
         const record = await jsonApi('/api/inspections/' + id);
         state.draft.data = record.data;
@@ -1984,6 +1995,7 @@ window.WorkspaceUI = (() => {
     fillClaim,
     openPage,
     pageEpoch: () => viewEpoch,
+    customerEmail,
     readinessClaim: () => (claim?.job_id === state.draft?.inspection_id ? claim.claim : {}),
     loadDelivery,
   };

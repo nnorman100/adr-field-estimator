@@ -241,6 +241,20 @@ class CustomerUpdate(StrictModel):
     expected_version: int = Field(ge=1)
     customer_name: str = Field(default='', max_length=150)
     customer_phone: str = Field(default='', max_length=80)
+    # The homeowner's copy of the signed documents goes here. None, from an app that predates the
+    # field, keeps the saved address; an empty string clears it.
+    customer_email: str | None = Field(default=None, max_length=254)
+
+
+# What a role without coordination sees of the job sidecar: the customer it records and the
+# version it saves against. Office notes, assignment and access lists stay with the office.
+CUSTOMER_FIELDS = ('job_id', 'version', 'status', 'address', 'customer_name', 'customer_phone')
+
+
+def customer_view(job):
+    return {key: job.get(key, '') for key in CUSTOMER_FIELDS} | {
+        'customer_email': job.get('customer_email') or ''
+    }
 
 
 class ClaimUpdate(StrictModel):
@@ -1459,6 +1473,9 @@ class WorkspaceStore:
             if job['version'] != req.expected_version:
                 raise Conflict('Customer details changed. Reload before saving.')
             name, phone = req.customer_name.strip(), req.customer_phone.strip()
+            email = job.get('customer_email') or ''
+            if req.customer_email is not None:
+                email = email_address(req.customer_email) if req.customer_email.strip() else ''
             # The documents name the customer, so a new name needs new documents.
             if name != job.get('customer_name', '').strip() and record.get('audit') is not None:
                 record.update(audit=None, status='draft', updated_at=now())
@@ -1466,13 +1483,14 @@ class WorkspaceStore:
             job.update(
                 customer_name=name,
                 customer_phone=phone,
+                customer_email=email,
                 version=job['version'] + 1,
                 status=record['status'],
                 updated_at=now(),
             )
             tx.set(ref, job)
             self.event(tx, uid, 'job_customer', actor['company_id'], {'job_id': inspection_id})
-            return job
+            return customer_view(job)
 
         return self._run(update)
 

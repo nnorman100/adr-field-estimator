@@ -80,6 +80,61 @@ def test_estimator_records_and_corrects_the_customer_on_their_job(api):
     assert len(events(store, 'job_customer')) == 2
 
 
+def test_estimator_records_the_customer_email_and_sees_only_the_customer(api):
+    client, current, store = api
+    current['uid'] = 'office'
+    store.create_inspection('estimator', ID, data())
+    office = client.get('/api/jobs/' + ID + '/coordination').json()
+    client.put(
+        '/api/jobs/' + ID + '/coordination',
+        json={'expected_version': office['version'], 'office_notes': 'Gate code 1234'},
+    )
+    current['uid'] = 'estimator'
+    view = client.get('/api/jobs/' + ID + '/coordination').json()
+    # Office notes, assignment and access lists are not the estimator's to read.
+    assert set(view) == {
+        'job_id',
+        'version',
+        'status',
+        'address',
+        'customer_name',
+        'customer_phone',
+        'customer_email',
+    }
+    saved = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={
+            'expected_version': view['version'],
+            'customer_name': 'Pat Doe',
+            'customer_phone': '',
+            'customer_email': ' Pat@Example.com ',
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['customer_email'] == 'pat@example.com'
+    assert 'office_notes' not in saved.json()
+    bad = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={'expected_version': saved.json()['version'], 'customer_email': 'not an email'},
+    )
+    assert bad.status_code == 400
+    # An app that predates the email field keeps the saved address.
+    older = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={'expected_version': saved.json()['version'], 'customer_name': 'Pat Doe'},
+    )
+    assert older.json()['customer_email'] == 'pat@example.com'
+    cleared = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={'expected_version': older.json()['version'], 'customer_email': ''},
+    )
+    assert cleared.json()['customer_email'] == ''
+    current['uid'] = 'office'
+    assert (
+        client.get('/api/jobs/' + ID + '/coordination').json()['office_notes'] == 'Gate code 1234'
+    )
+
+
 @pytest.mark.parametrize(
     'uid,codes',
     [('office', {403}), ('estimator2', {404}), ('other-owner', {403, 404}), ('admin', {403, 404})],

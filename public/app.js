@@ -767,6 +767,17 @@ function invalidate() {
   $('sendHomeownerLink').disabled = true;
   clearSignature();
   clearSigningError('documentsConfirmedError');
+  renderEmailCopy();
+}
+// The homeowner is offered an emailed copy only when the job has a customer email, and is shown
+// where it goes. Before the customer loads (null) the plain offer stays, as the server decides.
+function renderEmailCopy() {
+  const to = window.WorkspaceUI?.enabled() ? WorkspaceUI.customerEmail() : null;
+  $('emailCopyField').hidden = to === '';
+  $('emailCopyNone').hidden = to !== '';
+  $('emailCopyText').textContent = to
+    ? 'Email me a copy of my signed documents at ' + to + '.'
+    : 'Email me a copy of my signed documents.';
 }
 function clearDisplayedInspection() {
   state.scopeEdits = null;
@@ -1887,7 +1898,19 @@ function renderRooms() {
           photos = roomPhotos(room.name);
           scans = roomScans(state.draft.data, room.name);
         });
+      if (key === 'name')
+        // A name another room holds stays in the box, marked, and is never applied; leaving the
+        // box puts the room's own name back.
+        input.addEventListener('change', () => {
+          if (input.validationMessage !== ROOM_NAME_TAKEN) return;
+          input.value = room.name;
+          input.setCustomValidity('');
+        });
       input.addEventListener('input', () => {
+        if (key === 'name') {
+          input.setCustomValidity(roomNameTaken(input.value, room) ? ROOM_NAME_TAKEN : '');
+          if (input.validationMessage === ROOM_NAME_TAKEN) return input.reportValidity();
+        }
         room[key] = type === 'text' ? input.value : Number(input.value);
         if (key === 'name') {
           retagPhotos(photos, input.value);
@@ -2126,10 +2149,20 @@ function canEditDraft(capability) {
     !(window.WorkspaceUI?.enabled() && !WorkspaceUI.can(capability))
   );
 }
+// Photos, shot lists and equipment scans are keyed by room name, so every room keeps its own;
+// the server refuses a save with two rooms of one name.
+function roomNameTaken(name, except) {
+  return state.draft.data.rooms.some(
+    (room) => room !== except && roomKey(room.name) === roomKey(name),
+  );
+}
+const ROOM_NAME_TAKEN = 'Another room already has this name. Give each room its own name.';
 function addRoomEntry() {
   if (state.draft.data.rooms.length >= 30) throw Error('At most 30 rooms are supported.');
+  let n = 1;
+  while (roomNameTaken('Room ' + n)) n++;
   const room = {
-    name: 'Room ' + (state.draft.data.rooms.length + 1),
+    name: 'Room ' + n,
     category: 1,
     loss: 'water',
     unfinished_sf: 0,
@@ -2195,7 +2228,10 @@ function beginRoomRename(index) {
     if (done) return;
     done = true;
     const name = input.value.trim();
-    if (commit && name && name !== room.name) renameRoom(room, name);
+    if (commit && name && name !== room.name && roomNameTaken(name, room)) {
+      renderWalkRoomChips();
+      say(ROOM_NAME_TAKEN, 'error');
+    } else if (commit && name && name !== room.name) renameRoom(room, name);
     else renderWalkRoomChips();
     $('roomChips')
       .querySelector('[data-room-chip="' + index + '"]')
@@ -3724,7 +3760,8 @@ async function authorize() {
     signature_png: state.signature,
     documents_confirmed: true,
   };
-  payload.email_copy = $('emailCopy').checked;
+  renderEmailCopy();
+  payload.email_copy = !$('emailCopyField').hidden && $('emailCopy').checked;
   state.pendingAuthorization = payload;
   $('authorizeJob').disabled = true;
   $('authorizationStatus').textContent = 'Saving signed agreement…';
