@@ -16,8 +16,8 @@ from scripts import auto_deploy as auto
 ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
 NEW = 'b' * 40
-TAG = 'auto-' + NEW[:12]
-URL = 'https://auto-bbbbbbbbbbbb---alert-disaster-field-estimator-545776254070.us-west2.run.app'
+TAG = 'a' + NEW[:7]
+URL = 'https://abbbbbbb---alert-disaster-field-estimator-545776254070.us-west2.run.app'
 BASELINE = {
     'WORKSPACES_ENABLED': 'true',
     'AI_FEATURES': 'readiness',
@@ -469,3 +469,31 @@ def test_setup_script_restricts_the_identity_to_this_repository_and_master():
 
 def test_setup_script_has_valid_shell_syntax():
     subprocess.run(['bash', '-n', str(ROOT / 'scripts' / 'setup_auto_deploy.sh')], check=True)
+
+
+def test_default_tag_fits_cloud_run_limit_for_real_run_ids():
+    tag = auto.default_tag('90d08b55f32e' + '0' * 28, '41140166919')
+    assert tag == 'a90d08b5-0166919'
+    assert len(tag) + len(auto.SERVICE) <= 46
+    assert re.fullmatch(r'[a-z][a-z0-9-]*', tag)
+    assert auto.default_tag(NEW, '41140166919') != auto.default_tag(NEW, '41140166920')
+
+
+def test_check_tag_refuses_the_tag_that_failed_in_production():
+    with pytest.raises(auto.Refused):
+        auto.check_tag('auto-90d08b55f32e-41140166919')
+    with pytest.raises(auto.Refused):
+        auto.check_tag('1abc')
+    with pytest.raises(auto.Refused):
+        auto.check_tag('a' * 17)
+    assert auto.check_tag('a' * 16)
+
+
+def test_overlong_explicit_tag_is_refused_before_anything_runs():
+    runner = FakeRunner()
+    assert auto.main(['--commit', NEW, '--tag', 'auto-' + NEW[:12] + '-41140166919'], runner=runner) == 2
+
+
+def test_workflow_passes_run_id_not_a_hand_built_tag():
+    text = (ROOT / '.github/workflows/deploy.yml').read_text()
+    assert '--run-id "$RUN_ID"' in text and '--tag' not in text.split('Release')[-1]
