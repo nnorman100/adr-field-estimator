@@ -111,6 +111,61 @@ python scripts/stamp_hosting.py --reset
 
 The backend rejects a different project ID or evidence bucket. Production never enables local demo fallbacks.
 
+### Automatic deploys
+
+`.github/workflows/deploy.yml` releases a master commit after its CI run succeeds on a push to master.
+It runs `scripts/auto_deploy.py`, which uses the manual path: `deploy_backend.py --workspaces on
+--ai-features readiness --price-books off` stages a tagged 0% revision (the tag is `auto-<commit>-<run id>`);
+the staged revision's environment, secret bindings, service account and limits must equal the serving
+revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3 and the
+stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
+only then does traffic move. Next it stamps the shell, deploys only `hosting:alert-disaster`, runs
+`verify_hosting.js` and resets the stamp. A failure before promotion promotes nothing. A failure after
+it restores traffic to the revision that was serving, clones the previous Hosting version back to the
+live channel and fails the run. One release runs at a time (`concurrency: production-deploy`).
+
+It stops with a message, and the owner releases that commit by hand, when:
+
+- `firestore.rules` or `firestore.indexes.json` changed since the serving commit. The workflow never
+  deploys rules, indexes or TTL policies. After releasing them by hand (and confirming the indexes are
+  READY), release the commit by hand too; later merges deploy automatically again.
+- The serving revision's `source-commit` label is not a clean commit in this history, or traffic is not
+  100% on one revision.
+- A Firestore TTL policy is missing (`scripts/ensure_firestore_ttls.py`, read-only).
+
+A commit that is already serving, or older than what is serving, is skipped without error, so a manual
+release made in parallel is never overwritten. Each run's job summary is the release record; see
+[RELEASES.md](../RELEASES.md). Stale `auto-` tags accumulate on old revisions at 0% traffic; Cloud Run
+allows 1000 tags per service, so clear old ones occasionally with `gcloud run services update-traffic
+--remove-tags`.
+
+**Owner setup, once.** Nothing below is done by the repository or its agents.
+
+1. Review, then run, with `gcloud` signed in as a project owner:
+   ```bash
+   scripts/setup_auto_deploy.sh --dry-run   # prints each change
+   scripts/setup_auto_deploy.sh
+   ```
+   It enables the IAM Credentials and STS APIs; creates the `adr-deployer` service account (no keys), a
+   Workload Identity pool and an OIDC provider whose condition admits only repository
+   `nnorman100/adr-field-estimator`, ref `refs/heads/master` and the `deploy.yml` workflow; lets that
+   repository impersonate the account; and grants it `run.developer`, `cloudbuild.builds.editor`,
+   `logging.viewer`, `serviceusage.serviceUsageConsumer`, `firebasehosting.admin`, `firebase.viewer` and
+   `datastore.viewer` on the project, `serviceAccountUser` on `adr-runtime` and `adr-builder` only, and
+   write access to the Cloud Run source bucket and Artifact Registry repository only. It cannot edit
+   Firestore rules, indexes or TTLs, IAM, or any other project.
+2. Set the two repository variables the script prints, `GCP_WORKLOAD_IDENTITY_PROVIDER` and
+   `GCP_DEPLOY_SERVICE_ACCOUNT`, and `AUTO_DEPLOY_ENABLED=true`.
+3. Run **Deploy** once from the Actions tab (`workflow_dispatch`). It runs only the refusal checks
+   (`--check-only`) and proves authentication, the roles for reading the service and the TTL check,
+   without staging or deploying.
+4. The first real release is the next merge. The roles for source builds and Hosting were derived from
+   reading the scripts, not from a live run; a missing permission fails the run before promotion. Watch
+   the first run and add only what its error names.
+
+Set `AUTO_DEPLOY_ENABLED` to anything but `true` to pause automatic deploys; manual releases are
+unaffected.
+
 ### Firestore TTL policies
 
 Five collection groups carry an `expire_at` Firestore TTL field. Each expiry is also enforced in code on every use, so a record that has not been deleted yet is already refused; deletion only trims the leftovers. Firestore deletes asynchronously, typically within about a day of the time (not at it), and a policy is per collection group in the `(default)` database.
