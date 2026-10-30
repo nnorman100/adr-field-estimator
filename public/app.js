@@ -48,6 +48,8 @@ const state = {
   pendingAuthorization: null,
   localVersion: 0,
   conflict: false,
+  // The owner archived the open draft while this phone held unsynced work; it is kept, read-only.
+  archived: false,
   syncing: false,
   ocr: new Map(),
   photoUrls: new Map(),
@@ -459,10 +461,40 @@ async function closeArchivedJob(id) {
     state.record = null;
     state.ack = null;
     state.documents = null;
+    state.conflict = state.archived = false;
+    $('conflictActions').hidden = $('archivedActions').hidden = true;
     invalidate();
     clearDisplayedInspection();
   }
   await deleteDraft(draftKey(id));
+}
+// An archived job keeps a phone's copy only while it holds work the server never received:
+// edits, photos, room or shot changes, or a voice note still waiting to upload.
+async function archivedWorkPending(row) {
+  return unsynced(row) || (await pendingNoteKeys()).has(row.key);
+}
+// The open draft was archived by the owner but holds unsynced work: keep it on this phone, stop
+// saving it, and offer Save as new draft or Discard. state.conflict blocks every cloud save.
+function holdArchivedDraft() {
+  state.archived = true;
+  state.conflict = true;
+  $('conflictActions').hidden = true;
+  $('archivedActions').hidden = false;
+  say('The owner archived this job. Your unsynced work is kept on this phone.', 'error');
+  renderSaveStatus();
+}
+// doSync runs inside syncChain, so it must not wait for closeArchivedJob (which waits on the chain).
+async function openDraftArchived(id) {
+  if (state.draft?.inspection_id !== id) return;
+  if (openDraftUnsynced() || (await pendingNoteKeys()).has(draftKey(id))) {
+    holdArchivedDraft();
+    await persist();
+    return;
+  }
+  closeArchivedJob(id)
+    .then(() => window.WorkspaceUI?.enabled() && WorkspaceUI.jobs())
+    .catch(() => {});
+  say('The owner archived this job. Nothing on this phone was unsynced.', 'success');
 }
 function draftKey(id) {
   return (
@@ -505,6 +537,7 @@ async function persist() {
     ack: state.ack,
     session: state.session,
     updated_at: new Date().toISOString(),
+    ...(state.archived && { archived: true }),
   };
   await dbAction('readwrite', (drafts, photos) => {
     const stored = photos.getAllKeys(photoRange(key));
@@ -624,7 +657,10 @@ async function api(path, options = {}) {
       );
       e.status = response.status;
       e.retryAfter = Number(response.headers.get('Retry-After') || 0);
-      if ((e.status === 403 || e.status === 404) && window.WorkspaceUI?.enabled())
+      if (
+        (e.status === 403 || e.status === 404 || e.status === 410) &&
+        window.WorkspaceUI?.enabled()
+      )
         queueMicrotask(() => WorkspaceUI.refresh().catch(() => {}));
       throw e;
     }
@@ -858,7 +894,9 @@ function renderSaveStatus() {
     state.record &&
     stable(state.draft.data) === state.ack &&
     !state.draft.photos.some(photoUnsynced);
-  if (state.conflict) show('Revision conflict', 'Revision conflict · local draft preserved');
+  if (state.archived)
+    show('Archived by the owner', 'Archived by the owner · local work kept on this phone');
+  else if (state.conflict) show('Revision conflict', 'Revision conflict · local draft preserved');
   else if (state.syncing) show('Saving…');
   else if (synced) show('Saved', 'Saved privately · revision ' + state.record.revision);
   else if (navigator.onLine)
@@ -1027,6 +1065,9 @@ async function doSync() {
     for (const photo of state.draft.photos.filter((p) => p.uploaded && p.ocr_status === 'pending'))
       startOCR(photo);
     await loadPhotoUrls('/api/inspections/' + id + '/photos/');
+  } catch (e) {
+    if (e.status !== 410) throw e;
+    await openDraftArchived(id);
   } finally {
     state.syncing = false;
     renderSaveStatus();
@@ -1088,16 +1129,20 @@ async function drainQueue() {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
       guard();
-      if (row.draft.inspection_id === state.draft?.inspection_id) continue;
+      if (row.draft.inspection_id === state.draft?.inspection_id || row.archived) continue;
       const id = row.draft.inspection_id,
         path = '/api/inspections/' + id;
       let record;
       try {
         record = await request(path);
       } catch (e) {
-        // An owner archived this job, so this phone drops its copy instead of recreating it.
+        // An owner archived this job, so this phone never recreates it. A copy holding unsynced
+        // field work is kept and marked, so the estimator can save it as a new draft or discard it.
         if (e.status === 410) {
-          await deleteDraft(row.key, true);
+          if (await archivedWorkPending(row)) {
+            row.archived = true;
+            await saveRow(row);
+          } else await deleteDraft(row.key, true);
           continue;
         }
         if (e.status !== 404) throw e;
@@ -2590,10 +2635,10 @@ async function openNew(data = null, photos = []) {
   state.ack = null;
   state.signed = null;
   state.documents = null;
-  state.conflict = false;
+  state.conflict = state.archived = false;
   state.ocr.clear();
   state.localVersion++;
-  $('conflictActions').hidden = true;
+  $('conflictActions').hidden = $('archivedActions').hidden = true;
   $('savedSignature').hidden = true;
   $('signingArea').hidden = false;
   invalidate();
@@ -2620,12 +2665,19 @@ async function restoreDraft(id) {
     for (const photo of local.draft.photos)
       if (bytes.has(photo.id)) photo.data_url = bytes.get(photo.id);
   }
-  let remote = null;
-  if (navigator.onLine) {
+  let remote = null,
+    archived = !!local?.archived;
+  if (navigator.onLine && !archived) {
     try {
       remote = await jsonApi('/api/inspections/' + id);
     } catch (e) {
-      if (e.status !== 404 || !local) throw e;
+      if (e.status === 410) {
+        if (!local || !(await archivedWorkPending(local))) {
+          if (local) await deleteDraft(local.key, true);
+          throw Error('The owner archived this job, so it can no longer be opened.');
+        }
+        archived = true;
+      } else if (e.status !== 404 || !local) throw e;
     }
   }
   if (epoch !== authEpoch) return;
@@ -2637,7 +2689,8 @@ async function restoreDraft(id) {
   state.signed = null;
   state.signature = null;
   state.pendingAuthorization = null;
-  state.conflict = false;
+  state.conflict = state.archived = false;
+  $('archivedActions').hidden = true;
   state.documents = null;
   state.draft = local
     ? local.draft
@@ -2657,7 +2710,8 @@ async function restoreDraft(id) {
     (await takeLostNotes(local.key, local.ack, local.draft.data, remote.data))
   )
     state.ack = local.ack = stable(remote.data);
-  if (
+  if (archived) holdArchivedDraft();
+  else if (
     remote &&
     local &&
     stable(remote.data) !== local.ack &&
@@ -2680,6 +2734,15 @@ async function restoreDraft(id) {
   state.documents = state.record?.audit?.documents || null;
   if (stable(state.draft.data) !== state.ack) state.documents = null;
   fillForm();
+  if (archived) {
+    // The server no longer serves this job, so only this phone's copy is shown.
+    renderDocuments();
+    $('jobsDialog').close();
+    showTask('property', false);
+    await persist();
+    await window.WorkspaceUI?.editor(true);
+    return;
+  }
   await loadPhotoUrls('/api/inspections/' + id + '/photos/');
   renderDocuments();
   $('jobsDialog').close();
@@ -5103,7 +5166,10 @@ function connectivity() {
       .catch((e) => say(e.message, 'error'));
 }
 const unsynced = (row) =>
-  row.conflict || stable(row.draft.data) !== row.ack || row.draft.photos.some(photoUnsynced);
+  row.conflict ||
+  row.archived ||
+  stable(row.draft.data) !== row.ack ||
+  row.draft.photos.some(photoUnsynced);
 const allNotes = () =>
   dbAction('readonly', (drafts, photos, stored) => stored.getAll()).catch(() => []);
 // Draft keys with a voice note that is still recording or waiting to upload; a note the server
@@ -5522,20 +5588,22 @@ async function initialize() {
     await persist();
     await loadPhotoUrls('/api/inspections/' + record.inspection_id + '/photos/');
   });
+  const forkPhotos = (photos) =>
+    photos.map((p) => ({
+      ...p,
+      id: newId(),
+      uploaded: false,
+      // Copies upload untagged, so a saved tag follows each as a pending tag.
+      ...(p.shot ? { pending_shot: p.shot } : {}),
+      ocr_status: 'pending',
+      ocr: null,
+      file: undefined,
+    }));
   click('forkLocal', async () => {
     await syncChain.catch(() => {});
     await loadPhotoUrls('/api/inspections/' + state.draft.inspection_id + '/photos/');
     const data = structuredClone(state.draft.data),
-      photos = state.draft.photos.map((p) => ({
-        ...p,
-        id: newId(),
-        uploaded: false,
-        // Copies upload untagged, so a saved tag follows each as a pending tag.
-        ...(p.shot ? { pending_shot: p.shot } : {}),
-        ocr_status: 'pending',
-        ocr: null,
-        file: undefined,
-      }));
+      photos = forkPhotos(state.draft.photos);
     for (const p of photos) {
       if (!p.data_url)
         throw Error(
@@ -5543,6 +5611,33 @@ async function initialize() {
         );
     }
     await openNew(data, photos);
+  });
+  // The archived job can't serve its photos, so the new draft takes those this phone holds; the
+  // rest stay with the archived job's record.
+  click('forkArchived', async () => {
+    if (!state.archived) return;
+    const key = draftKey(state.draft.inspection_id),
+      kept = state.draft.photos.filter((p) => p.data_url),
+      left = state.draft.photos.length - kept.length;
+    await openNew(structuredClone(state.draft.data), forkPhotos(kept));
+    await deleteDraft(key, true);
+    say(
+      left
+        ? 'Saved as a new draft. ' +
+            left +
+            (left === 1 ? ' photo was' : ' photos were') +
+            ' not on this phone and stayed with the archived job.'
+        : 'Saved as a new draft.',
+      'success',
+    );
+  });
+  click('discardArchived', async () => {
+    if (!state.archived) return;
+    if (!confirm('Discard the work on this phone for the archived job? This cannot be undone.'))
+      return;
+    await closeArchivedJob(state.draft.inspection_id);
+    say('Local work discarded.', 'success');
+    if (window.WorkspaceUI?.enabled()) await WorkspaceUI.jobs();
   });
   window.addEventListener('online', connectivity);
   window.addEventListener('offline', connectivity);
