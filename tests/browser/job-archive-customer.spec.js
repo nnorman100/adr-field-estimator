@@ -63,3 +63,49 @@ test('owner archives a draft after confirming and it leaves the job list', async
   );
   expect(drafts).not.toContain('Assigned bathroom');
 });
+
+test('owner removes a team member after confirming, and can restore them', async ({ page }) => {
+  await start(page, 'owner');
+  await page
+    .locator('#workspaceMenuToggle:visible')
+    .click({ timeout: 1000 })
+    .catch(() => {});
+  await page.locator('#dashboardTeam').click();
+  await expect(page.locator('#dashboardHeading')).toHaveText('Team & invitations');
+  const office = page.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: uid('office') + '@example.invalid', exact: true }),
+  });
+  await office.getByRole('button', { name: 'Remove access' }).click();
+  // Asking first: keeping access changes nothing.
+  await expect(office).toContainText('Remove access for ' + uid('office') + '@example.invalid?');
+  await office.getByRole('button', { name: 'Keep access' }).click();
+  await expect(office).toContainText('Office staff · active');
+  await office.getByRole('button', { name: 'Remove access' }).click();
+  await office.getByRole('button', { name: 'Yes, remove access' }).click();
+  await expect(office).toContainText('Office staff · disabled');
+  await expect(office.getByRole('button', { name: 'Remove access' })).toHaveCount(0);
+  // Not a delete: the Access control still restores them.
+  await office.locator('select[name=status]').selectOption('active');
+  await office.getByRole('button', { name: 'Save access' }).click();
+  await expect(office).toContainText('Office staff · active');
+});
+
+test('offline job list keeps the customer name saved with the local copy', async ({
+  page,
+  context,
+}) => {
+  await start(page, 'estimator');
+  await page.locator('#dashboardJobs').click();
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#customerDetails summary').click();
+  await page.locator('#customerName').fill('Offline Homeowner');
+  await page.locator('#saveCustomer').click();
+  await expect(page.locator('#customerStatus')).toHaveText('Customer saved.');
+  await page.locator('#dashboardHome').click();
+  await context.setOffline(true);
+  await page.locator('#dashboardJobs').click();
+  await expect(page.getByRole('button', { name: /Assigned bathroom/ })).toContainText(
+    'Saved on this device · Offline Homeowner',
+  );
+  await context.setOffline(false);
+});
