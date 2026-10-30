@@ -5,11 +5,13 @@ Everything outside the process is replaced by FakeRunner; no test touches Google
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts import auto_deploy as auto
 
@@ -123,8 +125,9 @@ class FakeRunner:
         ):
             if needle in text:
                 if name == 'stage':
+                    tag = argv[argv.index('--tag') + 1]
                     self.traffic.append(
-                        {'revisionName': 'rev-new', 'percent': 0, 'tag': TAG, 'url': URL}
+                        {'revisionName': 'rev-new', 'percent': 0, 'tag': tag, 'url': URL}
                     )
                 return self.completed(argv, 1 if name in self.fail else 0)
         if 'hosting:clone' in text:
@@ -494,6 +497,24 @@ def test_overlong_explicit_tag_is_refused_before_anything_runs():
     assert auto.main(['--commit', NEW, '--tag', 'auto-' + NEW[:12] + '-41140166919'], runner=runner) == 2
 
 
-def test_workflow_passes_run_id_not_a_hand_built_tag():
-    text = (ROOT / '.github/workflows/deploy.yml').read_text()
-    assert '--run-id "$RUN_ID"' in text and '--tag' not in text.split('Release')[-1]
+def release_argv(run_id):
+    job = yaml.safe_load(WORKFLOW)['jobs']['deploy']
+    step = next(step for step in job['steps'] if step.get('name') == 'Release')
+    env = {'COMMIT': NEW, 'RUN_ID': run_id, 'DEPLOY_ARGS': ''}
+    tokens = shlex.split(step['run'], comments=True)
+    for name, value in env.items():
+        tokens = [token.replace(f'${name}', value) for token in tokens]
+    tokens = [token for token in tokens if token]
+    return tokens[tokens.index('scripts/auto_deploy.py') + 1 :]
+
+
+def test_workflow_release_step_stages_a_tag_cloud_run_accepts():
+    argv = release_argv('41140166919')
+    assert '--tag' not in argv
+    assert argv[argv.index('--run-id') + 1] == '41140166919'
+    runner = FakeRunner()
+    assert auto.main(argv, runner=runner) == 0
+    stage = next(command for key, command in runner.calls if key == 'stage')
+    tag = stage[stage.index('--tag') + 1]
+    assert auto.check_tag(tag) == tag
+    assert tag.endswith('0166919')
