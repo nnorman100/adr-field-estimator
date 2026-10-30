@@ -34,9 +34,9 @@ test('renaming a room to another room’s name is refused and reverts', async ({
   expect(await roomName(page, 1).evaluate((input) => input.validationMessage)).toContain(
     'Another room already has this name',
   );
-  expect((await names(page))[1]).toBe('Room 2');
+  expect((await names(page))[1]).toBe('Room 1');
   await roomName(page, 1).blur();
-  await expect(roomName(page, 1)).toHaveValue('Room 2');
+  await expect(roomName(page, 1)).toHaveValue('Room 1');
   expect(await roomName(page, 1).evaluate((input) => input.validity.valid)).toBe(true);
   await roomName(page, 1).fill('Hall');
   expect(await names(page)).toEqual(['Kitchen', 'Hall']);

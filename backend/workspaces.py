@@ -1424,16 +1424,36 @@ class WorkspaceStore:
 
         return self._run(update)
 
-    def archive_job(self, uid, inspection_id, req):
+    def _filed_job(self, uid, inspection_id, company_id, tx):
+        """The job an archive or restore acts on. With company_id this is superadmin support, which
+        reaches any company, suspended ones included; otherwise the caller must be a company member
+        whose role can archive. Archived jobs are reachable here, unlike job_access."""
+        record = self.read('inspections', inspection_id, tx)
+        if not record:
+            raise LookupError('Inspection not found.')
+        if company_id:
+            return record, self.support_job(uid, company_id, record, tx), company_id
+        actor = self.company_actor(uid, tx=tx)
+        job = self.job_for(record, tx)
+        if job['company_id'] != actor['company_id'] or (
+            actor['role'] == 'estimator' and uid not in job['accessible_estimator_uids']
+        ):
+            raise LookupError('Job not found.')
+        if 'jobs_archive' not in actor['capabilities']:
+            raise AccessDenied('Your role cannot perform this job action.')
+        return record, job, actor['company_id']
+
+    def archive_job(self, uid, inspection_id, req, company_id=None):
         """Owners file away an unsigned draft, such as a test or duplicate job. The source record,
-        photos and audit trail stay; the job leaves every list and can no longer be opened."""
+        photos and audit trail stay; the job leaves every list and can no longer be opened. With
+        company_id a superadmin does the same as an audited support action, for a company whose
+        owner cannot sign in, such as a suspended test company."""
         ref = self.ref('_workspace_jobs', inspection_id)
 
         def archive(tx):
-            record = self.read('inspections', inspection_id, tx)
-            if not record:
-                raise LookupError('Inspection not found.')
-            job, actor = self.job_access(uid, record, 'jobs_archive', tx)
+            record, job, company = self._filed_job(uid, inspection_id, company_id, tx)
+            if job.get('archived_at'):
+                raise JobArchived('This job was archived.')
             if record['status'] == 'signed' or job.get('auth_exists'):
                 raise Conflict('Signed jobs are kept. Only unsigned drafts can be archived.')
             if job['version'] != req.expected_version:
@@ -1448,14 +1468,73 @@ class WorkspaceStore:
             self.event(
                 tx,
                 uid,
-                'job_archived',
-                actor['company_id'],
+                'support_archive_job' if company_id else 'job_archived',
+                company,
                 {'job_id': inspection_id},
                 'job/' + inspection_id,
             )
             return {'job_id': inspection_id, 'archived_at': job['archived_at']}
 
         return self._run(archive)
+
+    def restore_job(self, uid, inspection_id, req, company_id=None):
+        """Puts an archived draft back in the job lists, exactly as it was archived. Owners restore
+        their company's drafts; with company_id a superadmin restores as a support action."""
+        ref = self.ref('_workspace_jobs', inspection_id)
+
+        def restore(tx):
+            _record, job, company = self._filed_job(uid, inspection_id, company_id, tx)
+            if not job.get('archived_at'):
+                raise Conflict('This job is not archived.')
+            if job['version'] != req.expected_version:
+                raise Conflict('This job changed. Reload before restoring.')
+            for key in ('archived_at', 'archived_by_uid'):
+                job.pop(key, None)
+            job.update(kind='inspection', version=job['version'] + 1)
+            tx.set(ref, job)
+            self.event(
+                tx,
+                uid,
+                'support_restore_job' if company_id else 'job_restored',
+                company,
+                {'job_id': inspection_id},
+                'job/' + inspection_id,
+            )
+            return {'job_id': inspection_id, 'version': job['version']}
+
+        return self._run(restore)
+
+    def archived_jobs(self, uid, company_id=None):
+        """The company's archived drafts, newest first, at most 100, for the Restore list. Owners
+        see their own company's; with company_id a superadmin reads any company's, audited."""
+        support = company_id is not None
+        if support:
+            self.support_company(uid, company_id)
+        else:
+            actor = self.company_actor(uid)
+            if 'jobs_archive' not in actor['capabilities']:
+                raise AccessDenied('Your role cannot perform this job action.')
+            company_id = actor['company_id']
+        query = (
+            self.db.collection('_workspace_jobs')
+            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+            .where(filter=firestore.FieldFilter('kind', '==', 'archived_inspection'))
+            .order_by('updated_at', direction=firestore.Query.DESCENDING)
+            .limit(100)
+        )
+        jobs = [
+            dict(
+                inspection_id=job['job_id'],
+                address=job.get('address', ''),
+                customer_name=job.get('customer_name', '').strip(),
+                archived_at=job.get('archived_at'),
+                version=job['version'],
+            )
+            for job in (row.to_dict() for row in query.stream())
+        ]
+        if support:
+            self.support_audit(uid, company_id, 'view_archived_jobs', 'jobs')
+        return jobs
 
     def customer(self, uid, inspection_id, req):
         """Estimators record and correct the customer's name and phone on their own unsigned jobs;

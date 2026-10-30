@@ -9,6 +9,7 @@ window.WorkspaceUI = (() => {
     claimEdits = [],
     // The open job's coordination record, for an estimator's customer name and phone.
     customer = null,
+    customerPending = null,
     refreshing = false,
     initialized = false,
     supportUrls = [],
@@ -21,7 +22,7 @@ window.WorkspaceUI = (() => {
       'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.';
   const SUPPORT_EYEBROW = 'READ-ONLY SUPPORT VIEW',
     SUPPORT_NOTE =
-      'Read-only: jobs, drafts and signed documents cannot be changed here. Every view and support action is recorded in the audit log.';
+      'Read-only: jobs and signed documents cannot be edited here; unsigned drafts can only be archived or restored. Every view and support action is recorded in the audit log.';
   const enabled = () => !!state.session?.workspaces_enabled;
   const can = (cap) => !enabled() || state.session.capabilities?.includes(cap);
   const context = () =>
@@ -167,8 +168,7 @@ window.WorkspaceUI = (() => {
       !!claim?.editable && navigator.onLine && claim.job_id === state.draft?.inspection_id;
     for (const control of $('claimForm').querySelectorAll('input,button'))
       control.disabled = !claimEditable;
-    const customerEditable =
-      !!customer && navigator.onLine && customer.job_id === state.draft?.inspection_id;
+    const customerEditable = !$('customerDetails').hidden && !!state.draft && !state.signed;
     for (const control of $('customerForm').querySelectorAll('input,button'))
       control.disabled = !customerEditable;
     $('newInspection').disabled = !can('jobs_create');
@@ -287,6 +287,12 @@ window.WorkspaceUI = (() => {
           say(e.message, 'error');
         });
       });
+      // Leaving a field saves it, so a name typed and never saved is not lost.
+      $('customerForm').addEventListener('change', () =>
+        saveCustomer(true).catch((e) => {
+          $('customerStatus').textContent = e.message;
+        }),
+      );
       $('archiveJob').addEventListener('click', () =>
         archiveJob().catch((e) => say(e.message, 'error')),
       );
@@ -365,6 +371,9 @@ window.WorkspaceUI = (() => {
       } else if (!claim && state.draft?.inspection_id && !$('claimDetails').hidden)
         // A job started offline has claim details once its first save reaches the server.
         await loadClaim();
+      // A customer saved offline sends on reconnect.
+      if (previous === next && customerPending?.job_id === state.draft?.inspection_id)
+        await loadCustomer().catch(() => {});
       if (previous === next && (state.signed || confirmedAuthorization)) await loadDelivery();
     } finally {
       refreshing = false;
@@ -642,6 +651,51 @@ window.WorkspaceUI = (() => {
         }));
     if (epoch !== viewEpoch) return;
     render();
+    if (can('jobs_archive')) archivedDrafts(content, '/api/archived-jobs', '/api/jobs/', jobs);
+  }
+  // Archived drafts are filed below the job list, each with Restore, as archived companies are.
+  // The list loads only when the folder is opened, so the working list never carries their text.
+  function archivedDrafts(content, listPath, jobBase, after) {
+    const folder = node('details', undefined, 'archived-companies archived-drafts'),
+      list = node('div', undefined, 'dashboard-list');
+    folder.append(node('summary', 'Archived drafts'), list);
+    folder.addEventListener('toggle', async () => {
+      if (!folder.open) return list.replaceChildren();
+      const epoch = viewEpoch;
+      list.replaceChildren(node('p', 'Loading archived drafts…'));
+      try {
+        const { jobs: archived } = await jsonApi(listPath);
+        if (epoch !== viewEpoch || !folder.open) return;
+        list.replaceChildren(
+          ...archived.map((job) => {
+            const row = node('article', undefined, 'dashboard-card');
+            row.append(
+              node('h3', job.address || 'Untitled job'),
+              node(
+                'p',
+                [job.customer_name, 'Archived ' + new Date(job.archived_at).toLocaleDateString()]
+                  .filter(Boolean)
+                  .join(' · '),
+              ),
+              button('Restore draft', async () => {
+                await jsonApi(
+                  jobBase + encodeURIComponent(job.inspection_id) + '/restore',
+                  'POST',
+                  { expected_version: job.version },
+                );
+                say('Draft restored to the job list.', 'success');
+                await after();
+              }),
+            );
+            return row;
+          }),
+        );
+        if (!archived.length) list.append(node('p', 'No archived drafts.'));
+      } catch (e) {
+        list.replaceChildren(node('p', e.message, 'field-error'));
+      }
+    });
+    content.append(folder);
   }
   function deadInvitation(invite) {
     if (!invite || invite.cleared_at || invite.status === 'accepted') return false;
@@ -1316,6 +1370,7 @@ window.WorkspaceUI = (() => {
     if (drafts.next_cursor || signed.next_cursor)
       older.append(node('p', 'Showing the 100 most recent drafts and agreements.'));
     render();
+    archivedDrafts(content, base + '/archived-jobs', base + '/jobs/', () => support(cid));
     window.InsightUI?.usage(content, cid);
     window.DryingWatch?.dashboard(content, cid, (authId) => supportRecord(cid, authId, true));
     content.append(node('h2', 'Team'));
@@ -1369,6 +1424,26 @@ window.WorkspaceUI = (() => {
       node('p', SUPPORT_NOTE, 'support-note'),
       button('Back to support view', () => support(cid)),
     );
+    // The one job write support has: filing away an unsigned draft, for a company whose owner
+    // cannot sign in to do it (a suspended test company). It is audited and can be restored.
+    if (!signed && record.status !== 'signed' && !job.auth_exists)
+      content.append(
+        button('Archive draft (support action)', async () => {
+          if (
+            !(await confirmArchive(
+              'Archive ' + (record.address || 'this draft') + '?',
+              'The draft leaves every job list for this company and can no longer be opened. Its photos and history are kept, the action is recorded in the audit log, and it can be restored from Archived drafts.',
+              'Archive draft',
+            ))
+          )
+            return;
+          await jsonApi(supportBase(cid) + '/jobs/' + encodeURIComponent(id) + '/archive', 'POST', {
+            expected_version: job.version,
+          });
+          say('Draft archived.', 'success');
+          await support(cid);
+        }),
+      );
     window.InsightUI?.support(content, job.job_id, cid);
     const facts = node('section', undefined, 'dashboard-card');
     facts.append(node('h2', record.address || scope.address || 'Untitled job'));
@@ -1558,28 +1633,38 @@ window.WorkspaceUI = (() => {
     $('archiveJob').hidden = !can('jobs_archive') || job.status === 'signed' || job.auth_exists;
     $('coordinationStatus').textContent = '';
   }
-  // Estimators keep the customer's name and phone on their own jobs; owners and office staff
-  // edit them in Job coordination instead.
+  // Estimators keep the customer's name, phone and email on their own jobs; owners and office
+  // staff edit them in Job coordination instead. Without a connection the panel shows this phone's
+  // copy, and a save waits on the phone (customerPending, kept in the local draft) until it sends.
+  const CUSTOMER_PENDING = 'Saved on this phone. It is sent when you reconnect.';
+  const customerFields = () => ({
+    customer_name: $('customerName').value,
+    customer_phone: $('customerPhone').value,
+    customer_email: $('customerEmail').value,
+  });
   async function loadCustomer() {
-    customer = null;
+    const id = state.draft?.inspection_id;
+    if (customer?.job_id !== id) customer = null;
+    if (customerPending?.job_id !== id) customerPending = null;
     $('customerDetails').hidden = true;
-    if (
-      !enabled() ||
-      can('coordination') ||
-      !can('scope') ||
-      state.signed ||
-      !state.draft?.inspection_id ||
-      !navigator.onLine
-    )
+    if (!enabled() || can('coordination') || !can('scope') || state.signed || !id) return;
+    if (!navigator.onLine) {
+      fillCustomer();
+      $('customerStatus').textContent = customerPending ? CUSTOMER_PENDING : '';
+      $('customerDetails').hidden = false;
       return;
-    const id = state.draft.inspection_id,
-      key = context();
+    }
+    const key = context();
     const job = await jsonApi('/api/jobs/' + id + '/coordination');
     if (id !== state.draft?.inspection_id || key !== context()) return;
     customer = job;
     fillCustomer();
     $('customerStatus').textContent = '';
     $('customerDetails').hidden = false;
+    if (customerPending)
+      await sendCustomer().catch((e) => {
+        $('customerStatus').textContent = e.message;
+      });
   }
   // The open job's saved customer email: '' when none, null until the job's customer has loaded.
   function customerEmail() {
@@ -1587,27 +1672,80 @@ window.WorkspaceUI = (() => {
     if (!job || job.job_id !== state.draft?.inspection_id) return null;
     return job.customer_email || '';
   }
-  function fillCustomer() {
-    $('customerName').value = customer.customer_name;
-    $('customerPhone').value = customer.customer_phone;
-    $('customerEmail').value = customer.customer_email || '';
+  // What the local draft keeps of the open job's customer, so it shows and sends offline.
+  function customerCache() {
+    const id = state.draft?.inspection_id;
+    const view = customer?.job_id === id ? customer : null,
+      pending = customerPending?.job_id === id ? customerPending : null;
+    return view || pending ? { view, pending } : null;
+  }
+  function seedCustomer(cache, id) {
+    if (cache?.view?.job_id === id) customer = cache.view;
+    if (cache?.pending?.job_id === id) customerPending = cache.pending;
+  }
+  // typing keeps what the estimator is still typing in the boxes, after a background save.
+  function fillCustomer(typing = false) {
+    const shown = customerPending || customer || {};
+    if (!typing) {
+      $('customerName').value = shown.customer_name || '';
+      $('customerPhone').value = shown.customer_phone || '';
+      $('customerEmail').value = shown.customer_email || '';
+    }
     renderEmailCopy();
-    $('customerSummary').textContent = customer.customer_name
-      ? '· ' + customer.customer_name
+    $('customerSummary').textContent = shown.customer_name
+      ? '· ' + shown.customer_name
       : '· none recorded';
   }
-  async function saveCustomer() {
-    if (!customer || !$('customerForm').reportValidity()) return;
+  // Saves run one after another, so a save on leaving a field and a tap on Save never race.
+  let customerChain = Promise.resolve();
+  function saveCustomer(quiet = false) {
+    const run = customerChain.catch(() => {}).then(() => storeCustomer(quiet));
+    customerChain = run;
+    return run;
+  }
+  async function storeCustomer(quiet) {
+    if (!state.draft?.inspection_id || $('customerDetails').hidden) return;
+    if (quiet ? !$('customerForm').checkValidity() : !$('customerForm').reportValidity()) return;
+    const id = state.draft.inspection_id,
+      fields = customerFields(),
+      same = (saved) =>
+        !!saved && Object.keys(fields).every((key) => (saved[key] || '') === fields[key]);
+    if (!same(customerPending)) {
+      if (!customerPending && same(customer)) {
+        if (!quiet) $('customerStatus').textContent = 'Customer saved.';
+        return;
+      }
+      customerPending = { job_id: id, ...fields };
+    }
+    if (!navigator.onLine || !customer) {
+      await persist();
+      fillCustomer();
+      $('customerStatus').textContent = CUSTOMER_PENDING;
+      return;
+    }
+    await sendCustomer();
+  }
+  async function sendCustomer() {
+    const pending = customerPending,
+      id = pending.job_id;
     $('saveCustomer').disabled = true;
     try {
       await syncDraft();
-      const id = state.draft.inspection_id;
-      customer = await jsonApi('/api/jobs/' + id + '/customer', 'PUT', {
-        expected_version: customer.version,
-        customer_name: $('customerName').value,
-        customer_phone: $('customerPhone').value,
-        customer_email: $('customerEmail').value,
-      });
+      try {
+        customer = await jsonApi('/api/jobs/' + id + '/customer', 'PUT', {
+          expected_version: customer.version,
+          customer_name: pending.customer_name,
+          customer_phone: pending.customer_phone,
+          customer_email: pending.customer_email,
+        });
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        // Someone else changed the customer: take their version, keep these entries to save again.
+        customer = await jsonApi('/api/jobs/' + id + '/coordination');
+        throw Error('The customer changed on another device. Check the details and save again.');
+      }
+      if (customerPending === pending) customerPending = null;
+      if (id !== state.draft?.inspection_id) return;
       // A new name clears generated documents, so reload the draft the server now holds.
       const record = await jsonApi('/api/inspections/' + id);
       state.draft.data = record.data;
@@ -1615,10 +1753,11 @@ window.WorkspaceUI = (() => {
       absorb(record);
       fillForm();
       await persist();
-      fillCustomer();
+      const fields = customerFields();
+      fillCustomer(Object.keys(fields).some((key) => fields[key] !== (pending[key] || '')));
       $('customerStatus').textContent = 'Customer saved.';
     } finally {
-      $('saveCustomer').disabled = !navigator.onLine;
+      $('saveCustomer').disabled = false;
       policy();
     }
   }
@@ -1996,6 +2135,8 @@ window.WorkspaceUI = (() => {
     openPage,
     pageEpoch: () => viewEpoch,
     customerEmail,
+    customerCache,
+    seedCustomer,
     readinessClaim: () => (claim?.job_id === state.draft?.inspection_id ? claim.claim : {}),
     loadDelivery,
   };

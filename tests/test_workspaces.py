@@ -2771,6 +2771,21 @@ def superadmin_tools(invites):
         ('support other jobs', 'GET', support + 'other/jobs', None, 200),
         ('support other job', 'GET', support + 'other/jobs/' + OTHER, None, 200),
         ('support other documents', 'GET', support + 'other/authorizations', None, 200),
+        ('support archived jobs', 'GET', support + 'other/archived-jobs', None, 200),
+        (
+            'support archive draft',
+            'POST',
+            support + 'other/jobs/' + OTHER + '/archive',
+            {'expected_version': 1},
+            200,
+        ),
+        (
+            'support restore draft',
+            'POST',
+            support + 'other/jobs/' + OTHER + '/restore',
+            {'expected_version': 2},
+            200,
+        ),
         (
             'switch member role',
             'PUT',

@@ -538,6 +538,8 @@ async function persist() {
     session: state.session,
     updated_at: new Date().toISOString(),
     ...(state.archived && { archived: true }),
+    // The estimator's customer panel, so it shows and sends without a connection.
+    customer: window.WorkspaceUI?.customerCache?.() || null,
   };
   await dbAction('readwrite', (drafts, photos) => {
     const stored = photos.getAllKeys(photoRange(key));
@@ -2737,6 +2739,7 @@ async function restoreDraft(id) {
       };
   state.record = remote || local.record;
   state.ack = local ? local.ack : stable(remote.data);
+  window.WorkspaceUI?.seedCustomer?.(local?.customer, id);
   if (
     remote &&
     local &&

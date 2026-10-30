@@ -477,6 +477,52 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         await stored(store.quota, claims['uid'], 'draft', 60)
         return await stored(workspace(store).archive_job, claims['uid'], inspection_id, req)
 
+    @app.post('/api/jobs/{inspection_id}/restore')
+    async def restore_job(
+        inspection_id: str, req: ArchiveRequest, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(store.quota, claims['uid'], 'draft', 60)
+        return await stored(workspace(store).restore_job, claims['uid'], inspection_id, req)
+
+    @app.get('/api/archived-jobs')
+    async def archived_jobs(claims=live_identity, store=Depends(get_store)):
+        return {'jobs': await stored(workspace(store).archived_jobs, claims['uid'])}
+
+    # Superadmin support actions for a company whose owner cannot sign in, such as a suspended
+    # test company: archive or restore an unsigned draft, each audited.
+    @app.get('/api/admin/companies/{company_id}/archived-jobs')
+    async def support_archived_jobs(
+        company_id: str, claims=live_identity, store=Depends(get_store)
+    ):
+        jobs = await stored(workspace(store).archived_jobs, claims['uid'], company_id)
+        return {'jobs': jobs}
+
+    @app.post('/api/admin/companies/{company_id}/jobs/{inspection_id}/archive')
+    async def support_archive_job(
+        company_id: str,
+        inspection_id: str,
+        req: ArchiveRequest,
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        await stored(store.quota, claims['uid'], 'admin', 10)
+        return await stored(
+            workspace(store).archive_job, claims['uid'], inspection_id, req, company_id
+        )
+
+    @app.post('/api/admin/companies/{company_id}/jobs/{inspection_id}/restore')
+    async def support_restore_job(
+        company_id: str,
+        inspection_id: str,
+        req: ArchiveRequest,
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        await stored(store.quota, claims['uid'], 'admin', 10)
+        return await stored(
+            workspace(store).restore_job, claims['uid'], inspection_id, req, company_id
+        )
+
     @app.get('/api/jobs/{inspection_id}/claim')
     async def get_claim(inspection_id: str, claims=Depends(identity), store=Depends(get_store)):
         return await stored(workspace(store).claim, claims['uid'], inspection_id)
