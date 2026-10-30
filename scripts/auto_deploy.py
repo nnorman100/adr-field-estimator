@@ -61,11 +61,13 @@ TAG_FORM = re.compile(r'[a-z][a-z0-9-]*')
 def check_tag(tag, service=SERVICE):
     """Refuse a tag Cloud Run would reject, before anything is staged."""
     if not TAG_FORM.fullmatch(tag):
-        raise Refused(f'Traffic tag {tag!r} must be lowercase letters, digits and dashes, starting with a letter.')
+        raise Refused(
+            f'Traffic tag {tag!r} must be lowercase letters, digits and dashes, starting with a letter.'
+        )
     if len(tag) + len(service) > TAG_LIMIT:
         raise Refused(
             f'Traffic tag {tag!r} ({len(tag)}) and service name {service!r} ({len(service)}) exceed '
-            f'Cloud Run\'s {TAG_LIMIT}-character limit.'
+            f"Cloud Run's {TAG_LIMIT}-character limit."
         )
     return tag
 
@@ -76,6 +78,8 @@ def default_tag(commit, run_id='', service=SERVICE):
     room = TAG_LIMIT - len(service) - len(head) - 1
     digits = re.sub(r'\D', '', run_id)[-room:] if room > 0 else ''
     return check_tag(f'{head}-{digits}' if digits else head, service)
+
+
 # Signed-out requests that the staged revision must refuse with 401 (RELEASES.md staged checks).
 REFUSED_GET = (
     '/api/session',

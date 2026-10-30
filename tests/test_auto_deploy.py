@@ -494,7 +494,10 @@ def test_check_tag_refuses_the_tag_that_failed_in_production():
 
 def test_overlong_explicit_tag_is_refused_before_anything_runs():
     runner = FakeRunner()
-    assert auto.main(['--commit', NEW, '--tag', 'auto-' + NEW[:12] + '-41140166919'], runner=runner) == 2
+    assert (
+        auto.main(['--commit', NEW, '--tag', 'auto-' + NEW[:12] + '-41140166919'], runner=runner)
+        == 2
+    )
 
 
 def release_argv(run_id):
