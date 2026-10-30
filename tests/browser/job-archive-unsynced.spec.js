@@ -67,9 +67,11 @@ test('an edit to the open draft after the owner archives it is kept and saves as
   await expect(page.locator('#address')).toHaveValue('Assigned bathroom');
   await expect(page.locator('#yearBuilt')).toHaveValue('1999');
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
-  const rows = await localRows(page);
-  expect(rows.map((row) => row.id)).not.toContain(JOB);
-  expect(rows).toContainEqual(expect.objectContaining({ year: 1999, archived: false }));
+  // The archived copy is removed once the new draft is open, after the new draft's first save.
+  await expect.poll(async () => (await localRows(page)).map((row) => row.id)).not.toContain(JOB);
+  expect(await localRows(page)).toContainEqual(
+    expect.objectContaining({ year: 1999, archived: false }),
+  );
 });
 
 test('a queued offline edit survives the archive and can be discarded on purpose', async ({
