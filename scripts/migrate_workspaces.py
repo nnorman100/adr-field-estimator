@@ -11,7 +11,8 @@ import firebase_admin
 from firebase_admin import auth
 from google.cloud import firestore
 from backend.workspaces import WorkspaceStore, email_address
-from backend.workspace_migration import migrate
+from backend.workspace_migration import MIGRATION_ID, migrate
+from backend.migration_ledger import local_source_commit, record_applied
 
 PROJECT = 'alert-disaster-field-2026'
 ADMIN_EMAIL = 'nathanaelcnorman@gmail.com'
@@ -64,6 +65,10 @@ def main():
     if not report['source_records_preserved']:
         raise RuntimeError(
             'Source records changed during migration; inspect concurrent writes before cutover.'
+        )
+    if args.apply:
+        report['ledger_recorded'] = record_applied(
+            workspace.db, MIGRATION_ID, local_source_commit()
         )
     if args.manifest:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)

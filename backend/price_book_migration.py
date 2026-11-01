@@ -32,6 +32,7 @@ except ImportError:
 HEAD = '_company_price_books'
 VERSIONS = '_price_book_versions'
 PINS = '_job_pricing'
+MIGRATION_ID = 'price-books-v1'
 
 
 def _two(value):

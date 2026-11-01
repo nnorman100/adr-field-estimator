@@ -110,6 +110,7 @@ try:
     )
     from .job_store import BUCKET, decode_image, IMAGE_WORKER
     from .cloud_log import event
+    from .migration_ledger import list_applied
 except ImportError:
     from contracts import (
         CopyRequest,
@@ -176,6 +177,7 @@ except ImportError:
     )
     from job_store import BUCKET, decode_image, IMAGE_WORKER
     from cloud_log import event
+    from migration_ledger import list_applied
 
 DEDICATED_PROJECT_ID = 'alert-disaster-field-2026'
 PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT', DEDICATED_PROJECT_ID)
@@ -826,7 +828,13 @@ def health_check():
 
 
 @app.get('/api/health/details')
-def health_details(staff=Depends(current_staff)):
+def health_details(staff=Depends(current_staff), store=Depends(get_job_store)):
+    try:
+        migrations = list_applied(store.db)
+    except Exception:
+        # A ledger read problem must not hide the rest of the configuration from the operator.
+        logging.getLogger(__name__).exception('Applied-migration ledger read failed')
+        migrations = None
     return dict(
         status='healthy',
         service='alert-disaster-field-estimator',
@@ -841,6 +849,7 @@ def health_details(staff=Depends(current_staff)):
         live_model=LIVE_MODEL,
         workspaces_enabled=WORKSPACES_ENABLED,
         source_commit=SOURCE_COMMIT,
+        migrations=migrations,
     )
 
 
