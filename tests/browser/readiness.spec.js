@@ -37,7 +37,7 @@ for (const width of [320, 390]) {
         'Nothing here blocks the documents. Fix what you can, or continue.',
       );
       await expect(dialog).toContainText(
-        'unconfirmed scope, unpriced items, pending extras or pending OCR',
+        'Signing is blocked by an unconfirmed scope, unpriced items, pending extras, pending OCR, no priced work, incomplete company setup, voice notes still recording, uploading or unreviewed, or an out-of-date audit.',
       );
       await expect(dialog).toContainText('No floor area for the drying check');
       await expect(dialog.locator('h3')).toContainText(['Room 1', 'Whole job']);
