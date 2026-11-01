@@ -2162,7 +2162,12 @@ const ROOM_NAME_TAKEN = 'Another room already has this name. Give each room its 
 function addRoomEntry() {
   if (state.draft.data.rooms.length >= 30) throw Error('At most 30 rooms are supported.');
   let n = 1;
-  while (roomNameTaken('Room ' + n)) n++;
+  while (
+    roomNameTaken('Room ' + n) ||
+    roomPhotos('Room ' + n).length ||
+    roomScans(state.draft.data, 'Room ' + n).length
+  )
+    n++;
   const room = {
     name: 'Room ' + n,
     category: 1,
