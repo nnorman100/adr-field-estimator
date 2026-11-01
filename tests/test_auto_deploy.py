@@ -5,19 +5,21 @@ Everything outside the process is replaced by FakeRunner; no test touches Google
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts import auto_deploy as auto
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
 NEW = 'b' * 40
-TAG = 'auto-' + NEW[:12]
-URL = 'https://auto-bbbbbbbbbbbb---alert-disaster-field-estimator-545776254070.us-west2.run.app'
+TAG = 'a' + NEW[:7]
+URL = 'https://abbbbbbb---alert-disaster-field-estimator-545776254070.us-west2.run.app'
 BASELINE = {
     'WORKSPACES_ENABLED': 'true',
     'AI_FEATURES': 'readiness',
@@ -123,8 +125,9 @@ class FakeRunner:
         ):
             if needle in text:
                 if name == 'stage':
+                    tag = argv[argv.index('--tag') + 1]
                     self.traffic.append(
-                        {'revisionName': 'rev-new', 'percent': 0, 'tag': TAG, 'url': URL}
+                        {'revisionName': 'rev-new', 'percent': 0, 'tag': tag, 'url': URL}
                     )
                 return self.completed(argv, 1 if name in self.fail else 0)
         if 'hosting:clone' in text:
@@ -469,3 +472,52 @@ def test_setup_script_restricts_the_identity_to_this_repository_and_master():
 
 def test_setup_script_has_valid_shell_syntax():
     subprocess.run(['bash', '-n', str(ROOT / 'scripts' / 'setup_auto_deploy.sh')], check=True)
+
+
+def test_default_tag_fits_cloud_run_limit_for_real_run_ids():
+    tag = auto.default_tag('90d08b55f32e' + '0' * 28, '41140166919')
+    assert tag == 'a90d08b5-0166919'
+    assert len(tag) + len(auto.SERVICE) <= 46
+    assert re.fullmatch(r'[a-z][a-z0-9-]*', tag)
+    assert auto.default_tag(NEW, '41140166919') != auto.default_tag(NEW, '41140166920')
+
+
+def test_check_tag_refuses_the_tag_that_failed_in_production():
+    with pytest.raises(auto.Refused):
+        auto.check_tag('auto-90d08b55f32e-41140166919')
+    with pytest.raises(auto.Refused):
+        auto.check_tag('1abc')
+    with pytest.raises(auto.Refused):
+        auto.check_tag('a' * 17)
+    assert auto.check_tag('a' * 16)
+
+
+def test_overlong_explicit_tag_is_refused_before_anything_runs():
+    runner = FakeRunner()
+    assert (
+        auto.main(['--commit', NEW, '--tag', 'auto-' + NEW[:12] + '-41140166919'], runner=runner)
+        == 2
+    )
+
+
+def release_argv(run_id):
+    job = yaml.safe_load(WORKFLOW)['jobs']['deploy']
+    step = next(step for step in job['steps'] if step.get('name') == 'Release')
+    env = {'COMMIT': NEW, 'RUN_ID': run_id, 'DEPLOY_ARGS': ''}
+    tokens = shlex.split(step['run'], comments=True)
+    for name, value in env.items():
+        tokens = [token.replace(f'${name}', value) for token in tokens]
+    tokens = [token for token in tokens if token]
+    return tokens[tokens.index('scripts/auto_deploy.py') + 1 :]
+
+
+def test_workflow_release_step_stages_a_tag_cloud_run_accepts():
+    argv = release_argv('41140166919')
+    assert '--tag' not in argv
+    assert argv[argv.index('--run-id') + 1] == '41140166919'
+    runner = FakeRunner()
+    assert auto.main(argv, runner=runner) == 0
+    stage = next(command for key, command in runner.calls if key == 'stage')
+    tag = stage[stage.index('--tag') + 1]
+    assert auto.check_tag(tag) == tag
+    assert tag.endswith('0166919')

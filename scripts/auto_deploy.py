@@ -53,6 +53,33 @@ HAND_RELEASED = ('firestore.rules', 'firestore.indexes.json')
 # deploy_backend.py sets these on every revision; any other difference from the serving revision is a bug.
 BASELINE_KEYS = tuple(env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS))
 COMMIT = re.compile(r'[0-9a-f]{40}')
+# Cloud Run rejects a traffic tag when tag + service name exceed this many characters.
+TAG_LIMIT = 46
+TAG_FORM = re.compile(r'[a-z][a-z0-9-]*')
+
+
+def check_tag(tag, service=SERVICE):
+    """Refuse a tag Cloud Run would reject, before anything is staged."""
+    if not TAG_FORM.fullmatch(tag):
+        raise Refused(
+            f'Traffic tag {tag!r} must be lowercase letters, digits and dashes, starting with a letter.'
+        )
+    if len(tag) + len(service) > TAG_LIMIT:
+        raise Refused(
+            f'Traffic tag {tag!r} ({len(tag)}) and service name {service!r} ({len(service)}) exceed '
+            f"Cloud Run's {TAG_LIMIT}-character limit."
+        )
+    return tag
+
+
+def default_tag(commit, run_id='', service=SERVICE):
+    """'a<commit prefix>-<run id>', unique per run, with the run id's trailing digits trimmed to fit."""
+    head = 'a' + commit[:7]
+    room = TAG_LIMIT - len(service) - len(head) - 1
+    digits = re.sub(r'\D', '', run_id)[-room:] if room > 0 else ''
+    return check_tag(f'{head}-{digits}' if digits else head, service)
+
+
 # Signed-out requests that the staged revision must refuse with 401 (RELEASES.md staged checks).
 REFUSED_GET = (
     '/api/session',
@@ -508,7 +535,8 @@ def release(runner, record, commit, tag, check_only=False):
 def main(argv=None, runner=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--commit', required=True, help='the CI-tested commit; must be checked out')
-    parser.add_argument('--tag', help='revision URL tag (default: auto-<commit prefix>)')
+    parser.add_argument('--tag', help='revision URL tag (default: a<commit prefix>-<run id>)')
+    parser.add_argument('--run-id', default='', help='CI run id, folded into the default tag')
     parser.add_argument(
         '--check-only',
         action='store_true',
@@ -518,7 +546,11 @@ def main(argv=None, runner=None):
     if not COMMIT.fullmatch(args.commit):
         print('--commit must be a full lowercase commit hash.', file=sys.stderr)
         return 2
-    tag = args.tag or 'auto-' + args.commit[:12]
+    try:
+        tag = check_tag(args.tag) if args.tag else default_tag(args.commit, args.run_id)
+    except Refused as error:
+        print(str(error), file=sys.stderr)
+        return 2
     runner = runner or Runner()
     record = Record(os.environ.get('GITHUB_STEP_SUMMARY'))
     record.append('## Production release\n\n')

@@ -1,4 +1,5 @@
 -c requirements.txt
 pytest
+pyyaml
 httpx2
 ruff
