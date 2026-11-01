@@ -43,14 +43,16 @@ def started(client, current, uid='estimator'):
     return response.json()
 
 
-def audit(client):
-    return client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+def audit(client, revision=1):
+    return client.post(
+        '/api/audit', json={'inspection_id': ID, 'expected_revision': revision}
+    ).json()
 
 
 def signing(record, auth_id):
     return dict(
         inspection_id=ID,
-        expected_revision=1,
+        expected_revision=record['audit']['revision'],
         auth_id=auth_id,
         proposal_hash=record['audit']['proposal_hash'],
         signature_png=png(),
@@ -139,8 +141,8 @@ def test_a_claim_change_needs_new_documents_and_signed_documents_keep_their_snap
     assert save_claim(client, {'claim_number': 'CLM-1'}).status_code == 200
     current['uid'] = 'estimator'
     cleared = client.get('/api/inspections/' + ID).json()
-    assert cleared['audit'] is None and cleared['status'] == 'draft' and cleared['revision'] == 1
-    named = audit(client)
+    assert cleared['audit'] is None and cleared['status'] == 'draft' and cleared['revision'] == 2
+    named = audit(client, 2)
     assert named['audit']['documents']['claim']['claim_number'] == 'CLM-1'
     # Saving the same values keeps the documents.
     assert save_claim(client, {'claim_number': 'CLM-1'}).status_code == 200
