@@ -2087,12 +2087,77 @@ function requestRoomRemoval(room, trigger) {
   )
     return;
   roomRemoval = { room, trigger, draft: state.draft, uid: state.user?.uid };
-  $('removeRoomDescription').textContent =
-    'Remove "' +
-    (room.name.trim() || 'Unnamed room') +
-    '"? Its measurements will be deleted, scope confirmation cleared, and generated documents and any unsigned signature invalidated. This cannot be undone.';
+  renderRoomRemoval();
   $('removeRoomDialog').showModal();
   $('cancelRoomRemoval').focus();
+}
+// Photos and scans are tagged with the room's name, so a room that still has any cannot be
+// removed until they move to another room.
+function roomRemovalItems(room) {
+  return {
+    photos: roomPhotos(room.name),
+    scans: roomScans(state.draft.data, room.name),
+  };
+}
+function renderRoomRemoval() {
+  const { room } = roomRemoval,
+    name = room.name.trim() || 'Unnamed room',
+    { photos, scans } = roomRemovalItems(room),
+    held = photos.length + scans.length > 0,
+    others = state.draft.data.rooms.filter((other) => other !== room);
+  $('removeRoomMove').hidden = $('moveRoomItems').hidden = !held || !others.length;
+  $('confirmRoomRemoval').hidden = held;
+  if (!held) {
+    $('removeRoomDescription').textContent =
+      'Remove "' +
+      name +
+      '"? Its measurements will be deleted, scope confirmation cleared, and generated documents and any unsigned signature invalidated. This cannot be undone.';
+    return;
+  }
+  const parts = [];
+  if (photos.length) parts.push(photos.length + (photos.length === 1 ? ' photo' : ' photos'));
+  if (scans.length) parts.push(scans.length + (scans.length === 1 ? ' scan' : ' scans'));
+  $('removeRoomDescription').textContent =
+    '"' +
+    name +
+    '" still has ' +
+    parts.join(' and ') +
+    '. ' +
+    (others.length
+      ? 'Move them to another room before removing it.'
+      : 'Add another room to move them to before removing it.');
+  $('removeRoomMoveTarget').replaceChildren(
+    ...others.map((other) => {
+      const option = node('option', other.name.trim() || 'Unnamed room');
+      option.value = String(state.draft.data.rooms.indexOf(other));
+      return option;
+    }),
+  );
+}
+function moveRoomItems() {
+  const pending = roomRemoval;
+  if (
+    !pending ||
+    state.draft !== pending.draft ||
+    state.user?.uid !== pending.uid ||
+    !state.session ||
+    state.signed ||
+    confirmedAuthorization ||
+    !state.draft.data.rooms.includes(pending.room)
+  )
+    return $('removeRoomDialog').close();
+  const target = state.draft.data.rooms[Number($('removeRoomMoveTarget').value)];
+  if (!target || target === pending.room) return;
+  const { photos, scans } = roomRemovalItems(pending.room);
+  // The photos carry pending_room, so the move also syncs from the offline queue.
+  retagPhotos(photos, target.name);
+  retagScans(scans, target.name);
+  changed();
+  renderPhotos();
+  renderWalkRoomChips();
+  renderRoomRemoval();
+  say('Moved to ' + (target.name.trim() || 'Unnamed room') + '.');
+  $('confirmRoomRemoval').focus();
 }
 function closeRoomRemoval() {
   const pending = roomRemoval;
@@ -2118,6 +2183,8 @@ function confirmRoomRemoval() {
     $('removeRoomDialog').close();
     return;
   }
+  const held = roomRemovalItems(pending.room);
+  if (held.photos.length || held.scans.length) return renderRoomRemoval();
   roomRemoval = null;
   $('removeRoomDialog').close();
   clearValidationFeedback();
@@ -5477,11 +5544,16 @@ async function initialize() {
   );
   click('cancelRoomRemoval', () => $('removeRoomDialog').close());
   click('confirmRoomRemoval', confirmRoomRemoval);
+  click('moveRoomItems', moveRoomItems);
   $('removeRoomDialog').addEventListener('close', closeRoomRemoval);
   $('removeRoomDialog').addEventListener('keydown', (event) => {
     if (event.key !== 'Tab') return;
     const first = $('cancelRoomRemoval'),
-      last = $('confirmRoomRemoval');
+      last = $('confirmRoomRemoval').hidden
+        ? $('moveRoomItems').hidden
+          ? first
+          : $('moveRoomItems')
+        : $('confirmRoomRemoval');
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
