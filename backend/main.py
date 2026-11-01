@@ -1203,13 +1203,6 @@ async def ocr_photo(
     )
 
 
-@app.post('/api/ocr-meter')
-async def legacy_ocr(staff=Depends(current_staff)):
-    raise HTTPException(
-        409, 'Update the app and attach the photo to an inspection before recognition.'
-    )
-
-
 @app.post('/api/inspections/{inspection_id}/scope-suggestions')
 @rest_deadline
 async def suggest_scope(
