@@ -183,12 +183,16 @@ def price_scope(data: InspectionData, rates=None):
 
 def proposal_range(data: InspectionData, items):
     """The estimating sheet's low/high labor-material allowances over priced scope."""
-    job = sum((amount(item['total']) for item in items if item['code'] in JOB_CODES), Decimal(0))
+    # Approved extras are added at exactly the amount the owner approved, like job charges.
+    job = sum(
+        (amount(item['total']) for item in items if item['code'] in (*JOB_CODES, 'ADR-EXTRA')),
+        Decimal(0),
+    )
     labor_material = sum(
         (
             amount(item['total'])
             for item in items
-            if item['code'] in {'ADR-DEMO', 'ADR-LABOR', 'ADR-EXTRA'}
+            if item['code'] in {'ADR-DEMO', 'ADR-LABOR'}
         ),
         Decimal(0),
     )
@@ -397,7 +401,7 @@ def make_documents(
         + [
             'Scope:\n' + '\n'.join(recommendations),
             '\n'.join(clauses),
-            f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope.',
+            f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope; approved additional work is added at its approved amount to both ends.',
             '\n'.join(line for line in ('Sincerely,', signoff, company_name) if line.strip()),
         ]
     )

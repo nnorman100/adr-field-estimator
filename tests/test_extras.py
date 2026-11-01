@@ -60,9 +60,9 @@ def test_extra_disallows_ai_hours_and_client_prices():
 
 
 @pytest.mark.parametrize(
-    'after_hours,sf,factor', [(False, 10, '1.5'), (True, 10, '1.8'), (False, 1001, '1.2')]
+    'after_hours,sf', [(False, 10), (True, 10), (False, 1001), (True, 1001)]
 )
-def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf, factor):
+def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf):
     values = data()
     values['rooms'][0]['finished_sf'] = sf
     values['is_after_hours'] = after_hours
@@ -75,11 +75,9 @@ def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf
     assert Decimal(str(total)) - Decimal(str(price_scope(original)[1])) == Decimal('118.65')
     old_low, old_high = proposal_range(original, price_scope(original)[0])
     low, high = proposal_range(scope, lines)
-    assert low - old_low == Decimal('118.65') * (Decimal('1.2') if after_hours else 1)
-    # Compare rounded final sums rather than independently rounded deltas.
-    assert high == (old_high + Decimal('118.65') * Decimal(factor)).quantize(
-        Decimal('.01'), rounding='ROUND_HALF_UP'
-    )
+    # Approved extras are job-charge-like: the exact approved amount, unmarked, in both bounds.
+    assert low - old_low == Decimal('118.65')
+    assert high - old_high == Decimal('118.65')
     ai = AIResult(summary='Proposed work', suggestions=[], unpriced_work=[TASK])
     docs = make_documents(
         scope,
