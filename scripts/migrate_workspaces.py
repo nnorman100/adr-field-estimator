@@ -66,14 +66,14 @@ def main():
         raise RuntimeError(
             'Source records changed during migration; inspect concurrent writes before cutover.'
         )
-    if args.apply:
-        report['ledger_recorded'] = record_applied(
-            workspace.db, MIGRATION_ID, local_source_commit()
-        )
     if args.manifest:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         # Manifest contains sidecar identifiers, not tokens or signed customer payloads.
         args.manifest.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
+    if args.apply:
+        report['ledger_recorded'] = record_applied(
+            workspace.db, MIGRATION_ID, local_source_commit()
+        )
     print(
         json.dumps(
             {k: v for k, v in report.items() if k not in ('created_paths', 'source_record_hashes')},

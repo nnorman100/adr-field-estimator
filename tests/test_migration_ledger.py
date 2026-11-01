@@ -8,13 +8,14 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from google.api_core.exceptions import ServiceUnavailable
 
 import backend.main as bm
 from backend.migration_ledger import COLLECTION, list_applied, local_source_commit, record_applied
 from backend.price_book_migration import MIGRATION_ID as PRICE_BOOKS
 from backend.workspace_migration import MIGRATION_ID as WORKSPACES
 from fastapi.testclient import TestClient
-from tests.fakes import DB, Collection, FakeAuth, FakeStore
+from tests.fakes import DB, Collection, FakeAuth, FakeStore, Ref
 
 COMMIT = 'a' * 40
 LATER = 'b' * 40
@@ -157,7 +158,7 @@ def test_migration_scripts_record_the_ledger_only_on_a_successful_apply(
     run(monkeypatch, db, '--apply', '--manifest', str(manifest))
     assert db.records[key]['migration_id'] == migration_id
     assert db.records[key]['source_commit'] == COMMIT
-    assert 'ledger_recorded' in manifest.read_text()
+    assert manifest.exists()
 
 
 @pytest.mark.parametrize('run, migration_id', SCRIPTS)
@@ -170,3 +171,20 @@ def test_migration_scripts_skip_the_ledger_when_source_records_change(
         run(monkeypatch, db, '--apply', '--manifest', str(manifest), change_source=True)
     assert COLLECTION + '/' + migration_id not in db.records
     assert not manifest.exists()
+
+
+@pytest.mark.parametrize('run, migration_id', SCRIPTS)
+def test_migration_scripts_keep_the_manifest_when_the_ledger_write_fails(
+    monkeypatch, tmp_path, run, migration_id
+):
+    db = PathDB()
+    manifest = tmp_path / 'applied.json'
+
+    def unavailable(*args):
+        raise ServiceUnavailable('Synthetic ledger outage')
+
+    monkeypatch.setattr(Ref, 'create', unavailable)
+    with pytest.raises(ServiceUnavailable):
+        run(monkeypatch, db, '--apply', '--manifest', str(manifest))
+    assert manifest.exists()
+    assert COLLECTION + '/' + migration_id not in db.records

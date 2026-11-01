@@ -49,14 +49,14 @@ def main():
         raise RuntimeError(
             'Source inspection or authorization records changed. No further apply is safe.'
         )
-    if args.apply:
-        report['ledger_recorded'] = record_applied(db, MIGRATION_ID, local_source_commit())
     if args.manifest:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         args.manifest.write_text(
             json.dumps({'plan': plan, 'summary': report}, indent=2, default=str) + '\n',
             encoding='utf8',
         )
+    if args.apply:
+        report['ledger_recorded'] = record_applied(db, MIGRATION_ID, local_source_commit())
     print(json.dumps(summary(plan) if not args.apply else report, indent=2))
 
 
