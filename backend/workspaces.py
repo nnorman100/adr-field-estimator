@@ -862,7 +862,9 @@ class WorkspaceStore:
             .stream()
         ]
         links = []
-        for link in sorted((r for r in rows if r['expires'] > moment), key=lambda r: r['created_at']):
+        for link in sorted(
+            (r for r in rows if r['expires'] > moment), key=lambda r: r['created_at']
+        ):
             job = self.read('_workspace_jobs', link['inspection_id']) or {}
             if job.get('kind') != 'inspection' or job.get('company_id') != company_id:
                 continue
