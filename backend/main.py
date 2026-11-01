@@ -801,6 +801,23 @@ def model_image(raw):
         return types.Part.from_bytes(data=output.getvalue(), mime_type='image/jpeg')
 
 
+AUDIT_PHOTO_DOWNLOADS = 6
+
+
+async def model_photos(store, uid, inspection_id, photos):
+    """The audit's photos in record order. Downloads overlap, at most AUDIT_PHOTO_DOWNLOADS at a
+    time, while decoding stays one at a time behind IMAGE_WORKER to bound memory, so a large job
+    no longer waits for each download and each encode in turn."""
+    gate = asyncio.Semaphore(AUDIT_PHOTO_DOWNLOADS)
+
+    async def prepare(photo):
+        async with gate:
+            _, raw = await stored(store.photo, uid, inspection_id, photo['id'])
+        return await run_in_threadpool(model_image, raw)
+
+    return await asyncio.gather(*(prepare(photo) for photo in photos))
+
+
 @app.get('/health')
 @app.get('/api/health')
 def health_check():
@@ -1486,11 +1503,17 @@ async def audit_inspection(
         return await draft_record(store, staff['uid'], record)
     await stored(store.quota, staff['uid'], 'audit')
     prompt = audit_prompt(record['data'], record['photos'], items, identity)
-    contents = [prompt]
-    for photo in record['photos']:
-        _, raw = await stored(store.photo, staff['uid'], req.inspection_id, photo['id'])
-        contents.append(await run_in_threadpool(model_image, raw))
-    ai = await generate_audit(contents, req.inspection_id, started)
+    prepared = time.monotonic()
+    images = await model_photos(store, staff['uid'], req.inspection_id, record['photos'])
+    # Audit time grows with the photo count, so a timeout can be tied to the job's size.
+    event(
+        'Audit photos prepared',
+        operation='audit',
+        inspection_id=req.inspection_id,
+        photo_count=len(images),
+        elapsed_ms=round((time.monotonic() - prepared) * 1000),
+    )
+    ai = await generate_audit([prompt, *images], req.inspection_id, started)
     try:
         documents = make_documents(
             data,

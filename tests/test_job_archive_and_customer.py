@@ -80,6 +80,61 @@ def test_estimator_records_and_corrects_the_customer_on_their_job(api):
     assert len(events(store, 'job_customer')) == 2
 
 
+def test_estimator_records_the_customer_email_and_sees_only_the_customer(api):
+    client, current, store = api
+    current['uid'] = 'office'
+    store.create_inspection('estimator', ID, data())
+    office = client.get('/api/jobs/' + ID + '/coordination').json()
+    client.put(
+        '/api/jobs/' + ID + '/coordination',
+        json={'expected_version': office['version'], 'office_notes': 'Gate code 1234'},
+    )
+    current['uid'] = 'estimator'
+    view = client.get('/api/jobs/' + ID + '/coordination').json()
+    # Office notes, assignment and access lists are not the estimator's to read.
+    assert set(view) == {
+        'job_id',
+        'version',
+        'status',
+        'address',
+        'customer_name',
+        'customer_phone',
+        'customer_email',
+    }
+    saved = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={
+            'expected_version': view['version'],
+            'customer_name': 'Pat Doe',
+            'customer_phone': '',
+            'customer_email': ' Pat@Example.com ',
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['customer_email'] == 'pat@example.com'
+    assert 'office_notes' not in saved.json()
+    bad = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={'expected_version': saved.json()['version'], 'customer_email': 'not an email'},
+    )
+    assert bad.status_code == 400
+    # An app that predates the email field keeps the saved address.
+    older = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={'expected_version': saved.json()['version'], 'customer_name': 'Pat Doe'},
+    )
+    assert older.json()['customer_email'] == 'pat@example.com'
+    cleared = client.put(
+        '/api/jobs/' + ID + '/customer',
+        json={'expected_version': older.json()['version'], 'customer_email': ''},
+    )
+    assert cleared.json()['customer_email'] == ''
+    current['uid'] = 'office'
+    assert (
+        client.get('/api/jobs/' + ID + '/coordination').json()['office_notes'] == 'Gate code 1234'
+    )
+
+
 @pytest.mark.parametrize(
     'uid,codes',
     [('office', {403}), ('estimator2', {404}), ('other-owner', {403, 404}), ('admin', {403, 404})],
@@ -177,6 +232,96 @@ def test_signed_jobs_cannot_be_archived(api):
     )
     assert response.status_code == 409
     assert not store.db.records['_workspace_jobs/' + ID].get('archived_at')
+
+
+def test_owner_lists_and_restores_an_archived_draft(api):
+    client, current, store = api
+    store.create_inspection('estimator', ID, data())
+    current['uid'] = 'owner'
+    archived = client.post(
+        '/api/jobs/' + ID + '/archive', json={'expected_version': version(client)}
+    )
+    assert archived.status_code == 200
+    listed = client.get('/api/archived-jobs').json()['jobs']
+    assert [row['inspection_id'] for row in listed] == [ID]
+    for uid in ('estimator', 'office'):
+        current['uid'] = uid
+        assert client.get('/api/archived-jobs').status_code == 403
+        restore = client.post('/api/jobs/' + ID + '/restore', json={'expected_version': 1})
+        assert restore.status_code == 403
+    current['uid'] = 'owner'
+    stale = client.post('/api/jobs/' + ID + '/restore', json={'expected_version': 1})
+    assert stale.status_code == 409
+    restored = client.post(
+        '/api/jobs/' + ID + '/restore', json={'expected_version': listed[0]['version']}
+    )
+    assert restored.status_code == 200, restored.text
+    assert client.get('/api/archived-jobs').json()['jobs'] == []
+    assert len(events(store, 'job_restored')) == 1
+    current['uid'] = 'estimator'
+    assert client.get('/api/inspections/' + ID).status_code == 200
+    assert ID in [r['inspection_id'] for r in client.get('/api/inspections').json()['inspections']]
+    current['uid'] = 'owner'
+    again = client.post('/api/jobs/' + ID + '/restore', json={'expected_version': version(client)})
+    assert again.status_code == 409
+
+
+def test_superadmin_archives_and_restores_a_draft_in_a_suspended_company(api):
+    client, current, store = api
+    store.create_inspection('estimator', ID, data())
+    current['uid'] = 'admin'
+    company = client.get('/api/companies/adr').json()
+    client.put(
+        '/api/admin/companies/adr/status',
+        json={'expected_version': company['version'], 'status': 'suspended'},
+    )
+    job = client.get('/api/admin/companies/adr/jobs/' + ID).json()['job']
+    # The member route stays closed to support; the support route is the audited one.
+    assert client.post(
+        '/api/jobs/' + ID + '/archive', json={'expected_version': job['version']}
+    ).status_code in {403, 404}
+    wrong = client.post(
+        '/api/admin/companies/other/jobs/' + ID + '/archive',
+        json={'expected_version': job['version']},
+    )
+    assert wrong.status_code == 404
+    archived = client.post(
+        '/api/admin/companies/adr/jobs/' + ID + '/archive',
+        json={'expected_version': job['version']},
+    )
+    assert archived.status_code == 200, archived.text
+    assert len(events(store, 'support_archive_job')) == 1
+    listed = client.get('/api/admin/companies/adr/archived-jobs').json()['jobs']
+    assert [row['inspection_id'] for row in listed] == [ID]
+    assert len(events(store, 'support_view_archived_jobs')) == 1
+    for uid in ('estimator', 'office'):
+        current['uid'] = uid
+        assert client.get('/api/admin/companies/adr/archived-jobs').status_code == 403
+    current['uid'] = 'admin'
+    restored = client.post(
+        '/api/admin/companies/adr/jobs/' + ID + '/restore',
+        json={'expected_version': listed[0]['version']},
+    )
+    assert restored.status_code == 200, restored.text
+    assert len(events(store, 'support_restore_job')) == 1
+    assert ID in [
+        r['inspection_id']
+        for r in client.get('/api/admin/companies/adr/jobs').json()['inspections']
+    ]
+
+
+def test_support_cannot_archive_a_signed_job(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    sign(client)
+    current['uid'] = 'admin'
+    job = client.get('/api/admin/companies/adr/jobs/' + ID).json()['job']
+    response = client.post(
+        '/api/admin/companies/adr/jobs/' + ID + '/archive',
+        json={'expected_version': job['version']},
+    )
+    assert response.status_code == 409
 
 
 def test_superadmin_archives_and_restores_a_company(api):

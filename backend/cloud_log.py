@@ -44,6 +44,8 @@ LOG_FIELDS = frozenset(
         'watch_status',
         # How many cancelled or expired invitations one clear hid. A count, never an address or id.
         'cleared',
+        # How many photos an audit sent to the model, so slow audits can be tied to job size.
+        'photo_count',
     }
 )
 

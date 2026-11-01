@@ -142,6 +142,11 @@
       $('consentElectronicText').textContent = view.consent.statements[1];
       $('linkExpiry').textContent =
         'This link expires ' + new Date(view.expires_at).toLocaleString() + '.';
+      // No saved customer email means no copy can be sent, so none is offered.
+      $('emailCopyField').hidden = view.email_to === '';
+      if (view.email_to)
+        $('emailCopyText').textContent =
+          'Email me a copy of my signed documents at ' + view.email_to + '.';
       gate();
     }
   }
@@ -315,7 +320,7 @@
       consent_version: page.view.consent.version,
       signature_png: page.signature,
     };
-    body.email_copy = $('emailCopy').checked;
+    body.email_copy = !$('emailCopyField').hidden && $('emailCopy').checked;
     page.pending = body;
     $('submitSignature').disabled = true;
     status('Saving your signature…');

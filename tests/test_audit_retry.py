@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 import time
 from types import SimpleNamespace
 import pytest
@@ -201,3 +202,35 @@ def test_a_new_proposal_date_regenerates_the_saved_audit(context, budget, monkey
     dated, _ = post_audit(client, record)
     assert dated.json()['audit']['documents']['adr_estimate']['date'] == '01-01-2099'
     assert len(calls) == 2
+
+
+def test_audit_photos_download_together_and_keep_their_order(monkeypatch):
+    lock, active, peak = threading.Lock(), [0], [0]
+
+    def photo(uid, inspection_id, photo_id):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        # Later photos finish first, so the order must come from the record, not arrival.
+        time.sleep(0.05 * (10 - int(photo_id)))
+        with lock:
+            active[0] -= 1
+        return None, photo_id.encode()
+
+    monkeypatch.setattr(bm, 'model_image', lambda raw: raw.decode())
+    store = SimpleNamespace(photo=photo)
+    photos = [{'id': str(i)} for i in range(10)]
+    images = asyncio.run(bm.model_photos(store, 'uid', ID, photos))
+    assert images == [str(i) for i in range(10)]
+    assert 1 < peak[0] <= bm.AUDIT_PHOTO_DOWNLOADS
+
+
+def test_audit_logs_how_many_photos_it_sent(context, budget, monkeypatch, capsys):
+    client, _ = context
+    record = inspect(client)
+    provider(monkeypatch, [0])
+    capsys.readouterr()
+    response, _ = post_audit(client, record)
+    assert response.status_code == 200, response.text
+    [logged] = messages(capsys, 'Audit photos prepared')
+    assert logged['photo_count'] == 0 and logged['inspection_id'] == ID
