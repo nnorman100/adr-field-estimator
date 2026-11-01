@@ -90,6 +90,31 @@ test('owner removes a team member after confirming, and can restore them', async
   await expect(office).toContainText('Office staff · active');
 });
 
+test('removing an estimator lists their pending signing links before confirming', async ({
+  page,
+  request,
+}) => {
+  await start(page, 'owner');
+  await page
+    .locator('#workspaceMenuToggle:visible')
+    .click({ timeout: 1000 })
+    .catch(() => {});
+  await page.locator('#dashboardTeam').click();
+  const estimator = page.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: uid('estimator') + '@example.invalid', exact: true }),
+  });
+  await estimator.getByRole('button', { name: 'Remove access' }).click();
+  await expect(estimator).toContainText('They have no pending signing links.');
+  await estimator.getByRole('button', { name: 'Keep access' }).click();
+  await request.post('/__test/pending-signing-link');
+  await estimator.getByRole('button', { name: 'Remove access' }).click();
+  await expect(estimator).toContainText('Pat Homeowner · Assigned bathroom · link created');
+  await expect(estimator).toContainText('These signing links stop working once access is removed.');
+  await estimator.getByRole('button', { name: 'Keep access' }).click();
+  // Looking changes nothing: the estimator is still active.
+  await expect(estimator).toContainText('Estimator · active');
+});
+
 test('offline job list keeps the customer name saved with the local copy', async ({
   page,
   context,

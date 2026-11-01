@@ -434,3 +434,84 @@ def test_company_link_dies_when_the_technician_loses_job_access(api):
     for response in [homeowner(value).get('/api/sign'), sign(value)]:
         assert response.status_code == 404 and response.json()['detail'] == sl.UNAVAILABLE
     assert not [k for k in store.db.records if k.startswith('authorizations/')]
+
+
+def test_owner_lists_an_estimators_pending_links_before_removing_access(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    url = '/api/companies/adr/team/estimator/signing-links'
+    current['uid'] = 'owner'
+    assert client.get(url).json() == {'links': []}
+    current['uid'] = 'estimator'
+    value = token(mint(client, record))
+    store.db.records['_workspace_jobs/' + ID].update(customer_name=' Pat Homeowner ')
+    current['uid'] = 'owner'
+    listed = client.get(url)
+    assert listed.status_code == 200, listed.text
+    [link] = listed.json()['links']
+    created = store.db.records['_signing_links/' + sl.link_id(value)]
+    assert link == dict(
+        inspection_id=ID,
+        address=store.db.records['_workspace_jobs/' + ID]['address'],
+        customer_name='Pat Homeowner',
+        created_at=created['created_at'],
+        expires_at=created['expires'],
+    )
+    assert value not in listed.text and sl.link_id(value) not in listed.text
+    # Listing changes nothing: the link is still pending and still signs.
+    assert created['status'] == 'pending'
+    assert homeowner(value).get('/api/sign').status_code == 200
+
+
+def test_pending_link_listing_skips_expired_revoked_used_and_archived_links(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    value = token(mint(client, record))
+    stored = store.db.records['_signing_links/' + sl.link_id(value)]
+    url = '/api/companies/adr/team/estimator/signing-links'
+    current['uid'] = 'owner'
+    assert len(client.get(url).json()['links']) == 1
+    for change in (dict(expires=time.time() - 1), dict(status='revoked'), dict(status='used')):
+        before = {k: stored[k] for k in change}
+        stored.update(change)
+        assert client.get(url).json() == {'links': []}, change
+        stored.update(before)
+    store.db.records['_workspace_jobs/' + ID]['kind'] = 'archived_inspection'
+    assert client.get(url).json() == {'links': []}
+
+
+def test_pending_link_listing_is_owner_only_and_stays_inside_the_company(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    mint(client, record)
+    url = '/api/companies/adr/team/estimator/signing-links'
+    for uid, status in (('estimator', 403), ('office', 403), ('other-owner', 403)):
+        current['uid'] = uid
+        assert client.get(url).status_code == status, uid
+    current['uid'] = 'owner'
+    assert client.get('/api/companies/adr/team/other-estimator/signing-links').status_code == 404
+    assert client.get('/api/companies/adr/team/nobody/signing-links').status_code == 404
+
+
+def test_removing_access_leaves_link_records_alone_but_the_link_stops_working(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    value = token(mint(client, record))
+    current['uid'] = 'owner'
+    member = store.db.records['_memberships/estimator']
+    removed = client.put(
+        '/api/companies/adr/team/estimator',
+        json={'expected_version': member['version'], 'role': 'estimator', 'status': 'disabled'},
+    )
+    assert removed.status_code == 200, removed.text
+    assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'pending'
+    response = homeowner(value).get('/api/sign')
+    assert response.status_code == 404 and response.json()['detail'] == sl.UNAVAILABLE

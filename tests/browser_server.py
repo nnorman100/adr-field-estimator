@@ -456,6 +456,24 @@ async def expire_signing_links():
     return {'expired': expired}
 
 
+@bm.app.post('/__test/pending-signing-link')
+async def pending_signing_link():
+    # Records an unexpired, unused link for the seeded estimator job without an audit, so the
+    # owner's remove-access confirmation has something to list.
+    job_id = 'ADR-INS-' + 'c' * 32
+    now = time.time()
+    store.db.records['_workspace_jobs/' + job_id].update(customer_name='Pat Homeowner')
+    store.db.records['_signing_links/' + 'f' * 64] = dict(
+        inspection_id=job_id,
+        owner_uid='test-owner-ws-estimator',
+        company_id='adr',
+        status='pending',
+        created_at=now,
+        expires=now + 7 * 86400,
+    )
+    return {'created': True}
+
+
 @bm.app.post('/__test/document-links')
 async def mint_document_link(request: Request):
     # Stands in for the delivery step that will mint links after signing (roadmap Phase 2); the

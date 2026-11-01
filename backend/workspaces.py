@@ -842,6 +842,41 @@ class WorkspaceStore:
             if m['role'] == 'estimator' and m['status'] == 'active'
         ]
 
+    def pending_signing_links(self, uid, company_id, member_uid):
+        """The jobs where a staff member holds a signing link that could still be used (unexpired,
+        unused, unrevoked), oldest first, for the owner's confirmation before removing their access.
+        Read-only: removing access leaves the link records as they are, but the link stops
+        working because it signs as that technician, whose job access is gone."""
+        self.company_actor(uid, company_id, True)
+        member = self.read('_memberships', member_uid)
+        if not member or member['company_id'] != company_id:
+            raise LookupError('Staff member not found.')
+        moment = time.time()
+        rows = [
+            row.to_dict()
+            for row in self.db.collection('_signing_links')
+            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+            .where(filter=firestore.FieldFilter('owner_uid', '==', member_uid))
+            .where(filter=firestore.FieldFilter('status', '==', 'pending'))
+            .limit(100)
+            .stream()
+        ]
+        links = []
+        for link in sorted((r for r in rows if r['expires'] > moment), key=lambda r: r['created_at']):
+            job = self.read('_workspace_jobs', link['inspection_id']) or {}
+            if job.get('kind') != 'inspection' or job.get('company_id') != company_id:
+                continue
+            links.append(
+                dict(
+                    inspection_id=link['inspection_id'],
+                    address=job.get('address', ''),
+                    customer_name=job.get('customer_name', '').strip(),
+                    created_at=link['created_at'],
+                    expires_at=link['expires'],
+                )
+            )
+        return links
+
     def cancel_invitations(self, tx, company_id, email):
         # A pending invitation would otherwise let a disabled member reactivate themselves.
         # Reads precede writes here, so call this before the transaction's first write.
