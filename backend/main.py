@@ -39,7 +39,6 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import ClientDisconnect
-from PIL import Image, ImageOps
 import firebase_admin
 from firebase_admin import app_check, auth as firebase_auth
 from google import genai
@@ -108,7 +107,7 @@ try:
         TRANSCRIPT_LIMIT,
         voice_notes_clear,
     )
-    from .job_store import BUCKET, decode_image, IMAGE_WORKER
+    from .job_store import BUCKET, decode_image, fit_jpeg, IMAGE_WORKER
     from .cloud_log import event
 except ImportError:
     from contracts import (
@@ -174,7 +173,7 @@ except ImportError:
         TRANSCRIPT_LIMIT,
         voice_notes_clear,
     )
-    from job_store import BUCKET, decode_image, IMAGE_WORKER
+    from job_store import BUCKET, decode_image, fit_jpeg, IMAGE_WORKER
     from cloud_log import event
 
 DEDICATED_PROJECT_ID = 'alert-disaster-field-2026'
@@ -788,17 +787,7 @@ async def generate_audit(contents, inspection_id, started):
 
 
 def model_image(raw):
-    with IMAGE_WORKER, Image.open(io.BytesIO(raw)) as image:
-        # JPEG originals decode at the smallest power-of-two reduction that still fills the box.
-        scale = max(image.size) / 1600
-        if scale > 1:
-            box = (max(1, int(image.width / scale)), max(1, int(image.height / scale)))
-            image.draft('RGB', box)
-        image = ImageOps.exif_transpose(image).convert('RGB')
-        image.thumbnail((1600, 1600))
-        output = io.BytesIO()
-        image.save(output, format='JPEG', quality=85)
-        return types.Part.from_bytes(data=output.getvalue(), mime_type='image/jpeg')
+    return types.Part.from_bytes(data=fit_jpeg(raw), mime_type='image/jpeg')
 
 
 AUDIT_PHOTO_DOWNLOADS = 6
@@ -812,7 +801,7 @@ async def model_photos(store, uid, inspection_id, photos):
 
     async def prepare(photo):
         async with gate:
-            _, raw = await stored(store.photo, uid, inspection_id, photo['id'])
+            _, raw = await stored(store.photo, uid, inspection_id, photo['id'], True)
         return await run_in_threadpool(model_image, raw)
 
     return await asyncio.gather(*(prepare(photo) for photo in photos))

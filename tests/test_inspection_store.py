@@ -81,7 +81,7 @@ def test_photo_retry_same_id_cannot_substitute_room_or_evidence():
     changed = {**upload, 'room': 'Kitchen'}
     with pytest.raises(Conflict):
         store.add_photo('owner', ID, changed)
-    assert len(store.bucket.objects) == 1
+    assert len(store.bucket.objects) == 2  # the original and its 1600 px copy, once
 
 
 def test_limits_and_live_lease_apply_across_instances():

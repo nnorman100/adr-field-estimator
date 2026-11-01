@@ -4,7 +4,7 @@ These pin the behaviour the backend relies on from Pillow so a Pillow upgrade th
 EXIF handling, thumbnailing, decompression-bomb checks or mode conversion fails here first.
 """
 
-import base64, io, time
+import asyncio, base64, hashlib, io, time
 import pytest
 from PIL import Image, ImageDraw
 import backend.main as bm
@@ -168,3 +168,142 @@ def test_signature_ink_is_detected_on_opaque_and_transparent_canvases():
     payload['signature_png'] = data_url(encode(opaque, 'PNG'), 'png')
     assert store.authorize('owner', payload)['status'] == 'saved'
     assert len(store.bucket.objects) == 1
+
+
+def upload_photo(store, raw, subtype='jpeg', photo_id='c' * 32):
+    record = store.create_inspection('owner', ID, data())
+    store.add_photo(
+        'owner',
+        ID,
+        dict(
+            expected_revision=record['revision'],
+            photo_id=photo_id,
+            room='Bathroom',
+            captured_at='2026-10-06T19:00:00Z',
+            data_url=data_url(raw, subtype),
+        ),
+    )
+    return store.get_inspection('owner', ID)['photos'][0]
+
+
+def test_upload_stores_an_upright_1600_pixel_jpeg_beside_the_original():
+    store = FakeStore()
+    original = rotated_jpeg()
+    photo = upload_photo(store, original)
+    # The original is untouched and keeps its own reference and hash.
+    assert store.bucket.objects[photo['file']['path']][0] == original
+    assert (photo['width'], photo['height']) == (3200, 1600)
+    copy = photo['model_file']
+    # Deterministic name beside the original, a JPEG reference with the copy's own hash.
+    assert copy['path'] == photo['file']['path'].rpartition('.')[0] + '-1600.jpg'
+    assert copy['content_type'] == 'image/jpeg'
+    raw, content_type = store.bucket.objects[copy['path']]
+    assert content_type == 'image/jpeg'
+    assert hashlib.sha256(raw).hexdigest() == copy['sha256']
+    assert decoded(raw) == ('JPEG', 'RGB', (800, 1600), None)
+    assert len(store.bucket.objects) == 2
+
+
+def test_upload_keeps_png_and_webp_photos_and_adds_a_jpeg_copy_for_each():
+    for subtype, format in (('png', 'PNG'), ('webp', 'WEBP')):
+        store = FakeStore()
+        photo = upload_photo(store, encode(Image.new('RGB', (200, 100), 'red'), format), subtype)
+        assert photo['file']['content_type'] == f'image/{subtype}'
+        assert decoded(store.bucket.objects[photo['model_file']['path']][0])[:3] == (
+            'JPEG',
+            'RGB',
+            (200, 100),
+        )
+
+
+def test_upload_validation_is_unchanged_and_a_rejected_photo_stores_nothing():
+    store = FakeStore()
+    record = store.create_inspection('owner', ID, data())
+    upload = dict(
+        expected_revision=record['revision'],
+        photo_id='d' * 32,
+        room='Bathroom',
+        captured_at='2026-10-06T19:00:00Z',
+    )
+    with pytest.raises(ValueError, match='does not match its file type'):
+        store.add_photo('owner', ID, {**upload, 'data_url': data_url(rotated_jpeg(), 'png')})
+    with pytest.raises(ValueError, match='photo limit is 8 MB'):
+        store.add_photo(
+            'owner', ID, {**upload, 'data_url': data_url(b'\xff\xd8\xff' * 3_000_000, 'jpeg')}
+        )
+    assert not store.bucket.objects
+
+
+def test_a_failed_save_removes_both_the_original_and_its_copy():
+    store = FakeStore()
+    record = store.create_inspection('owner', ID, data())
+    store.update_inspection('owner', ID, record['revision'], data())  # no change; revision stays
+    stale = record['revision'] - 1 if record['revision'] > 1 else 0
+    with pytest.raises(Exception):
+        store.add_photo(
+            'owner',
+            ID,
+            dict(
+                expected_revision=stale,
+                photo_id='e' * 32,
+                room='Bathroom',
+                captured_at='2026-10-06T19:00:00Z',
+                data_url=data_url(rotated_jpeg((64, 64)), 'jpeg'),
+            ),
+        )
+    assert not store.bucket.objects
+
+
+def test_store_photo_serves_the_copy_for_the_model_and_the_original_otherwise():
+    store = FakeStore()
+    original = rotated_jpeg()
+    photo = upload_photo(store, original)
+    assert store.photo('owner', ID, photo['id'])[1] == original
+    _, raw = store.photo('owner', ID, photo['id'], True)
+    assert raw == store.bucket.objects[photo['model_file']['path']][0] != original
+
+
+def test_older_photos_without_a_copy_fall_back_to_the_original():
+    store = FakeStore()
+    original = rotated_jpeg()
+    photo = upload_photo(store, original)
+    key = f'inspections/{ID}'
+    del store.db.records[key]['photos'][0]['model_file']
+    assert store.photo('owner', ID, photo['id'], True)[1] == original
+
+
+def test_a_missing_copy_object_falls_back_to_the_original():
+    store = FakeStore()
+    original = rotated_jpeg()
+    photo = upload_photo(store, original)
+    del store.bucket.objects[photo['model_file']['path']]
+    assert store.photo('owner', ID, photo['id'], True)[1] == original
+
+
+def test_audit_downloads_the_copy_when_present_and_the_original_for_older_photos():
+    store = FakeStore()
+    original = rotated_jpeg()
+    new = upload_photo(store, original)
+    old_id = 'f' * 32
+    store.add_photo(
+        'owner',
+        ID,
+        dict(
+            expected_revision=store.get_inspection('owner', ID)['revision'],
+            photo_id=old_id,
+            room='Bathroom',
+            captured_at='2026-10-06T19:01:00Z',
+            data_url=data_url(original + b'', 'jpeg'),
+        ),
+    )
+    del store.db.records[f'inspections/{ID}']['photos'][1]['model_file']
+    photos = store.get_inspection('owner', ID)['photos']
+    sent = asyncio.run(bm.model_photos(store, 'owner', ID, photos))
+    # Both reach the model as the same upright 1600 px JPEG; only the bytes read differ.
+    for part in sent:
+        assert decoded(part.inline_data.data) == ('JPEG', 'RGB', (800, 1600), None)
+    read = []
+    real = store.bucket.blob
+    store.bucket.blob = lambda key: (read.append(key), real(key))[1]
+    asyncio.run(bm.model_photos(store, 'owner', ID, photos))
+    assert sorted(read) == sorted([new['model_file']['path'], photos[1]['file']['path']])
