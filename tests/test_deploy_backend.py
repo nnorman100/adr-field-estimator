@@ -238,3 +238,36 @@ def test_stamp_file_reaches_the_image_but_not_git(tmp_path):
         subprocess.run(['git', 'check-ignore', '-q', 'backend/SOURCE_COMMIT'], cwd=root).returncode
         == 0
     )
+
+
+def test_staff_emails_are_set_only_when_asked_for():
+    plain = env_flag(deploy.command('on', 'tag-1', HEAD))
+    assert 'STAFF_EMAILS' not in plain
+    argv = deploy.command('on', 'tag-1', HEAD, staff_emails='a@example.com,b@example.com')
+    assert env_flag(argv).endswith('@STAFF_EMAILS=a@example.com,b@example.com')
+
+
+def test_staff_emails_flag_is_normalized_and_validated():
+    assert deploy.staff_emails_value(' A@Example.com, ,b@example.com,a@example.com') == (
+        'a@example.com,b@example.com'
+    )
+    for bad in ('', ' , ', 'not-an-email', 'a@example.com,^b@example.com'):
+        with pytest.raises(deploy.argparse.ArgumentTypeError):
+            deploy.staff_emails_value(bad)
+
+
+def test_main_passes_staff_emails_to_the_deploy_command(capsys):
+    code = deploy.main(
+        [
+            '--workspaces',
+            'on',
+            '--tag',
+            'tag-1',
+            '--staff-emails',
+            'Owner@Example.com',
+            '--dry-run',
+        ],
+        git=fake_git(),
+    )
+    assert code == 0
+    assert 'STAFF_EMAILS=owner@example.com' in capsys.readouterr().out

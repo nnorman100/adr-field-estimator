@@ -4,7 +4,9 @@ Cloud Run copies environment variables from the service's latest template, which
 revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES and
 PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting those staged values.
 The defaults are the current production baseline: AI_FEATURES=readiness and price books off. Pass
---ai-features or --price-books only to change that baseline on purpose. The same command mounts the
+--ai-features or --price-books only to change that baseline on purpose. STAFF_EMAILS is the legacy staff allowlist and fails closed: the backend treats an unset value as
+nobody being staff. Pass --staff-emails to set it; without it the service keeps its current value.
+The same command mounts the
 Maps key secret by name, so a release never depends on a binding made by hand in the console.
 Promotion is a separate reviewed update-traffic step.
 
@@ -66,6 +68,22 @@ def env_assignments(workspaces, ai_features, price_books):
     }
 
 
+def staff_emails_value(value):
+    """Normalize a deliberate STAFF_EMAILS list: comma-separated, lowercase, no blanks or repeats."""
+    names = []
+    for part in value.split(','):
+        email = part.strip().lower()
+        if not email:
+            continue
+        if not re.fullmatch(r'[^@\s,^]+@[^@\s,^]+\.[^@\s,^]+', email):
+            raise argparse.ArgumentTypeError(f'{email!r} is not an email address')
+        if email not in names:
+            names.append(email)
+    if not names:
+        raise argparse.ArgumentTypeError('give at least one email address')
+    return ','.join(names)
+
+
 def update_env_flag(assignments):
     # A caret delimiter keeps a comma inside AI_FEATURES from splitting the flag.
     payload = '@'.join(f'{key}={value}' for key, value in assignments.items())
@@ -79,7 +97,12 @@ def baseline_line(assignments):
     return 'Feature baseline: ' + ' '.join(parts)
 
 
-def command(workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_books='off'):
+def command(
+    workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_books='off', staff_emails=None
+):
+    assignments = env_assignments(workspaces, ai_features, price_books)
+    if staff_emails:
+        assignments['STAFF_EMAILS'] = staff_emails
     return [
         'gcloud',
         'run',
@@ -97,7 +120,7 @@ def command(workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_book
         '--memory=1Gi',
         '--timeout=3600',
         '--allow-unauthenticated',
-        update_env_flag(env_assignments(workspaces, ai_features, price_books)),
+        update_env_flag(assignments),
         '--update-secrets=' + MAPS_SECRET,
         '--update-labels=source-commit=' + commit,
         '--no-traffic',
@@ -132,6 +155,15 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
         help='PRICE_BOOKS_ENABLED for this revision (default: off)',
     )
     parser.add_argument(
+        '--staff-emails',
+        type=staff_emails_value,
+        default=None,
+        help=(
+            'STAFF_EMAILS for this revision (comma-separated). Without it the service keeps its '
+            'current value; the backend treats an unset value as nobody being staff'
+        ),
+    )
+    parser.add_argument(
         '--tag',
         type=revision_tag,
         required=True,
@@ -156,8 +188,12 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
         )
         return 2
     assignments = env_assignments(args.workspaces, args.ai_features, args.price_books)
-    argv = command(args.workspaces, args.tag, commit, args.ai_features, args.price_books)
+    argv = command(
+        args.workspaces, args.tag, commit, args.ai_features, args.price_books, args.staff_emails
+    )
     print(baseline_line(assignments))
+    if args.staff_emails:
+        print('STAFF_EMAILS: set explicitly on this revision.')
     if args.dry_run:
         print(shlex.join(argv))
         return 0

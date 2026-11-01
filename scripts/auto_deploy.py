@@ -465,6 +465,16 @@ def release(runner, record, commit, tag, check_only=False):
         f'release `{hosting_before["release"]}` / version `{hosting_before["version"]}`',
     )
 
+    serving_summary = spec_summary(serving)
+    staff_emails = serving_summary['env'].get('STAFF_EMAILS', '')
+    if staff_emails:
+        record.note('STAFF_EMAILS is carried explicitly from the serving revision.')
+    else:
+        record.note(
+            'The serving revision has no STAFF_EMAILS; the staged one has none either, so the '
+            'legacy workspaces-off mode would admit nobody.'
+        )
+
     runner.run(
         [
             sys.executable,
@@ -475,6 +485,7 @@ def release(runner, record, commit, tag, check_only=False):
             AI_FEATURES,
             '--price-books',
             PRICE_BOOKS,
+            *(['--staff-emails', staff_emails] if staff_emails else []),
             '--tag',
             tag,
             '--yes',

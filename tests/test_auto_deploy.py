@@ -309,6 +309,29 @@ def test_check_only_stages_and_deploys_nothing(summary):
     assert 'nothing deployed' in summary.text()
 
 
+def test_stage_carries_the_serving_staff_emails_explicitly(summary):
+    runner = FakeRunner(staged_env={'STAFF_EMAILS': 'owner@example.com'})
+    runner.revisions['rev-old'] = revision(OLD, {'STAFF_EMAILS': 'owner@example.com'})
+    assert release(runner) == 0
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--staff-emails') + 1] == 'owner@example.com'
+
+
+def test_stage_passes_no_staff_emails_when_the_serving_revision_has_none(summary):
+    runner = FakeRunner()
+    assert release(runner) == 0
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert '--staff-emails' not in stage
+    assert 'no STAFF_EMAILS' in summary.text()
+
+
+def test_a_staged_staff_list_that_differs_from_serving_is_refused(summary):
+    runner = FakeRunner(staged_env={'STAFF_EMAILS': 'other@example.com'})
+    runner.revisions['rev-old'] = revision(OLD, {'STAFF_EMAILS': 'owner@example.com'})
+    assert release(runner) == 1
+    assert 'traffic' not in runner.keys()
+
+
 @pytest.mark.parametrize(
     'kwargs',
     [
