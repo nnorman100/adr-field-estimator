@@ -1,4 +1,5 @@
 const { chromium } = require('playwright'),
+  { assertEventuallyEqual, fetchFresh, newRunToken } = require('./verify_fetch'),
   fs = require('node:fs'),
   nodePath = require('node:path'),
   assert = require('node:assert/strict');
@@ -21,6 +22,9 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
   localSigning = fs.readFileSync('public/sign.html', 'utf8');
 (async () => {
   const base = 'https://alert-disaster-field-2026.web.app';
+  // Every fetch asks caches not to answer from storage; versioned assets also get this run's own query.
+  const token = newRunToken(),
+    fetch = (url, options) => fetchFresh(url, { token, ...options });
   // The site root is the public landing page; the app shell answers at /app.
   const landing = await fetch(base + '/');
   assert(landing.ok);
@@ -29,7 +33,7 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
   assert(response.ok);
   const shell = await response.text();
   const marker =
-    ((await (await fetch(base + '/sw.js?verify=stamp')).text()).match(
+    ((await (await fetch(base + '/sw.js', { bust: true })).text()).match(
       /^const VERSION='([^']*)';/m,
     ) || [])[1] || '';
   assert.match(
@@ -102,8 +106,8 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     'audio-worklet.js',
     'sw.js',
   ]))
-    assert.equal(
-      unstamp(await (await fetch(base + '/' + file + '?verify=repair-20261006')).text()),
+    await assertEventuallyEqual(
+      async () => unstamp(await (await fetch(base + '/' + file, { bust: true })).text()),
       unstamp(fs.readFileSync('public/' + file, 'utf8')),
       'Deployed asset differs: ' + file,
     );
