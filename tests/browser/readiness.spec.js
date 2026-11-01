@@ -33,6 +33,12 @@ for (const width of [320, 390]) {
       await page.locator('#finishAudit').click();
       const dialog = page.getByRole('dialog', { name: 'Ready to review?' });
       await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText(
+        'Nothing here blocks the documents. Fix what you can, or continue.',
+      );
+      await expect(dialog).toContainText(
+        'unconfirmed scope, unpriced items, pending extras or pending OCR',
+      );
       await expect(dialog).toContainText('No floor area for the drying check');
       await expect(dialog.locator('h3')).toContainText(['Room 1', 'Whole job']);
       expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

@@ -1824,8 +1824,17 @@ function renderRooms() {
     more.append(node('summary', 'More room options'), moreBody);
     // Cabinetry only doubles the category 3 finished rate, so it sits on the card for a category 3
     // room and waits under More room options otherwise.
-    const placeCabinetry = () =>
-      Number(room.category) === 3 ? more.before(cabinetry) : more.append(cabinetry);
+    // Below category 3 the box stays visible but disabled with a hint. Its stored value is left
+    // alone, because pricing only applies it to category 3 rooms.
+    const cabinetryInput = node('input'),
+      cabinetryText = node('span'),
+      cabinetryHint = node('small', 'Applies to category 3 only', 'hint');
+    const placeCabinetry = () => {
+      const cat3 = Number(room.category) === 3;
+      cabinetryInput.disabled = !!state.signed || !cat3;
+      cabinetryHint.hidden = cat3;
+      cat3 ? more.before(cabinetry) : more.append(cabinetry);
+    };
     // One tap answers the walkthrough's "water, mold, or both?". Mold and Water + Mold price at the
     // sheet's category 3 / mold rates; Water keeps whichever category the select shows.
     const pills = node('fieldset', undefined, 'loss-pills'),
@@ -1938,17 +1947,17 @@ function renderRooms() {
     const shotDrawer = node('details', undefined, 'shot-drawer');
     shotDrawer.append(node('summary'), node('div', undefined, 'room-shots'));
     card.append(grid, more, shotDrawer, node('div', undefined, 'room-photos photo-gallery'));
-    const input = node('input');
+    const input = cabinetryInput;
     input.type = 'checkbox';
     input.checked = room.custom_cabinetry;
     input.dataset.roomIndex = i;
     input.dataset.roomKey = 'custom_cabinetry';
-    input.disabled = !!state.signed;
     input.addEventListener('change', () => {
       room.custom_cabinetry = input.checked;
       changed();
     });
-    cabinetry.append(input, node('span', 'Custom cabinetry · category 3 finished rate ×2'));
+    cabinetryText.textContent = 'Custom cabinetry · category 3 finished rate ×2';
+    cabinetry.append(input, cabinetryText, cabinetryHint);
     placeCabinetry();
     $('rooms').append(card);
   });
