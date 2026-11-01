@@ -58,7 +58,11 @@ test('each room keeps its own photos when a room is removed and another is added
   expect(new Set(after.map((name) => name.trim().toLowerCase())).size).toBe(after.length);
   // The surviving room still has exactly its own photo, and no photo was lost or moved to it.
   expect(after).toContain('Room 2');
-  const photos = await page.evaluate(() => state.record.photos.map((photo) => photo.room));
+  const photos = await photoRooms(page);
   expect(photos.filter((room) => room === 'Room 2')).toHaveLength(1);
   expect(photos).toHaveLength(2);
+  // The removed room's photo keeps its label, so the new room must not reuse that name.
+  const added = after.find((name) => name !== 'Room 2');
+  expect(added).not.toBe('Room 1');
+  expect(photos.filter((room) => room === added)).toHaveLength(0);
 });
