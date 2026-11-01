@@ -215,7 +215,7 @@ def test_audit_photos_download_together_and_keep_their_order(monkeypatch):
         time.sleep(0.05 * (10 - int(photo_id)))
         with lock:
             active[0] -= 1
-        return None, photo_id.encode()
+        return {}, photo_id.encode()
 
     monkeypatch.setattr(bm, 'model_image', lambda raw: raw.decode())
     store = SimpleNamespace(photo=photo)

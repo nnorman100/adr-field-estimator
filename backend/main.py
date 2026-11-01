@@ -801,7 +801,10 @@ async def model_photos(store, uid, inspection_id, photos):
 
     async def prepare(photo):
         async with gate:
-            _, raw = await stored(store.photo, uid, inspection_id, photo['id'], True)
+            stored_photo, raw = await stored(store.photo, uid, inspection_id, photo['id'], True)
+        copy = stored_photo.get('model_file')
+        if copy and hashlib.sha256(raw).hexdigest() == copy['sha256']:
+            return types.Part.from_bytes(data=raw, mime_type='image/jpeg')
         return await run_in_threadpool(model_image, raw)
 
     return await asyncio.gather(*(prepare(photo) for photo in photos))

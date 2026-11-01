@@ -9,6 +9,7 @@ import pytest
 from PIL import Image, ImageDraw
 import backend.main as bm
 import backend.workspaces as workspaces
+from backend.inspection_store import Conflict
 from backend.job_store import decode_image
 from tests.fakes import FakeStore, png
 from tests.test_backend import ID, data, sign_payload
@@ -234,23 +235,59 @@ def test_upload_validation_is_unchanged_and_a_rejected_photo_stores_nothing():
     assert not store.bucket.objects
 
 
+def upload_failing(store, fail):
+    """Adds a photo while fail(key, blob) runs after each object upload."""
+    record = store.create_inspection('owner', ID, data())
+    real = store.bucket.blob
+
+    def blob(key):
+        stored = real(key)
+        upload = stored.upload_from_string
+
+        def upload_then_fail(*args, **kwargs):
+            upload(*args, **kwargs)
+            fail(key)
+
+        stored.upload_from_string = upload_then_fail
+        return stored
+
+    store.bucket.blob = blob
+    store.add_photo(
+        'owner',
+        ID,
+        dict(
+            expected_revision=record['revision'],
+            photo_id='e' * 32,
+            room='Bathroom',
+            captured_at='2026-10-06T19:00:00Z',
+            data_url=data_url(rotated_jpeg((64, 64)), 'jpeg'),
+        ),
+    )
+
+
 def test_a_failed_save_removes_both_the_original_and_its_copy():
     store = FakeStore()
-    record = store.create_inspection('owner', ID, data())
-    store.update_inspection('owner', ID, record['revision'], data())  # no change; revision stays
-    stale = record['revision'] - 1 if record['revision'] > 1 else 0
-    with pytest.raises(Exception):
-        store.add_photo(
-            'owner',
-            ID,
-            dict(
-                expected_revision=stale,
-                photo_id='e' * 32,
-                room='Bathroom',
-                captured_at='2026-10-06T19:00:00Z',
-                data_url=data_url(rotated_jpeg((64, 64)), 'jpeg'),
-            ),
-        )
+
+    def concurrent_edit(key):
+        if key.endswith('-1600.jpg'):
+            store.db.records[f'inspections/{ID}']['revision'] += 1
+
+    with pytest.raises(Conflict):
+        upload_failing(store, concurrent_edit)
+    assert not store.get_inspection('owner', ID)['photos']
+    assert not store.bucket.objects
+
+
+def test_a_failed_copy_upload_removes_the_original_and_any_partly_written_copy():
+    store = FakeStore()
+
+    def lost_response(key):
+        if key.endswith('-1600.jpg'):
+            raise TimeoutError('response lost after the write')
+
+    with pytest.raises(TimeoutError):
+        upload_failing(store, lost_response)
+    assert not store.get_inspection('owner', ID)['photos']
     assert not store.bucket.objects
 
 
@@ -302,6 +339,9 @@ def test_audit_downloads_the_copy_when_present_and_the_original_for_older_photos
     # Both reach the model as the same upright 1600 px JPEG; only the bytes read differ.
     for part in sent:
         assert decoded(part.inline_data.data) == ('JPEG', 'RGB', (800, 1600), None)
+    # The stored copy is sent byte for byte, not re-encoded.
+    assert sent[0].inline_data.data == store.bucket.objects[new['model_file']['path']][0]
+    assert sent[1].inline_data.data != original
     read = []
     real = store.bucket.blob
     store.bucket.blob = lambda key: (read.append(key), real(key))[1]

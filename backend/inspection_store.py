@@ -370,7 +370,7 @@ class InspectionStore(JobStore):
                     model_raw, content_type='image/jpeg', if_generation_match=0
                 )
             except Exception:
-                self._discard_unreferenced(blob, self._ref(inspection_id))
+                self._discard_unreferenced(blob, self._ref(inspection_id), model_blob)
                 raise
 
         def append(current):
