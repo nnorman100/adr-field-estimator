@@ -1678,11 +1678,11 @@ async def document_link(request, store):
 
 
 async def linked(method, *args, unavailable=signing_links.UNAVAILABLE):
-    """Unknown, expired, revoked and inaccessible links all answer with the same 404."""
+    """Unknown, expired, revoked, archived and inaccessible links all answer with the same 404."""
     try:
         return await stored(method, *args)
     except HTTPException as error:
-        if error.status_code in (403, 404):
+        if error.status_code in (403, 404, 410):
             raise HTTPException(404, unavailable)
         raise
 

@@ -1458,6 +1458,19 @@ class WorkspaceStore:
                 raise Conflict('Signed jobs are kept. Only unsigned drafts can be archived.')
             if job['version'] != req.expected_version:
                 raise Conflict('This job changed. Reload before archiving.')
+            # Transaction reads come before writes. A homeowner link must not outlive the draft,
+            # and restoring the job never brings the revoked link back.
+            pointer = self.db.collection('_signing_link_jobs').document(inspection_id).get(
+                transaction=tx
+            )
+            link_ref = link = None
+            if pointer.exists:
+                link_ref = self.db.collection('_signing_links').document(
+                    pointer.to_dict()['link_id']
+                )
+                link = link_ref.get(transaction=tx).to_dict() or {}
+            if link and link.get('status') == 'pending':
+                tx.update(link_ref, {'status': 'revoked', 'ended_at': time.time()})
             job.update(
                 kind='archived_inspection',
                 archived_at=now(),
