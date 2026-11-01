@@ -401,7 +401,12 @@ def make_documents(
         + [
             'Scope:\n' + '\n'.join(recommendations),
             '\n'.join(clauses),
-            f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope; approved additional work is added at its approved amount to both ends.',
+            f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope'
+            + (
+                '; approved additional work is added at its approved amount to both ends.'
+                if any(item['code'] == 'ADR-EXTRA' for item in items)
+                else '.'
+            ),
             '\n'.join(line for line in ('Sincerely,', signoff, company_name) if line.strip()),
         ]
     )

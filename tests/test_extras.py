@@ -380,3 +380,18 @@ def test_source_item_cannot_clear_work_beyond_approved_description(source, descr
     docs = make_documents(scope, [], ai)
     assert docs['unpriced_work'] == []
     assert docs['signable']
+
+
+EXTRA_RANGE = 'approved additional work is added at its approved amount to both ends'
+
+
+@pytest.mark.parametrize('with_extra', [True, False])
+def test_range_mentions_approved_work_only_with_an_approved_extra(with_extra):
+    values = dict(data(), extras=[approved()] if with_extra else [])
+    docs = make_documents(
+        InspectionData.model_validate(values),
+        [],
+        AIResult(summary='Proposed work', suggestions=[], unpriced_work=[]),
+    )
+    assert (EXTRA_RANGE in docs['iicrc_defense_letter']) is with_extra
+    assert 'to the priced scope' in docs['iicrc_defense_letter']
