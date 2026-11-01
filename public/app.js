@@ -5249,6 +5249,7 @@ async function leaveForCanonical() {
   return true;
 }
 async function initialize() {
+  $('yearBuilt').max = new Date().getFullYear();
   initExtras();
   if (canonical) {
     if (await leaveForCanonical()) return;
@@ -5741,7 +5742,6 @@ async function initialize() {
         'error',
       );
     }
-  $('yearBuilt').max = new Date().getFullYear();
   const [config, { initializeApp }, sdk, appCheckSdk] = await Promise.all([
     fetch('/__/firebase/init.json', { cache: 'no-store' }).then((response) => response.json()),
     import(FIREBASE_SDK + 'firebase-app.js'),
