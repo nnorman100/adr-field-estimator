@@ -1256,3 +1256,17 @@ def test_draft_records_carry_the_sizing_check_and_its_inputs_stay_absent_until_s
     ).json()
     assert 'water_class' not in record['data']['rooms'][0]
     assert 'dehumidifier_ppd' not in record['data']
+
+
+def test_year_built_2027_is_accepted_when_the_clock_reads_2027(monkeypatch):
+    import backend.contracts as contracts
+
+    class Clock2027(contracts.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return contracts.datetime(2027, 1, 2)
+
+    monkeypatch.setattr(contracts, 'datetime', Clock2027)
+    assert InspectionData(year_built=2027).year_built == 2027
+    with pytest.raises(ValueError):
+        InspectionData(year_built=2028)
