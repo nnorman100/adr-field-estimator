@@ -59,9 +59,7 @@ def test_extra_disallows_ai_hours_and_client_prices():
             Extra.model_validate(extra)
 
 
-@pytest.mark.parametrize(
-    'after_hours,sf', [(False, 10), (True, 10), (False, 1001), (True, 1001)]
-)
+@pytest.mark.parametrize('after_hours,sf', [(False, 10), (True, 10), (False, 1001), (True, 1001)])
 def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf):
     values = data()
     values['rooms'][0]['finished_sf'] = sf

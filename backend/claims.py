@@ -189,11 +189,7 @@ def proposal_range(data: InspectionData, items):
         Decimal(0),
     )
     labor_material = sum(
-        (
-            amount(item['total'])
-            for item in items
-            if item['code'] in {'ADR-DEMO', 'ADR-LABOR'}
-        ),
+        (amount(item['total']) for item in items if item['code'] in {'ADR-DEMO', 'ADR-LABOR'}),
         Decimal(0),
     )
     equipment = sum(
