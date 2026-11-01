@@ -1635,6 +1635,11 @@ function renderWalkthroughEdits() {
           state.conflict
         )
           throw Error('The draft changed. Review its current values.');
+        if (entry.removesRoom) {
+          const held = roomRemovalItems(entry.target);
+          if (held.photos.length || held.scans.length)
+            return requestRoomRemoval(entry.target, undo);
+        }
         const before = structuredClone(edit.data);
         if (entry.removesRoom) edit.data.rooms.splice(edit.data.rooms.indexOf(entry.target), 1);
         else entry.target[entry.field] = entry.before;

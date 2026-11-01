@@ -89,3 +89,45 @@ test('a room with no photos or scans removes straight away', async ({ page }) =>
   expect(await names(page)).toEqual(['Hall']);
   expect(await photoRooms(page)).toEqual(['Hall']);
 });
+test('undoing a walkthrough-added room with photos or scans goes through the same move first', async ({
+  page,
+}) => {
+  await page.goto('/app');
+  await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+  await checkScope(page);
+  await page.locator('#address').fill('Synthetic walkthrough undo property');
+  await page.locator('#yearBuilt').fill('1998');
+  await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+  await page.locator('[data-room-index="0"][data-room-key="name"]').fill('Office');
+  await page.locator('#fillScopeProperty').click();
+  const kitchenName = page.locator('[data-room-index="1"][data-room-key="name"]');
+  await expect(kitchenName).toHaveValue('Kitchen');
+  await page.locator('.task-nav [data-task="walkthrough"]').click();
+  await selectRoom(page, 1);
+  await addImage(page, '#0000aa');
+  await expect.poll(() => photoRooms(page)).toEqual(['Kitchen']);
+  await page.evaluate(() => {
+    state.draft.data.equipment_scans = [{ kind: 'air_mover', asset_id: 'FAN-2', room: 'Kitchen' }];
+  });
+  await checkScope(page);
+  const undo = kitchenName
+    .locator('..')
+    .locator('.walkthrough-edit')
+    .getByRole('button', { name: 'Undo', exact: true });
+  await undo.click();
+  const dialog = page.locator('#removeRoomDialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('#removeRoomDescription')).toContainText('1 photo and 1 scan');
+  await expect(page.locator('#confirmRoomRemoval')).toBeHidden();
+  expect(await names(page)).toEqual(['Office', 'Kitchen']);
+  await expect(page.locator('#removeRoomMoveTarget option')).toHaveText(['Office']);
+  await page.locator('#moveRoomItems').click();
+  await expect(page.locator('#confirmRoomRemoval')).toBeVisible();
+  expect(await photoRooms(page)).toEqual(['Office']);
+  expect(await scanRooms(page)).toEqual(['Office']);
+  await page.locator('#confirmRoomRemoval').click();
+  await expect(dialog).toBeHidden();
+  expect(await names(page)).toEqual(['Office']);
+  expect(await photoRooms(page)).toEqual(['Office']);
+  expect(await scanRooms(page)).toEqual(['Office']);
+});
