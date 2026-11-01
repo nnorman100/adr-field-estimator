@@ -1460,8 +1460,8 @@ class WorkspaceStore:
                 raise Conflict('This job changed. Reload before archiving.')
             # Transaction reads come before writes. A homeowner link must not outlive the draft,
             # and restoring the job never brings the revoked link back.
-            pointer = self.db.collection('_signing_link_jobs').document(inspection_id).get(
-                transaction=tx
+            pointer = (
+                self.db.collection('_signing_link_jobs').document(inspection_id).get(transaction=tx)
             )
             link_ref = link = None
             if pointer.exists:

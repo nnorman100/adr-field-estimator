@@ -450,9 +450,7 @@ def test_archiving_a_draft_revokes_its_pending_link_and_restoring_does_not_reviv
     # The link is revoked in the same write that archives the job.
     assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'revoked'
     assert store.db.records['_workspace_jobs/' + ID]['archived_at']
-    restored = client.post(
-        '/api/jobs/' + ID + '/restore', json={'expected_version': version + 1}
-    )
+    restored = client.post('/api/jobs/' + ID + '/restore', json={'expected_version': version + 1})
     assert restored.status_code == 200, restored.text
     assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'revoked'
     assert homeowner(value).get('/api/sign').status_code == 404
