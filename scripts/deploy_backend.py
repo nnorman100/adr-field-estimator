@@ -4,9 +4,9 @@ Cloud Run copies environment variables from the service's latest template, which
 revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES and
 PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting those staged values.
 The defaults are the current production baseline: AI_FEATURES=readiness and price books off. Pass
---ai-features or --price-books only to change that baseline on purpose. STAFF_EMAILS is the legacy staff allowlist and fails closed: the backend treats an unset value as
-nobody being staff. Pass --staff-emails to set it; without it the service keeps its current value.
-The same command mounts the
+--ai-features or --price-books only to change that baseline on purpose. STAFF_EMAILS is the legacy
+staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
+--staff-emails to set it; without it the service keeps its current value. The same command mounts the
 Maps key secret by name, so a release never depends on a binding made by hand in the console.
 Promotion is a separate reviewed update-traffic step.
 
