@@ -515,3 +515,17 @@ def test_removing_access_leaves_link_records_alone_but_the_link_stops_working(ap
     assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'pending'
     response = homeowner(value).get('/api/sign')
     assert response.status_code == 404 and response.json()['detail'] == sl.UNAVAILABLE
+
+
+def test_pending_link_listing_does_not_use_the_team_change_quota(api):
+    client, current, store = api
+    current['uid'] = 'owner'
+    for _ in range(25):
+        listed = client.get('/api/companies/adr/team/estimator/signing-links')
+        assert listed.status_code == 200, listed.text
+    member = store.db.records['_memberships/estimator']
+    removed = client.put(
+        '/api/companies/adr/team/estimator',
+        json={'expected_version': member['version'], 'role': 'estimator', 'status': 'disabled'},
+    )
+    assert removed.status_code == 200, removed.text

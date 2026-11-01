@@ -385,7 +385,6 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     async def member_signing_links(
         company_id: str, member_uid: str, claims=live_identity, store=Depends(get_store)
     ):
-        await stored(store.quota, claims['uid'], 'team', 20)
         return {
             'links': await stored(
                 workspace(store).pending_signing_links, claims['uid'], company_id, member_uid

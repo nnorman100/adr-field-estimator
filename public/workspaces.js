@@ -826,11 +826,8 @@ window.WorkspaceUI = (() => {
           ).links;
           links.replaceChildren(...pendingLinksNote(found));
         } catch {
-          // Do not hide the question when the listing is unavailable; say so and let the owner decide.
-          links.replaceChildren(
-            node('p', 'Could not check pending signing links. Try again before removing access.'),
-          );
-          return;
+          // The listing is informational; when it is unavailable, say so and let the owner decide.
+          links.replaceChildren(node('p', "Couldn't load pending signing links"));
         }
         confirm.disabled = false;
       });
