@@ -65,6 +65,12 @@ test('the front page is the static DryScope landing with a plain Log in link', a
       return [style.borderStyle, style.backgroundColor, style.textDecorationLine, box.height >= 44];
     }),
   ).toEqual(['none', 'rgba(0, 0, 0, 0)', 'underline', true]);
+  // QA 32: every Log in link, including the two inside sentences, is at least 44 by 44 CSS pixels.
+  for (const link of await logins.all()) {
+    const box = await link.boundingBox();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
   await expect(page.locator('#accessNote')).toContainText(
     'superadmins, owners, estimators and office staff',
   );
