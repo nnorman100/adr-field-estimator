@@ -16,14 +16,15 @@ function fetchFresh(url, { bust = false, token, fetchImpl = fetch } = {}) {
   return fetchImpl(target, { headers: NO_CACHE, cache: 'no-store' });
 }
 // Compare fetched text with the expected text, retrying a mismatch only while Hosting propagates.
+// read receives the attempt number so each attempt can use a URL no earlier attempt cached.
 // A persistent mismatch fails with the same assert.equal diff and message as a single try.
 async function assertEventuallyEqual(read, expected, message, options = {}) {
   const { timeoutMs = 60000, delayMs = 5000, wait = sleep } = options;
   const retries = Math.floor(timeoutMs / delayMs);
   for (let attempt = 0; attempt < retries; attempt += 1) {
-    if ((await read()) === expected) return;
+    if ((await read(attempt)) === expected) return;
     await wait(delayMs);
   }
-  assert.equal(await read(), expected, message);
+  assert.equal(await read(retries), expected, message);
 }
 module.exports = { assertEventuallyEqual, fetchFresh, newRunToken };

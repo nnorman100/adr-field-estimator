@@ -107,7 +107,12 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     'sw.js',
   ]))
     await assertEventuallyEqual(
-      async () => unstamp(await (await fetch(base + '/' + file, { bust: true })).text()),
+      async (attempt) =>
+        unstamp(
+          await (
+            await fetch(base + '/' + file, { bust: true, token: token + '-' + attempt })
+          ).text(),
+        ),
       unstamp(fs.readFileSync('public/' + file, 'utf8')),
       'Deployed asset differs: ' + file,
     );

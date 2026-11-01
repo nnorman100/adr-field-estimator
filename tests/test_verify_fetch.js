@@ -66,3 +66,19 @@ test('without bust the URL is untouched but caches are still bypassed', async ()
   assert.equal(seen.url, 'https://example.test/app?v=ui-1');
   assert.equal(seen.init.headers['cache-control'], 'no-cache');
 });
+
+test('every retry reads a URL no earlier attempt used', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => (urls.push(url), { text: async () => 'previous release' });
+  await assert.rejects(
+    assertEventuallyEqual(
+      async (attempt) =>
+        (await fetchFresh(URL_, { bust: true, token: 'run-' + attempt, fetchImpl })).text(),
+      'current release',
+      'Deployed asset differs: app.js',
+      { wait: noWait },
+    ),
+  );
+  assert.equal(urls.length, 13);
+  assert.equal(new Set(urls).size, 13);
+});
