@@ -642,7 +642,7 @@ window.WorkspaceUI = (() => {
           id: row.draft.inspection_id,
           kind: 'local',
           address: row.draft.data.address || 'Local draft',
-          customer: '',
+          customer: row.draft.customer_name || '',
           claim: '',
           label: row.archived
             ? 'Archived by the owner · unsynced work saved on this device'
@@ -774,7 +774,37 @@ window.WorkspaceUI = (() => {
     bindClearNetwork(sync);
     return box;
   }
-  function invitationList(container, invitations, companyId, after, actions = true) {
+  // Removing access disables the member rather than deleting the account, so their jobs and the
+  // audit trail stay. Re-enable them any time with Access: Active.
+  function removeAccess(member, cid) {
+    const box = node('div', undefined, 'actions');
+    const ask = () => {
+      const remove = button('Remove access', () => {
+        const note = node(
+          'p',
+          'Remove access for ' +
+            member.email +
+            '? They lose access to the company, and you can restore it later.',
+        );
+        const confirm = button('Yes, remove access', async () => {
+          await jsonApi('/api/companies/' + cid + '/team/' + member.uid, 'PUT', {
+            expected_version: member.version,
+            role: member.role,
+            status: 'disabled',
+          });
+          await team();
+          say('Access removed for ' + member.email + '.', 'success');
+        });
+        confirm.classList.add('primary');
+        box.replaceChildren(note, confirm, button('Keep access', ask));
+      });
+      remove.classList.add('remove-access');
+      box.replaceChildren(remove);
+    };
+    ask();
+    return box;
+  }
+  function invitationList(container, invitations, companyId, after, actions = true, manage = null) {
     const list = node('div', undefined, 'dashboard-list');
     container.append(list);
     if (
@@ -795,6 +825,12 @@ window.WorkspaceUI = (() => {
         ),
       );
       if (invite.delivery_error) card.append(node('p', invite.delivery_error));
+      // An accepted invitation cannot be cancelled; the person's access is managed on the Team page.
+      if (manage && invite.status === 'accepted') {
+        card.append(
+          node('p', "Accepted. To revoke this person's access, remove it on the Team page."),
+        );
+      }
       if (actions && invite.status === 'pending')
         for (const action of ['resend', 'cancel'])
           card.append(
@@ -1008,10 +1044,12 @@ window.WorkspaceUI = (() => {
         });
         card.append(form);
       }
+      if (member.role !== 'owner' && member.status === 'active')
+        card.append(removeAccess(member, cid));
       grid.append(card);
     }
     content.append(node('h2', 'Invitations'));
-    invitationList(content, invites.invitations, cid);
+    invitationList(content, invites.invitations, cid, null, true, team);
   }
   async function profile() {
     const cid = state.session.company_id,
@@ -1594,6 +1632,14 @@ window.WorkspaceUI = (() => {
     }
     await Promise.all([loadCoordination(), loadCustomer(), loadClaim()]);
   }
+  // The job list is built from saved jobs, so offline it relies on the name kept with the local copy.
+  function rememberCustomer(job) {
+    if (!state.draft || job.job_id !== state.draft.inspection_id) return;
+    const name = job.customer_name || '';
+    if ((state.draft.customer_name || '') === name) return;
+    state.draft.customer_name = name;
+    persist().catch(() => {});
+  }
   async function loadCoordination() {
     coordination = null;
     $('jobCoordination').hidden = true;
@@ -1607,6 +1653,7 @@ window.WorkspaceUI = (() => {
     ]);
     if (id !== state.draft?.inspection_id || key !== context()) return;
     coordination = job;
+    rememberCustomer(job);
     mirroredAddress = job.address;
     $('coordAddress').value = job.address;
     $('coordAddress').disabled = job.status === 'signed';
@@ -1658,6 +1705,7 @@ window.WorkspaceUI = (() => {
     const job = await jsonApi('/api/jobs/' + id + '/coordination');
     if (id !== state.draft?.inspection_id || key !== context()) return;
     customer = job;
+    rememberCustomer(job);
     fillCustomer();
     $('customerStatus').textContent = '';
     $('customerDetails').hidden = false;
@@ -1752,6 +1800,7 @@ window.WorkspaceUI = (() => {
       state.ack = stable(record.data);
       absorb(record);
       fillForm();
+      rememberCustomer(customer);
       await persist();
       const fields = customerFields();
       fillCustomer(Object.keys(fields).some((key) => fields[key] !== (pending[key] || '')));
@@ -1819,6 +1868,7 @@ window.WorkspaceUI = (() => {
       });
       mirroredAddress = coordination.address;
       renderEmailCopy();
+      rememberCustomer(coordination);
       if (!state.signed) {
         const record = await jsonApi('/api/inspections/' + id);
         state.draft.data = record.data;

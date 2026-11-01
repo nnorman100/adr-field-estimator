@@ -94,6 +94,14 @@ h3 {
   text-underline-offset: 0.2em;
   white-space: nowrap;
 }
+/* Log in links inside a sentence are still tap targets: at least 44 by 44 CSS pixels. */
+.inline-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
 .header-link:focus-visible {
   outline-color: #fff;
 }

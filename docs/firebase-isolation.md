@@ -115,7 +115,7 @@ The backend rejects a different project ID or evidence bucket. Production never 
 
 `.github/workflows/deploy.yml` releases a master commit after its CI run succeeds on a push to master.
 It runs `scripts/auto_deploy.py`, which uses the manual path: `deploy_backend.py --workspaces on
---ai-features readiness --price-books off` stages a tagged 0% revision (the tag is `auto-<commit>-<run id>`);
+--ai-features readiness --price-books off` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
 the staged revision's environment, secret bindings, service account and limits must equal the serving
 revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3 and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
@@ -135,7 +135,7 @@ It stops with a message, and the owner releases that commit by hand, when:
 
 A commit that is already serving, or older than what is serving, is skipped without error, so a manual
 release made in parallel is never overwritten. Each run's job summary is the release record; see
-[RELEASES.md](../RELEASES.md). Stale `auto-` tags accumulate on old revisions at 0% traffic; Cloud Run
+[RELEASES.md](../RELEASES.md). Stale tags accumulate on old revisions at 0% traffic; Cloud Run
 allows 1000 tags per service, so clear old ones occasionally with `gcloud run services update-traffic
 --remove-tags`.
 
