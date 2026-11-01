@@ -11,7 +11,8 @@ previous version) and fails the run.
 It refuses, with a message, anything the owner must release by hand: a merge that changed
 firestore.rules or firestore.indexes.json since the serving commit, a serving revision whose commit is
 unknown or not an ancestor of the candidate, a staged revision whose environment, secrets or limits
-differ from the serving one beyond the three baseline flags, or a Firestore TTL policy that is missing.
+differ from the serving one beyond the three baseline flags, a serving revision with no STAFF_EMAILS,
+or a Firestore TTL policy that is missing.
 A candidate that is already serving, or older than what is serving, is skipped without error so
 overlapping runs and manual releases never move production backwards.
 
@@ -37,6 +38,7 @@ from scripts.deploy_backend import (
     DEFAULT_AI_FEATURES,
     PROJECT,
     env_assignments,
+    staff_emails_value,
 )
 
 SERVICE = 'alert-disaster-field-estimator'
@@ -236,6 +238,20 @@ def spec_summary(revision):
         'timeoutSeconds': spec.get('timeoutSeconds'),
         'limits': (containers[0].get('resources') or {}).get('limits') or {},
     }
+
+
+def serving_staff_emails(summary):
+    """The serving STAFF_EMAILS, normalized as deploy_backend.py sets it; refuse when it is missing."""
+    try:
+        value = staff_emails_value(summary['env'].get('STAFF_EMAILS', ''))
+    except argparse.ArgumentTypeError as error:
+        raise Refused(
+            f'The serving revision has no usable STAFF_EMAILS ({error}). Releasing without it would '
+            'leave the legacy workspaces-off mode admitting nobody; set STAFF_EMAILS on the service '
+            'by hand, then rerun. Nothing was staged or deployed.'
+        ) from None
+    summary['env']['STAFF_EMAILS'] = value
+    return value
 
 
 def spec_differences(serving, staged):
@@ -453,9 +469,12 @@ def release(runner, record, commit, tag, check_only=False):
     names = check_candidate(runner, commit, serving_commit)
     check_hand_released(names)
     check_ttls(runner)
+    serving_summary = spec_summary(serving)
+    staff_emails = serving_staff_emails(serving_summary)
     record.note(
         'Candidate is newer than the serving commit; no rules or indexes changed; TTL policies in place.'
     )
+    record.note('The serving STAFF_EMAILS is set and is carried explicitly to the staged revision.')
     if check_only:
         record.note('Check only: nothing staged or deployed.')
         return
@@ -464,16 +483,6 @@ def release(runner, record, commit, tag, check_only=False):
         'Rollback pair (Hosting before)',
         f'release `{hosting_before["release"]}` / version `{hosting_before["version"]}`',
     )
-
-    serving_summary = spec_summary(serving)
-    staff_emails = serving_summary['env'].get('STAFF_EMAILS', '')
-    if staff_emails:
-        record.note('STAFF_EMAILS is carried explicitly from the serving revision.')
-    else:
-        record.note(
-            'The serving revision has no STAFF_EMAILS; the staged one has none either, so the '
-            'legacy workspaces-off mode would admit nobody.'
-        )
 
     runner.run(
         [
@@ -485,7 +494,8 @@ def release(runner, record, commit, tag, check_only=False):
             AI_FEATURES,
             '--price-books',
             PRICE_BOOKS,
-            *(['--staff-emails', staff_emails] if staff_emails else []),
+            '--staff-emails',
+            staff_emails,
             '--tag',
             tag,
             '--yes',
@@ -497,13 +507,13 @@ def release(runner, record, commit, tag, check_only=False):
     if staged_name == previous:
         raise Refused('Staging produced no new revision.')
     staged = spec_summary(revision_state(runner, staged_name))
-    differences = spec_differences(spec_summary(serving), staged)
+    differences = spec_differences(serving_summary, staged)
     if differences:
         raise Refused(
             'The staged revision does not preserve the serving revision; nothing was promoted:\n'
             + '\n'.join(differences)
         )
-    for line in baseline_notes(spec_summary(serving), staged):
+    for line in baseline_notes(serving_summary, staged):
         record.note('Baseline change: ' + line)
     staged_checks(runner, url, commit)
     record.set(

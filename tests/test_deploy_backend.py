@@ -1,6 +1,7 @@
 """The backend deploy command never inherits the staged workspace flag or moves traffic."""
 
 import fnmatch
+import re
 import shutil
 import subprocess
 import pytest
@@ -39,8 +40,8 @@ def env_flag(argv):
 def test_workspaces_off_is_explicit_and_receives_no_traffic():
     argv = deploy.command('off', 'workspaces-off-1', HEAD)
     assert env_flag(argv) == (
-        '--update-env-vars=^@^WORKSPACES_ENABLED=false'
-        '@AI_FEATURES=readiness@PRICE_BOOKS_ENABLED=false'
+        '--update-env-vars=^|^WORKSPACES_ENABLED=false'
+        '|AI_FEATURES=readiness|PRICE_BOOKS_ENABLED=false'
     )
     assert '--no-traffic' in argv and '--tag=workspaces-off-1' in argv
     # The Maps key is mounted from its Secret Manager secret, never passed as a value.
@@ -70,11 +71,11 @@ def test_feature_baseline_changes_only_when_asked():
         price_books='on',
     )
     assert env_flag(overridden) == (
-        '--update-env-vars=^@^WORKSPACES_ENABLED=true'
-        '@AI_FEATURES=drying_watch,readiness@PRICE_BOOKS_ENABLED=true'
+        '--update-env-vars=^|^WORKSPACES_ENABLED=true'
+        '|AI_FEATURES=drying_watch,readiness|PRICE_BOOKS_ENABLED=true'
     )
     cleared = deploy.command('on', 'features-off-1', HEAD, ai_features='', price_books='off')
-    assert '@AI_FEATURES=@PRICE_BOOKS_ENABLED=false' in env_flag(cleared)
+    assert '|AI_FEATURES=|PRICE_BOOKS_ENABLED=false' in env_flag(cleared)
 
 
 def test_dry_run_prints_a_deliberate_feature_baseline(capsys):
@@ -101,7 +102,7 @@ def test_dry_run_prints_a_deliberate_feature_baseline(capsys):
     assert (
         "Feature baseline: WORKSPACES_ENABLED=true AI_FEATURES='' PRICE_BOOKS_ENABLED=true" in out
     )
-    assert '@AI_FEATURES=@PRICE_BOOKS_ENABLED=true' in out
+    assert '|AI_FEATURES=|PRICE_BOOKS_ENABLED=true' in out
     with pytest.raises(SystemExit):
         deploy.main(
             [
@@ -244,14 +245,33 @@ def test_staff_emails_are_set_only_when_asked_for():
     plain = env_flag(deploy.command('on', 'tag-1', HEAD))
     assert 'STAFF_EMAILS' not in plain
     argv = deploy.command('on', 'tag-1', HEAD, staff_emails='a@example.com,b@example.com')
-    assert env_flag(argv).endswith('@STAFF_EMAILS=a@example.com,b@example.com')
+    assert parse_env_flag(env_flag(argv)) == {
+        'WORKSPACES_ENABLED': 'true',
+        'AI_FEATURES': 'readiness',
+        'PRICE_BOOKS_ENABLED': 'false',
+        'STAFF_EMAILS': 'a@example.com,b@example.com',
+    }
+
+
+def parse_env_flag(flag):
+    """Split --update-env-vars the way gcloud does: '^X^' at the start makes X the list delimiter."""
+    value = flag.split('=', 1)[1]
+    delimiter = ','
+    if value.startswith('^'):
+        delimiter, value = value[1:].split('^', 1)
+    pairs = {}
+    for item in value.split(delimiter):
+        key, sep, val = item.partition('=')
+        assert sep and re.fullmatch(r'[A-Z_][A-Z0-9_]*', key), f'gcloud would reject {item!r}'
+        pairs[key] = val
+    return pairs
 
 
 def test_staff_emails_flag_is_normalized_and_validated():
     assert deploy.staff_emails_value(' A@Example.com, ,b@example.com,a@example.com') == (
         'a@example.com,b@example.com'
     )
-    for bad in ('', ' , ', 'not-an-email', 'a@example.com,^b@example.com'):
+    for bad in ('', ' , ', 'not-an-email', 'a@example.com,^b@example.com', 'a|b@example.com'):
         with pytest.raises(deploy.argparse.ArgumentTypeError):
             deploy.staff_emails_value(bad)
 

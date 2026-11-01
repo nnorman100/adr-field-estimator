@@ -75,7 +75,7 @@ def staff_emails_value(value):
         email = part.strip().lower()
         if not email:
             continue
-        if not re.fullmatch(r'[^@\s,^]+@[^@\s,^]+\.[^@\s,^]+', email):
+        if not re.fullmatch(r'[^@\s,^|]+@[^@\s,^|]+\.[^@\s,^|]+', email):
             raise argparse.ArgumentTypeError(f'{email!r} is not an email address')
         if email not in names:
             names.append(email)
@@ -85,9 +85,9 @@ def staff_emails_value(value):
 
 
 def update_env_flag(assignments):
-    # A caret delimiter keeps a comma inside AI_FEATURES from splitting the flag.
-    payload = '@'.join(f'{key}={value}' for key, value in assignments.items())
-    return '--update-env-vars=^@^' + payload
+    # A caret delimiter keeps a comma inside AI_FEATURES or STAFF_EMAILS from splitting the flag.
+    payload = '|'.join(f'{key}={value}' for key, value in assignments.items())
+    return '--update-env-vars=^|^' + payload
 
 
 def baseline_line(assignments):
