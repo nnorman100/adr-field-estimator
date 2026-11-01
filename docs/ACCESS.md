@@ -30,6 +30,8 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `profile_manage` | Company profile and logo | yes | no | no |
 | `delivery_manage` | Company delivery settings | yes | no | no |
 | `delivery_resend` | Resend signed documents | yes | no | yes |
+| `prices_read` | See company price books (only when `PRICE_BOOKS_ENABLED`; added in `_capabilities`) | yes | yes | yes |
+| `prices_manage` | Edit company price books (only when `PRICE_BOOKS_ENABLED`) | yes | no | no |
 
 Office can read only active estimators' uid/email from the team, for assignment.
 
