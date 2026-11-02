@@ -6,7 +6,8 @@ PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting 
 The defaults are the current production baseline: AI_FEATURES=readiness and price books off. Pass
 --ai-features or --price-books only to change that baseline on purpose. STAFF_EMAILS is the legacy
 staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
---staff-emails to set it; without it the service keeps its current value. The same command mounts the
+--staff-emails to set it; without it the revision inherits the service template's value, and the
+script refuses (even for --dry-run) when that template has none. The same command mounts the
 Maps key secret by name, so a release never depends on a binding made by hand in the console.
 Promotion is a separate reviewed update-traffic step.
 
@@ -16,6 +17,7 @@ it inherits environment variables. The same commit is set as the revision's sour
 """
 
 import argparse
+import json
 import re
 import shlex
 import shutil
@@ -128,6 +130,37 @@ def command(
     ]
 
 
+def describe_service(argv):
+    return subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
+
+
+def template_staff_emails(describe):
+    """STAFF_EMAILS a deploy without --staff-emails inherits; empty when unset or unreadable."""
+    result = describe(
+        [
+            shutil.which('gcloud') or 'gcloud',
+            'run',
+            'services',
+            'describe',
+            'alert-disaster-field-estimator',
+            '--region=us-west2',
+            '--project=' + PROJECT,
+            '--format=json',
+        ]
+    )
+    if result.returncode != 0:
+        return ''
+    try:
+        containers = json.loads(result.stdout)['spec']['template']['spec']['containers']
+        env = containers[0].get('env') or []
+    except (ValueError, KeyError, IndexError, TypeError):
+        return ''
+    for item in env:
+        if item.get('name') == 'STAFF_EMAILS':
+            return (item.get('value') or '').strip(' ,')
+    return ''
+
+
 def revision_tag(value):
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,45}', value):
         raise argparse.ArgumentTypeError(
@@ -136,7 +169,7 @@ def revision_tag(value):
     return value
 
 
-def main(argv=None, run=subprocess.run, git=subprocess.run):
+def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--workspaces', choices=('on', 'off'), required=True)
     parser.add_argument(
@@ -159,8 +192,8 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
         type=staff_emails_value,
         default=None,
         help=(
-            'STAFF_EMAILS for this revision (comma-separated). Without it the service keeps its '
-            'current value; the backend treats an unset value as nobody being staff'
+            'STAFF_EMAILS for this revision (comma-separated). Without it the revision inherits '
+            "the service template's value; the deploy is refused when that template has none"
         ),
     )
     parser.add_argument(
@@ -184,6 +217,14 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
     except DirtyTree as error:
         print(
             f'Refusing to stamp the backend: {error}\nCommit first, or pass --allow-dirty to mark the release dirty.',
+            file=sys.stderr,
+        )
+        return 2
+    if not args.staff_emails and not template_staff_emails(describe or describe_service):
+        print(
+            'Refusing to deploy: the Cloud Run service template has no STAFF_EMAILS (or could not '
+            'be read), so this revision would admit nobody in workspaces-off mode. '
+            'Pass --staff-emails.',
             file=sys.stderr,
         )
         return 2

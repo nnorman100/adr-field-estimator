@@ -1,6 +1,7 @@
 """The backend deploy command never inherits the staged workspace flag or moves traffic."""
 
 import fnmatch
+import json
 import re
 import shutil
 import subprocess
@@ -23,6 +24,27 @@ def fake_git(status='', head=HEAD):
 
     git.calls = calls
     return git
+
+
+def fake_describe(env, returncode=0):
+    calls = []
+
+    def describe(argv):
+        calls.append(argv)
+        items = [{'name': key, 'value': value} for key, value in env.items()]
+        template = {'spec': {'containers': [{'env': items}]}}
+        stdout = json.dumps({'spec': {'template': template}}) if returncode == 0 else ''
+        return subprocess.CompletedProcess(argv, returncode, stdout=stdout)
+
+    describe.calls = calls
+    return describe
+
+
+@pytest.fixture(autouse=True)
+def service_template(monkeypatch):
+    monkeypatch.setattr(
+        deploy, 'describe_service', fake_describe({'STAFF_EMAILS': 'owner@example.com'})
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -291,3 +313,53 @@ def test_main_passes_staff_emails_to_the_deploy_command(capsys):
     )
     assert code == 0
     assert 'STAFF_EMAILS=owner@example.com' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    'template',
+    [
+        {'env': {}},
+        {'env': {'STAFF_EMAILS': ''}},
+        {'env': {'STAFF_EMAILS': ' , '}},
+        {'env': {'STAFF_EMAILS': 'owner@example.com'}, 'returncode': 1},
+    ],
+)
+@pytest.mark.parametrize('confirm', ['--dry-run', '--yes'])
+def test_refuses_without_staff_emails_when_the_service_template_has_none(capsys, template, confirm):
+    never = lambda *args, **kwargs: pytest.fail('gcloud deploy ran')
+    describe = fake_describe(**template)
+    code = deploy.main(
+        ['--workspaces', 'off', '--tag', 'stage-1', confirm],
+        run=never,
+        git=fake_git(),
+        describe=describe,
+    )
+    assert code == 2
+    assert '--staff-emails' in capsys.readouterr().err
+    assert describe.calls and describe.calls[0][1:4] == ['run', 'services', 'describe']
+
+
+def test_inherits_the_template_staff_emails_when_the_flag_is_omitted(capsys):
+    describe = fake_describe({'STAFF_EMAILS': 'owner@example.com'})
+    code = deploy.main(
+        ['--workspaces', 'off', '--tag', 'stage-1', '--dry-run'],
+        run=lambda *args, **kwargs: pytest.fail('gcloud deploy ran'),
+        git=fake_git(),
+        describe=describe,
+    )
+    assert code == 0
+    assert describe.calls
+    printed = capsys.readouterr().out.splitlines()[-1]
+    assert 'STAFF_EMAILS' not in printed
+
+
+def test_an_explicit_staff_list_does_not_need_the_service_template(capsys):
+    never = lambda *args, **kwargs: pytest.fail('gcloud ran')
+    code = deploy.main(
+        ['--workspaces', 'off', '--tag', 'stage-1', '--staff-emails', 'a@example.com', '--dry-run'],
+        run=never,
+        git=fake_git(),
+        describe=never,
+    )
+    assert code == 0
+    assert 'STAFF_EMAILS=a@example.com' in capsys.readouterr().out
