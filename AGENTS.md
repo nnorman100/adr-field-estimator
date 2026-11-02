@@ -139,3 +139,10 @@ Agents must preserve the exact standard estimate clauses in `backend/claims.py`,
 - **Fix the code, not the test.** When a test fails, assume the code is wrong first. Adding new tests is always welcome.
 - Run `python -m pytest tests -q -p no:cacheprovider`, `npm test` and `npm run test:browser` for lifecycle changes. Keep the HTML copies identical.
 - Record synthetic real-service checks separately from mock tests. Physical iPhone camera, microphone, Bluetooth, reconnect, interruption, Finish cleanup and sub-second latency remain open until observed on the device. See `docs/review-repairs.md` for the guided test and current evidence.
+
+## 8. Where to look
+
+- `docs/STATUS.md`: each feature, whether it is built, switched on, and checked on a phone. Update it in the same PR as the change.
+- `docs/ACCESS.md`: the role and capability table (code source: `CAPABILITIES` in `backend/workspaces.py`).
+- `docs/SECURITY.md`, `docs/RUNBOOK.md`, `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`: security rules, operations and rollback, decisions (including open ones), and structure.
+- `specs/_TEMPLATE.md`: the spec template for a new piece of work.
