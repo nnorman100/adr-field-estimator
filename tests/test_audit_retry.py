@@ -207,7 +207,7 @@ def test_a_new_proposal_date_regenerates_the_saved_audit(context, budget, monkey
 def test_audit_photos_download_together_and_keep_their_order(monkeypatch):
     lock, active, peak = threading.Lock(), [0], [0]
 
-    def photo(uid, inspection_id, photo_id):
+    def photo(uid, inspection_id, photo_id, model=False):
         with lock:
             active[0] += 1
             peak[0] = max(peak[0], active[0])
@@ -215,7 +215,7 @@ def test_audit_photos_download_together_and_keep_their_order(monkeypatch):
         time.sleep(0.05 * (10 - int(photo_id)))
         with lock:
             active[0] -= 1
-        return None, photo_id.encode()
+        return {}, photo_id.encode()
 
     monkeypatch.setattr(bm, 'model_image', lambda raw: raw.decode())
     store = SimpleNamespace(photo=photo)
