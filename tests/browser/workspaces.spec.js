@@ -94,6 +94,7 @@ test('owner dashboard has no automatic blank inspection and fits phones', async 
   });
   await office.locator('select[name=status]').selectOption('disabled');
   await office.getByRole('button', { name: 'Save access' }).click();
+  await office.getByRole('button', { name: 'Yes, remove access' }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Office staff · disabled');
   expect(errors).toEqual([]);
 });

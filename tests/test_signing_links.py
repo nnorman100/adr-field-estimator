@@ -490,11 +490,9 @@ def test_owner_lists_an_estimators_pending_links_before_removing_access(api):
     [link] = listed.json()['links']
     created = store.db.records['_signing_links/' + sl.link_id(value)]
     assert link == dict(
-        inspection_id=ID,
         address=store.db.records['_workspace_jobs/' + ID]['address'],
         customer_name='Pat Homeowner',
         created_at=created['created_at'],
-        expires_at=created['expires'],
     )
     assert value not in listed.text and sl.link_id(value) not in listed.text
     # Listing changes nothing: the link is still pending and still signs.
@@ -517,7 +515,72 @@ def test_pending_link_listing_skips_expired_revoked_used_and_archived_links(api)
         stored.update(change)
         assert client.get(url).json() == {'links': []}, change
         stored.update(before)
-    store.db.records['_workspace_jobs/' + ID]['kind'] = 'archived_inspection'
+    store.db.records['_workspace_jobs/' + ID]['archived_at'] = '2026-11-01T00:00:00+00:00'
+    assert client.get(url).json() == {'links': []}
+
+
+@pytest.mark.parametrize('change', ['edit', 'device-signed', 'role-changed'])
+def test_pending_link_listing_skips_links_that_already_cannot_sign(api, change):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    value = token(mint(client, record))
+    url = '/api/companies/adr/team/estimator/signing-links'
+    current['uid'] = 'owner'
+    assert len(client.get(url).json()['links']) == 1
+    if change == 'edit':
+        current['uid'] = 'estimator'
+        changed = client.put(
+            '/api/inspections/' + ID,
+            json={'expected_revision': record['revision'], 'data': company_data('Changed property')},
+        )
+        assert changed.status_code == 200, changed.text
+    elif change == 'device-signed':
+        current['uid'] = 'estimator'
+        signed = client.post(
+            '/api/authorize',
+            json=dict(
+                inspection_id=ID,
+                expected_revision=record['revision'],
+                auth_id='ADR-AUTH-device123456',
+                proposal_hash=record['audit']['proposal_hash'],
+                signature_png=png(),
+                documents_confirmed=True,
+            ),
+        )
+        assert signed.status_code == 200, signed.text
+    else:
+        member = store.db.records['_memberships/estimator']
+        moved = client.put(
+            '/api/companies/adr/team/estimator',
+            json={'expected_version': member['version'], 'role': 'office', 'status': 'active'},
+        )
+        assert moved.status_code == 200, moved.text
+    # The record still reads pending until someone opens the link, but it is not listed.
+    assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'pending'
+    current['uid'] = 'owner'
+    assert client.get(url).json() == {'links': []}
+
+
+def test_pending_link_listing_skips_a_job_reassigned_away_from_the_links_estimator(api):
+    client, current, store = api
+    current['uid'] = 'owner'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    coordination = '/api/jobs/' + ID + '/coordination'
+    version = client.get(coordination).json()['version']
+    assigned = client.put(
+        coordination, json={'expected_version': version, 'assigned_estimator_uid': 'estimator'}
+    )
+    assert assigned.status_code == 200, assigned.text
+    current['uid'] = 'estimator'
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    mint(client, record)
+    url = '/api/companies/adr/team/estimator/signing-links'
+    current['uid'] = 'owner'
+    assert len(client.get(url).json()['links']) == 1
+    moved = client.put(coordination, json={'expected_version': version + 1})
+    assert moved.status_code == 200, moved.text
     assert client.get(url).json() == {'links': []}
 
 
