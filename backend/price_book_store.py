@@ -768,6 +768,12 @@ class PriceBookStore:
         )
         display = pin['rates'] if pin else book['rates']
         adr_book = adr_rates()
+        display_rates = {
+            'after_hours_job_charge': display['after_hours_job_charge'],
+            'sheet_labor_hourly': display['sheet_labor_hourly'],
+        }
+        if pin or not unset:
+            display_rates['standard_job_charges'] = price_display(display)['standard_job_charges']
         return {
             'pinned': None
             if not pin
@@ -788,10 +794,7 @@ class PriceBookStore:
             'sheet_rates': job['company_id'] == ADR_COMPANY_ID
             and display['after_hours_job_charge'] == adr_book['after_hours_job_charge']
             and display['sheet_labor_hourly'] == adr_book['sheet_labor_hourly'],
-            'display_rates': {
-                'after_hours_job_charge': display['after_hours_job_charge'],
-                'sheet_labor_hourly': display['sheet_labor_hourly'],
-            },
+            'display_rates': display_rates,
             'pending_note': None
             if pin
             else (

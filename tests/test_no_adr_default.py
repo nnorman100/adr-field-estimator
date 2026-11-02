@@ -618,6 +618,45 @@ def test_adr_keeps_the_sheet_sentence_on_a_draft_pinned_before_a_newer_book(api,
     assert view['sheet_rates'] is True
 
 
+def test_adr_draft_pinned_before_a_newer_book_keeps_its_own_job_charges_total(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    current['uid'] = 'owner'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    rates = adr_rates()
+    db.records['_job_pricing/' + ID] = dict(
+        inspection_id=ID,
+        company_id='adr',
+        pin_version=1,
+        version_id='seed',
+        sequence=0,
+        rates=rates,
+        content_sha256=price_books.content_hash(rates),
+        calculation_version=price_books.CALCULATION_VERSION,
+        priced_at='2026',
+    )
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={'rates': {**rates, 'emergency_call': '150.00'}, 'change_reason': 'A newer book'},
+    ).json()
+    published = client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': preview['preview_id'], 'expected_generation': preview['generation']},
+    )
+    assert published.status_code == 200, published.text
+    assert client.get('/api/session').json()['price_display']['standard_job_charges'] == '1,196.25'
+    view = client.get(f'/api/inspections/{ID}/pricing').json()
+    assert view['display_rates']['standard_job_charges'] == '1,180.20'
+
+
+def test_a_job_on_a_company_with_no_prices_has_no_job_charges_total(api, enabled):
+    client, current, _ = api
+    other_job(client, current)
+    view = client.get(f'/api/inspections/{ID}/pricing').json()
+    assert 'standard_job_charges' not in view['display_rates']
+
+
 def test_another_company_never_gets_the_sheet_sentence_signal(api, enabled):
     client, current, _ = api
     publish_own(client, current)

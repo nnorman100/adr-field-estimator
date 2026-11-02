@@ -1661,7 +1661,7 @@ function renderWalkthroughEdits() {
   }
 }
 // The summary says whether this job still uses the five standard charges at their populated
-// quantities. The server prices every charge and supplies the signed-in company's total.
+// quantities. The server prices every charge and supplies the total from this job's saved rates.
 function renderJobChargesSummary() {
   const data = state.draft?.data,
     defaults = emptyData();
@@ -1670,10 +1670,7 @@ function renderJobChargesSummary() {
     ['emergency_calls', 'monitoring_hours', 'haul_loads', 'air_scrubbers', 'hepa_filters'].every(
       (key) => Number(data[key]) === defaults[key],
     );
-  // A draft priced from a published book may differ from the company total, so none is claimed.
-  const total = window.Prices?.usesCustomRates?.()
-    ? null
-    : state.session?.price_display?.standard_job_charges;
+  const total = window.Prices?.jobChargesTotal?.();
   $('jobChargesSummary').textContent = !total
     ? sheetQuantities
       ? '· sheet quantities'

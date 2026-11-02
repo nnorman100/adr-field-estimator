@@ -63,3 +63,35 @@ test('price groups and after-hours wording come from the company prices', () => 
   };
   assert.match(Prices.afterHoursSentence(), /\$250 job charge.*\$55\.00\/hr/);
 });
+
+test('the job-charges total comes from the shown job, then the company', async () => {
+  const element = () => ({ replaceChildren() {}, append() {} });
+  const elements = new Map();
+  const view = { display_rates: { standard_job_charges: '1,180.20' } };
+  context.$ = (id) => {
+    if (!elements.has(id)) elements.set(id, element());
+    return elements.get(id);
+  };
+  context.document = { getElementById: context.$ };
+  context.navigator = { onLine: true };
+  context.jsonApi = async () => view;
+  context.state = {
+    user: { uid: 'u' },
+    draft: { inspection_id: 'job-1' },
+    session: {
+      company_id: 'adr',
+      price_books_enabled: true,
+      workspaces_enabled: true,
+      price_display: { standard_job_charges: '1,196.25' },
+    },
+  };
+  assert.equal(Prices.jobChargesTotal(), '1,196.25');
+  await Prices.noteJob();
+  assert.equal(Prices.jobChargesTotal(), '1,180.20');
+  context.state.draft = { inspection_id: 'job-2' };
+  assert.equal(Prices.jobChargesTotal(), '1,196.25');
+  context.state.draft = { inspection_id: 'job-1' };
+  view.display_rates = { after_hours_job_charge: '', sheet_labor_hourly: '' };
+  await Prices.noteJob();
+  assert.equal(Prices.jobChargesTotal(), undefined);
+});

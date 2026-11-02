@@ -52,8 +52,10 @@
   function enabled() {
     return !!(state?.session?.price_books_enabled && state?.session?.workspaces_enabled);
   }
-  function usesCustomRates() {
-    return !!(shown && shown.inspectionId === state?.draft?.inspection_id && shown.sequence > 0);
+  function jobChargesTotal() {
+    return shown && shown.inspectionId === state?.draft?.inspection_id
+      ? shown.standardJobCharges
+      : state?.session?.price_display?.standard_job_charges;
   }
   function dom() {
     return typeof document !== 'undefined' && typeof document.getElementById === 'function';
@@ -105,7 +107,7 @@
         state.draft?.inspection_id !== id
       )
         return;
-      shown = { inspectionId: id, sequence: view.pinned?.sequence || 0 };
+      shown = { inspectionId: id, standardJobCharges: view.display_rates?.standard_job_charges };
       syncNotice();
       $('jobPricing').hidden = false;
       $('jobPricingStatus').textContent = view.pinned
@@ -534,7 +536,7 @@
     grouped,
     afterHoursSentence,
     enabled,
-    usesCustomRates,
+    jobChargesTotal,
     noteJob,
     open,
     openSupport,
