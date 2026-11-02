@@ -8,6 +8,6 @@ firebase-admin>=6.9.0,<8
 google-cloud-firestore>=2.21.0,<3
 google-cloud-storage>=3.17.1,<4
 Pillow>=11.0,<14
-websockets>=14,<16
+websockets>=17.3,<18
 tzdata>=2026.6
 qrcode==8.2
