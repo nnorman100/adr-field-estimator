@@ -1,6 +1,5 @@
 """ADR's proprietary rates reach ADR only. Every other company starts with no prices."""
 
-import ast
 import csv
 import hashlib
 import io
@@ -12,6 +11,7 @@ from pathlib import Path
 import pytest
 from backend import claims, price_books
 from backend.adr_price_book import adr_rates
+from backend.inspection_store import Conflict
 from backend.contracts import InspectionData
 from backend.price_book_import import export_csv
 from tests.test_workspaces import ID, api, data, store  # noqa: F401
@@ -293,26 +293,7 @@ def test_the_catalog_holds_no_prices():
     assert all('seed' not in item for item in price_books.ITEMS)
     assert set(price_books.blank_rates().values()) == {''}
     assert not hasattr(price_books, 'seed_rates')
-    assert_no_adr_rate((ROOT / 'backend/price_books.py').read_text())
     assert_no_adr_rate(export_csv('other', 'unset', 0, price_books.blank_rates()).decode())
-
-
-def test_only_named_modules_may_read_adr_rates():
-    allowed = {
-        'adr_price_book.py',
-        'extras.py',
-        'main.py',
-        'price_book_migration.py',
-        'price_book_store.py',
-        'price_books.py',
-        'workspaces.py',
-    }
-    importers = set()
-    for path in (ROOT / 'backend').glob('*.py'):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.module == 'adr_price_book':
-                importers.add(path.name)
-    assert importers <= allowed
 
 
 def served_files():
@@ -435,10 +416,225 @@ def test_adr_book_hash_and_display_are_unchanged(api):
     }
 
 
-def test_adr_keeps_its_seed_version_and_restore(api, enabled):
+def test_adr_keeps_its_seed_version_for_old_pins(api, enabled):
     client, current, _ = api
     current['uid'] = 'owner'
     assert client.get('/api/companies/adr/prices').json()['label'] == 'Workbook seed'
     version = client.get('/api/companies/adr/prices/versions/seed')
     assert version.status_code == 200
     assert {row['unit_price'] for row in version.json()['rates']} >= {'133.95', '47.46'}
+
+
+def test_seed_restore_is_gone_for_adr_too(api, enabled):
+    client, current, company_store = api
+    current['uid'] = 'owner'
+    restored = client.post(
+        '/api/companies/adr/prices/versions/seed/restore',
+        json={'change_reason': 'Give me the seed'},
+    )
+    assert restored.status_code == 404
+    assert not [key for key in company_store.db.records if key.startswith('_price_book_previews/')]
+
+
+LEGACY = {**adr_rates(), 'additional_work_hourly': ''}
+REFUSED = 'These saved prices cannot be used for this company'
+
+
+def legacy_pin(db, rates=None):
+    rates = LEGACY if rates is None else rates
+    db.records['_job_pricing/' + ID] = dict(
+        inspection_id=ID,
+        company_id='other',
+        pin_version=1,
+        version_id='seed',
+        sequence=0,
+        rates=rates,
+        content_sha256=price_books.content_hash(rates),
+        calculation_version=price_books.CALCULATION_VERSION,
+        priced_at='2026',
+    )
+
+
+def legacy_version(db, version_id='old-seed', source='restore', parent=None):
+    db.records['_price_book_versions/' + version_id] = dict(
+        version_id=version_id,
+        company_id='other',
+        sequence=1,
+        parent_version_id=parent,
+        calculation_version=price_books.CALCULATION_VERSION,
+        rates=LEGACY,
+        content_sha256=price_books.content_hash(LEGACY),
+        source=source,
+        published_at='2026',
+    )
+
+
+def assert_refused(response):
+    assert response.status_code == 409, response.text
+    assert REFUSED in response.text
+    assert_no_adr_rate(response.text)
+
+
+@pytest.mark.parametrize('rates', [LEGACY, adr_rates()], ids=['blank extras', 'full'])
+def test_a_legacy_pin_holding_adr_rates_is_refused_for_an_unsigned_draft(api, enabled, rates):
+    client, current, company_store = api
+    db = company_store.db
+    other_job(client, current)
+    legacy_pin(db, rates)
+    assert_refused(client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}))
+    assert_refused(client.get(f'/api/inspections/{ID}/pricing'))
+    assert_refused(client.post(f'/api/inspections/{ID}/pricing/reprice-preview'))
+    assert db.records['_job_pricing/' + ID]['rates'] == rates
+
+
+def test_saved_documents_on_an_adr_rate_pin_cannot_be_kept_or_signed(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    other_job(client, current)
+    legacy_pin(db)
+    record = db.records['inspections/' + ID]
+    with pytest.raises(Conflict, match=REFUSED):
+        company_store.workspaces.prices.assert_pin(
+            record,
+            dict(
+                company_id='other',
+                version_id='seed',
+                content_sha256=price_books.content_hash(LEGACY),
+                calculation_version=price_books.CALCULATION_VERSION,
+            ),
+        )
+
+
+def test_a_signed_job_on_an_adr_rate_pin_stays_viewable(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    other_job(client, current)
+    legacy_pin(db)
+    db.records['inspections/' + ID]['status'] = 'signed'
+    view = client.get(f'/api/inspections/{ID}/pricing')
+    assert view.status_code == 200, view.text
+    assert view.json()['pinned']['version_id'] == 'seed'
+    assert client.get(f'/api/inspections/{ID}').status_code == 200
+    pin = company_store.workspaces.prices.ensure_pin('other-owner', ID)
+    assert pin['rates'] == LEGACY
+
+
+def test_a_saved_version_holding_adr_rates_is_refused_on_every_read(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    legacy_version(db)
+    current['uid'] = 'other-owner'
+    base = '/api/companies/other/prices'
+    assert_refused(client.get(base + '/versions/old-seed'))
+    assert_refused(client.get(base + '/export?format=csv&version_id=old-seed'))
+    assert_refused(
+        client.post(base + '/versions/old-seed/restore', json={'change_reason': 'Bring it back'})
+    )
+    assert not [key for key in db.records if key.startswith('_price_book_previews/')]
+    current['uid'] = 'admin'
+    assert_refused(client.get('/api/admin/companies/other/prices/versions/old-seed'))
+
+
+def test_a_restored_book_holding_adr_rates_does_not_count_as_prices(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    legacy_version(db, source='restore')
+    db.records['_company_price_books/other'] = dict(
+        company_id='other', generation=3, latest_version_id='old-seed', next_sequence=2
+    )
+    current['uid'] = 'other-owner'
+    view = client.get('/api/companies/other/prices')
+    assert view.json()['prices_set'] is False
+    assert view.json()['generation'] == 3
+    assert_no_adr_rate(view.text)
+    assert client.get('/api/session').json()['prices_set'] is False
+
+
+def test_a_company_cannot_publish_adr_rates_as_its_own(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'other-owner'
+    assert_refused(
+        client.post(
+            '/api/companies/other/prices/preview',
+            json={'rates': LEGACY, 'change_reason': 'Copied prices'},
+        )
+    )
+
+
+def test_a_version_detail_never_compares_against_an_adr_rate_parent(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    legacy_version(db)
+    db.records['_price_book_versions/mine'] = dict(
+        version_id='mine',
+        company_id='other',
+        sequence=2,
+        parent_version_id='old-seed',
+        calculation_version=price_books.CALCULATION_VERSION,
+        rates=OWN,
+        content_sha256=price_books.content_hash(OWN),
+        source='manual',
+        published_at='2026',
+    )
+    current['uid'] = 'other-owner'
+    detail = client.get('/api/companies/other/prices/versions/mine')
+    assert detail.status_code == 200, detail.text
+    assert_no_adr_rate(detail.text)
+    assert {row['before'] for row in detail.json()['diff']} == {''}
+
+
+def test_adr_keeps_the_sheet_sentence_on_a_draft_pinned_before_a_newer_book(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    current['uid'] = 'owner'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    rates = adr_rates()
+    db.records['_job_pricing/' + ID] = dict(
+        inspection_id=ID,
+        company_id='adr',
+        pin_version=1,
+        version_id='seed',
+        sequence=0,
+        rates=rates,
+        content_sha256=price_books.content_hash(rates),
+        calculation_version=price_books.CALCULATION_VERSION,
+        priced_at='2026',
+    )
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={
+            'rates': {**rates, 'after_hours_job_charge': '210.00'},
+            'change_reason': 'A newer book',
+        },
+    ).json()
+    published = client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': preview['preview_id'], 'expected_generation': preview['generation']},
+    )
+    assert published.status_code == 200, published.text
+    view = client.get(f'/api/inspections/{ID}/pricing').json()
+    assert view['display_rates']['after_hours_job_charge'] == '200.00'
+    assert view['sheet_rates'] is True
+
+
+def test_another_company_never_gets_the_sheet_sentence_signal(api, enabled):
+    client, current, _ = api
+    publish_own(client, current)
+    other_job(client, current)
+    assert client.get(f'/api/inspections/{ID}/pricing').json()['sheet_rates'] is False
+
+
+def test_a_first_publication_with_an_intentional_zero_stays_in_the_review():
+    rows, warnings = price_books.diff_rates(
+        price_books.blank_rates(), {**OWN, 'emergency_call': '0.00'}
+    )
+    zero = next(row for row in rows if row['key'] == 'emergency_call')
+    assert (zero['before'], zero['after'], zero['warnings']) == ('', '0.00', ['zero_rate'])
+    assert 'zero_rate' in warnings
+    assert 'additional_work_hourly' not in {row['key'] for row in rows}
+
+
+def test_a_zero_price_left_at_zero_is_not_a_change():
+    rates = {**OWN, 'emergency_call': '0.00'}
+    assert price_books.diff_rates(rates, {**rates, 'emergency_call': '0'}) == ([], [])

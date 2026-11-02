@@ -11,7 +11,7 @@ from uuid import uuid4
 from google.cloud import firestore
 
 try:
-    from .adr_price_book import ADR_COMPANY_ID, adr_rates
+    from .adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from .claims import price_scope, proposal_range
     from .cloud_log import event
     from .contracts import InspectionData
@@ -36,7 +36,7 @@ try:
     )
     from .workspaces import AccessDenied
 except ImportError:
-    from adr_price_book import ADR_COMPANY_ID, adr_rates
+    from adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from claims import price_scope, proposal_range
     from cloud_log import event
     from contracts import InspectionData
@@ -85,6 +85,11 @@ def _not_set_message(role):
             'Set your company prices before your first estimate. Open Company prices from the menu.'
         )
     return 'Set your company prices before your first estimate. Contact support to turn on Company prices.'
+
+
+def _refuse_adr_rates(company_id, rates):
+    if foreign_adr_rates(company_id, rates):
+        raise Conflict('These saved prices cannot be used for this company. Contact support.')
 
 
 def _is_unset(book):
@@ -149,8 +154,8 @@ class PriceBookStore:
                 or version.get('content_sha256') != content_hash(version['rates'])
             ):
                 raise Conflict('This company price book cannot be used. Contact support.')
-            # A seeded book outside ADR would be ADR's rates, so it does not count as prices.
-            if version.get('source') != 'seed' or company_id == ADR_COMPANY_ID:
+            # ADR's rates held by another company do not count as that company's prices.
+            if not foreign_adr_rates(company_id, version['rates']):
                 return {**version, 'generation': head['generation']}
             generation = head['generation']
         if company_id != ADR_COMPANY_ID:
@@ -297,6 +302,7 @@ class PriceBookStore:
         if 'prices_manage' not in actor['capabilities']:
             raise AccessDenied('Only the company owner can change prices.')
         rates = self._normalize(company, payload['rates'], payload.get('acknowledgements') or [])
+        _refuse_adr_rates(company['company_id'], rates)
         reason = reason_text(payload.get('change_reason', ''))
         book = self.effective(company)
         rows, warnings = diff_rates(book['rates'], rates)
@@ -395,6 +401,7 @@ class PriceBookStore:
             if book['generation'] != head['generation']:
                 raise Conflict('Prices changed. Review the new published values before publishing.')
             rates = preview['rates']
+            _refuse_adr_rates(company_id, rates)
             # Repeat the guardrails inside the commit, against the rates stored at preview time.
             rates = normalize_rates(
                 rates,
@@ -555,6 +562,7 @@ class PriceBookStore:
         version = self._version(version_id)
         if not version or version.get('company_id') != company_id:
             raise LookupError('Price version not found.')
+        _refuse_adr_rates(company_id, version['rates'])
         return self._version_detail(version, manage)
 
     def _version_detail(self, version, manage):
@@ -562,11 +570,9 @@ class PriceBookStore:
         if version.get('parent_version_id'):
             parent = self._version(version['parent_version_id'])
         company_id = version['company_id']
-        before = (
-            parent['rates']
-            if parent
-            else (adr_rates() if company_id == ADR_COMPANY_ID else blank_rates())
-        )
+        before = adr_rates() if company_id == ADR_COMPANY_ID else blank_rates()
+        if parent and not foreign_adr_rates(company_id, parent['rates']):
+            before = parent['rates']
         rows, warnings = diff_rates(before, version['rates'])
         detail = {
             'version_id': version['version_id'],
@@ -630,6 +636,7 @@ class PriceBookStore:
             version = self._version(version_id)
             if not version or version.get('company_id') != company_id:
                 raise LookupError('Price version not found.')
+            _refuse_adr_rates(company_id, version['rates'])
             book = version
             generation = self._head(company_id)['generation'] if self._head(company_id) else 0
             # Historical exports are viewable. Restoring one still requires a current-base preview.
@@ -716,6 +723,7 @@ class PriceBookStore:
             or content_hash(pin['rates']) != pin.get('content_sha256')
         ):
             raise Conflict("This draft's saved prices are missing. Contact support.")
+        _refuse_adr_rates(company_id, pin['rates'])
         return {
             'company_id': company_id,
             'version_id': pin['version_id'],
@@ -748,6 +756,8 @@ class PriceBookStore:
         company = self.ws.read('_companies', job['company_id'])
         book = self.effective(company)
         pin = self._pin(record['inspection_id'])
+        if pin and record.get('status') != 'signed':
+            _refuse_adr_rates(job['company_id'], pin['rates'])
         manage = actor['role'] == 'owner' and record.get('status') != 'signed'
         unset = _is_unset(book)
         newer = bool(
@@ -757,6 +767,7 @@ class PriceBookStore:
             and book['content_sha256'] != pin.get('content_sha256')
         )
         display = pin['rates'] if pin else book['rates']
+        adr_book = adr_rates()
         return {
             'pinned': None
             if not pin
@@ -774,6 +785,9 @@ class PriceBookStore:
             },
             'newer_available': newer,
             'can_reprice': bool(manage and newer),
+            'sheet_rates': job['company_id'] == ADR_COMPANY_ID
+            and display['after_hours_job_charge'] == adr_book['after_hours_job_charge']
+            and display['sheet_labor_hourly'] == adr_book['sheet_labor_hourly'],
             'display_rates': {
                 'after_hours_job_charge': display['after_hours_job_charge'],
                 'sheet_labor_hourly': display['sheet_labor_hourly'],
@@ -797,6 +811,7 @@ class PriceBookStore:
         pin = self._pin(record['inspection_id'])
         if not pin:
             raise Conflict('This draft has no saved prices yet. Finish and review it first.')
+        _refuse_adr_rates(job['company_id'], pin['rates'])
         company = self.ws.read('_companies', job['company_id'])
         book = self.effective(company)
         if _is_unset(book):
@@ -900,13 +915,10 @@ class PriceBookStore:
         """A preview of one saved version. Publishing it still needs the owner to confirm."""
         self._require()
         self.ws.company_actor(uid, company_id, manage=True)
-        if version_id == 'seed':
-            rates = _adr_starting_rates(self.ws.read('_companies', company_id))
-        else:
-            version = self._version(version_id)
-            if not version or version.get('company_id') != company_id:
-                raise LookupError('Price version not found.')
-            rates = version['rates']
+        version = self._version(version_id)
+        if not version or version.get('company_id') != company_id:
+            raise LookupError('Price version not found.')
+        rates = version['rates']
         acknowledgements = [
             key
             for key in ('emergency_call', 'after_hours_job_charge')

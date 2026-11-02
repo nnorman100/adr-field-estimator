@@ -66,24 +66,6 @@ def _legacy_audit(inspection):
     return bool(audit) and not saved_basis(audit)
 
 
-def adr_rates_outside_adr(db):
-    """Counts of other companies' saved books and job pins that hold ADR's rates. No values."""
-    ours = {key: value for key, value in adr_rates().items() if key != 'additional_work_hourly'}
-
-    def holding(collection):
-        found = 0
-        for snapshot in db.collection(collection).stream():
-            row = snapshot.to_dict() or {}
-            rates = row.get('rates')
-            if row.get('company_id') == ADR_COMPANY_ID or not isinstance(rates, dict):
-                continue
-            if {key: rates.get(key) for key in ours} == ours:
-                found += 1
-        return found
-
-    return {'books': holding(VERSIONS), 'pins': holding(PINS)}
-
-
 def build_plan(db, company_ids):
     if not company_ids:
         raise ValueError('Name at least one company.')
@@ -189,7 +171,6 @@ def build_plan(db, company_ids):
         'pins': pins,
         'ambiguous': ambiguous,
         'signed_left_untouched': signed,
-        'adr_rates_outside_adr': adr_rates_outside_adr(db),
     }
 
 
@@ -204,7 +185,6 @@ def summary(plan):
         'audit_bases_to_record': sum(1 for row in plan['pins'] if row.get('audit_basis')),
         'ambiguous_drafts': len(plan['ambiguous']),
         'signed_left_untouched': plan['signed_left_untouched'],
-        'adr_rates_outside_adr': plan['adr_rates_outside_adr'],
         'content_hashes': sorted(
             {row['content_sha256'] for row in plan['companies'] if row.get('content_sha256')}
         ),

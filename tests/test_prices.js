@@ -40,4 +40,26 @@ test('price groups and after-hours wording come from the company prices', () => 
     Prices.afterHoursSentence({ after_hours_job_charge: '250.00', sheet_labor_hourly: '55.00' }),
     /\$250\.00/,
   );
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '210.00', sheet_labor_hourly: '50.00' } },
+  };
+  assert.equal(
+    Prices.afterHoursSentence(
+      { after_hours_job_charge: '200.00', sheet_labor_hourly: '47.46' },
+      true,
+    ),
+    adr,
+  );
+  assert.match(
+    Prices.afterHoursSentence({ after_hours_job_charge: '200.00', sheet_labor_hourly: '47.46' }),
+    /\$200\.00 job charge.*the job's \$47\.46/,
+  );
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '250.50', sheet_labor_hourly: '52.50' } },
+  };
+  assert.match(Prices.afterHoursSentence(), /\$250\.50 job charge.*\$52\.50\/hr/);
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '250.00', sheet_labor_hourly: '55.00' } },
+  };
+  assert.match(Prices.afterHoursSentence(), /\$250 job charge.*\$55\.00\/hr/);
 });

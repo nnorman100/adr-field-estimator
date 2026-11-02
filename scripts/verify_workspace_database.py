@@ -15,7 +15,7 @@ from scripts.verify_common import EVIDENCE
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import InspectionData, AIResult
 from backend.claims import make_documents
-from backend.price_books import KEYS
+from backend.adr_price_book import adr_rates
 from backend.workspaces import (
     AccessDenied,
     CoordinationUpdate,
@@ -167,7 +167,7 @@ def main():
                 summary='Synthetic database verification only.', suggestions=[], unpriced_work=[]
             ),
             w.snapshot(users['estimator']),
-            rates={key: '1.00' for key in KEYS},
+            rates=adr_rates(),
         )
         assert (
             documents['xactimate_total'] == 1775

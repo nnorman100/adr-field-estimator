@@ -8,6 +8,6 @@ Each company sets its own prices. DryScope has no default price list, and one co
 - **Rates live on the server as data:** a published book is stored per company, and each job pins the book it was first priced from. A published book applies to new pricing from the server's publication time. An existing draft keeps its saved rates until the owner reviews and applies new prices to that one draft. Signed records never change.
 - **Formulas, waste and range factors, default quantities and mandatory wording stay in code** (`backend/claims.py`) for now, under `CALCULATION_VERSION`.
 
-ADR's rates are ADR's proprietary data. They sit in `backend/adr_price_book.py` and ADR's own price-book record, are used only for company `adr`, and their source notes are in [ADR pricing source](adr-pricing-source.md). `scripts/migrate_price_books.py` writes them as ADR's book and refuses any other company; see [ADR price book](../RELEASES.md#adr-price-book).
+ADR's rates are ADR's proprietary data. They sit in `backend/adr_price_book.py` and ADR's own price-book record, are used only for company `adr`, and their source notes are in [ADR pricing source](adr-pricing-source.md). `scripts/migrate_price_books.py` writes them as ADR's book and refuses any other company; see [ADR price book](../RELEASES.md#adr-price-book). An older book or unsigned draft in another company that holds ADR's rates is refused rather than used; signed records stay viewable.
 
 For pricing work outside the catalog and its treatment in the estimate range, see [Priced additional work](priced-extras.md).

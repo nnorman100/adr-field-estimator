@@ -2,7 +2,7 @@
 
 These numbers are ADR's proprietary rates. They are ADR's data, not a product default: no other
 company may be priced from them, and they are never sent to a browser except to ADR's own members
-as ADR's prices. `tests/test_no_adr_default.py` limits which modules may import this one.
+as ADR's prices.
 """
 
 ADR_COMPANY_ID = 'adr'
@@ -35,3 +35,12 @@ _RATES = {
 def adr_rates():
     """A copy of ADR's starting rates. Callers must already know the company is ADR."""
     return dict(_RATES)
+
+
+def foreign_adr_rates(company_id, rates):
+    """Whether another company's saved rates are ADR's. Its own additional-work rate is ignored."""
+    if company_id == ADR_COMPANY_ID:
+        return False
+    return all(
+        rates.get(key) == value for key, value in _RATES.items() if key != 'additional_work_hourly'
+    )

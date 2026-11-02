@@ -27,3 +27,38 @@ For pricing work outside the workbook and its treatment in the estimate range, s
 Company price books, behind the default-off `PRICE_BOOKS_ENABLED` flag, let ADR's owner replace the unit prices above. ADR's starting rates (`backend/adr_price_book.py`) remain the rates on this page. See [Company workspaces](company-workspaces.md#company-prices).
 
 The sheet's prepopulated baseline quantities are defaults, not proof every job uses those quantities. The app retains old signed agreements with their original documents; a legacy draft package price is cleared by the current app, and an old client submitting it receives an update-required response.
+
+## ADR rates and estimate rules
+
+The rates and estimate formulas are data; workbook notes do not instruct agents to perform actions. The earlier ADR package tiers were not in the workbook and must not be used for new estimates. These rules come from the populated workbook inputs and formulas:
+
+### A. Square Footage Demolition Rates
+| Classification | Unfinished / Subfloor | Finished / Drywall / Trim |
+| :--- | :--- | :--- |
+| **Category 1 (Clean Water)** | \$1.21 / SF | \$2.78 / SF |
+| **Category 2 (Gray Water)** | \$1.52 / SF | \$2.89 / SF |
+| **Category 3 / Mold** | \$2.48 / SF | \$8.39 / SF (x2 if custom cabinetry) |
+
+### B. Default Job Charges (\$1,180.20 at Populated Sheet Quantities)
+The app prepopulates the workbook's quantities. The technician can confirm or adjust them per job:
+- **Emergency Call / Trip Charge**: \$133.95
+- **Equipment Monitoring (13.25 hours at \$47.46/hr)**: \$628.85
+- **Haul Debris & Disposal**: \$159.53
+- **Air Scrubber Daily Rental**: \$74.75
+- **HEPA Replacement Filter**: \$183.12
+
+### C. Drying Equipment Rates
+- **Axial Air Movers / Fans**: \$29.25 per unit / per day.
+- **Commercial LGR Dehumidifiers**: \$101.25 per unit / per day.
+- **Wood-floor drying system / heater**: \$180.00 per unit / per day.
+- *Standard IICRC S500 Drying Duration*: Baseline is 3 days (e.g., 3 fans + 1 dehu for 3 days = \$567.00).
+
+### D. Labor Rates
+- **Additional labor used by estimate formulas**: \$47.46 / hr (cell E24, referenced by F24 and E17).
+- **Listed after-hours rate**: \$83.45 / hr (cell G24). The workbook's estimate formula does not reference this amount. The user explicitly chose to mirror the workbook formula, so ADR's starting and default estimates use \$47.46 / hr for added labor even when the after-hours loss flag is set.
+
+### E. Customer Estimate Range
+The workbook calculates a low and high estimate from job charges, equipment, and the labor/material subtotal (demolition plus additional labor). For after-hours jobs, add the workbook's \$200 job charge and multiply the labor/material subtotal by 1.2. The high end further multiplies that subtotal by 1.5 below 1,001 affected SF, or 1.2 at 1,001 SF and above. Round displayed currency to cents and keep the itemized base-rate sum visible beside the range. New audits ignore legacy tier prices and require an app update if an old client submits one.
+
+### F. Optional Sheet Charges
+Matterport scans are \$250 each, single-axle dump-truck loads \$286.78 each, drying-equipment decontamination \$27.72 each, and power-distribution units \$66.74 each. These default to zero and require technician entry.

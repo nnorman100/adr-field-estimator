@@ -22,7 +22,7 @@
   function companyDisplay() {
     return typeof state === 'undefined' ? null : state?.session?.price_display || null;
   }
-  function afterHoursSentence(rates) {
+  function afterHoursSentence(rates, sheetRates) {
     const own = companyDisplay(),
       shown = rates || own,
       charge = shown?.after_hours_job_charge,
@@ -30,14 +30,15 @@
     if (!charge || !labor) return AFTER_HOURS_DEFAULT;
     const money = (value) => Number(value).toFixed(2);
     if (
-      money(charge) === money(own?.after_hours_job_charge) &&
-      money(labor) === money(own?.sheet_labor_hourly)
+      sheetRates ||
+      (money(charge) === money(own?.after_hours_job_charge) &&
+        money(labor) === money(own?.sheet_labor_hourly))
     )
       return (
         'After-hours loss: $' +
-        String(Number(charge)) +
+        money(charge).replace(/\.00$/, '') +
         " job charge and 20% labor/material adjustment. Added labor uses the sheet's $" +
-        String(Number(labor)) +
+        money(labor) +
         '/hr estimate formula.'
       );
     return (
@@ -121,7 +122,7 @@
           ),
         );
       if ($('afterHoursLabel'))
-        $('afterHoursLabel').textContent = afterHoursSentence(view.display_rates);
+        $('afterHoursLabel').textContent = afterHoursSentence(view.display_rates, view.sheet_rates);
       if (typeof renderJobChargesSummary === 'function') renderJobChargesSummary();
     } catch (e) {
       if (mine !== jobSeq) return;

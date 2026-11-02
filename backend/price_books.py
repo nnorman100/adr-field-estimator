@@ -344,7 +344,7 @@ def diff_rates(before, after):
     warnings = []
     for item in ITEMS:
         old, new = _amount(before[item['key']]), _amount(after[item['key']])
-        if old == new:
+        if old == new and (before[item['key']] != '' or after[item['key']] == ''):
             continue
         if old == 0:
             percent = None

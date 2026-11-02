@@ -84,23 +84,6 @@ def test_only_adr_can_be_given_a_starting_book(named):
         planned_rates(store.db.records['_companies/other'])
 
 
-def test_dry_run_counts_adr_rates_held_outside_adr_without_showing_them():
-    store = company()
-    plan = build_plan(store.db, ['adr'])
-    assert summary(plan)['adr_rates_outside_adr'] == {'books': 0, 'pins': 0}
-    store.db.records['_job_pricing/old'] = dict(company_id='other', rates=adr_rates())
-    store.db.records['_price_book_versions/old'] = dict(
-        company_id='other', rates={**adr_rates(), 'additional_work_hourly': ''}
-    )
-    store.db.records['_price_book_versions/own'] = dict(
-        company_id='other', rates={**adr_rates(), 'emergency_call': '99.00'}
-    )
-    assert summary(build_plan(store.db, ['adr']))['adr_rates_outside_adr'] == {
-        'books': 1,
-        'pins': 1,
-    }
-
-
 @pytest.mark.parametrize('change', ['signed', 'association', 'rate'])
 def test_apply_rechecks_current_state_before_writing(change):
     store = company()

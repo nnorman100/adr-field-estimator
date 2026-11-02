@@ -51,11 +51,11 @@ Before promoting a backend, complete the
 
 ### ADR price book
 
-ADR's rates are ADR's own price-book data, and no other company falls back to them. ADR already holds its book from the 2026-10-26 setup row below, so this check should find nothing to write. Run it after the release that removes the default, with the owner's go for any `--apply`. It never reads or prints prices for another company, only counts.
+ADR's rates are ADR's own price-book data, and no other company falls back to them. ADR already holds its book from the 2026-10-26 setup row below, so this check should find nothing to write. Run it after the release that removes the default, with the owner's go for any `--apply`. It prints only counts and content hashes, and writes only ADR's records.
 
 1. Dry run, which writes nothing:
    `python scripts/migrate_price_books.py --company adr`
-2. Expect `books_unchanged: 1`, `books_to_create: 0`, `ambiguous_drafts: 0` and `source_records_preserved` true. `adr_rates_outside_adr` counts other companies' saved books and job pins holding ADR's rates: report any non-zero count to the owner (the suspended test company's archived drafts are the only possible source). `pins_to_create` counts ADR drafts started since the last run, which would otherwise pin at their first pricing.
+2. Expect `books_unchanged: 1`, `books_to_create: 0`, `ambiguous_drafts: 0` and `source_records_preserved` true. `pins_to_create` counts ADR drafts started since the last run, which would otherwise pin at their first pricing.
 3. Only if the owner approves writing: `python scripts/migrate_price_books.py --company adr --apply --manifest <path outside the repo>`. Repeat the dry run; it must report nothing left to write. A second apply changes nothing.
 4. Append a row with the source commit and these counts. No deploy is involved.
 
