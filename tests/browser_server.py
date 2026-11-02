@@ -20,6 +20,7 @@ from fastapi import Request, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
 from backend import places, ai_features, monitoring_store, price_books, signing_links
+from backend.adr_price_book import adr_rates
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
@@ -302,7 +303,7 @@ async def workspaces_fixture(request: Request):
     global store, accounts
     body = await request.json()
     ai_features.AI_FEATURES = frozenset(body.get('ai_features', []))
-    # Absent means off, so other specs keep the settings rate field and the seed prices.
+    # Absent means off, so other specs keep the settings rate field and ADR's starting prices.
     price_books.set_enabled(bool(body.get('price_books')) if body.get('enabled') else False)
     if not body.get('enabled'):
         store = legacy_store
@@ -337,6 +338,36 @@ async def workspaces_fixture(request: Request):
             created_at='2026',
             updated_at='2026',
             region='CA',
+        )
+    # A company has no prices until it publishes some, so the fixture's other company has its own.
+    if body.get('other_prices', True):
+        rates = {key: '12.34' for key in price_books.KEYS}
+        stamp = '2026-01-01T00:00:00+00:00'
+        store.db.records['_price_book_versions/other-own-prices'] = dict(
+            version_id='other-own-prices',
+            company_id='other',
+            sequence=1,
+            parent_version_id=None,
+            catalog_version=price_books.CATALOG_VERSION,
+            calculation_version=price_books.CALCULATION_VERSION,
+            currency=price_books.CURRENCY,
+            rates=rates,
+            content_sha256=price_books.content_hash(rates),
+            published_by_uid='test-owner-ws-other',
+            published_at=stamp,
+            effective_from=stamp,
+            source='manual',
+            change_reason='Other company prices',
+            import_digest=None,
+        )
+        store.db.records['_company_price_books/other'] = dict(
+            company_id='other',
+            schema_version=1,
+            generation=1,
+            latest_version_id='other-own-prices',
+            next_sequence=2,
+            started_at=stamp,
+            updated_at=stamp,
         )
     for role in ('owner', 'estimator', 'office', 'other'):
         uid = 'test-owner-ws-' + role
@@ -394,6 +425,7 @@ async def drying_watch_fixture(request: Request):
         [],
         AIResult(summary='Confirmed', suggestions=[], unpriced_work=[]),
         store.workspaces.snapshot(uid),
+        rates=adr_rates(),
     )
     record = store.save_audit(uid, job_id, record['revision'], documents)
     payload = dict(
@@ -470,6 +502,7 @@ async def pending_signing_link():
         [],
         AIResult(summary='Confirmed', suggestions=[], unpriced_work=[]),
         store.workspaces.snapshot(uid),
+        rates=adr_rates(),
     )
     record = store.save_audit(uid, job_id, record['revision'], documents)
     signing_links.mint(store, uid, job_id, record['revision'], record['audit']['proposal_hash'])

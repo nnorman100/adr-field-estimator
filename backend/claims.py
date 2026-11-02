@@ -1,4 +1,4 @@
-"""ADR rate book and document construction, independent of model-supplied prices."""
+"""Priced scope and document construction, independent of model-supplied prices."""
 
 import re
 from datetime import datetime
@@ -8,16 +8,14 @@ from zoneinfo import ZoneInfo
 try:
     from .extras import wording
     from .contracts import InspectionData, AIResult, AuditDocuments
-    from .price_books import seed_rates
     from .sizing import equipment_sizing, letter_paragraph
 except ImportError:
     from extras import wording
     from contracts import InspectionData, AIResult, AuditDocuments
-    from price_books import seed_rates
     from sizing import equipment_sizing, letter_paragraph
 
 CENT = Decimal('0.01')
-# Category -> (unfinished key, finished key). The numbers live in the seed book.
+# Category -> (unfinished key, finished key). The numbers live in each company's price book.
 RATES = {
     1: ('demo_cat1_unfinished', 'demo_cat1_finished'),
     2: ('demo_cat2_unfinished', 'demo_cat2_finished'),
@@ -95,9 +93,11 @@ def line(code, description, quantity, unit, rate, waste=0):
     )
 
 
-def price_scope(data: InspectionData, rates=None):
-    """Price saved quantities. `rates` defaults to the frozen ADR seed, never a company's latest book."""
-    book = rates or seed_rates()
+def price_scope(data: InspectionData, rates):
+    """Price saved quantities from the job's saved rates. There is no default price book."""
+    if not rates:
+        raise ValueError('Company prices are required to price this job.')
+    book = rates
     items = [
         line(code, text, getattr(data, field), unit, book[key])
         for code, text, field, unit, key in BASELINE
@@ -181,6 +181,21 @@ def price_scope(data: InspectionData, rates=None):
                 line('ADR-EXTRA', extra.description, extra.hours, 'HR', extra.approval.rate)
             )
     return items, float(sum((amount(i['total']) for i in items), Decimal(0)))
+
+
+def standard_job_charges(rates):
+    """The five baseline charges at the form's default quantities, in the company's prices."""
+    return sum(
+        (
+            amount(
+                line(code, text, InspectionData.model_fields[field].default, unit, rates[key])[
+                    'total'
+                ]
+            )
+            for code, text, field, unit, key in BASELINE
+        ),
+        Decimal(0),
+    )
 
 
 def proposal_range(data: InspectionData, items):

@@ -38,7 +38,8 @@ from google.api_core.exceptions import Aborted
 from google.auth.credentials import AnonymousCredentials
 from google.cloud import firestore
 import backend.inspection_store as inspection_store
-from backend.claims import make_documents
+from backend.adr_price_book import adr_rates
+from tests.adr_pricing import make_documents
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import AIResult, InspectionData
 from backend.inspection_store import Conflict, InspectionStore, Limited
@@ -1057,8 +1058,8 @@ def test_price_publish_rolls_back_and_two_publishes_keep_one_generation():
         stores = instances(CompanyInspectionStore)
         seed_company(stores[0].db)
         books = stores[0].workspaces.prices
-        changed = dict(price_books.seed_rates(), emergency_call='150.00')
-        other = dict(price_books.seed_rates(), emergency_call='160.00')
+        changed = dict(adr_rates(), emergency_call='150.00')
+        other = dict(adr_rates(), emergency_call='160.00')
         payload = {
             'rates': changed,
             'acknowledgements': [],

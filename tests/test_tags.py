@@ -6,7 +6,8 @@ import json
 import pytest
 from pydantic import ValidationError
 from backend import tags
-from backend.claims import price_scope, make_documents, proposal_range
+from backend.claims import proposal_range
+from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import InspectionData, AIResult
 from backend.prompts import audit_prompt, live_prompt
 from backend.scope import scope_prompt

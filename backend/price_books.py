@@ -1,8 +1,8 @@
-"""Company price catalog, ADR seed rates and fixed residential calculation policy.
+"""Company price catalog and fixed residential calculation policy.
 
 Formulas, factors, default quantities and mandatory wording stay in code. A company
-may replace only the unit prices listed here. The seed is a frozen asset: it is not
-a live pointer at one company's editable book.
+may replace only the unit prices listed here, and the catalog itself holds no prices:
+each company publishes its own (ADR's starting rates live in adr_price_book.py).
 """
 
 import hashlib
@@ -10,6 +10,11 @@ import json
 import os
 import re
 from decimal import Decimal, ROUND_HALF_UP
+
+try:
+    from .adr_price_book import ADR_COMPANY_ID
+except ImportError:
+    from adr_price_book import ADR_COMPANY_ID
 
 CALCULATION_VERSION = 'adr-residential-v1'
 CATALOG_VERSION = 1
@@ -27,7 +32,6 @@ ITEMS = (
         'group': 'Demolition',
         'description': 'Category 1 clean water, unfinished / subfloor',
         'unit': 'SF',
-        'seed': '1.21',
         'minimum': '0.01',
         'maximum': '100.00',
     },
@@ -36,7 +40,6 @@ ITEMS = (
         'group': 'Demolition',
         'description': 'Category 1 clean water, finished / drywall / trim',
         'unit': 'SF',
-        'seed': '2.78',
         'minimum': '0.01',
         'maximum': '100.00',
     },
@@ -45,7 +48,6 @@ ITEMS = (
         'group': 'Demolition',
         'description': 'Category 2 gray water, unfinished / subfloor',
         'unit': 'SF',
-        'seed': '1.52',
         'minimum': '0.01',
         'maximum': '100.00',
     },
@@ -54,7 +56,6 @@ ITEMS = (
         'group': 'Demolition',
         'description': 'Category 2 gray water, finished / drywall / trim',
         'unit': 'SF',
-        'seed': '2.89',
         'minimum': '0.01',
         'maximum': '100.00',
     },
@@ -63,7 +64,6 @@ ITEMS = (
         'group': 'Demolition',
         'description': 'Category 3 / mold, unfinished / subfloor',
         'unit': 'SF',
-        'seed': '2.48',
         'minimum': '0.01',
         'maximum': '100.00',
     },
@@ -72,7 +72,6 @@ ITEMS = (
         'group': 'Demolition',
         'description': 'Category 3 / mold, finished / drywall / trim',
         'unit': 'SF',
-        'seed': '8.39',
         'minimum': '0.01',
         'maximum': '100.00',
     },
@@ -81,7 +80,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Emergency call / trip charge',
         'unit': 'EA',
-        'seed': '133.95',
         'minimum': '0.00',
         'maximum': '10000.00',
         'allow_zero': True,
@@ -91,7 +89,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Equipment monitoring',
         'unit': 'HR',
-        'seed': '47.46',
         'minimum': '0.01',
         'maximum': '1000.00',
     },
@@ -100,7 +97,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Haul debris and disposal',
         'unit': 'load',
-        'seed': '159.53',
         'minimum': '0.01',
         'maximum': '10000.00',
     },
@@ -109,7 +105,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Air scrubber daily rental',
         'unit': 'day',
-        'seed': '74.75',
         'minimum': '0.01',
         'maximum': '2500.00',
     },
@@ -118,7 +113,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'HEPA replacement filter',
         'unit': 'EA',
-        'seed': '183.12',
         'minimum': '0.01',
         'maximum': '2500.00',
     },
@@ -127,7 +121,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Matterport scan',
         'unit': 'EA',
-        'seed': '250.00',
         'minimum': '0.01',
         'maximum': '10000.00',
     },
@@ -136,7 +129,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Single-axle dump truck load',
         'unit': 'EA',
-        'seed': '286.78',
         'minimum': '0.01',
         'maximum': '10000.00',
     },
@@ -145,7 +137,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Drying equipment decontamination',
         'unit': 'EA',
-        'seed': '27.72',
         'minimum': '0.01',
         'maximum': '1000.00',
     },
@@ -154,7 +145,6 @@ ITEMS = (
         'group': 'Job charges',
         'description': 'Power distribution',
         'unit': 'EA',
-        'seed': '66.74',
         'minimum': '0.01',
         'maximum': '2500.00',
     },
@@ -163,7 +153,6 @@ ITEMS = (
         'group': 'Equipment',
         'description': 'Axial air mover',
         'unit': 'unit-day',
-        'seed': '29.25',
         'minimum': '0.01',
         'maximum': '2500.00',
     },
@@ -172,7 +161,6 @@ ITEMS = (
         'group': 'Equipment',
         'description': 'Commercial LGR dehumidifier',
         'unit': 'unit-day',
-        'seed': '101.25',
         'minimum': '0.01',
         'maximum': '2500.00',
     },
@@ -181,7 +169,6 @@ ITEMS = (
         'group': 'Equipment',
         'description': 'Wood-floor drying system / heater',
         'unit': 'unit-day',
-        'seed': '180.00',
         'minimum': '0.01',
         'maximum': '2500.00',
     },
@@ -190,7 +177,6 @@ ITEMS = (
         'group': 'Labor',
         'description': 'Additional labor in the estimating sheet',
         'unit': 'HR',
-        'seed': '47.46',
         'minimum': '0.01',
         'maximum': '1000.00',
     },
@@ -199,7 +185,6 @@ ITEMS = (
         'group': 'Labor',
         'description': 'After-hours job charge',
         'unit': 'EA',
-        'seed': '200.00',
         'minimum': '0.00',
         'maximum': '10000.00',
         'allow_zero': True,
@@ -209,7 +194,6 @@ ITEMS = (
         'group': 'Additional work',
         'description': 'Additional work outside the sheet',
         'unit': 'HR',
-        'seed': '47.46',
         'minimum': '0.01',
         'maximum': '10000.00',
         'f2': True,
@@ -246,13 +230,9 @@ def price_books_enabled():
     return os.getenv('PRICE_BOOKS_ENABLED', 'false').lower() == 'true'
 
 
-def seed_rates():
-    """The frozen ADR workbook rates, including the initial additional-work rate."""
-    return {item['key']: item['seed'] for item in ITEMS}
-
-
-def seed_digest():
-    return content_hash(seed_rates())
+def blank_rates():
+    """Every catalog row with no price, for a company that has not set its prices."""
+    return {key: '' for key in KEYS}
 
 
 def calculation_policy():
@@ -268,7 +248,7 @@ def calculation_policy():
 
 
 def saved_basis(audit):
-    """Migration records the seed basis beside a legacy audit's documents, keeping its hash."""
+    """Migration records ADR's starting basis beside a legacy audit's documents, keeping its hash."""
     audit = audit or {}
     return (audit.get('documents') or {}).get('price_basis') or audit.get('price_basis')
 
@@ -321,7 +301,7 @@ def normalize_rates(incoming, acknowledgements=(), locked=(), current=None):
     missing = set(KEYS) - set(incoming)
     if unknown or missing:
         raise ValueError('The price list must contain each catalog row once.')
-    current = current or seed_rates()
+    current = current or blank_rates()
     acked = set(acknowledgements or ())
     if any(not isinstance(key, str) for key in acked):
         raise ValueError('Confirm a zero trip or after-hours charge before publishing it.')
@@ -364,11 +344,12 @@ def diff_rates(before, after):
     warnings = []
     for item in ITEMS:
         old, new = _amount(before[item['key']]), _amount(after[item['key']])
-        if old == new:
+        if old == new and (before[item['key']] != '' or after[item['key']] == ''):
             continue
         if old == 0:
             percent = None
-            large = new != 0
+            # A first price has nothing to compare against, so it is not a large change.
+            large = new != 0 and before[item['key']] != ''
         else:
             percent = (new - old) / old
             large = abs(percent) >= Decimal('0.5')
@@ -383,7 +364,7 @@ def diff_rates(before, after):
                 'key': item['key'],
                 'description': item['description'],
                 'unit': item['unit'],
-                'before': f'{old:.2f}',
+                'before': f'{old:.2f}' if before[item['key']] != '' else '',
                 'after': f'{new:.2f}',
                 'delta': f'{(new - old):.2f}',
                 'percent': None if percent is None else f'{percent:.4f}',
@@ -393,10 +374,10 @@ def diff_rates(before, after):
     return rows, sorted(set(warnings))
 
 
-def label_for(sequence):
-    if not sequence:
-        return 'Workbook seed'
-    return f'Prices v{sequence}'
+def label_for(sequence, company_id):
+    if sequence:
+        return f'Prices v{sequence}'
+    return 'ADR starting prices' if company_id == ADR_COMPANY_ID else 'Prices not set'
 
 
 def public_rates(rates, *, editable_additional_work):
@@ -416,6 +397,21 @@ def public_rates(rates, *, editable_additional_work):
             }
         )
     return rows
+
+
+def price_display(rates):
+    """The few prices the estimate form shows outside the price editor."""
+    try:
+        from .claims import standard_job_charges
+    except ImportError:
+        from claims import standard_job_charges
+
+    return {
+        'after_hours_job_charge': rates['after_hours_job_charge'],
+        'sheet_labor_hourly': rates['sheet_labor_hourly'],
+        'additional_work_hourly': rates['additional_work_hourly'],
+        'standard_job_charges': f'{standard_job_charges(rates):,.2f}',
+    }
 
 
 def sample_totals(rates):

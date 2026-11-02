@@ -1,6 +1,6 @@
-"""Preview company price books by default. Write only with --apply, a manifest and the dedicated project.
+"""Preview ADR's price book by default. Write only with --apply, a manifest and the dedicated project.
 
-Does not deploy, send email, or rewrite inspections, audits, authorizations or company identity versions.
+Only `--company adr` is accepted: other companies publish their own prices. Does not deploy, send email, or rewrite inspections, audits, authorizations or company identity versions.
 """
 
 import argparse
@@ -25,9 +25,7 @@ PROJECT = 'alert-disaster-field-2026'
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Dry-run company price books unless --apply is set.'
-    )
+    parser = argparse.ArgumentParser(description="Dry-run ADR's price book unless --apply is set.")
     parser.add_argument('--company', action='append', required=True)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--manifest', type=Path)

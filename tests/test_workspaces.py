@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import backend.main as bm
 import backend.workspaces as workspaces
-from backend.claims import make_documents
+from tests.adr_pricing import make_documents
 from backend.contracts import InspectionData, AIResult
 from backend.workspaces import (
     AccessDenied,

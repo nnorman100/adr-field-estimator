@@ -1,4 +1,4 @@
-"""Company price books. Seed output matches the ADR workbook while the feature is off."""
+"""Company price books. ADR's output matches its workbook while the feature is off."""
 
 import logging
 from copy import deepcopy
@@ -6,9 +6,10 @@ from decimal import Decimal
 
 import pytest
 from backend import ai_features, price_books
-from backend.claims import PRETEST, make_documents, price_scope, proposal_range
+from backend.claims import PRETEST, proposal_range
+from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import AIResult, InspectionData
-from backend.price_books import seed_rates
+from backend.adr_price_book import adr_rates
 from tests.fakes import ADR_PROFILE
 from tests.test_backend import sign_payload
 from tests.test_workspaces import ID, api, data, store
@@ -25,7 +26,7 @@ def enabled():
 
 
 def rates(**changes):
-    book = seed_rates()
+    book = adr_rates()
     book.update(changes)
     return book
 
@@ -176,7 +177,7 @@ def test_flag_off_hides_the_editor_and_prices_from_the_seed_pin(api, monkeypatch
     assert audited.status_code == 200, audited.text
     documents = audited.json()['audit']['documents']
     assert documents['price_basis']['version_id'] == 'seed'
-    assert documents['price_basis']['content_sha256'] == price_books.content_hash(seed_rates())
+    assert documents['price_basis']['content_sha256'] == price_books.content_hash(adr_rates())
     assert documents['adr_estimate']['proposed_cost_low'] == 1775
 
 
@@ -207,7 +208,7 @@ def test_publish_pins_isolation_reprice_and_signing(api, enabled, caplog):
     first = audited.json()
     basis = first['audit']['documents']['price_basis']
     assert basis['sequence'] == 0 and basis['version_id'] == 'seed'
-    assert basis['content_sha256'] == price_books.content_hash(seed_rates())
+    assert basis['content_sha256'] == price_books.content_hash(adr_rates())
     assert 'Priced from' not in first['audit']['documents']['adr_estimate']['disclaimers']
     proposal = first['audit']['proposal_hash']
     current['uid'] = 'estimator'
@@ -528,7 +529,9 @@ from workspaces import AccessDenied
 
 price_books.set_enabled(True)
 record = json.loads(sys.stdin.read())
-seed = price_books.seed_rates()
+from adr_price_book import adr_rates
+
+seed = adr_rates()
 pin = dict(rates=seed, version_id='seed', content_sha256=price_books.content_hash(seed))
 
 
@@ -585,7 +588,7 @@ def test_owner_paths_run_in_the_deployed_top_level_layout():
         text=True,
     )
     assert run.returncode == 0, run.stderr
-    items, total = price_scope(InspectionData.model_validate(record['data']), seed_rates())
+    items, total = price_scope(InspectionData.model_validate(record['data']), adr_rates())
     assert json.loads(run.stdout) == ['denied', 'denied', 'invalid', f'{total:.2f}']
 
 
@@ -741,7 +744,7 @@ def test_migrated_drafts_price_reuse_and_sign_the_same_with_the_flag_off_or_on(
                 pin['version_id'],
                 pin['content_sha256'],
             )
-            assert basis['rates'] == seed_rates()
+            assert basis['rates'] == adr_rates()
         assert sign(token(issued)).status_code == 200
         fresh = mint(client, records[later], later)
         assert fresh.status_code == 200, fresh.text

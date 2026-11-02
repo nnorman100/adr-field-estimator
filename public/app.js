@@ -1660,8 +1660,8 @@ function renderWalkthroughEdits() {
     );
   }
 }
-// The sheet's five standard charges total $1,180.20 at its populated quantities (docs/pricing-source.md);
-// the summary says whether this job still uses them. The server prices every charge.
+// The summary says whether this job still uses the five standard charges at their populated
+// quantities. The server prices every charge and supplies the total from this job's saved rates.
 function renderJobChargesSummary() {
   const data = state.draft?.data,
     defaults = emptyData();
@@ -1670,14 +1670,14 @@ function renderJobChargesSummary() {
     ['emergency_calls', 'monitoring_hours', 'haul_loads', 'air_scrubbers', 'hepa_filters'].every(
       (key) => Number(data[key]) === defaults[key],
     );
-  // A published company book replaces those unit prices, so the seed dollar total is not claimed.
-  $('jobChargesSummary').textContent = window.Prices?.usesCustomRates?.()
+  const total = window.Prices?.jobChargesTotal?.();
+  $('jobChargesSummary').textContent = !total
     ? sheetQuantities
       ? '· sheet quantities'
       : '· quantities adjusted from the sheet'
     : sheetQuantities
-      ? '· $1,180.20 at sheet quantities'
-      : "· adjusted from the sheet's $1,180.20";
+      ? '· $' + total + ' at sheet quantities'
+      : "· adjusted from the sheet's $" + total;
 }
 function collect() {
   if (!state.draft) return;

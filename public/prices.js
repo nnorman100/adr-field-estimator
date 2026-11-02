@@ -1,15 +1,12 @@
 /* Company prices. Changes stay online and never enter the draft queue. */
 (function (root) {
   const zeroKeys = ['emergency_call', 'after_hours_job_charge'];
+  // No price is written here: amounts come from the API for the signed-in company.
   const AFTER_HOURS_DEFAULT =
-    "After-hours loss: $200 job charge and 20% labor/material adjustment. Added labor uses the sheet's $47.46/hr estimate formula.";
+    'After-hours loss: company after-hours job charge and 20% labor/material adjustment.';
   let shown = null,
     jobSeq = 0;
 
-  function labelFor(sequence) {
-    const number = Number(sequence) || 0;
-    return number ? 'Prices v' + number : 'Workbook seed';
-  }
   function grouped(rows) {
     const order = [],
       groups = new Map();
@@ -22,12 +19,28 @@
     }
     return order.map((name) => ({ name, rows: groups.get(name) }));
   }
-  function afterHoursSentence(rates) {
-    if (!rates) return AFTER_HOURS_DEFAULT;
-    const charge = rates.after_hours_job_charge,
-      labor = rates.sheet_labor_hourly;
-    if ((charge === '200.00' || charge === '200') && labor === '47.46') return AFTER_HOURS_DEFAULT;
+  function companyDisplay() {
+    return typeof state === 'undefined' ? null : state?.session?.price_display || null;
+  }
+  function afterHoursSentence(rates, sheetRates) {
+    const own = companyDisplay(),
+      shown = rates || own,
+      charge = shown?.after_hours_job_charge,
+      labor = shown?.sheet_labor_hourly;
+    if (!charge || !labor) return AFTER_HOURS_DEFAULT;
     const money = (value) => Number(value).toFixed(2);
+    if (
+      sheetRates ||
+      (money(charge) === money(own?.after_hours_job_charge) &&
+        money(labor) === money(own?.sheet_labor_hourly))
+    )
+      return (
+        'After-hours loss: $' +
+        money(charge).replace(/\.00$/, '') +
+        " job charge and 20% labor/material adjustment. Added labor uses the sheet's $" +
+        money(labor) +
+        '/hr estimate formula.'
+      );
     return (
       'After-hours loss: $' +
       money(charge) +
@@ -39,19 +52,34 @@
   function enabled() {
     return !!(state?.session?.price_books_enabled && state?.session?.workspaces_enabled);
   }
-  function usesCustomRates() {
-    return !!(shown && shown.inspectionId === state?.draft?.inspection_id && shown.sequence > 0);
+  function jobChargesTotal() {
+    return shown && shown.inspectionId === state?.draft?.inspection_id
+      ? shown.standardJobCharges
+      : state?.session?.price_display?.standard_job_charges;
   }
   function dom() {
     return typeof document !== 'undefined' && typeof document.getElementById === 'function';
   }
+  function syncNotice() {
+    if (!dom() || !$('pricesNotSet')) return;
+    const missing = state?.session?.prices_set === false;
+    $('pricesNotSet').hidden = !missing;
+    $('pricesNotSetActions').replaceChildren();
+    if (!missing) return;
+    $('pricesNotSetText').textContent = state.session.prices_not_set_message;
+    if (state.session.role === 'owner' && enabled())
+      $('pricesNotSetActions').append(
+        button('Set company prices', () => open().catch((e) => say(e.message, 'error'))),
+      );
+  }
   function clearJob() {
     shown = null;
     if (!dom() || !$('jobPricing')) return;
+    syncNotice();
     $('jobPricing').hidden = true;
     $('jobPricingStatus').textContent = '';
     $('jobPricingActions').replaceChildren();
-    if ($('afterHoursLabel')) $('afterHoursLabel').textContent = AFTER_HOURS_DEFAULT;
+    if ($('afterHoursLabel')) $('afterHoursLabel').textContent = afterHoursSentence();
     if (typeof renderJobChargesSummary === 'function') renderJobChargesSummary();
   }
   async function noteJob() {
@@ -74,8 +102,9 @@
         state.draft?.inspection_id !== id
       )
         return;
-      shown = { inspectionId: id, sequence: view.pinned?.sequence || 0 };
-      $('jobPricing').hidden = false;
+      shown = { inspectionId: id, standardJobCharges: view.display_rates?.standard_job_charges };
+      syncNotice();
+      $('jobPricing').hidden = !view.pinned && state.session.prices_set === false;
       $('jobPricingStatus').textContent = view.pinned
         ? 'This job is priced from ' + view.pinned.label + '.'
         : view.pending_note || 'Rates are confirmed at the first online pricing.';
@@ -90,7 +119,7 @@
           ),
         );
       if ($('afterHoursLabel'))
-        $('afterHoursLabel').textContent = afterHoursSentence(view.display_rates);
+        $('afterHoursLabel').textContent = afterHoursSentence(view.display_rates, view.sheet_rates);
       if (typeof renderJobChargesSummary === 'function') renderJobChargesSummary();
     } catch (e) {
       if (mine !== jobSeq) return;
@@ -105,7 +134,9 @@
       actions = $('jobPricingActions');
     actions.replaceChildren();
     for (const row of preview.diff)
-      actions.append(node('p', row.description + ': ' + row.before + ' to ' + row.after));
+      actions.append(
+        node('p', row.description + ': ' + (row.before || 'not set') + ' to ' + row.after),
+      );
     actions.append(
       node(
         'p',
@@ -168,23 +199,35 @@
     panel.append(node('h2', 'Review changes'));
     for (const row of preview.diff)
       panel.append(
-        node('p', row.description + ' (' + row.unit + '): ' + row.before + ' to ' + row.after),
+        node(
+          'p',
+          row.description +
+            ' (' +
+            row.unit +
+            '): ' +
+            (row.before || 'not set') +
+            ' to ' +
+            row.after,
+        ),
       );
     for (const warning of preview.warnings || []) panel.append(node('p', warningText(warning)));
     const before = preview.sample_before,
       after = preview.sample_after;
+    if (before)
+      panel.append(
+        node(
+          'p',
+          'Sample before: itemized ' +
+            before.itemized +
+            ', range ' +
+            before.low +
+            '–' +
+            before.high +
+            '. ' +
+            before.label,
+        ),
+      );
     panel.append(
-      node(
-        'p',
-        'Sample before: itemized ' +
-          before.itemized +
-          ', range ' +
-          before.low +
-          '–' +
-          before.high +
-          '. ' +
-          before.label,
-      ),
       node(
         'p',
         'Sample after: itemized ' +
@@ -326,6 +369,14 @@
       expected_generation: preview.generation,
     });
     say((result.label || 'Prices') + ' published. New pricing uses them now.', 'success');
+    const session = await jsonApi('/api/session');
+    state.session = {
+      ...state.session,
+      prices_set: session.prices_set,
+      price_display: session.price_display,
+      prices_not_set_message: session.prices_not_set_message,
+    };
+    syncNotice();
     await open();
   }
   function tools(content, base, manage, view) {
@@ -391,8 +442,7 @@
     const listing = await jsonApi(base + '/history'),
       card = node('section', undefined, 'price-card');
     card.append(node('h2', 'Price history'));
-    if (!listing.versions.length)
-      card.append(node('p', 'No published prices yet. New pricing uses the workbook seed.'));
+    if (!listing.versions.length) card.append(node('p', 'No published prices yet.'));
     for (const version of listing.versions) {
       const row = node('div', undefined, 'price-row');
       row.append(
@@ -432,30 +482,6 @@
         row.append(restore);
       }
       card.append(row);
-    }
-    if (manage) {
-      const restoreSeed = node('form', undefined, 'price-actions'),
-        seedReason = node('input');
-      seedReason.required = true;
-      seedReason.minLength = 3;
-      seedReason.maxLength = 500;
-      seedReason.placeholder = 'Reason for restoring the workbook seed';
-      restoreSeed.append(
-        seedReason,
-        button('Restore workbook seed', async () => {
-          if (!restoreSeed.reportValidity()) return;
-          const preview = await jsonApi(base + '/versions/seed/restore', 'POST', {
-            change_reason: seedReason.value,
-          });
-          $('priceReview')?.remove();
-          content.append(
-            reviewPanel(preview, () =>
-              publish(companyId, preview).catch((e) => say(e.message, 'error')),
-            ),
-          );
-        }),
-      );
-      card.append(restoreSeed);
     }
     for (const entry of listing.events || [])
       card.append(
@@ -505,12 +531,12 @@
   root.Prices = {
     zeroKeys,
     AFTER_HOURS_DEFAULT,
-    labelFor,
     grouped,
     afterHoursSentence,
     enabled,
-    usesCustomRates,
+    jobChargesTotal,
     noteJob,
+    syncNotice,
     open,
     openSupport,
     syncNav,

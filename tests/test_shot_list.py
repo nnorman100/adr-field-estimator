@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 import backend.main as bm
-from backend.claims import make_documents
+from tests.adr_pricing import make_documents
 from backend.contracts import AIResult, InspectionData, Room
 from backend.live_support import scope_fingerprint
 from backend.prompts import SHOT_STATUS_UPDATE, live_prompt, prompt_inspection

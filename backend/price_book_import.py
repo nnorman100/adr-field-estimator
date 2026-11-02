@@ -96,7 +96,7 @@ def _row(company_id, base_version_id, base_generation, item, rates):
     return {
         'template_version': TEMPLATE_VERSION,
         'company_id': company_id,
-        'base_version_id': base_version_id or 'seed',
+        'base_version_id': base_version_id or 'unset',
         'base_generation': str(base_generation),
         'item_key': item['key'],
         'description': item['description'],

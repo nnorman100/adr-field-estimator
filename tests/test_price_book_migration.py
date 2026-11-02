@@ -1,9 +1,16 @@
-"""Price-book seed migration is a dry run until apply, and it does not rewrite source records."""
+"""ADR's price-book migration is a dry run until apply, and it does not rewrite source records."""
 
 from copy import deepcopy
 
 import pytest
-from backend.price_book_migration import apply_plan, build_plan, source_fingerprints, summary
+from backend.adr_price_book import adr_rates
+from backend.price_book_migration import (
+    apply_plan,
+    build_plan,
+    planned_rates,
+    source_fingerprints,
+    summary,
+)
 from tests.fakes import FakeCompanyStore
 from tests.test_backend import ID
 from tests.test_workspaces import data, seed
@@ -66,15 +73,15 @@ def test_apply_refuses_a_drifted_additional_work_rate_without_writing():
     assert store.db.records == before
 
 
-def test_a_company_without_a_rate_keeps_the_blank_instead_of_adr_default():
+@pytest.mark.parametrize('named', [['other'], ['adr', 'other']])
+def test_only_adr_can_be_given_a_starting_book(named):
     store = company()
-    plan = build_plan(store.db, ['other'])
-    assert plan['companies'][0]['rates']['additional_work_hourly'] == ''
-    apply_plan(store, plan, True)
-    assert (
-        store.db.records['_price_book_versions/migrate-other-v1']['rates']['additional_work_hourly']
-        == ''
-    )
+    before = deepcopy(store.db.records)
+    with pytest.raises(ValueError, match='Only ADR'):
+        build_plan(store.db, named)
+    assert store.db.records == before
+    with pytest.raises(ValueError, match='Only ADR'):
+        planned_rates(store.db.records['_companies/other'])
 
 
 @pytest.mark.parametrize('change', ['signed', 'association', 'rate'])
@@ -97,7 +104,7 @@ def test_migration_reads_before_writes_and_keeps_seed_unpublished(monkeypatch):
     from tests.fakes import Ref, Tx
 
     store = company()
-    plan = build_plan(store.db, ['adr', 'other'])
+    plan = build_plan(store.db, ['adr'])
     writing = False
     original_get = Ref.get
     original_create, original_set = Tx.create, Tx.set

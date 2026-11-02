@@ -8,9 +8,7 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync('public/prices.js', 'utf8'), context);
 const { Prices } = context.window;
 
-test('price labels and groups follow the published sequence', () => {
-  assert.equal(Prices.labelFor(0), 'Workbook seed');
-  assert.equal(Prices.labelFor('2'), 'Prices v2');
+test('price groups and after-hours wording come from the company prices', () => {
   assert.deepEqual(Array.from(Prices.zeroKeys), ['emergency_call', 'after_hours_job_charge']);
   const groups = Prices.grouped([
     { group: 'Demolition', key: 'demo_cat1_finished' },
@@ -22,12 +20,190 @@ test('price labels and groups follow the published sequence', () => {
     ['Demolition', 'Job charges'],
   );
   assert.equal(groups[0].rows.length, 2);
+  assert.equal(Prices.afterHoursSentence(), Prices.AFTER_HOURS_DEFAULT);
+  assert.doesNotMatch(Prices.AFTER_HOURS_DEFAULT, /\d\.\d|\$/);
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '200.00', sheet_labor_hourly: '47.46' } },
+  };
+  const adr =
+    "After-hours loss: $200 job charge and 20% labor/material adjustment. Added labor uses the sheet's $47.46/hr estimate formula.";
+  assert.equal(Prices.afterHoursSentence(), adr);
   assert.equal(
     Prices.afterHoursSentence({ after_hours_job_charge: '200.00', sheet_labor_hourly: '47.46' }),
+    adr,
+  );
+  assert.equal(
+    Prices.afterHoursSentence({ after_hours_job_charge: '', sheet_labor_hourly: '' }),
     Prices.AFTER_HOURS_DEFAULT,
   );
   assert.match(
     Prices.afterHoursSentence({ after_hours_job_charge: '250.00', sheet_labor_hourly: '55.00' }),
     /\$250\.00/,
   );
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '210.00', sheet_labor_hourly: '50.00' } },
+  };
+  assert.equal(
+    Prices.afterHoursSentence(
+      { after_hours_job_charge: '200.00', sheet_labor_hourly: '47.46' },
+      true,
+    ),
+    adr,
+  );
+  assert.match(
+    Prices.afterHoursSentence({ after_hours_job_charge: '200.00', sheet_labor_hourly: '47.46' }),
+    /\$200\.00 job charge.*the job's \$47\.46/,
+  );
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '250.50', sheet_labor_hourly: '52.50' } },
+  };
+  assert.match(Prices.afterHoursSentence(), /\$250\.50 job charge.*\$52\.50\/hr/);
+  context.state = {
+    session: { price_display: { after_hours_job_charge: '250.00', sheet_labor_hourly: '55.00' } },
+  };
+  assert.match(Prices.afterHoursSentence(), /\$250 job charge.*\$55\.00\/hr/);
+});
+
+test('the job-charges total comes from the shown job, then the company', async () => {
+  const element = () => ({ replaceChildren() {}, append() {} });
+  const elements = new Map();
+  const view = { display_rates: { standard_job_charges: '1,180.20' } };
+  context.$ = (id) => {
+    if (!elements.has(id)) elements.set(id, element());
+    return elements.get(id);
+  };
+  context.document = { getElementById: context.$ };
+  context.navigator = { onLine: true };
+  context.jsonApi = async () => view;
+  context.state = {
+    user: { uid: 'u' },
+    draft: { inspection_id: 'job-1' },
+    session: {
+      company_id: 'adr',
+      price_books_enabled: true,
+      workspaces_enabled: true,
+      price_display: { standard_job_charges: '1,196.25' },
+    },
+  };
+  assert.equal(Prices.jobChargesTotal(), '1,196.25');
+  await Prices.noteJob();
+  assert.equal(Prices.jobChargesTotal(), '1,180.20');
+  context.state.draft = { inspection_id: 'job-2' };
+  assert.equal(Prices.jobChargesTotal(), '1,196.25');
+  context.state.draft = { inspection_id: 'job-1' };
+  view.display_rates = { after_hours_job_charge: '', sheet_labor_hourly: '' };
+  await Prices.noteJob();
+  assert.equal(Prices.jobChargesTotal(), undefined);
+});
+
+test('one notice, in the server words, for a draft with no prices', async () => {
+  const elements = new Map();
+  context.$ = (id) => {
+    if (!elements.has(id)) elements.set(id, { replaceChildren() {}, append() {} });
+    return elements.get(id);
+  };
+  context.document = { getElementById: context.$ };
+  context.navigator = { onLine: true };
+  const notice = 'Words from the server.';
+  let view = {
+    pinned: null,
+    pending_note: notice,
+    display_rates: { after_hours_job_charge: '', sheet_labor_hourly: '' },
+  };
+  context.jsonApi = async () => view;
+  context.state = {
+    user: { uid: 'u' },
+    draft: { inspection_id: 'job-1' },
+    session: {
+      company_id: 'other',
+      role: 'estimator',
+      price_books_enabled: true,
+      workspaces_enabled: true,
+      prices_set: false,
+      prices_not_set_message: notice,
+    },
+  };
+  await Prices.noteJob();
+  assert.equal(context.$('pricesNotSet').hidden, false);
+  assert.equal(context.$('pricesNotSetText').textContent, notice);
+  assert.equal(context.$('jobPricing').hidden, true);
+
+  view = { ...view, pinned: { label: 'Prices v1' }, pending_note: null };
+  await Prices.noteJob();
+  assert.equal(context.$('jobPricing').hidden, false);
+  assert.equal(context.$('jobPricingStatus').textContent, 'This job is priced from Prices v1.');
+
+  context.state.session = {
+    ...context.state.session,
+    prices_set: true,
+    prices_not_set_message: null,
+  };
+  Prices.syncNotice();
+  assert.equal(context.$('pricesNotSet').hidden, true);
+});
+
+test('the job reprice review says not set for a row with no earlier price', async () => {
+  const elements = new Map();
+  context.$ = (id) => {
+    if (!elements.has(id))
+      elements.set(id, {
+        children: [],
+        replaceChildren() {
+          this.children = [];
+        },
+        append(...added) {
+          this.children.push(...added);
+        },
+      });
+    return elements.get(id);
+  };
+  context.document = { getElementById: context.$ };
+  context.navigator = { onLine: true };
+  context.node = (tag, text) => ({ tag, text });
+  context.button = (text, fn) => ({ text, fn });
+  const totals = { itemized: '1.00', low: '1.00', high: '2.00' };
+  context.jsonApi = async (path) =>
+    path.endsWith('/reprice-preview')
+      ? {
+          diff: [
+            { description: 'Additional work', before: '', after: '60.00' },
+            { description: 'Trip charge', before: '133.95', after: '200.00' },
+          ],
+          before: totals,
+          after: totals,
+          to_label: 'Prices v2',
+        }
+      : {
+          pinned: { label: 'Prices v1' },
+          can_reprice: true,
+          display_rates: { after_hours_job_charge: '', sheet_labor_hourly: '' },
+        };
+  context.state = {
+    user: { uid: 'u' },
+    draft: { inspection_id: 'job-1' },
+    session: {
+      company_id: 'other',
+      role: 'owner',
+      price_books_enabled: true,
+      workspaces_enabled: true,
+      prices_set: true,
+    },
+  };
+  await Prices.noteJob();
+  await context.$('jobPricingActions').children[0].fn();
+  const lines = context.$('jobPricingActions').children.map((child) => child.text);
+  assert.equal(lines[0], 'Additional work: not set to 60.00');
+  assert.equal(lines[1], 'Trip charge: 133.95 to 200.00');
+});
+
+test('the proposal names ADR starting prices for ADR only', () => {
+  const documents = { window: { ADRCore: {} } };
+  vm.createContext(documents);
+  vm.runInContext(fs.readFileSync('public/documents.js', 'utf8'), documents);
+  const { pricedFrom } = documents.window.ADRDocuments;
+  assert.equal(pricedFrom({ company_id: 'adr', sequence: 0 }), 'Priced from ADR starting prices.');
+  assert.equal(pricedFrom({ company_id: 'other', sequence: 0 }), '');
+  assert.equal(pricedFrom({ company_id: 'adr', sequence: 2 }), 'Priced from Prices v2.');
+  assert.equal(pricedFrom({ company_id: 'other', sequence: 1 }), 'Priced from Prices v1.');
+  assert.equal(pricedFrom(undefined), '');
 });

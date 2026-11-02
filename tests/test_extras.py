@@ -5,7 +5,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 from backend import ai_features
-from backend.claims import make_documents, price_scope, proposal_range
+from backend.claims import proposal_range
+from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import Extra, ExtraApprove, InspectionData, AIResult
 from backend.cloud_log import LOG_FIELDS
 from backend.inspection_store import Conflict, Limited
