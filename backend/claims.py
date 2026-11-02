@@ -43,9 +43,11 @@ OPTIONAL_CHARGES = [
 ]
 JOB_CODES = (
     {code for code, _, _, _, _ in BASELINE}
-    | {'ADR-AFTER'}
+    | {'ADR-AFTER', 'ADR-EXTRA'}
     | {code for code, _, _, _ in OPTIONAL_CHARGES}
 )
+LABOR_MATERIAL_CODES = {'ADR-DEMO', 'ADR-LABOR'}
+EQUIPMENT_CODES = {'ADR-FAN', 'ADR-DEHU', 'ADR-WOOD'}
 SCOPE_EXCLUDED = {code for code, _, _, _, _ in BASELINE} | {'ADR-AFTER'}
 PHOTO_LOCATION_PRIVACY = "Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log."
 ADDRESS_LOCATION_PRIVACY = 'When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.'
@@ -183,21 +185,20 @@ def price_scope(data: InspectionData, rates=None):
 
 def proposal_range(data: InspectionData, items):
     """The estimating sheet's low/high labor-material allowances over priced scope."""
-    # Approved extras are added at exactly the amount the owner approved, like job charges.
-    job = sum(
-        (amount(item['total']) for item in items if item['code'] in (*JOB_CODES, 'ADR-EXTRA')),
-        Decimal(0),
+    unbucketed = (
+        {item['code'] for item in items} - JOB_CODES - LABOR_MATERIAL_CODES - EQUIPMENT_CODES
     )
+    if unbucketed:
+        # A priced code outside every bucket would count in the itemized total but vanish from the range.
+        raise RuntimeError(f'Priced codes missing from the estimate range: {sorted(unbucketed)}')
+    # Approved extras are added at exactly the amount the owner approved, like job charges.
+    job = sum((amount(item['total']) for item in items if item['code'] in JOB_CODES), Decimal(0))
     labor_material = sum(
-        (amount(item['total']) for item in items if item['code'] in {'ADR-DEMO', 'ADR-LABOR'}),
+        (amount(item['total']) for item in items if item['code'] in LABOR_MATERIAL_CODES),
         Decimal(0),
     )
     equipment = sum(
-        (
-            amount(item['total'])
-            for item in items
-            if item['code'] in {'ADR-FAN', 'ADR-DEHU', 'ADR-WOOD'}
-        ),
+        (amount(item['total']) for item in items if item['code'] in EQUIPMENT_CODES),
         Decimal(0),
     )
     affected_sf = sum(
@@ -337,6 +338,10 @@ def make_documents(
     unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
     pending = sum(extra.approval is None for extra in data.extras)
     estimate_low, estimate_high = proposal_range(data, items)
+    if total <= 0:
+        raise ValueError(
+            'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'
+        )
     before = data.year_built < 1978
     age = (
         f'Due to property age ({data.year_built}), California State Law requires third-party lead and asbestos testing prior to destructive demolition.'

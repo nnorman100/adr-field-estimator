@@ -545,3 +545,46 @@ def test_new_proposals_include_owner_approved_location_privacy(year_built, ident
         docs['adr_estimate']['disclaimers'][1]
         == 'When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.'
     )
+
+
+def test_zero_priced_scope_is_a_readable_error():
+    zero = dict(rooms=[{'name': 'Bathroom'}], emergency_calls=0, monitoring_hours=0, haul_loads=0)
+    data = scoped(**zero, air_scrubbers=0, hepa_filters=0)
+    ai = AIResult(summary='Reviewed', suggestions=[], unpriced_work=[])
+    with pytest.raises(ValueError, match=r'totals \$0\.00'):
+        make_documents(data, [], ai)
+
+
+def test_every_priced_code_has_a_range_bucket():
+    from backend.claims import EQUIPMENT_CODES, JOB_CODES, LABOR_MATERIAL_CODES
+
+    room = dict(name='R', category=1, unfinished_sf=1, finished_sf=1)
+    full = scoped(
+        rooms=[room],
+        is_after_hours=True,
+        air_movers=1,
+        dehumidifiers=1,
+        wood_floor_systems=1,
+        labor_hours=1,
+        matterport_scans=1,
+        dump_truck_loads=1,
+        equipment_decon=1,
+        power_distribution=1,
+        emergency_calls=1,
+        monitoring_hours=1,
+        haul_loads=1,
+        air_scrubbers=1,
+        hepa_filters=1,
+    )
+    items, _ = price_scope(full)
+    codes = {i['code'] for i in items}
+    assert codes <= JOB_CODES | LABOR_MATERIAL_CODES | EQUIPMENT_CODES
+    proposal_range(full, items)
+
+
+def test_unbucketed_code_fails_loudly():
+    data = scoped()
+    items, _ = price_scope(data)
+    items.append(dict(items[0], code='ADR-NEW'))
+    with pytest.raises(RuntimeError, match='ADR-NEW'):
+        proposal_range(data, items)
