@@ -411,6 +411,45 @@ async def workspaces_fixture(request: Request):
     return {'enabled': True, 'inspection_id': 'ADR-INS-' + 'c' * 32}
 
 
+@bm.app.post('/__test/price-table')
+async def price_table_fixture(request: Request):
+    """Publish a v2 company price table (the starter list with made-up prices) as the owner."""
+    from backend import price_table
+
+    body = await request.json()
+    company = body.get('company', 'adr')
+    table = price_table.starter_table()
+    by_id = {item['item_id']: item for item in table['items']}
+    for item in table['items']:
+        if item['group'] == 'extras':
+            # Priced additional work stays off until its own release.
+            item['enabled'] = False
+        elif item['enabled']:
+            item['unit_price'] = body.get('unit_price', '25.00')
+    for item_id, changes in (body.get('items') or {}).items():
+        by_id[item_id].update(changes)
+    for key, value in (body.get('policy') or {}).items():
+        if isinstance(value, dict):
+            table['policy'][key].update(value)
+        else:
+            table['policy'][key] = value
+    owner = 'test-owner-ws-owner' if company == 'adr' else 'test-owner-ws-other'
+    prices = store.workspaces.prices
+    preview = prices.preview(
+        owner,
+        company,
+        {
+            'items': table['items'],
+            'policy': table['policy'],
+            'acknowledgements': [],
+            'change_reason': body.get('reason', 'Synthetic browser table'),
+        },
+    )
+    if preview['no_changes']:
+        return {'version_id': None}
+    return prices.publish(owner, company, preview['preview_id'], preview['generation'])
+
+
 @bm.app.post('/__test/drying-watch')
 async def drying_watch_fixture(request: Request):
     from backend.contracts import AIResult

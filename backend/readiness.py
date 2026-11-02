@@ -1,6 +1,8 @@
 """Advisory gaps only. Never stored, priced, or used as a signing gate.
 
 The device mirror is ADRCore.readiness / missingItems; shared fixtures pin parity.
+`pricing` is None for companies on the v1 rate book (no price gaps). For a v2 price table it is
+{'prices_set': bool, 'area_basis': 'demolition' | 'wet_floor'}.
 A setup reading is the first affected air or material reading in the drying log:
 there is no separate equipment setup timestamp or visit type in today's schema.
 """
@@ -28,7 +30,7 @@ SIZING_FIELDS = {
 }
 
 
-def readiness(data, photos=None, claim=None, readings=None):
+def readiness(data, photos=None, claim=None, readings=None, pricing=None):
     if hasattr(data, 'model_dump'):
         data = data.model_dump(mode='json')
     photos, claim = photos or [], claim or {}
@@ -47,6 +49,17 @@ def readiness(data, photos=None, claim=None, readings=None):
         name = room.get('name', '').strip() or 'Unnamed room'
         if not (room.get('finished_sf') or 0) > 0 and not (room.get('unfinished_sf') or 0) > 0:
             add('demolition', 'No measured demolition area', name)
+        if (
+            pricing
+            and pricing.get('prices_set')
+            and pricing.get('area_basis') == 'wet_floor'
+            and not (room.get('wet_floor_sf') or 0) > 0
+        ):
+            add(
+                'area_basis',
+                'No wet floor area entered; your company prices by wet floor area',
+                name,
+            )
         if not room.get('loss'):
             add('loss', 'Loss type not confirmed', name)
         # Match sizing.room_loss: legacy category 3 rooms read as mold, others as water.
@@ -91,6 +104,8 @@ def readiness(data, photos=None, claim=None, readings=None):
             add('setup_readings', 'No setup-day affected air or material reading')
     if any(p.get('ocr_status') in ('pending', 'failed') for p in photos):
         add('ocr', 'Photo readings await verification')
+    if pricing is not None and not pricing.get('prices_set'):
+        add('prices', 'Company prices are not set up')
     if not data.get('scope_confirmed'):
         add('scope_confirmed', 'Scope not confirmed')
     return dict(gaps=gaps, ready=not gaps)

@@ -508,6 +508,8 @@ async function localDrafts() {
   const rows = await dbAction('readonly', (store) => store.getAll());
   return rows.filter(
     (r) =>
+      // The cached company price table shares this store but is never a draft.
+      r.draft &&
       r.uid === state.user?.uid &&
       (!state.session?.workspaces_enabled ||
         r.company_id === state.session.company_id ||
@@ -537,6 +539,8 @@ async function persist() {
     ack: state.ack,
     session: state.session,
     updated_at: new Date().toISOString(),
+    // The price table the screen was built from and the walkthrough values behind any override.
+    ...window.ScopeItems?.rowExtras(state.draft.inspection_id),
     ...(state.archived && { archived: true }),
     // The estimator's customer panel, so it shows and sends without a connection.
     customer: window.WorkspaceUI?.customerCache?.() || null,
@@ -721,7 +725,10 @@ function absorb(record) {
   )
     invalidate();
   const insightChanged = state.record?.revision !== record.revision;
+  const firstSave = !state.record;
   state.record = record;
+  // A draft first saved on the server is pinned there; read the table it was pinned to.
+  if (firstSave) window.ScopeItems?.refresh();
   if (!record.audit) state.draft.homeowner_link_pending = false;
 
   window.InsightUI?.job(insightChanged);
@@ -860,6 +867,7 @@ function clearDisplayedInspection() {
 function changed(resetConfirmation = true) {
   if (!state.draft || state.signed || confirmedAuthorization) return;
   state.localVersion++;
+  window.ScopeItems?.syncOverrides();
   renderReadiness();
   if (resetConfirmation) {
     // Say so, because a silent un-tick hid that the confirmed scope had moved.
@@ -1493,6 +1501,7 @@ async function fillScopeFromWalkthrough() {
             entries.push({ ...entry, target, snapshot: stable(target) });
         }
       state.scopeEdits = { draft, data: filled, entries };
+      window.ScopeItems?.noteMeasured(entries, filled);
       fillForm();
     }
     const applied = draft.data;
@@ -1531,6 +1540,7 @@ async function fillScopeFromWalkthrough() {
           draft.photos,
           window.WorkspaceUI?.readinessClaim() || {},
           window.DryingLog?.readinessReadings() ?? null,
+          window.ScopeItems?.readinessPricing(),
         )
       : missingItems(filled, draft.photos);
     $('scopeMissing').replaceChildren(...missing.map((item) => node('li', item)));
@@ -1720,6 +1730,7 @@ function collect() {
   }))
     data[key] = $(id).checked;
   renderJobChargesSummary();
+  window.ScopeItems?.collect(data);
   window.WorkspaceUI?.scopeAddressChanged();
   window.PlacesUI?.render();
 }
@@ -1736,6 +1747,7 @@ function fillForm() {
     $('liveTranscriptPreview').textContent = '';
   }
 
+  window.ScopeItems?.prepare();
   const defaults = emptyData();
   for (const [id, key] of Object.entries({
     address: 'address',
@@ -1768,6 +1780,7 @@ function fillForm() {
     $(id).checked = !!data[key];
   renderJobChargesSummary();
   window.Prices?.noteJob();
+  window.ScopeItems?.refresh();
   $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
   window.PlacesUI?.render();
@@ -1945,9 +1958,11 @@ function renderRooms() {
       });
       wrap.append(input);
       parent.append(wrap);
+      window.ScopeItems?.watch(wrap, room, key);
       if (key === 'category') grid.append(pills);
     }
     moreBody.append(sizing);
+    window.ScopeItems?.placeWetFloor(sizing, grid);
     // The shot list waits in a drawer on Check Scope; its summary counts the missing shots.
     const shotDrawer = node('details', undefined, 'shot-drawer');
     shotDrawer.append(node('summary'), node('div', undefined, 'room-shots'));
@@ -2026,6 +2041,7 @@ function sizingFields(room, i) {
     });
     wrap.append(input);
     body.append(wrap);
+    window.ScopeItems?.watch(wrap, room, key);
   }
   group.append(
     title,
@@ -2726,7 +2742,7 @@ async function openNew(data = null, photos = []) {
     throw Error('Company access is required before starting an inspection.');
   // A blank job starts on Walk & Photo; forks and office intake open on Check Scope.
   const walkFirst = !data && state.session.role !== 'office';
-  data = data || emptyData();
+  data = data || window.ScopeItems?.newData(emptyData) || emptyData();
   if (state.session?.workspaces_enabled && state.session.role === 'office') {
     data = { ...emptyData(), address: data.address, rooms: [] };
     photos = [];
@@ -2752,6 +2768,7 @@ async function openNew(data = null, photos = []) {
     }));
     state.draft.data.scope_confirmed = false;
   }
+  window.ScopeItems?.seed(state.draft.inspection_id, null);
   confirmedAuthorization = null;
   $('retrySavedEvidence').hidden = true;
   $('signedEvidenceStatus').textContent = '';
@@ -2823,6 +2840,7 @@ async function restoreDraft(id) {
         data: remote.data,
         photos: remote.photos.map((p) => ({ ...p, uploaded: true })),
       };
+  window.ScopeItems?.seed(id, local);
   state.record = remote || local.record;
   state.ack = local ? local.ack : stable(remote.data);
   window.WorkspaceUI?.seedCustomer?.(local?.customer, id);
@@ -3235,6 +3253,7 @@ function currentReadiness() {
     state.draft.photos,
     window.WorkspaceUI?.readinessClaim() || {},
     readings,
+    window.ScopeItems?.readinessPricing(),
   );
 }
 function renderReadiness() {
@@ -5316,7 +5335,9 @@ const openDraftUnsynced = () =>
 const canonical = canonicalUrl(location.href);
 // Local drafts belong to this origin, so the app stays here until every one has synced.
 async function leaveForCanonical() {
-  const rows = await dbAction('readonly', (store) => store.getAll()).catch(() => []);
+  const rows = (await dbAction('readonly', (store) => store.getAll()).catch(() => [])).filter(
+    (r) => r.draft,
+  );
   if (openDraftUnsynced() || rows.some(unsynced) || (await pendingNoteKeys()).size) return false;
   // A Home Screen app keeps the origin it was added from; iOS opens the canonical one in a sheet.
   if (matchMedia('(display-mode: standalone)').matches || navigator.standalone)
@@ -5499,6 +5520,7 @@ async function initialize() {
     state.draft = null;
     state.record = null;
     state.signed = null;
+    window.ScopeItems?.forget();
     invalidate();
     await clearLocal();
     location.reload();
@@ -6019,6 +6041,8 @@ async function applyUser(user) {
     state.queuePaused = false;
     if (state.session.workspaces_enabled) {
       await WorkspaceUI.ready();
+      if (stale()) return;
+      await window.ScopeItems?.loadCompany();
       if (stale()) return;
       if (!state.session.role) {
         state.queuePaused = true;

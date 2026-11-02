@@ -74,7 +74,8 @@ try:
     from . import document_links
     from . import tags as qr_tags
     from .adr_price_book import adr_rates
-    from .claims import make_documents, price_scope, proposal_date
+    from .claims import make_documents, proposal_date
+    from .pricing import price_and_range
     from .sizing import equipment_sizing
     from .prompts import (
         live_prompt,
@@ -142,7 +143,8 @@ except ImportError:
     import document_links
     import tags as qr_tags
     from adr_price_book import adr_rates
-    from claims import make_documents, price_scope, proposal_date
+    from claims import make_documents, proposal_date
+    from pricing import price_and_range
     from sizing import equipment_sizing
     from prompts import (
         live_prompt,
@@ -671,7 +673,8 @@ async def saved_readiness(store, uid, record):
     log = await stored(store.drying_log, uid, record['inspection_id'])
     claim = await stored(store.workspaces.claim_details, record) if WORKSPACES_ENABLED else None
     await stored(store._access, uid, record)
-    return readiness(record['data'], record.get('photos', []), claim, log['readings'])
+    pricing = await readiness_pricing(store, uid, record)
+    return readiness(record['data'], record.get('photos', []), claim, log['readings'], pricing)
 
 
 async def reads_quantity_notes(store, uid, record):
@@ -926,6 +929,64 @@ async def current_identity(
     return claims
 
 
+V2_CALCULATION_VERSION = 'dryscope-v2'
+
+
+async def company_pricing_version(store, company):
+    """The calculation version of the company's current price table, or None when none is set.
+
+    The app picks the v1 form or the v2 item list from this before any other call. Companies
+    without price books, or without a published table, read as None.
+    """
+    if not (WORKSPACES_ENABLED and price_books_enabled() and company):
+        return None
+    try:
+        book = await run_in_threadpool(store.workspaces.prices.effective, company)
+    except Exception:
+        return None
+    if not isinstance(book, dict) or book.get('version_id') == 'unset':
+        return None
+    return book.get('calculation_version')
+
+
+async def pin_new_draft(store, uid, record):
+    """Pin a new draft to the company's v2 table at its first server save (spec 1.7).
+
+    A v1 company, a company without a published table, a role that cannot audit and any
+    storage problem leave the draft unpinned: it is pinned at its first audit as before.
+    """
+    if not (WORKSPACES_ENABLED and price_books_enabled() and getattr(store, 'workspaces', None)):
+        return
+    try:
+        company = await run_in_threadpool(store.workspaces.company_actor, uid)
+        if await company_pricing_version(store, company.get('company')) != V2_CALCULATION_VERSION:
+            return
+        await run_in_threadpool(store.workspaces.prices.ensure_pin, uid, record['inspection_id'])
+    except Exception as error:
+        event(
+            'Draft pin skipped',
+            logging.INFO,
+            operation='pin_new_draft',
+            outcome=type(error).__name__,
+        )
+
+
+async def readiness_pricing(store, uid, record):
+    """What the readiness check needs to know about the job's company prices (v2 only)."""
+    if not (WORKSPACES_ENABLED and price_books_enabled() and getattr(store, 'workspaces', None)):
+        return None
+    try:
+        view = await run_in_threadpool(store.workspaces.prices.job_view, uid, record)
+    except Conflict:
+        return {'prices_set': False}
+    except Exception:
+        return None
+    if view.get('calculation_version') != V2_CALCULATION_VERSION:
+        return None
+    policy = (view.get('table') or {}).get('policy') or {}
+    return {'prices_set': True, 'area_basis': policy.get('area_basis', 'demolition')}
+
+
 @app.get('/api/session')
 async def session_info(staff=Depends(current_staff)):
     result = dict(
@@ -950,6 +1011,9 @@ async def session_info(staff=Depends(current_staff)):
             get_job_store().workspaces.email_notice
         )
         result.update(await stored(get_job_store().workspaces.prices.session_view, actor))
+        result['pricing_version'] = await company_pricing_version(
+            get_job_store(), actor.get('company')
+        )
     else:
         result.update(prices_set=True, price_display=price_display(adr_rates()))
     if ai_features.enabled('ai_usage'):
@@ -1049,13 +1113,11 @@ async def create_inspection(
 ):
     check_extras_input(req.data)
     await stored(store.quota, staff['uid'], 'draft', 60)
-    return await draft_record(
-        store,
-        staff['uid'],
-        await stored(
-            store.create_inspection, staff['uid'], req.inspection_id, inspection_payload(req.data)
-        ),
+    created = await stored(
+        store.create_inspection, staff['uid'], req.inspection_id, inspection_payload(req.data)
     )
+    await pin_new_draft(store, staff['uid'], created)
+    return await draft_record(store, staff['uid'], created)
 
 
 @app.post('/api/authorizations/{auth_id}/copy')
@@ -1546,13 +1608,22 @@ async def audit_inspection(
         )
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
     # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
-    rates = adr_rates() if pin is None else pin['rates']
-    items, total = (
-        price_scope(data, rates)
-        if pin is None
-        else price_scope(data, rates, basis['calculation_version'])
-    )
-    if total <= 0:
+    rates = adr_rates() if pin is None else pin.get('rates')
+    try:
+        priced = price_and_range(
+            data,
+            {'calculation_version': 'adr-residential-v1', 'rates': rates}
+            if pin is None
+            else {**pin, 'calculation_version': basis['calculation_version']},
+        )
+    except NotImplementedError:
+        raise HTTPException(
+            409, "This company's price list cannot be audited yet. Contact support."
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    items = priced.lines
+    if priced.xactimate_total <= 0:
         raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
     deadline = time.monotonic() + 30
     while (

@@ -1,6 +1,15 @@
 /* Small pure functions shared by the UI and behavioral tests. */
 (function (root) {
-  const emptyData = () => ({
+  // A v2 company prices from its own table, so the sheet's charge quantities are not assumed
+  // (ScopeItems.applyDefaults writes the table's default quantities afterwards).
+  const V1_SHEET_CHARGES = {
+    emergency_calls: 1,
+    monitoring_hours: 13.25,
+    haul_loads: 1,
+    air_scrubbers: 1,
+    hepa_filters: 1,
+  };
+  const emptyData = (options = {}) => ({
     address: '',
     year_built: null,
     // Retired flags the server still accepts and returns for older drafts.
@@ -24,11 +33,9 @@
     drying_days: 3,
     labor_hours: 0,
     is_after_hours: false,
-    emergency_calls: 1,
-    monitoring_hours: 13.25,
-    haul_loads: 1,
-    air_scrubbers: 1,
-    hepa_filters: 1,
+    ...(options.v2
+      ? Object.fromEntries(Object.keys(V1_SHEET_CHARGES).map((k) => [k, 0]))
+      : V1_SHEET_CHARGES),
     matterport_scans: 0,
     dump_truck_loads: 0,
     equipment_decon: 0,
@@ -388,7 +395,7 @@
   // Gaps the technician can still fill on site, checked against the form with any proposed scope
   // values applied. The model's clarification questions are listed beside these.
   // Keep in parity with backend/readiness.py. These gaps are advisory, never signing rules.
-  function readiness(data, photos = [], claim = {}, readings = null) {
+  function readiness(data, photos = [], claim = {}, readings = null, pricing = null) {
     const gaps = [],
       add = (code, text, room = '') => gaps.push({ room, code, text });
     if (!String(data.address || '').trim()) add('address', 'No property address');
@@ -398,6 +405,8 @@
       const name = (room.name || '').trim() || 'Unnamed room';
       if (!(room.finished_sf > 0) && !(room.unfinished_sf > 0))
         add('demolition', 'No measured demolition area', name);
+      if (pricing?.prices_set && pricing.area_basis === 'wet_floor' && !(room.wet_floor_sf > 0))
+        add('area_basis', 'No wet floor area entered; your company prices by wet floor area', name);
       if (!room.loss) add('loss', 'Loss type not confirmed', name);
       if (roomLoss(room) !== 'mold') {
         for (const [field, label] of Object.entries({
@@ -451,14 +460,15 @@
     }
     if (photos.some((p) => ['pending', 'failed'].includes(p.ocr_status)))
       add('ocr', 'Photo readings await verification');
+    if (pricing && !pricing.prices_set) add('prices', 'Company prices are not set up');
     if (!data.scope_confirmed) add('scope_confirmed', 'Scope not confirmed');
     return { gaps, ready: !gaps.length };
   }
-  function missingItems(data, photos = [], claim, readings) {
+  function missingItems(data, photos = [], claim, readings, pricing = null) {
     // The existing Fill scope list stays unchanged until the server enables readiness.
     // Supplying sidecar context opts into the complete F1 list (including unknown readings).
     if (claim !== undefined || readings !== undefined)
-      return readiness(data, photos, claim || {}, readings ?? null).gaps.map(
+      return readiness(data, photos, claim || {}, readings ?? null, pricing).gaps.map(
         (g) => (g.room ? g.room + ': ' : '') + g.text,
       );
     const items = [];

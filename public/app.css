@@ -1757,7 +1757,8 @@ footer {
     margin-top: 0.25rem;
     padding-top: 0.25rem;
   }
-  #inspectionFields > .form-grid {
+  #inspectionFields > .form-grid,
+  #v1Scope > .form-grid {
     grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr));
     gap: 0 0.75rem;
     align-items: end;
@@ -3125,4 +3126,37 @@ footer {
   .price-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* Estimator item list for companies with their own price table (public/scope-items.js). */
+#v1Scope {
+  display: contents;
+}
+#v1Scope[hidden],
+#v2Scope[hidden] {
+  display: none;
+}
+.v2-scope .scope-group {
+  margin-top: 0.5rem;
+}
+.v2-scope .scope-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.25rem 0.75rem;
+  align-items: end;
+  margin: 0.5rem 0;
+}
+.v2-scope .scope-row .scope-price {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.v2-scope .scope-from-rooms {
+  margin: 0.25rem 0;
+}
+.override-reason {
+  grid-column: 1 / -1;
+  display: block;
+}
+.override-reason[hidden] {
+  display: none;
 }
