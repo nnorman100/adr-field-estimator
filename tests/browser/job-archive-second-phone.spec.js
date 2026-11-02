@@ -125,7 +125,9 @@ test('a second phone archives the job the estimator has open: the edit is kept a
   await expect(page.locator('#archivedActions')).toBeVisible();
   await expect(page.locator('#saveStatus')).toHaveText('Archived by the owner');
   await expect(page.locator('#conflictActions')).toBeHidden();
-  expect(await localRows(page)).toContainEqual({ id: JOB, year: 1999, archived: true });
+  await expect
+    .poll(async () => (await localRows(page)).find((row) => row.id === JOB))
+    .toEqual({ id: JOB, year: 1999, archived: true });
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#discardArchived').click();
   await expect(page.locator('#dashboardHeading')).toHaveText('My jobs');

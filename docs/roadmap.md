@@ -3,6 +3,7 @@
 The approved plan (Oct 24, 2026) for making this repository the complete DryScope product. Any tool or person picking up the work starts at **Handoff**, then works the phases in order. `RELEASES.md` stays the one record of what is live; this file records what is planned and why.
 
 ## Handoff (updated Oct 27, 2026)
+- **Feature state at a glance:** `docs/STATUS.md` (built, switched on, phone-checked). Update it in the same PR as the change.
 - **What is live:** read the newest rows of `RELEASES.md`. It is the one record of the serving backend revision, Hosting release and source commit; this file does not copy them. Check `git log origin/master` and `gh-axi pr list` for what has merged since.
 - **Merged and released:** all of Phase 1 and all six Phase 2 steps (see the Oct 24–25 rows in `RELEASES.md`). Phase 0 items 1–4 and 6 are not recorded as done; item 6 (the local SMTP timeout test fails on Windows, passes in CI) is still open.
 - **In the serving revision:** Phase 3a readiness (F1, #147) is on. The newest 100% row in `RELEASES.md` records `AI_FEATURES=readiness`. The voice-note gate (#148) is in that revision and is not behind `AI_FEATURES`. Drying watch (A1, #149), priced extras (F2, #150), job summaries and AI usage (O1 + O3, #151), and the price editor (#153) are in that same revision and stay off: `AI_FEATURES` is only `readiness`, and `PRICE_BOOKS_ENABLED` is unset. Compare each later merge with the source commit of the newest `live` row. The rel5 commit was rolled back, so it is on `master` and is not serving.
@@ -11,7 +12,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
-  - Agents may merge Low or Medium risk PRs with green CI. High risk PRs and every production deploy need Nate's go.
+  - Agents do not merge PRs; Nate approves every merge (D-009 in `docs/DECISIONS.md`, Oct 28). Every production deploy needs Nate's go.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
@@ -23,6 +24,7 @@ Nate wants one product, **DryScope**, built on the live field estimator (`nnorma
 Goal: finish the Dryscope ports Nate picked, then build the first missing VISION.md piece he chose, **delivery after signing**.
 
 ## Where we are (Oct 27, 2026)
+_History only. For current feature state use `docs/STATUS.md`; for what is serving use `RELEASES.md`._
 - Deployed state lives only in `RELEASES.md`. The serving revision includes Phase 1, Phase 2, and the Phase 3a items in the Handoff. Readiness is the only enabled `AI_FEATURES` entry. Drying watch, priced extras, job summaries, the usage meter, and the price editor are in that revision and stay off. A later backend release was rolled back; anything newer than the newest `live` row's source commit is unreleased.
 - Shipped Oct 19–22: walkthrough-first flow, owner logins, QR tags (#115), drying log with psychrometrics and thermal readings (#117), claim and loss details (#118), IICRC sizing (#119), photo shot list (#121), landing page at `/` with the app at `/app` (#124), built-in ADR branding removed (#127).
 - Shipped Oct 24–25: jobs list tabs and search (#130), GPS stamp (#134), address autocomplete and map (#136), copy to draft (#133), and Phase 2 document delivery through delivery status and Resend (#144).

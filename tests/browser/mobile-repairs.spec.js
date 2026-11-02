@@ -739,14 +739,22 @@ for (const width of [320, 390])
       await roomMore.locator('summary').click();
       await expect(waste).toBeVisible();
       await expect(cabinetry).toBeVisible();
+      await expect(cabinetry).toBeDisabled();
+      await expect(card.getByText('Applies to category 3 only')).toBeVisible();
       await roomMore.locator('summary').click();
       // The Mold pill makes the room category 3, so cabinetry moves onto the card itself.
       await lossPill(page, 0, 'mold').check();
       await expect(cabinetry).toBeVisible();
+      await expect(cabinetry).toBeEnabled();
+      await expect(card.getByText('Applies to category 3 only')).toBeHidden();
       await expect(roomMore.locator('[data-room-key="custom_cabinetry"]')).toHaveCount(0);
       await cabinetry.check();
       await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('1');
       await expect(cabinetry).toBeHidden();
+      await roomMore.locator('summary').click();
+      await expect(cabinetry).toBeDisabled();
+      await expect(cabinetry).toBeChecked();
+      await roomMore.locator('summary').click();
       expect(await page.evaluate(() => state.draft.data.rooms[0].custom_cabinetry)).toBe(true);
       // Wood-floor drying, added labor and after-hours wait behind More equipment & labor.
       for (const id of ['woodFloorSystems', 'woodFloorDays', 'laborHours', 'afterHours'])
@@ -822,7 +830,10 @@ for (const width of [320, 390])
       // Job B: the same room answered with the Mold pill.
       const menu = page.locator('#jobMenu');
       if (!(await menu.evaluate((el) => el.open))) await menu.locator(':scope > summary').click();
+      const jobAId = await page.evaluate(() => state.draft.inspection_id);
       await page.locator('#newInspection').click();
+      // Job A also has one room, so wait for the new draft: the form is reset in the same step.
+      await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(jobAId);
       await expect(page.locator('#rooms .room')).toHaveCount(1);
       await scope(page, ['Bathroom', 'Hall']);
       await fits();

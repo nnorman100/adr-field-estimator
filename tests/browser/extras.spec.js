@@ -256,6 +256,8 @@ test('conflict recovery copies quantities into a new draft without carrying owne
   await page.locator('#extraOwnerName').fill('Test Owner');
   await page.locator('#saveExtra').click();
   await expect(page.locator('#extraDialog')).toBeHidden();
+  // The app's own save of the approval must land before this test changes the record.
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   const original = await page.evaluate(() => state.draft.inspection_id);
   const headers = { Authorization: 'Bearer ' + uid('owner'), 'X-ADR-Workspace-Protocol': '1' };
   const record = await (await page.request.get('/api/inspections/' + original, { headers })).json();

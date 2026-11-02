@@ -13,6 +13,7 @@ test.use({ serviceWorkers: 'block' });
 const APP_SELECTS = [
   'coordEstimator',
   'photoRoom',
+  'removeRoomMoveTarget',
   'readingRoom',
   'readingZone',
   'readingUnit',

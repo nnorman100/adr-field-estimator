@@ -25,6 +25,7 @@ async function jobs(page) {
 async function openJob(page) {
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
   await expect(page.locator('#jobInsight')).toBeVisible();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await expect(page.locator('#jobInsight .insight-narrative')).toContainText(
     /Draft scope\.|Facts changed/,
   );

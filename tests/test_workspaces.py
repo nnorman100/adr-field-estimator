@@ -1622,8 +1622,8 @@ def test_documents_name_the_coordinated_customer_and_a_new_name_needs_new_docume
     assert 'Customer:' not in unnamed['audit']['documents']['iicrc_defense_letter']
     coordinate_customer(client, current, '  Synthetic Homeowner  ')
     cleared = client.get('/api/inspections/' + ID).json()
-    assert cleared['audit'] is None and cleared['status'] == 'draft' and cleared['revision'] == 1
-    named = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    assert cleared['audit'] is None and cleared['status'] == 'draft' and cleared['revision'] == 2
+    named = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 2}).json()
     documents = named['audit']['documents']
     assert documents['adr_estimate']['customer_name'] == 'Synthetic Homeowner'
     assert (
@@ -1645,7 +1645,7 @@ def test_documents_name_the_coordinated_customer_and_a_new_name_needs_new_docume
     store.db.records['_workspace_jobs/' + ID]['customer_name'] = 'Renamed Mid-Audit'
     payload = dict(
         inspection_id=ID,
-        expected_revision=1,
+        expected_revision=2,
         auth_id='ADR-AUTH-customer123456',
         proposal_hash=named['audit']['proposal_hash'],
         signature_png=png(),

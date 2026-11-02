@@ -55,6 +55,8 @@ test('a customer entered offline stays on the phone and sends on reconnect', asy
   await page.locator('#dashboardJobs').click();
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  // The customer panel opens only after its record has loaded; go offline after that.
+  await expect(page.locator('#customerDetails')).toBeVisible();
   // The panel sits at the top of Check Scope, above the address.
   expect(
     await page.evaluate(

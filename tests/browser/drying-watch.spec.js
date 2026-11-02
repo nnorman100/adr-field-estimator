@@ -53,7 +53,12 @@ for (const width of [390, 320]) {
       await expect(card).toContainText('Offline · last loaded state');
       await expect(card.getByRole('button', { name: 'Mark dry', exact: true })).toBeDisabled();
       await expect(card).toContainText('Day 1 of 3');
+      const reloaded = page.waitForResponse(
+        (r) => /\/api\/jobs\/[^/]+\/drying-watch$/.test(r.url()) && r.request().method() === 'GET',
+      );
       await context.setOffline(false);
+      // Reconnecting reloads the watch; act only once that reload has landed.
+      await reloaded;
       await expect(card.getByRole('button', { name: 'Mark dry', exact: true })).toBeEnabled();
       await card.getByRole('button', { name: 'Mark dry', exact: true }).click();
       await expect(card.locator('#watchApproval')).toContainText(

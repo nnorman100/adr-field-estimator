@@ -39,7 +39,6 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import ClientDisconnect
-from PIL import Image, ImageOps
 import firebase_admin
 from firebase_admin import app_check, auth as firebase_auth
 from google import genai
@@ -108,8 +107,9 @@ try:
         TRANSCRIPT_LIMIT,
         voice_notes_clear,
     )
-    from .job_store import BUCKET, decode_image, IMAGE_WORKER
+    from .job_store import BUCKET, decode_image, fit_jpeg, IMAGE_WORKER
     from .cloud_log import event
+    from .migration_ledger import list_applied
 except ImportError:
     from contracts import (
         CopyRequest,
@@ -174,8 +174,9 @@ except ImportError:
         TRANSCRIPT_LIMIT,
         voice_notes_clear,
     )
-    from job_store import BUCKET, decode_image, IMAGE_WORKER
+    from job_store import BUCKET, decode_image, fit_jpeg, IMAGE_WORKER
     from cloud_log import event
+    from migration_ledger import list_applied
 
 DEDICATED_PROJECT_ID = 'alert-disaster-field-2026'
 PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT', DEDICATED_PROJECT_ID)
@@ -209,11 +210,8 @@ LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/a
 ORIGINS = list(DOCUMENT_ORIGINS)
 
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED', 'false').lower() == 'true'
-STAFF_EMAILS = {
-    e.strip().lower()
-    for e in os.getenv('STAFF_EMAILS', 'nathanaelcnorman@gmail.com').split(',')
-    if e.strip()
-}
+# Fail closed: with STAFF_EMAILS unset or empty, nobody passes the legacy (workspaces-off) staff check.
+STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS', '').split(',') if e.strip()}
 WORKSPACE_SIGN_IN_PROVIDERS = frozenset({'google.com', 'password'})
 # Step one of the App Check rollout only records each request's token; see docs/app-check.md.
 APPCHECK_MODE = os.getenv('APPCHECK_MODE', 'monitor')
@@ -788,17 +786,7 @@ async def generate_audit(contents, inspection_id, started):
 
 
 def model_image(raw):
-    with IMAGE_WORKER, Image.open(io.BytesIO(raw)) as image:
-        # JPEG originals decode at the smallest power-of-two reduction that still fills the box.
-        scale = max(image.size) / 1600
-        if scale > 1:
-            box = (max(1, int(image.width / scale)), max(1, int(image.height / scale)))
-            image.draft('RGB', box)
-        image = ImageOps.exif_transpose(image).convert('RGB')
-        image.thumbnail((1600, 1600))
-        output = io.BytesIO()
-        image.save(output, format='JPEG', quality=85)
-        return types.Part.from_bytes(data=output.getvalue(), mime_type='image/jpeg')
+    return types.Part.from_bytes(data=fit_jpeg(raw), mime_type='image/jpeg')
 
 
 AUDIT_PHOTO_DOWNLOADS = 6
@@ -812,7 +800,10 @@ async def model_photos(store, uid, inspection_id, photos):
 
     async def prepare(photo):
         async with gate:
-            _, raw = await stored(store.photo, uid, inspection_id, photo['id'])
+            stored_photo, raw = await stored(store.photo, uid, inspection_id, photo['id'], True)
+        copy = stored_photo.get('model_file')
+        if copy and hashlib.sha256(raw).hexdigest() == copy['sha256']:
+            return types.Part.from_bytes(data=raw, mime_type='image/jpeg')
         return await run_in_threadpool(model_image, raw)
 
     return await asyncio.gather(*(prepare(photo) for photo in photos))
@@ -826,7 +817,13 @@ def health_check():
 
 
 @app.get('/api/health/details')
-def health_details(staff=Depends(current_staff)):
+def health_details(staff=Depends(current_staff), store=Depends(get_job_store)):
+    try:
+        migrations = list_applied(store.db)
+    except Exception:
+        # A ledger read problem must not hide the rest of the configuration from the operator.
+        logging.getLogger(__name__).exception('Applied-migration ledger read failed')
+        migrations = None
     return dict(
         status='healthy',
         service='alert-disaster-field-estimator',
@@ -841,6 +838,7 @@ def health_details(staff=Depends(current_staff)):
         live_model=LIVE_MODEL,
         workspaces_enabled=WORKSPACES_ENABLED,
         source_commit=SOURCE_COMMIT,
+        migrations=migrations,
     )
 
 
@@ -1200,13 +1198,6 @@ async def ocr_photo(
         await stored(
             store.set_ocr, staff['uid'], inspection_id, photo_id, result.model_dump(mode='json')
         ),
-    )
-
-
-@app.post('/api/ocr-meter')
-async def legacy_ocr(staff=Depends(current_staff)):
-    raise HTTPException(
-        409, 'Update the app and attach the photo to an inspection before recognition.'
     )
 
 
@@ -1678,11 +1669,11 @@ async def document_link(request, store):
 
 
 async def linked(method, *args, unavailable=signing_links.UNAVAILABLE):
-    """Unknown, expired, revoked and inaccessible links all answer with the same 404."""
+    """Unknown, expired, revoked, archived and inaccessible links all answer with the same 404."""
     try:
         return await stored(method, *args)
     except HTTPException as error:
-        if error.status_code in (403, 404):
+        if error.status_code in (403, 404, 410):
             raise HTTPException(404, unavailable)
         raise
 

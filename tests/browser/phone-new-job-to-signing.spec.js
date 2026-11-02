@@ -31,11 +31,14 @@ test('a new job goes from creation to a signed proposal at 390 px', async ({ pag
   await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
   await expect(page.locator('#saveStatus')).toHaveText('Saved');
   // Start a new job from the phone's More menu.
+  const firstJob = await page.evaluate(() => state.draft.inspection_id);
   await page.locator('#jobMenu > summary').click();
   await page
     .locator('#jobMenu')
     .getByRole('button', { name: 'New inspection', exact: true })
     .click();
+  // The blank address was already true; the new draft and its reset form arrive together.
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(firstJob);
   await expect(page.locator('#address')).toHaveValue('');
   await fits(page, 'new job');
   await page.locator('.task-nav [data-task="property"]').click();

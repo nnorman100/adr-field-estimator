@@ -11,7 +11,7 @@ from threading import BoundedSemaphore
 from datetime import datetime, timezone
 from uuid import uuid4
 from google.cloud import firestore, storage
-from PIL import Image
+from PIL import Image, ImageOps
 
 # Limit decoded-image memory across concurrent OCR/audit/signature requests.
 IMAGE_WORKER = BoundedSemaphore(1)
@@ -43,6 +43,24 @@ def decode_image(data_url, *, signature=False):
     except Exception as error:
         raise ValueError('The image is damaged or cannot be decoded.') from error
     return raw, f'image/{match[1]}', match[1]
+
+
+MODEL_PIXELS = 1600
+
+
+def fit_jpeg(raw):
+    """An upright RGB JPEG of at most 1600 px on its longest side: the copy sent to the model."""
+    with IMAGE_WORKER, Image.open(io.BytesIO(raw)) as image:
+        # JPEG originals decode at the smallest power-of-two reduction that still fills the box.
+        scale = max(image.size) / MODEL_PIXELS
+        if scale > 1:
+            box = (max(1, int(image.width / scale)), max(1, int(image.height / scale)))
+            image.draft('RGB', box)
+        image = ImageOps.exif_transpose(image).convert('RGB')
+        image.thumbnail((MODEL_PIXELS, MODEL_PIXELS))
+        output = io.BytesIO()
+        image.save(output, format='JPEG', quality=85)
+        return output.getvalue()
 
 
 class JobStore:

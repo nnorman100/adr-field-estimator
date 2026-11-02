@@ -290,6 +290,8 @@ test('weak uplink: small frames wait behind queued audio, and lagging acks pause
     );
   // The clock stands still, so frames come only from runFor, which fires each acknowledgement when it
   // was due. A natural frame tick or a fastForward jump past a pending ack would make the counts race.
+  // A frame is only sent once the camera video has dimensions; fake time never advances to retry.
+  await expect(page.locator('#cameraEmpty')).toBeHidden();
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   // Frames are context only: at most 640 px wide and one every 2 s, so voice keeps the uplink.
   await page.clock.runFor(2000);

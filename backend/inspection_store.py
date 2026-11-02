@@ -13,14 +13,14 @@ from pydantic import ValidationError
 from google.cloud import firestore
 
 try:
-    from .job_store import JobStore, decode_image, IMAGE_WORKER
+    from .job_store import JobStore, decode_image, fit_jpeg, IMAGE_WORKER, MODEL_PIXELS
     from .cloud_log import event
     from .scope import default_photo_rename
     from .extras import validate_edits
     from .contracts import InspectionData
     from .psychrometrics import psychrometrics
 except ImportError:
-    from job_store import JobStore, decode_image, IMAGE_WORKER
+    from job_store import JobStore, decode_image, fit_jpeg, IMAGE_WORKER, MODEL_PIXELS
     from cloud_log import event
     from scope import default_photo_rename
     from extras import validate_edits
@@ -125,16 +125,20 @@ def now():
 
 
 class InspectionStore(JobStore):
-    def _discard_unreferenced(self, blob, ref):
+    def _discard_unreferenced(self, blob, ref, *more):
         # Each attempt has a unique path. Never delete the winning retry's object,
         # including when a commit succeeded but its response was lost.
         try:
             snapshot = ref.get()
             record = snapshot.to_dict() if snapshot.exists else {}
             paths = {p['file']['path'] for p in record.get('photos', [])}
+            paths.update(
+                p['model_file']['path'] for p in record.get('photos', []) if p.get('model_file')
+            )
             paths.add(record.get('signature', {}).get('path'))
-            if blob.name not in paths:
-                blob.delete(if_generation_match=blob.generation)
+            for orphan in (blob, *more):
+                if orphan.name not in paths:
+                    orphan.delete(if_generation_match=orphan.generation)
         except Exception as error:
             # The object path and the error text name the user; record only the error class.
             event(
@@ -334,12 +338,40 @@ class InspectionStore(JobStore):
             ocr=None,
             file=dict(path=path, content_type=mime, sha256=digest),
         )
+        # The audit sends this 1600 px JPEG instead of the original. Photos stored before it
+        # existed (or whose copy could not be made) have no model_file and use the original.
+        model_blob = None
+        try:
+            model_raw = fit_jpeg(raw)
+        except Exception as error:
+            event(
+                'Model copy of a photo could not be made; the original is kept',
+                logging.WARNING,
+                operation='photo_model_copy',
+                outcome=type(error).__name__,
+            )
+        else:
+            model_path = f'{path.rpartition(".")[0]}-{MODEL_PIXELS}.jpg'
+            photo['model_file'] = dict(
+                path=model_path,
+                content_type='image/jpeg',
+                sha256=hashlib.sha256(model_raw).hexdigest(),
+            )
+            model_blob = self.bucket.blob(model_path)
         # Older clients send none; the key stays absent so the photo reads as having no stamp.
         if location is not None:
             photo['location'] = location
         checked_metadata({**record, 'photos': record['photos'] + [photo]})
         blob = self.bucket.blob(path)
         blob.upload_from_string(raw, content_type=mime, if_generation_match=0)
+        if model_blob:
+            try:
+                model_blob.upload_from_string(
+                    model_raw, content_type='image/jpeg', if_generation_match=0
+                )
+            except Exception:
+                self._discard_unreferenced(blob, self._ref(inspection_id), model_blob)
+                raise
 
         def append(current):
             if len(current['photos']) >= 60:
@@ -351,7 +383,9 @@ class InspectionStore(JobStore):
         try:
             return self._change(uid, inspection_id, upload['expected_revision'], append)
         except Exception:
-            self._discard_unreferenced(blob, self._ref(inspection_id))
+            self._discard_unreferenced(
+                blob, self._ref(inspection_id), *([model_blob] if model_blob else [])
+            )
             raise
 
     def move_photo(self, uid, inspection_id, revision, photo_id, room):
@@ -621,12 +655,26 @@ class InspectionStore(JobStore):
 
         return self._atomic(update)
 
-    def photo(self, uid, inspection_id, photo_id):
+    def photo(self, uid, inspection_id, photo_id, model=False):
+        """The photo record and its bytes. With model=True, the 1600 px copy made at upload when
+        the photo has one and it can be read; otherwise the original."""
         record = self.get_inspection(uid, inspection_id)
         photo = next((p for p in record['photos'] if p['id'] == photo_id), None)
         if not photo:
             raise LookupError('Photo not found.')
-        raw = self.bucket.blob(photo['file']['path']).download_as_bytes()
+        raw = None
+        if model and photo.get('model_file'):
+            try:
+                raw = self.bucket.blob(photo['model_file']['path']).download_as_bytes()
+            except Exception as error:
+                event(
+                    'Model copy of a photo could not be read; using the original',
+                    logging.WARNING,
+                    operation='photo_model_copy',
+                    outcome=type(error).__name__,
+                )
+        if raw is None:
+            raw = self.bucket.blob(photo['file']['path']).download_as_bytes()
         self._access(uid, record)
         return photo, raw
 

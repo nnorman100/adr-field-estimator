@@ -28,7 +28,12 @@ BASELINE = {
 
 
 def revision(commit, env=None, **overrides):
-    env = {**BASELINE, 'INVITATION_TRANSPORT': 'smtp', **(env or {})}
+    env = {
+        **BASELINE,
+        'INVITATION_TRANSPORT': 'smtp',
+        'STAFF_EMAILS': 'owner@example.com',
+        **(env or {}),
+    }
     items = [{'name': key, 'value': value} for key, value in env.items() if value is not None]
     items.append(
         {
@@ -307,6 +312,51 @@ def test_check_only_stages_and_deploys_nothing(summary):
     assert release(runner, '--check-only') == 0
     assert set(runner.keys()) <= {'git', 'ttl', 'other'}
     assert 'nothing deployed' in summary.text()
+
+
+def test_stage_carries_the_serving_staff_emails_explicitly(summary):
+    runner = FakeRunner(staged_env={'STAFF_EMAILS': 'owner@example.com'})
+    runner.revisions['rev-old'] = revision(OLD, {'STAFF_EMAILS': 'owner@example.com'})
+    assert release(runner) == 0
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--staff-emails') + 1] == 'owner@example.com'
+
+
+@pytest.mark.parametrize('serving_value', [None, '', ' , '])
+def test_release_is_refused_before_staging_when_the_serving_revision_has_no_staff_emails(
+    summary, serving_value
+):
+    runner = FakeRunner()
+    runner.revisions['rev-old'] = revision(OLD, {'STAFF_EMAILS': serving_value})
+    assert release(runner) == 1
+    assert not {'stage', 'traffic', 'stamp', 'hosting-deploy'} & set(runner.keys())
+    assert runner.traffic[0]['revisionName'] == 'rev-old' and runner.traffic[0]['percent'] == 100
+    assert 'no usable STAFF_EMAILS' in summary.text()
+
+
+def test_check_only_also_refuses_when_the_serving_revision_has_no_staff_emails(summary):
+    runner = FakeRunner()
+    runner.revisions['rev-old'] = revision(OLD, {'STAFF_EMAILS': None})
+    assert release(runner, '--check-only') == 1
+    assert 'STAFF_EMAILS' in summary.text()
+
+
+def test_serving_staff_emails_are_normalized_before_staging_and_comparing(summary):
+    runner = FakeRunner(staged_env={'STAFF_EMAILS': 'owner@example.com,staff@example.com'})
+    runner.revisions['rev-old'] = revision(
+        OLD, {'STAFF_EMAILS': ' Owner@Example.com, staff@example.com,,owner@example.com'}
+    )
+    assert release(runner) == 0
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--staff-emails') + 1] == 'owner@example.com,staff@example.com'
+    assert 'traffic' in runner.keys()
+
+
+def test_a_staged_staff_list_that_differs_from_serving_is_refused(summary):
+    runner = FakeRunner(staged_env={'STAFF_EMAILS': 'other@example.com'})
+    runner.revisions['rev-old'] = revision(OLD, {'STAFF_EMAILS': 'owner@example.com'})
+    assert release(runner) == 1
+    assert 'traffic' not in runner.keys()
 
 
 @pytest.mark.parametrize(

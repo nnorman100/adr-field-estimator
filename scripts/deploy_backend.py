@@ -4,7 +4,10 @@ Cloud Run copies environment variables from the service's latest template, which
 revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES and
 PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting those staged values.
 The defaults are the current production baseline: AI_FEATURES=readiness and price books off. Pass
---ai-features or --price-books only to change that baseline on purpose. The same command mounts the
+--ai-features or --price-books only to change that baseline on purpose. STAFF_EMAILS is the legacy
+staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
+--staff-emails to set it; without it the revision inherits the service template's value, and the
+script refuses (even for --dry-run) when that template has none. The same command mounts the
 Maps key secret by name, so a release never depends on a binding made by hand in the console.
 Promotion is a separate reviewed update-traffic step.
 
@@ -14,6 +17,7 @@ it inherits environment variables. The same commit is set as the revision's sour
 """
 
 import argparse
+import json
 import re
 import shlex
 import shutil
@@ -66,10 +70,26 @@ def env_assignments(workspaces, ai_features, price_books):
     }
 
 
+def staff_emails_value(value):
+    """Normalize a deliberate STAFF_EMAILS list: comma-separated, lowercase, no blanks or repeats."""
+    names = []
+    for part in value.split(','):
+        email = part.strip().lower()
+        if not email:
+            continue
+        if not re.fullmatch(r'[^@\s,^|]+@[^@\s,^|]+\.[^@\s,^|]+', email):
+            raise argparse.ArgumentTypeError(f'{email!r} is not an email address')
+        if email not in names:
+            names.append(email)
+    if not names:
+        raise argparse.ArgumentTypeError('give at least one email address')
+    return ','.join(names)
+
+
 def update_env_flag(assignments):
-    # A caret delimiter keeps a comma inside AI_FEATURES from splitting the flag.
-    payload = '@'.join(f'{key}={value}' for key, value in assignments.items())
-    return '--update-env-vars=^@^' + payload
+    # A caret delimiter keeps a comma inside AI_FEATURES or STAFF_EMAILS from splitting the flag.
+    payload = '|'.join(f'{key}={value}' for key, value in assignments.items())
+    return '--update-env-vars=^|^' + payload
 
 
 def baseline_line(assignments):
@@ -79,7 +99,12 @@ def baseline_line(assignments):
     return 'Feature baseline: ' + ' '.join(parts)
 
 
-def command(workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_books='off'):
+def command(
+    workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_books='off', staff_emails=None
+):
+    assignments = env_assignments(workspaces, ai_features, price_books)
+    if staff_emails:
+        assignments['STAFF_EMAILS'] = staff_emails
     return [
         'gcloud',
         'run',
@@ -97,12 +122,46 @@ def command(workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_book
         '--memory=1Gi',
         '--timeout=3600',
         '--allow-unauthenticated',
-        update_env_flag(env_assignments(workspaces, ai_features, price_books)),
+        update_env_flag(assignments),
         '--update-secrets=' + MAPS_SECRET,
         '--update-labels=source-commit=' + commit,
         '--no-traffic',
         '--tag=' + tag,
     ]
+
+
+def describe_service(argv):
+    return subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
+
+
+def template_staff_emails(describe):
+    """STAFF_EMAILS a deploy without --staff-emails inherits; empty when unset or unreadable."""
+    try:
+        result = describe(
+            [
+                shutil.which('gcloud') or 'gcloud',
+                'run',
+                'services',
+                'describe',
+                'alert-disaster-field-estimator',
+                '--region=us-west2',
+                '--project=' + PROJECT,
+                '--format=json',
+            ]
+        )
+    except OSError:
+        return ''
+    if result.returncode != 0:
+        return ''
+    try:
+        containers = json.loads(result.stdout)['spec']['template']['spec']['containers']
+        env = containers[0].get('env') or []
+    except (ValueError, KeyError, IndexError, TypeError):
+        return ''
+    for item in env:
+        if item.get('name') == 'STAFF_EMAILS':
+            return (item.get('value') or '').strip(' ,')
+    return ''
 
 
 def revision_tag(value):
@@ -113,7 +172,7 @@ def revision_tag(value):
     return value
 
 
-def main(argv=None, run=subprocess.run, git=subprocess.run):
+def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--workspaces', choices=('on', 'off'), required=True)
     parser.add_argument(
@@ -130,6 +189,15 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
         choices=('on', 'off'),
         default='off',
         help='PRICE_BOOKS_ENABLED for this revision (default: off)',
+    )
+    parser.add_argument(
+        '--staff-emails',
+        type=staff_emails_value,
+        default=None,
+        help=(
+            'STAFF_EMAILS for this revision (comma-separated). Without it the revision inherits '
+            "the service template's value; the deploy is refused when that template has none"
+        ),
     )
     parser.add_argument(
         '--tag',
@@ -155,9 +223,21 @@ def main(argv=None, run=subprocess.run, git=subprocess.run):
             file=sys.stderr,
         )
         return 2
+    if not args.staff_emails and not template_staff_emails(describe or describe_service):
+        print(
+            'Refusing to deploy: the Cloud Run service template has no STAFF_EMAILS (or could not '
+            'be read), so this revision would admit nobody in workspaces-off mode. '
+            'Pass --staff-emails.',
+            file=sys.stderr,
+        )
+        return 2
     assignments = env_assignments(args.workspaces, args.ai_features, args.price_books)
-    argv = command(args.workspaces, args.tag, commit, args.ai_features, args.price_books)
+    argv = command(
+        args.workspaces, args.tag, commit, args.ai_features, args.price_books, args.staff_emails
+    )
     print(baseline_line(assignments))
+    if args.staff_emails:
+        print('STAFF_EMAILS: set explicitly on this revision.')
     if args.dry_run:
         print(shlex.join(argv))
         return 0

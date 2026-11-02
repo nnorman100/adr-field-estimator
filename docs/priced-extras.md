@@ -10,7 +10,7 @@ The owner opens the job and chooses **Review & approve**, reviews the descriptio
 
 Every extra must be approved before signing. An approval clears only an exact match to the approved priced description; the retained source audit item is provenance, not proof of coverage. Narrowing a description or truncating a prefill to 300 characters leaves any unmatched or expanded audit finding blocking signing. The audit also sees the priced `ADR-EXTRA` lines and is instructed to avoid flagging the same covered task again. Different or expanded wording remains subject to review; there is no fuzzy matching that silently clears unrelated tasks.
 
-The server computes each line in Decimal (`2.5 × 47.46 = 118.65`), rounds cents with half-up rounding, and includes it in the workbook labor/material subtotal. The low/high range therefore applies the same after-hours and area factors as other labor/material work. The base-rate sum remains visible beside the customer range. Each approved extra is a separate proposal scope and itemized claim line:
+The server computes each line in Decimal (`2.5 × 47.46 = 118.65`), rounds cents with half-up rounding, and adds it to the low and high estimate like a job charge, at exactly the approved amount. The after-hours and affected-area factors apply only to the workbook labor/material subtotal, never to approved extras. The base-rate sum remains visible beside the customer range. Each approved extra is a separate proposal scope and itemized claim line:
 
 > Additional work, not in [Company] price sheet: [description], [hours] h at $[rate]/h, approved by [owner name] on [date].
 

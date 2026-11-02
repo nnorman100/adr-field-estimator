@@ -11,7 +11,8 @@ import firebase_admin
 from firebase_admin import auth
 from google.cloud import firestore
 from backend.workspaces import WorkspaceStore, email_address
-from backend.workspace_migration import migrate
+from backend.workspace_migration import MIGRATION_ID, migrate
+from backend.migration_ledger import local_source_commit, record_applied
 
 PROJECT = 'alert-disaster-field-2026'
 ADMIN_EMAIL = 'nathanaelcnorman@gmail.com'
@@ -69,6 +70,10 @@ def main():
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         # Manifest contains sidecar identifiers, not tokens or signed customer payloads.
         args.manifest.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
+    if args.apply:
+        report['ledger_recorded'] = record_applied(
+            workspace.db, MIGRATION_ID, local_source_commit()
+        )
     print(
         json.dumps(
             {k: v for k, v in report.items() if k not in ('created_paths', 'source_record_hashes')},

@@ -1635,6 +1635,11 @@ function renderWalkthroughEdits() {
           state.conflict
         )
           throw Error('The draft changed. Review its current values.');
+        if (entry.removesRoom) {
+          const held = roomRemovalItems(entry.target);
+          if (held.photos.length || held.scans.length)
+            return requestRoomRemoval(entry.target, undo);
+        }
         const before = structuredClone(edit.data);
         if (entry.removesRoom) edit.data.rooms.splice(edit.data.rooms.indexOf(entry.target), 1);
         else entry.target[entry.field] = entry.before;
@@ -1824,8 +1829,17 @@ function renderRooms() {
     more.append(node('summary', 'More room options'), moreBody);
     // Cabinetry only doubles the category 3 finished rate, so it sits on the card for a category 3
     // room and waits under More room options otherwise.
-    const placeCabinetry = () =>
-      Number(room.category) === 3 ? more.before(cabinetry) : more.append(cabinetry);
+    // Below category 3 the box stays visible but disabled with a hint. Its stored value is left
+    // alone, because pricing only applies it to category 3 rooms.
+    const cabinetryInput = node('input'),
+      cabinetryText = node('span'),
+      cabinetryHint = node('small', 'Applies to category 3 only', 'hint');
+    const placeCabinetry = () => {
+      const cat3 = Number(room.category) === 3;
+      cabinetryInput.disabled = !!state.signed || !cat3;
+      cabinetryHint.hidden = cat3;
+      cat3 ? more.before(cabinetry) : more.append(cabinetry);
+    };
     // One tap answers the walkthrough's "water, mold, or both?". Mold and Water + Mold price at the
     // sheet's category 3 / mold rates; Water keeps whichever category the select shows.
     const pills = node('fieldset', undefined, 'loss-pills'),
@@ -1938,17 +1952,17 @@ function renderRooms() {
     const shotDrawer = node('details', undefined, 'shot-drawer');
     shotDrawer.append(node('summary'), node('div', undefined, 'room-shots'));
     card.append(grid, more, shotDrawer, node('div', undefined, 'room-photos photo-gallery'));
-    const input = node('input');
+    const input = cabinetryInput;
     input.type = 'checkbox';
     input.checked = room.custom_cabinetry;
     input.dataset.roomIndex = i;
     input.dataset.roomKey = 'custom_cabinetry';
-    input.disabled = !!state.signed;
     input.addEventListener('change', () => {
       room.custom_cabinetry = input.checked;
       changed();
     });
-    cabinetry.append(input, node('span', 'Custom cabinetry · category 3 finished rate ×2'));
+    cabinetryText.textContent = 'Custom cabinetry · category 3 finished rate ×2';
+    cabinetry.append(input, cabinetryText, cabinetryHint);
     placeCabinetry();
     $('rooms').append(card);
   });
@@ -2087,12 +2101,77 @@ function requestRoomRemoval(room, trigger) {
   )
     return;
   roomRemoval = { room, trigger, draft: state.draft, uid: state.user?.uid };
-  $('removeRoomDescription').textContent =
-    'Remove "' +
-    (room.name.trim() || 'Unnamed room') +
-    '"? Its measurements will be deleted, scope confirmation cleared, and generated documents and any unsigned signature invalidated. This cannot be undone.';
+  renderRoomRemoval();
   $('removeRoomDialog').showModal();
   $('cancelRoomRemoval').focus();
+}
+// Photos and scans are tagged with the room's name, so a room that still has any cannot be
+// removed until they move to another room.
+function roomRemovalItems(room) {
+  return {
+    photos: roomPhotos(room.name),
+    scans: roomScans(state.draft.data, room.name),
+  };
+}
+function renderRoomRemoval() {
+  const { room } = roomRemoval,
+    name = room.name.trim() || 'Unnamed room',
+    { photos, scans } = roomRemovalItems(room),
+    held = photos.length + scans.length > 0,
+    others = state.draft.data.rooms.filter((other) => other !== room);
+  $('removeRoomMove').hidden = $('moveRoomItems').hidden = !held || !others.length;
+  $('confirmRoomRemoval').hidden = held;
+  if (!held) {
+    $('removeRoomDescription').textContent =
+      'Remove "' +
+      name +
+      '"? Its measurements will be deleted, scope confirmation cleared, and generated documents and any unsigned signature invalidated. This cannot be undone.';
+    return;
+  }
+  const parts = [];
+  if (photos.length) parts.push(photos.length + (photos.length === 1 ? ' photo' : ' photos'));
+  if (scans.length) parts.push(scans.length + (scans.length === 1 ? ' scan' : ' scans'));
+  $('removeRoomDescription').textContent =
+    '"' +
+    name +
+    '" still has ' +
+    parts.join(' and ') +
+    '. ' +
+    (others.length
+      ? 'Move them to another room before removing it.'
+      : 'Add another room to move them to before removing it.');
+  $('removeRoomMoveTarget').replaceChildren(
+    ...others.map((other) => {
+      const option = node('option', other.name.trim() || 'Unnamed room');
+      option.value = String(state.draft.data.rooms.indexOf(other));
+      return option;
+    }),
+  );
+}
+function moveRoomItems() {
+  const pending = roomRemoval;
+  if (
+    !pending ||
+    state.draft !== pending.draft ||
+    state.user?.uid !== pending.uid ||
+    !state.session ||
+    state.signed ||
+    confirmedAuthorization ||
+    !state.draft.data.rooms.includes(pending.room)
+  )
+    return $('removeRoomDialog').close();
+  const target = state.draft.data.rooms[Number($('removeRoomMoveTarget').value)];
+  if (!target || target === pending.room) return;
+  const { photos, scans } = roomRemovalItems(pending.room);
+  // The photos carry pending_room, so the move also syncs from the offline queue.
+  retagPhotos(photos, target.name);
+  retagScans(scans, target.name);
+  changed();
+  renderPhotos();
+  renderWalkRoomChips();
+  renderRoomRemoval();
+  say('Moved to ' + (target.name.trim() || 'Unnamed room') + '.');
+  $('confirmRoomRemoval').focus();
 }
 function closeRoomRemoval() {
   const pending = roomRemoval;
@@ -2118,6 +2197,8 @@ function confirmRoomRemoval() {
     $('removeRoomDialog').close();
     return;
   }
+  const held = roomRemovalItems(pending.room);
+  if (held.photos.length || held.scans.length) return renderRoomRemoval();
   roomRemoval = null;
   $('removeRoomDialog').close();
   clearValidationFeedback();
@@ -3512,7 +3593,7 @@ async function refreshExtraQuote() {
       price.rate +
       '/h = $' +
       price.total +
-      ' at base rate. The estimate range applies sheet allowances.';
+      '. This exact amount is added to the estimate range with no markup.';
     $('saveExtra').disabled = !!editor.saving;
   } catch (e) {
     if (!extraContext(editor) || editor.sequence !== sequence) return;
@@ -5249,6 +5330,7 @@ async function leaveForCanonical() {
   return true;
 }
 async function initialize() {
+  $('yearBuilt').max = new Date().getFullYear();
   initExtras();
   if (canonical) {
     if (await leaveForCanonical()) return;
@@ -5477,11 +5559,16 @@ async function initialize() {
   );
   click('cancelRoomRemoval', () => $('removeRoomDialog').close());
   click('confirmRoomRemoval', confirmRoomRemoval);
+  click('moveRoomItems', moveRoomItems);
   $('removeRoomDialog').addEventListener('close', closeRoomRemoval);
   $('removeRoomDialog').addEventListener('keydown', (event) => {
     if (event.key !== 'Tab') return;
     const first = $('cancelRoomRemoval'),
-      last = $('confirmRoomRemoval');
+      last = $('confirmRoomRemoval').hidden
+        ? $('moveRoomItems').hidden
+          ? first
+          : $('moveRoomItems')
+        : $('confirmRoomRemoval');
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
@@ -5741,7 +5828,6 @@ async function initialize() {
         'error',
       );
     }
-  $('yearBuilt').max = new Date().getFullYear();
   const [config, { initializeApp }, sdk, appCheckSdk] = await Promise.all([
     fetch('/__/firebase/init.json', { cache: 'no-store' }).then((response) => response.json()),
     import(FIREBASE_SDK + 'firebase-app.js'),

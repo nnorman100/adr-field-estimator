@@ -1,0 +1,42 @@
+# Status
+
+One table of truth for each feature: **Built** (merged), **On** (enabled in production), **Phone-checked** (observed on a real phone by the owner). Last built from `docs/roadmap.md` and `RELEASES.md` on 2026-10-28. `RELEASES.md` stays the only record of what is serving; recheck it, do not copy from here.
+
+Legend: yes · no · partial · flag off. "no" under Phone-checked means no phone check is recorded in the repo; the roadmap says releases since Oct 19 were checked signed-out only.
+
+This file replaces the roadmap's old "Where we are" narrative. Update this table in the same PR that changes a feature, and keep `docs/roadmap.md` for the plan.
+
+| Feature | Built | On | Phone-checked | Notes |
+|---|---|---|---|---|
+| Walkthrough-first flow, Live, offline notes | yes | yes | partial | Owner's staged field workflow passed Oct 14; physical iPhone checks still open |
+| Company workspaces and roles | yes | yes (since Oct 15) | partial | One real invitation accepted Oct 14; Google-account invitee not yet checked |
+| Invitation clearing (owners) | yes | yes | no | #167 |
+| QR tags, drying log, claim details, sizing, shot list | yes | yes | no | |
+| Jobs list tabs and search | yes | yes | no | #130 |
+| GPS stamp on photos | yes | yes | no | |
+| Address autocomplete and map | yes | yes | no | Maps key set; $25 budget alert |
+| Copy signed job to draft | yes | yes | no | |
+| Document delivery (homeowner, adjuster, crew lead, resend) | yes | yes | no | Gmail SMTP; limit near 500/day |
+| Readiness check | yes | yes (`AI_FEATURES=readiness`) | no | |
+| Voice-note signing gate | yes | yes | no | #148, fix #158 |
+| Drying watch | yes | flag off | no | |
+| Priced extras | yes | flag off | no | |
+| Job summaries and AI usage | yes | flag off | no | |
+| Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built |
+| Automatic deploys after CI | yes (#171) | not recorded | n/a | Needs the owner's one-time setup in `docs/firebase-isolation.md#automatic-deploys`; runs are recorded in the Actions job summary, not `RELEASES.md` |
+| Vault backup | yes | yes | n/a | Verified Oct 27 |
+| Landing page at `/` | yes | yes | no | |
+
+## Not built (from VISION.md)
+Company workbook upload; AI-suggested prices; crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
+
+## Open items for the owner
+1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1.
+2. ADR company profile and logo — Phase 0 item 2.
+3. Invitation check to a Google and an Outlook address — Phase 0 item 3.
+4. Local SMTP timeout test on Windows — Phase 0 item 6.
+5. Before onboarding a second company: add a separate test project (D-006) and switch email to Resend with a company sending domain (D-007).
+6. Decide which flag-off features to switch on, one at a time, each with a phone check.
+
+## Next steps for an agent
+Work only the first item the owner approves, as one small PR. Do not turn on flags or release.

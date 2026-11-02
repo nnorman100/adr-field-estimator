@@ -66,6 +66,7 @@ test('fresh Kitchen autofill and explicit confirmation reach review with zero ma
 test('Undo restores the original room and manual edits are retained', async ({ page }) => {
   await ready(page);
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
   await room(page, 'name').locator('..').getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(room(page, 'name')).toHaveValue('Room 1');
@@ -80,7 +81,12 @@ test('Undo restores the original room and manual edits are retained', async ({ p
     .getByRole('button', { name: 'Undo', exact: true })
     .click();
   await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+  // The panel from the first fill is still showing, so wait for this fill's own read to finish.
+  const read = page.waitForResponse((r) => r.url().endsWith('/scope-suggestions'));
   await page.locator('#fillScopeProperty').click();
+  await read;
+  await expect(page.locator('#fillScopeProperty')).toHaveText('Fill scope from walkthrough');
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
   await room(page, 'finished_sf').fill('95');
   await expect(room(page, 'finished_sf').locator('..').locator('.walkthrough-edit')).toHaveCount(0);
@@ -141,6 +147,7 @@ test('initial-walk photo labels follow the default-room rename and name Undo thr
   const original = await page.evaluate(() => state.record.photos[0]);
   expect(original.room).toBe('Room 1');
   await page.locator('#fillScope').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
   await saveDraft(page);
   await expect.poll(() => page.evaluate(() => state.record.photos[0].room)).toBe('Kitchen');
@@ -162,6 +169,7 @@ test('a manually entered room is preserved and Undo removes only a newly added r
   await room(page, 'name').fill('Office');
   await room(page, 'finished_sf').fill('10');
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(page.locator('#rooms .room')).toHaveCount(2);
   await expect(room(page, 'name')).toHaveValue('Office');
   await expect(room(page, 'finished_sf')).toHaveValue('10');
@@ -183,6 +191,7 @@ async function fillBesideOffice(page) {
   await room(page, 'name').fill('Office');
   await room(page, 'finished_sf').fill('10');
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(kitchen(page, 'name')).toHaveValue('Kitchen');
 }
 
@@ -225,7 +234,11 @@ test('a repeated fill keeps unchanged field Undos but no room removal after a ma
   await kitchen(page, 'waste_percent').fill('10');
   await expect(marker(kitchen(page, 'name'))).toHaveCount(0);
   await expect(marker(kitchen(page, 'finished_sf'))).toHaveCount(1);
+  // The panel from the first fill is still showing, so wait for this fill's own read to finish.
+  const read = page.waitForResponse((r) => r.url().endsWith('/scope-suggestions'));
   await page.locator('#fillScopeProperty').click();
+  await read;
+  await expect(page.locator('#fillScopeProperty')).toHaveText('Fill scope from walkthrough');
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(kitchen(page, 'waste_percent')).toHaveValue('10');
   await expect(marker(kitchen(page, 'name'))).toHaveCount(0);

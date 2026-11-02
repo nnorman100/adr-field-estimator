@@ -807,6 +807,7 @@ def test_live_rejects_origins_and_unauthorized_before_vertex(context, monkeypatc
 
 
 def test_staff_verification_checks_revoked_and_disabled_sessions(monkeypatch):
+    monkeypatch.setattr(bm, 'STAFF_EMAILS', {'owner@example.invalid'})
     monkeypatch.setattr(bm.firebase_admin, 'get_app', lambda name: object())
     calls = []
 
@@ -814,7 +815,7 @@ def test_staff_verification_checks_revoked_and_disabled_sessions(monkeypatch):
         calls.append(kwargs)
         if token == 'revoked':
             raise ValueError('Revoked or disabled')
-        return {'uid': 'owner', 'email': next(iter(bm.STAFF_EMAILS)), 'email_verified': True}
+        return {'uid': 'owner', 'email': 'owner@example.invalid', 'email_verified': True}
 
     monkeypatch.setattr(bm.firebase_auth, 'verify_id_token', verify)
     assert asyncio.run(bm.verify_staff('approved'))['uid'] == 'owner'
@@ -954,13 +955,14 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
 @pytest.fixture
 def revocation(monkeypatch):
     """Firebase verification against a controllable clock; records whether each call looked up revocation."""
+    monkeypatch.setattr(bm, 'STAFF_EMAILS', {'owner@example.invalid'})
     clock = SimpleNamespace(now=1_000_000.0, revoked=set(), calls=[])
 
     def verify(token, **kwargs):
         clock.calls.append(kwargs['check_revoked'])
         claims = {
             'uid': token.split('.')[0],
-            'email': next(iter(bm.STAFF_EMAILS)),
+            'email': 'owner@example.invalid',
             'email_verified': True,
             'exp': clock.now + 3000,
         }
@@ -1257,3 +1259,42 @@ def test_draft_records_carry_the_sizing_check_and_its_inputs_stay_absent_until_s
     ).json()
     assert 'water_class' not in record['data']['rooms'][0]
     assert 'dehumidifier_ppd' not in record['data']
+
+
+def test_year_built_2027_is_accepted_when_the_clock_reads_2027(monkeypatch):
+    import backend.contracts as contracts
+
+    class Clock2027(contracts.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return contracts.datetime(2027, 1, 2)
+
+    monkeypatch.setattr(contracts, 'datetime', Clock2027)
+    assert InspectionData(year_built=2027).year_built == 2027
+    with pytest.raises(ValueError):
+        InspectionData(year_built=2028)
+
+
+@pytest.mark.parametrize(
+    'value, expected',
+    [
+        (None, set()),
+        ('', set()),
+        (' , ', set()),
+        (' Owner@Example.com, ,staff@example.com', {'owner@example.com', 'staff@example.com'}),
+    ],
+)
+def test_staff_emails_fail_closed_unless_set(value, expected):
+    import os, subprocess, sys
+
+    env = {k: v for k, v in os.environ.items() if k != 'STAFF_EMAILS'}
+    if value is not None:
+        env['STAFF_EMAILS'] = value
+    out = subprocess.run(
+        [sys.executable, '-c', 'import backend.main as m; print(sorted(m.STAFF_EMAILS))'],
+        env={**env, 'PYTHONPATH': os.pathsep.join(sys.path)},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out.strip() == str(sorted(expected))
