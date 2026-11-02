@@ -451,13 +451,19 @@ def test_a_new_pin_takes_the_version_of_its_published_book(api, next_version):  
     assert store.db.records['_job_pricing/' + ID]['calculation_version'] == NEXT
 
 
-@pytest.mark.parametrize('bad', [UNKNOWN, None, ['adr-residential-v1']])
+NO_VERSION_KEY = object()
+
+
+@pytest.mark.parametrize('bad', [UNKNOWN, None, ['adr-residential-v1'], NO_VERSION_KEY])
 def test_a_pin_on_an_unknown_version_is_refused(api, next_version, bad):  # noqa: F811
     client, current, store = api
     current['uid'] = 'estimator'
     created = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
     assert created.status_code == 200, created.text
-    store.db.records['_job_pricing/' + ID] = pin_for(bad, V1_HASH)
+    pin = pin_for(bad, V1_HASH)
+    if bad is NO_VERSION_KEY:
+        del pin['calculation_version']
+    store.db.records['_job_pricing/' + ID] = pin
     audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
     assert audited.status_code == 409, audited.text
     current['uid'] = 'owner'

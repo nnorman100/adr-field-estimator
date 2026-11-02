@@ -836,7 +836,7 @@ class PriceBookStore:
             raise Conflict(_not_set_message(actor['role']))
 
         data = InspectionData.model_validate(record['data'])
-        old_version = pin.get('calculation_version', CALCULATION_VERSION)
+        old_version = pin.get('calculation_version')
         if not known_calculation_version(old_version):
             raise Conflict("This draft's saved prices are missing. Contact support.")
         new_version = book['calculation_version']
