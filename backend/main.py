@@ -209,11 +209,8 @@ LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/a
 ORIGINS = list(DOCUMENT_ORIGINS)
 
 WORKSPACES_ENABLED = os.getenv('WORKSPACES_ENABLED', 'false').lower() == 'true'
-STAFF_EMAILS = {
-    e.strip().lower()
-    for e in os.getenv('STAFF_EMAILS', 'nathanaelcnorman@gmail.com').split(',')
-    if e.strip()
-}
+# Fail closed: with STAFF_EMAILS unset or empty, nobody passes the legacy (workspaces-off) staff check.
+STAFF_EMAILS = {e.strip().lower() for e in os.getenv('STAFF_EMAILS', '').split(',') if e.strip()}
 WORKSPACE_SIGN_IN_PROVIDERS = frozenset({'google.com', 'password'})
 # Step one of the App Check rollout only records each request's token; see docs/app-check.md.
 APPCHECK_MODE = os.getenv('APPCHECK_MODE', 'monitor')
