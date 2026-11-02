@@ -55,8 +55,8 @@ ADR's rates are ADR's own price-book data, and no other company falls back to th
 
 1. Dry run, which writes nothing:
    `python scripts/migrate_price_books.py --company adr`
-2. Expect `books_unchanged: 1`, `books_to_create: 0`, `ambiguous_drafts: 0` and `source_records_preserved` true. `pins_to_create` counts ADR drafts started since the last run, which would otherwise pin at their first pricing.
-3. Only if the owner approves writing: `python scripts/migrate_price_books.py --company adr --apply --manifest <path outside the repo>`. Repeat the dry run; it must report nothing left to write. A second apply changes nothing.
+2. Expect `books_unchanged: 1`, `books_to_create: 0` and `ambiguous_drafts: 0`. The dry run prints this summary without `source_records_preserved`, and stops with an error if source records changed. `pins_to_create` counts ADR drafts started since the last run, which would otherwise pin at their first pricing.
+3. Only if the owner approves writing: `python scripts/migrate_price_books.py --company adr --apply --manifest <path outside the repo>`. Expect `source_records_preserved` true in its output; it stops with an error if source records changed. Repeat the dry run; it must report nothing left to write. A second apply changes nothing.
 4. Append a row with the source commit and these counts. No deploy is involved.
 
 The script refuses any `--company` other than `adr` and limits `--apply` to `alert-disaster-field-2026`.
