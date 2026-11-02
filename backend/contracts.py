@@ -9,7 +9,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    model_serializer,
     model_validator,
 )
 
@@ -242,27 +241,14 @@ class InspectionData(StrictModel):
     # Added with QR tags; drafts saved before it stay without the key (see inspection_payload).
     equipment_scans: list[EquipmentScan] = Field(default_factory=list, max_length=200)
     # Owner-added items only (sources typed / typed_count_days). Absent on drafts saved before v2;
-    # inspection_payload drops it when None, like dehumidifier_ppd (backend/main.py:915-918).
+    # An unset value is left out of every dump, so a saved record never gains the key.
     scope_items: dict[Annotated[str, Field(pattern=ITEM_ID)], ScopeQuantity] | None = Field(
-        default=None, max_length=150
+        default=None, max_length=150, exclude_if=lambda value: value is None
     )
-    # Estimator overrides of walkthrough-measured quantities; absent until set.
+    # Estimator overrides of walkthrough-measured quantities; absent until set, as above.
     quantity_overrides: (
         dict[Annotated[str, Field(min_length=1, max_length=120)], QuantityOverride] | None
-    ) = Field(default=None, max_length=150)
-
-    @model_serializer(mode='wrap')
-    def _omit_unset_v2_fields(self, handler):
-        out = handler(self)
-        if isinstance(out, dict):
-            if out.get('scope_items') is None and 'scope_items' not in self.model_fields_set:
-                out.pop('scope_items', None)
-            if (
-                out.get('quantity_overrides') is None
-                and 'quantity_overrides' not in self.model_fields_set
-            ):
-                out.pop('quantity_overrides', None)
-        return out
+    ) = Field(default=None, max_length=150, exclude_if=lambda value: value is None)
 
 
 def distinct_rooms(data: InspectionData):

@@ -555,6 +555,7 @@ def scope_prompt(data, claim=None):
         + json.dumps(
             {
                 'current_form': data.model_dump(
+                    mode='json',
                     exclude={
                         'assistant_transcript',
                         'technician_transcript',
@@ -563,7 +564,10 @@ def scope_prompt(data, claim=None):
                         'equipment_scans',
                         # Location data for the map, never model input.
                         'coordinates',
-                    }
+                        # Priced-item quantities and estimator overrides are not model input.
+                        'scope_items',
+                        'quantity_overrides',
+                    },
                 ),
                 **({'current_claim': claim} if claim is not None else {}),
                 'technician_transcript': data.technician_transcript,

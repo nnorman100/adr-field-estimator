@@ -244,11 +244,7 @@ class PriceBookStore:
         blocked. ADR alone starts from its own book in adr_price_book.py until its migrated
         version exists.
         """
-        if isinstance(company, str):
-            company_id = company
-            company = self.ws.read('_companies', company_id, tx) or {'company_id': company_id}
-        else:
-            company_id = company['company_id']
+        company_id = company['company_id']
         head = self._head(company_id, tx)
         generation = 0
         if head and head.get('latest_version_id'):

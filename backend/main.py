@@ -966,16 +966,11 @@ def inspection_payload(data):
         result.pop('extras', None)
     if not result.get('equipment_scans'):
         result.pop('equipment_scans', None)
-    if result.get('scope_items') is None:
-        result.pop('scope_items', None)
-    else:
-        for item in result['scope_items'].values():
-            if item.get('measured_quantity') is None:
-                item.pop('measured_quantity', None)
-            if item.get('override_reason') is None:
-                item.pop('override_reason', None)
-    if result.get('quantity_overrides') is None:
-        result.pop('quantity_overrides', None)
+    for item in (result.get('scope_items') or {}).values():
+        if item.get('measured_quantity') is None:
+            item.pop('measured_quantity', None)
+        if item.get('override_reason') is None:
+            item.pop('override_reason', None)
     if result.get('coordinates') is None and 'coordinates' not in data.model_fields_set:
         result.pop('coordinates', None)
     return result

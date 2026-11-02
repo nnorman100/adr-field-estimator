@@ -1,11 +1,12 @@
 """Unit tests for the v2 owner-defined price table model, contracts and stub dispatch."""
 
 import copy
+import json
 from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from backend import claims, main as bm, price_books, price_table, pricing
+from backend import claims, main as bm, price_books, price_table, pricing, scope
 from backend.adr_price_book import adr_rates
 from backend.contracts import (
     InspectionData,
@@ -13,6 +14,7 @@ from backend.contracts import (
     PricingPolicy,
     QuantityOverride,
     ScopeQuantity,
+    Extra,
 )
 from tests.test_workspaces import store  # noqa: F401
 
@@ -663,3 +665,54 @@ def test_public_diff_shows_only_items_enabled_in_the_version():
 
     first, _ = price_table.public_diff(None, before)
     assert hidden['item_id'] not in {row['item_id'] for row in first['items']}
+
+
+def _prompt_form(prompt):
+    start = prompt.index('{"current_form"')
+    return json.loads(prompt[start:])['current_form']
+
+
+def test_scope_prompt_builds_for_a_draft_with_decimal_fields_and_leaves_v2_fields_out():
+    draft = InspectionData(
+        address='300 Elm St',
+        scope_items={
+            'containment': ScopeQuantity(
+                quantity=Decimal('2.50'),
+                measured_quantity=Decimal('1.50'),
+                override_reason='Second room needs containment',
+            )
+        },
+        quantity_overrides={
+            'air_movers': QuantityOverride(
+                measured=Decimal('3'), entered=Decimal('5'), reason='Added fans for the hallway'
+            )
+        },
+        extras=[Extra(id='a' * 32, description='Move contents', hours=Decimal('1.50'))],
+    )
+
+    form = _prompt_form(scope.scope_prompt(draft))
+
+    assert 'scope_items' not in form
+    assert 'quantity_overrides' not in form
+    assert form['extras'][0]['hours'] == '1.50'
+
+
+def test_scope_prompt_is_the_same_for_a_draft_without_v2_fields_whether_unset_or_null():
+    unset = InspectionData(address='300 Elm St')
+    explicit_null = InspectionData(address='300 Elm St', scope_items=None, quantity_overrides=None)
+
+    form = _prompt_form(scope.scope_prompt(unset))
+
+    assert 'scope_items' not in form
+    assert 'quantity_overrides' not in form
+    assert scope.scope_prompt(unset) == scope.scope_prompt(explicit_null)
+
+
+def test_saved_payload_is_the_one_place_that_omits_empty_v2_fields():
+    unset = InspectionData(address='300 Elm St')
+    explicit_null = InspectionData(address='300 Elm St', scope_items=None, quantity_overrides=None)
+
+    assert unset.model_dump() == explicit_null.model_dump()
+    assert bm.inspection_payload(unset) == bm.inspection_payload(explicit_null)
+    assert 'scope_items' not in bm.inspection_payload(explicit_null)
+    assert 'quantity_overrides' not in bm.inspection_payload(explicit_null)

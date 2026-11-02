@@ -812,7 +812,7 @@ def test_v2_version_pin_basis_round_trip(api, enabled):
     assert 'items' in current_book and 'policy' in current_book
 
     prices = db.workspaces.prices
-    eff = prices.effective('adr')
+    eff = prices.effective(db.workspaces.read('_companies', 'adr'))
     assert eff['calculation_version'] == price_table.CALCULATION_VERSION
     assert eff['version_id'] == published['version_id']
     assert eff['content_sha256'] == price_table.content_hash(table)
@@ -899,7 +899,7 @@ def test_v1_pins_and_versions_still_validate_unchanged(api, enabled, monkeypatch
     assert published['sequence'] == 1
 
     prices = db.workspaces.prices
-    eff = prices.effective('adr')
+    eff = prices.effective(db.workspaces.read('_companies', 'adr'))
     assert set(eff.keys()) == {
         'company_id',
         'version_id',
@@ -1191,7 +1191,7 @@ def test_head_saved_before_the_field_existed_still_prices_as_v1(api, enabled):
     apply_plan(store, build_plan(store.db, ['adr']), True)
     del store.db.records['_company_price_books/adr']['calculation_version']
 
-    book = store.workspaces.prices.effective('adr')
+    book = store.workspaces.prices.effective(store.workspaces.read('_companies', 'adr'))
     assert book['calculation_version'] == price_books.CALCULATION_VERSION
 
     current['uid'] = 'owner'
@@ -1558,7 +1558,7 @@ def test_v1_pinned_draft_is_not_offered_or_moved_to_a_v2_book(api, enabled):
 
     current['uid'] = 'owner'
     _publish_v2(client, _v2_table('25.00'))
-    book = prices.effective('adr')
+    book = prices.effective(store.workspaces.read('_companies', 'adr'))
     record = store.get_inspection('owner', ID)
     view = prices.job_view('owner', record)
     assert view['newer_available'] is True and view['can_reprice'] is False
@@ -1635,3 +1635,13 @@ def test_estimator_export_hides_disabled_items_and_owner_only_columns(api, enabl
         assert len(rows) == len(price_table.starter_table()['items']) - 1
         assert disabled['item_id'] not in {row['item_id'] for row in rows}
         assert {row['allow_zero'] for row in rows} == {'no'}
+
+
+def test_effective_takes_only_a_company_record(store):
+    prices = store.workspaces.prices
+
+    assert prices.effective(store.workspaces.read('_companies', 'adr'))['company_id'] == 'adr'
+    with pytest.raises(TypeError):
+        prices.effective('adr')
+    with pytest.raises(TypeError):
+        prices.effective('no-such-company')
