@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.release_stamp import DirtyTree, release_row, source_commit
+from scripts.release_stamp import DirtyTree, release_row, source_commit, valid_version
 
 PROJECT = 'alert-disaster-field-2026'
 # The Maps key for address suggestions and the job map: a Secret Manager secret that adr-runtime may
@@ -172,6 +172,14 @@ def revision_tag(value):
     return value
 
 
+def release_version(value):
+    if not valid_version(value, allow_dirty=False):
+        raise argparse.ArgumentTypeError(
+            'use date-style version YYYY.MM.DD-N (for example 2026.11.02-1)'
+        )
+    return value
+
+
 def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--workspaces', choices=('on', 'off'), required=True)
@@ -206,6 +214,12 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
         help='revision URL tag, for example workspaces-off-20261010',
     )
     parser.add_argument(
+        '--version',
+        type=release_version,
+        default=None,
+        help='date-style release version to stamp into /api/health, for example 2026.11.02-1',
+    )
+    parser.add_argument(
         '--dry-run', action='store_true', help='print the gcloud command without running it'
     )
     parser.add_argument('--yes', action='store_true', help='confirm the deploy')
@@ -235,9 +249,14 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     argv = command(
         args.workspaces, args.tag, commit, args.ai_features, args.price_books, args.staff_emails
     )
+    version_stamp = None
+    if args.version:
+        version_stamp = args.version + ('-dirty' if commit.endswith('-dirty') else '')
     print(baseline_line(assignments))
     if args.staff_emails:
         print('STAFF_EMAILS: set explicitly on this revision.')
+    if version_stamp:
+        print(f'Release version: {version_stamp}')
     if args.dry_run:
         print(shlex.join(argv))
         return 0
@@ -247,23 +266,27 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
             file=sys.stderr,
         )
         return 2
-    STAMP.write_text(commit + '\n', encoding='utf8')
+    stamp_body = f'{commit}\n{version_stamp}\n' if version_stamp else commit + '\n'
+    STAMP.write_text(stamp_body, encoding='utf8')
     try:
         code = run([shutil.which('gcloud') or 'gcloud', *argv[1:]], cwd=ROOT).returncode
     finally:
         STAMP.unlink(missing_ok=True)
     if code == 0:
+        notes = (
+            f'workspaces {args.workspaces}; '
+            f'AI_FEATURES={args.ai_features or "(none)"}; '
+            f'price books {args.price_books}'
+        )
+        if version_stamp:
+            notes += f'; version {version_stamp}'
         print(
             'Append to RELEASES.md, replacing REVISION with the revision suffix printed above (for example 00017-kap):\n'
             + release_row(
                 backend=f'`REVISION` (tag `{args.tag}`)',
                 commit=commit,
                 traffic='0% (staged)',
-                notes=(
-                    f'workspaces {args.workspaces}; '
-                    f'AI_FEATURES={args.ai_features or "(none)"}; '
-                    f'price books {args.price_books}'
-                ),
+                notes=notes,
             )
         )
     return code

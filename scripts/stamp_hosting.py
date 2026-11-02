@@ -17,7 +17,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.release_stamp import COMMIT_PATTERN, DirtyTree, release_row, source_commit
+from scripts.release_stamp import (
+    COMMIT_PATTERN,
+    DirtyTree,
+    release_row,
+    source_commit,
+    valid_version,
+)
 
 PLACEHOLDER = 'unstamped'
 # Hosting serves public/ under the routing in firebase.json; the root index.html mirrors the landing page.
@@ -30,21 +36,42 @@ TARGETS = {
     'public/sw.js': [(WORKER, 1, 'marker')],
     'public/index.html': [(ASSET, 2, 'marker')],
     'index.html': [(ASSET, 2, 'marker')],
-    'public/app.html': [(ASSET, 12, 'marker'), (DISPLAY, 1, 'display')],
+    'public/app.html': [(ASSET, 12, 'marker'), (DISPLAY, 2, 'display')],
     'public/app.js': [(ASSET, 1, 'marker')],
     'public/sign.html': [(ASSET, 4, 'marker')],
 }
 
 
-def display(marker):
-    """The Account menu has room for a short commit; the dirty mark stays visible."""
+def release_version(value):
+    if not valid_version(value, allow_dirty=False):
+        raise argparse.ArgumentTypeError(
+            'use date-style version YYYY.MM.DD-N (for example 2026.11.02-1)'
+        )
+    return value
+
+
+def display(marker, version=None):
+    """The Account menu and footer show the release version (or short commit); the dirty mark stays visible."""
+    if version:
+        if marker == PLACEHOLDER:
+            return PLACEHOLDER
+        dirty = marker.endswith('-dirty') and not version.endswith('-dirty')
+        return version + ('-dirty' if dirty else '')
     if re.fullmatch(COMMIT_PATTERN, marker):
         return marker[:12] + ('-dirty' if marker.endswith('-dirty') else '')
     return marker
 
 
-def stamp(text, rules, marker):
-    values = {'marker': marker, 'display': display(marker)}
+def _valid_display(value, marker):
+    if value == display(marker):
+        return True
+    if not valid_version(value, allow_dirty=True):
+        return False
+    return value.endswith('-dirty') == marker.endswith('-dirty')
+
+
+def stamp(text, rules, marker, version=None):
+    values = {'marker': marker, 'display': display(marker, version)}
     for pattern, count, kind in rules:
         text, replaced = pattern.subn(values[kind], text)
         if replaced != count:
@@ -58,11 +85,11 @@ def markers(text, rules):
     return [value for pattern, _, _ in rules for value in pattern.findall(text)]
 
 
-def write(marker, root=ROOT):
+def write(marker, root=ROOT, version=None):
     for name, rules in TARGETS.items():
         path = root / name
         text = path.read_bytes().decode('utf8')  # keeps line endings byte-for-byte
-        updated = stamp(text, rules, marker)
+        updated = stamp(text, rules, marker, version=version)
         if updated != text:
             path.write_bytes(updated.encode('utf8'))
 
@@ -80,8 +107,21 @@ def check(root=ROOT, git=subprocess.run):
         raise RuntimeError(
             f'The Hosting shell is not stamped (marker {marker!r}). Run python scripts/stamp_hosting.py first.'
         )
-    for name, values in found.items():
-        if any(value not in (marker, display(marker)) for value in values):
+    for name, rules in TARGETS.items():
+        display_values = set()
+        for pattern, _, kind in rules:
+            for value in pattern.findall(texts[name]):
+                if kind == 'marker' and value != marker:
+                    raise RuntimeError(
+                        f'{name} carries a marker other than {marker}; restamp the shell.'
+                    )
+                if kind == 'display':
+                    if not _valid_display(value, marker):
+                        raise RuntimeError(
+                            f'{name} carries a marker other than {marker}; restamp the shell.'
+                        )
+                    display_values.add(value)
+        if len(display_values) > 1:
             raise RuntimeError(f'{name} carries a marker other than {marker}; restamp the shell.')
     if (root / 'index.html').read_bytes() != (root / 'public/index.html').read_bytes():
         raise RuntimeError('index.html and public/index.html differ.')
@@ -126,6 +166,12 @@ def main(argv=None, git=subprocess.run):
         '--check', action='store_true', help='fail unless the shell is consistently stamped'
     )
     parser.add_argument(
+        '--version',
+        type=release_version,
+        default=None,
+        help='date-style release version to stamp into the app shell, for example 2026.11.02-1',
+    )
+    parser.add_argument(
         '--allow-dirty',
         action='store_true',
         help='stamp uncommitted Hosting changes as <commit>-dirty instead of refusing',
@@ -140,7 +186,10 @@ def main(argv=None, git=subprocess.run):
             print('Hosting shell reset to the unstamped placeholder.')
             return 0
         commit = source_commit(DEPLOYED, args.allow_dirty, git)
-        write(commit)
+        if args.version:
+            write(commit, version=args.version)
+        else:
+            write(commit)
     except DirtyTree as error:
         print(
             f'Refusing to stamp Hosting: {error}\nCommit first (or --reset an earlier stamp), '

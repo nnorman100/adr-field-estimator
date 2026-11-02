@@ -58,13 +58,19 @@ class FakeRunner:
         self,
         serving_commit=OLD,
         changed=('backend/main.py',),
-        ancestors=((OLD, NEW), (NEW, 'master')),
+        ancestors=((OLD, NEW), (NEW, 'master'), (OLD, 'master')),
         fail=(),
         staged_env=None,
         refused_status=401,
         health_commit=NEW,
         traffic=None,
+        tags=None,
+        releases=None,
+        log_output='Merge pull request #185 from nnorman100/fm/feature\x1ffeat: add version numbers\x1e',
+        migrations=None,
+        root=ROOT,
     ):
+        self.root = root
         self.calls = []
         self.sleeps = []
         self.changed = list(changed)
@@ -78,6 +84,12 @@ class FakeRunner:
             'rev-new': revision(NEW, staged_env),
         }
         self.hosting = {'release': '100', 'version': 'v-old'}
+        self.tags = dict(tags or {})
+        self.remote_tags = dict(tags or {})
+        self.releases = dict(releases or {})
+        self.log_output = log_output
+        self.migrations = list(migrations or [])
+        self.head = NEW
         self.sleep = self.sleeps.append
 
     def keys(self):
@@ -145,11 +157,58 @@ class FakeRunner:
             if 'hosting-deploy' not in self.fail:
                 self.hosting = {'release': '101', 'version': 'v-new'}
             return self.completed(argv, 1 if 'hosting-deploy' in self.fail else 0)
+        if argv[0] == 'gh' and argv[1:3] == ['release', 'view']:
+            ver = argv[3]
+            return self.completed(argv, 0 if ver in self.releases else 1)
+        if argv[0] == 'gh' and argv[1:3] == ['release', 'create']:
+            ver = argv[3]
+            title = argv[argv.index('--title') + 1]
+            notes = argv[argv.index('--notes') + 1]
+            self.releases[ver] = {'title': title, 'notes': notes}
+            return self.completed(argv, 0)
         return self.completed(argv)
 
     def git(self, argv):
         if argv[1] == 'rev-parse':
-            return self.completed(argv, out=NEW + '\n')
+            if '--verify' in argv:
+                ref = argv[-1]
+                tag = ref.removeprefix('refs/tags/').removesuffix('^{commit}')
+                commit = self.tags.get(tag, '')
+                return self.completed(
+                    argv, 0 if commit else 1, out=(commit + '\n') if commit else ''
+                )
+            return self.completed(argv, out=self.head + '\n')
+        if argv[1] == 'fetch':
+            return self.completed(argv, 0)
+        if argv[1] == 'tag':
+            if argv[2] == '--points-at':
+                target = argv[3]
+                found = [t for t, c in self.tags.items() if c == target]
+                return self.completed(argv, 0, out='\n'.join(found) + ('\n' if found else ''))
+            if argv[2] == '--list':
+                prefix = argv[3].removesuffix('*')
+                found = [t for t in self.tags if t.startswith(prefix)]
+                return self.completed(argv, 0, out='\n'.join(found) + ('\n' if found else ''))
+            tag_name, commit = argv[2], argv[3]
+            self.tags[tag_name] = commit
+            return self.completed(argv, 0)
+        if argv[1] == 'ls-remote':
+            ref = argv[-1].removeprefix('refs/tags/')
+            commit = self.remote_tags.get(ref, '')
+            return self.completed(argv, 0, out=(f'{commit}\trefs/tags/{ref}\n' if commit else ''))
+        if argv[1] == 'push':
+            ref = argv[-1].removeprefix('refs/tags/')
+            self.remote_tags[ref] = self.tags.get(ref, '')
+            return self.completed(argv, 0)
+        if argv[1] == 'log':
+            return self.completed(argv, 0, out=self.log_output)
+        if argv[1] == 'show':
+            return self.completed(argv, 0, out='2026-11-02\n')
+        if argv[1] == 'checkout':
+            self.head = argv[-1]
+            self.health_commit = self.head
+            self.revisions['rev-new'] = revision(self.head)
+            return self.completed(argv, 0)
         if argv[1] == 'merge-base':
             first, second = argv[-2], argv[-1]
             second = 'master' if second == 'origin/master' else second
@@ -184,6 +243,8 @@ class FakeRunner:
                 'source_commit': self.health_commit,
             }
             return 200, json.dumps(payload)
+        if 'documents/_migrations' in url:
+            return 200, json.dumps({'documents': self.migrations})
         if 'firebasehosting.googleapis.com' in url:
             return 200, json.dumps(
                 {
@@ -571,3 +632,128 @@ def test_workflow_release_step_stages_a_tag_cloud_run_accepts():
     tag = stage[stage.index('--tag') + 1]
     assert auto.check_tag(tag) == tag
     assert tag.endswith('0166919')
+
+
+def test_version_numbering_counts_up_per_utc_day_and_publishes_github_release(summary):
+    runner = FakeRunner()
+    assert auto.next_version(runner, NEW, today='2026.11.02') == '2026.11.02-1'
+    runner.tags['2026.11.02-1'] = OLD
+    runner.tags['2026.11.02-2'] = 'c' * 40
+    assert auto.next_version(runner, NEW, today='2026.11.02') == '2026.11.02-3'
+    assert release(runner, '--title', 'Customer Portal Milestone') == 0
+    created_ver = next(v for v, c in runner.tags.items() if c == NEW)
+    assert runner.remote_tags[created_ver] == NEW
+    assert created_ver in runner.releases
+    rel = runner.releases[created_ver]
+    assert rel['title'] == f'{created_ver} — Customer Portal Milestone'
+    assert '- Add version numbers (#185)' in rel['notes']
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--version') + 1] == created_ver
+    stamp = next(argv for key, argv in runner.calls if key == 'stamp')
+    assert stamp[stamp.index('--version') + 1] == created_ver
+    assert created_ver in summary.text()
+
+
+def test_failed_deploy_never_creates_a_version_tag_or_github_release(summary):
+    runner = FakeRunner(fail={'verify'})
+    assert release(runner) == 1
+    assert runner.tags == {} and runner.releases == {}
+
+
+def test_rerun_on_same_commit_is_idempotent_and_never_moves_existing_tag(summary):
+    runner = FakeRunner(
+        serving_commit=NEW,
+        tags={'2026.11.02-1': NEW},
+        releases={'2026.11.02-1': {'title': '2026.11.02-1', 'notes': 'existing'}},
+    )
+    assert release(runner) == 0
+    assert runner.tags == {'2026.11.02-1': NEW}
+    assert not any(argv[:3] == ['gh', 'release', 'create'] for _, argv in runner.calls)
+    record = auto.Record()
+    with pytest.raises(auto.Refused, match='refusing to move it'):
+        auto.publish_release(runner, record, '2026.11.02-1', OLD)
+
+
+def test_rollback_to_version_redeploys_tag_and_warns_when_target_is_older_than_migration(
+    summary, tmp_path, capsys
+):
+    releases_md = tmp_path / 'RELEASES.md'
+    releases_md.write_text(
+        '| Date | Backend | Frontend | Source commit | Traffic | Notes |\n'
+        '| --- | --- | --- | --- | --- | --- |\n'
+        f'| 2026-11-01 | — (`migrate_price_books.py --apply`) | — | `{NEW}` | one-time migration | applied |\n',
+        encoding='utf8',
+    )
+    migrations = [
+        {
+            'name': 'projects/p/databases/(default)/documents/_migrations/workspaces',
+            'fields': {
+                'migration_id': {'stringValue': 'workspaces'},
+                'applied_at': {'stringValue': '2026-10-12T03:19:56Z'},
+                'source_commit': {'stringValue': OLD},
+            },
+        },
+        {
+            'name': 'projects/p/databases/(default)/documents/_migrations/price_books',
+            'fields': {
+                'migration_id': {'stringValue': 'price_books'},
+                'applied_at': {'stringValue': '2026-11-01T10:00:00Z'},
+                'source_commit': {'stringValue': NEW},
+            },
+        },
+    ]
+    runner = FakeRunner(
+        serving_commit=NEW,
+        ancestors={(OLD, NEW), (OLD, OLD), (NEW, 'master'), (OLD, 'master')},
+        tags={'2026.10.30-1': OLD, '2026.11.02-1': NEW},
+        migrations=migrations,
+        root=tmp_path,
+    )
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 0
+    err = capsys.readouterr().err
+    assert '::warning::Target version 2026.10.30-1' in err
+    assert 'price_books' in err
+    assert 'workspaces' not in err
+    assert 'Migration warning' in summary.text()
+    assert 'rolled back to 2026.10.30-1' in summary.text()
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--version') + 1] == '2026.10.30-1'
+
+
+def test_rollback_without_newer_migrations_passes_cleanly(summary, tmp_path, capsys):
+    (tmp_path / 'RELEASES.md').write_text(
+        '| Date | Backend | Frontend | Source commit | Traffic | Notes |\n', encoding='utf8'
+    )
+    migrations = [
+        {
+            'name': 'projects/p/databases/(default)/documents/_migrations/workspaces',
+            'fields': {
+                'migration_id': {'stringValue': 'workspaces'},
+                'applied_at': {'stringValue': '2026-10-12T03:19:56Z'},
+                'source_commit': {'stringValue': OLD},
+            },
+        }
+    ]
+    runner = FakeRunner(
+        serving_commit=NEW,
+        ancestors={(OLD, NEW), (OLD, OLD), (NEW, 'master'), (OLD, 'master')},
+        tags={'2026.11.01-1': OLD},
+        migrations=migrations,
+        root=tmp_path,
+    )
+    assert auto.main(['--rollback', '2026.11.01-1', '--check-only'], runner=runner) == 0
+    assert '::warning::' not in capsys.readouterr().err
+    assert 'no applied migrations newer than target version' in summary.text()
+
+
+def test_rollback_workflow_is_pinned_and_uses_keyless_auth():
+    rollback_wf = (ROOT / '.github' / 'workflows' / 'rollback.yml').read_text(encoding='utf8')
+    assert 'name: Roll back to version' in rollback_wf
+    assert 'workflow_dispatch:' in rollback_wf
+    assert 'scripts/auto_deploy.py --rollback' in rollback_wf
+    assert 'credentials_json' not in rollback_wf and 'secrets.' not in rollback_wf
+    assert 'firebase deploy' not in rollback_wf
+    for line in rollback_wf.splitlines():
+        match = re.search(r'uses: (\S+)', line)
+        if match:
+            assert re.search(r'@[0-9a-f]{40}$', match.group(1)), line

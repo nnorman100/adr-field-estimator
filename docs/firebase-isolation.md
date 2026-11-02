@@ -116,15 +116,15 @@ The backend rejects a different project ID or evidence bucket. Production never 
 ### Automatic deploys
 
 `.github/workflows/deploy.yml` releases a master commit after its CI run succeeds on a push to master.
-It runs `scripts/auto_deploy.py`, which uses the manual path: `deploy_backend.py --workspaces on
---ai-features readiness --price-books off --staff-emails <serving value>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
+It runs `scripts/auto_deploy.py`, which computes the next UTC date-style version (`YYYY.MM.DD-N`, starting at `1` each day) and uses the manual path: `deploy_backend.py --workspaces on
+--ai-features readiness --price-books off --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
 the staged revision's environment, secret bindings, service account and limits must equal the serving
-revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3 and the
+revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3, the release `version` and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
-only then does traffic move. Next it stamps the shell, deploys only `hosting:alert-disaster`, runs
-`verify_hosting.js` and resets the stamp. A failure before promotion promotes nothing. A failure after
+only then does traffic move. Next it stamps the shell with `--version <YYYY.MM.DD-N>`, deploys only `hosting:alert-disaster`, runs
+`verify_hosting.js`, resets the stamp, and—only after verification succeeds—creates the immutable git tag `YYYY.MM.DD-N` and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after
 it restores traffic to the revision that was serving, clones the previous Hosting version back to the
-live channel and fails the run. One release runs at a time (`concurrency: production-deploy`).
+live channel and fails the run without creating a tag. One release runs at a time (`concurrency: production-deploy`).
 
 It stops with a message, and the owner releases that commit by hand, when:
 
@@ -203,7 +203,14 @@ The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78f
 
 ## Rollback
 
-The previous dedicated backend revisions remain available. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
+To roll back to a previous `YYYY.MM.DD-N` release version in one step:
+
+- **GitHub Actions**: run **Deploy** (`workflow_dispatch` with `version` set to the target `YYYY.MM.DD-N`, which works immediately with the existing Workload Identity provider binding) or **Roll back to version** (`.github/workflows/rollback.yml`, `workflow_dispatch` with `version`, which is authorized once `scripts/setup_auto_deploy.sh` is re-run).
+- **Single operator command**: `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (add `--check-only` to run only refusal and migration checks).
+
+The rollback resolves the version tag, checks the Firestore `_migrations` ledger (#184) and `RELEASES.md` for any applied data migrations newer than the target version (emitting a `::warning::` banner and job-summary warning when found, because rolling back code does not undo Firestore data changes), and redeploys that tag's backend and Hosting through the same staged checks and `verify_hosting.js` verification.
+
+The previous dedicated backend revisions also remain available for manual traffic restoration. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
 
 [Firebase Hosting timeout documentation](https://firebase.google.com/docs/hosting/serverless-overview), [Cloud Run WebSockets](https://docs.cloud.google.com/run/docs/triggering/websockets), [Live API formats](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api).
 

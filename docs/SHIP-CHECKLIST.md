@@ -14,15 +14,15 @@ The owner approves every production release. Follow the recipe at the top of `RE
 - [ ] No secrets, keys or personal data in the diff
 
 ## Release
-- [ ] Stage backend at 0% traffic with a tag; run staged checks
-- [ ] Promote; `/api/health` reports the commit; anonymous business routes return 401
-- [ ] Stamp and deploy **only** `hosting:alert-disaster`
-- [ ] `node scripts/verify_hosting.js` passes (matching commits, assets, CSP, OAuth popup)
+- [ ] Stage backend at 0% traffic with a tag (`--version YYYY.MM.DD-N`); run staged checks
+- [ ] Promote; `/api/health` reports `version` and `source_commit`; anonymous business routes return 401
+- [ ] Stamp (`--version YYYY.MM.DD-N`) and deploy **only** `hosting:alert-disaster`
+- [ ] `node scripts/verify_hosting.js` passes (matching version, commits, assets, CSP, OAuth popup)
 - [ ] 15-minute watch
 - [ ] For a manual release, append the rows to `RELEASES.md`; reset the stamp (`stamp_hosting.py --reset`); both `index.html` copies identical
 
 ## If a check fails
-Restore traffic to the recorded rollback revision and the recorded Hosting version, record the failed attempt and the rollback, and do not retry blindly. (This is what happened with release 5 on Oct 26.)
+Run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (or restore traffic to the recorded rollback revision and the recorded Hosting version), note any `_migrations` / `RELEASES.md` data migration warning, record the failed attempt and the rollback, and do not retry blindly. (This is what happened with release 5 on Oct 26.)
 
 ## After (owner)
 - [ ] Phone check of each new screen on a real phone (record separately from automated results)

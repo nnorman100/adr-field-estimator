@@ -30,6 +30,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +41,7 @@ from scripts.deploy_backend import (
     env_assignments,
     staff_emails_value,
 )
+from scripts.release_stamp import valid_version
 
 SERVICE = 'alert-disaster-field-estimator'
 REGION = 'us-west2'
@@ -335,7 +337,7 @@ def check_ttls(runner):
         )
 
 
-def staged_checks(runner, url, commit):
+def staged_checks(runner, url, commit, version=None):
     """Health (with retries for a cold start) and signed-out refusals, against the tagged URL."""
     failures = []
     for attempt in range(6):
@@ -344,16 +346,20 @@ def staged_checks(runner, url, commit):
             health = json.loads(body)
         except ValueError:
             health = {}
+        reported_version = health.get('version')
+        version_ok = not version or reported_version in (None, 'unknown', version)
         if (
             status == 200
             and health.get('status') == 'healthy'
             and health.get('schema_version') == 3
             and health.get('source_commit') == commit
+            and version_ok
         ):
             break
         if attempt == 5:
             failures.append(
                 f'/api/health answered {status} {body[:200]!r}; wanted healthy, schema 3, {commit}'
+                + (f', version {version}' if version else '')
             )
         else:
             runner.sleep(10)
@@ -369,6 +375,275 @@ def staged_checks(runner, url, commit):
             failures.append(f'signed-out POST {path} answered {status}, not 401')
     if failures:
         raise Refused('Staged checks failed; nothing was promoted:\n' + '\n'.join(failures))
+
+
+def version_tags_at(runner, commit):
+    result = git(runner, 'tag', '--points-at', commit, check=False)
+    if result.returncode != 0:
+        return []
+    tags = [
+        line.strip()
+        for line in (result.stdout or '').splitlines()
+        if valid_version(line.strip(), allow_dirty=False)
+    ]
+    return sorted(tags, key=lambda item: (item.split('-', 1)[0], int(item.split('-', 1)[1])))
+
+
+def next_version(runner, commit, today=None):
+    """Return the existing YYYY.MM.DD-N tag on commit, or the next UTC version for today."""
+    git(runner, 'fetch', '--tags', '--quiet', check=False)
+    existing = version_tags_at(runner, commit)
+    if existing:
+        return existing[-1]
+    day = today or datetime.now(timezone.utc).strftime('%Y.%m.%d')
+    prefix = day + '-'
+    result = git(runner, 'tag', '--list', prefix + '*', check=False)
+    numbers = []
+    for line in (result.stdout or '').splitlines():
+        tag = line.strip()
+        if tag.startswith(prefix) and valid_version(tag, allow_dirty=False):
+            numbers.append(int(tag.split('-', 1)[1]))
+    return f'{prefix}{max(numbers, default=0) + 1}'
+
+
+def plain_commit_line(subject, body=''):
+    """Format one commit or merge commit as a plain-English release note bullet."""
+    subject = (subject or '').strip()
+    first_body = next((line.strip() for line in (body or '').splitlines() if line.strip()), '')
+    pr_merge = re.match(r'^Merge pull request #(\d+)\b', subject)
+    if pr_merge:
+        num = pr_merge.group(1)
+        summary = first_body or subject
+        summary = re.sub(r'^[a-z]+(?:\([^)]+\))?!?:\s*', '', summary)
+        if summary:
+            summary = summary[0].upper() + summary[1:]
+        return f'- {summary} (#{num})'
+    cleaned = re.sub(r'^[a-z]+(?:\([^)]+\))?!?:\s*', '', subject)
+    if cleaned:
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return f'- {cleaned or subject}'
+
+
+def release_notes(runner, commit, previous_commit=None):
+    """Build plain-word release notes listing the merged PRs in this release."""
+    log_args = ['log', '--first-parent', '--pretty=format:%s%x1f%b%x1e']
+    if previous_commit and previous_commit != commit:
+        log_args.append(f'{previous_commit}..{commit}')
+    else:
+        log_args.extend(['-n', '1', commit])
+    result = git(runner, *log_args, check=False)
+    bullets = []
+    for raw in (result.stdout or '').split('\x1e'):
+        raw = raw.strip()
+        if not raw:
+            continue
+        parts = raw.split('\x1f', 1)
+        subject = parts[0].strip()
+        body = parts[1] if len(parts) > 1 else ''
+        if subject:
+            bullets.append(plain_commit_line(subject, body))
+    if not bullets:
+        bullets.append(f'- Release commit {commit[:12]}.')
+    return 'Changes in this release:\n\n' + '\n'.join(bullets)
+
+
+def publish_release(runner, record, version, commit, previous_commit=None, title=''):
+    """Create the immutable version tag and GitHub Release after production verification."""
+    existing = git(
+        runner, 'rev-parse', '-q', '--verify', f'refs/tags/{version}^{{commit}}', check=False
+    )
+    if existing.returncode == 0 and (existing.stdout or '').strip():
+        tagged_commit = existing.stdout.strip()
+        if tagged_commit != commit:
+            raise Refused(
+                f'Version tag {version} already points to {tagged_commit[:12]}; '
+                f'refusing to move it to {commit[:12]}.'
+            )
+        record.note(f'Version tag {version} already points to {commit[:12]}.')
+    else:
+        git(runner, 'tag', version, commit)
+        record.note(f'Created git tag {version} at {commit[:12]}.')
+    remote = git(runner, 'ls-remote', '--tags', 'origin', f'refs/tags/{version}', check=False)
+    if not (remote.stdout or '').strip():
+        git(runner, 'push', 'origin', f'refs/tags/{version}')
+    release_title = version
+    if title and title.strip():
+        clean_title = title.strip()
+        release_title = (
+            clean_title if clean_title.startswith(version) else f'{version} — {clean_title}'
+        )
+    view = runner.run(['gh', 'release', 'view', version], check=False)
+    if view.returncode == 0:
+        record.set('GitHub Release', f'`{version}` (existing)')
+        record.note(f'GitHub Release {version} already exists.')
+        return
+    notes = release_notes(runner, commit, previous_commit)
+    runner.run(
+        [
+            'gh',
+            'release',
+            'create',
+            version,
+            '--verify-tag',
+            '--title',
+            release_title,
+            '--notes',
+            notes,
+        ]
+    )
+    record.set('GitHub Release', f'`{release_title}`')
+    record.note(f'Published GitHub Release {release_title}.')
+
+
+def firestore_migrations(runner):
+    """Read applied migrations from Firestore _migrations using the deployer's read-only role."""
+    token = runner.run([runner.gcloud, 'auth', 'print-access-token']).stdout.strip()
+    status, body = runner.fetch(
+        f'https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents/_migrations?pageSize=100',
+        headers={'Authorization': 'Bearer ' + token, 'x-goog-user-project': PROJECT},
+    )
+    if status == 404:
+        return []
+    if status != 200:
+        return None
+    try:
+        docs = json.loads(body).get('documents') or []
+    except ValueError:
+        return None
+    items = []
+    for doc in docs:
+        fields = doc.get('fields') or {}
+        mid = (fields.get('migration_id') or {}).get('stringValue') or doc.get('name', '').rsplit(
+            '/', 1
+        )[-1]
+        if not mid:
+            continue
+        items.append(
+            {
+                'migration_id': mid,
+                'applied_at': (fields.get('applied_at') or {}).get('stringValue', ''),
+                'source_commit': (fields.get('source_commit') or {}).get('stringValue', 'unknown'),
+                'source': '_migrations',
+            }
+        )
+    return items
+
+
+def releases_md_migrations(root=ROOT):
+    """Extract applied data migrations recorded in RELEASES.md (or docs/RELEASES.md)."""
+    paths = [
+        p for p in (Path(root) / 'RELEASES.md', Path(root) / 'docs' / 'RELEASES.md') if p.is_file()
+    ]
+    found = []
+    for path in paths:
+        for line in path.read_text(encoding='utf8').splitlines():
+            if not line.startswith('|'):
+                continue
+            match = re.search(r'migrate_([a-z0-9_]+)\.py\s+--apply', line)
+            if not match:
+                continue
+            cells = [cell.strip() for cell in line.strip('|').split('|')]
+            if len(cells) < 6:
+                continue
+            date_text = cells[0]
+            commit_match = re.search(r'[0-9a-f]{40}', cells[3])
+            found.append(
+                {
+                    'migration_id': match.group(1),
+                    'applied_at': date_text,
+                    'source_commit': commit_match.group(0) if commit_match else 'unknown',
+                    'source': path.name,
+                }
+            )
+    return found
+
+
+def check_rollback_migrations(runner, record, target_commit, version):
+    """Warn when rolling back to a version older than an applied database/data migration."""
+    ledger = firestore_migrations(runner)
+    from_docs = releases_md_migrations(runner.root)
+    by_id = {}
+    for entry in from_docs:
+        by_id[entry['migration_id']] = dict(entry)
+    if ledger is not None:
+        for entry in ledger:
+            mid = entry['migration_id']
+            existing = by_id.get(mid)
+            if (
+                existing
+                and not COMMIT.fullmatch(entry['source_commit'])
+                and COMMIT.fullmatch(existing['source_commit'])
+            ):
+                merged = {**entry, 'source_commit': existing['source_commit']}
+            else:
+                merged = dict(entry)
+            by_id[mid] = merged
+    else:
+        record.note(
+            'Could not read Firestore _migrations ledger; checked RELEASES.md migration rows only.'
+        )
+    newer = []
+    target_date = ''
+    date_res = git(runner, 'show', '-s', '--format=%cs', target_commit, check=False)
+    if date_res.returncode == 0:
+        target_date = (date_res.stdout or '').strip()[:10]
+    for mid, entry in sorted(by_id.items()):
+        mig_commit = entry.get('source_commit') or 'unknown'
+        applied_at = entry.get('applied_at') or 'unknown date'
+        if COMMIT.fullmatch(mig_commit):
+            anc = git(runner, 'merge-base', '--is-ancestor', mig_commit, target_commit, check=False)
+            if anc.returncode != 0:
+                newer.append(f'{mid} (applied {applied_at} at {mig_commit[:12]})')
+        else:
+            applied_day = applied_at[:10] if re.match(r'\d{4}-\d{2}-\d{2}', applied_at) else ''
+            script_in_target = (
+                git(
+                    runner,
+                    'cat-file',
+                    '-e',
+                    f'{target_commit}:scripts/migrate_{mid}.py',
+                    check=False,
+                ).returncode
+                == 0
+            )
+            if (
+                entry.get('source') == '_migrations'
+                or not script_in_target
+                or (target_date and applied_day and target_date < applied_day)
+            ):
+                newer.append(f'{mid} (applied {applied_at}, source_commit={mig_commit})')
+    if newer:
+        warning = (
+            f'Target version {version} ({target_commit[:12]}) is older than applied data '
+            f'migration(s): {", ".join(newer)}. Code rollback does not undo database/data changes.'
+        )
+        print(f'::warning::{warning}', file=sys.stderr)
+        record.set('Migration warning', warning)
+        record.note('WARNING: ' + warning)
+        return warning
+    record.set('Migration check', 'no applied migrations newer than target version')
+    record.note(
+        'Migration check passed: target version is not older than any recorded data migration.'
+    )
+    return None
+
+
+def resolve_rollback_version(runner, version):
+    """Resolve a YYYY.MM.DD-N release tag to its commit on master."""
+    if not valid_version(version, allow_dirty=False):
+        raise Refused(
+            f'Version {version!r} is not a valid YYYY.MM.DD-N release version (for example 2026.11.02-1).'
+        )
+    git(runner, 'fetch', '--tags', '--quiet', check=False)
+    resolved = git(
+        runner, 'rev-parse', '-q', '--verify', f'refs/tags/{version}^{{commit}}', check=False
+    )
+    commit = (resolved.stdout or '').strip() if resolved.returncode == 0 else ''
+    if not COMMIT.fullmatch(commit):
+        raise Refused(f'Release version tag {version!r} was not found in git tags.')
+    if git(runner, 'merge-base', '--is-ancestor', commit, 'origin/master', check=False).returncode:
+        raise Refused(f'Release version {version} ({commit[:12]}) is not on master.')
+    return commit
 
 
 def hosting_release(runner):
@@ -459,25 +734,9 @@ def roll_back(runner, record, previous, hosting_before, hosting_deployed):
     return problems
 
 
-def release(runner, record, commit, tag, check_only=False):
-    service = service_state(runner)
-    previous = serving_revision(service)
-    serving = revision_state(runner, previous)
-    serving_commit = revision_commit(serving)
-    record.set('Source commit', f'`{commit}`')
-    record.set('Rollback pair (serving before)', f'backend `{previous}` at `{serving_commit}`')
-    names = check_candidate(runner, commit, serving_commit)
-    check_hand_released(names)
-    check_ttls(runner)
-    serving_summary = spec_summary(serving)
-    staff_emails = serving_staff_emails(serving_summary)
-    record.note(
-        'Candidate is newer than the serving commit; no rules or indexes changed; TTL policies in place.'
-    )
-    record.note('The serving STAFF_EMAILS is set and is carried explicitly to the staged revision.')
-    if check_only:
-        record.note('Check only: nothing staged or deployed.')
-        return
+def _deploy_backend_and_hosting(
+    runner, record, commit, tag, version, previous, serving_summary, staff_emails
+):
     hosting_before = hosting_release(runner)
     record.set(
         'Rollback pair (Hosting before)',
@@ -496,6 +755,8 @@ def release(runner, record, commit, tag, check_only=False):
             PRICE_BOOKS,
             '--staff-emails',
             staff_emails,
+            '--version',
+            version,
             '--tag',
             tag,
             '--yes',
@@ -515,10 +776,10 @@ def release(runner, record, commit, tag, check_only=False):
         )
     for line in baseline_notes(serving_summary, staged):
         record.note('Baseline change: ' + line)
-    staged_checks(runner, url, commit)
+    staged_checks(runner, url, commit, version=version)
     record.set(
         'Staged checks',
-        f'passed at {url}: health (schema 3, source commit), signed-out 401s, TTL policies',
+        f'passed at {url}: health (schema 3, version {version}, source commit), signed-out 401s, TTL policies',
     )
     record.note(f'Staged {staged_name} at 0% and its checks passed.')
 
@@ -527,7 +788,9 @@ def release(runner, record, commit, tag, check_only=False):
         promote(runner, tag)
         record.set('Backend traffic', '100% (promoted)')
         record.note(f'Promoted {staged_name} to 100%.')
-        runner.run([sys.executable, 'scripts/stamp_hosting.py'], capture=False)
+        runner.run(
+            [sys.executable, 'scripts/stamp_hosting.py', '--version', version], capture=False
+        )
         hosting_deployed = True
         firebase(runner, 'deploy', '--only', HOSTING_TARGET)
         hosting_after = hosting_release(runner)
@@ -536,7 +799,7 @@ def release(runner, record, commit, tag, check_only=False):
             raise Refused('Hosting deploy created no new release.')
         record.set(
             'Frontend (Hosting)',
-            f'`{commit}` (Hosting version `{hosting_after["version"]}`, release `{hosting_after["release"]}`)',
+            f'`{commit}` (version `{version}`, Hosting version `{hosting_after["version"]}`, release `{hosting_after["release"]}`)',
         )
         runner.run(['node', 'scripts/verify_hosting.js'], capture=False)
         record.set('Hosting verification', 'scripts/verify_hosting.js passed')
@@ -553,32 +816,152 @@ def release(runner, record, commit, tag, check_only=False):
         runner.run([sys.executable, 'scripts/stamp_hosting.py', '--reset'], check=False)
 
 
+def release(runner, record, commit, tag, check_only=False, version=None, title=''):
+    service = service_state(runner)
+    previous = serving_revision(service)
+    serving = revision_state(runner, previous)
+    serving_commit = revision_commit(serving)
+    record.set('Source commit', f'`{commit}`')
+    record.set('Rollback pair (serving before)', f'backend `{previous}` at `{serving_commit}`')
+    if serving_commit == commit and not check_only:
+        if (
+            git(runner, 'rev-parse', 'HEAD').stdout.strip() == commit
+            and git(
+                runner, 'merge-base', '--is-ancestor', commit, 'origin/master', check=False
+            ).returncode
+            == 0
+        ):
+            ver = version or next_version(runner, commit)
+            record.set('Release version', f'`{ver}`')
+            publish_release(runner, record, ver, commit, title=title)
+    names = check_candidate(runner, commit, serving_commit)
+    check_hand_released(names)
+    check_ttls(runner)
+    serving_summary = spec_summary(serving)
+    staff_emails = serving_staff_emails(serving_summary)
+    version = version or next_version(runner, commit)
+    record.set('Release version', f'`{version}`')
+    record.note(
+        'Candidate is newer than the serving commit; no rules or indexes changed; TTL policies in place.'
+    )
+    record.note('The serving STAFF_EMAILS is set and is carried explicitly to the staged revision.')
+    if check_only:
+        record.note(f'Check only (candidate version {version}): nothing staged or deployed.')
+        return
+    _deploy_backend_and_hosting(
+        runner, record, commit, tag, version, previous, serving_summary, staff_emails
+    )
+    publish_release(runner, record, version, commit, previous_commit=serving_commit, title=title)
+
+
+def rollback_to_version(runner, record, version, tag=None, run_id='', check_only=False):
+    target_commit = resolve_rollback_version(runner, version)
+    tag = check_tag(tag) if tag else default_tag(target_commit, run_id)
+    service = service_state(runner)
+    previous = serving_revision(service)
+    serving = revision_state(runner, previous)
+    serving_commit = revision_commit(serving)
+    record.set('Rollback target version', f'`{version}`')
+    record.set('Release version', f'`{version}`')
+    record.set('Source commit', f'`{target_commit}`')
+    record.set('Rollback pair (serving before)', f'backend `{previous}` at `{serving_commit}`')
+    if serving_commit == target_commit:
+        raise Skipped(f'Version {version} ({target_commit[:12]}) is already serving.')
+    if git(runner, 'cat-file', '-e', serving_commit + '^{commit}', check=False).returncode:
+        raise Refused(
+            f'Serving commit {serving_commit[:12]} is not in this checkout. Release by hand.'
+        )
+    names = git(runner, 'diff', '--name-only', f'{target_commit}..{serving_commit}').stdout.split()
+    check_hand_released(names)
+    check_ttls(runner)
+    serving_summary = spec_summary(serving)
+    staff_emails = serving_staff_emails(serving_summary)
+    check_rollback_migrations(runner, record, target_commit, version)
+    record.note(
+        f'Rollback target {version} ({target_commit[:12]}) verified; no rules or indexes changed; TTL policies in place.'
+    )
+    record.note('The serving STAFF_EMAILS is set and is carried explicitly to the staged revision.')
+    if check_only:
+        record.note(f'Check only (rollback to {version}): nothing staged or deployed.')
+        return
+    head = git(runner, 'rev-parse', 'HEAD').stdout.strip()
+    if head != target_commit:
+        git(runner, 'checkout', '--detach', target_commit)
+    _deploy_backend_and_hosting(
+        runner, record, target_commit, tag, version, previous, serving_summary, staff_emails
+    )
+    record.note(f'Rolled production back to version {version} ({target_commit[:12]}).')
+
+
 def main(argv=None, runner=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--commit', required=True, help='the CI-tested commit; must be checked out')
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--commit', help='the CI-tested commit; must be checked out')
+    target.add_argument(
+        '--rollback',
+        metavar='VERSION',
+        help='roll production back to an existing YYYY.MM.DD-N release tag',
+    )
     parser.add_argument('--tag', help='revision URL tag (default: a<commit prefix>-<run id>)')
     parser.add_argument('--run-id', default='', help='CI run id, folded into the default tag')
     parser.add_argument(
+        '--title',
+        default='',
+        help='optional milestone title for the GitHub Release (version numbering stays YYYY.MM.DD-N)',
+    )
+    parser.add_argument(
         '--check-only',
         action='store_true',
-        help='run every refusal check; stage and deploy nothing',
+        help='run every refusal and migration check; stage and deploy nothing',
     )
     args = parser.parse_args(argv)
-    if not COMMIT.fullmatch(args.commit):
+    if args.commit and not COMMIT.fullmatch(args.commit):
         print('--commit must be a full lowercase commit hash.', file=sys.stderr)
         return 2
+    if args.rollback and not valid_version(args.rollback, allow_dirty=False):
+        print(
+            '--rollback must be a date-style version YYYY.MM.DD-N (for example 2026.11.02-1).',
+            file=sys.stderr,
+        )
+        return 2
     try:
-        tag = check_tag(args.tag) if args.tag else default_tag(args.commit, args.run_id)
+        if args.commit:
+            tag = check_tag(args.tag) if args.tag else default_tag(args.commit, args.run_id)
+        else:
+            tag = check_tag(args.tag) if args.tag else None
     except Refused as error:
         print(str(error), file=sys.stderr)
         return 2
     runner = runner or Runner()
     record = Record(os.environ.get('GITHUB_STEP_SUMMARY'))
-    record.append('## Production release\n\n')
+    heading = '## Production rollback\n\n' if args.rollback else '## Production release\n\n'
+    record.append(heading)
     outcome = 'FAILED'
     try:
-        release(runner, record, args.commit, tag, args.check_only)
-        outcome = 'checked, nothing deployed' if args.check_only else 'released'
+        if args.rollback:
+            rollback_to_version(
+                runner,
+                record,
+                args.rollback,
+                tag=tag,
+                run_id=args.run_id,
+                check_only=args.check_only,
+            )
+            outcome = (
+                'checked, nothing deployed'
+                if args.check_only
+                else f'rolled back to {args.rollback}'
+            )
+        else:
+            release(
+                runner,
+                record,
+                args.commit,
+                tag,
+                args.check_only,
+                title=args.title,
+            )
+            outcome = 'checked, nothing deployed' if args.check_only else 'released'
         return 0
     except Skipped as notice:
         outcome = 'skipped'

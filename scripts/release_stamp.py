@@ -11,6 +11,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMIT_PATTERN = r'[0-9a-f]{40}(?:-dirty)?'
+VERSION_PATTERN = r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*(?:-dirty)?'
+
+
+def valid_version(value, allow_dirty=False):
+    """Return True when value is a well-formed YYYY.MM.DD-N release version."""
+    if not isinstance(value, str):
+        return False
+    pattern = (
+        VERSION_PATTERN
+        if allow_dirty
+        else r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*'
+    )
+    if not re.fullmatch(pattern, value):
+        return False
+    date_part = value.split('-', 1)[0]
+    try:
+        datetime.strptime(date_part, '%Y.%m.%d')
+    except ValueError:
+        return False
+    return True
 
 
 class DirtyTree(RuntimeError):

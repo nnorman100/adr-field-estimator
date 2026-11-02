@@ -10,7 +10,7 @@ const unstamp = (text) =>
   text
     .replace(/^(const VERSION=')[^']*(';)/m, '$1unstamped$2')
     .replace(/(\.(?:css|js)\?v=)[0-9A-Za-z-]+/g, '$1unstamped')
-    .replace(/(App version )[^<]+(<\/small>)/, '$1unstamped$2');
+    .replace(/(App version )[^<]+(<\/small>)/g, '$1unstamped$2');
 // Each versioned asset a page loads, with its ?v= stamp; the local copies define what to expect.
 const versioned = (html) =>
   [...html.matchAll(/"\/([^"?]+\.(?:css|js))\?v=([0-9A-Za-z-]+)"/g)].map((m) => ({
@@ -79,14 +79,17 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     (await (await fetch(base + '/api/documents')).json()).detail,
     'This document link is not available. Ask your restoration company for a new link.',
   );
+  const displayedVersions = [...shell.matchAll(/App version ([^<]+)<\/small>/g)].map((m) => m[1]);
+  const shortCommit = marker.slice(0, 12) + (marker.endsWith('-dirty') ? '-dirty' : '');
+  const versionPattern = /^\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*(?:-dirty)?$/;
   assert(
-    shell.includes(
-      'App version ' +
-        marker.slice(0, 12) +
-        (marker.endsWith('-dirty') ? '-dirty' : '') +
-        '</small>',
-    ),
-    'Displayed app version is not the stamped commit',
+    displayedVersions.length === 2 &&
+      displayedVersions[0] === displayedVersions[1] &&
+      (displayedVersions[0] === shortCommit ||
+        (versionPattern.test(displayedVersions[0]) &&
+          displayedVersions[0].endsWith('-dirty') === marker.endsWith('-dirty'))),
+    'Displayed app version is not the stamped commit or release version: ' +
+      displayedVersions.join(', '),
   );
   assert.equal(unstamp(shell), unstamp(localShell));
   for (const path of ['/app', '/app?v=ui-20261006-6']) {
@@ -154,6 +157,7 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
   const {
     status,
     schema_version,
+    version = 'unknown',
     source_commit = 'not reported (built before release stamping)',
     ...extra
   } = health;
@@ -161,10 +165,24 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
     { status, schema_version, extra },
     { status: 'healthy', schema_version: 3, extra: {} },
   );
+  if (version !== 'unknown') {
+    assert.match(version, versionPattern, 'Invalid backend release version: ' + version);
+    if (source_commit === marker && displayedVersions[0] !== shortCommit) {
+      assert.equal(
+        displayedVersions[0],
+        version,
+        'Frontend displayed version does not match backend release version',
+      );
+    }
+  }
   console.log(
     'Frontend commit ' +
       marker +
-      '; backend source_commit ' +
+      ' (displayed ' +
+      displayedVersions[0] +
+      '); backend version ' +
+      version +
+      ' source_commit ' +
       source_commit +
       (source_commit === marker
         ? ' (same commit)'

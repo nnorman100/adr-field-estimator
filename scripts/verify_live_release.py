@@ -788,7 +788,7 @@ def public():
     result = requests.get(SERVICE + '/api/health', timeout=30)
     assert result.status_code == 200
     health = result.json()
-    assert set(health) <= {'status', 'schema_version', 'source_commit'}
+    assert set(health) <= {'status', 'schema_version', 'version', 'source_commit'}
     assert health['status'] == 'healthy' and health['schema_version'] == 3
     print('Backend source_commit: ' + source_commit(health), flush=True)
     for path in ('/api/health/details', '/api/session', '/api/inspections', '/api/authorizations'):

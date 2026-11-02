@@ -14,6 +14,16 @@ on:
     types: [completed]
     branches: [master]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional YYYY.MM.DD-N version tag to roll back to (leave blank for check-only preflight)'
+        required: false
+        type: string
+      check_only:
+        description: 'Run refusal and migration checks only without deploying'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -40,19 +50,21 @@ jobs:
       group: production-deploy
       cancel-in-progress: false
     permissions:
-      contents: read
+      contents: write
       id-token: write
     env:
       COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
       RUN_ID: ${{ github.run_id }}
       DEPLOY_ARGS: ${{ github.event_name == 'workflow_dispatch' && '--check-only' || '' }}
+      ROLLBACK_VERSION: ${{ inputs.version || '' }}
+      ROLLBACK_ARGS: ${{ inputs.check_only && '--check-only' || '' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       # Deploy the commit CI tested, not whatever master has moved to since.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
-          persist-credentials: false
       # backend/Dockerfile is the single source of the Python version.
       - id: python
         run: echo "version=$(python3 scripts/ci_python_version.py)" >> "$GITHUB_OUTPUT"
@@ -78,5 +90,10 @@ jobs:
           project_id: alert-disaster-field-2026
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
       - name: Release
+        if: ${{ !inputs.version }}
         # DEPLOY_ARGS is deliberately unquoted: empty means no argument.
         run: python3 scripts/auto_deploy.py --commit "$COMMIT" --run-id "$RUN_ID" $DEPLOY_ARGS
+      - name: Roll back to version
+        if: ${{ inputs.version != '' }}
+        # ROLLBACK_ARGS is deliberately unquoted: empty means a live rollback to the chosen version.
+        run: python3 scripts/auto_deploy.py --rollback "$ROLLBACK_VERSION" --run-id "$RUN_ID" $ROLLBACK_ARGS

@@ -25,9 +25,41 @@ release made while automation is enabled should say so in its row. See
 
 The serving backend is the newest row with 100% traffic that has not been rolled back; the serving
 frontend is the newest `live` row. Recheck both read-only before a cutover and keep them as the rollback
-pair. Compare them with `/api/health` (`source_commit`) and `node scripts/verify_hosting.js`. The
+pair. Compare them with `/api/health` (`version` and `source_commit`) and `node scripts/verify_hosting.js`. The
 service-level `source-commit` label follows the latest staged revision, not traffic; read the label of
 the revision that serves traffic instead.
+
+## Version numbers, live version check, and rollback
+
+- **Numbering (`YYYY.MM.DD-N` in UTC)**: Every successful production release automatically receives a
+  date-style version number (for example `2026.11.02-1`, `2026.11.02-2`, counting up from `1` within
+  each UTC day). The git tag and GitHub Release are created only after backend promotion, Hosting
+  deployment, and `node scripts/verify_hosting.js` succeed. Workflow re-runs are idempotent and tags are
+  never moved. Big milestones can be named in the GitHub Release title (`--title "Milestone name"` or by
+  editing the GitHub Release title on GitHub) without changing the `YYYY.MM.DD-N` tag.
+- **How to find the live version**:
+  - **In the app**: check the bottom footer (`App version YYYY.MM.DD-N`) or open **Account** in the top
+    bar (`DryScope · App version YYYY.MM.DD-N`).
+  - **Health / status endpoints**: `GET /api/health` and `GET /api/health/details` return
+    `"version": "YYYY.MM.DD-N"` alongside `"source_commit"`. `node scripts/verify_hosting.js` also prints
+    both the frontend displayed version and backend `version`.
+  - **GitHub Releases**: the repository's Releases page lists each production version tag and the merged
+    pull requests in plain words.
+- **One-step rollback to a version**:
+  - **GitHub Actions**: trigger **Deploy** (`workflow_dispatch`, entering the target `YYYY.MM.DD-N` in
+    the `version` input; works immediately with the existing Workload Identity provider condition) or
+    **Roll back to version** (`.github/workflows/rollback.yml`, `workflow_dispatch` with `version`; works
+    once `scripts/setup_auto_deploy.sh` is re-run to include `rollback.yml` in the OIDC condition).
+  - **Single operator CLI command**:
+    ```bash
+    python3 scripts/auto_deploy.py --rollback 2026.11.02-1
+    # Dry-run preflight and migration check only:
+    python3 scripts/auto_deploy.py --rollback 2026.11.02-1 --check-only
+    ```
+  - **Data migration warning**: During rollback, `scripts/auto_deploy.py` reads the Firestore
+    `_migrations` ledger (#184) and the migration rows in `RELEASES.md`. If the target version is older
+    than an applied database/data migration, it prints a `::warning::` banner and records a `Migration
+    warning` in the job summary because rolling back code does not undo Firestore data changes.
 
 ## Recording a release
 

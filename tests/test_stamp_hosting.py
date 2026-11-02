@@ -233,3 +233,23 @@ def test_predeploy_launcher_falls_back_to_python3_and_passes_exit_code(tmp_path)
     assert only_python3.returncode == 7 and 'args:x.py --check' in only_python3.stdout
     none = run(str(tmp_path / 'empty'))
     assert none.returncode == 1 and 'No Python interpreter found' in none.stderr
+
+
+def test_stamp_with_release_version_stamps_both_account_and_footer_displays(shell):
+    hosting.write(HEAD, shell, version='2026.11.02-1')
+    assert hosting.check(shell, fake_git()) == HEAD
+    html = (shell / 'public/app.html').read_text(encoding='utf8')
+    assert html.count(f'?v={HEAD}') == 12
+    assert html.count('App version 2026.11.02-1</small>') == 2
+    assert 'id="footerVersion"' in html
+    hosting.write(HEAD + '-dirty', shell, version='2026.11.02-1')
+    assert hosting.check(shell, fake_git()) == HEAD + '-dirty'
+    dirty_html = (shell / 'public/app.html').read_text(encoding='utf8')
+    assert dirty_html.count('App version 2026.11.02-1-dirty</small>') == 2
+    # Disagreeing display markers in public/app.html are rejected by check().
+    mismatch = dirty_html.replace(
+        'App version 2026.11.02-1-dirty</small>', 'App version 2026.11.02-2-dirty</small>', 1
+    )
+    (shell / 'public/app.html').write_text(mismatch, encoding='utf8')
+    with pytest.raises(RuntimeError, match='other than'):
+        hosting.check(shell, fake_git())
