@@ -30,7 +30,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Signing and document links | `backend/signing_links.py`, `document_links.py` |
 | Drying log / watch | `psychrometrics.py`, `drying_watch.py`, `public/drying*.js` |
 | Delivery (email) | `backend/delivery.py`, `workspaces.py` |
-| Price books (off by default) | `price_book_*.py`, `price_books.py` |
+| Price books (off by default) | `price_book_*.py`, `price_books.py`, `price_table.py` (v2 tables), `pricing.py` (calculation dispatch) |
 | Readiness, insights, AI usage | `readiness.py`, `insights.py`, `ai_usage.py` |
 | Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
 | Release scripts | `scripts/deploy_backend.py`, `stamp_hosting.py`, `verify_*`, `auto_deploy.py` (automatic deploys) |
