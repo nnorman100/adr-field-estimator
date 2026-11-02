@@ -8,10 +8,22 @@ except ImportError:
     from adr_price_book import ADR_COMPANY_ID, adr_rates
 
 
+def _source_rate(source):
+    """A price-book source's hourly rate: the v2 enabled extras item, or the v1 rate key."""
+    if 'items' not in source:
+        return source['rates'].get('additional_work_hourly')
+    for item in source['items']:
+        if item['group'] == 'extras' and item['enabled']:
+            # A blank or zero price is not a rate an owner can approve work at.
+            price = item['unit_price']
+            return price if price and Decimal(price) > 0 else None
+    return None
+
+
 def rate_for(company, source=None):
     """The hourly rate for a new approval. A price-book source wins over the profile projection."""
     if source is not None:
-        value = source['rates'].get('additional_work_hourly')
+        value = _source_rate(source)
         if not value:
             raise ValueError(
                 'The company owner must set an additional-work hourly rate in Company prices.'
@@ -34,12 +46,17 @@ def quote(company, hours, source=None):
     if source is not None:
         try:
             from .price_books import rate_fingerprint
+            from .price_table import rate_fingerprint as table_fingerprint
         except ImportError:
             from price_books import rate_fingerprint
+            from price_table import rate_fingerprint as table_fingerprint
+        fingerprint = (
+            table_fingerprint(source) if 'items' in source else rate_fingerprint(source['rates'])
+        )
         priced.update(
             price_version_id=source['version_id'],
             price_content_sha256=source['content_sha256'],
-            price_rate_fingerprint=rate_fingerprint(source['rates']),
+            price_rate_fingerprint=fingerprint,
         )
     return priced
 

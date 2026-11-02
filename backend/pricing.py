@@ -4,12 +4,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 try:
-    from . import claims, price_books
+    from . import claims, price_books, pricing_v2
     from .contracts import InspectionData
     from .price_table import CALCULATION_VERSION as V2_CALCULATION_VERSION
 except ImportError:
     import claims
     import price_books
+    import pricing_v2
     from contracts import InspectionData
     from price_table import CALCULATION_VERSION as V2_CALCULATION_VERSION
 
@@ -29,7 +30,18 @@ def price_and_range(data: InspectionData, pin: dict[str, Any]) -> PricedJob:
     """Dispatch pricing by pin['calculation_version']."""
     version = pin.get('calculation_version')
     if version == V2_CALCULATION_VERSION:
-        raise NotImplementedError('dryscope-v2 pricing is not available yet')
+        lines, warnings = pricing_v2.price_scope(data, pin)
+        estimate = pricing_v2.totals(data, lines, pin['policy'])
+        low = estimate['low']['total']
+        return PricedJob(
+            lines=lines,
+            totals=estimate,
+            warnings=warnings,
+            calculation_version=version,
+            xactimate_total=float(low),
+            low=low,
+            high=estimate['high']['total'] if estimate['high'] else None,
+        )
     if not price_books.known_calculation_version(version):
         raise ValueError(f'Unsupported calculation version: {version!r}')
     rates = pin.get('rates')

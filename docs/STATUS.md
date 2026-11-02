@@ -25,6 +25,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 | Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built. Turn the flag on before onboarding a company other than ADR: it cannot set prices or estimate without it |
 | No default prices (a company without prices is blocked; ADR's rates are ADR's alone) | yes | on with the code | no | Owner notice and blocked audit not yet checked on a phone |
 | Owner-defined pricing v2 data model | yes | flag off | no | v2 item/policy schema, starter catalog, working copy, v2 CSV/XLSX template |
+| Owner-defined pricing v2 calculation | yes | not connected (audits and extras approvals refuse a v2 table) | no | `backend/pricing_v2.py`; documents, editor and estimator screens are separate work |
 | Automatic deploys after CI | yes (#171) | not recorded | n/a | Needs the owner's one-time setup in `docs/firebase-isolation.md#automatic-deploys`; runs are recorded in the Actions job summary, not `RELEASES.md` |
 | Release version numbers (`YYYY.MM.DD-N`) and one-step rollback | yes | not yet released | no | Shown in `/api/health`, app footer and Account menu; automatic git tag + plain-word GitHub Release after deploy verification; `auto_deploy.py --rollback <version>` and workflow dispatch warn and stop when rolling back past a `_migrations` data migration or a rules or index change, unless confirmed |
 | Vault backup | yes | yes | n/a | Verified Oct 27 |

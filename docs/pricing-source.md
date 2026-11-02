@@ -12,4 +12,51 @@ ADR's rates are ADR's proprietary data. They sit in `backend/adr_price_book.py` 
 
 For pricing work outside the catalog and its treatment in the estimate range, see [Priced additional work](priced-extras.md).
 
-Each job's saved prices record a calculation version, and that version selects the formulas used to price the job (`POLICIES` in `backend/claims.py`, `CALCULATION_FACTORS` in `backend/price_books.py`). `adr-residential-v1` is the only version with formulas today; a `dryscope-v2` table can be published but cannot price a job yet. A version's formulas never change once saved prices use it, so existing drafts and signed documents keep their numbers; new formulas get a new version. An unknown version is refused, never priced with another version's formulas.
+Each job's saved prices record a calculation version, and that version selects the formulas used to price the job (`POLICIES` in `backend/claims.py`, `CALCULATION_FACTORS` in `backend/price_books.py`). `adr-residential-v1` and `dryscope-v2` are the versions with formulas, and `backend/pricing.py` chooses between them. A `dryscope-v2` table can be published, but audits and additional-work approvals still refuse it with a conflict until the estimator screens and documents are connected. A version's formulas never change once saved prices use it, so existing drafts and signed documents keep their numbers; new formulas get a new version. An unknown version is refused, never priced with another version's formulas.
+
+## Company-defined tables (`dryscope-v2`)
+
+A company on calculation version `dryscope-v2` prices from its own table: `items` and `policy`, pinned to the job (see [Company workspaces](company-workspaces.md#company-prices)). Documents already priced on `adr-residential-v1` keep that calculation and their numbers. `backend/pricing_v2.py` holds this calculation. All math is `Decimal`; a model never supplies a price.
+
+**Lines.** Each enabled item with a price makes lines from its `quantity_source`. Room sources make one line per room matching the item's `categories`; the unit price is multiplied by the room's category multiplier, and by the cabinetry multiplier for a category 3 room with custom cabinetry when the source is `room:demolition:finished` or the scope is `all_cat3`. A room's own waste wins over the item's when it is above zero. Job sources make one line, at the item's price and waste, and only when a room matches the item's `categories`. A line total is `quantity × price × (1 + waste / 100)`, to cents, half up; a zero quantity makes no line. Each approved extra makes one line at its approved rate. The enabled `extras` item is never priced by quantity: it only supplies the hourly rate an owner approves work at, so unapproved hours cannot reach a total.
+
+**Entered quantities.** `quantity_overrides` holds what an estimator entered over a walkthrough measurement, and pricing reads the entered number. Keys name what was overridden: a job number by its field name (`air_movers`, `drying_days`, `monitoring_hours`), or a room area as `<room name>:<field>` (`Kitchen:finished_sf`, with `unfinished_sf`, `finished_sf`, `wet_floor_sf` or `floor_sf`). A typed item's entered quantity is its `scope_items` `quantity`. A key that names no such field or room is ignored and listed as a warning.
+
+**Buckets.** A line's group sets its bucket: job charges, optional services and extras are fixed (`F`), drying equipment is equipment (`E`), and demolition, treatment and labor are labor and materials (`L`). `L_area` is the labor-and-material lines read from a room's area; `L_other` is the rest, such as labor hours.
+
+**The high end.** With `N = range.first_sf`, `X = first_percent / 100` and `Y = beyond_percent / 100`, `TopN` is the dollars of the `N` most expensive square feet of `L_area`, taking a partial line in proportion:
+
+```
+H = round_cents( (1 + Y) × L_area + (X − Y) × TopN + (1 + X) × L_other )
+```
+
+At or below `N` square feet this is `(1 + X) × L`, and above `N` the factor falls smoothly toward `1 + Y`, with no step at any size. Because `TopN` is the most any `N` square feet can cost, adding area at any rate, or raising any price, can never lower it. A share of the job's area spread evenly does not have that property: cheap added area would dilute expensive dollars and lower the high.
+
+**Each end.** `LM` is `L` at the low end and `H` at the high end, and `m` is `after_hours.multiplier` on an after-hours job, else 1.
+
+| Summary line | Amount |
+| --- | --- |
+| Subtotal | `F + E + LM` |
+| After-hours adjustment, with the owner's label | `round_cents(LM × (m − 1))` |
+| Minimum job charge | `minimum_job_charge − (subtotal + adjustment)`, when that is above zero |
+| Overhead and profit, `p` | `round_cents(p × (subtotal + adjustment + minimum))` |
+| Sales tax, `t` | `round_cents(t × (T_F + T_E + m × T_L × LM / L) × (1 + p))` |
+| Total | the sum of the lines above |
+
+`T_F`, `T_E` and `T_L` are the same sums over lines marked taxable, and `T_L × LM / L` is zero when `L` is zero: the high end taxes the same proportion of labor and materials as the low end. Overhead and profit comes before sales tax, so taxable items carry their own share of it; with overhead and profit off it plays no part in tax. The minimum job charge comes before both, and it is not a taxable item.
+
+If the high end's amount before the minimum is still below the minimum, the job is the minimum at both ends and the high equals the low. Otherwise the high has no minimum line. The high is not floored on its own, because adding non-taxable work under the minimum would shrink its taxable share and lower its total with nothing to offset that.
+
+The itemized total printed beside the range is the low total. A single-price company prints the low total as the price and has no high end; `H` is still calculated, so a later switch to a range needs no change to the calculation.
+
+**Rounding.** Each line, `H`, and each summary line round once, to cents, half up, and nothing else rounds. Printed lines always add up to the printed total.
+
+**Guards.** A priced scope of $0.00 is refused with "The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing." before any minimum applies, so a minimum never turns an empty job into a signable one. A line outside the three buckets raises an error rather than vanishing from the range.
+
+**Neither total drops when work is added.** Raising any room area, equipment count, day count, labor hour, charge count, approved extra, the after-hours flag or any unit price never lowers the low or the high beyond rounding (two cents at most). `tests/test_pricing_v2.py` scans this over 2,000 random tables and jobs on a fixed seed.
+
+**Explanation text.** `explanation()` builds the paragraph under the amounts from the pinned policy, and `range_explanation()` builds the one sentence naming the cushion tiers, such as "The high end allows 50% extra on the first 1,000 sq ft of work and 20% beyond, for hidden damage." Both are server text.
+
+**Advisory warnings**, returned beside the lines and never blocking on their own: `missing_area`, `unknown_scope_item`, `unknown_quantity_override` and `blank_price_item`.
+
+**Sample jobs.** `SAMPLE_JOBS` are three made-up jobs for previews: "Clean-water kitchen leak", "Gray-water main floor" and "Mold remediation, after hours". Each states every job number, so no quantity default reaches a preview.
