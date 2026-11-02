@@ -1505,6 +1505,84 @@ def test_calculate_returns_publish_problems_until_v2_pricing_exists(api, enabled
     assert 'Storage operation failed' not in caplog.text
 
 
+def test_calculate_refuses_a_sample_choice_it_cannot_honor(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    answer = client.post(
+        '/api/companies/adr/prices/calculate',
+        json={'items': table['items'], 'policy': table['policy'], 'sample': 'small'},
+    )
+    assert answer.status_code == 422
+
+
+def _save_working_policy(client, company_id, generation):
+    table = _v2_table('25.00')
+    table['policy']['overhead_profit_percent'] = '30'
+    saved = client.put(
+        f'/api/companies/{company_id}/prices/working-copy',
+        json={
+            'expected_working_version': 0,
+            'expected_generation': generation,
+            'items': table['items'],
+            'policy': table['policy'],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+
+def test_import_preview_takes_the_published_policy_not_the_working_copy(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    table = _v2_table('30.00')
+    table['policy']['overhead_profit_percent'] = '10'
+    head = _publish_v2(client, table)
+    _save_working_policy(client, 'adr', head['generation'])
+
+    uploaded = _upload(client, _v2_csv(base=head['version_id'], generation=head['generation']))
+    assert uploaded.status_code == 200, uploaded.text
+    preview = store.db.records['_price_book_previews/' + uploaded.json()['preview_id']]
+    assert preview['policy']['overhead_profit_percent'] == '10'
+
+
+def test_first_import_preview_takes_the_starter_policy_not_the_working_copy(api, enabled):
+    from backend import price_table
+
+    client, current, store = api
+    current['uid'] = 'other-owner'
+    rows = _template_rows(_other_owner_export(client).content)
+    _save_working_policy(client, 'other', 0)
+
+    uploaded = client.post(
+        '/api/companies/other/prices/import-preview',
+        files={'file': ('prices.csv', _priced_template(rows), 'text/csv')},
+        data={'change_reason': 'First owner table'},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    preview = store.db.records['_price_book_previews/' + uploaded.json()['preview_id']]
+    assert preview['policy'] == price_table.starter_table()['policy']
+
+
+@pytest.mark.parametrize(
+    'price,copied',
+    [('0.00', False), ('0.01', True), ('10000.00', True), ('10000.01', False)],
+)
+def test_v2_publish_copies_only_a_valid_profile_rate(api, enabled, price, copied):
+    client, current, store = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    extras = next(item for item in table['items'] if item['group'] == 'extras')
+    extras['unit_price'] = price
+    extras['allow_zero'] = price == '0.00'
+    _publish_v2(client, table, acknowledgements=[extras['item_id']] if price == '0.00' else [])
+
+    profile = store.db.records['_companies/adr']['profile']
+    if copied:
+        assert profile['additional_work_rate'] == price
+    else:
+        assert 'additional_work_rate' not in profile
+
+
 def test_v2_book_gives_readable_conflicts_and_writes_no_pin(api, enabled):
     client, current, store = api
     current['uid'] = 'owner'

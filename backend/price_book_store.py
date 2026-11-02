@@ -6,6 +6,7 @@ Publication does not change the company identity version.
 
 import copy
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import json
 import logging
 from uuid import uuid4
@@ -48,7 +49,6 @@ try:
         publish_problems,
         starter_table,
     )
-    from .pricing import price_and_range
     from .workspaces import AccessDenied
 except ImportError:
     from adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
@@ -86,7 +86,6 @@ except ImportError:
         publish_problems,
         starter_table,
     )
-    from pricing import price_and_range
     from workspaces import AccessDenied
 
 PREVIEW_MINUTES = 30
@@ -94,6 +93,7 @@ HEAD = '_company_price_books'
 VERSIONS = '_price_book_versions'
 PINS = '_job_pricing'
 PREVIEWS = '_price_book_previews'
+PROFILE_RATE_MAX = Decimal('10000')
 DRAFTS = '_price_book_drafts'
 DOMAIN = 'pricing'
 V1_SIZE_LIMIT = 32768
@@ -520,19 +520,10 @@ class PriceBookStore:
             publish=False,
             acknowledgements=payload.get('acknowledgements') or [],
         )
-        problems = publish_problems(table, payload.get('acknowledgements') or [])
-        try:
-            priced = price_and_range(
-                InspectionData(),
-                {
-                    'calculation_version': V2_CALCULATION_VERSION,
-                    'items': table['items'],
-                    'policy': table['policy'],
-                },
-            )
-        except NotImplementedError:
-            return {'samples': [], 'problems': problems}
-        return {'samples': [priced.totals] if priced.totals else [], 'problems': problems}
+        return {
+            'samples': [],
+            'problems': publish_problems(table, payload.get('acknowledgements') or []),
+        }
 
     def _support_read(self, uid, company_id, action):
         def audit(tx):
@@ -903,9 +894,13 @@ class PriceBookStore:
         profile = dict(company.get('profile') or {})
         profile.pop('additional_work_rate', None)
         for item in table['items']:
-            if item['group'] == 'extras' and item['enabled'] and item['unit_price'] != '':
+            if (
+                item['group'] == 'extras'
+                and item['enabled']
+                and item['unit_price'] != ''
+                and 0 < Decimal(item['unit_price']) <= PROFILE_RATE_MAX
+            ):
                 profile['additional_work_rate'] = item['unit_price']
-                break
         company['profile'] = profile
         tx.set(self.ws.ref('_companies', company_id), company)
         preview['result_version_id'] = preview_id

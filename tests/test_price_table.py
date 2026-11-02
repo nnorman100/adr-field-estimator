@@ -468,10 +468,14 @@ def _item(**changes):
 @pytest.mark.parametrize(
     'source,kind,count_field,days_field',
     [
+        ('field:emergency_calls', 'field', None, None),
+        ('field:monitoring_hours', 'field', None, None),
+        ('field:haul_loads', 'field', None, None),
+        ('field:labor_hours', 'field', None, None),
+        ('field:matterport_scans', 'field', None, None),
+        ('field:dump_truck_loads', 'field', None, None),
         ('field:decon_units', 'field', None, None),
-        ('field:equipment_decon', 'field', None, None),
-        ('field:air_scrubbers', 'field', None, None),
-        ('field:hepa_filters', 'field', None, None),
+        ('field:power_distribution', 'field', None, None),
         (
             'count_days:air_scrubbers*air_scrubber_days',
             'count_days',
@@ -480,6 +484,13 @@ def _item(**changes):
         ),
         ('count_days:hepa_filters*1', 'count_days', 'hepa_filters', '1'),
         ('count_days:air_movers*drying_days', 'count_days', 'air_movers', 'drying_days'),
+        ('count_days:dehumidifiers*drying_days', 'count_days', 'dehumidifiers', 'drying_days'),
+        (
+            'count_days:wood_floor_systems*wood_floor_days',
+            'count_days',
+            'wood_floor_systems',
+            'wood_floor_days',
+        ),
     ],
 )
 def test_source_grammar_accepts_every_listed_form(source, kind, count_field, days_field):
@@ -494,6 +505,59 @@ def test_source_grammar_accepts_every_listed_form(source, kind, count_field, day
 def test_source_grammar_refuses_unlisted_forms(source):
     with pytest.raises(ValueError, match='Unknown quantity source'):
         price_table.parse_source(source)
+
+
+@pytest.mark.parametrize(
+    'source', ['field:air_scrubbers', 'field:hepa_filters', 'field:equipment_decon']
+)
+def test_source_grammar_refuses_equipment_counts_as_field_sources(source):
+    with pytest.raises(ValueError, match='Unknown quantity source'):
+        price_table.parse_source(source)
+
+
+def test_every_starter_item_unit_matches_its_quantity_source():
+    field_units = {
+        'emergency_calls': {'each'},
+        'monitoring_hours': {'hour'},
+        'labor_hours': {'hour'},
+        'haul_loads': {'load'},
+        'matterport_scans': {'each'},
+        'dump_truck_loads': {'each'},
+        'decon_units': {'each'},
+        'power_distribution': {'each'},
+    }
+    for item in price_table.starter_table()['items']:
+        source = price_table.parse_source(item['quantity_source'])
+        if source.kind == 'field':
+            expected = field_units[source.field]
+        elif source.kind == 'count_days':
+            expected = {'day', 'unit_day'} if source.days_field.endswith('_days') else {'each'}
+        elif source.kind == 'room':
+            expected = {'sf'}
+        elif source.kind == 'after_hours':
+            expected = {'each'}
+        elif source.kind == 'typed_count_days':
+            expected = {'unit_day'}
+        else:
+            assert source.kind == 'typed'
+            continue
+        assert item['unit'] in expected, item['item_id']
+
+
+def test_starter_monitoring_is_priced_by_the_hour():
+    item = next(
+        row for row in price_table.starter_table()['items'] if row['item_id'] == 'monitoring_visit'
+    )
+    assert item['unit'] == 'hour'
+    assert item['name'] == 'Drying monitoring (per hour)'
+
+
+def test_v1_mapping_uses_the_count_sources_for_equipment():
+    table = price_table.from_v1_rates(adr_rates())
+    sources = {item['item_id']: item['quantity_source'] for item in table['items']}
+    assert sources['air_scrubber_daily'] == 'count_days:air_scrubbers*air_scrubber_days'
+    assert sources['hepa_filter'] == 'count_days:hepa_filters*1'
+    assert sources['equipment_decontamination'] == 'field:decon_units'
 
 
 def test_item_id_and_code_patterns_match_the_specification():

@@ -3,7 +3,6 @@
 import hashlib
 import logging
 import re
-from typing import Literal
 
 from fastapi import Depends, HTTPException, Query, Request, Response, Security
 from pydantic import Field, model_validator
@@ -56,7 +55,6 @@ class PriceWorkingCopyBody(StrictModel):
 class PriceCalculateBody(StrictModel):
     items: list[dict]
     policy: dict
-    sample: Literal['small', 'medium', 'large', 'all'] = 'all'
     acknowledgements: list[str] = Field(default_factory=list)
 
 
@@ -376,12 +374,9 @@ def _import_preview(book, uid, company_id, upload):
         raise
     event('Price import parsed', logging.INFO, operation='price_book', outcome='parsed')
     if isinstance(parsed, list):
-        draft = book._draft(company_id)
-        policy = (draft or {}).get('policy')
-        if not policy:
-            head = book._head(company_id)
-            ver = book._version(head.get('latest_version_id')) if head else None
-            policy = (ver or {}).get('policy') or starter_table()['policy']
+        head = book._head(company_id)
+        published = book._version(head.get('latest_version_id')) if head else None
+        policy = (published or {}).get('policy') or starter_table()['policy']
         return book.preview(
             uid,
             company_id,
