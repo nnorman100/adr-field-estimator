@@ -101,7 +101,9 @@ def prompt_inspection(data):
     are stored and shown only; wiring them into guidance or documents is separate work. Address
     coordinates are location data used for the map and are never sent to a model."""
     return {
-        key: value for key, value in data.items() if key not in ('equipment_scans', 'coordinates')
+        key: value
+        for key, value in data.items()
+        if key not in ('equipment_scans', 'coordinates', 'scope_items', 'quantity_overrides')
     }
 
 

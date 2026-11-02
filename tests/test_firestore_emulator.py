@@ -1118,6 +1118,8 @@ def test_v2_publish_and_working_copy_transactions():
         for item in table['items']:
             if item['enabled']:
                 item['unit_price'] = amount
+            if item['group'] == 'extras':
+                item['enabled'] = False
         return table
 
     price_books.set_enabled(True)

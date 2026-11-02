@@ -46,6 +46,7 @@ try:
         normalize_table,
         public_diff,
         public_table,
+        locked_extras_problems,
         publish_problems,
         starter_table,
     )
@@ -83,6 +84,7 @@ except ImportError:
         normalize_table,
         public_diff,
         public_table,
+        locked_extras_problems,
         publish_problems,
         starter_table,
     )
@@ -432,7 +434,7 @@ class PriceBookStore:
             publish=False,
             acknowledgements=payload.get('acknowledgements') or [],
         )
-        problems = publish_problems(table, payload.get('acknowledgements') or [])
+        problems = self._publish_problems(table, payload.get('acknowledgements') or [])
         expected_wv = payload.get('expected_working_version')
         expected_gen = payload.get('expected_generation')
 
@@ -522,7 +524,7 @@ class PriceBookStore:
         )
         return {
             'samples': [],
-            'problems': publish_problems(table, payload.get('acknowledgements') or []),
+            'problems': self._publish_problems(table, payload.get('acknowledgements') or []),
         }
 
     def _support_read(self, uid, company_id, action):
@@ -558,6 +560,15 @@ class PriceBookStore:
         if ai_features.enabled('priced_extras'):
             return ()
         return ('additional_work_hourly',)
+
+    def _publish_problems(self, table, acknowledgements):
+        return publish_problems(table, acknowledgements, extras_locked=bool(self._locked_keys()))
+
+    def _refuse_locked_extras(self, table):
+        if self._locked_keys():
+            problems = locked_extras_problems(table)
+            if problems:
+                raise ValueError(problems[0]['message'])
 
     def _normalize(self, company, incoming, acknowledgements):
         current = self.effective(company)['rates']
@@ -624,6 +635,7 @@ class PriceBookStore:
         reason = reason_text(payload.get('change_reason', ''))
         head = self._head(company_id)
         _refuse_v1_to_v2(head)
+        self._refuse_locked_extras(table)
         if head and head.get('latest_version_id'):
             current = self._version(head['latest_version_id'])
             base_generation = head['generation']
@@ -845,6 +857,7 @@ class PriceBookStore:
             publish=True,
             acknowledgements=preview.get('acknowledgements') or [],
         )
+        self._refuse_locked_extras(table)
         digest = v2_content_hash(table)
         if digest != preview.get('content_sha256'):
             raise Conflict('This price review no longer matches its prices. Review them again.')

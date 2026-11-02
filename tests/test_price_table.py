@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from backend import claims, main as bm, price_books, price_table, pricing, scope
+from backend import claims, main as bm, price_books, price_table, pricing, prompts, scope
 from backend.adr_price_book import adr_rates
 from backend.contracts import (
     InspectionData,
@@ -471,18 +471,13 @@ def _item(**changes):
         ('field:emergency_calls', 'field', None, None),
         ('field:monitoring_hours', 'field', None, None),
         ('field:haul_loads', 'field', None, None),
-        ('field:labor_hours', 'field', None, None),
+        ('field:air_scrubbers', 'field', None, None),
+        ('field:hepa_filters', 'field', None, None),
         ('field:matterport_scans', 'field', None, None),
         ('field:dump_truck_loads', 'field', None, None),
-        ('field:decon_units', 'field', None, None),
+        ('field:equipment_decon', 'field', None, None),
         ('field:power_distribution', 'field', None, None),
-        (
-            'count_days:air_scrubbers*air_scrubber_days',
-            'count_days',
-            'air_scrubbers',
-            'air_scrubber_days',
-        ),
-        ('count_days:hepa_filters*1', 'count_days', 'hepa_filters', '1'),
+        ('field:labor_hours', 'field', None, None),
         ('count_days:air_movers*drying_days', 'count_days', 'air_movers', 'drying_days'),
         ('count_days:dehumidifiers*drying_days', 'count_days', 'dehumidifiers', 'drying_days'),
         (
@@ -508,9 +503,14 @@ def test_source_grammar_refuses_unlisted_forms(source):
 
 
 @pytest.mark.parametrize(
-    'source', ['field:air_scrubbers', 'field:hepa_filters', 'field:equipment_decon']
+    'source',
+    [
+        'field:decon_units',
+        'count_days:air_scrubbers*air_scrubber_days',
+        'count_days:hepa_filters*1',
+    ],
 )
-def test_source_grammar_refuses_equipment_counts_as_field_sources(source):
+def test_source_grammar_refuses_names_outside_the_specification(source):
     with pytest.raises(ValueError, match='Unknown quantity source'):
         price_table.parse_source(source)
 
@@ -521,9 +521,11 @@ def test_every_starter_item_unit_matches_its_quantity_source():
         'monitoring_hours': {'hour'},
         'labor_hours': {'hour'},
         'haul_loads': {'load'},
+        'air_scrubbers': {'day'},
+        'hepa_filters': {'each'},
         'matterport_scans': {'each'},
         'dump_truck_loads': {'each'},
-        'decon_units': {'each'},
+        'equipment_decon': {'each'},
         'power_distribution': {'each'},
     }
     for item in price_table.starter_table()['items']:
@@ -531,7 +533,7 @@ def test_every_starter_item_unit_matches_its_quantity_source():
         if source.kind == 'field':
             expected = field_units[source.field]
         elif source.kind == 'count_days':
-            expected = {'day', 'unit_day'} if source.days_field.endswith('_days') else {'each'}
+            expected = {'unit_day'}
         elif source.kind == 'room':
             expected = {'sf'}
         elif source.kind == 'after_hours':
@@ -552,40 +554,69 @@ def test_starter_monitoring_is_priced_by_the_hour():
     assert item['name'] == 'Drying monitoring (per hour)'
 
 
-def test_v1_mapping_uses_the_count_sources_for_equipment():
+def test_v1_mapping_uses_the_field_sources_for_equipment():
     table = price_table.from_v1_rates(adr_rates())
     sources = {item['item_id']: item['quantity_source'] for item in table['items']}
-    assert sources['air_scrubber_daily'] == 'count_days:air_scrubbers*air_scrubber_days'
-    assert sources['hepa_filter'] == 'count_days:hepa_filters*1'
-    assert sources['equipment_decontamination'] == 'field:decon_units'
+    assert sources['air_scrubber_daily'] == 'field:air_scrubbers'
+    assert sources['hepa_filter'] == 'field:hepa_filters'
+    assert sources['equipment_decontamination'] == 'field:equipment_decon'
 
 
 def test_item_id_and_code_patterns_match_the_specification():
-    longest_id = 'a' * 48
-    longest_code = 'A' * 24
+    longest_id = 'a' * 40
+    longest_code = 'A' * 16
     normalized = price_table.normalize_items(
         [
             _item(item_id=longest_id, code=longest_code),
-            _item(item_id='with_code_underscore', code='AB_2'),
+            _item(item_id='with_short_code', code='A'),
+            _item(item_id='with_code_hyphen', code='AB-2'),
         ],
         publish=False,
     )
     assert normalized[0]['item_id'] == longest_id
-    assert normalized[1]['code'] == 'AB_2'
+    assert normalized[1]['code'] == 'A'
+    assert normalized[2]['code'] == 'AB-2'
     for changes, match in (
-        ({'item_id': 'a' * 49}, 'invalid item_id'),
-        ({'code': 'A'}, 'invalid code'),
-        ({'code': 'A' * 25}, 'invalid code'),
+        ({'item_id': 'a' * 41}, 'invalid item_id'),
+        ({'code': 'AB_2'}, 'invalid code'),
+        ({'code': 'A' * 17}, 'invalid code'),
     ):
         with pytest.raises(ValueError, match=match):
             price_table.normalize_items([_item(**changes)], publish=False)
     # A blank code falls back to one that satisfies the pattern, even for the longest id.
-    defaulted = price_table.normalize_items([_item(item_id='a' + '_' * 47, code='')], publish=False)
+    defaulted = price_table.normalize_items([_item(item_id='a' + '_' * 39, code='')], publish=False)
     assert price_table.CODE_RE.fullmatch(defaulted[0]['code'])
     assert InspectionData(scope_items={longest_id: ScopeQuantity()}).scope_items
 
 
-@pytest.mark.parametrize('basis', ['demolition', 'wet_floor', 'floor'])
+def test_floor_is_not_an_area_basis():
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['area_basis'] = 'floor'
+    with pytest.raises(ValueError, match='area_basis'):
+        price_table.normalize_policy(policy)
+    with pytest.raises(ValidationError):
+        PricingPolicy(**policy)
+
+
+def test_every_default_code_and_id_in_the_starter_and_v1_mapping_fits_the_patterns():
+    tables = (price_table.starter_table(), price_table.from_v1_rates(adr_rates()))
+    for table in tables:
+        codes = [item['code'] for item in table['items']]
+        assert len(codes) == len(set(codes))
+        for item in table['items']:
+            assert price_table.ITEM_ID_RE.fullmatch(item['item_id'])
+            assert price_table.CODE_RE.fullmatch(item['code'])
+
+
+def test_extras_lock_is_reported_only_when_asked_for():
+    table = price_table.normalize_table(_priced_starter(), publish=True)
+    assert price_table.publish_problems(table) == []
+    locked = price_table.publish_problems(table, extras_locked=True)
+    assert [row['item_id'] for row in locked] == ['additional_work']
+    assert 'Turn this item off' in locked[0]['message']
+
+
+@pytest.mark.parametrize('basis', ['demolition', 'wet_floor'])
 def test_every_area_basis_is_accepted_by_the_table_and_the_saved_basis(basis):
     policy = copy.deepcopy(price_table.DEFAULT_POLICY)
     policy['area_basis'] = basis
@@ -759,6 +790,31 @@ def test_scope_prompt_builds_for_a_draft_with_decimal_fields_and_leaves_v2_field
     assert 'scope_items' not in form
     assert 'quantity_overrides' not in form
     assert form['extras'][0]['hours'] == '1.50'
+
+
+def test_audit_and_live_prompts_leave_out_job_quantities_and_override_reasons():
+    draft = bm.inspection_payload(
+        InspectionData(
+            address='300 Elm St',
+            year_built=1990,
+            scope_items={'containment': ScopeQuantity(quantity=Decimal('2.50'))},
+            quantity_overrides={
+                'air_movers': QuantityOverride(
+                    measured=Decimal('3'), entered=Decimal('5'), reason='Added hallway fans'
+                )
+            },
+        )
+    )
+    assert draft['scope_items'] and draft['quantity_overrides']
+
+    audit = prompts.audit_prompt(draft, [], {})
+    live = prompts.live_prompt(draft)
+
+    for prompt in (audit, live):
+        assert 'Added hallway fans' not in prompt
+        assert 'scope_items' not in prompt
+        assert 'quantity_overrides' not in prompt
+        assert '300 Elm St' in prompt
 
 
 def test_scope_prompt_is_the_same_for_a_draft_without_v2_fields_whether_unset_or_null():

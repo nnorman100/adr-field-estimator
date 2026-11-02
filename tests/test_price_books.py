@@ -766,14 +766,21 @@ def test_migrated_drafts_price_reuse_and_sign_the_same_with_the_flag_off_or_on(
         price_books.set_enabled(None)
 
 
-def _v2_table(unit_price='25.00'):
+def _v2_table(unit_price='25.00', extras=False):
     from backend import price_table
 
     table = price_table.starter_table()
     for item in table['items']:
         if item['enabled']:
             item['unit_price'] = unit_price
+        if item['group'] == 'extras':
+            item['enabled'] = extras
     return table
+
+
+@pytest.fixture
+def extras_on(monkeypatch):
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
 
 
 def _publish_v2(client, table, reason='Initial v2 price table', acknowledgements=None):
@@ -1251,6 +1258,8 @@ def _priced_template(rows):
     writer.writeheader()
     for row in rows:
         priced = {**row, 'unit_price': '40.00'} if row['enabled'] == 'yes' else row
+        if row['group'] == 'extras':
+            priced = {**priced, 'enabled': 'no'}
         writer.writerow(priced)
     return out.getvalue().encode('utf-8')
 
@@ -1456,17 +1465,18 @@ def _approved_extra(store):
 
 
 @pytest.mark.parametrize('with_extras', [True, False])
-def test_additional_work_refuses_a_v2_book_with_the_flag_off(api, enabled, with_extras):
+def test_additional_work_refuses_a_v2_book_with_the_flag_off(
+    api, enabled, with_extras, monkeypatch
+):
     from backend.workspaces import Conflict
 
+    if with_extras:
+        monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     client, current, store = api
     current['uid'] = 'estimator'
     client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
     current['uid'] = 'owner'
-    table = _v2_table('25.00')
-    if not with_extras:
-        next(item for item in table['items'] if item['group'] == 'extras')['enabled'] = False
-    _publish_v2(client, table)
+    _publish_v2(client, _v2_table('25.00', extras=with_extras))
     profile = store.db.records['_companies/adr']['profile']
     if with_extras:
         assert profile['additional_work_rate'] == '25.00'
@@ -1567,10 +1577,10 @@ def test_first_import_preview_takes_the_starter_policy_not_the_working_copy(api,
     'price,copied',
     [('0.00', False), ('0.01', True), ('10000.00', True), ('10000.01', False)],
 )
-def test_v2_publish_copies_only_a_valid_profile_rate(api, enabled, price, copied):
+def test_v2_publish_copies_only_a_valid_profile_rate(api, enabled, extras_on, price, copied):
     client, current, store = api
     current['uid'] = 'owner'
-    table = _v2_table('25.00')
+    table = _v2_table('25.00', extras=True)
     extras = next(item for item in table['items'] if item['group'] == 'extras')
     extras['unit_price'] = price
     extras['allow_zero'] = price == '0.00'
@@ -1581,6 +1591,84 @@ def test_v2_publish_copies_only_a_valid_profile_rate(api, enabled, price, copied
         assert profile['additional_work_rate'] == price
     else:
         assert 'additional_work_rate' not in profile
+
+
+def test_locked_extras_are_refused_at_preview_and_the_profile_stays(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    before = deepcopy(store.db.records['_companies/adr'])
+
+    refused = client.post(
+        '/api/companies/adr/prices/preview', json=_table_body(_v2_table('25.00', extras=True))
+    )
+    assert 400 <= refused.status_code < 500
+    assert 'Turn this item off' in refused.json()['detail']
+
+    assert store.db.records['_companies/adr'] == before
+    assert '_company_price_books/adr' not in store.db.records
+
+
+def test_locked_extras_are_refused_on_upload(api, enabled):
+    client, current, store = api
+    current['uid'] = 'other-owner'
+    rows = _template_rows(_other_owner_export(client).content)
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=list(rows[0]), lineterminator='\n')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({**row, 'unit_price': '40.00'} if row['enabled'] == 'yes' else row)
+    before = deepcopy(store.db.records['_companies/other'])
+
+    uploaded = client.post(
+        '/api/companies/other/prices/import-preview',
+        files={'file': ('prices.csv', out.getvalue().encode('utf-8'), 'text/csv')},
+        data={'change_reason': 'First owner table'},
+    )
+    assert 400 <= uploaded.status_code < 500
+    assert 'Turn this item off' in uploaded.json()['detail']
+    assert store.db.records['_companies/other'] == before
+    assert '_company_price_books/other' not in store.db.records
+
+
+def test_extras_locked_after_preview_is_refused_inside_publish(
+    api, enabled, extras_on, monkeypatch
+):
+    client, current, store = api
+    current['uid'] = 'owner'
+    preview = client.post(
+        '/api/companies/adr/prices/preview', json=_table_body(_v2_table('25.00', extras=True))
+    )
+    assert preview.status_code == 200, preview.text
+    before = deepcopy(store.db.records['_companies/adr'])
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', set())
+    saved = client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': preview.json()['preview_id'], 'expected_generation': 0},
+    )
+    assert 400 <= saved.status_code < 500
+    assert 'Turn this item off' in saved.json()['detail']
+    assert store.db.records['_companies/adr'] == before
+    assert not store.db.records.get('_company_price_books/adr', {}).get('latest_version_id')
+
+
+def test_working_copy_keeps_a_locked_extras_item_and_reports_it_like_publish(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00', extras=True)
+    saved = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={'expected_working_version': 0, 'items': table['items'], 'policy': table['policy']},
+    )
+    assert saved.status_code == 200, saved.text
+    assert any('Turn this item off' in row['message'] for row in saved.json()['problems'])
+
+    calculated = client.post(
+        '/api/companies/adr/prices/calculate',
+        json={'items': table['items'], 'policy': table['policy']},
+    )
+    assert calculated.status_code == 200, calculated.text
+    assert any('Turn this item off' in row['message'] for row in calculated.json()['problems'])
 
 
 def test_v2_book_gives_readable_conflicts_and_writes_no_pin(api, enabled):
@@ -1686,12 +1774,12 @@ def test_legacy_draft_keeps_the_seed_when_the_company_publishes_v2(api, enabled,
     assert pin['reason'] == 'legacy_rollout'
 
 
-def test_estimator_export_hides_disabled_items_and_owner_only_columns(api, enabled):
+def test_estimator_export_hides_disabled_items_and_owner_only_columns(api, enabled, extras_on):
     from backend import price_table
 
     client, current, _ = api
     current['uid'] = 'owner'
-    table = _v2_table('25.00')
+    table = _v2_table('25.00', extras=True)
     disabled = next(item for item in table['items'] if not item['enabled'])
     disabled['unit_price'] = '77.00'
     zero = table['items'][0]

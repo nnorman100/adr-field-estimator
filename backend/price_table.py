@@ -61,19 +61,19 @@ FIELD_SOURCES = (
     'emergency_calls',
     'monitoring_hours',
     'haul_loads',
-    'labor_hours',
+    'air_scrubbers',
+    'hepa_filters',
     'matterport_scans',
     'dump_truck_loads',
-    'decon_units',
+    'equipment_decon',
     'power_distribution',
+    'labor_hours',
 )
 
 COUNT_DAYS_SOURCES = {
     ('air_movers', 'drying_days'),
     ('dehumidifiers', 'drying_days'),
     ('wood_floor_systems', 'wood_floor_days'),
-    ('air_scrubbers', 'air_scrubber_days'),
-    ('hepa_filters', '1'),
 }
 
 COLUMNS = (
@@ -101,8 +101,8 @@ COLUMNS = (
 
 Source = namedtuple('Source', ('kind', 'field', 'count_field', 'days_field', 'finish'))
 
-ITEM_ID_RE = re.compile(r'^[a-z][a-z0-9_]{1,47}$')
-CODE_RE = re.compile(r'^[A-Z0-9][A-Z0-9_-]{1,23}$')
+ITEM_ID_RE = re.compile(r'^[a-z][a-z0-9_]{1,39}$')
+CODE_RE = re.compile(r'^[A-Z0-9][A-Z0-9-]{0,15}$')
 XACTIMATE_RE = re.compile(r'^[A-Z0-9][A-Z0-9 ._/-]{0,29}$')
 DECIMAL_RE = re.compile(r'^\d+(?:\.\d+)?$')
 FORMULA_LEAD = re.compile(r'^[=+\-@]')
@@ -139,7 +139,7 @@ DEFAULT_POLICY = {
 
 
 def _default_code(item_id: str) -> str:
-    return item_id.upper().replace('_', '-')[:24]
+    return item_id.upper().replace('_', '-')[:16]
 
 
 # (group, item_id, name, unit, quantity_source, categories, default_quantity, enabled)
@@ -322,7 +322,7 @@ _STARTER_ROWS = (
         'air_scrubber',
         'Air scrubber (HEPA)',
         'day',
-        'count_days:air_scrubbers*air_scrubber_days',
+        'field:air_scrubbers',
         (),
         '0',
         True,
@@ -332,7 +332,7 @@ _STARTER_ROWS = (
         'hepa_filter',
         'HEPA filter replacement',
         'each',
-        'count_days:hepa_filters*1',
+        'field:hepa_filters',
         (),
         '0',
         True,
@@ -404,7 +404,7 @@ _STARTER_ROWS = (
         'equipment_decontamination',
         'Equipment decontamination',
         'each',
-        'field:decon_units',
+        'field:equipment_decon',
         (),
         '0',
         True,
@@ -763,8 +763,8 @@ def normalize_policy(raw) -> dict:
         raise ValueError(f'{where}: estimate_mode must be "range" or "single".')
 
     area_basis = raw.get('area_basis', 'demolition')
-    if area_basis not in ('demolition', 'wet_floor', 'floor'):
-        raise ValueError(f'{where}: area_basis must be "demolition", "wet_floor" or "floor".')
+    if area_basis not in ('demolition', 'wet_floor'):
+        raise ValueError(f'{where}: area_basis must be "demolition" or "wet_floor".')
 
     range_raw = raw.get('range')
     if not isinstance(range_raw, dict):
@@ -923,7 +923,22 @@ def normalize_table(payload, *, publish: bool, acknowledgements=()) -> dict:
     return {'items': items, 'policy': policy}
 
 
-def publish_problems(table: dict, acknowledgements=()) -> list[dict]:
+def locked_extras_problems(table: dict) -> list[dict]:
+    """An enabled extras item cannot be published while priced extras are off."""
+    return [
+        {
+            'item_id': item['item_id'],
+            'message': (
+                f'Row {item.get("code", item["item_id"])}: priced additional work is off for this '
+                'company. Turn this item off before publishing.'
+            ),
+        }
+        for item in table.get('items') or []
+        if item.get('group') == 'extras' and item.get('enabled', True)
+    ]
+
+
+def publish_problems(table: dict, acknowledgements=(), *, extras_locked=False) -> list[dict]:
     """Return a list of problems that would prevent publishing a working-copy table."""
     problems: list[dict] = []
     acked = set(acknowledgements or ())
@@ -966,6 +981,8 @@ def publish_problems(table: dict, acknowledgements=()) -> list[dict]:
                 'message': 'Settings: at least one enabled item with a price is required to publish.',
             }
         )
+    if extras_locked:
+        problems.extend(locked_extras_problems(table))
     return problems
 
 
@@ -1044,17 +1061,11 @@ _V1_KEY_MAPPING = {
     'emergency_call': ('job_charges', 'each', 'field:emergency_calls', [], '1'),
     'monitoring_hourly': ('job_charges', 'hour', 'field:monitoring_hours', [], '13.25'),
     'haul_pickup_load': ('job_charges', 'load', 'field:haul_loads', [], '1'),
-    'air_scrubber_daily': (
-        'job_charges',
-        'day',
-        'count_days:air_scrubbers*air_scrubber_days',
-        [],
-        '1',
-    ),
-    'hepa_filter': ('job_charges', 'each', 'count_days:hepa_filters*1', [], '1'),
+    'air_scrubber_daily': ('job_charges', 'day', 'field:air_scrubbers', [], '1'),
+    'hepa_filter': ('job_charges', 'each', 'field:hepa_filters', [], '1'),
     'matterport_scan': ('optional_services', 'each', 'field:matterport_scans', [], '0'),
     'dump_truck_load': ('optional_services', 'each', 'field:dump_truck_loads', [], '0'),
-    'equipment_decontamination': ('optional_services', 'each', 'field:decon_units', [], '0'),
+    'equipment_decontamination': ('optional_services', 'each', 'field:equipment_decon', [], '0'),
     'power_distribution': ('optional_services', 'each', 'field:power_distribution', [], '0'),
     'air_mover_daily': (
         'drying_equipment',
