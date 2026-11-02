@@ -888,10 +888,7 @@ async def session_info(staff=Depends(current_staff)):
         result['email_notice'] = actor['role'] == 'owner' and await stored(
             get_job_store().workspaces.email_notice
         )
-        if actor.get('company'):
-            result.update(
-                await stored(get_job_store().workspaces.prices.session_view, actor['company'])
-            )
+        result.update(await stored(get_job_store().workspaces.prices.session_view, actor))
     else:
         result.update(prices_set=True, price_display=price_display(adr_rates()))
     if ai_features.enabled('ai_usage'):

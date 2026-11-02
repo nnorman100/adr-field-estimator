@@ -73,10 +73,6 @@ class Expired(Exception):
     """A price preview can no longer be published."""
 
 
-class PricesNotSet(Conflict):
-    """This company has no prices yet, so nothing can be priced. The API answers 409."""
-
-
 def _not_set_message(role):
     if role != 'owner':
         return 'Ask your company owner to set company prices before the first estimate.'
@@ -186,16 +182,23 @@ class PriceBookStore:
             'source': 'seed',
         }
 
-    def session_view(self, company):
+    def session_view(self, actor):
         """What the app shows a member outside the price editor, for their own company only."""
+        view = {'prices_set': None, 'price_display': None, 'prices_not_set_message': None}
+        if not actor.get('company'):
+            return view
         try:
-            book = self.effective(company)
+            book = self.effective(actor['company'])
         except Conflict:
             # The audit reports a damaged book. It must not stop the whole app from loading.
-            return {'prices_set': True, 'price_display': None}
+            return {**view, 'prices_set': True}
         if _is_unset(book):
-            return {'prices_set': False, 'price_display': None}
-        return {'prices_set': True, 'price_display': price_display(book['rates'])}
+            return {
+                **view,
+                'prices_set': False,
+                'prices_not_set_message': _not_set_message(actor.get('role')),
+            }
+        return {**view, 'prices_set': True, 'price_display': price_display(book['rates'])}
 
     def _actor_name(self, company_id, uid, tx=None):
         member = self.ws.read('_memberships', uid, tx) if uid else None
@@ -676,7 +679,7 @@ class PriceBookStore:
             company = self.ws.read('_companies', job['company_id'], tx)
             book = self.effective(company, tx)
             if _is_unset(book):
-                raise PricesNotSet(_not_set_message(actor.get('role')))
+                raise Conflict(_not_set_message(actor.get('role')))
             created = _stamp(current.get('created_at'))
             started = _stamp((self._head(job['company_id'], tx) or {}).get('started_at'))
             grandfather = bool(current.get('audit')) or (
@@ -818,7 +821,7 @@ class PriceBookStore:
         company = self.ws.read('_companies', job['company_id'])
         book = self.effective(company)
         if _is_unset(book):
-            raise PricesNotSet(_not_set_message(actor['role']))
+            raise Conflict(_not_set_message(actor['role']))
 
         data = InspectionData.model_validate(record['data'])
         old_items, old_total = price_scope(data, pin['rates'])
@@ -869,7 +872,7 @@ class PriceBookStore:
             company = self.ws.read('_companies', job['company_id'], tx)
             book = self.effective(company, tx)
             if _is_unset(book):
-                raise PricesNotSet(_not_set_message(actor['role']))
+                raise Conflict(_not_set_message(actor['role']))
             if (
                 book['version_id'] != expected['destination_version_id']
                 or book['content_sha256'] != expected['destination_hash']

@@ -23,6 +23,9 @@ ADR_ONLY = sorted(
     | {'1,180.20', '1180.20', '628.85', '567.00', '83.45'}
 )
 OWN = {key: '11.11' for key in adr_rates()} | {'additional_work_hourly': ''}
+OWNER_NOTICE = (
+    'Set your company prices before your first estimate. Open Company prices from the menu.'
+)
 
 
 def assert_no_adr_rate(text):
@@ -84,6 +87,50 @@ def test_a_company_without_prices_sees_blanks_through_every_price_read(api, enab
     current['uid'] = 'admin'
     support = client.get('/api/admin/companies/other/prices')
     assert_no_adr_rate(support.text)
+
+
+def session_prices(body):
+    return {key: body[key] for key in ('prices_set', 'price_display', 'prices_not_set_message')}
+
+
+def test_access_keeps_the_price_fields_current_like_the_session(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    current['uid'] = 'other-owner'
+    unset = {'prices_set': False, 'price_display': None, 'prices_not_set_message': OWNER_NOTICE}
+    assert session_prices(client.get('/api/session').json()) == unset
+    assert session_prices(client.get('/api/access').json()) == unset
+
+    db.records['_memberships/other-estimator'] = {
+        **db.records['_memberships/other-owner'],
+        'uid': 'other-estimator',
+        'role': 'estimator',
+    }
+    current['uid'] = 'other-estimator'
+    told = session_prices(client.get('/api/access').json())
+    assert told['prices_not_set_message'] == (
+        'Ask your company owner to set company prices before the first estimate.'
+    )
+    assert told == session_prices(client.get('/api/session').json())
+
+    publish_own(client, current)
+    current['uid'] = 'other-estimator'
+    published = session_prices(client.get('/api/access').json())
+    assert published['prices_set'] is True and published['prices_not_set_message'] is None
+    assert published['price_display']['after_hours_job_charge'] == '11.11'
+    assert published == session_prices(client.get('/api/session').json())
+
+
+def test_access_clears_the_price_fields_when_a_member_leaves_the_company(api, enabled):
+    client, current, company_store = api
+    current['uid'] = 'owner'
+    assert client.get('/api/access').json()['price_display'] is not None
+    company_store.db.records['_memberships/owner']['status'] = 'disabled'
+    cleared = {'prices_set': None, 'price_display': None, 'prices_not_set_message': None}
+    access = client.get('/api/access')
+    assert access.status_code == 200 and session_prices(access.json()) == cleared
+    assert_no_adr_rate(access.text)
+    assert session_prices(client.get('/api/session').json()) == cleared
 
 
 def test_the_export_template_has_names_and_units_but_no_prices(api, enabled):
@@ -182,7 +229,7 @@ def test_job_pricing_and_reprice_refuse_without_prices(api, enabled):
     view = client.get(f'/api/inspections/{ID}/pricing')
     assert view.status_code == 200
     assert view.json()['display_rates'] == {'after_hours_job_charge': '', 'sheet_labor_hourly': ''}
-    assert 'Set your company prices' in view.json()['pending_note']
+    assert view.json()['pending_note'] == OWNER_NOTICE
     assert view.json()['newer_available'] is False
     # A pin saved before this rule cannot be moved onto an empty book.
     db.records['_job_pricing/' + ID] = dict(

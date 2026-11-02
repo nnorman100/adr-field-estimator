@@ -95,3 +95,49 @@ test('the job-charges total comes from the shown job, then the company', async (
   await Prices.noteJob();
   assert.equal(Prices.jobChargesTotal(), undefined);
 });
+
+test('one notice, in the server words, for a draft with no prices', async () => {
+  const elements = new Map();
+  context.$ = (id) => {
+    if (!elements.has(id)) elements.set(id, { replaceChildren() {}, append() {} });
+    return elements.get(id);
+  };
+  context.document = { getElementById: context.$ };
+  context.navigator = { onLine: true };
+  const notice = 'Words from the server.';
+  let view = {
+    pinned: null,
+    pending_note: notice,
+    display_rates: { after_hours_job_charge: '', sheet_labor_hourly: '' },
+  };
+  context.jsonApi = async () => view;
+  context.state = {
+    user: { uid: 'u' },
+    draft: { inspection_id: 'job-1' },
+    session: {
+      company_id: 'other',
+      role: 'estimator',
+      price_books_enabled: true,
+      workspaces_enabled: true,
+      prices_set: false,
+      prices_not_set_message: notice,
+    },
+  };
+  await Prices.noteJob();
+  assert.equal(context.$('pricesNotSet').hidden, false);
+  assert.equal(context.$('pricesNotSetText').textContent, notice);
+  assert.equal(context.$('jobPricing').hidden, true);
+
+  view = { ...view, pinned: { label: 'Prices v1' }, pending_note: null };
+  await Prices.noteJob();
+  assert.equal(context.$('jobPricing').hidden, false);
+  assert.equal(context.$('jobPricingStatus').textContent, 'This job is priced from Prices v1.');
+
+  context.state.session = {
+    ...context.state.session,
+    prices_set: true,
+    prices_not_set_message: null,
+  };
+  Prices.syncNotice();
+  assert.equal(context.$('pricesNotSet').hidden, true);
+});

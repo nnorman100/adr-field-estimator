@@ -279,6 +279,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             project='alert-disaster-field-2026',
             workspaces_enabled=True,
             price_books_enabled=bool(price_books_enabled()),
+            **await stored(workspace(store).prices.session_view, actor),
             # The shared sender is near Gmail's daily limit; only owners are told.
             email_notice=actor['role'] == 'owner' and await stored(workspace(store).email_notice),
             invitations=[

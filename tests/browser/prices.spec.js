@@ -139,8 +139,9 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
   await page.locator('.task-nav [data-task="property"]').click();
   await expect(page.locator('#pricesNotSet')).toBeVisible();
   await expect(page.locator('#pricesNotSetText')).toHaveText(
-    'Set your company prices before your first estimate.',
+    'Set your company prices before your first estimate. Open Company prices from the menu.',
   );
+  await expect(page.locator('#jobPricing')).toBeHidden();
   await expect(page.locator('#jobChargesSummary')).toHaveText('· sheet quantities');
   await expect(page.locator('#afterHoursLabel')).toHaveText(
     'After-hours loss: company after-hours job charge and 20% labor/material adjustment.',
@@ -154,6 +155,7 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
     'Set your company prices before your first estimate. Open Company prices from the menu.',
   );
   await expect(page.locator('#documents')).toBeHidden();
+  await expect(page.locator('#jobPricing')).toBeHidden();
 
   await page.getByRole('button', { name: 'Set company prices' }).click();
   await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
@@ -178,6 +180,42 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
   await expect(page.locator('#documents')).toBeVisible();
   await expect(page.locator('#proposalBody')).toContainText('Priced from Prices v1.');
   await expect(page.locator('body')).not.toContainText(adrRates);
+});
+
+test('an open job form picks up prices published on another device', async ({ page, request }) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await page.locator('.task-nav [data-task="property"]').click();
+  await expect(page.locator('#pricesNotSet')).toBeVisible();
+  await expect(page.locator('#jobChargesSummary')).toHaveText('· sheet quantities');
+
+  await page.evaluate(async () => {
+    const view = await jsonApi('/api/companies/other/prices');
+    const preview = await jsonApi('/api/companies/other/prices/preview', 'POST', {
+      rates: Object.fromEntries(view.rates.map((row) => [row.key, '12.34'])),
+      change_reason: 'Published on another device',
+    });
+    await jsonApi('/api/companies/other/prices/publish', 'POST', {
+      preview_id: preview.preview_id,
+      expected_generation: preview.generation,
+    });
+  });
+  await expect(page.locator('#pricesNotSet')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+
+  await expect(page.locator('#pricesNotSet')).toBeHidden();
+  await expect(page.locator('#jobChargesSummary')).toHaveText(
+    /^· \$[\d,]+\.\d\d at sheet quantities$/,
+  );
+  await expect(page.locator('#afterHoursLabel')).toContainText('$12.34 job charge');
 });
 
 test('ADR still sees its own prices on the estimate form, from the API', async ({ page }) => {

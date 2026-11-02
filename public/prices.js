@@ -66,13 +66,8 @@
     $('pricesNotSet').hidden = !missing;
     $('pricesNotSetActions').replaceChildren();
     if (!missing) return;
-    const owner = state.session.role === 'owner';
-    $('pricesNotSetText').textContent = !owner
-      ? 'Ask your company owner to set company prices before the first estimate.'
-      : enabled()
-        ? 'Set your company prices before your first estimate.'
-        : 'Set your company prices before your first estimate. Contact support to turn on Company prices.';
-    if (owner && enabled())
+    $('pricesNotSetText').textContent = state.session.prices_not_set_message;
+    if (state.session.role === 'owner' && enabled())
       $('pricesNotSetActions').append(
         button('Set company prices', () => open().catch((e) => say(e.message, 'error'))),
       );
@@ -109,7 +104,7 @@
         return;
       shown = { inspectionId: id, standardJobCharges: view.display_rates?.standard_job_charges };
       syncNotice();
-      $('jobPricing').hidden = false;
+      $('jobPricing').hidden = !view.pinned && state.session.prices_set === false;
       $('jobPricingStatus').textContent = view.pinned
         ? 'This job is priced from ' + view.pinned.label + '.'
         : view.pending_note || 'Rates are confirmed at the first online pricing.';
@@ -377,6 +372,7 @@
       ...state.session,
       prices_set: session.prices_set,
       price_display: session.price_display,
+      prices_not_set_message: session.prices_not_set_message,
     };
     syncNotice();
     await open();
@@ -538,6 +534,7 @@
     enabled,
     jobChargesTotal,
     noteJob,
+    syncNotice,
     open,
     openSupport,
     syncNav,

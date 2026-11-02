@@ -360,8 +360,12 @@ window.WorkspaceUI = (() => {
         clearDisplayedInspection();
       }
       const noticeChanged = !!state.session.email_notice !== !!access.email_notice;
+      const pricesChanged =
+        state.session.prices_set !== access.prices_set ||
+        JSON.stringify(state.session.price_display) !== JSON.stringify(access.price_display);
       state.session = { ...state.session, ...access };
       state.queuePaused = !access.role;
+      window.Prices?.syncNotice();
       await ready();
       if (previous !== next) {
         say('Your company access changed. Local drafts are retained for authorized recovery.');
@@ -375,6 +379,7 @@ window.WorkspaceUI = (() => {
       if (previous === next && customerPending?.job_id === state.draft?.inspection_id)
         await loadCustomer().catch(() => {});
       if (previous === next && (state.signed || confirmedAuthorization)) await loadDelivery();
+      if (previous === next && pricesChanged) await window.Prices?.noteJob();
     } finally {
       refreshing = false;
     }
