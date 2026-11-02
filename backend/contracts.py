@@ -4,7 +4,14 @@ import re
 from decimal import Decimal
 from datetime import date, datetime, timedelta
 from typing import Literal, Annotated
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_serializer,
+    model_validator,
+)
 
 try:
     from .price_books import known_calculation_version
@@ -146,6 +153,54 @@ class ExtraApprove(StrictModel):
     expected_price_hash: str = Field(default='', max_length=64)
 
 
+ITEM_ID = r'^[a-z][a-z0-9_]{1,39}$'
+
+
+class ScopeQuantity(StrictModel):
+    quantity: Decimal = Field(default=Decimal(0), ge=0, le=100000, decimal_places=2)
+    count: int = Field(default=0, ge=0, le=100)
+    days: int = Field(default=0, ge=0, le=60)
+    measured_quantity: Decimal | None = Field(default=None, ge=0, le=100000, decimal_places=2)
+    override_reason: str | None = Field(default=None, min_length=3, max_length=300)
+
+    @model_validator(mode='after')
+    def validate_override(self):
+        if self.override_reason is not None:
+            self.override_reason = ' '.join(self.override_reason.split())
+            if len(self.override_reason) < 3 or any(
+                not c.isprintable() for c in self.override_reason
+            ):
+                raise ValueError(
+                    'Enter a short reason for the quantity override (at least 3 characters).'
+                )
+        if self.measured_quantity is not None and self.measured_quantity != self.quantity:
+            if not self.override_reason:
+                raise ValueError(
+                    'Enter a short reason when overriding a walkthrough-measured quantity.'
+                )
+        elif self.override_reason is not None and self.measured_quantity is None:
+            raise ValueError('Override reason requires a measured quantity.')
+        return self
+
+
+class QuantityOverride(StrictModel):
+    """Estimator override of a walkthrough-filled quantity (measured value, entered value, reason)."""
+
+    measured: Decimal = Field(ge=0, le=100000, decimal_places=2)
+    entered: Decimal = Field(ge=0, le=100000, decimal_places=2)
+    reason: str = Field(min_length=3, max_length=300)
+    room: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @model_validator(mode='after')
+    def validate_reason(self):
+        self.reason = ' '.join(self.reason.split())
+        if len(self.reason) < 3 or any(not c.isprintable() for c in self.reason):
+            raise ValueError(
+                'Enter a short reason for the quantity override (at least 3 characters).'
+            )
+        return self
+
+
 class InspectionData(StrictModel):
     address: str = Field(default='', max_length=500)
     # Added with address suggestions; drafts saved before it stay without the key (see inspection_payload).
@@ -187,6 +242,28 @@ class InspectionData(StrictModel):
     extras: list[Extra] = Field(default_factory=list, max_length=30)
     # Added with QR tags; drafts saved before it stay without the key (see inspection_payload).
     equipment_scans: list[EquipmentScan] = Field(default_factory=list, max_length=200)
+    # Owner-added items only (sources typed / typed_count_days). Absent on drafts saved before v2;
+    # inspection_payload drops it when None, like dehumidifier_ppd (backend/main.py:915-918).
+    scope_items: dict[Annotated[str, Field(pattern=ITEM_ID)], ScopeQuantity] | None = Field(
+        default=None, max_length=150
+    )
+    # Estimator overrides of walkthrough-measured quantities; absent until set.
+    quantity_overrides: (
+        dict[Annotated[str, Field(min_length=1, max_length=120)], QuantityOverride] | None
+    ) = Field(default=None, max_length=150)
+
+    @model_serializer(mode='wrap')
+    def _omit_unset_v2_fields(self, handler):
+        out = handler(self)
+        if isinstance(out, dict):
+            if out.get('scope_items') is None and 'scope_items' not in self.model_fields_set:
+                out.pop('scope_items', None)
+            if (
+                out.get('quantity_overrides') is None
+                and 'quantity_overrides' not in self.model_fields_set
+            ):
+                out.pop('quantity_overrides', None)
+        return out
 
 
 def distinct_rooms(data: InspectionData):
@@ -492,14 +569,66 @@ class CompanyIdentity(StrictModel):
     water_heater_notice: str = ''
 
 
+class RangePolicy(StrictModel):
+    first_sf: int = Field(default=1000, ge=1, le=100000)
+    first_percent: str = Field(default='50', min_length=1, max_length=10)
+    beyond_percent: str = Field(default='20', min_length=1, max_length=10)
+
+
+class AfterHoursPolicy(StrictModel):
+    multiplier: str = Field(default='1.000', min_length=1, max_length=10)
+    label: str = Field(default='After-hours adjustment', min_length=1, max_length=80)
+
+
+class CabinetryPolicy(StrictModel):
+    multiplier: str = Field(default='1.000', min_length=1, max_length=10)
+    scope: Literal['finished_only', 'all_cat3'] = 'finished_only'
+
+
+class SalesTaxPolicy(StrictModel):
+    enabled: bool = False
+    percent: str = Field(default='0', min_length=1, max_length=10)
+
+
+class PricingPolicy(StrictModel):
+    estimate_mode: Literal['range', 'single'] = 'range'
+    area_basis: Literal['demolition', 'wet_floor'] = 'demolition'
+    range: RangePolicy = Field(default_factory=RangePolicy)
+    after_hours: AfterHoursPolicy = Field(default_factory=AfterHoursPolicy)
+    category_multipliers: dict[Literal['1', '2', '3'], str] = Field(
+        default_factory=lambda: {'1': '1.000', '2': '1.000', '3': '1.000'}
+    )
+    cabinetry: CabinetryPolicy = Field(default_factory=CabinetryPolicy)
+    minimum_job_charge: str = Field(default='0', min_length=1, max_length=12)
+    overhead_profit_percent: str = Field(default='0', min_length=1, max_length=10)
+    sales_tax: SalesTaxPolicy = Field(default_factory=SalesTaxPolicy)
+    show_line_breakdown: bool = False
+
+    @model_validator(mode='after')
+    def check_policy_values(self):
+        try:
+            from .price_table import normalize_policy
+        except ImportError:
+            from price_table import normalize_policy
+        normalized = normalize_policy(self.model_dump())
+        self.range = RangePolicy(**normalized['range'])
+        self.after_hours = AfterHoursPolicy(**normalized['after_hours'])
+        self.category_multipliers = normalized['category_multipliers']
+        self.cabinetry = CabinetryPolicy(**normalized['cabinetry'])
+        self.minimum_job_charge = normalized['minimum_job_charge']
+        self.overhead_profit_percent = normalized['overhead_profit_percent']
+        self.sales_tax = SalesTaxPolicy(**normalized['sales_tax'])
+        return self
+
+
 def known_calculation(value):
-    if not known_calculation_version(value):
+    if value != 'dryscope-v2' and not known_calculation_version(value):
         raise ValueError('Unknown calculation version.')
     return value
 
 
 class PriceBasis(StrictModel):
-    """Rates that produced one audit. Absent on documents priced before company price books."""
+    """Rates or policy that produced one audit. Absent on documents priced before company price books."""
 
     company_id: str = Field(min_length=1, max_length=128)
     version_id: str = Field(min_length=1, max_length=128)
@@ -507,7 +636,21 @@ class PriceBasis(StrictModel):
     content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
     calculation_version: Annotated[str, AfterValidator(known_calculation)]
     priced_at: str = Field(min_length=1, max_length=40)
-    rates: dict[str, str]
+    rates: dict[str, str] | None = None
+    policy: PricingPolicy | None = None
+    item_count: int | None = Field(default=None, ge=0, le=150)
+
+    @model_validator(mode='after')
+    def check_version_fields(self):
+        if self.calculation_version == 'dryscope-v2':
+            if self.policy is None or self.item_count is None or self.rates is not None:
+                raise ValueError(
+                    'dryscope-v2 PriceBasis requires policy and item_count without rates.'
+                )
+        else:
+            if not self.rates or self.policy is not None or self.item_count is not None:
+                raise ValueError('v1 PriceBasis requires rates without policy or item_count.')
+        return self
 
 
 class AuditDocuments(StrictModel):

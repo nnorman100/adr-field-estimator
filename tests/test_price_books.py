@@ -761,3 +761,372 @@ def test_migrated_drafts_price_reuse_and_sign_the_same_with_the_flag_off_or_on(
             assert store.db.records['inspections/' + key]['status'] == 'signed'
     finally:
         price_books.set_enabled(None)
+
+
+def _v2_table(unit_price='25.00'):
+    from backend import price_table
+
+    table = price_table.starter_table()
+    for item in table['items']:
+        if item['enabled']:
+            item['unit_price'] = unit_price
+    return table
+
+
+def _publish_v2(client, table, reason='Initial v2 price table', acknowledgements=None):
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={
+            'items': table['items'],
+            'policy': table['policy'],
+            'acknowledgements': acknowledgements or [],
+            'change_reason': reason,
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    if body['no_changes']:
+        return body
+    saved = client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': body['preview_id'], 'expected_generation': body['generation']},
+    )
+    assert saved.status_code == 200, saved.text
+    return saved.json()
+
+
+def test_v2_version_pin_basis_round_trip(api, enabled):
+    from backend import price_table
+    from backend.workspaces import Conflict
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    table = _v2_table('30.00')
+    published = _publish_v2(client, table, 'Publish v2 table')
+    assert published['sequence'] == 1
+    current_book = client.get('/api/companies/adr/prices').json()
+    assert current_book['calculation_version'] == price_table.CALCULATION_VERSION
+    assert 'items' in current_book and 'policy' in current_book
+
+    prices = db.workspaces.prices
+    eff = prices.effective('adr')
+    assert eff['calculation_version'] == price_table.CALCULATION_VERSION
+    assert eff['version_id'] == published['version_id']
+    assert eff['content_sha256'] == price_table.content_hash(table)
+    assert 'items' in eff and 'policy' in eff and 'rates' not in eff
+
+    current['uid'] = 'estimator'
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert created.status_code == 200, created.text
+    record = db.get_inspection('estimator', ID)
+
+    pin = prices.ensure_pin('estimator', ID)
+    assert pin['calculation_version'] == price_table.CALCULATION_VERSION
+    assert pin['version_id'] == published['version_id']
+    assert pin['content_sha256'] == eff['content_sha256']
+    assert 'items' in pin and 'policy' in pin and 'rates' not in pin
+
+    basis = prices.basis_for(pin, 'adr')
+    assert basis['calculation_version'] == price_table.CALCULATION_VERSION
+    assert basis['version_id'] == pin['version_id']
+    assert basis['content_sha256'] == pin['content_sha256']
+    assert basis['policy'] == pin['policy']
+    assert basis['item_count'] == len(pin['items'])
+    assert 'rates' not in basis and 'items' not in basis
+
+    # Tampered item price is rejected by basis_for
+    tampered_item = deepcopy(pin)
+    tampered_item['items'][0]['unit_price'] = '999.00'
+    with pytest.raises(Conflict, match="This draft's saved prices are missing"):
+        prices.basis_for(tampered_item, 'adr')
+
+    # Tampered policy (including after_hours.label and minimum_job_charge) is rejected
+    tampered_label = deepcopy(pin)
+    tampered_label['policy']['after_hours']['label'] = 'Tampered label'
+    with pytest.raises(Conflict, match="This draft's saved prices are missing"):
+        prices.basis_for(tampered_label, 'adr')
+
+    tampered_min = deepcopy(pin)
+    tampered_min['policy']['minimum_job_charge'] = '750.00'
+    with pytest.raises(Conflict, match="This draft's saved prices are missing"):
+        prices.basis_for(tampered_min, 'adr')
+
+    # A v1-shaped pin claiming a v2 calculation_version or v2 version_id is rejected
+    v1_impostor = {
+        'inspection_id': ID,
+        'company_id': 'adr',
+        'version_id': published['version_id'],
+        'sequence': 1,
+        'content_sha256': price_books.content_hash(seed_rates()),
+        'calculation_version': price_table.CALCULATION_VERSION,
+        'rates': seed_rates(),
+        'priced_at': pin['priced_at'],
+        'priced_by_uid': 'estimator',
+    }
+    with pytest.raises(Conflict):
+        prices.basis_for(v1_impostor, 'adr')
+
+    # assert_pin succeeds with matching audit price_basis and rejects mismatches
+    audited_record = deepcopy(record)
+    audited_record['audit'] = {
+        'price_basis': basis,
+        'documents': {'price_basis': basis},
+    }
+    prices.assert_pin(audited_record, basis)
+
+    bad_basis = deepcopy(basis)
+    bad_basis['content_sha256'] = '0' * 64
+    with pytest.raises(Conflict):
+        prices.assert_pin(audited_record, bad_basis)
+
+    # job_view returns estimator-filtered public items + policy for v2 pins
+    view = prices.job_view('estimator', audited_record)
+    assert view['pinned']['version_id'] == published['version_id']
+    assert view['newer_available'] is False
+    assert view['calculation_version'] == price_table.CALCULATION_VERSION
+    assert 'items' in view['table'] and 'policy' in view['table']
+    assert all('enabled' not in it for it in view['table']['items'])
+
+
+def test_v1_pins_and_versions_still_validate_unchanged(api, enabled, monkeypatch):
+    client, current, db = api
+    calls = counting(monkeypatch)
+    current['uid'] = 'owner'
+    published = publish(client, rates(emergency_call='145.00'), 'V1 trip rate')
+    assert published['sequence'] == 1
+
+    prices = db.workspaces.prices
+    eff = prices.effective('adr')
+    assert set(eff.keys()) == {
+        'company_id',
+        'version_id',
+        'sequence',
+        'parent_version_id',
+        'catalog_version',
+        'calculation_version',
+        'currency',
+        'rates',
+        'content_sha256',
+        'published_by_uid',
+        'published_at',
+        'effective_from',
+        'source',
+        'change_reason',
+        'import_digest',
+        'generation',
+    }
+
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    doc_basis = audited.json()['audit']['documents']['price_basis']
+    pin = db.db.records[f'_job_pricing/{ID}']
+    assert prices.basis_for(pin, 'adr') == doc_basis
+    assert set(doc_basis.keys()) == {
+        'company_id',
+        'version_id',
+        'sequence',
+        'content_sha256',
+        'calculation_version',
+        'priced_at',
+        'rates',
+    }
+    saved_rec = db.get_inspection('estimator', ID)
+    prices.assert_pin(saved_rec, doc_basis)
+    jview = prices.job_view('estimator', saved_rec)
+    assert jview['pinned'] is not None and 'display_rates' in jview and 'table' not in jview
+
+    # Audit reuse is byte-identical
+    model_count = len(calls)
+    reused = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert reused.status_code == 200, reused.text
+    assert reused.json()['audit'] == audited.json()['audit']
+    assert len(calls) == model_count
+
+
+def test_working_copy_save_conflicts_and_is_never_used_for_pricing(api, enabled):
+    from backend import price_table
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    head = _publish_v2(client, _v2_table('25.00'), 'Published v2 head')
+    assert head['generation'] == 1
+
+    # Working copy starts empty on GET /api/companies/adr/prices
+    initial = client.get('/api/companies/adr/prices').json()
+    assert initial['working_copy'] is None
+
+    # Save a working copy with a blank price on an enabled item (allowed in working copy, reported in publish_problems)
+    draft_table = _v2_table('40.00')
+    draft_table['items'][0]['unit_price'] = ''
+    draft_table['policy']['after_hours']['label'] = 'Night & weekend dispatch'
+    draft_table['policy']['minimum_job_charge'] = '350.00'
+
+    saved_wc = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={
+            'expected_working_version': 0,
+            'expected_generation': 1,
+            'items': draft_table['items'],
+            'policy': draft_table['policy'],
+        },
+    )
+    assert saved_wc.status_code == 200, saved_wc.text
+    wc_body = saved_wc.json()
+    assert wc_body['working_copy']['working_version'] == 1
+    assert wc_body['working_copy']['base_generation'] == 1
+    assert wc_body['working_copy']['policy']['after_hours']['label'] == 'Night & weekend dispatch'
+    assert wc_body['working_copy']['policy']['minimum_job_charge'] == '350'
+    assert wc_body['problems']
+
+    # Stale expected_working_version returns 409
+    stale_ver = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={
+            'expected_working_version': 0,
+            'expected_generation': 1,
+            'items': draft_table['items'],
+            'policy': draft_table['policy'],
+        },
+    )
+    assert stale_ver.status_code == 409
+
+    # Stale expected_generation returns 409
+    stale_gen = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={
+            'expected_working_version': 1,
+            'expected_generation': 0,
+            'items': draft_table['items'],
+            'policy': draft_table['policy'],
+        },
+    )
+    assert stale_gen.status_code == 409
+
+    # Pinning a job while a working copy exists pins the published head (25.00), never the working copy (40.00)
+    current['uid'] = 'estimator'
+    est_prices = client.get('/api/companies/adr/prices').json()
+    assert est_prices['working_copy'] is None
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    pin = db.workspaces.prices.ensure_pin('estimator', ID)
+    assert pin['version_id'] == head['version_id']
+    assert pin['content_sha256'] == price_table.content_hash(_v2_table('25.00'))
+    assert pin['items'][0]['unit_price'] == '25.00'
+    assert pin['policy']['minimum_job_charge'] == '0'
+
+    # Role matrix on working-copy PUT and DELETE/discard
+    for role_uid, expected_status in (
+        ('estimator', 403),
+        ('office', 403),
+        ('admin', 403),
+        ('other-owner', 403),
+    ):
+        current['uid'] = role_uid
+        res = client.put(
+            '/api/companies/adr/prices/working-copy',
+            json={
+                'expected_working_version': 1,
+                'expected_generation': 1,
+                'items': draft_table['items'],
+                'policy': draft_table['policy'],
+            },
+        )
+        assert res.status_code == expected_status, (role_uid, res.text)
+        del_res = client.delete('/api/companies/adr/prices/working-copy')
+        assert del_res.status_code == expected_status, (role_uid, del_res.text)
+
+    # Discard working copy via DELETE and re-save, then discard via POST /working-copy/discard
+    current['uid'] = 'owner'
+    discarded = client.delete('/api/companies/adr/prices/working-copy')
+    assert discarded.status_code == 200, discarded.text
+    assert discarded.json()['working_copy'] is None
+    assert '_price_book_drafts/adr' not in db.db.records
+
+    resaved = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={
+            'expected_working_version': 0,
+            'expected_generation': 1,
+            'items': draft_table['items'],
+            'policy': draft_table['policy'],
+        },
+    )
+    assert resaved.status_code == 200, resaved.text
+    discarded_post = client.post('/api/companies/adr/prices/working-copy/discard')
+    assert discarded_post.status_code == 200, discarded_post.text
+    assert discarded_post.json()['working_copy'] is None
+
+    # Save working copy again, then publish a new v2 table and verify publish deletes the working copy
+    resaved2 = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={
+            'expected_working_version': 0,
+            'expected_generation': 1,
+            'items': draft_table['items'],
+            'policy': draft_table['policy'],
+        },
+    )
+    assert resaved2.status_code == 200
+    assert '_price_book_drafts/adr' in db.db.records
+    published2 = _publish_v2(client, _v2_table('35.00'), 'Second v2 head')
+    assert published2['sequence'] == 2
+    assert '_price_book_drafts/adr' not in db.db.records
+    after_pub = client.get('/api/companies/adr/prices').json()
+    assert after_pub['working_copy'] is None
+
+    # Flag off returns 404
+    price_books.set_enabled(False)
+    assert (
+        client.put(
+            '/api/companies/adr/prices/working-copy',
+            json={
+                'expected_working_version': 0,
+                'expected_generation': 2,
+                'items': draft_table['items'],
+                'policy': draft_table['policy'],
+            },
+        ).status_code
+        == 404
+    )
+    assert client.delete('/api/companies/adr/prices/working-copy').status_code == 404
+
+
+def test_restore_across_calculation_versions_is_refused(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    v1_pub = publish(client, rates(emergency_call='140.00'), 'V1 version')
+    v1_id = v1_pub['version_id']
+
+    v2_first = _publish_v2(client, _v2_table('25.00'), 'First v2 version')
+    v2_second = _publish_v2(client, _v2_table('30.00'), 'Second v2 version')
+    assert v2_second['sequence'] == 3
+
+    # Restoring the v1 version (or 'seed') when head is v2 is refused with 409
+    refused_v1 = client.post(
+        f'/api/companies/adr/prices/versions/{v1_id}/restore',
+        json={'change_reason': 'Try restore v1'},
+    )
+    assert refused_v1.status_code == 409, refused_v1.text
+    assert (
+        'This version uses the previous calculation. Start from the current table.'
+        in refused_v1.json()['detail']
+    )
+
+    refused_seed = client.post(
+        '/api/companies/adr/prices/versions/seed/restore',
+        json={'change_reason': 'Try restore seed'},
+    )
+    assert refused_seed.status_code == 409, refused_seed.text
+    assert (
+        'This version uses the previous calculation. Start from the current table.'
+        in refused_seed.json()['detail']
+    )
+
+    # Restoring the earlier v2 version when head is v2 succeeds
+    restored_v2 = client.post(
+        f'/api/companies/adr/prices/versions/{v2_first["version_id"]}/restore',
+        json={'change_reason': 'Restore earlier v2 table'},
+    )
+    assert restored_v2.status_code == 200, restored_v2.text
+    assert restored_v2.json()['diff']

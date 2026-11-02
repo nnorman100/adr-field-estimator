@@ -127,3 +127,67 @@ def test_excel_shared_strings_round_trip_and_edited_price():
         archive.writestr('xl/sharedStrings.xml', ET.tostring(strings))
     book['emergency_call'] = '150.25'
     assert parsed(output.getvalue(), XLSX) == book
+
+
+def test_v2_template_csv_xlsx_round_trip_and_rejects_v1_template():
+    from backend import price_table
+
+    table = price_table.starter_table()
+    for item in table['items']:
+        if item['enabled']:
+            item['unit_price'] = '25.00'
+    # Test multi-category pipe format ('1|3') and blank categories, plus yes/no booleans
+    table['items'][0]['categories'] = [1, 3]
+    table['items'][0]['taxable'] = True
+    table['items'][0]['allow_zero'] = True
+    normalized = price_table.normalize_table(table, publish=True)
+    items = normalized['items']
+
+    csv_bytes = export_csv('adr', 'v2-ver-1', 2, items)
+    assert b'dryscope-prices-v2' in csv_bytes
+    assert b'1|3' in csv_bytes
+    assert b',yes,' in csv_bytes and b',no,' in csv_bytes
+
+    csv_round_trip = parse_upload(
+        csv_bytes,
+        'text/csv',
+        'adr',
+        'v2-ver-1',
+        2,
+        calculation_version=price_table.CALCULATION_VERSION,
+    )
+    assert price_table.normalize_items(csv_round_trip, publish=True) == items
+
+    xlsx_bytes = export_xlsx('adr', 'v2-ver-1', 2, items)
+    xlsx_round_trip = parse_upload(
+        xlsx_bytes,
+        XLSX,
+        'adr',
+        'v2-ver-1',
+        2,
+        calculation_version=price_table.CALCULATION_VERSION,
+    )
+    assert price_table.normalize_items(xlsx_round_trip, publish=True) == items
+
+    # A v1 template uploaded to a v2 company is rejected
+    v1_csv = export_csv('adr', 'v2-ver-1', 2, seed_rates())
+    with pytest.raises(ValueError, match='this file is not the current DryScope price template'):
+        parse_upload(
+            v1_csv,
+            'text/csv',
+            'adr',
+            'v2-ver-1',
+            2,
+            calculation_version=price_table.CALCULATION_VERSION,
+        )
+
+    v1_xlsx = export_xlsx('adr', 'v2-ver-1', 2, seed_rates())
+    with pytest.raises(ValueError, match='this file is not the current DryScope price template'):
+        parse_upload(
+            v1_xlsx,
+            XLSX,
+            'adr',
+            'v2-ver-1',
+            2,
+            calculation_version=price_table.CALCULATION_VERSION,
+        )

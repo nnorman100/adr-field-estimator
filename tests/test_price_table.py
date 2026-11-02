@@ -1,0 +1,449 @@
+"""Unit tests for the v2 owner-defined price table model, contracts and stub dispatch."""
+
+import copy
+from decimal import Decimal
+import pytest
+from pydantic import ValidationError
+
+from backend import claims, main as bm, price_books, price_table, pricing
+from backend.contracts import (
+    InspectionData,
+    PriceBasis,
+    PricingPolicy,
+    QuantityOverride,
+    ScopeQuantity,
+)
+from tests.test_workspaces import store  # noqa: F401
+
+
+def _priced_starter():
+    table = price_table.starter_table()
+    for item in table['items']:
+        if item['enabled']:
+            item['unit_price'] = '25.00'
+    return table
+
+
+def test_starter_catalog_has_no_prices_and_nothing_from_the_workbook():
+    table = price_table.starter_table()
+    items = table['items']
+    assert 1 <= len(items) <= price_table.MAX_ITEMS
+
+    v1_descriptions = {row['description'].strip().lower() for row in price_books.ITEMS}
+    v1_seeds = {row['seed'] for row in price_books.ITEMS}
+
+    seen_ids = set()
+    seen_codes = set()
+    disabled_ids = set()
+
+    for item in items:
+        assert item['unit_price'] == ''
+        assert item['name'].strip().lower() not in v1_descriptions
+        assert item['default_quantity'] not in v1_seeds
+        assert not item['code'].startswith('ADR-')
+        assert item['item_id'] not in seen_ids
+        assert item['code'] not in seen_codes
+        seen_ids.add(item['item_id'])
+        seen_codes.add(item['code'])
+        parsed = price_table.parse_source(item['quantity_source'])
+        assert parsed.kind in (
+            'room',
+            'field',
+            'count_days',
+            'after_hours',
+            'typed',
+            'typed_count_days',
+        )
+        if not item['enabled']:
+            disabled_ids.add(item['item_id'])
+
+    assert disabled_ids == {'testing_coordination'}
+    policy = table['policy']
+    assert policy['estimate_mode'] == 'range'
+    assert policy['area_basis'] == 'demolition'
+    assert policy['range'] == {'first_sf': 1000, 'first_percent': '50', 'beyond_percent': '20'}
+    assert policy['after_hours'] == {
+        'multiplier': '1.000',
+        'label': 'After-hours adjustment',
+    }
+    assert policy['minimum_job_charge'] == '0'
+    assert policy['overhead_profit_percent'] == '0'
+    assert policy['sales_tax'] == {'enabled': False, 'percent': '0'}
+
+
+def test_normalize_table_bounds_and_messages():
+    # Working copy accepts blank prices on enabled items; publish rejects them.
+    starter = price_table.starter_table()
+    working = price_table.normalize_table(starter, publish=False)
+    assert len(working['items']) == len(starter['items'])
+    problems = price_table.publish_problems(working)
+    assert problems and any('enter a unit price' in p['message'] for p in problems)
+
+    with pytest.raises(ValueError, match='enter a unit price or disable'):
+        price_table.normalize_table(starter, publish=True)
+
+    valid = _priced_starter()
+    normalized = price_table.normalize_table(valid, publish=True)
+    assert len(normalized['items']) == len(valid['items'])
+
+    # Duplicate item_id and duplicate code
+    dup_id = copy.deepcopy(valid)
+    dup_id['items'][1]['item_id'] = dup_id['items'][0]['item_id']
+    with pytest.raises(ValueError, match='duplicate item_id'):
+        price_table.normalize_table(dup_id, publish=False)
+
+    dup_code = copy.deepcopy(valid)
+    dup_code['items'][1]['code'] = dup_code['items'][0]['code']
+    with pytest.raises(ValueError, match='duplicate code'):
+        price_table.normalize_table(dup_code, publish=False)
+
+    # Unknown quantity source
+    bad_src = copy.deepcopy(valid)
+    bad_src['items'][0]['quantity_source'] = 'field:unknown_metric'
+    with pytest.raises(ValueError, match='Unknown quantity source'):
+        price_table.normalize_table(bad_src, publish=False)
+
+    # Demolition item with a non-room source
+    bad_demo = copy.deepcopy(valid)
+    demo_item = next(it for it in bad_demo['items'] if it['group'] == 'demolition')
+    demo_item['quantity_source'] = 'typed'
+    with pytest.raises(ValueError, match='demolition items must use a room quantity source'):
+        price_table.normalize_table(bad_demo, publish=False)
+
+    # Zero price without allow_zero or acknowledgement
+    zero_disallowed = copy.deepcopy(valid)
+    zero_disallowed['items'][0]['unit_price'] = '0.00'
+    zero_disallowed['items'][0]['allow_zero'] = False
+    with pytest.raises(ValueError, match='allow_zero'):
+        price_table.normalize_table(zero_disallowed, publish=False)
+
+    zero_unacked = copy.deepcopy(valid)
+    zero_unacked['items'][0]['unit_price'] = '0.00'
+    zero_unacked['items'][0]['allow_zero'] = True
+    assert price_table.normalize_table(zero_unacked, publish=False)
+    with pytest.raises(ValueError, match='confirm that a zero unit price'):
+        price_table.normalize_table(zero_unacked, publish=True)
+    assert price_table.normalize_table(
+        zero_unacked, publish=True, acknowledgements=[zero_unacked['items'][0]['item_id']]
+    )
+
+    # Item field bounds (1.3)
+    for field, bad_val, match in (
+        ('item_id', 'Bad-Id', 'invalid item_id'),
+        ('code', 'bad_code', 'invalid code'),
+        ('group', 'plumbing', 'unknown group'),
+        ('name', '', 'name must be 1 to 80'),
+        ('name', 'x' * 81, 'name must be 1 to 80'),
+        ('customer_description', 'x' * 301, 'customer_description must be'),
+        ('unit', 'gallon', 'unknown unit'),
+        ('unit_price', '100000.01', 'unit_price must be between'),
+        ('unit_price', '10.123', 'unit_price'),
+        ('default_quantity', '100001', 'default_quantity must be between'),
+        ('waste_percent', '101', 'waste_percent must be between'),
+        ('categories', [1, 4], 'categories must be distinct'),
+        ('categories', [2, 2], 'categories must not contain duplicates'),
+        ('xactimate_code', 'bad*code', 'invalid xactimate_code'),
+        ('sort_order', 10001, 'sort_order must be an integer from 0 to 10000'),
+    ):
+        broken = copy.deepcopy(valid)
+        broken['items'][0][field] = bad_val
+        with pytest.raises(ValueError, match=match):
+            price_table.normalize_table(broken, publish=False)
+
+    # More than 150 items
+    too_many = copy.deepcopy(valid)
+    while len(too_many['items']) <= price_table.MAX_ITEMS:
+        idx = len(too_many['items'])
+        extra = copy.deepcopy(valid['items'][0])
+        extra['item_id'] = f'custom_item_{idx}'
+        extra['code'] = f'CUST-{idx}'
+        too_many['items'].append(extra)
+    with pytest.raises(ValueError, match='at most 150 items'):
+        price_table.normalize_table(too_many, publish=False)
+
+    # Policy bounds (1.5, 3.11, and Captain additions)
+    beyond_gt_first = copy.deepcopy(valid)
+    beyond_gt_first['policy']['range'] = {
+        'first_sf': 1000,
+        'first_percent': '20',
+        'beyond_percent': '50',
+    }
+    with pytest.raises(
+        ValueError,
+        match='The cushion beyond the first square feet cannot exceed the cushion on them',
+    ):
+        price_table.normalize_table(beyond_gt_first, publish=False)
+
+    for mutate, match in (
+        (lambda p: p.update(estimate_mode='tiered'), 'estimate_mode'),
+        (lambda p: p.update(area_basis='ceiling'), 'area_basis'),
+        (lambda p: p['range'].update(first_sf=0), 'range.first_sf'),
+        (lambda p: p['range'].update(first_sf=100001), 'range.first_sf'),
+        (lambda p: p['range'].update(first_percent='101'), 'range.first_percent'),
+        (lambda p: p['after_hours'].update(multiplier='0.95'), 'after_hours.multiplier'),
+        (lambda p: p['after_hours'].update(multiplier='2.001'), 'after_hours.multiplier'),
+        (lambda p: p['after_hours'].update(label=''), 'after_hours.label'),
+        (lambda p: p['after_hours'].update(label='x' * 81), 'after_hours.label'),
+        (lambda p: p['category_multipliers'].update({'1': '3.5'}), 'category_multipliers.1'),
+        (lambda p: p['cabinetry'].update(multiplier='0.5'), 'cabinetry.multiplier'),
+        (lambda p: p['cabinetry'].update(scope='none'), 'cabinetry.scope'),
+        (lambda p: p.update(minimum_job_charge='100000.01'), 'minimum_job_charge'),
+        (lambda p: p.update(minimum_job_charge='-5'), 'minimum_job_charge'),
+        (lambda p: p.update(overhead_profit_percent='30.01'), 'overhead_profit_percent'),
+        (lambda p: p['sales_tax'].update(percent='15.001'), 'sales_tax.percent'),
+        (lambda p: p['sales_tax'].update(enabled='yes'), 'sales_tax.enabled'),
+        (lambda p: p.update(show_line_breakdown='yes'), 'show_line_breakdown'),
+    ):
+        broken_pol = copy.deepcopy(valid)
+        mutate(broken_pol['policy'])
+        with pytest.raises(ValueError, match=match):
+            price_table.normalize_table(broken_pol, publish=False)
+
+
+def test_content_hash_is_order_independent_and_includes_disabled_items_and_policy():
+    table = _priced_starter()
+    reversed_table = {
+        'items': list(reversed(copy.deepcopy(table['items']))),
+        'policy': copy.deepcopy(table['policy']),
+    }
+    digest = price_table.content_hash(table)
+    assert price_table.content_hash(reversed_table) == digest
+
+    # Disabled items are included in the hash
+    toggled = copy.deepcopy(table)
+    disabled_item = next(it for it in toggled['items'] if not it['enabled'])
+    disabled_item['unit_price'] = '99.00'
+    assert price_table.content_hash(toggled) != digest
+
+    enabled_toggle = copy.deepcopy(table)
+    enabled_toggle['items'][0]['enabled'] = False
+    assert price_table.content_hash(enabled_toggle) != digest
+
+    # Policy fields (including after-hours label and minimum job charge) are in the hash
+    label_changed = copy.deepcopy(table)
+    label_changed['policy']['after_hours']['label'] = 'Emergency after-hours surcharge'
+    assert price_table.content_hash(label_changed) != digest
+
+    min_changed = copy.deepcopy(table)
+    min_changed['policy']['minimum_job_charge'] = '500.00'
+    assert price_table.content_hash(min_changed) != digest
+
+    op_changed = copy.deepcopy(table)
+    op_changed['policy']['overhead_profit_percent'] = '10'
+    assert price_table.content_hash(op_changed) != digest
+
+    # Extras fingerprint only changes when the extras item changes
+    fp = price_table.rate_fingerprint(table)
+    assert price_table.rate_fingerprint(op_changed) == fp
+    extras_changed = copy.deepcopy(table)
+    extras_item = next(it for it in extras_changed['items'] if it['group'] == 'extras')
+    extras_item['unit_price'] = '75.00'
+    assert price_table.rate_fingerprint(extras_changed) != fp
+
+    # public_table hides disabled items and owner-only keys unless manage=True
+    estimator_view = price_table.public_table(table, manage=False)
+    owner_view = price_table.public_table(table, manage=True)
+    assert len(estimator_view['items']) == len(table['items']) - 1
+    assert len(owner_view['items']) == len(table['items'])
+    assert 'enabled' not in estimator_view['items'][0]
+    assert 'allow_zero' not in estimator_view['items'][0]
+    assert owner_view['items'][0]['enabled'] is True
+
+
+def test_scope_items_absent_on_old_drafts_and_bounded(store):
+    old_draft = InspectionData(address='100 Oak St')
+    assert old_draft.scope_items is None
+    assert old_draft.quantity_overrides is None
+    dumped = bm.inspection_payload(old_draft)
+    assert 'scope_items' not in dumped
+    assert 'quantity_overrides' not in dumped
+
+    # Office empty-scope rule still passes on a fresh draft
+    created = store.create_inspection(
+        'office',
+        'ADR-INS-' + 'b' * 32,
+        bm.inspection_payload(InspectionData(address='Office draft')),
+    )
+    assert 'scope_items' not in created['data']
+    assert 'quantity_overrides' not in created['data']
+
+    # Valid scope_items and estimator quantity overrides round-trip cleanly
+    with_items = InspectionData(
+        address='200 Pine St',
+        scope_items={
+            'containment': ScopeQuantity(quantity=Decimal('2.50')),
+            'desiccant_dehumidifier': ScopeQuantity(count=2, days=4),
+            'baseboard_removal': ScopeQuantity(
+                quantity=Decimal('45.00'),
+                measured_quantity=Decimal('30.00'),
+                override_reason='Behind wet vanity and closet wall',
+            ),
+        },
+        quantity_overrides={
+            'air_movers': QuantityOverride(
+                measured=Decimal('3'),
+                entered=Decimal('5'),
+                reason='Added two fans for hallway corner',
+            ),
+            'Kitchen:finished_sf': QuantityOverride(
+                measured=Decimal('120.00'),
+                entered=Decimal('160.00'),
+                reason='Moisture extended behind pantry',
+                room='Kitchen',
+            ),
+        },
+    )
+    payload = bm.inspection_payload(with_items)
+    assert payload['scope_items']['containment'] == {'quantity': '2.50', 'count': 0, 'days': 0}
+    assert payload['scope_items']['baseboard_removal']['measured_quantity'] == '30.00'
+    assert (
+        payload['scope_items']['baseboard_removal']['override_reason']
+        == 'Behind wet vanity and closet wall'
+    )
+    assert payload['quantity_overrides']['air_movers'] == {
+        'measured': '3',
+        'entered': '5',
+        'reason': 'Added two fans for hallway corner',
+    }
+    round_trip = InspectionData.model_validate(payload)
+    assert round_trip.scope_items['containment'].quantity == Decimal('2.50')
+    assert round_trip.quantity_overrides['air_movers'].entered == Decimal('5')
+
+    # Missing or blank override reason is rejected
+    with pytest.raises(ValidationError):
+        ScopeQuantity(quantity=Decimal('20.00'), measured_quantity=Decimal('10.00'))
+    with pytest.raises(ValidationError):
+        QuantityOverride(measured=Decimal('3'), entered=Decimal('5'), reason='  ')
+
+    # Invalid item_id and >150 entries in scope_items are rejected
+    with pytest.raises(ValidationError):
+        InspectionData(scope_items={'Bad-Key': ScopeQuantity(quantity=Decimal('1'))})
+    with pytest.raises(ValidationError):
+        InspectionData(
+            scope_items={
+                f'item_{i}': ScopeQuantity(quantity=Decimal('1'))
+                for i in range(price_table.MAX_ITEMS + 1)
+            }
+        )
+
+
+def test_price_basis_v2_requires_policy_and_v1_requires_rates():
+    table = _priced_starter()
+    digest = price_table.content_hash(table)
+
+    v2_basis = PriceBasis(
+        company_id='co_v2',
+        version_id='v2_ver_1',
+        sequence=1,
+        content_sha256=digest,
+        calculation_version='dryscope-v2',
+        priced_at='2026-11-02T19:00:00+00:00',
+        policy=PricingPolicy(**table['policy']),
+        item_count=len(table['items']),
+    )
+    assert v2_basis.calculation_version == 'dryscope-v2'
+    assert v2_basis.policy.after_hours.label == 'After-hours adjustment'
+    assert v2_basis.policy.minimum_job_charge == '0'
+    assert v2_basis.rates is None
+
+    # v2 without policy or item_count or with rates is rejected
+    with pytest.raises(ValidationError):
+        PriceBasis(
+            company_id='co_v2',
+            version_id='v2_ver_1',
+            sequence=1,
+            content_sha256=digest,
+            calculation_version='dryscope-v2',
+            priced_at='2026-11-02T19:00:00+00:00',
+            item_count=10,
+        )
+    with pytest.raises(ValidationError):
+        PriceBasis(
+            company_id='co_v2',
+            version_id='v2_ver_1',
+            sequence=1,
+            content_sha256=digest,
+            calculation_version='dryscope-v2',
+            priced_at='2026-11-02T19:00:00+00:00',
+            policy=PricingPolicy(**table['policy']),
+        )
+    with pytest.raises(ValidationError):
+        PriceBasis(
+            company_id='co_v2',
+            version_id='v2_ver_1',
+            sequence=1,
+            content_sha256=digest,
+            calculation_version='dryscope-v2',
+            priced_at='2026-11-02T19:00:00+00:00',
+            policy=PricingPolicy(**table['policy']),
+            item_count=10,
+            rates=price_books.seed_rates(),
+        )
+
+    # v1 requires rates and rejects policy or item_count
+    v1_rates = price_books.seed_rates()
+    v1_digest = price_books.content_hash(v1_rates)
+    v1_basis = PriceBasis(
+        company_id='adr',
+        version_id='seed',
+        sequence=0,
+        content_sha256=v1_digest,
+        calculation_version='adr-residential-v1',
+        priced_at='2026-11-02T19:00:00+00:00',
+        rates=v1_rates,
+    )
+    assert v1_basis.rates['emergency_call'] == '133.95'
+    assert v1_basis.policy is None
+
+    with pytest.raises(ValidationError):
+        PriceBasis(
+            company_id='adr',
+            version_id='seed',
+            sequence=0,
+            content_sha256=v1_digest,
+            calculation_version='adr-residential-v1',
+            priced_at='2026-11-02T19:00:00+00:00',
+        )
+    with pytest.raises(ValidationError):
+        PriceBasis(
+            company_id='adr',
+            version_id='seed',
+            sequence=0,
+            content_sha256=v1_digest,
+            calculation_version='adr-residential-v1',
+            priced_at='2026-11-02T19:00:00+00:00',
+            rates=v1_rates,
+            policy=PricingPolicy(**table['policy']),
+        )
+
+
+def test_pricing_dispatch_runs_v1_and_stubs_v2():
+    job_data = InspectionData(
+        address='10 Main St',
+        rooms=[{'name': 'Kitchen', 'category': 2, 'finished_sf': 200}],
+        air_movers=2,
+        dehumidifiers=1,
+        drying_days=3,
+    )
+    rates = price_books.seed_rates()
+    result = pricing.price_and_range(
+        job_data,
+        {'calculation_version': 'adr-residential-v1', 'rates': rates},
+    )
+    expected_lines, expected_total = claims.price_scope(job_data, rates)
+    expected_low, expected_high = claims.proposal_range(job_data, expected_lines)
+    assert result.lines == expected_lines
+    assert result.xactimate_total == expected_total
+    assert (result.low, result.high) == (expected_low, expected_high)
+    assert result.totals is None
+
+    table = _priced_starter()
+    with pytest.raises(NotImplementedError, match='dryscope-v2 pricing is not available yet'):
+        pricing.price_and_range(
+            job_data,
+            {
+                'calculation_version': 'dryscope-v2',
+                'items': table['items'],
+                'policy': table['policy'],
+            },
+        )
