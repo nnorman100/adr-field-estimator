@@ -23,6 +23,7 @@ try:
         COLUMNS as V2_COLUMNS,
         FORMULA_LEAD,
         MAX_ITEMS as V2_ROW_LIMIT,
+        STARTER_VERSION as V2_STARTER_VERSION,
         TEMPLATE_VERSION as V2_TEMPLATE_VERSION,
         normalize_items,
     )
@@ -40,6 +41,7 @@ except ImportError:
         COLUMNS as V2_COLUMNS,
         FORMULA_LEAD,
         MAX_ITEMS as V2_ROW_LIMIT,
+        STARTER_VERSION as V2_STARTER_VERSION,
         TEMPLATE_VERSION as V2_TEMPLATE_VERSION,
         normalize_items,
     )
@@ -152,7 +154,9 @@ def parse_upload(
         raise ValueError('Row 2: this file is not the current DryScope price template.')
 
     if fmt == 'v2':
-        return _table_to_items(table, company_id, str(base_version_id), str(base_generation))
+        # A company with no prices downloads its v2 template against the starter table.
+        base = V2_STARTER_VERSION if base_version_id == 'unset' else str(base_version_id)
+        return _table_to_items(table, company_id, base, str(base_generation))
     return _table_to_rates(table, company_id, str(base_version_id), str(base_generation))
 
 

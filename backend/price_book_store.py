@@ -48,6 +48,7 @@ try:
         public_table,
         locked_extras_problems,
         publish_problems,
+        STARTER_VERSION,
         starter_table,
     )
     from .workspaces import AccessDenied
@@ -86,6 +87,7 @@ except ImportError:
         public_table,
         locked_extras_problems,
         publish_problems,
+        STARTER_VERSION,
         starter_table,
     )
     from workspaces import AccessDenied
@@ -101,7 +103,6 @@ DOMAIN = 'pricing'
 V1_SIZE_LIMIT = 32768
 V2_SIZE_LIMIT = 200 * 1024
 V2_PRICING_UNAVAILABLE = 'v2 pricing is not available yet.'
-STARTER_VERSION = 'starter'
 
 
 class Expired(Exception):
@@ -151,13 +152,13 @@ def _is_v2(doc) -> bool:
     return bool(isinstance(doc, dict) and doc.get('calculation_version') == V2_CALCULATION_VERSION)
 
 
-def _head_calculation(head) -> str:
+def _head_is_v2(head) -> bool:
     # The Oct 26 2026 production migration wrote ADR's head before this field existed.
-    return (head or {}).get('calculation_version', CALCULATION_VERSION)
+    return (head or {}).get('calculation_version') == V2_CALCULATION_VERSION
 
 
 def _refuse_v1_to_v2(head):
-    if head and head.get('latest_version_id') and _head_calculation(head) == CALCULATION_VERSION:
+    if head and head.get('latest_version_id') and not _head_is_v2(head):
         raise Conflict(
             'This company uses the previous calculation. '
             'It cannot move to an owner price table until the cutover is available.'
@@ -194,14 +195,14 @@ def _valid_v2_doc(doc) -> tuple[bool, dict | None]:
 def _valid_v1_doc(doc) -> bool:
     if (
         not isinstance(doc, dict)
-        or doc.get('calculation_version') != CALCULATION_VERSION
+        or not known_calculation_version(doc.get('calculation_version'))
         or not isinstance(doc.get('rates'), dict)
         or set(doc['rates']) != set(KEYS)
         or doc.get('items') is not None
         or doc.get('policy') is not None
     ):
         return False
-    return content_hash(doc['rates']) == doc.get('content_sha256')
+    return content_hash(doc['rates'], doc['calculation_version']) == doc.get('content_sha256')
 
 
 def _raise_size_limit():
@@ -253,7 +254,7 @@ class PriceBookStore:
             version = self._version(head['latest_version_id'], tx)
             if not version or version.get('company_id') != company_id:
                 raise Conflict('This company price book cannot be used. Contact support.')
-            if version.get('calculation_version') != _head_calculation(head):
+            if _is_v2(version) != _head_is_v2(head):
                 raise Conflict('This company price book cannot be used. Contact support.')
             if _is_v2(version):
                 ok, _ = _valid_v2_doc(version)
@@ -1096,7 +1097,11 @@ class PriceBookStore:
                 raise AccessDenied('Your role cannot view company prices.')
             company = self.ws.read('_companies', company_id)
         manage = support or actor['role'] == 'owner'
-        if version_id and version_id != 'seed':
+        if version_id == STARTER_VERSION and self._starts_from_catalog(company_id):
+            book = {**starter_table(), 'calculation_version': V2_CALCULATION_VERSION}
+            base_generation = 0
+            base_version = STARTER_VERSION
+        elif version_id and version_id != 'seed':
             version = self._version(version_id)
             if not version or version.get('company_id') != company_id:
                 raise LookupError('Price version not found.')
@@ -1108,10 +1113,6 @@ class PriceBookStore:
             # Historical exports are viewable. Restoring one still requires a current-base preview.
             base_generation = generation
             base_version = (head or {}).get('latest_version_id') or 'seed'
-        elif self._starts_from_catalog(company_id):
-            book = {**starter_table(), 'calculation_version': V2_CALCULATION_VERSION}
-            base_generation = 0
-            base_version = STARTER_VERSION
         else:
             book = self.effective(company)
             base_generation = book['generation']
@@ -1440,7 +1441,7 @@ class PriceBookStore:
                 'priced_at': now(),
                 'reason': 'explicit_reprice',
                 'pin_version': pin.get('pin_version', 1) + 1,
-                'calculation_version': book.get('calculation_version', CALCULATION_VERSION),
+                'calculation_version': book['calculation_version'],
             }
             record['revision'] = record['revision'] + 1
             record['audit'] = None
@@ -1472,7 +1473,7 @@ class PriceBookStore:
         """A preview of one saved version. Publishing it still needs the owner to confirm."""
         self._require()
         self.ws.company_actor(uid, company_id, manage=True)
-        head_calc = _head_calculation(self._head(company_id))
+        head_is_v2 = _head_is_v2(self._head(company_id))
         version = self._version(version_id)
         if (
             not version
@@ -1480,7 +1481,7 @@ class PriceBookStore:
             or (company_id != ADR_COMPANY_ID and not version.get('sequence'))
         ):
             raise LookupError('Price version not found.')
-        if version.get('calculation_version', CALCULATION_VERSION) != head_calc:
+        if _is_v2(version) != head_is_v2:
             raise Conflict(
                 'This version uses the previous calculation. Start from the current table.'
             )

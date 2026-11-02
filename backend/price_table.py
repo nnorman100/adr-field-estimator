@@ -443,6 +443,10 @@ _STARTER_ROWS = (
 )
 
 
+# The base version a v2 template names before a company has published prices.
+STARTER_VERSION = 'starter'
+
+
 def _build_starter_items() -> tuple[dict, ...]:
     group_counts: dict[str, int] = {}
     built = []

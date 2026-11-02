@@ -1243,7 +1243,9 @@ def test_publish_refuses_a_v2_preview_once_the_head_is_v1(api, enabled):
 
 
 def _other_owner_export(client, fmt='csv'):
-    exported = client.get('/api/companies/other/prices/export', params={'format': fmt})
+    exported = client.get(
+        '/api/companies/other/prices/export', params={'format': fmt, 'version_id': 'starter'}
+    )
     assert exported.status_code == 200, exported.text
     return exported
 
@@ -1326,11 +1328,11 @@ def test_no_book_company_template_and_view_for_readers_and_v1_file(api, enabled)
         data={'change_reason': 'Old template'},
     )
     assert refused.status_code == 400
-    assert 'not the current DryScope price template' in refused.json()['detail']
+    assert 'Download a new template' in refused.json()['detail']
 
     # Asking for the seed version as a template still gives no workbook rates.
     named = client.get('/api/companies/other/prices/export', params={'version_id': 'seed'})
-    assert b'133.95' not in named.content and b'dryscope-prices-v2' in named.content
+    assert b'133.95' not in named.content and b'dryscope-prices-v1' in named.content
 
     records = store.db.records
     estimator = 'other-estimator'
@@ -1354,6 +1356,8 @@ def test_workbook_company_and_published_books_keep_the_v1_view_and_template(api,
     assert 'starter' not in view and 'working_copy' not in view and view['rates']
     assert view['version_id'] == 'seed'
     assert b'dryscope-prices-v1' in client.get('/api/companies/adr/prices/export').content
+    starter = {'version_id': 'starter'}
+    assert client.get('/api/companies/adr/prices/export', params=starter).status_code == 404
 
     current['uid'] = 'other-owner'
     published = client.post(
@@ -1372,6 +1376,7 @@ def test_workbook_company_and_published_books_keep_the_v1_view_and_template(api,
     view = client.get('/api/companies/other/prices').json()
     assert 'starter' not in view and view['rates']
     assert b'dryscope-prices-v1' in client.get('/api/companies/other/prices/export').content
+    assert client.get('/api/companies/other/prices/export', params=starter).status_code == 404
 
 
 def test_company_with_no_published_book_may_publish_v2_by_form(api, enabled):

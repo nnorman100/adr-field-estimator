@@ -30,14 +30,14 @@ def price_and_range(data: InspectionData, pin: dict[str, Any]) -> PricedJob:
     version = pin.get('calculation_version')
     if version == V2_CALCULATION_VERSION:
         raise NotImplementedError('dryscope-v2 pricing is not available yet')
-    if version != price_books.CALCULATION_VERSION:
+    if not price_books.known_calculation_version(version):
         raise ValueError(f'Unsupported calculation version: {version!r}')
     rates = pin.get('rates')
     if not rates:
         raise ValueError('A v1 pricing pin must carry its rates.')
 
-    lines, total = claims.price_scope(data, rates)
-    low, high = claims.proposal_range(data, lines)
+    lines, total = claims.price_scope(data, rates, version)
+    low, high = claims.proposal_range(data, lines, version)
 
     return PricedJob(
         lines=lines,

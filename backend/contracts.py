@@ -606,6 +606,12 @@ class PricingPolicy(StrictModel):
         return self
 
 
+def known_calculation(value):
+    if value != 'dryscope-v2' and not known_calculation_version(value):
+        raise ValueError('Unknown calculation version.')
+    return value
+
+
 class PriceBasis(StrictModel):
     """Rates or policy that produced one audit. Absent on documents priced before company price books."""
 
@@ -613,7 +619,7 @@ class PriceBasis(StrictModel):
     version_id: str = Field(min_length=1, max_length=128)
     sequence: int = Field(ge=0)
     content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
-    calculation_version: Literal['adr-residential-v1', 'dryscope-v2']
+    calculation_version: Annotated[str, AfterValidator(known_calculation)]
     priced_at: str = Field(min_length=1, max_length=40)
     rates: dict[str, str] | None = None
     policy: PricingPolicy | None = None
