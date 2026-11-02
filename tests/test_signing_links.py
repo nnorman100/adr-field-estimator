@@ -434,3 +434,40 @@ def test_company_link_dies_when_the_technician_loses_job_access(api):
     for response in [homeowner(value).get('/api/sign'), sign(value)]:
         assert response.status_code == 404 and response.json()['detail'] == sl.UNAVAILABLE
     assert not [k for k in store.db.records if k.startswith('authorizations/')]
+
+
+def test_archiving_a_draft_revokes_its_pending_link_and_restoring_does_not_revive_it(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    value = token(mint(client, record))
+    assert homeowner(value).get('/api/sign').status_code == 200
+    current['uid'] = 'owner'
+    version = client.get('/api/jobs/' + ID + '/coordination').json()['version']
+    archived = client.post('/api/jobs/' + ID + '/archive', json={'expected_version': version})
+    assert archived.status_code == 200, archived.text
+    # The link is revoked in the same write that archives the job.
+    assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'revoked'
+    assert store.db.records['_workspace_jobs/' + ID]['archived_at']
+    restored = client.post('/api/jobs/' + ID + '/restore', json={'expected_version': version + 1})
+    assert restored.status_code == 200, restored.text
+    assert store.db.records['_signing_links/' + sl.link_id(value)]['status'] == 'revoked'
+    assert homeowner(value).get('/api/sign').status_code == 404
+    current['uid'] = 'estimator'
+    assert client.get('/api/inspections/' + ID + '/signing-links').json()['status'] == 'revoked'
+
+
+def test_a_link_to_an_archived_job_answers_like_any_unavailable_link(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': company_data()})
+    record = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1}).json()
+    value = token(mint(client, record))
+    unknown = homeowner('A' * 43).get('/api/sign')
+    # Archive without touching the link, as the job would look to a link that survived.
+    store.db.records['_workspace_jobs/' + ID]['archived_at'] = '2026-11-01T00:00:00+00:00'
+    for response in [homeowner(value).get('/api/sign'), sign(value)]:
+        assert response.status_code == 404
+        assert response.json() == unknown.json() == {'detail': sl.UNAVAILABLE}
+    assert homeowner(value).get('/api/sign/photos/' + 'b' * 32).status_code == 404
