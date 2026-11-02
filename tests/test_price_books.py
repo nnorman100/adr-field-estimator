@@ -1835,3 +1835,183 @@ def test_effective_takes_only_a_company_record(store):
         prices.effective('adr')
     with pytest.raises(TypeError):
         prices.effective('no-such-company')
+
+
+# --- Owner price-table editor (PR 4): routes the editor screen depends on ---
+
+
+def _wc_body(table, **extra):
+    return {
+        'items': table['items'],
+        'policy': table['policy'],
+        'expected_working_version': 0,
+        'expected_generation': 0,
+        **extra,
+    }
+
+
+def test_working_copy_routes_are_owner_only(api, enabled):
+    client, current, _ = api
+    table = _v2_table('30.00')
+    current['uid'] = 'owner'
+    head = _publish_v2(client, _v2_table('20.00'), 'Head for the working copy')
+    saved = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json=_wc_body(table, expected_generation=head['generation']),
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['working_version'] == 1
+    assert saved.json()['working_copy']['items'][0]['unit_price'] == '30.00'
+    # The owner reads the copy back with the page, disabled items included.
+    page = client.get('/api/companies/adr/prices').json()
+    assert page['working_copy']['working_version'] == 1
+    assert any(not item['enabled'] for item in page['working_copy']['items'])
+
+    for uid in ('estimator', 'office', 'admin', 'other-owner'):
+        current['uid'] = uid
+        put = client.put(
+            '/api/companies/adr/prices/working-copy',
+            json=_wc_body(table, expected_generation=1, expected_working_version=1),
+        )
+        assert put.status_code in (403, 404), (uid, put.text)
+        assert client.post('/api/companies/adr/prices/working-copy/discard').status_code in (
+            403,
+            404,
+        ), uid
+    # Members who may read prices never receive the working copy.
+    current['uid'] = 'estimator'
+    read = client.get('/api/companies/adr/prices')
+    assert read.status_code == 200
+    assert read.json().get('working_copy') is None
+    assert read.json()['can_manage'] is False
+
+    price_books.set_enabled(False)
+    current['uid'] = 'owner'
+    assert (
+        client.put(
+            '/api/companies/adr/prices/working-copy',
+            json=_wc_body(table, expected_generation=1, expected_working_version=1),
+        ).status_code
+        == 404
+    )
+
+
+def test_preview_diff_lists_items_policy_and_warnings(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    head = _v2_table('20.00')
+    _publish_v2(client, head, 'First table')
+    changed = deepcopy(head)
+    changed['items'][0]['unit_price'] = '40.00'  # +100 percent
+    changed['items'][1]['enabled'] = False
+    changed['items'][2]['unit_price'] = '0.00'
+    changed['items'][2]['allow_zero'] = True
+    changed['items'][3]['taxable'] = True
+    changed['items'] = changed['items'][:-1] + [
+        {**deepcopy(changed['items'][-1]), 'item_id': 'extra_new', 'code': 'EXTRA-NEW'}
+    ]
+    changed['policy']['estimate_mode'] = 'single'
+    changed['policy']['sales_tax'] = {'enabled': True, 'percent': '8'}
+    changed['policy']['after_hours']['label'] = 'Night work'
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={
+            'items': changed['items'],
+            'policy': changed['policy'],
+            'acknowledgements': [changed['items'][2]['item_id']],
+            'change_reason': 'Quarterly review',
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    kinds = {(row['item_id'], row['change']) for row in body['diff']['items']}
+    assert (changed['items'][0]['item_id'], 'price') in kinds
+    assert (changed['items'][1]['item_id'], 'enabled') in kinds
+    assert ('extra_new', 'added') in kinds
+    assert (head['items'][-1]['item_id'], 'removed') in kinds
+    fields = {row['field'] for row in body['diff']['policy']}
+    assert {
+        'estimate_mode',
+        'sales_tax.enabled',
+        'sales_tax.percent',
+        'after_hours.label',
+    } <= fields
+    assert {'large_change', 'zero_price', 'disabled_items', 'mode_change', 'tax_change'} <= set(
+        body['warnings']
+    )
+
+
+def test_import_replaces_items_and_keeps_policy(api, enabled):
+    from backend import price_book_import, price_table
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    table['policy']['overhead_profit_percent'] = '10'
+    table['policy']['after_hours']['label'] = 'Night work'
+    _publish_v2(client, table, 'Head with a policy')
+    company, base_version, generation, exported = db.workspaces.prices.export_rows('owner', 'adr')
+    changed = deepcopy(exported)
+    changed[0]['unit_price'] = '31.00'
+    raw = price_book_import.export_csv(company, base_version, generation, changed)
+    boundary = 'xBOUNDARYx'
+    body = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="p.csv"\r\n'
+        f'Content-Type: text/csv\r\n\r\n'.encode()
+        + raw
+        + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="change_reason"\r\n\r\n'
+        f'Imported prices\r\n--{boundary}--\r\n'.encode()
+    )
+    preview = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=body,
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
+    )
+    assert preview.status_code == 200, preview.text
+    result = preview.json()
+    assert [row['change'] for row in result['diff']['items']] == ['price']
+    assert result['diff']['policy'] == []
+    client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': result['preview_id'], 'expected_generation': result['generation']},
+    )
+    view = client.get('/api/companies/adr/prices').json()
+    assert view['policy']['overhead_profit_percent'] == '10'
+    assert view['policy']['after_hours']['label'] == 'Night work'
+    assert price_table.starter_table()['items'][0]['item_id'] == view['items'][0]['item_id']
+
+
+def test_calculate_is_stateless_and_quota_limited(api, enabled):
+    client, current, db = api
+    table = _v2_table('30.00')
+    table['items'][0]['unit_price'] = ''
+    current['uid'] = 'owner'
+    before = {key for key in db.db.records}
+    result = client.post(
+        '/api/companies/adr/prices/calculate',
+        json={'items': table['items'], 'policy': table['policy']},
+    )
+    assert result.status_code == 200, result.text
+    assert any(row['item_id'] == table['items'][0]['item_id'] for row in result.json()['problems'])
+    created = {key for key in db.db.records} - before
+    assert not any(
+        key.startswith(('_price_book_drafts', '_price_book_previews')) for key in created
+    )
+    for uid in ('estimator', 'office'):
+        current['uid'] = uid
+        assert (
+            client.post(
+                '/api/companies/adr/prices/calculate',
+                json={'items': table['items'], 'policy': table['policy']},
+            ).status_code
+            == 403
+        ), uid
+    current['uid'] = 'owner'
+    statuses = [
+        client.post(
+            '/api/companies/adr/prices/calculate',
+            json={'items': table['items'], 'policy': table['policy']},
+        ).status_code
+        for _ in range(62)
+    ]
+    assert statuses[0] == 200 and statuses[-1] == 429

@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 import backend.main as bm
 from backend import places, ai_features, monitoring_store, price_books, signing_links
 from backend.adr_price_book import adr_rates
+from backend.price_book_store import PriceBookStore
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
@@ -298,11 +299,27 @@ async def password_claims(uid: str):
     return accounts.get_user(uid).custom_claims or {}
 
 
+# The ADR test company has its own starting book. The fixture can make it read as a company that
+# starts from the starter list, so the editor's first-run screen can be driven.
+price_fixture = {'unset': False}
+_starts_from_catalog = PriceBookStore._starts_from_catalog
+
+
+def _starts_from_catalog_fixture(self, company_id):
+    return (
+        price_fixture['unset'] and not (self._head(company_id) or {}).get('latest_version_id')
+    ) or _starts_from_catalog(self, company_id)
+
+
+PriceBookStore._starts_from_catalog = _starts_from_catalog_fixture
+
+
 @bm.app.post('/__test/workspaces')
 async def workspaces_fixture(request: Request):
     global store, accounts
     body = await request.json()
     ai_features.AI_FEATURES = frozenset(body.get('ai_features', []))
+    price_fixture['unset'] = bool(body.get('prices_unset'))
     # Absent means off, so other specs keep the settings rate field and ADR's starting prices.
     price_books.set_enabled(bool(body.get('price_books')) if body.get('enabled') else False)
     if not body.get('enabled'):

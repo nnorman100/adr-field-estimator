@@ -3122,6 +3122,103 @@ footer {
 #jobPricing {
   margin: 0.75rem 0;
 }
+/* Owner price-table editor: one column, 44px targets, nothing wider than the phone. */
+#priceEditor,
+.price-group,
+.price-item,
+.price-add,
+.price-banner,
+#priceSamples,
+#priceProblems {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.price-banner {
+  border-color: var(--accent, #b45309);
+}
+.price-banner[hidden],
+#priceSamples[hidden],
+#priceProblems[hidden] {
+  display: none;
+}
+.price-field span,
+.price-source {
+  font-size: 0.9rem;
+}
+.price-field small,
+.price-source,
+.price-problem:empty {
+  color: var(--muted, #555);
+}
+.price-problem:empty {
+  display: none;
+}
+.price-problem {
+  color: var(--danger, #b00020);
+  margin: 0;
+}
+.price-warning {
+  font-weight: 600;
+}
+.price-item {
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border, #ccc);
+}
+.price-item.price-off .price-field,
+.price-item.price-off .price-source {
+  opacity: 0.6;
+}
+.price-group > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+}
+.price-more > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.price-check,
+.price-radio {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+}
+.price-card .price-check input,
+.price-card .price-radio input {
+  width: auto;
+  min-height: 0;
+  flex: none;
+}
+.price-radios {
+  border: 0;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+.price-subgroup {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.price-add {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.price-add select,
+.price-card select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px;
+  min-height: 44px;
+}
+#priceSaveStatus[data-kind='error'] {
+  color: var(--danger, #b00020);
+}
 @media (max-width: 390px) {
   .price-row {
     grid-template-columns: 1fr;
