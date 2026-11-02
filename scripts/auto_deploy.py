@@ -22,7 +22,8 @@ commit to protected master; manual releases still append RELEASES.md rows.
 --publish creates the git tag and GitHub Release for the version the live backend reports. It runs as its
 own step, because only it holds a GitHub write token, and a hand release runs it too. --rollback
 redeploys an earlier version and stops before staging when a data migration is newer than that version,
-or Firestore rules or indexes changed since it, unless --confirm-past-migration is given. --next-version prints the number a hand release should use.
+or Firestore rules or indexes changed since it, unless --confirm-past-migration is given.
+--next-version prints the number a hand release should use.
 """
 
 import argparse

@@ -1,9 +1,9 @@
 """Stamp the source commit into the Hosting shell before `firebase deploy --only hosting:alert-disaster`.
 
 The committed shell carries the placeholder marker 'unstamped'. Stamping replaces the service-worker
-VERSION, every versioned asset URL and the Account menu's app version with the commit, so each
-release gets a new worker cache and the deployed site can be compared with the backend's
-source_commit. Restore the placeholder with --reset after deploying. firebase.json runs --check
+VERSION, every versioned asset URL and the Account menu's and footer's app version with the commit
+(--version shows that release version as the app version instead), so each release gets a new
+worker cache and the deployed site can be compared with the backend's source_commit. Restore the placeholder with --reset after deploying. firebase.json runs --check
 before every Hosting deploy so an unstamped shell, which would keep serving stale cached assets, or a
 shell stamped with a commit other than HEAD or with Hosting changes not in that commit, is never
 released; a <commit>-dirty stamp declares such changes and is accepted as is.

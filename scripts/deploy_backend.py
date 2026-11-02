@@ -14,6 +14,7 @@ Promotion is a separate reviewed update-traffic step.
 The deployed commit is written to backend/SOURCE_COMMIT inside the uploaded build context, so the
 image itself reports it as source_commit in /api/health; a later raw deploy cannot inherit it the way
 it inherits environment variables. The same commit is set as the revision's source-commit label.
+--version adds the release version to that file, and the image reports it as version in /api/health.
 """
 
 import argparse
