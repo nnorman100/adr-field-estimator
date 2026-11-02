@@ -1112,7 +1112,7 @@ def test_restore_across_calculation_versions_is_refused(api, enabled):
         'content_sha256': price_books.content_hash(seed),
     }
 
-    # Restoring the v1 version (or 'seed') when head is v2 is refused with 409
+    # Restoring the v1 version when head is v2 is refused with 409
     refused_v1 = client.post(
         f'/api/companies/adr/prices/versions/{v1_id}/restore',
         json={'change_reason': 'Try restore v1'},
@@ -1123,15 +1123,12 @@ def test_restore_across_calculation_versions_is_refused(api, enabled):
         in refused_v1.json()['detail']
     )
 
+    # There is no seed to restore.
     refused_seed = client.post(
         '/api/companies/adr/prices/versions/seed/restore',
         json={'change_reason': 'Try restore seed'},
     )
-    assert refused_seed.status_code == 409, refused_seed.text
-    assert (
-        'This version uses the previous calculation. Start from the current table.'
-        in refused_seed.json()['detail']
-    )
+    assert refused_seed.status_code == 404, refused_seed.text
 
     # Restoring the earlier v2 version when head is v2 succeeds
     restored_v2 = client.post(
@@ -1197,8 +1194,10 @@ def test_head_saved_before_the_field_existed_still_prices_as_v1(api, enabled):
     current['uid'] = 'owner'
     refused = client.post('/api/companies/adr/prices/preview', json=_table_body(_v2_table()))
     assert refused.status_code == 409
+    migrated = store.db.records['_company_price_books/adr']['latest_version_id']
     restored = client.post(
-        '/api/companies/adr/prices/versions/seed/restore', json={'change_reason': 'Back to seed'}
+        f'/api/companies/adr/prices/versions/{migrated}/restore',
+        json={'change_reason': 'Back to the starting book'},
     )
     assert restored.status_code == 200, restored.text
 
@@ -1264,8 +1263,9 @@ def test_no_book_company_is_served_the_starter_and_can_round_trip_its_template(a
     view = client.get('/api/companies/other/prices').json()
     assert view['starter'] is True
     assert view['calculation_version'] is None
-    assert (view['version_id'], view['generation'], view['sequence']) == (None, 0, 0)
-    assert 'rates' not in view and view['working_copy'] is None and view['can_manage'] is True
+    assert (view['version_id'], view['generation'], view['sequence']) == ('unset', 0, 0)
+    assert {row['unit_price'] for row in view['rates']} == {''}
+    assert view['working_copy'] is None and view['can_manage'] is True
     starter = price_table.starter_table()
     assert len(view['items']) == len(starter['items'])
     assert all(item['unit_price'] == '' for item in view['items'])

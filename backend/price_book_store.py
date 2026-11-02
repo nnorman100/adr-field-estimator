@@ -349,29 +349,6 @@ class PriceBookStore:
         reason = _shown_reason(book)
         unset = _is_unset(book)
         draft = self._draft(company['company_id']) if manage else None
-        if self._starts_from_catalog(company['company_id']):
-            pub = public_table(starter_table(), manage=manage)
-            return {
-                'company_id': company['company_id'],
-                'company_name': (company.get('profile') or {}).get('name', ''),
-                'calculation_version': None,
-                'starter': True,
-                'prices_set': False,
-                'generation': 0,
-                'version_id': None,
-                'sequence': 0,
-                'label': 'Not set up yet',
-                'published_at': None,
-                'effective_from': None,
-                'source': STARTER_VERSION,
-                'change_reason': '',
-                'items': pub['items'],
-                'policy': pub['policy'],
-                'working_copy': self._working_copy_view(draft),
-                'can_manage': manage,
-                'priced_extras': extras,
-                'used_for': _not_set_message(actor.get('role') if not support else None),
-            }
         if _is_v2(book):
             pub = public_table(book, manage=manage)
             return {
@@ -415,7 +392,17 @@ class PriceBookStore:
             if unset
             else 'New pricing uses these rates. Existing jobs keep their saved rates.',
         }
-        if draft:
+        if self._starts_from_catalog(company['company_id']):
+            # The blank rows stay beside the starter table, which is what the editor reads today.
+            pub = public_table(starter_table(), manage=manage)
+            view.update(
+                starter=True,
+                calculation_version=None,
+                items=pub['items'],
+                policy=pub['policy'],
+                working_copy=self._working_copy_view(draft),
+            )
+        elif draft:
             view['working_copy'] = self._working_copy_view(draft)
         return view
 
