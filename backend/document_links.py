@@ -34,7 +34,13 @@ SETS = {
 }
 UNAVAILABLE = 'This document link is not available. Ask your restoration company for a new link.'
 # Notes the estimator sees in the app; they are never part of a delivered document.
-ESTIMATOR_ONLY = ('ai_summary', 'ai_suggestions', 'unpriced_work', 'company_setup_missing')
+ESTIMATOR_ONLY = (
+    'ai_summary',
+    'ai_suggestions',
+    'unpriced_work',
+    'company_setup_missing',
+    'quantity_notes',
+)
 
 
 def link_id(token):

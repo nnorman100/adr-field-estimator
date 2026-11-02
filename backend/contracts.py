@@ -486,6 +486,13 @@ class LineItem(StrictModel):
     unit_price: float
     waste_percent: float
     total: float
+    # Added with company price tables; documents audited before them omit these.
+    item_id: str | None = None
+    group: str | None = None
+    bucket: str | None = None
+    taxable: bool | None = None
+    xactimate_code: str | None = None
+    room: str | None = None
 
 
 class Proposal(StrictModel):
@@ -493,8 +500,12 @@ class Proposal(StrictModel):
     # From job coordination when the audit ran; documents audited before this field omit it.
     customer_name: str = Field(default='', max_length=150)
     date: str
+    # The high end, or the single price when estimate_mode is 'single'.
     proposed_cost: float = Field(gt=0)
-    proposed_cost_low: float = Field(gt=0)
+    # Absent in single-price mode.
+    proposed_cost_low: float | None = Field(default=None, gt=0)
+    # Absent on documents priced before company price tables (they are always a range).
+    estimate_mode: Literal['range', 'single'] | None = None
     lead_notice_required: bool
     findings: list[str]
     recommendations: list[str]
@@ -638,6 +649,48 @@ class PriceBasis(StrictModel):
         return self
 
 
+class EstimateEnd(StrictModel):
+    """One end of the estimate: the summary lines that add up to its total."""
+
+    subtotal: float
+    after_hours: float = 0
+    minimum_adjustment: float = 0
+    overhead_profit: float = 0
+    tax: float = 0
+    total: float
+
+
+class EstimateSummary(StrictModel):
+    """How a company price table produced the estimate; absent on documents priced before them."""
+
+    calculation_version: Literal['dryscope-v2']
+    mode: Literal['range', 'single']
+    low: EstimateEnd
+    high: EstimateEnd | None = None
+    labor_material_low: float
+    labor_material_high: float
+    after_hours_label: str = Field(max_length=80)
+    # Percent strings; '0' when the company has the adjustment off.
+    after_hours_percent: str = Field(max_length=12)
+    overhead_profit_percent: str = Field(max_length=12)
+    sales_tax_percent: str = Field(max_length=12)
+    minimum_job_charge: str = Field(max_length=12)
+    range_rule: dict[str, str | int]
+    explanation: str = Field(max_length=2000)
+    show_line_breakdown: bool = False
+
+
+class QuantityNote(StrictModel):
+    """An estimator's override of a walkthrough-measured quantity, for the owner's eyes only."""
+
+    item: str = Field(max_length=120)
+    label: str = Field(max_length=120)
+    room: str | None = Field(default=None, max_length=100)
+    measured: float
+    entered: float
+    reason: str = Field(max_length=300)
+
+
 class AuditDocuments(StrictModel):
     schema_version: Literal[3] = 3
     company_identity: CompanyIdentity | None = None
@@ -656,3 +709,6 @@ class AuditDocuments(StrictModel):
     signable: bool
     pending_extras: int = 0
     price_basis: PriceBasis | None = None
+    estimate: EstimateSummary | None = None
+    # Estimator-only (never delivered by document links); absent when nothing was overridden.
+    quantity_notes: list[QuantityNote] | None = None

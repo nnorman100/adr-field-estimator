@@ -1596,8 +1596,18 @@ window.WorkspaceUI = (() => {
     documents.append(node('h2', 'Documents'));
     if (docs) {
       documents.append(
-        node('p', 'Customer estimate range: ' + estimateLabel(docs.adr_estimate), 'money'),
-        node('p', 'Itemized charges at base rates: ' + ADRCore.money(docs.xactimate_total)),
+        node(
+          'p',
+          ADRCore.estimateHeading(docs.adr_estimate.estimate_mode) +
+            ': ' +
+            estimateLabel(docs.adr_estimate),
+          'money',
+        ),
+        node(
+          'p',
+          (docs.estimate ? 'Itemized total: ' : 'Itemized charges at base rates: ') +
+            ADRCore.money(docs.xactimate_total),
+        ),
         node('h3', 'Findings'),
       );
       for (const text of docs.adr_estimate.findings || []) documents.append(node('p', text));
