@@ -1361,6 +1361,12 @@ class WorkspaceStore:
         if named is not None and named != self.customer_name(record, tx):
             raise Conflict('Customer details changed. Generate new documents before signing.')
 
+    def invalidate_documents(self, record, tx):
+        """Clear a saved audit whose documents no longer match the job. The revision moves on too,
+        so a second phone holding the old documents gets a conflict instead of signing them."""
+        record.update(revision=record['revision'] + 1, audit=None, status='draft', updated_at=now())
+        tx.set(self.ref('inspections', record['inspection_id']), record)
+
     @staticmethod
     def job_claim(job):
         return ClaimDetails.model_validate(job.get('claim', {})).model_dump()
@@ -1392,7 +1398,6 @@ class WorkspaceStore:
         """Estimators record claim details during intake and office staff after it; signed
         documents keep the snapshot they were signed with."""
         ref = self.ref('_workspace_jobs', inspection_id)
-        inspection_ref = self.ref('inspections', inspection_id)
 
         def update(tx):
             record = self.read('inspections', inspection_id, tx)
@@ -1410,8 +1415,7 @@ class WorkspaceStore:
                 and record['status'] != 'signed'
                 and record.get('audit') is not None
             ):
-                record.update(audit=None, status='draft', updated_at=now())
-                tx.set(inspection_ref, record)
+                self.invalidate_documents(record, tx)
             job.update(
                 claim=claim,
                 claim_version=req.expected_version + 1,
@@ -1553,7 +1557,6 @@ class WorkspaceStore:
         """Estimators record and correct the customer's name and phone on their own unsigned jobs;
         owners and office staff keep the full coordination form."""
         ref = self.ref('_workspace_jobs', inspection_id)
-        inspection_ref = self.ref('inspections', inspection_id)
 
         def update(tx):
             record = self.read('inspections', inspection_id, tx)
@@ -1570,8 +1573,7 @@ class WorkspaceStore:
                 email = email_address(req.customer_email) if req.customer_email.strip() else ''
             # The documents name the customer, so a new name needs new documents.
             if name != job.get('customer_name', '').strip() and record.get('audit') is not None:
-                record.update(audit=None, status='draft', updated_at=now())
-                tx.set(inspection_ref, record)
+                self.invalidate_documents(record, tx)
             job.update(
                 customer_name=name,
                 customer_phone=phone,
@@ -1588,7 +1590,6 @@ class WorkspaceStore:
 
     def coordination(self, uid, inspection_id, req):
         ref = self.ref('_workspace_jobs', inspection_id)
-        inspection_ref = self.ref('inspections', inspection_id)
 
         def update(tx):
             record = self.read('inspections', inspection_id, tx)
@@ -1609,21 +1610,19 @@ class WorkspaceStore:
                 or assignee['status'] != 'active'
             ):
                 raise ValueError('Assign an active estimator from this company.')
-            if req.address is not None and req.address != record['data']['address']:
-                if record['status'] == 'signed':
-                    raise Conflict('A signed property address cannot be changed.')
-                record['data']['address'] = req.address
-                record.update(
-                    revision=record['revision'] + 1, audit=None, status='draft', updated_at=now()
-                )
             # The documents name the customer, so a new name needs new documents.
             customer_changed = (
                 req.customer_name.strip() != job.get('customer_name', '').strip()
                 and record['status'] != 'signed'
                 and record.get('audit') is not None
             )
-            if customer_changed:
-                record.update(audit=None, status='draft', updated_at=now())
+            address_changed = req.address is not None and req.address != record['data']['address']
+            if address_changed and record['status'] == 'signed':
+                raise Conflict('A signed property address cannot be changed.')
+            if address_changed:
+                record['data']['address'] = req.address
+            if address_changed or customer_changed:
+                self.invalidate_documents(record, tx)
             updates = req.model_dump(exclude={'expected_version', 'address'})
             if updates['customer_email']:
                 updates['customer_email'] = email_address(updates['customer_email'])
@@ -1642,8 +1641,6 @@ class WorkspaceStore:
             )
             self.monitoring.sync(inspection_id, tx, job=job)
             tx.set(ref, job)
-            if (req.address is not None or customer_changed) and record['status'] != 'signed':
-                tx.set(inspection_ref, record)
             self.event(
                 tx,
                 uid,
