@@ -2,7 +2,7 @@
 
 Each company sets its own prices. DryScope has no default price list, and one company's rates are never used for another.
 
-- **A company with no published prices cannot price an estimate.** The audit answers 409 and the job stays a draft. The owner is told "Set your company prices before your first estimate" with a link to Company prices; estimators and office staff are told to ask the owner.
+- **A company with no published prices cannot price an estimate.** The audit answers 409 and the job stays a draft. The owner is told "Set your company prices before your first estimate", with a Set company prices button while the editor is on; estimators and office staff are told to ask the owner.
 - **Owners publish prices under Company prices** (behind `PRICE_BOOKS_ENABLED`), or import the CSV/XLSX template. The template for a company without prices lists item names and units with blank prices. See [Company workspaces](company-workspaces.md#company-prices). While the flag is off the editor is unavailable, so the flag must be on before a company other than ADR can price anything.
 - **The browser gets prices only from the API,** for the signed-in company. No rate is written in `public/`; `tests/test_no_adr_default.py` checks that.
 - **Rates live on the server as data:** a published book is stored per company, and each job pins the book it was first priced from. A published book applies to new pricing from the server's publication time. An existing draft keeps its saved rates until the owner reviews and applies new prices to that one draft. Signed records never change.

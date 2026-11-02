@@ -77,7 +77,7 @@ Verification: **27 Python tests**, Node checks and **19 browser tests passed**, 
 
 ## Estimating-sheet correction — deployed October 6, 2026
 
-The user supplied `1 - Water . Mold - Estimating Sheet (2).xlsx` and confirmed that ADR does not use the package tiers previously coded. The user chose the workbook's low–high customer estimate and instructed us to mirror its added-labor formula even for after-hours jobs. [ADR pricing source](adr-pricing-source.md) identify the source cells, after-hours factors, optional charges and workbook defects. New audits reject a selected legacy package price with an update-required response; current clients clear it while preserving old signed documents.
+The user supplied `1 - Water . Mold - Estimating Sheet (2).xlsx` and confirmed that ADR does not use the package tiers previously coded. The user chose the workbook's low–high customer estimate and instructed us to mirror its added-labor formula even for after-hours jobs. [ADR pricing source](adr-pricing-source.md) identifies the source cells, after-hours factors, optional charges and workbook defects. New audits reject a selected legacy package price with an update-required response; current clients clear it while preserving old signed documents.
 
 New proposals show a customer estimate range and separate itemized base-rate charges. The backend uses confirmed job-charge quantities, demolition areas, waste, equipment and optional sheet items. It adds the sheet's after-hours charge, applies its 20% labor/material adjustment, then calculates the high bound from the affected-area threshold. The default five job charges and the 3-fan, 1-dehumidifier, 3-day example match the sheet's totals. Schema-3 authorizations retain both range bounds and the original four documents.
 
@@ -399,8 +399,7 @@ Normal approved staff Google sign-in succeeded. The token was retained only in m
 passed over stdin; no credential was printed/exported and no IAM change was made. The
 production API check passed read-only scope extraction, selective application and revision
 conflicts; non-meter OCR; real protocol-2 audio/transcripts, pause/unmute, provider resumption
-and Finish checkpoint/lease deletion; workbook totals ($1,775.00 itemized, $1,775.00-$1,788.90
-range); four documents; signing, saved evidence and immutable reopening. The real production
+and Finish checkpoint/lease deletion; workbook totals (itemized and range); four documents; signing, saved evidence and immutable reopening. The real production
 UI at a 390 x 844 viewport passed reviewed/selective form filling, totals, all document tabs,
 synthetic signing and restoration. Both runners removed only their tracked synthetic records
 and exact evidence prefixes. Logs: review-artifacts/live-release-20261007/production-authenticated.txt

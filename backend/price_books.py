@@ -248,7 +248,7 @@ def calculation_policy():
 
 
 def saved_basis(audit):
-    """Migration records the seed basis beside a legacy audit's documents, keeping its hash."""
+    """Migration records ADR's starting basis beside a legacy audit's documents, keeping its hash."""
     audit = audit or {}
     return (audit.get('documents') or {}).get('price_basis') or audit.get('price_basis')
 
