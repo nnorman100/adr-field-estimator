@@ -83,20 +83,21 @@ Never use a blanket `firebase deploy`. Keep both `index.html` copies (the landin
 
 Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED`, `AI_FEATURES` or `PRICE_BOOKS_ENABLED` from that revision. The script requires `--workspaces on|off` and always sets `WORKSPACES_ENABLED`, `AI_FEATURES` and `PRICE_BOOKS_ENABLED`. The defaults match the current production baseline: `AI_FEATURES=readiness` and price books off (`PRICE_BOOKS_ENABLED=false`). Pass `--ai-features` or `--price-books on|off` only to change that baseline on purpose. The script prints the baseline, always mounts the Maps key secret (`--update-secrets`, see [Address suggestions and the job map](#address-suggestions-and-the-job-map)), keeps the other existing variables (model settings, and the staff list unless `--staff-emails` sets it on purpose; it refuses, `--dry-run` included, when the flag is omitted and the service template has no `STAFF_EMAILS`), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
 
-Every release is stamped with the commit it was built from. `deploy_backend.py` refuses uncommitted or untracked changes under `backend/` (`--allow-dirty` stamps `<commit>-dirty` instead), writes the commit to `backend/SOURCE_COMMIT` in the uploaded build context for the duration of the deploy, and sets the revision label `source-commit`. The image reports it as `source_commit` in `/api/health`; an image built without the script reports `unknown`. `gcloud run deploy` also copies the label onto the service, so the service-level `source-commit` follows the latest staged revision even while traffic stays on an older one or after a rollback; only the serving revision's label or `/api/health` identifies the code that is serving. Before a Hosting deploy, `python scripts/stamp_hosting.py` stamps the same kind of commit into the service-worker `VERSION`, every versioned asset URL and the Account menu's app version, which also gives each release a new worker cache. The committed shell carries the placeholder `unstamped`; `firebase.json` runs `node scripts/run_python.js scripts/stamp_hosting.py --check` as the Hosting predeploy hook (the launcher uses whichever of `python`, `python3` or `py` exists and blocks the deploy if none does), so an unstamped or inconsistently stamped shell, or one stamped with a commit other than HEAD or with Hosting changes not in that commit, is never deployed; a `-dirty` stamp declares such changes and is accepted as is. Restore the placeholder with `--reset` afterwards. Both scripts print a row to append to [RELEASES.md](../RELEASES.md), the only record of deployed state.
+Every release is stamped with the commit it was built from. `deploy_backend.py` refuses uncommitted or untracked changes under `backend/` (`--allow-dirty` stamps `<commit>-dirty` instead), writes the commit to `backend/SOURCE_COMMIT` in the uploaded build context for the duration of the deploy, and sets the revision label `source-commit`. The image reports it as `source_commit` in `/api/health`; an image built without the script reports `unknown`. `gcloud run deploy` also copies the label onto the service, so the service-level `source-commit` follows the latest staged revision even while traffic stays on an older one or after a rollback; only the serving revision's label or `/api/health` identifies the code that is serving. Before a Hosting deploy, `python scripts/stamp_hosting.py` stamps the same kind of commit into the service-worker `VERSION`, every versioned asset URL and the Account menu's and footer's app version, which also gives each release a new worker cache. A production release also passes `--version <YYYY.MM.DD-N>` (from `python3 scripts/auto_deploy.py --next-version`) to both scripts: the backend reports it as `version` in `/api/health` and the app version shows it instead of the short commit. Both scripts refuse `--version` on a dirty tree; a build without it reports `version` `unknown` and shows its short commit. The committed shell carries the placeholder `unstamped`; `firebase.json` runs `node scripts/run_python.js scripts/stamp_hosting.py --check` as the Hosting predeploy hook (the launcher uses whichever of `python`, `python3` or `py` exists and blocks the deploy if none does), so an unstamped or inconsistently stamped shell, or one stamped with a commit other than HEAD or with Hosting changes not in that commit, is never deployed; a `-dirty` stamp declares such changes and is accepted as is. Restore the placeholder with `--reset` afterwards. Both scripts print a row to append to [RELEASES.md](../RELEASES.md), the only record of deployed state.
 
 ```powershell
 firebase.cmd deploy --only firestore:indexes --project alert-disaster-field-2026
 # Confirm the required indexes are READY before deploying the backend.
 gcloud firestore indexes composite list --project=alert-disaster-field-2026
-python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --dry-run
-python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --yes
+$VERSION = python scripts/auto_deploy.py --next-version
+python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --version $VERSION --dry-run
+python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --version $VERSION --yes
 # The dry run prints the feature baseline. Defaults are AI_FEATURES=readiness and PRICE_BOOKS_ENABLED=false.
 # Without --staff-emails the revision inherits the service template's STAFF_EMAILS; both commands refuse when
 # that template has none. Then add --staff-emails <comma-separated staff emails> to both.
 # Pass --ai-features and --price-books only when this release is the one that changes them.
 # Append the printed row to RELEASES.md. Before promotion, the tagged URL printed by the deploy must answer
-# {"status":"healthy","schema_version":3,"source_commit":"<the stamped commit>"}.
+# {"status":"healthy","schema_version":3,"version":"<the release version>","source_commit":"<the stamped commit>"}.
 curl.exe -s <tagged-revision-url>/api/health
 # Configuration, including the chosen flag ("workspaces_enabled":false for --workspaces off), is staff-only at
 # /api/health/details; `node scripts/verify_live_browser.js --backend-tag <tag>` prints it after normal staff sign-in.
@@ -104,11 +105,13 @@ gcloud run services update-traffic alert-disaster-field-estimator --to-tags=work
 # Append a "100% (promoted)" row for the backend to RELEASES.md.
 firebase.cmd deploy --only firestore:rules --project alert-disaster-field-2026
 firebase.cmd deploy --only auth --project alert-disaster-field-2026
-python scripts/stamp_hosting.py
+python scripts/stamp_hosting.py --version $VERSION
 firebase.cmd deploy --only hosting:alert-disaster --project alert-disaster-field-2026
 # Compare the deployed shell and backend commits, append the printed Hosting row to RELEASES.md, then reset.
 node scripts/verify_hosting.js
 python scripts/stamp_hosting.py --reset
+# Create the tag and GitHub Release so this version can be chosen for a rollback (needs gh signed in).
+python scripts/auto_deploy.py --publish "$(git rev-parse HEAD)"
 ```
 
 The backend rejects a different project ID or evidence bucket. Production never enables local demo fallbacks.
@@ -116,15 +119,15 @@ The backend rejects a different project ID or evidence bucket. Production never 
 ### Automatic deploys
 
 `.github/workflows/deploy.yml` releases a master commit after its CI run succeeds on a push to master.
-It runs `scripts/auto_deploy.py`, which uses the manual path: `deploy_backend.py --workspaces on
---ai-features readiness --price-books off --staff-emails <serving value>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
+It runs `scripts/auto_deploy.py`, which computes the next UTC date-style version (`YYYY.MM.DD-N`, starting at `1` each day) and uses the manual path: `deploy_backend.py --workspaces on
+--ai-features readiness --price-books off --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
 the staged revision's environment, secret bindings, service account and limits must equal the serving
-revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3 and the
+revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3, the release `version` and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
-only then does traffic move. Next it stamps the shell, deploys only `hosting:alert-disaster`, runs
-`verify_hosting.js` and resets the stamp. A failure before promotion promotes nothing. A failure after
+only then does traffic move. Next it stamps the shell with `--version <YYYY.MM.DD-N>`, deploys only `hosting:alert-disaster`, runs
+`verify_hosting.js` and resets the stamp. Only after verification succeeds, a separate workflow step (the only one holding a GitHub write token) creates the immutable git tag for the version the live backend reports and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after
 it restores traffic to the revision that was serving, clones the previous Hosting version back to the
-live channel and fails the run. One release runs at a time (`concurrency: production-deploy`).
+live channel and fails the run without creating a tag. One release runs at a time (`concurrency: production-deploy`).
 
 It stops with a message, and the owner releases that commit by hand, when:
 
@@ -160,7 +163,7 @@ allows 1000 tags per service, so clear old ones occasionally with `gcloud run se
    Firestore rules, indexes or TTLs, IAM, or any other project.
 2. Set the two repository variables the script prints, `GCP_WORKLOAD_IDENTITY_PROVIDER` and
    `GCP_DEPLOY_SERVICE_ACCOUNT`, and `AUTO_DEPLOY_ENABLED=true`.
-3. Run **Deploy** once from the Actions tab (`workflow_dispatch`). It runs only the refusal checks
+3. Run **Deploy** once from the Actions tab (`workflow_dispatch`, `version` left blank). It runs only the refusal checks
    (`--check-only`) and proves authentication, the roles for reading the service and the TTL check,
    without staging or deploying.
 4. The first real release is the next merge. The roles for source builds and Hosting were derived from
@@ -203,7 +206,14 @@ The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78f
 
 ## Rollback
 
-The previous dedicated backend revisions remain available. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
+To roll back to a previous `YYYY.MM.DD-N` release version in one step:
+
+- **GitHub Actions**: run **Deploy** (`workflow_dispatch` with `version` set to the target `YYYY.MM.DD-N`). This needs `AUTO_DEPLOY_ENABLED` set to `true`.
+- **Single operator command**: `git fetch --tags`, then `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. Use this while automatic deploys are paused, and append rows to [RELEASES.md](../RELEASES.md) as for any manual release.
+
+The rollback resolves the version tag and checks the Firestore `_migrations` ledger (#184) for any applied data migrations newer than the target version. When it finds one, or cannot read the ledger, it emits a `::warning::` banner and job-summary warning and stops before staging, because rolling back code does not undo Firestore data changes; `--confirm-past-migration` (workflow input `confirm_past_migration` set to `yes`) goes ahead anyway. A change to `firestore.rules` or `firestore.indexes.json` between the target and what is serving warns and stops the same way, with the same confirmation: a rollback does not roll them back, so they stay at the newer hand-released version, and the next automatic release stops for a hand release. It then redeploys that tag's backend and Hosting through the same staged checks and `verify_hosting.js` verification. Afterwards, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge, otherwise the next release brings it back.
+
+The previous dedicated backend revisions also remain available for manual traffic restoration. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
 
 [Firebase Hosting timeout documentation](https://firebase.google.com/docs/hosting/serverless-overview), [Cloud Run WebSockets](https://docs.cloud.google.com/run/docs/triggering/websockets), [Live API formats](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api).
 

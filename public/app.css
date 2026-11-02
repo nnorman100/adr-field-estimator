@@ -1502,6 +1502,11 @@ footer {
   margin-top: 0.25rem;
   font-size: 0.8125rem;
 }
+.app-version {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+}
 /* Before sign-in the whole page is DryScope; the attribution line only frames a company. */
 .audit-photo {
   display: grid;

@@ -232,19 +232,40 @@ REVOCATION_CACHE_LIMIT = 1024
 LIVE_REVOCATION = ['revocation:live']
 
 
+COMMIT_PATTERN = re.compile(r'[0-9a-f]{40}(?:-dirty)?')
+VERSION_PATTERN = re.compile(r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*')
+
+
+def _read_stamp_lines(path):
+    try:
+        with open(path, encoding='utf8') as stamp:
+            lines = [line.strip() for line in stamp.read().splitlines() if line.strip()]
+    except OSError:
+        return None
+    if not lines or len(lines) > 2 or not COMMIT_PATTERN.fullmatch(lines[0]):
+        return None
+    if len(lines) == 2 and not VERSION_PATTERN.fullmatch(lines[1]):
+        return None
+    return lines
+
+
 def read_source_commit(
     path=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'SOURCE_COMMIT'),
 ):
-    # scripts/deploy_backend.py writes the deployed commit into the build context; local runs have no stamp.
-    try:
-        with open(path, encoding='utf8') as stamp:
-            value = stamp.read().strip()
-    except OSError:
-        return 'unknown'
-    return value if re.fullmatch(r'[0-9a-f]{40}(?:-dirty)?', value) else 'unknown'
+    # scripts/deploy_backend.py writes the deployed commit (and optional release version) into the build context; local runs have no stamp.
+    lines = _read_stamp_lines(path)
+    return lines[0] if lines else 'unknown'
+
+
+def read_release_version(
+    path=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'SOURCE_COMMIT'),
+):
+    lines = _read_stamp_lines(path)
+    return lines[1] if lines and len(lines) == 2 else 'unknown'
 
 
 SOURCE_COMMIT = read_source_commit()
+RELEASE_VERSION = read_release_version()
 app = FastAPI(title='DryScope', version='2.0')
 app.add_middleware(
     CORSMiddleware,
@@ -812,8 +833,13 @@ async def model_photos(store, uid, inspection_id, photos):
 @app.get('/health')
 @app.get('/api/health')
 def health_check():
-    # Anonymous callers learn liveness and the source commit only; configuration is staff-only below.
-    return dict(status='healthy', schema_version=3, source_commit=SOURCE_COMMIT)
+    # Anonymous callers learn liveness, version and the source commit only; configuration is staff-only below.
+    return dict(
+        status='healthy',
+        schema_version=3,
+        version=RELEASE_VERSION,
+        source_commit=SOURCE_COMMIT,
+    )
 
 
 @app.get('/api/health/details')
@@ -837,6 +863,7 @@ def health_details(staff=Depends(current_staff), store=Depends(get_job_store)):
         ocr_model=OCR_MODEL,
         live_model=LIVE_MODEL,
         workspaces_enabled=WORKSPACES_ENABLED,
+        version=RELEASE_VERSION,
         source_commit=SOURCE_COMMIT,
         migrations=migrations,
     )

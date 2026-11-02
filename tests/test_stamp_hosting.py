@@ -233,3 +233,35 @@ def test_predeploy_launcher_falls_back_to_python3_and_passes_exit_code(tmp_path)
     assert only_python3.returncode == 7 and 'args:x.py --check' in only_python3.stdout
     none = run(str(tmp_path / 'empty'))
     assert none.returncode == 1 and 'No Python interpreter found' in none.stderr
+
+
+def test_stamp_with_release_version_stamps_both_account_and_footer_displays(shell):
+    hosting.write(HEAD, shell, version='2026.11.02-1')
+    assert hosting.check(shell, fake_git()) == HEAD
+    html = (shell / 'public/app.html').read_text(encoding='utf8')
+    assert html.count(f'?v={HEAD}') == 12
+    assert html.count('App version 2026.11.02-1</small>') == 2
+    assert 'id="footerVersion"' in html
+    # Disagreeing display markers in public/app.html are rejected by check().
+    mismatch = html.replace(
+        'App version 2026.11.02-1</small>', 'App version 2026.11.02-2</small>', 1
+    )
+    (shell / 'public/app.html').write_text(mismatch, encoding='utf8')
+    with pytest.raises(RuntimeError, match='other than'):
+        hosting.check(shell, fake_git())
+
+
+def test_dirty_shell_cannot_carry_a_release_version(shell):
+    hosting.write(HEAD + '-dirty', shell, version='2026.11.02-1')
+    with pytest.raises(RuntimeError, match='other than'):
+        hosting.check(shell, fake_git())
+
+
+def test_version_is_refused_with_a_dirty_tree_and_the_dirty_stamp_still_works(monkeypatch, capsys):
+    written = []
+    monkeypatch.setattr(hosting, 'write', written.append)
+    dirty = fake_git(' M public/app.js\n')
+    assert hosting.main(['--allow-dirty', '--version', '2026.11.02-1'], git=dirty) == 2
+    assert '--version needs a clean tree' in capsys.readouterr().err and written == []
+    assert hosting.main(['--allow-dirty'], git=dirty) == 0
+    assert written == [HEAD + '-dirty']

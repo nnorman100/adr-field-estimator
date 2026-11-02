@@ -25,14 +25,38 @@ release made while automation is enabled should say so in its row. See
 
 The serving backend is the newest row with 100% traffic that has not been rolled back; the serving
 frontend is the newest `live` row. Recheck both read-only before a cutover and keep them as the rollback
-pair. Compare them with `/api/health` (`source_commit`) and `node scripts/verify_hosting.js`. The
+pair. Compare them with `/api/health` (`version` and `source_commit`) and `node scripts/verify_hosting.js`. The
 service-level `source-commit` label follows the latest staged revision, not traffic; read the label of
 the revision that serves traffic instead.
 
+## Version numbers, live version check, and rollback
+
+- **Numbering (`YYYY.MM.DD-N` in UTC)**: Every successful production release automatically receives a
+  date-style version number (for example `2026.11.02-1`, `2026.11.02-2`, counting up from `1` within
+  each UTC day). The git tag and GitHub Release are created only after backend promotion, Hosting
+  deployment, and `node scripts/verify_hosting.js` succeed, and they always carry the version the live
+  backend reports. Workflow re-runs are idempotent and tags are never moved. Big milestones can be named
+  by editing the GitHub Release title on GitHub without changing the `YYYY.MM.DD-N` tag.
+- **How to find the live version**:
+  - **In the app**: check the bottom footer (`App version YYYY.MM.DD-N`) or open **Account** in the top
+    bar (`DryScope · App version YYYY.MM.DD-N`).
+  - **Health / status endpoints**: `GET /api/health` and `GET /api/health/details` return
+    `"version": "YYYY.MM.DD-N"` alongside `"source_commit"`. `node scripts/verify_hosting.js` also prints
+    both the frontend displayed version and backend `version`.
+  - **GitHub Releases**: the repository's Releases page lists each production version tag and the merged
+    pull requests in plain words.
+- **One-step rollback to a version**: `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or the
+  **Deploy** workflow's `version` input. See [Rollback](docs/firebase-isolation.md#rollback), including
+  when it stops for a data migration or a rules or index change.
+
 ## Recording a release
 
-1. `python scripts/deploy_backend.py --workspaces on|off --tag <tag> ... --yes` stamps the image and
-   its `source-commit` label. Every deploy sets `WORKSPACES_ENABLED`, `AI_FEATURES` and
+Every production release gets a version, including a hand release of a Firestore rules or index change.
+Start with `VERSION=$(python3 scripts/auto_deploy.py --next-version)`, which fetches tags and prints the
+number for the checked-out commit.
+
+1. `python scripts/deploy_backend.py --workspaces on|off --tag <tag> --version "$VERSION" ... --yes` stamps
+   the image and its `source-commit` label. Every deploy sets `WORKSPACES_ENABLED`, `AI_FEATURES` and
    `PRICE_BOOKS_ENABLED` from this command, not from the latest Cloud Run template. The defaults are
    the current production baseline: `AI_FEATURES=readiness` and `PRICE_BOOKS_ENABLED=false`. Pass
    `--ai-features` (or `none`) and `--price-books on|off` only to change that baseline on purpose.
@@ -40,9 +64,13 @@ the revision that serves traffic instead.
    and append it.
 2. After `gcloud run services update-traffic ... --to-tags=<tag>=100`, append the same revision with
    `100% (promoted)`.
-3. `python scripts/stamp_hosting.py` stamps the Hosting shell and prints a row. Deploy only
-   `hosting:alert-disaster`, fill in the Hosting version, append the row, then run
+3. `python scripts/stamp_hosting.py --version "$VERSION"` stamps the Hosting shell and prints a row.
+   Deploy only `hosting:alert-disaster`, fill in the Hosting version, append the row, then run
    `python scripts/stamp_hosting.py --reset`.
+4. After `node scripts/verify_hosting.js` passes, run
+   `python3 scripts/auto_deploy.py --publish "$(git rev-parse HEAD)"` with `gcloud` and `gh` signed in. It
+   creates the git tag and GitHub Release for the version the live backend reports, so this release can
+   be chosen for a rollback.
 
 ### Firestore TTL policies
 

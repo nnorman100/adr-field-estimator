@@ -510,6 +510,7 @@ def test_health_discloses_configuration_only_to_staff(context):
     assert client.get('/api/health').json() == {
         'status': 'healthy',
         'schema_version': 3,
+        'version': 'unknown',
         'source_commit': 'unknown',
     }
     details = client.get('/api/health/details').json()
@@ -518,6 +519,7 @@ def test_health_discloses_configuration_only_to_staff(context):
         and details['evidence_bucket'] == bm.BUCKET
         and details['live_model'] == bm.LIVE_MODEL
     )
+    assert details['version'] == 'unknown'
     assert details['source_commit'] == 'unknown'
     bm.app.dependency_overrides.pop(bm.current_staff)
     assert client.get('/api/health/details', headers={'Authorization': ''}).status_code == 401
@@ -526,12 +528,28 @@ def test_health_discloses_configuration_only_to_staff(context):
 def test_source_commit_comes_only_from_a_well_formed_deploy_stamp(tmp_path):
     stamp = tmp_path / 'SOURCE_COMMIT'
     assert bm.read_source_commit(str(stamp)) == 'unknown'
+    assert bm.read_release_version(str(stamp)) == 'unknown'
     for value in ['a' * 40, 'a' * 40 + '-dirty']:
         stamp.write_text(value + '\n')
         assert bm.read_source_commit(str(stamp)) == value
-    for value in ['', 'abc123', 'A' * 40, 'a' * 40 + '-other', 'a' * 40 + '\n<script>']:
+        assert bm.read_release_version(str(stamp)) == 'unknown'
+    stamp.write_text('a' * 40 + '\n2026.11.02-1\n')
+    assert bm.read_source_commit(str(stamp)) == 'a' * 40
+    assert bm.read_release_version(str(stamp)) == '2026.11.02-1'
+    for value in [
+        '',
+        'abc123',
+        'A' * 40,
+        'a' * 40 + '-other',
+        'a' * 40 + '\n<script>',
+        'a' * 40 + '\n2026.11.02-0\n',
+        'a' * 40 + '\n2026.13.02-1\n',
+        'a' * 40 + '-dirty\n2026.11.02-1-dirty\n',
+        'a' * 40 + '\n2026.11.02-1\nextra\n',
+    ]:
         stamp.write_text(value)
         assert bm.read_source_commit(str(stamp)) == 'unknown'
+        assert bm.read_release_version(str(stamp)) == 'unknown'
 
 
 def test_year_built_bound_follows_the_clock_on_a_warm_instance(monkeypatch):

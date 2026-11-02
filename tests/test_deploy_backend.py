@@ -377,3 +377,49 @@ def test_refuses_with_the_message_when_gcloud_is_missing(capsys):
     )
     assert code == 2
     assert '--staff-emails' in capsys.readouterr().err
+
+
+def test_version_flag_is_refused_with_a_dirty_tree(capsys, stamp_path):
+    def run(argv, **kwargs):
+        raise AssertionError('nothing may be deployed')
+
+    argv = ['--workspaces', 'on', '--tag', 'stage-1', '--version', '2026.11.02-1', '--yes']
+    assert deploy.main([*argv, '--allow-dirty'], run=run, git=fake_git(' M backend/main.py\n')) == 2
+    assert '--version needs a clean tree' in capsys.readouterr().err
+    assert not stamp_path.exists()
+
+
+def test_version_flag_stamps_commit_and_version_into_build_context(capsys, stamp_path):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(stamp_path.read_text())
+        return subprocess.CompletedProcess(argv, 0)
+
+    assert (
+        deploy.main(
+            [
+                '--workspaces',
+                'on',
+                '--tag',
+                'stage-1',
+                '--version',
+                '2026.11.02-1',
+                '--yes',
+            ],
+            run=run,
+            git=fake_git(),
+        )
+        == 0
+    )
+    assert calls == [HEAD + '\n2026.11.02-1\n']
+    assert not stamp_path.exists()
+    out = capsys.readouterr().out
+    assert 'Release version: 2026.11.02-1' in out
+    assert 'version 2026.11.02-1' in out.splitlines()[-1]
+    with pytest.raises(SystemExit):
+        deploy.main(
+            ['--workspaces', 'on', '--tag', 'stage-1', '--version', '2026.11.02-0', '--dry-run'],
+            run=run,
+            git=fake_git(),
+        )
