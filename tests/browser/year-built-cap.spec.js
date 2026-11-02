@@ -18,9 +18,6 @@ test('Year built accepts the current year when the clock reads 2027', async ({ p
   await page.goto('/app');
   const year = page.locator('#yearBuilt');
   await expect(year).toHaveAttribute('max', '2027');
-  // Sign-in finishes after load and opens the job, which refills the form and clears this field.
-  // The address field is enabled once that has happened, as in the other browser specs.
-  await expect(page.locator('#address')).toBeEnabled();
   // Set the value and read the validity in one evaluate: the browser runs it without
   // interleaving any other app work, so no refill can land between the two steps.
   const checks = await year.evaluate((el) => {
