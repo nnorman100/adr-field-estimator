@@ -103,6 +103,8 @@ test('a queued offline edit survives the archive and can be discarded on purpose
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#discardArchived').click();
   await expect(page.locator('#dashboardHeading')).toHaveText('My jobs');
+  await expect(page.locator('#archivedActions')).toBeHidden();
+  await expect(page.locator('#message')).toContainText('Local work discarded.');
   expect((await localRows(page)).map((r) => r.id)).not.toContain(JOB);
 });
 

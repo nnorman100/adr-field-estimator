@@ -717,6 +717,8 @@ test.describe('controlled voice-note uploads', () => {
       return page.route(other, (route) => route.abort());
     });
     // The queue's next attempt loses its connection while the browser still reports online.
+    // Wait until the first drain has armed its retry timer before moving the clock.
+    await expect.poll(() => page.evaluate(() => !!state.queueRetry)).toBe(true);
     await page.clock.fastForward(61000);
     await expect(page.locator('#message')).toContainText(
       'Some queued drafts still need synchronization',

@@ -51,6 +51,7 @@ test('Retry recognition is disabled offline and hidden after the job is signed',
   await expect(retry).toBeEnabled();
   await expect(retry).not.toHaveAttribute('title', 'Photo recognition needs a connection.');
   // Coming back online can clear a confirmation that moved while the phone was offline.
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await task(page, 'property');
   await page.locator('#scopeConfirmed').check();
   await saveDraft(page);

@@ -19,9 +19,12 @@ async function newJob(page, role) {
   await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid(role));
   await page.goto('/app');
   await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  // The readings request starts only after the editor has loaded the claim, so it marks the job as ready.
+  const loaded = page.waitForRequest((r) => /\/api\/inspections\/[^/]+\/readings$/.test(r.url()));
   await page.getByRole('button', { name: 'New job', exact: true }).click();
   await checkScope(page);
   await expect(page.locator('#claimDetails')).toBeVisible();
+  await loaded;
 }
 async function openClaim(page) {
   if (!(await page.locator('#claimDetails').evaluate((el) => el.open)))
@@ -242,8 +245,11 @@ test('a fill whose document refresh finishes after a manual save marks only its 
   await page.locator('#fillScopeProperty').click();
   await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   // Clear the filled claim values so a later fill changes only claim details.
-  for (const id of ['claimCarrier', 'claimNumber'])
+  for (const id of ['claimCarrier', 'claimNumber']) {
     await label(page, id).getByRole('button', { name: 'Undo', exact: true }).click();
+    // The next Undo must use the claim version this one saves.
+    await expect(label(page, id)).not.toContainText('From walkthrough');
+  }
   await expect(page.locator('#claimNumber')).toHaveValue('');
   await page.locator('#confirmFilledScope').click();
   await page.locator('#finishAudit').click();

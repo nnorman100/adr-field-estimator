@@ -830,7 +830,10 @@ for (const width of [320, 390])
       // Job B: the same room answered with the Mold pill.
       const menu = page.locator('#jobMenu');
       if (!(await menu.evaluate((el) => el.open))) await menu.locator(':scope > summary').click();
+      const jobAId = await page.evaluate(() => state.draft.inspection_id);
       await page.locator('#newInspection').click();
+      // Job A also has one room, so wait for the new draft: the form is reset in the same step.
+      await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(jobAId);
       await expect(page.locator('#rooms .room')).toHaveCount(1);
       await scope(page, ['Bathroom', 'Hall']);
       await fits();

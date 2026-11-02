@@ -213,6 +213,7 @@ test('a failed transcription blocks Finish and signing until the technician reso
     'Play it, type the key facts, then remove it.',
   );
   await context.setOffline(true);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
   const retainedParts = await savedParts(page);
   await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
   await expect(page.locator('#message')).toContainText('requires a connection');
@@ -220,6 +221,7 @@ test('a failed transcription blocks Finish and signing until the technician reso
   expect(await savedParts(page)).toBe(retainedParts);
   expect(resolves).toBe(0);
   await context.setOffline(false);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
   await page.locator('#voiceNotes li').getByRole('button', { name: 'Remove' }).click();
   await expect(page.locator('#voiceNotes li')).toHaveCount(0);
   expect(resolves).toBe(1);
@@ -247,6 +249,7 @@ test('an outstanding homeowner link blocks offline voice recording and survives 
   await page.reload();
   await ready(page);
   await context.setOffline(true);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
   await task(page, 'walkthrough');
   await page.locator('#startNotes').click();
   await page.locator('#recordNote').click();
@@ -265,6 +268,7 @@ test('an outstanding homeowner link blocks offline voice recording and survives 
     'Connect to cancel it before recording new notes.',
   );
   await context.setOffline(false);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
   await page.locator('#recordNote').click();
   await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
   expect(await page.evaluate(() => state.draft.homeowner_link_pending)).toBe(false);
@@ -376,6 +380,7 @@ test('a signing link sent on another device blocks offline recording without vis
     }, id);
     expect(await other.evaluate(() => state.draft.homeowner_link_pending)).toBe(true);
     await second.setOffline(true);
+    await expect.poll(() => other.evaluate(() => navigator.onLine)).toBe(false);
     await other.locator('#startNotes').click();
     await other.locator('#recordNote').click();
     await expect(other.locator('#message')).toContainText(

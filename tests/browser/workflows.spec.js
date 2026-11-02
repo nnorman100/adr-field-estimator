@@ -205,6 +205,8 @@ test('older drafts with retired job flags load and documents print the standard 
   });
   await page.reload();
   await page.locator('#restoreRemote').click();
+  // The restore fetches the server record before it fills the form and hides the conflict bar.
+  await expect(page.locator('#conflictActions')).toBeHidden();
   for (const id of ['crawlSpace', 'graniteRemoval', 'waterHeaterLoss', 'workPerformed'])
     await expect(page.locator('#' + id)).toHaveCount(0);
   await page.locator('#finishAudit').click();
@@ -379,7 +381,30 @@ test('offline draft reload and reconnection preserve local work', async ({
   await context.setOffline(true);
   await page.locator('#technicianNotes').fill('Local observations while offline');
   await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
-  await page.waitForTimeout(1700);
+  // The status shows at once; wait until the note is committed to the phone's database.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          new Promise((resolve, reject) => {
+            const request = indexedDB.open('adr-private-drafts-v2');
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+              const all = request.result.transaction('drafts').objectStore('drafts').getAll();
+              all.onerror = () => reject(all.error);
+              all.onsuccess = () => {
+                request.result.close();
+                resolve(
+                  all.result.some(
+                    (row) => row.draft.data.technician_notes === 'Local observations while offline',
+                  ),
+                );
+              };
+            };
+          }),
+      ),
+    )
+    .toBe(true);
   await page.reload();
   await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
   await expect(page.locator('#finishAudit')).toBeDisabled();
@@ -762,6 +787,8 @@ async function restoreCloudOnly(page, id) {
   await menu(page, 'jobMenu');
   await page.locator('#newInspection').click();
   await expect(page.locator('#jobMenu')).not.toHaveAttribute('open');
+  // The old draft is written back before the new form is filled; wait for the blank form.
+  await expect(page.locator('#address')).toHaveValue('');
   await page.evaluate(
     (id) =>
       new Promise((resolve, reject) => {
@@ -945,6 +972,7 @@ test('walkthrough form fill auto-applies quoted values, supports Undo and invali
   await expect(page.locator('#documents')).toBeHidden();
   await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
   await saveDraft(page);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
   await page.reload();
   await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
   await page.locator('#scopeConfirmed').check();
