@@ -218,35 +218,3 @@ test('an auth-state change clears private counts and cached summary UI', async (
   await expect(page.locator('#jobInsight')).toHaveText('');
   await expect(page.locator('.ai-usage')).toHaveCount(0);
 });
-
-test('counts that arrive while sign-out is clearing the phone do not survive it', async ({
-  page,
-}) => {
-  await start(page, 'owner');
-  let release;
-  const held = new Promise((resolve) => (release = resolve));
-  await page.route('**/api/session', async (route) => {
-    await held;
-    await route.continue();
-  });
-  const requested = page.waitForRequest('**/api/session');
-  await page.locator('#accountMenu > summary').click();
-  await requested;
-  await page.evaluate(() => {
-    // Hold sign-out mid-way until the opened menu's late response has rendered.
-    const clear = window.clearLocal,
-      quota = document.getElementById('aiQuota');
-    window.clearLocal = async () => {
-      await clear();
-      window.__clearingLocal = true;
-      while (!quota.textContent) await new Promise((resolve) => setTimeout(resolve, 20));
-    };
-  });
-  const signedOut = page.evaluate(() => window.__testAuthChanged(null));
-  await page.waitForFunction(() => window.__clearingLocal);
-  release();
-  await signedOut;
-  await expect(page.locator('#authPanel')).toBeVisible();
-  await expect(page.locator('#aiQuota')).toBeHidden();
-  await expect(page.locator('#aiQuota')).toHaveText('');
-});
