@@ -3521,7 +3521,7 @@ async function refreshExtraQuote() {
       price.rate +
       '/h = $' +
       price.total +
-      ' at base rate. The estimate range applies sheet allowances.';
+      '. This exact amount is added to the estimate range with no markup.';
     $('saveExtra').disabled = !!editor.saving;
   } catch (e) {
     if (!extraContext(editor) || editor.sequence !== sequence) return;

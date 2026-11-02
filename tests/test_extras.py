@@ -59,10 +59,8 @@ def test_extra_disallows_ai_hours_and_client_prices():
             Extra.model_validate(extra)
 
 
-@pytest.mark.parametrize(
-    'after_hours,sf,factor', [(False, 10, '1.5'), (True, 10, '1.8'), (False, 1001, '1.2')]
-)
-def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf, factor):
+@pytest.mark.parametrize('after_hours,sf', [(False, 10), (True, 10), (False, 1001), (True, 1001)])
+def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf):
     values = data()
     values['rooms'][0]['finished_sf'] = sf
     values['is_after_hours'] = after_hours
@@ -75,11 +73,9 @@ def test_decimal_price_range_exact_wording_and_unpriced_coverage(after_hours, sf
     assert Decimal(str(total)) - Decimal(str(price_scope(original)[1])) == Decimal('118.65')
     old_low, old_high = proposal_range(original, price_scope(original)[0])
     low, high = proposal_range(scope, lines)
-    assert low - old_low == Decimal('118.65') * (Decimal('1.2') if after_hours else 1)
-    # Compare rounded final sums rather than independently rounded deltas.
-    assert high == (old_high + Decimal('118.65') * Decimal(factor)).quantize(
-        Decimal('.01'), rounding='ROUND_HALF_UP'
-    )
+    # Approved extras are job-charge-like: the exact approved amount, unmarked, in both bounds.
+    assert low - old_low == Decimal('118.65')
+    assert high - old_high == Decimal('118.65')
     ai = AIResult(summary='Proposed work', suggestions=[], unpriced_work=[TASK])
     docs = make_documents(
         scope,
@@ -382,3 +378,18 @@ def test_source_item_cannot_clear_work_beyond_approved_description(source, descr
     docs = make_documents(scope, [], ai)
     assert docs['unpriced_work'] == []
     assert docs['signable']
+
+
+EXTRA_RANGE = 'approved additional work is added at its approved amount to both ends'
+
+
+@pytest.mark.parametrize('with_extra', [True, False])
+def test_range_mentions_approved_work_only_with_an_approved_extra(with_extra):
+    values = dict(data(), extras=[approved()] if with_extra else [])
+    docs = make_documents(
+        InspectionData.model_validate(values),
+        [],
+        AIResult(summary='Proposed work', suggestions=[], unpriced_work=[]),
+    )
+    assert (EXTRA_RANGE in docs['iicrc_defense_letter']) is with_extra
+    assert 'to the priced scope' in docs['iicrc_defense_letter']
