@@ -1,6 +1,7 @@
-"""Seed one price book per named company and pin unsigned drafts. Dry-run writes nothing.
+"""Write ADR's own rates as ADR's price book and pin ADR's unsigned drafts. Dry-run writes nothing.
 
-Signed inspections, authorizations, evidence and company identity versions are not written.
+Only ADR has a starting book: every other company publishes its own prices, and naming one here
+is refused. Signed inspections, authorizations, evidence and company identity versions are not written.
 A draft that still carries a legacy package price is left unpinned. An audited draft keeps its
 documents and proposal hash; the seed basis is recorded beside them so the draft stays signable.
 """
@@ -9,6 +10,7 @@ import hashlib
 import json
 
 try:
+    from .adr_price_book import ADR_COMPANY_ID, adr_rates
     from .inspection_store import now
     from .price_books import (
         CALCULATION_VERSION,
@@ -16,9 +18,9 @@ try:
         CURRENCY,
         content_hash,
         saved_basis,
-        seed_rates,
     )
 except ImportError:
+    from adr_price_book import ADR_COMPANY_ID, adr_rates
     from inspection_store import now
     from price_books import (
         CALCULATION_VERSION,
@@ -26,7 +28,6 @@ except ImportError:
         CURRENCY,
         content_hash,
         saved_basis,
-        seed_rates,
     )
 
 HEAD = '_company_price_books'
@@ -46,12 +47,12 @@ def _two(value):
 
 
 def planned_rates(company):
-    rates = seed_rates()
+    if company.get('company_id') != ADR_COMPANY_ID:
+        raise ValueError('Only ADR has a starting price book. Other companies set their own.')
+    rates = adr_rates()
     profile_rate = (company.get('profile') or {}).get('additional_work_rate')
     if profile_rate:
         rates['additional_work_hourly'] = _two(profile_rate)
-    elif company.get('company_id') != 'adr':
-        rates['additional_work_hourly'] = ''
     return rates
 
 
@@ -65,9 +66,29 @@ def _legacy_audit(inspection):
     return bool(audit) and not saved_basis(audit)
 
 
+def adr_rates_outside_adr(db):
+    """Counts of other companies' saved books and job pins that hold ADR's rates. No values."""
+    ours = {key: value for key, value in adr_rates().items() if key != 'additional_work_hourly'}
+
+    def holding(collection):
+        found = 0
+        for snapshot in db.collection(collection).stream():
+            row = snapshot.to_dict() or {}
+            rates = row.get('rates')
+            if row.get('company_id') == ADR_COMPANY_ID or not isinstance(rates, dict):
+                continue
+            if {key: rates.get(key) for key in ours} == ours:
+                found += 1
+        return found
+
+    return {'books': holding(VERSIONS), 'pins': holding(PINS)}
+
+
 def build_plan(db, company_ids):
     if not company_ids:
         raise ValueError('Name at least one company.')
+    if set(company_ids) != {ADR_COMPANY_ID}:
+        raise ValueError('Only ADR has a starting price book. Other companies set their own.')
     priced_at = now()
     companies = []
     pins = []
@@ -168,6 +189,7 @@ def build_plan(db, company_ids):
         'pins': pins,
         'ambiguous': ambiguous,
         'signed_left_untouched': signed,
+        'adr_rates_outside_adr': adr_rates_outside_adr(db),
     }
 
 
@@ -182,6 +204,7 @@ def summary(plan):
         'audit_bases_to_record': sum(1 for row in plan['pins'] if row.get('audit_basis')),
         'ambiguous_drafts': len(plan['ambiguous']),
         'signed_left_untouched': plan['signed_left_untouched'],
+        'adr_rates_outside_adr': plan['adr_rates_outside_adr'],
         'content_hashes': sorted(
             {row['content_sha256'] for row in plan['companies'] if row.get('content_sha256')}
         ),

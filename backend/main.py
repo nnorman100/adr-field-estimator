@@ -73,6 +73,7 @@ try:
     from .delivery import Deliveries
     from . import document_links
     from . import tags as qr_tags
+    from .adr_price_book import adr_rates
     from .claims import make_documents, price_scope, proposal_date
     from .sizing import equipment_sizing
     from .prompts import (
@@ -98,7 +99,7 @@ try:
     from .workspace_api import failure_for, register_workspace_routes
     from .price_book_api import register_price_book_routes
     from .price_book_store import Expired
-    from .price_books import price_books_enabled, saved_basis
+    from .price_books import price_books_enabled, price_display, saved_basis
     from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from .inspection_store import (
         InspectionStore,
@@ -140,6 +141,7 @@ except ImportError:
     from delivery import Deliveries
     import document_links
     import tags as qr_tags
+    from adr_price_book import adr_rates
     from claims import make_documents, price_scope, proposal_date
     from sizing import equipment_sizing
     from prompts import (
@@ -165,7 +167,7 @@ except ImportError:
     from workspace_api import failure_for, register_workspace_routes
     from price_book_api import register_price_book_routes
     from price_book_store import Expired
-    from price_books import price_books_enabled, saved_basis
+    from price_books import price_books_enabled, price_display, saved_basis
     from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
     from inspection_store import (
         InspectionStore,
@@ -886,6 +888,12 @@ async def session_info(staff=Depends(current_staff)):
         result['email_notice'] = actor['role'] == 'owner' and await stored(
             get_job_store().workspaces.email_notice
         )
+        if actor.get('company'):
+            result.update(
+                await stored(get_job_store().workspaces.prices.session_view, actor['company'])
+            )
+    else:
+        result.update(prices_set=True, price_display=price_display(adr_rates()))
     if ai_features.enabled('ai_usage'):
         try:
             result['quota'] = await stored(get_job_store().usage, staff['uid'])
@@ -1472,7 +1480,9 @@ async def audit_inspection(
     if WORKSPACES_ENABLED and getattr(store, 'workspaces', None):
         pin = await stored(store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id)
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
-    items, total = price_scope(data, None if pin is None else pin['rates'])
+    # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
+    rates = adr_rates() if pin is None else pin['rates']
+    items, total = price_scope(data, rates)
     if total <= 0:
         raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
     deadline = time.monotonic() + 30
@@ -1513,7 +1523,7 @@ async def audit_inspection(
             identity,
             customer,
             claim,
-            None if pin is None else pin['rates'],
+            rates,
             basis,
         )
     except (ValueError, ValidationError):

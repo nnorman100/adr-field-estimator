@@ -2,6 +2,11 @@
 
 from decimal import Decimal, ROUND_HALF_UP
 
+try:
+    from .adr_price_book import ADR_COMPANY_ID, adr_rates
+except ImportError:
+    from adr_price_book import ADR_COMPANY_ID, adr_rates
+
 
 def rate_for(company, source=None):
     """The hourly rate for a new approval. A price-book source wins over the profile projection."""
@@ -13,8 +18,8 @@ def rate_for(company, source=None):
             )
         return Decimal(str(value))
     value = company['profile'].get('additional_work_rate')
-    if value is None and company['company_id'] == 'adr':
-        value = '47.46'  # Residential Estimate Tool E24; existing ADR profile seed.
+    if value is None and company['company_id'] == ADR_COMPANY_ID:
+        value = adr_rates()['additional_work_hourly']
     if value is None:
         raise ValueError(
             'The company owner must set an additional-work hourly rate in Company settings.'

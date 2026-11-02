@@ -29,10 +29,12 @@ from pydantic import AfterValidator, BeforeValidator, Field, SecretStr, field_va
 from typing import Annotated, Literal
 
 try:
+    from .adr_price_book import ADR_COMPANY_ID, adr_rates
     from .cloud_log import event
     from .contracts import ClaimDetails, StrictModel
     from .inspection_store import Conflict, link_voided, now, reserve_slot
 except ImportError:
+    from adr_price_book import ADR_COMPANY_ID, adr_rates
     from cloud_log import event
     from contracts import ClaimDetails, StrictModel
     from inspection_store import Conflict, link_voided, now, reserve_slot
@@ -786,7 +788,13 @@ class WorkspaceStore:
                     from price_books import price_books_enabled
                 if price_books_enabled():
                     baseline = (
-                        current_rate if current_rate else ('47.46' if company_id == 'adr' else None)
+                        current_rate
+                        if current_rate
+                        else (
+                            adr_rates()['additional_work_hourly']
+                            if company_id == ADR_COMPANY_ID
+                            else None
+                        )
                     )
                     if rate is not None and f'{rate:.2f}' != (baseline or ''):
                         raise Conflict(
@@ -794,14 +802,14 @@ class WorkspaceStore:
                         )
                     if current_rate:
                         profile['additional_work_rate'] = current_rate
-                    elif company_id == 'adr':
-                        profile['additional_work_rate'] = '47.46'
+                    elif company_id == ADR_COMPANY_ID:
+                        profile['additional_work_rate'] = adr_rates()['additional_work_hourly']
                 elif rate is not None:
                     profile['additional_work_rate'] = f'{rate:.2f}'
                 elif current_rate:
                     profile['additional_work_rate'] = current_rate
-                elif company_id == 'adr':
-                    profile['additional_work_rate'] = '47.46'
+                elif company_id == ADR_COMPANY_ID:
+                    profile['additional_work_rate'] = adr_rates()['additional_work_hourly']
                 company['profile'] = profile
             company.update(version=company['version'] + 1, updated_at=now())
             tx.set(self.ref('_companies', company_id), company)

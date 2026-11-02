@@ -10,7 +10,7 @@ Context · Options · Decision · Consequences
 ```
 
 ### D-001: Mirror the company workbook for prices (Oct 2026)
-Status: accepted. Prices come from the company's estimating workbook, calculated in Decimal on the server. ADR's after-hours labor stays at the workbook formula's $47.46/hr even though the sheet lists $83.45 (owner chose to mirror the formula). A model never overrides a total.
+Status: accepted. Prices come from the company's estimating workbook, calculated in Decimal on the server. ADR's after-hours labor stays at the workbook formula's rate even though the sheet lists a higher one (owner chose to mirror the formula). A model never overrides a total.
 
 ### D-002: One product named DryScope, built on this repo (Oct 24, 2026)
 Status: accepted. The Next.js `nnorman100/Dryscope` repo is only a feature source, rebuilt here in this repo's style. No repo rename or domain. Firebase project stays `alert-disaster-field-2026`.
@@ -35,3 +35,6 @@ Status: accepted (owner). Options considered: stay standalone; fold into the pla
 
 ### D-009: Agents ask before merging any PR (Oct 28, 2026)
 Status: accepted (owner). Overrides the roadmap's earlier rule that agents may merge Low/Medium risk PRs with green CI. Enforced by the `gh pr merge` approval rule in `.claude/settings.json`.
+
+### D-010: No default prices; ADR's rates are ADR's alone (Nov 2, 2026)
+Status: accepted (owner). ADR's estimating sheet is proprietary to ADR, so it is not a product default. A company without published prices is blocked from pricing with a clear message. ADR's rates are kept as ADR's data and used only for company `adr`, and no rate ships in browser code. Later steps of the owner-pricing plan add owner-defined tables; formulas and `CALCULATION_VERSION` are unchanged here.

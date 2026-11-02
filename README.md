@@ -33,9 +33,9 @@ Use the persistent **1. Walk & Photo / 2. Check Scope / 3. Review & Sign** step 
 
 ## Pricing and evidence
 
-`backend/claims.py` calculates money with Decimal and cent rounding. The populated default job charges total $1,180.20 and appear exactly once. Rates and the estimate-range formulas are traced to the user-supplied workbook in [pricing source notes](docs/pricing-source.md). Three fans and one dehumidifier for three days cost $567.00. Waste increases applicable demolition item totals. Added labor uses the workbook's $47.46/hr formula even for an after-hours loss, as confirmed by the user; after-hours estimates add $200 in job charges and apply the sheet's labor/material factor.
+`backend/claims.py` calculates money with Decimal and cent rounding. Each company sets its own prices and there is no default price list ([pricing source](docs/pricing-source.md)); a company without published prices cannot price an estimate. The populated default job charges appear exactly once. Waste increases applicable demolition item totals. After-hours estimates add the company's after-hours job charge and apply the labor/material factor. ADR's rates and source notes are in [ADR pricing source](docs/adr-pricing-source.md).
 
-The customer proposal shows the sheet-derived low–high estimate, with itemized base-rate charges shown separately as its calculation detail. ADR package tiers are not in the supplied sheet and are no longer accepted for new audits. Models cannot supply prices, override totals or remove conditional clauses. AI summaries and suggestions are labeled for technician review; suggestions do not become observed evidence or authorized work.
+The customer proposal shows the low–high estimate, with itemized base-rate charges shown separately as its calculation detail. ADR package tiers are not in the supplied sheet and are no longer accepted for new audits. Models cannot supply prices, override totals or remove conditional clauses. AI summaries and suggestions are labeled for technician review; suggestions do not become observed evidence or authorized work.
 
 For work outside the sheet, see [priced additional work](docs/priced-extras.md) for the **Price the unpriced work** workflow, owner approval, company rates, offline behavior and feature availability.
 

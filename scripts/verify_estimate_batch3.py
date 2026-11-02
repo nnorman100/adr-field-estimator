@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend.contracts import InspectionData, AIResult, OcrResult
+from backend.adr_price_book import adr_rates
 from backend.claims import price_scope, make_documents
 from backend.main import generate, get_ai_client, AUDIT_MODEL, OCR_MODEL, PROJECT_ID
 from backend.prompts import audit_prompt, OCR_INSTRUCTIONS
@@ -48,7 +49,7 @@ async def health_case():
     )
     result = await generate(
         AIResult,
-        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
+        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data, adr_rates())[0])],
         AUDIT_MODEL,
     )
     text = (result.summary + ' ' + ' '.join(result.suggestions)).casefold()
@@ -103,7 +104,7 @@ async def evidence_case():
     ]
     result = await generate(
         AIResult,
-        [audit_prompt(data.model_dump(mode='json'), photos, price_scope(data)[0])],
+        [audit_prompt(data.model_dump(mode='json'), photos, price_scope(data, adr_rates())[0])],
         AUDIT_MODEL,
     )
     text = (result.summary + ' ' + ' '.join(result.suggestions)).casefold()
@@ -139,13 +140,13 @@ async def open_extent_case():
     )
     result = await generate(
         AIResult,
-        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
+        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data, adr_rates())[0])],
         AUDIT_MODEL,
     )
     assert any(
         'floor' in x.casefold() or 'laminate' in x.casefold() for x in result.unpriced_work
     ), result
-    assert not make_documents(data, [], result)['signable']
+    assert not make_documents(data, [], result, rates=adr_rates())['signable']
     print(
         'PASS: requested open-ended flooring outside priced quantities blocks signing', flush=True
     )

@@ -8,7 +8,8 @@ import urllib.error
 from copy import deepcopy
 import pytest
 import backend.workspaces as workspaces
-from backend.claims import price_scope, proposal_range
+from backend.claims import proposal_range
+from tests.adr_pricing import price_scope
 from backend.contracts import InspectionData
 from backend.delivery import (
     DELIVERY_OFF,

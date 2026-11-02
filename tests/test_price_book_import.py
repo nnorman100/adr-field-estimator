@@ -5,7 +5,8 @@ import zipfile
 
 import pytest
 from backend.price_book_import import export_csv, export_xlsx, parse_upload
-from backend.price_books import normalize_rates, seed_rates
+from backend.adr_price_book import adr_rates
+from backend.price_books import normalize_rates
 
 XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -15,7 +16,7 @@ def parsed(raw, kind='text/csv'):
 
 
 def test_csv_and_xlsx_round_trip_preserves_cents():
-    book = seed_rates()
+    book = adr_rates()
     book['emergency_call'] = '0.00'
     book['additional_work_hourly'] = '10000.00'
     csv_rates = parsed(export_csv('adr', 'seed', 0, book))
@@ -27,7 +28,7 @@ def test_csv_and_xlsx_round_trip_preserves_cents():
 
 
 def test_csv_rejects_a_wrong_template_company_or_formula():
-    raw = export_csv('adr', 'seed', 0, seed_rates())
+    raw = export_csv('adr', 'seed', 0, adr_rates())
     with pytest.raises(ValueError, match='columns'):
         parsed(raw.replace(b'unit_price', b'price', 1))
     with pytest.raises(ValueError, match='different company'):
@@ -53,7 +54,7 @@ def _patch(raw, name, data):
 
 
 def test_xlsx_rejects_formulas_macros_links_entities_and_extra_sheets():
-    raw = export_xlsx('adr', 'seed', 0, seed_rates())
+    raw = export_xlsx('adr', 'seed', 0, adr_rates())
     sheet = zipfile.ZipFile(io.BytesIO(raw)).read('xl/worksheets/sheet1.xml')
     formula = sheet.replace(
         b't="inlineStr"><is><t>133.95</t></is>',
@@ -101,7 +102,7 @@ def test_excel_shared_strings_round_trip_and_edited_price():
     from xml.etree import ElementTree as ET
     from backend.price_book_import import NS
 
-    book = seed_rates()
+    book = adr_rates()
     raw = export_xlsx('adr', 'seed', 0, book)
     output = io.BytesIO()
     strings = ET.Element('sst', xmlns=NS['m'])

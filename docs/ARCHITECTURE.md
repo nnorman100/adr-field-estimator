@@ -25,7 +25,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Documents (4) rendering | `public/documents.js` |
 | Homeowner signing and read-only document page | `public/sign.html`, `sign.js` |
 | Workspaces, roles, jobs list | `public/workspaces.js`, `backend/workspaces.py`, `workspace_api.py` |
-| Pricing, documents, mandatory wording | `backend/claims.py`, `contracts.py`, `docs/pricing-source.md` |
+| Pricing, documents, mandatory wording | `backend/claims.py`, `contracts.py`, `price_books.py`, `docs/pricing-source.md` |
 | Revisions, evidence, quotas | `backend/inspection_store.py`, `job_store.py` |
 | Signing and document links | `backend/signing_links.py`, `document_links.py` |
 | Drying log / watch | `psychrometrics.py`, `drying_watch.py`, `public/drying*.js` |

@@ -22,7 +22,8 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 | Drying watch | yes | flag off | no | |
 | Priced extras | yes | flag off | no | |
 | Job summaries and AI usage | yes | flag off | no | |
-| Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built |
+| Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built. Turn the flag on before onboarding a company other than ADR: it cannot set prices or estimate without it |
+| No default prices (a company without prices is blocked; ADR's rates are ADR's alone) | yes | on with the code | no | Owner notice and blocked audit not yet checked on a phone |
 | Automatic deploys after CI | yes (#171) | not recorded | n/a | Needs the owner's one-time setup in `docs/firebase-isolation.md#automatic-deploys`; runs are recorded in the Actions job summary, not `RELEASES.md` |
 | Vault backup | yes | yes | n/a | Verified Oct 27 |
 | Landing page at `/` | yes | yes | no | |

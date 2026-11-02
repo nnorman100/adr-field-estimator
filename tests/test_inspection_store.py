@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import pytest
 from backend.inspection_store import Conflict, Limited
-from backend.claims import make_documents
+from tests.adr_pricing import make_documents
 from backend.contracts import AIResult
 from tests.fakes import FakeStore, png
 from tests.test_backend import ID, data, sign_payload

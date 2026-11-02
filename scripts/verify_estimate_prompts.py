@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend.contracts import InspectionData
+from backend.adr_price_book import adr_rates
 from backend.claims import price_scope, make_documents
 from backend.main import (
     generate,
@@ -61,7 +62,7 @@ async def audit_specialty():
         ),
     )
     result = await generate_audit(
-        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
+        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data, adr_rates())[0])],
         'synthetic-check',
         time.monotonic(),
     )
@@ -69,7 +70,7 @@ async def audit_specialty():
     assert not any('cabinet' in task.casefold() for task in result.unpriced_work), result
     assert 'suspect' in result.summary.casefold(), result.summary
     assert 'propos' in result.summary.casefold(), result.summary
-    assert not make_documents(data, [], result)['signable']
+    assert not make_documents(data, [], result, rates=adr_rates())['signable']
     print(
         'PASS: mixed completed/proposed work, suspected growth and unpriced toilet task; cabinet possibility remains conditional'
     )
@@ -104,12 +105,12 @@ async def audit_priced_extra():
     )
     for attempt in range(3):
         result = await generate_audit(
-            [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
+            [audit_prompt(data.model_dump(mode='json'), [], price_scope(data, adr_rates())[0])],
             'synthetic-extras-check',
             time.monotonic(),
         )
         assert not result.unpriced_work, result.unpriced_work
-        documents = make_documents(data, [], result)
+        documents = make_documents(data, [], result, rates=adr_rates())
         assert documents['signable']
         assert documents['xactimate_scope'][-1]['total'] == 118.65
         print(f'PASS: owner-approved toilet extra covered, run {attempt + 1}/3')
@@ -130,7 +131,7 @@ async def audit_cleaning_only():
         ),
     )
     result = await generate_audit(
-        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data)[0])],
+        [audit_prompt(data.model_dump(mode='json'), [], price_scope(data, adr_rates())[0])],
         'synthetic-check',
         time.monotonic(),
     )
@@ -140,7 +141,7 @@ async def audit_cleaning_only():
     summary = result.summary.casefold()
     assert 'third-party' in summary or 'third party' in summary, result.summary
     assert 'suspect' in summary, result.summary
-    assert not make_documents(data, [], result)['signable']
+    assert not make_documents(data, [], result, rates=adr_rates())['signable']
     print(
         'PASS: cleaning-only services remain unpriced despite generic labor/filter charges; third-party findings stay attributed'
     )

@@ -12,7 +12,7 @@ from backend.contracts import InspectionData
 from backend.live_support import scope_fingerprint
 from backend.prompts import audit_prompt, live_prompt
 from backend.scope import scope_prompt
-from backend.claims import price_scope
+from tests.adr_pricing import price_scope
 from tests.test_backend import context, data, inspect, ID  # noqa: F401
 from tests.test_workspaces import api, store  # noqa: F401
 

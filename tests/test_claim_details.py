@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import backend.main as bm
-from backend.claims import make_documents
+from tests.adr_pricing import make_documents
 from backend.contracts import AIResult, ClaimDetails, InspectionData
 from backend.prompts import live_prompt
 from backend.scope import CLAIM_LABELS, ScopeSuggestions, scope_prompt, validate_suggestions

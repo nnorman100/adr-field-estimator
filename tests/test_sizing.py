@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from backend.claims import price_scope
+from tests.adr_pricing import price_scope
 from backend.contracts import InspectionData, Room
 from backend.sizing import equipment_sizing, letter_paragraph, room_check
 

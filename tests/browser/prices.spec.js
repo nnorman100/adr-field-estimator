@@ -120,3 +120,73 @@ test('a second publish of a stale review is refused and offline does not queue i
   await page.context().setOffline(false);
   await other.close();
 });
+
+test('a company with no prices is told to set them, sees no ADR rate, then prices from its own', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  const adrRates = /133\.95|47\.46|1,180\.20|159\.53|Workbook seed|workbook seed/;
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await page.locator('.task-nav [data-task="property"]').click();
+  await expect(page.locator('#pricesNotSet')).toBeVisible();
+  await expect(page.locator('#pricesNotSetText')).toHaveText(
+    'Set your company prices before your first estimate.',
+  );
+  await expect(page.locator('#jobChargesSummary')).toHaveText('· sheet quantities');
+  await expect(page.locator('#afterHoursLabel')).toHaveText(
+    'After-hours loss: company after-hours job charge and 20% labor/material adjustment.',
+  );
+  await page.locator('#address').fill('Other company synthetic property');
+  await page.locator('#yearBuilt').fill('2000');
+  await page.locator('[data-room-key=finished_sf]').fill('10');
+  await page.locator('#scopeConfirmed').check();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('body')).toContainText(
+    'Set your company prices before your first estimate. Open Company prices from the menu.',
+  );
+  await expect(page.locator('#documents')).toBeHidden();
+
+  await page.getByRole('button', { name: 'Set company prices' }).click();
+  await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices not set.');
+  await expect(page.locator('#dashboardContent')).not.toContainText(adrRates);
+  await expect(page.locator('input[name=emergency_call]')).toHaveValue('');
+  await expect(page.getByRole('button', { name: /Restore/ })).toHaveCount(0);
+  for (const input of await page.locator('input[data-price-key]').all()) await input.fill('12.34');
+  await page.locator('textarea[name=change_reason]').fill('Our first prices');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('not set to 12.34');
+  await expect(page.locator('#priceReview')).not.toContainText('Sample before');
+  await expect(page.locator('#priceReview')).not.toContainText(adrRates);
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1.');
+  await expect(page.locator('input[name=emergency_call]')).toHaveValue('12.34');
+
+  await navigate(page, 'dashboardJobs');
+  await page.getByRole('button', { name: /Other company synthetic property/ }).click();
+  await expect(page.locator('#pricesNotSet')).toBeHidden();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  await expect(page.locator('#proposalBody')).toContainText('Priced from Prices v1.');
+  await expect(page.locator('body')).not.toContainText(adrRates);
+});
+
+test('ADR still sees its own prices on the estimate form, from the API', async ({ page }) => {
+  await start(page, 'estimator');
+  await navigate(page, 'dashboardJobs');
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await expect(page.locator('#jobChargesSummary')).toHaveText('· $1,180.20 at sheet quantities');
+  await expect(page.locator('#afterHoursLabel')).toHaveText(
+    "After-hours loss: $200 job charge and 20% labor/material adjustment. Added labor uses the sheet's $47.46/hr estimate formula.",
+  );
+  await expect(page.locator('#pricesNotSet')).toBeHidden();
+});

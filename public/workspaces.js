@@ -1132,7 +1132,11 @@ window.WorkspaceUI = (() => {
           form,
           'Additional work hourly rate ($/h)',
           'additional_work_rate',
-          p.additional_work_rate ?? (cid === 'adr' ? '47.46' : ''),
+          p.additional_work_rate ??
+            (cid === state.session?.company_id
+              ? state.session?.price_display?.additional_work_hourly
+              : '') ??
+            '',
           'number',
         );
         rate.min = '0.01';

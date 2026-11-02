@@ -2,10 +2,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 from backend.claims import (
-    price_scope,
     proposal_range,
     technician_statement,
-    make_documents,
     ADDITIONAL,
     PRETEST,
     PHOTO_LOCATION_PRIVACY,
@@ -14,6 +12,7 @@ from backend.claims import (
     TESTING,
     VALIDITY,
 )
+from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import InspectionData, AIResult
 from backend.prompts import audit_prompt
 from tests.fakes import ADR_PROFILE
