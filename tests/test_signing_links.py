@@ -533,7 +533,10 @@ def test_pending_link_listing_skips_links_that_already_cannot_sign(api, change):
         current['uid'] = 'estimator'
         changed = client.put(
             '/api/inspections/' + ID,
-            json={'expected_revision': record['revision'], 'data': company_data('Changed property')},
+            json={
+                'expected_revision': record['revision'],
+                'data': company_data('Changed property'),
+            },
         )
         assert changed.status_code == 200, changed.text
     elif change == 'device-signed':
