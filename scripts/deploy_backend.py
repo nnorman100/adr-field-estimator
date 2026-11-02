@@ -136,18 +136,21 @@ def describe_service(argv):
 
 def template_staff_emails(describe):
     """STAFF_EMAILS a deploy without --staff-emails inherits; empty when unset or unreadable."""
-    result = describe(
-        [
-            shutil.which('gcloud') or 'gcloud',
-            'run',
-            'services',
-            'describe',
-            'alert-disaster-field-estimator',
-            '--region=us-west2',
-            '--project=' + PROJECT,
-            '--format=json',
-        ]
-    )
+    try:
+        result = describe(
+            [
+                shutil.which('gcloud') or 'gcloud',
+                'run',
+                'services',
+                'describe',
+                'alert-disaster-field-estimator',
+                '--region=us-west2',
+                '--project=' + PROJECT,
+                '--format=json',
+            ]
+        )
+    except OSError:
+        return ''
     if result.returncode != 0:
         return ''
     try:

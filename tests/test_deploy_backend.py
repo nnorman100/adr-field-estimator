@@ -363,3 +363,17 @@ def test_an_explicit_staff_list_does_not_need_the_service_template(capsys):
     )
     assert code == 0
     assert 'STAFF_EMAILS=a@example.com' in capsys.readouterr().out
+
+
+def test_refuses_with_the_message_when_gcloud_is_missing(capsys):
+    def missing(argv):
+        raise FileNotFoundError(argv[0])
+
+    code = deploy.main(
+        ['--workspaces', 'off', '--tag', 'stage-1', '--dry-run'],
+        run=lambda *args, **kwargs: pytest.fail('gcloud deploy ran'),
+        git=fake_git(),
+        describe=missing,
+    )
+    assert code == 2
+    assert '--staff-emails' in capsys.readouterr().err
