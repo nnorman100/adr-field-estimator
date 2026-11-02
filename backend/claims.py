@@ -338,7 +338,7 @@ def make_documents(
     unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
     pending = sum(extra.approval is None for extra in data.extras)
     estimate_low, estimate_high = proposal_range(data, items)
-    if estimate_high <= 0 or total <= 0:
+    if total <= 0:
         raise ValueError(
             'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'
         )
