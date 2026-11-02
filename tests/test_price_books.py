@@ -1093,14 +1093,21 @@ def test_working_copy_save_conflicts_and_is_never_used_for_pricing(api, enabled)
 
 
 def test_restore_across_calculation_versions_is_refused(api, enabled):
-    client, current, _ = api
+    client, current, db = api
     current['uid'] = 'owner'
-    v1_pub = publish(client, rates(emergency_call='140.00'), 'V1 version')
-    v1_id = v1_pub['version_id']
-
     v2_first = _publish_v2(client, _v2_table('25.00'), 'First v2 version')
     v2_second = _publish_v2(client, _v2_table('30.00'), 'Second v2 version')
-    assert v2_second['sequence'] == 3
+    assert v2_second['sequence'] == 2
+    v1_id = 'a' * 32
+    seed = seed_rates()
+    db.db.records['_price_book_versions/' + v1_id] = {
+        'version_id': v1_id,
+        'company_id': 'adr',
+        'sequence': 0,
+        'calculation_version': price_books.CALCULATION_VERSION,
+        'rates': seed,
+        'content_sha256': price_books.content_hash(seed),
+    }
 
     # Restoring the v1 version (or 'seed') when head is v2 is refused with 409
     refused_v1 = client.post(
@@ -1130,3 +1137,271 @@ def test_restore_across_calculation_versions_is_refused(api, enabled):
     )
     assert restored_v2.status_code == 200, restored_v2.text
     assert restored_v2.json()['diff']
+
+
+def _v2_csv(company='adr', base='seed', generation=0, unit_price='25.00'):
+    from backend import price_table
+    from backend.price_book_import import export_csv
+
+    items = price_table.normalize_table(_v2_table(unit_price), publish=True)['items']
+    return export_csv(company, base, generation, items)
+
+
+def _upload(client, raw):
+    return client.post(
+        '/api/companies/adr/prices/import-preview',
+        files={'file': ('prices.csv', raw, 'text/csv')},
+        data={'change_reason': 'Upload owner table'},
+    )
+
+
+def _table_body(table, reason='Move to the owner table'):
+    return {'items': table['items'], 'policy': table['policy'], 'change_reason': reason}
+
+
+def test_every_publish_path_writes_the_calculation_version_on_the_head(api, enabled):
+    from backend import price_table
+    from backend.price_book_migration import apply_plan, build_plan
+
+    client, current, store = api
+    apply_plan(store, build_plan(store.db, ['adr']), True)
+    head = store.db.records['_company_price_books/adr']
+    assert head['calculation_version'] == price_books.CALCULATION_VERSION
+    current['uid'] = 'owner'
+    publish(client, rates(emergency_call='150.00'))
+    head = store.db.records['_company_price_books/adr']
+    assert head['calculation_version'] == price_books.CALCULATION_VERSION
+    assert head['schema_version'] == 1
+
+    del store.db.records['_company_price_books/adr']
+    for key in [k for k in store.db.records if k.startswith('_price_book_versions/')]:
+        del store.db.records[key]
+    _publish_v2(client, _v2_table('25.00'))
+    head = store.db.records['_company_price_books/adr']
+    assert head['calculation_version'] == price_table.CALCULATION_VERSION
+    assert head['schema_version'] == 2
+
+
+def test_head_saved_before_the_field_existed_still_prices_as_v1(api, enabled):
+    from backend.price_book_migration import apply_plan, build_plan
+
+    client, current, store = api
+    apply_plan(store, build_plan(store.db, ['adr']), True)
+    del store.db.records['_company_price_books/adr']['calculation_version']
+
+    book = store.workspaces.prices.effective('adr')
+    assert book['calculation_version'] == price_books.CALCULATION_VERSION
+
+    current['uid'] = 'owner'
+    refused = client.post('/api/companies/adr/prices/preview', json=_table_body(_v2_table()))
+    assert refused.status_code == 409
+    restored = client.post(
+        '/api/companies/adr/prices/versions/seed/restore', json={'change_reason': 'Back to seed'}
+    )
+    assert restored.status_code == 200, restored.text
+
+
+def test_company_on_a_published_v1_book_cannot_move_to_v2(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    published = publish(client, rates(emergency_call='150.00'))
+    before = deepcopy(store.db.records['_company_price_books/adr'])
+
+    refused = client.post('/api/companies/adr/prices/preview', json=_table_body(_v2_table()))
+    assert refused.status_code == 409
+    assert 'previous calculation' in refused.json()['detail']
+
+    uploaded = _upload(client, _v2_csv(base=published['version_id'], generation=1))
+    assert uploaded.status_code == 409, uploaded.text
+    assert 'previous calculation' in uploaded.json()['detail']
+    assert store.db.records['_company_price_books/adr'] == before
+
+
+def test_publish_refuses_a_v2_preview_once_the_head_is_v1(api, enabled):
+    from backend.workspaces import Conflict
+
+    client, current, store = api
+    current['uid'] = 'owner'
+    prices = store.workspaces.prices
+    preview = prices.preview('owner', 'adr', {**_table_body(_v2_table()), 'source': 'manual'})
+    published = publish(client, rates(emergency_call='150.00'))
+    head = store.db.records['_company_price_books/adr']
+    store.db.records['_price_book_previews/' + preview['preview_id']]['base_generation'] = head[
+        'generation'
+    ]
+    with pytest.raises(Conflict, match='previous calculation'):
+        prices.publish('owner', 'adr', preview['preview_id'], head['generation'])
+    assert head['latest_version_id'] == published['version_id']
+
+
+def test_company_with_no_published_book_may_publish_v2_by_form_or_file(api, enabled):
+    from backend import price_table
+
+    client, current, store = api
+    current['uid'] = 'owner'
+    uploaded = _upload(client, _v2_csv())
+    assert uploaded.status_code == 200, uploaded.text
+    saved = client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': uploaded.json()['preview_id'], 'expected_generation': 0},
+    )
+    assert saved.status_code == 200, saved.text
+    head = store.db.records['_company_price_books/adr']
+    assert head['calculation_version'] == price_table.CALCULATION_VERSION
+
+    v1_refused = client.post(
+        '/api/companies/adr/prices/preview',
+        json={'rates': rates(), 'change_reason': 'Back to v1 rates'},
+    )
+    assert v1_refused.status_code == 409
+    assert 'owner price table' in v1_refused.json()['detail']
+
+
+def test_calculate_returns_publish_problems_until_v2_pricing_exists(api, enabled, caplog):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    table['items'][0]['unit_price'] = ''
+    with caplog.at_level(logging.ERROR):
+        answer = client.post(
+            '/api/companies/adr/prices/calculate',
+            json={'items': table['items'], 'policy': table['policy']},
+        )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()['samples'] == []
+    assert any('enter a unit price' in row['message'] for row in answer.json()['problems'])
+    assert 'Storage operation failed' not in caplog.text
+
+
+def test_v2_book_gives_readable_conflicts_and_writes_no_pin(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'))
+
+    current['uid'] = 'estimator'
+    job = data()
+    job['scope_confirmed'] = True
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': job})
+    assert created.status_code == 200, created.text
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 409, audited.text
+    assert 'v2 pricing is not available yet' in audited.json()['detail']
+    assert f'_job_pricing/{ID}' not in store.db.records
+
+    prices = store.workspaces.prices
+    record = store.get_inspection('estimator', ID)
+    pin = prices.ensure_pin('estimator', ID)
+    # An existing v2 pin is refused the same way when the caller prices the job.
+    repeat = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert repeat.status_code == 409
+    assert 'v2 pricing is not available yet' in repeat.json()['detail']
+
+    current['uid'] = 'owner'
+    assert prices.job_view('owner', record)['can_reprice'] is False
+    preview = client.post(f'/api/inspections/{ID}/pricing/reprice-preview')
+    assert preview.status_code == 409
+    assert 'v2 pricing is not available yet' in preview.json()['detail']
+    applied = client.post(
+        f'/api/inspections/{ID}/pricing/reprice',
+        json={
+            'expected_revision': record['revision'],
+            'expected_pin_hash': pin['content_sha256'],
+            'destination_version_id': pin['version_id'],
+            'destination_hash': pin['content_sha256'],
+        },
+    )
+    assert applied.status_code == 409
+    assert 'v2 pricing is not available yet' in applied.json()['detail']
+
+
+def test_v1_pinned_draft_is_not_offered_or_moved_to_a_v2_book(api, enabled):
+    from backend.workspaces import Conflict
+
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    prices = store.workspaces.prices
+    pin = prices.ensure_pin('estimator', ID)
+    assert pin['calculation_version'] == price_books.CALCULATION_VERSION
+
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'))
+    book = prices.effective('adr')
+    record = store.get_inspection('owner', ID)
+    view = prices.job_view('owner', record)
+    assert view['newer_available'] is True and view['can_reprice'] is False
+    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
+        prices.reprice_preview('owner', record)
+    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
+        prices.reprice(
+            'owner',
+            ID,
+            {
+                'expected_revision': record['revision'],
+                'expected_pin_hash': pin['content_sha256'],
+                'destination_version_id': book['version_id'],
+                'destination_hash': book['content_sha256'],
+            },
+        )
+    assert store.db.records[f'_job_pricing/{ID}']['version_id'] == pin['version_id']
+
+
+def test_additional_work_on_a_v2_book_answers_a_readable_conflict(api, enabled):
+    from backend.workspaces import Conflict
+
+    client, current, store = api
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'))
+    company = store.db.records['_companies/adr']
+    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
+        store.workspaces.prices.approval_source(company)
+
+
+@pytest.mark.parametrize('audited', [False, True])
+def test_legacy_draft_keeps_the_seed_when_the_company_publishes_v2(api, enabled, audited):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    record = store.db.records['inspections/' + ID]
+    if audited:
+        record['audit'] = {'documents': {}}
+    else:
+        record['created_at'] = '2020-01-01T00:00:00+00:00'
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'))
+
+    pin = store.workspaces.prices.ensure_pin('estimator', ID)
+    assert pin['version_id'] == 'seed'
+    assert pin['calculation_version'] == price_books.CALCULATION_VERSION
+    assert pin['reason'] == 'legacy_rollout'
+
+
+def test_estimator_export_hides_disabled_items_and_owner_only_columns(api, enabled):
+    from backend import price_table
+    import csv
+    import io
+
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    disabled = next(item for item in table['items'] if not item['enabled'])
+    disabled['unit_price'] = '77.00'
+    zero = table['items'][0]
+    zero['allow_zero'] = True
+    published = _publish_v2(client, table)
+
+    def exported(version=None):
+        path = '/api/companies/adr/prices/export'
+        res = client.get(path, params={'version_id': version} if version else None)
+        assert res.status_code == 200, res.text
+        return list(csv.DictReader(io.StringIO(res.content.decode('utf-8-sig'))))
+
+    owner_rows = exported()
+    assert disabled['item_id'] in {row['item_id'] for row in owner_rows}
+    assert {r['allow_zero'] for r in owner_rows if r['item_id'] == zero['item_id']} == {'yes'}
+
+    current['uid'] = 'estimator'
+    for rows in (exported(), exported(published['version_id'])):
+        assert len(rows) == len(price_table.starter_table()['items']) - 1
+        assert disabled['item_id'] not in {row['item_id'] for row in rows}
+        assert {row['allow_zero'] for row in rows} == {'no'}

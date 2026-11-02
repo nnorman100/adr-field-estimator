@@ -295,6 +295,7 @@ def apply_plan(store, plan, write):
                 {
                     'company_id': company_id,
                     'schema_version': 1,
+                    'calculation_version': CALCULATION_VERSION,
                     'generation': 0,
                     'latest_version_id': row['version_id'],
                     'next_sequence': 1,

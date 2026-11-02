@@ -153,7 +153,7 @@ class ExtraApprove(StrictModel):
     expected_price_hash: str = Field(default='', max_length=64)
 
 
-ITEM_ID = r'^[a-z][a-z0-9_]{1,39}$'
+ITEM_ID = r'^[a-z][a-z0-9_]{1,47}$'
 
 
 class ScopeQuantity(StrictModel):
@@ -189,7 +189,6 @@ class QuantityOverride(StrictModel):
     measured: Decimal = Field(ge=0, le=100000, decimal_places=2)
     entered: Decimal = Field(ge=0, le=100000, decimal_places=2)
     reason: str = Field(min_length=3, max_length=300)
-    room: str | None = Field(default=None, min_length=1, max_length=100)
 
     @model_validator(mode='after')
     def validate_reason(self):
@@ -592,7 +591,7 @@ class SalesTaxPolicy(StrictModel):
 
 class PricingPolicy(StrictModel):
     estimate_mode: Literal['range', 'single'] = 'range'
-    area_basis: Literal['demolition', 'wet_floor'] = 'demolition'
+    area_basis: Literal['demolition', 'wet_floor', 'floor'] = 'demolition'
     range: RangePolicy = Field(default_factory=RangePolicy)
     after_hours: AfterHoursPolicy = Field(default_factory=AfterHoursPolicy)
     category_multipliers: dict[Literal['1', '2', '3'], str] = Field(
@@ -621,12 +620,6 @@ class PricingPolicy(StrictModel):
         return self
 
 
-def known_calculation(value):
-    if value != 'dryscope-v2' and not known_calculation_version(value):
-        raise ValueError('Unknown calculation version.')
-    return value
-
-
 class PriceBasis(StrictModel):
     """Rates or policy that produced one audit. Absent on documents priced before company price books."""
 
@@ -634,7 +627,7 @@ class PriceBasis(StrictModel):
     version_id: str = Field(min_length=1, max_length=128)
     sequence: int = Field(ge=0)
     content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
-    calculation_version: Annotated[str, AfterValidator(known_calculation)]
+    calculation_version: Literal['adr-residential-v1', 'dryscope-v2']
     priced_at: str = Field(min_length=1, max_length=40)
     rates: dict[str, str] | None = None
     policy: PricingPolicy | None = None

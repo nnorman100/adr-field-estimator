@@ -61,19 +61,22 @@ FIELD_SOURCES = (
     'emergency_calls',
     'monitoring_hours',
     'haul_loads',
-    'air_scrubbers',
-    'hepa_filters',
+    'labor_hours',
     'matterport_scans',
     'dump_truck_loads',
-    'equipment_decon',
+    'decon_units',
     'power_distribution',
-    'labor_hours',
+    'air_scrubbers',
+    'hepa_filters',
+    'equipment_decon',
 )
 
 COUNT_DAYS_SOURCES = {
-    'air_movers*drying_days': ('air_movers', 'drying_days'),
-    'dehumidifiers*drying_days': ('dehumidifiers', 'drying_days'),
-    'wood_floor_systems*wood_floor_days': ('wood_floor_systems', 'wood_floor_days'),
+    ('air_movers', 'drying_days'),
+    ('dehumidifiers', 'drying_days'),
+    ('wood_floor_systems', 'wood_floor_days'),
+    ('air_scrubbers', 'air_scrubber_days'),
+    ('hepa_filters', '1'),
 }
 
 COLUMNS = (
@@ -101,10 +104,11 @@ COLUMNS = (
 
 Source = namedtuple('Source', ('kind', 'field', 'count_field', 'days_field', 'finish'))
 
-ITEM_ID_RE = re.compile(r'^[a-z][a-z0-9_]{1,39}$')
-CODE_RE = re.compile(r'^[A-Z0-9][A-Z0-9-]{0,15}$')
+ITEM_ID_RE = re.compile(r'^[a-z][a-z0-9_]{1,47}$')
+CODE_RE = re.compile(r'^[A-Z0-9][A-Z0-9_-]{1,23}$')
 XACTIMATE_RE = re.compile(r'^[A-Z0-9][A-Z0-9 ._/-]{0,29}$')
 DECIMAL_RE = re.compile(r'^\d+(?:\.\d+)?$')
+FORMULA_LEAD = re.compile(r'^[=+\-@]')
 
 DEFAULT_POLICY = {
     'estimate_mode': 'range',
@@ -138,10 +142,7 @@ DEFAULT_POLICY = {
 
 
 def _default_code(item_id: str) -> str:
-    base = item_id.upper().replace('_', '-')
-    if len(base) <= 16:
-        return base
-    return base[:16].rstrip('-')
+    return item_id.upper().replace('_', '-')[:24]
 
 
 # (group, item_id, name, unit, quantity_source, categories, default_quantity, enabled)
@@ -510,9 +511,8 @@ def parse_source(text: str) -> Source:
         if field in FIELD_SOURCES:
             return Source('field', field, None, None, None)
     if text.startswith('count_days:'):
-        pair = text[11:]
-        if pair in COUNT_DAYS_SOURCES:
-            count_field, days_field = COUNT_DAYS_SOURCES[pair]
+        count_field, _, days_field = text[11:].partition('*')
+        if (count_field, days_field) in COUNT_DAYS_SOURCES:
             return Source('count_days', None, count_field, days_field, None)
     raise ValueError(f'Unknown quantity source "{text}".')
 
@@ -525,6 +525,8 @@ def _printable_text(raw, *, where: str, field: str, min_len: int, max_len: int) 
         raise ValueError(f'{where}: {field} must be {min_len} to {max_len} printable characters.')
     if any(not ch.isprintable() or ch in '\r\n\t' for ch in text):
         raise ValueError(f'{where}: {field} must contain only printable characters.')
+    if FORMULA_LEAD.match(text):
+        raise ValueError(f'{where}: {field} cannot start with =, +, - or @.')
     return text
 
 
@@ -629,10 +631,8 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
         except ValueError as error:
             raise ValueError(f'{where}: {error}') from error
 
-        if group == 'demolition' and (
-            src.kind not in ('room', 'typed') or (unit == 'sf' and src.kind != 'room')
-        ):
-            raise ValueError(f'{where}: demolition items must use a room quantity source.')
+        if group == 'demolition' and unit == 'sf' and src.kind != 'room':
+            raise ValueError(f'{where}: sf demolition items must use a room quantity source.')
         if group == 'extras' and unit != 'hour':
             raise ValueError(f'{where}: extras items must use unit "hour".')
 
@@ -766,8 +766,8 @@ def normalize_policy(raw) -> dict:
         raise ValueError(f'{where}: estimate_mode must be "range" or "single".')
 
     area_basis = raw.get('area_basis', 'demolition')
-    if area_basis not in ('demolition', 'wet_floor'):
-        raise ValueError(f'{where}: area_basis must be "demolition" or "wet_floor".')
+    if area_basis not in ('demolition', 'wet_floor', 'floor'):
+        raise ValueError(f'{where}: area_basis must be "demolition", "wet_floor" or "floor".')
 
     range_raw = raw.get('range')
     if not isinstance(range_raw, dict):
@@ -808,11 +808,12 @@ def normalize_policy(raw) -> dict:
         max_decimals=3,
         fixed_decimals=3,
     )
-    ah_label_raw = ah_raw.get('label', raw.get('after_hours_label', DEFAULT_AFTER_HOURS_LABEL))
-    if ah_label_raw is None:
-        ah_label_raw = DEFAULT_AFTER_HOURS_LABEL
     ah_label = _printable_text(
-        ah_label_raw, where=where, field='after_hours.label', min_len=1, max_len=80
+        ah_raw.get('label', DEFAULT_AFTER_HOURS_LABEL),
+        where=where,
+        field='after_hours.label',
+        min_len=1,
+        max_len=80,
     )
 
     cat_raw = raw.get('category_multipliers')
@@ -850,31 +851,14 @@ def normalize_policy(raw) -> dict:
     if cab_scope not in ('finished_only', 'all_cat3'):
         raise ValueError(f'{where}: cabinetry.scope must be "finished_only" or "all_cat3".')
 
-    min_charge_raw = raw.get('minimum_job_charge', '0')
-    if min_charge_raw is None:
-        min_charge_raw = '0'
-    if isinstance(min_charge_raw, dict):
-        enabled_min = min_charge_raw.get('enabled', False)
-        if not isinstance(enabled_min, bool):
-            raise ValueError(f'{where}: minimum_job_charge.enabled must be a boolean.')
-        amount_min = _decimal_str(
-            min_charge_raw.get('amount', '0'),
-            where=where,
-            field='minimum_job_charge',
-            low=Decimal('0'),
-            high=Decimal('100000'),
-            max_decimals=2,
-        )
-        minimum_job_charge = amount_min if enabled_min else '0'
-    else:
-        minimum_job_charge = _decimal_str(
-            min_charge_raw,
-            where=where,
-            field='minimum_job_charge',
-            low=Decimal('0'),
-            high=Decimal('100000'),
-            max_decimals=2,
-        )
+    minimum_job_charge = _decimal_str(
+        raw.get('minimum_job_charge', '0'),
+        where=where,
+        field='minimum_job_charge',
+        low=Decimal('0'),
+        high=Decimal('100000'),
+        max_decimals=2,
+    )
 
     overhead_profit_percent = _decimal_str(
         raw.get('overhead_profit_percent', '0'),
@@ -991,6 +975,8 @@ def publish_problems(table: dict, acknowledgements=()) -> list[dict]:
 def content_hash(table: dict) -> str:
     """Canonical SHA-256 over calculation_version, currency, sorted items (including disabled) and policy."""
     normalized = normalize_table(table, publish=False)
+    if not normalized['items']:
+        raise ValueError('Settings: a published price table needs at least one item.')
     sorted_items = sorted(normalized['items'], key=lambda it: it['item_id'])
     payload = {
         'calculation_version': CALCULATION_VERSION,

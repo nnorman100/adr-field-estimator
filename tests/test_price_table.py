@@ -289,7 +289,6 @@ def test_scope_items_absent_on_old_drafts_and_bounded(store):
                 measured=Decimal('120.00'),
                 entered=Decimal('160.00'),
                 reason='Moisture extended behind pantry',
-                room='Kitchen',
             ),
         },
     )
@@ -447,3 +446,148 @@ def test_pricing_dispatch_runs_v1_and_stubs_v2():
                 'policy': table['policy'],
             },
         )
+
+
+def _item(**changes):
+    item = {
+        'item_id': 'test_item',
+        'code': 'TEST-ITEM',
+        'group': 'labor',
+        'name': 'Test item',
+        'unit': 'hour',
+        'quantity_source': 'typed',
+        'unit_price': '10.00',
+    }
+    item.update(changes)
+    return item
+
+
+@pytest.mark.parametrize(
+    'source,kind,count_field,days_field',
+    [
+        ('field:decon_units', 'field', None, None),
+        ('field:equipment_decon', 'field', None, None),
+        ('field:air_scrubbers', 'field', None, None),
+        ('field:hepa_filters', 'field', None, None),
+        (
+            'count_days:air_scrubbers*air_scrubber_days',
+            'count_days',
+            'air_scrubbers',
+            'air_scrubber_days',
+        ),
+        ('count_days:hepa_filters*1', 'count_days', 'hepa_filters', '1'),
+        ('count_days:air_movers*drying_days', 'count_days', 'air_movers', 'drying_days'),
+    ],
+)
+def test_source_grammar_accepts_every_listed_form(source, kind, count_field, days_field):
+    parsed = price_table.parse_source(source)
+    assert (parsed.kind, parsed.count_field, parsed.days_field) == (kind, count_field, days_field)
+
+
+@pytest.mark.parametrize(
+    'source',
+    ['count_days:hepa_filters*drying_days', 'count_days:air_movers', 'field:air_scrubber_days'],
+)
+def test_source_grammar_refuses_unlisted_forms(source):
+    with pytest.raises(ValueError, match='Unknown quantity source'):
+        price_table.parse_source(source)
+
+
+def test_item_id_and_code_patterns_match_the_specification():
+    longest_id = 'a' * 48
+    longest_code = 'A' * 24
+    normalized = price_table.normalize_items(
+        [
+            _item(item_id=longest_id, code=longest_code),
+            _item(item_id='with_code_underscore', code='AB_2'),
+        ],
+        publish=False,
+    )
+    assert normalized[0]['item_id'] == longest_id
+    assert normalized[1]['code'] == 'AB_2'
+    for changes, match in (
+        ({'item_id': 'a' * 49}, 'invalid item_id'),
+        ({'code': 'A'}, 'invalid code'),
+        ({'code': 'A' * 25}, 'invalid code'),
+    ):
+        with pytest.raises(ValueError, match=match):
+            price_table.normalize_items([_item(**changes)], publish=False)
+    # A blank code falls back to one that satisfies the pattern, even for the longest id.
+    defaulted = price_table.normalize_items([_item(item_id='a' + '_' * 47, code='')], publish=False)
+    assert price_table.CODE_RE.fullmatch(defaulted[0]['code'])
+    assert InspectionData(scope_items={longest_id: ScopeQuantity()}).scope_items
+
+
+@pytest.mark.parametrize('basis', ['demolition', 'wet_floor', 'floor'])
+def test_every_area_basis_is_accepted_by_the_table_and_the_saved_basis(basis):
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['area_basis'] = basis
+    assert price_table.normalize_policy(policy)['area_basis'] == basis
+    assert PricingPolicy(**policy).area_basis == basis
+
+
+def test_new_companies_start_with_no_cabinetry_multiplier():
+    assert price_table.DEFAULT_POLICY['cabinetry']['multiplier'] == '1.000'
+    assert price_table.starter_table()['policy']['cabinetry']['multiplier'] == '1.000'
+    assert PricingPolicy().cabinetry.multiplier == '1.000'
+
+
+def test_starter_catalog_has_35_items_across_all_seven_groups():
+    items = price_table.starter_table()['items']
+    assert len(items) == 35
+    assert {item['group'] for item in items} == set(price_table.GROUPS)
+    assert len(price_table.GROUPS) == 7
+
+
+def test_item_lower_bound_and_sf_demolition_source_rule():
+    policy = price_table.DEFAULT_POLICY
+    empty = {'items': [], 'policy': policy}
+    assert price_table.normalize_table(empty, publish=False)['items'] == []
+    with pytest.raises(ValueError):
+        price_table.normalize_table(empty, publish=True)
+    with pytest.raises(ValueError):
+        price_table.content_hash(empty)
+
+    # Only square-foot demolition items are tied to a room source.
+    for source in ('field:labor_hours', 'typed_count_days', 'typed'):
+        kept = _item(group='demolition', unit='each', quantity_source=source)
+        assert price_table.normalize_items([kept], publish=False)
+    with pytest.raises(ValueError, match='room quantity source'):
+        price_table.normalize_items(
+            [_item(group='demolition', unit='sf', quantity_source='field:labor_hours')],
+            publish=False,
+        )
+
+
+def test_policy_accepts_only_the_documented_shapes():
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['minimum_job_charge'] = {'enabled': True, 'amount': '500'}
+    with pytest.raises(ValueError, match='minimum_job_charge'):
+        price_table.normalize_policy(policy)
+
+    aliased = copy.deepcopy(price_table.DEFAULT_POLICY)
+    del aliased['after_hours']['label']
+    aliased['after_hours_label'] = 'Night rate'
+    assert (
+        price_table.normalize_policy(aliased)['after_hours']['label']
+        == price_table.DEFAULT_AFTER_HOURS_LABEL
+    )
+    with pytest.raises(ValidationError):
+        QuantityOverride(measured=Decimal('1'), entered=Decimal('2'), reason='More', room='Kitchen')
+
+
+@pytest.mark.parametrize('lead', ['=', '+', '-', '@'])
+def test_formula_leading_text_is_refused_for_every_exported_or_printed_label(lead):
+    for field in ('name', 'customer_description'):
+        with pytest.raises(ValueError, match=field):
+            price_table.normalize_items([_item(**{field: lead + 'SUM(1)'})], publish=False)
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['after_hours']['label'] = lead + 'SUM(1)'
+    with pytest.raises(ValueError, match='after_hours.label'):
+        price_table.normalize_policy(policy)
+
+
+def test_v1_pin_without_rates_never_prices_at_the_seed():
+    for pin in ({'calculation_version': 'adr-residential-v1'}, {'rates': price_books.seed_rates()}):
+        with pytest.raises(ValueError):
+            pricing.price_and_range(InspectionData(), pin)

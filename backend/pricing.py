@@ -24,41 +24,20 @@ class PricedJob:
     low: Any = None
     high: Any = None
 
-    def __getitem__(self, key: str) -> Any:
-        return getattr(self, key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
-
-
-def _is_known_v1(version: str | None) -> bool:
-    if not version:
-        return False
-    known = getattr(price_books, 'known_calculation_version', None)
-    if callable(known):
-        return bool(known(version))
-    return version == price_books.CALCULATION_VERSION
-
 
 def price_and_range(data: InspectionData, pin: dict[str, Any]) -> PricedJob:
     """Dispatch pricing by pin['calculation_version']."""
-    if not isinstance(pin, dict):
-        raise ValueError('A pricing pin dictionary is required.')
-    version = pin.get('calculation_version') or price_books.CALCULATION_VERSION
+    version = pin.get('calculation_version')
     if version == V2_CALCULATION_VERSION:
         raise NotImplementedError('dryscope-v2 pricing is not available yet')
-    if not _is_known_v1(version):
+    if version != price_books.CALCULATION_VERSION:
         raise ValueError(f'Unsupported calculation version: {version!r}')
-
     rates = pin.get('rates')
-    try:
-        lines, total = claims.price_scope(data, rates, calculation_version=version)
-    except TypeError:
-        lines, total = claims.price_scope(data, rates)
-    try:
-        low, high = claims.proposal_range(data, lines, calculation_version=version)
-    except TypeError:
-        low, high = claims.proposal_range(data, lines)
+    if not rates:
+        raise ValueError('A v1 pricing pin must carry its rates.')
+
+    lines, total = claims.price_scope(data, rates)
+    low, high = claims.proposal_range(data, lines)
 
     return PricedJob(
         lines=lines,

@@ -6,7 +6,6 @@ sheets are rejected. Prices stay strings until the catalog normalizes them.
 
 import csv
 import io
-import re
 import zipfile
 from xml.etree import ElementTree
 
@@ -22,6 +21,7 @@ try:
     from .price_table import (
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         COLUMNS as V2_COLUMNS,
+        FORMULA_LEAD,
         MAX_ITEMS as V2_ROW_LIMIT,
         TEMPLATE_VERSION as V2_TEMPLATE_VERSION,
         normalize_items,
@@ -38,6 +38,7 @@ except ImportError:
     from price_table import (
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         COLUMNS as V2_COLUMNS,
+        FORMULA_LEAD,
         MAX_ITEMS as V2_ROW_LIMIT,
         TEMPLATE_VERSION as V2_TEMPLATE_VERSION,
         normalize_items,
@@ -57,32 +58,20 @@ NS = {
     'm': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
     'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
     'pr': 'http://schemas.openxmlformats.org/package/2006/relationships',
-    'ct': 'http://schemas.openxmlformats.org/content-types',
+    'ct': 'http://schemas.openxmlformats.org/package/2006/content-types',
 }
-# Keep the exact namespace URI used by Office Open XML packages.
-NS['ct'] = 'http://schemas.openxmlformats.org/package/2006/content-types'
-FORMULA_LEAD = re.compile(r'^[=+\-@]')
 
 
 class SizeLimit(ValueError):
     """The upload or saved book exceeds its byte cap. The API answers 413."""
 
 
-def _extract_v2_items(rates_or_items):
-    if isinstance(rates_or_items, list):
-        return rates_or_items
-    if isinstance(rates_or_items, dict) and isinstance(rates_or_items.get('items'), list):
-        return rates_or_items['items']
-    return None
-
-
 def export_csv(company_id, base_version_id, base_generation, rates):
-    v2_items = _extract_v2_items(rates)
     buffer = io.StringIO()
-    if v2_items is not None:
+    if isinstance(rates, list):
         writer = csv.DictWriter(buffer, fieldnames=V2_COLUMNS, lineterminator='\n')
         writer.writeheader()
-        for item in v2_items:
+        for item in rates:
             writer.writerow(_row_v2(company_id, base_version_id, base_generation, item))
         return ('\ufeff' + buffer.getvalue()).encode('utf-8')
     writer = csv.DictWriter(buffer, fieldnames=V1_COLUMNS, lineterminator='\n')
@@ -93,8 +82,7 @@ def export_csv(company_id, base_version_id, base_generation, rates):
 
 
 def export_xlsx(company_id, base_version_id, base_generation, rates):
-    v2_items = _extract_v2_items(rates)
-    if v2_items is not None:
+    if isinstance(rates, list):
         rows = [
             list(V2_COLUMNS),
             *[
@@ -104,7 +92,7 @@ def export_xlsx(company_id, base_version_id, base_generation, rates):
                         company_id, base_version_id, base_generation, item
                     ).values()
                 ]
-                for item in v2_items
+                for item in rates
             ],
         ]
     else:
@@ -160,13 +148,7 @@ def parse_upload(
     else:
         raise ValueError('Upload a CSV or XLSX file.')
 
-    expect_v2 = calculation_version in (V2_CALCULATION_VERSION, V2_TEMPLATE_VERSION, True)
-    expect_v1 = (
-        calculation_version is not None and not expect_v2 and calculation_version is not False
-    )
-    if expect_v2 and fmt != 'v2':
-        raise ValueError('Row 2: this file is not the current DryScope price template.')
-    if expect_v1 and fmt != 'v1':
+    if calculation_version == V2_CALCULATION_VERSION and fmt != 'v2':
         raise ValueError('Row 2: this file is not the current DryScope price template.')
 
     if fmt == 'v2':
@@ -228,13 +210,6 @@ def _detect_columns(header):
         return 'v2', V2_COLUMNS, V2_ROW_LIMIT
     if header == list(V1_COLUMNS):
         return 'v1', V1_COLUMNS, ROW_LIMIT
-    if (
-        len(header) == len(V2_COLUMNS)
-        and header[:4] == list(V2_COLUMNS[:4])
-        or len(header) == len(V1_COLUMNS)
-        and header[:4] == list(V1_COLUMNS[:4])
-    ):
-        raise ValueError('The file must use the DryScope price template columns.')
     raise ValueError('The file must use the DryScope price template columns.')
 
 

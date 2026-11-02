@@ -191,3 +191,17 @@ def test_v2_template_csv_xlsx_round_trip_and_rejects_v1_template():
             2,
             calculation_version=price_table.CALCULATION_VERSION,
         )
+
+
+def test_v2_text_round_trips_unchanged_through_csv_and_xlsx():
+    from backend import price_table
+
+    table = price_table.starter_table()
+    for item in table['items']:
+        if item['enabled']:
+            item['unit_price'] = '25.00'
+    table['items'][0]['name'] = 'Call-out, "emergency" & after 5 pm'
+    items = price_table.normalize_table(table, publish=True)['items']
+    version = price_table.CALCULATION_VERSION
+    assert parse_upload(export_csv('adr', 'v', 1, items), 'text/csv', 'adr', 'v', 1, version) == items
+    assert parse_upload(export_xlsx('adr', 'v', 1, items), XLSX, 'adr', 'v', 1, version) == items

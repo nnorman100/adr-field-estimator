@@ -45,7 +45,6 @@ try:
         normalize_table,
         public_table,
         publish_problems,
-        starter_table,
     )
     from .pricing import price_and_range
     from .workspaces import AccessDenied
@@ -82,7 +81,6 @@ except ImportError:
         normalize_table,
         public_table,
         publish_problems,
-        starter_table,
     )
     from pricing import price_and_range
     from workspaces import AccessDenied
@@ -96,6 +94,7 @@ DRAFTS = '_price_book_drafts'
 DOMAIN = 'pricing'
 V1_SIZE_LIMIT = 32768
 V2_SIZE_LIMIT = 200 * 1024
+V2_PRICING_UNAVAILABLE = 'v2 pricing is not available yet.'
 
 
 class Expired(Exception):
@@ -145,24 +144,17 @@ def _is_v2(doc) -> bool:
     return bool(isinstance(doc, dict) and doc.get('calculation_version') == V2_CALCULATION_VERSION)
 
 
-def _is_known_v1(version) -> bool:
-    if not isinstance(version, str) or not version or version == V2_CALCULATION_VERSION:
-        return False
-    try:
-        from . import price_books as pb
-    except ImportError:
-        import price_books as pb
-    known = getattr(pb, 'known_calculation_version', None)
-    if callable(known):
-        return bool(known(version))
-    return version == CALCULATION_VERSION
+def _head_calculation(head) -> str:
+    # The Oct 26 2026 production migration wrote ADR's head before this field existed.
+    return (head or {}).get('calculation_version', CALCULATION_VERSION)
 
 
-def _v1_hash(rates, calculation_version=CALCULATION_VERSION) -> str:
-    try:
-        return content_hash(rates, calculation_version)
-    except TypeError:
-        return content_hash(rates)
+def _refuse_v1_to_v2(head):
+    if head and head.get('latest_version_id') and _head_calculation(head) == CALCULATION_VERSION:
+        raise Conflict(
+            'This company uses the previous calculation. '
+            'It cannot move to an owner price table until the cutover is available.'
+        )
 
 
 def _valid_v2_doc(doc) -> tuple[bool, dict | None]:
@@ -195,14 +187,14 @@ def _valid_v2_doc(doc) -> tuple[bool, dict | None]:
 def _valid_v1_doc(doc) -> bool:
     if (
         not isinstance(doc, dict)
-        or not _is_known_v1(doc.get('calculation_version'))
+        or doc.get('calculation_version') != CALCULATION_VERSION
         or not isinstance(doc.get('rates'), dict)
         or set(doc['rates']) != set(KEYS)
         or doc.get('items') is not None
         or doc.get('policy') is not None
     ):
         return False
-    return _v1_hash(doc['rates'], doc.get('calculation_version')) == doc.get('content_sha256')
+    return content_hash(doc['rates']) == doc.get('content_sha256')
 
 
 def _raise_size_limit():
@@ -258,9 +250,7 @@ class PriceBookStore:
             version = self._version(head['latest_version_id'], tx)
             if not version or version.get('company_id') != company_id:
                 raise Conflict('This company price book cannot be used. Contact support.')
-            if head.get('calculation_version') and (
-                version.get('calculation_version') != head.get('calculation_version')
-            ):
+            if version.get('calculation_version') != _head_calculation(head):
                 raise Conflict('This company price book cannot be used. Contact support.')
             if _is_v2(version):
                 ok, _ = _valid_v2_doc(version)
@@ -410,14 +400,6 @@ class PriceBookStore:
         company = self.ws.read('_companies', company_id)
         return self._view(actor, company)
 
-    def working_copy(self, uid, company_id):
-        self._require()
-        actor = self.ws.company_actor(uid, company_id, manage=True)
-        if 'prices_manage' not in actor['capabilities']:
-            raise AccessDenied('Only the company owner can change prices.')
-        draft = self._draft(company_id)
-        return {'working_copy': self._working_copy_view(draft)}
-
     def save_working_copy(self, uid, company_id, payload):
         self._require()
         actor = self.ws.company_actor(uid, company_id, manage=True)
@@ -517,14 +499,17 @@ class PriceBookStore:
             acknowledgements=payload.get('acknowledgements') or [],
         )
         problems = publish_problems(table, payload.get('acknowledgements') or [])
-        priced = price_and_range(
-            InspectionData(),
-            {
-                'calculation_version': V2_CALCULATION_VERSION,
-                'items': table['items'],
-                'policy': table['policy'],
-            },
-        )
+        try:
+            priced = price_and_range(
+                InspectionData(),
+                {
+                    'calculation_version': V2_CALCULATION_VERSION,
+                    'items': table['items'],
+                    'policy': table['policy'],
+                },
+            )
+        except NotImplementedError:
+            return {'samples': [], 'problems': problems}
         return {'samples': [priced.totals] if priced.totals else [], 'problems': problems}
 
     def _support_read(self, uid, company_id, action):
@@ -583,6 +568,8 @@ class PriceBookStore:
         ):
             return self._preview_v2(uid, company_id, company, payload)
 
+        if _is_v2(self.effective(company)):
+            raise Conflict('This company uses an owner price table. Send items and policy.')
         rates = self._normalize(company, payload['rates'], payload.get('acknowledgements') or [])
         _refuse_adr_rates(company['company_id'], rates)
         reason = reason_text(payload.get('change_reason', ''))
@@ -627,6 +614,7 @@ class PriceBookStore:
         table = normalize_table(payload, publish=True, acknowledgements=acks)
         reason = reason_text(payload.get('change_reason', ''))
         head = self._head(company_id)
+        _refuse_v1_to_v2(head)
         if head and head.get('latest_version_id'):
             current = self._version(head['latest_version_id'])
             base_generation = head['generation']
@@ -732,6 +720,7 @@ class PriceBookStore:
             head = self._head(company_id, tx) or {
                 'company_id': company_id,
                 'schema_version': 1,
+                'calculation_version': CALCULATION_VERSION,
                 'generation': 0,
                 'latest_version_id': None,
                 'next_sequence': 1,
@@ -786,6 +775,7 @@ class PriceBookStore:
                 latest_version_id=preview_id,
                 next_sequence=sequence + 1,
                 schema_version=1,
+                calculation_version=CALCULATION_VERSION,
                 company_id=company_id,
                 updated_at=published,
             )
@@ -836,6 +826,7 @@ class PriceBookStore:
         }
 
     def _commit_v2_publish(self, tx, uid, company_id, company, head, preview_id, preview):
+        _refuse_v1_to_v2(head)
         current_version = (
             self._version(head['latest_version_id'], tx) if head.get('latest_version_id') else None
         )
@@ -1079,6 +1070,7 @@ class PriceBookStore:
             if 'prices_read' not in actor['capabilities']:
                 raise AccessDenied('Your role cannot view company prices.')
             company = self.ws.read('_companies', company_id)
+        manage = support or actor['role'] == 'owner'
         if version_id and version_id != 'seed':
             version = self._version(version_id)
             if not version or version.get('company_id') != company_id:
@@ -1098,11 +1090,15 @@ class PriceBookStore:
             base_generation = book['generation']
             base_version = book['version_id']
         if _is_v2(book):
-            return company_id, base_version, base_generation, book['items']
+            items = public_table(book, manage=manage)['items']
+            return company_id, base_version, base_generation, items
         return company_id, base_version, base_generation, book['rates']
 
-    def ensure_pin(self, uid, inspection_id):
-        """Create the job pin once. Later audits reuse it. A signed job is never pinned again."""
+    def ensure_pin(self, uid, inspection_id, priceable_only=False):
+        """Create the job pin once. Later audits reuse it. A signed job is never pinned again.
+
+        priceable_only refuses a v2 pin, before any write, for callers that price the job now.
+        """
 
         def pin(tx):
             record = (
@@ -1119,6 +1115,8 @@ class PriceBookStore:
                 raise Conflict('Signed inspections keep the prices they were signed with.')
             existing = self._pin(inspection_id, tx)
             if existing:
+                if priceable_only and _is_v2(existing):
+                    raise Conflict(V2_PRICING_UNAVAILABLE)
                 self.basis_for(existing, job['company_id'])
                 basis = saved_basis(current.get('audit'))
                 if basis:
@@ -1130,24 +1128,6 @@ class PriceBookStore:
             book = self.effective(company, tx)
             if _is_unset(book):
                 raise Conflict(_not_set_message(actor.get('role')))
-            if _is_v2(book):
-                body = {
-                    'inspection_id': inspection_id,
-                    'company_id': job['company_id'],
-                    'pin_version': 1,
-                    'version_id': book['version_id'],
-                    'sequence': book.get('sequence', 1),
-                    'content_sha256': book['content_sha256'],
-                    'calculation_version': V2_CALCULATION_VERSION,
-                    'items': copy.deepcopy(book['items']),
-                    'policy': copy.deepcopy(book['policy']),
-                    'priced_at': now(),
-                    'reason': 'first_price',
-                }
-                if len(json.dumps(body).encode('utf-8')) > V2_SIZE_LIMIT:
-                    _raise_size_limit()
-                tx.create(self.ws.ref(PINS, inspection_id), body)
-                return body
             created = _stamp(current.get('created_at'))
             started = _stamp((self._head(job['company_id'], tx) or {}).get('started_at'))
             grandfather = bool(current.get('audit')) or (
@@ -1167,6 +1147,26 @@ class PriceBookStore:
             else:
                 chosen = book
                 reason = 'first_price' if not current.get('audit') else 'legacy_rollout'
+            if _is_v2(chosen):
+                if priceable_only:
+                    raise Conflict(V2_PRICING_UNAVAILABLE)
+                body = {
+                    'inspection_id': inspection_id,
+                    'company_id': job['company_id'],
+                    'pin_version': 1,
+                    'version_id': chosen['version_id'],
+                    'sequence': chosen.get('sequence', 1),
+                    'content_sha256': chosen['content_sha256'],
+                    'calculation_version': V2_CALCULATION_VERSION,
+                    'items': copy.deepcopy(chosen['items']),
+                    'policy': copy.deepcopy(chosen['policy']),
+                    'priced_at': now(),
+                    'reason': reason,
+                }
+                if len(json.dumps(body).encode('utf-8')) > V2_SIZE_LIMIT:
+                    _raise_size_limit()
+                tx.create(self.ws.ref(PINS, inspection_id), body)
+                return body
             body = {
                 'inspection_id': inspection_id,
                 'company_id': job['company_id'],
@@ -1273,7 +1273,7 @@ class PriceBookStore:
                     'version_id': book['version_id'],
                 },
                 'newer_available': newer,
-                'can_reprice': bool(manage and newer),
+                'can_reprice': False,
                 'table': {
                     'version_id': active['version_id'],
                     'content_sha256': active['content_sha256'],
@@ -1308,7 +1308,7 @@ class PriceBookStore:
                 'version_id': book['version_id'],
             },
             'newer_available': newer,
-            'can_reprice': bool(manage and newer),
+            'can_reprice': bool(manage and newer and not _is_v2(book)),
             'sheet_rates': job['company_id'] == ADR_COMPANY_ID
             and display['after_hours_job_charge'] == adr_book['after_hours_job_charge']
             and display['sheet_labor_hourly'] == adr_book['sheet_labor_hourly'],
@@ -1337,6 +1337,8 @@ class PriceBookStore:
         book = self.effective(company)
         if _is_unset(book):
             raise Conflict(_not_set_message(actor['role']))
+        if _is_v2(pin) or _is_v2(book):
+            raise Conflict(V2_PRICING_UNAVAILABLE)
 
         data = InspectionData.model_validate(record['data'])
         old_version = pin.get('calculation_version')
@@ -1392,6 +1394,8 @@ class PriceBookStore:
             book = self.effective(company, tx)
             if _is_unset(book):
                 raise Conflict(_not_set_message(actor['role']))
+            if _is_v2(pin) or _is_v2(book):
+                raise Conflict(V2_PRICING_UNAVAILABLE)
             if (
                 book['version_id'] != expected['destination_version_id']
                 or book['content_sha256'] != expected['destination_hash']
@@ -1399,32 +1403,17 @@ class PriceBookStore:
                 raise Conflict('Company prices changed. Review the latest prices again.')
             if book['content_sha256'] == pin.get('content_sha256'):
                 return record
-            if _is_v2(book):
-                replacement = {
-                    'inspection_id': inspection_id,
-                    'company_id': job['company_id'],
-                    'version_id': book['version_id'],
-                    'sequence': book.get('sequence', 1),
-                    'content_sha256': book['content_sha256'],
-                    'items': copy.deepcopy(book['items']),
-                    'policy': copy.deepcopy(book['policy']),
-                    'priced_at': now(),
-                    'reason': 'explicit_reprice',
-                    'pin_version': pin.get('pin_version', 1) + 1,
-                    'calculation_version': V2_CALCULATION_VERSION,
-                }
-            else:
-                replacement = {
-                    **pin,
-                    'version_id': book['version_id'],
-                    'sequence': book.get('sequence', 0),
-                    'content_sha256': book['content_sha256'],
-                    'rates': dict(book['rates']),
-                    'priced_at': now(),
-                    'reason': 'explicit_reprice',
-                    'pin_version': pin.get('pin_version', 1) + 1,
-                    'calculation_version': book['calculation_version'],
-                }
+            replacement = {
+                **pin,
+                'version_id': book['version_id'],
+                'sequence': book.get('sequence', 0),
+                'content_sha256': book['content_sha256'],
+                'rates': dict(book['rates']),
+                'priced_at': now(),
+                'reason': 'explicit_reprice',
+                'pin_version': pin.get('pin_version', 1) + 1,
+                'calculation_version': book.get('calculation_version', CALCULATION_VERSION),
+            }
             record['revision'] = record['revision'] + 1
             record['audit'] = None
             record['status'] = 'draft'
@@ -1455,6 +1444,7 @@ class PriceBookStore:
         """A preview of one saved version. Publishing it still needs the owner to confirm."""
         self._require()
         self.ws.company_actor(uid, company_id, manage=True)
+        head_calc = _head_calculation(self._head(company_id))
         version = self._version(version_id)
         if (
             not version
@@ -1462,17 +1452,6 @@ class PriceBookStore:
             or (company_id != ADR_COMPANY_ID and not version.get('sequence'))
         ):
             raise LookupError('Price version not found.')
-        head = self._head(company_id)
-        head_version = (
-            self._version(head['latest_version_id'])
-            if head and head.get('latest_version_id')
-            else None
-        )
-        head_calc = (
-            head.get('calculation_version')
-            if head and head.get('calculation_version')
-            else (head_version or {}).get('calculation_version', CALCULATION_VERSION)
-        )
         if version.get('calculation_version', CALCULATION_VERSION) != head_calc:
             raise Conflict(
                 'This version uses the previous calculation. Start from the current table.'
@@ -1516,7 +1495,10 @@ class PriceBookStore:
         """The book a new additional-work approval is priced from, when price books are on."""
         if not price_books_enabled():
             return None
-        return self.effective(company, tx)
+        book = self.effective(company, tx)
+        if _is_v2(book):
+            raise Conflict(V2_PRICING_UNAVAILABLE)
+        return book
 
 
 def _stamp(value):
