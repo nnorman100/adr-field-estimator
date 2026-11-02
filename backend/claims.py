@@ -3,15 +3,18 @@
 import re
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 try:
     from .extras import wording
     from .contracts import InspectionData, AIResult, AuditDocuments
+    from .price_books import CALCULATION_VERSION, known_calculation_version
     from .sizing import equipment_sizing, letter_paragraph
 except ImportError:
     from extras import wording
     from contracts import InspectionData, AIResult, AuditDocuments
+    from price_books import CALCULATION_VERSION, known_calculation_version
     from sizing import equipment_sizing, letter_paragraph
 
 CENT = Decimal('0.01')
@@ -93,7 +96,7 @@ def line(code, description, quantity, unit, rate, waste=0):
     )
 
 
-def price_scope(data: InspectionData, rates):
+def _v1_price_scope(data: InspectionData, rates):
     """Price saved quantities from the job's saved rates. There is no default price book."""
     if not rates:
         raise ValueError('Company prices are required to price this job.')
@@ -198,7 +201,7 @@ def standard_job_charges(rates):
     )
 
 
-def proposal_range(data: InspectionData, items):
+def _v1_proposal_range(data: InspectionData, items):
     """The estimating sheet's low/high labor-material allowances over priced scope."""
     unbucketed = (
         {item['code'] for item in items} - JOB_CODES - LABOR_MATERIAL_CODES - EQUIPMENT_CODES
@@ -223,6 +226,31 @@ def proposal_range(data: InspectionData, items):
     low_labor = labor_material * (Decimal('1.2') if data.is_after_hours else Decimal(1))
     high_labor = low_labor * (Decimal('1.5') if affected_sf < 1001 else Decimal('1.2'))
     return amount(job + equipment + low_labor), amount(job + equipment + high_labor)
+
+
+class CalculationPolicy(NamedTuple):
+    """The formulas one saved calculation version prices with."""
+
+    price_scope: Callable
+    proposal_range: Callable
+
+
+# One entry for each version in price_books.CALCULATION_FACTORS.
+POLICIES = {CALCULATION_VERSION: CalculationPolicy(_v1_price_scope, _v1_proposal_range)}
+
+
+def policy_for(calculation_version):
+    if not known_calculation_version(calculation_version):
+        raise ValueError('This job was priced with an unknown calculation version.')
+    return POLICIES[calculation_version]
+
+
+def price_scope(data: InspectionData, rates, calculation_version=CALCULATION_VERSION):
+    return policy_for(calculation_version).price_scope(data, rates)
+
+
+def proposal_range(data: InspectionData, items, calculation_version=CALCULATION_VERSION):
+    return policy_for(calculation_version).proposal_range(data, items)
 
 
 def proposal_date():
@@ -345,14 +373,16 @@ def make_documents(
         raise ValueError('Enter the address, year built and rooms before auditing.')
     if data.package_price is not None:
         raise ValueError('Update the app and clear the old package-tier selection before auditing.')
-    items, total = price_scope(data, rates)
+    # The saved basis names the formulas; a job without one predates company price books.
+    calculation_version = (price_basis or {}).get('calculation_version', CALCULATION_VERSION)
+    items, total = price_scope(data, rates, calculation_version)
     approved = [extra for extra in data.extras if extra.approval]
     for item, extra in zip((i for i in items if i['code'] == 'ADR-EXTRA'), approved):
         item['description'] = wording(extra, clause_company)
     covered = {extra.description for extra in approved}
     unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
     pending = sum(extra.approval is None for extra in data.extras)
-    estimate_low, estimate_high = proposal_range(data, items)
+    estimate_low, estimate_high = proposal_range(data, items, calculation_version)
     if total <= 0:
         raise ValueError(
             'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'

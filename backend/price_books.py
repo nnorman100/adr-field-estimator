@@ -17,6 +17,17 @@ except ImportError:
     from adr_price_book import ADR_COMPANY_ID
 
 CALCULATION_VERSION = 'adr-residential-v1'
+# Each saved calculation version's factors, as shown to owners. The keys are the known versions.
+# A version's formulas never change once pins use it; new formulas get a new version.
+CALCULATION_FACTORS = {
+    CALCULATION_VERSION: {
+        'cabinetry_factor': '2',
+        'after_hours_factor': '1.2',
+        'range_factor_below_1001_sf': '1.5',
+        'range_factor_at_or_above_1001_sf': '1.2',
+        'range_threshold_sf': '1001',
+    },
+}
 CATALOG_VERSION = 1
 TEMPLATE_VERSION = 'dryscope-prices-v1'
 CURRENCY = 'USD'
@@ -235,14 +246,14 @@ def blank_rates():
     return {key: '' for key in KEYS}
 
 
-def calculation_policy():
+def known_calculation_version(version):
+    return isinstance(version, str) and version in CALCULATION_FACTORS
+
+
+def calculation_policy(calculation_version=CALCULATION_VERSION):
     return {
-        'calculation_version': CALCULATION_VERSION,
-        'cabinetry_factor': '2',
-        'after_hours_factor': '1.2',
-        'range_factor_below_1001_sf': '1.5',
-        'range_factor_at_or_above_1001_sf': '1.2',
-        'range_threshold_sf': '1001',
+        'calculation_version': calculation_version,
+        **CALCULATION_FACTORS[calculation_version],
         'currency': CURRENCY,
     }
 
@@ -253,9 +264,9 @@ def saved_basis(audit):
     return (audit.get('documents') or {}).get('price_basis') or audit.get('price_basis')
 
 
-def content_hash(rates):
+def content_hash(rates, calculation_version=CALCULATION_VERSION):
     payload = {
-        'calculation_version': CALCULATION_VERSION,
+        'calculation_version': calculation_version,
         'catalog_version': CATALOG_VERSION,
         'currency': CURRENCY,
         'rates': {key: rates[key] for key in KEYS},
@@ -414,7 +425,7 @@ def price_display(rates):
     }
 
 
-def sample_totals(rates):
+def sample_totals(rates, calculation_version=CALCULATION_VERSION):
     """The workbook's filled example, labelled as an illustration. It creates no job."""
     try:
         from .claims import price_scope, proposal_range
@@ -440,8 +451,8 @@ def sample_totals(rates):
         drying_days=3,
         scope_confirmed=True,
     )
-    items, total = price_scope(data, rates)
-    low, high = proposal_range(data, items)
+    items, total = price_scope(data, rates, calculation_version)
+    low, high = proposal_range(data, items, calculation_version)
     return {
         'itemized': f'{_money(total):.2f}',
         'low': f'{low:.2f}',

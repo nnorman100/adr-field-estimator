@@ -532,7 +532,12 @@ record = json.loads(sys.stdin.read())
 from adr_price_book import adr_rates
 
 seed = adr_rates()
-pin = dict(rates=seed, version_id='seed', content_sha256=price_books.content_hash(seed))
+pin = dict(
+    rates=seed,
+    version_id='seed',
+    content_sha256=price_books.content_hash(seed),
+    calculation_version=price_books.CALCULATION_VERSION,
+)
 
 
 class Workspaces:
