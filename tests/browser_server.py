@@ -502,6 +502,7 @@ async def pending_signing_link():
         [],
         AIResult(summary='Confirmed', suggestions=[], unpriced_work=[]),
         store.workspaces.snapshot(uid),
+        rates=adr_rates(),
     )
     record = store.save_audit(uid, job_id, record['revision'], documents)
     signing_links.mint(store, uid, job_id, record['revision'], record['audit']['proposal_hash'])
