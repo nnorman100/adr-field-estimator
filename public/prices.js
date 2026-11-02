@@ -134,7 +134,9 @@
       actions = $('jobPricingActions');
     actions.replaceChildren();
     for (const row of preview.diff)
-      actions.append(node('p', row.description + ': ' + row.before + ' to ' + row.after));
+      actions.append(
+        node('p', row.description + ': ' + (row.before || 'not set') + ' to ' + row.after),
+      );
     actions.append(
       node(
         'p',

@@ -141,3 +141,57 @@ test('one notice, in the server words, for a draft with no prices', async () => 
   Prices.syncNotice();
   assert.equal(context.$('pricesNotSet').hidden, true);
 });
+
+test('the job reprice review says not set for a row with no earlier price', async () => {
+  const elements = new Map();
+  context.$ = (id) => {
+    if (!elements.has(id))
+      elements.set(id, {
+        children: [],
+        replaceChildren() {
+          this.children = [];
+        },
+        append(...added) {
+          this.children.push(...added);
+        },
+      });
+    return elements.get(id);
+  };
+  context.document = { getElementById: context.$ };
+  context.navigator = { onLine: true };
+  context.node = (tag, text) => ({ tag, text });
+  context.button = (text, fn) => ({ text, fn });
+  const totals = { itemized: '1.00', low: '1.00', high: '2.00' };
+  context.jsonApi = async (path) =>
+    path.endsWith('/reprice-preview')
+      ? {
+          diff: [
+            { description: 'Additional work', before: '', after: '60.00' },
+            { description: 'Trip charge', before: '133.95', after: '200.00' },
+          ],
+          before: totals,
+          after: totals,
+          to_label: 'Prices v2',
+        }
+      : {
+          pinned: { label: 'Prices v1' },
+          can_reprice: true,
+          display_rates: { after_hours_job_charge: '', sheet_labor_hourly: '' },
+        };
+  context.state = {
+    user: { uid: 'u' },
+    draft: { inspection_id: 'job-1' },
+    session: {
+      company_id: 'other',
+      role: 'owner',
+      price_books_enabled: true,
+      workspaces_enabled: true,
+      prices_set: true,
+    },
+  };
+  await Prices.noteJob();
+  await context.$('jobPricingActions').children[0].fn();
+  const lines = context.$('jobPricingActions').children.map((child) => child.text);
+  assert.equal(lines[0], 'Additional work: not set to 60.00');
+  assert.equal(lines[1], 'Trip charge: 133.95 to 200.00');
+});
