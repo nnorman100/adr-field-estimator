@@ -195,3 +195,15 @@ test('the job reprice review says not set for a row with no earlier price', asyn
   assert.equal(lines[0], 'Additional work: not set to 60.00');
   assert.equal(lines[1], 'Trip charge: 133.95 to 200.00');
 });
+
+test('the proposal names ADR starting prices for ADR only', () => {
+  const documents = { window: { ADRCore: {} } };
+  vm.createContext(documents);
+  vm.runInContext(fs.readFileSync('public/documents.js', 'utf8'), documents);
+  const { pricedFrom } = documents.window.ADRDocuments;
+  assert.equal(pricedFrom({ company_id: 'adr', sequence: 0 }), 'Priced from ADR starting prices.');
+  assert.equal(pricedFrom({ company_id: 'other', sequence: 0 }), '');
+  assert.equal(pricedFrom({ company_id: 'adr', sequence: 2 }), 'Priced from Prices v2.');
+  assert.equal(pricedFrom({ company_id: 'other', sequence: 1 }), 'Priced from Prices v1.');
+  assert.equal(pricedFrom(undefined), '');
+});

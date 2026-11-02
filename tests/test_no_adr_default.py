@@ -14,6 +14,7 @@ from backend.adr_price_book import adr_rates
 from backend.inspection_store import Conflict
 from backend.contracts import InspectionData
 from backend.price_book_import import export_csv
+from backend.price_book_migration import apply_plan, build_plan
 from tests.test_workspaces import ID, api, data, store  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -450,7 +451,8 @@ def test_adr_book_hash_and_display_are_unchanged(api):
     assert price_books.content_hash(adr_rates()) == (
         'e4c41407ed544b53d4cb88ff75024399021a45401699b23a2733a3609063b2b5'
     )
-    assert price_books.label_for(0, 'adr') == 'Workbook seed'
+    assert price_books.label_for(0, 'adr') == 'ADR starting prices'
+    assert price_books.label_for(0, 'other') == 'Prices not set'
     client, current, _ = api
     current['uid'] = 'estimator'
     session = client.get('/api/session').json()
@@ -466,7 +468,7 @@ def test_adr_book_hash_and_display_are_unchanged(api):
 def test_adr_keeps_its_seed_version_for_old_pins(api, enabled):
     client, current, _ = api
     current['uid'] = 'owner'
-    assert client.get('/api/companies/adr/prices').json()['label'] == 'Workbook seed'
+    assert client.get('/api/companies/adr/prices').json()['label'] == 'ADR starting prices'
     version = client.get('/api/companies/adr/prices/versions/seed')
     assert version.status_code == 200
     assert {row['unit_price'] for row in version.json()['rates']} >= {'133.95', '47.46'}
@@ -481,6 +483,70 @@ def test_seed_restore_is_gone_for_adr_too(api, enabled):
     )
     assert restored.status_code == 404
     assert not [key for key in company_store.db.records if key.startswith('_price_book_previews/')]
+
+
+def test_adr_starting_prices_restore_as_adr_own_book_and_only_for_adr(api, enabled):
+    client, current, company_store = api
+    db = company_store.db
+    apply_plan(company_store, build_plan(db, ['adr']), True)
+    stored = db.records['_price_book_versions/migrate-adr-v1']
+    assert stored['change_reason'] == 'ADR starting prices'
+    stored['change_reason'] = 'Workbook seed'
+    saved = dict(stored)
+    db.records['_price_book_versions/migrate-other-v1'] = {
+        **saved,
+        'version_id': 'migrate-other-v1',
+        'company_id': 'other',
+        'rates': OWN,
+        'content_sha256': price_books.content_hash(OWN),
+    }
+
+    current['uid'] = 'owner'
+    base = '/api/companies/adr/prices'
+    raised = client.post(
+        base + '/preview',
+        json={'rates': {**adr_rates(), 'emergency_call': '200.00'}, 'change_reason': 'Raise it'},
+    ).json()
+    published = client.post(
+        base + '/publish',
+        json={'preview_id': raised['preview_id'], 'expected_generation': raised['generation']},
+    )
+    assert published.status_code == 200, published.text
+    history = client.get(base + '/history')
+    rows = {row['version_id']: row for row in history.json()['versions']}
+    assert rows['migrate-adr-v1']['label'] == 'ADR starting prices'
+    assert rows['migrate-adr-v1']['change_reason'] == ''
+    detail = client.get(base + '/versions/migrate-adr-v1')
+    assert detail.json()['label'] == 'ADR starting prices'
+    assert detail.json()['change_reason'] == ''
+    for shown in (history, detail, client.get(base)):
+        assert 'workbook seed' not in shown.text.lower()
+    restored = client.post(
+        base + '/versions/migrate-adr-v1/restore', json={'change_reason': 'Back to the start'}
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()['preview_id']
+    changed = {row['key']: row for row in restored.json()['diff']}['emergency_call']
+    assert (changed['before'], changed['after']) == ('200.00', '133.95')
+    assert db.records['_price_book_versions/migrate-adr-v1'] == saved
+
+    current['uid'] = 'other-owner'
+    base = '/api/companies/other/prices'
+    responses = [client.get(base + '/history'), client.get(base + '/versions')]
+    current['uid'] = 'admin'
+    responses.append(client.get('/api/admin/companies/other/prices/versions'))
+    for listed in responses:
+        assert listed.status_code == 200, listed.text
+        assert listed.json()['versions'] == []
+        assert 'ADR starting prices' not in listed.text
+        assert 'workbook seed' not in listed.text.lower()
+    current['uid'] = 'other-owner'
+    for version_id in ('migrate-other-v1', 'migrate-adr-v1'):
+        refused = client.post(
+            f'{base}/versions/{version_id}/restore', json={'change_reason': 'Bring it back'}
+        )
+        assert refused.status_code == 404
+    assert client.get(base).json()['label'] == 'Prices not set'
 
 
 LEGACY = {**adr_rates(), 'additional_work_hourly': ''}

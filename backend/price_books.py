@@ -377,7 +377,7 @@ def diff_rates(before, after):
 def label_for(sequence, company_id):
     if sequence:
         return f'Prices v{sequence}'
-    return 'Workbook seed' if company_id == ADR_COMPANY_ID else 'Prices not set'
+    return 'ADR starting prices' if company_id == ADR_COMPANY_ID else 'Prices not set'
 
 
 def public_rates(rates, *, editable_additional_work):

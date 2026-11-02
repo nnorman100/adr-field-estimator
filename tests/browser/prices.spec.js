@@ -34,7 +34,7 @@ test('owner publishes a price, keeps the saved draft, then applies it to that dr
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
   await page.locator('#finishAudit').click();
   await expect(page.locator('#estimateRange')).toHaveText('$1,775.00–$1,788.90');
-  await expect(page.locator('#proposalBody')).toContainText('Priced from workbook seed.');
+  await expect(page.locator('#proposalBody')).toContainText('Priced from ADR starting prices.');
   await navigate(page, 'dashboardPrices');
   await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
   const trip = page.locator('input[name=emergency_call]');
@@ -48,7 +48,10 @@ test('owner publishes a price, keeps the saved draft, then applies it to that dr
   await navigate(page, 'dashboardJobs');
   await page.getByRole('button', { name: /Assigned bathroom/ }).click();
   await expect(page.locator('#estimateRange')).toHaveText('$1,775.00–$1,788.90');
-  await expect(page.locator('#proposalBody')).toContainText('Priced from workbook seed.');
+  await expect(page.locator('#proposalBody')).toContainText('Priced from ADR starting prices.');
+  await expect(page.locator('#jobPricingStatus')).toContainText(
+    'This job is priced from ADR starting prices.',
+  );
   await expect(page.locator('#jobPricingStatus')).toContainText('Newer company prices');
   await page.getByRole('button', { name: 'Review new prices for this job' }).click();
   await page.getByRole('button', { name: 'Apply these prices to this job only' }).click();
@@ -134,7 +137,8 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
     },
   });
   await start(page, 'other');
-  const adrRates = /133\.95|47\.46|1,180\.20|159\.53|Workbook seed|workbook seed/;
+  const adrRates =
+    /133\.95|47\.46|1,180\.20|159\.53|Workbook seed|workbook seed|ADR starting prices/;
   await page.getByRole('button', { name: 'New job', exact: true }).click();
   await page.locator('.task-nav [data-task="property"]').click();
   await expect(page.locator('#pricesNotSet')).toBeVisible();

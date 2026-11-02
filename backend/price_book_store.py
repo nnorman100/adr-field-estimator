@@ -88,6 +88,11 @@ def _refuse_adr_rates(company_id, rates):
         raise Conflict('These saved prices cannot be used for this company. Contact support.')
 
 
+def _shown_reason(version):
+    """Only an owner's publication has a reason to show. The label names a starting book."""
+    return version.get('change_reason', '') if version.get('sequence') else ''
+
+
 def _is_unset(book):
     return book.get('source') == 'unset'
 
@@ -216,7 +221,7 @@ class PriceBookStore:
         except ImportError:
             import ai_features
         extras = ai_features.enabled('priced_extras')
-        reason = book.get('change_reason', '')
+        reason = _shown_reason(book)
         unset = _is_unset(book)
         return {
             'company_id': company['company_id'],
@@ -521,7 +526,7 @@ class PriceBookStore:
                 'actor': self._actor_name(company_id, version.get('published_by_uid')),
             }
             if manage:
-                item['change_reason'] = version.get('change_reason', '')
+                item['change_reason'] = _shown_reason(version)
             listed.append(item)
         return {'versions': listed}
 
@@ -534,6 +539,8 @@ class PriceBookStore:
             .stream()
         ]
         rows.sort(key=lambda row: row.get('sequence', 0), reverse=True)
+        if company_id != ADR_COMPANY_ID:
+            return [row for row in rows if row.get('sequence')]
         return rows
 
     def one_version(self, uid, company_id, version_id, support=False):
@@ -588,7 +595,7 @@ class PriceBookStore:
             'rates': public_rates(version['rates'], editable_additional_work=False),
         }
         if manage:
-            detail['change_reason'] = version.get('change_reason', '')
+            detail['change_reason'] = _shown_reason(version)
         return detail
 
     def history(self, uid, company_id, support=False):
@@ -922,7 +929,11 @@ class PriceBookStore:
         self._require()
         self.ws.company_actor(uid, company_id, manage=True)
         version = self._version(version_id)
-        if not version or version.get('company_id') != company_id:
+        if (
+            not version
+            or version.get('company_id') != company_id
+            or (company_id != ADR_COMPANY_ID and not version.get('sequence'))
+        ):
             raise LookupError('Price version not found.')
         rates = version['rates']
         acknowledgements = [

@@ -286,7 +286,7 @@ def apply_plan(store, plan, write):
                 'published_at': None,
                 'effective_from': None,
                 'source': 'seed',
-                'change_reason': 'Workbook seed',
+                'change_reason': 'ADR starting prices',
                 'import_digest': None,
             }
             tx.create(ws.ref(VERSIONS, row['version_id']), version)
