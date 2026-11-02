@@ -11,7 +11,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import firebase_admin
 from google.cloud import firestore
-from backend.price_book_migration import apply_plan, build_plan, source_fingerprints, summary
+from backend.migration_ledger import local_source_commit, record_applied
+from backend.price_book_migration import (
+    MIGRATION_ID,
+    apply_plan,
+    build_plan,
+    source_fingerprints,
+    summary,
+)
 from backend.workspaces import WorkspaceStore
 
 PROJECT = 'alert-disaster-field-2026'
@@ -48,6 +55,8 @@ def main():
             json.dumps({'plan': plan, 'summary': report}, indent=2, default=str) + '\n',
             encoding='utf8',
         )
+    if args.apply:
+        report['ledger_recorded'] = record_applied(db, MIGRATION_ID, local_source_commit())
     print(json.dumps(summary(plan) if not args.apply else report, indent=2))
 
 

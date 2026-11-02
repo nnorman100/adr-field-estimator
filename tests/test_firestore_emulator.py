@@ -700,6 +700,7 @@ def test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims
     db.document('_admin_events/event').set({'actor_uid': 'admin', 'action': 'support_view_jobs'})
     db.document('_companies/adr').set({'company_id': 'adr', 'status': 'active'})
     db.document('_memberships/office').set({'uid': 'office', 'company_id': 'adr', 'role': 'office'})
+    db.document('_migrations/adr-company-v1').set({'migration_id': 'adr-company-v1'})
     active = {'booleanValue': True}
     attempts = [
         ('GET', '_platform_admins/admin', None),
@@ -719,6 +720,9 @@ def test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims
         ('GET', '_price_book_versions/seed', None),
         ('GET', '_job_pricing/adr', None),
         ('GET', '_price_book_previews/seed', None),
+        ('GET', '_migrations/adr-company-v1', None),
+        ('GET', '_migrations', None),
+        ('PATCH', '_migrations/forged', {'fields': {'source_commit': {'stringValue': 'x'}}}),
     ]
     forged = dict(superadmin=True, admin=True, role='superadmin', platform_admin=True)
     for uid in ('office', 'admin', 'outsider'):
@@ -733,6 +737,7 @@ def test_rules_deny_browser_access_to_superadmin_records_even_with_forged_claims
     assert stored(db, '_admin_events/forged') is None
     assert stored(db, '_companies/adr')['status'] == 'active'
     assert stored(db, '_memberships/office')['role'] == 'office'
+    assert stored(db, '_migrations/forged') is None
 
 
 def test_concurrent_delivery_retries_send_each_entry_once_and_count_it(monkeypatch):
