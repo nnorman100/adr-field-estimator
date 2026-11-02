@@ -5953,6 +5953,8 @@ async function applyUser(user) {
   if (stale()) return;
   state.user = user;
   state.session = null;
+  // A response that landed during the awaits above may have re-rendered the old session's private counts.
+  window.InsightUI?.reset();
   if (!user) resetShellBranding();
   state.workspaceInitializing = true;
   document.body.classList.remove('dashboard-open', 'office-view');
