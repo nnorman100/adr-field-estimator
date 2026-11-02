@@ -16,10 +16,10 @@ import qrcode
 import qrcode.image.svg
 
 try:
-    from .inspection_store import Conflict, canonical, reserve_slot
+    from .inspection_store import Conflict, canonical, link_voided, reserve_slot
     from .workspaces import AccessDenied, email_address
 except ImportError:
-    from inspection_store import Conflict, canonical, reserve_slot
+    from inspection_store import Conflict, canonical, link_voided, reserve_slot
     from workspaces import AccessDenied, email_address
 
 LINK_SECONDS = 7 * 86400
@@ -167,14 +167,7 @@ def status(store, uid, inspection_id):
             return dict(status=link['status'] if link else 'none')
         if time.time() >= link['expires']:
             return dict(status='expired')
-        try:
-            if record['status'] == 'signed':
-                raise Conflict(UPDATED)
-            store._signable(
-                record,
-                {'expected_revision': link['revision'], 'proposal_hash': link['proposal_hash']},
-            )
-        except Conflict:
+        if link_voided(record, link):
             return dict(status='voided')
         return dict(status='pending', expires_at=iso(link['expires']))
 
@@ -203,17 +196,9 @@ def _resolve(store, key, count=False):
         if link['status'] == 'used':
             if record.get('authorization_id') != link['auth_id']:
                 raise LookupError(UNAVAILABLE)
-        else:
-            try:
-                if record['status'] == 'signed':
-                    raise Conflict(UPDATED)
-                store._signable(
-                    record,
-                    {'expected_revision': link['revision'], 'proposal_hash': link['proposal_hash']},
-                )
-            except Conflict:
-                tx.update(link_ref, {'status': 'voided', 'ended_at': moment})
-                return link, None
+        elif link_voided(record, link):
+            tx.update(link_ref, {'status': 'voided', 'ended_at': moment})
+            return link, None
         if count:
             limits = reserve_slot(link.get('limits', {}), 'reads', READS_PER_MINUTE)
             tx.update(link_ref, {'limits': limits})

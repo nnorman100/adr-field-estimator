@@ -774,35 +774,73 @@ window.WorkspaceUI = (() => {
     bindClearNetwork(sync);
     return box;
   }
+  function pendingLinksNote(links) {
+    if (!links.length) return [node('p', 'They have no pending signing links.')];
+    const list = node('ul');
+    for (const link of links)
+      list.append(
+        node(
+          'li',
+          [link.customer_name || 'No customer name', link.address || 'No address']
+            .join(' · ')
+            .concat(' · link created ', new Date(link.created_at * 1000).toLocaleString()),
+        ),
+      );
+    return [
+      node(
+        'p',
+        'These signing links stop working once access is removed. The homeowner sees that the link is unavailable and needs a new one:',
+      ),
+      list,
+    ];
+  }
   // Removing access disables the member rather than deleting the account, so their jobs and the
   // audit trail stay. Re-enable them any time with Access: Active.
   function removeAccess(member, cid) {
     const box = node('div', undefined, 'actions');
     const ask = () => {
-      const remove = button('Remove access', () => {
-        const note = node(
-          'p',
-          'Remove access for ' +
-            member.email +
-            '? They lose access to the company, and you can restore it later.',
-        );
-        const confirm = button('Yes, remove access', async () => {
-          await jsonApi('/api/companies/' + cid + '/team/' + member.uid, 'PUT', {
-            expected_version: member.version,
-            role: member.role,
-            status: 'disabled',
-          });
-          await team();
-          say('Access removed for ' + member.email + '.', 'success');
-        });
-        confirm.classList.add('primary');
-        box.replaceChildren(note, confirm, button('Keep access', ask));
-      });
+      const remove = button('Remove access', () => confirmRemoval(member.role));
       remove.classList.add('remove-access');
       box.replaceChildren(remove);
     };
+    const confirmRemoval = async (role, onKeep) => {
+      const note = node(
+        'p',
+        'Remove access for ' +
+          member.email +
+          '? They lose access to the company, and you can restore it later.',
+      );
+      // Their pending signing links stop working too, so show which signings that affects.
+      const links = node('div', 'Checking pending signing links…', 'signing-links-note');
+      const confirm = button('Yes, remove access', async () => {
+        await jsonApi('/api/companies/' + cid + '/team/' + member.uid, 'PUT', {
+          expected_version: member.version,
+          role,
+          status: 'disabled',
+        });
+        await team();
+        say('Access removed for ' + member.email + '.', 'success');
+      });
+      confirm.classList.add('primary');
+      confirm.disabled = true;
+      const keep = button('Keep access', () => {
+        onKeep?.();
+        ask();
+      });
+      box.replaceChildren(note, links, confirm, keep);
+      try {
+        const found = (
+          await jsonApi('/api/companies/' + cid + '/team/' + member.uid + '/signing-links')
+        ).links;
+        links.replaceChildren(...pendingLinksNote(found));
+      } catch {
+        // The listing is informational; when it is unavailable, say so and let the owner decide.
+        links.replaceChildren(node('p', "Couldn't load pending signing links"));
+      }
+      confirm.disabled = false;
+    };
     ask();
-    return box;
+    return { box, confirmRemoval };
   }
   function invitationList(container, invitations, companyId, after, actions = true, manage = null) {
     const list = node('div', undefined, 'dashboard-list');
@@ -1011,6 +1049,8 @@ window.WorkspaceUI = (() => {
         node('h3', member.email),
         node('p', roleName(member.role) + ' · ' + member.status),
       );
+      const removal =
+        member.role !== 'owner' && member.status === 'active' ? removeAccess(member, cid) : null;
       if (member.role !== 'owner' || member.status !== 'active') {
         const form = node('form');
         selectField(
@@ -1023,7 +1063,7 @@ window.WorkspaceUI = (() => {
           ],
           member.role === 'owner' ? 'estimator' : member.role,
         );
-        selectField(
+        const access = selectField(
           form,
           'Access',
           'status',
@@ -1034,6 +1074,10 @@ window.WorkspaceUI = (() => {
           member.status,
         );
         submit(form, 'Save access', async (values) => {
+          if (removal && values.get('status') === 'disabled')
+            return removal.confirmRemoval(values.get('role'), () => {
+              access.value = member.status;
+            });
           await jsonApi('/api/companies/' + cid + '/team/' + member.uid, 'PUT', {
             expected_version: member.version,
             role: values.get('role'),
@@ -1044,8 +1088,7 @@ window.WorkspaceUI = (() => {
         });
         card.append(form);
       }
-      if (member.role !== 'owner' && member.status === 'active')
-        card.append(removeAccess(member, cid));
+      if (removal) card.append(removal.box);
       grid.append(card);
     }
     content.append(node('h2', 'Invitations'));

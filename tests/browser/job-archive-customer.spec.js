@@ -90,6 +90,122 @@ test('owner removes a team member after confirming, and can restore them', async
   await expect(office).toContainText('Office staff · active');
 });
 
+test('removing an estimator lists their pending signing links before confirming', async ({
+  page,
+  request,
+}) => {
+  await start(page, 'owner');
+  await page
+    .locator('#workspaceMenuToggle:visible')
+    .click({ timeout: 1000 })
+    .catch(() => {});
+  await page.locator('#dashboardTeam').click();
+  const estimator = page.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: uid('estimator') + '@example.invalid', exact: true }),
+  });
+  await estimator.getByRole('button', { name: 'Remove access' }).click();
+  await expect(estimator).toContainText('They have no pending signing links.');
+  await estimator.getByRole('button', { name: 'Keep access' }).click();
+  await request.post('/__test/pending-signing-link');
+  await estimator.getByRole('button', { name: 'Remove access' }).click();
+  await expect(estimator).toContainText('Pat Homeowner · Assigned bathroom · link created');
+  await expect(estimator).toContainText('These signing links stop working once access is removed.');
+  await estimator.getByRole('button', { name: 'Keep access' }).click();
+  // Looking changes nothing: the estimator is still active.
+  await expect(estimator).toContainText('Estimator · active');
+});
+
+test('saving Access: Disabled lists pending signing links and waits for confirmation', async ({
+  page,
+  request,
+}) => {
+  await start(page, 'owner');
+  await request.post('/__test/pending-signing-link');
+  await page
+    .locator('#workspaceMenuToggle:visible')
+    .click({ timeout: 1000 })
+    .catch(() => {});
+  await page.locator('#dashboardTeam').click();
+  const estimator = page.locator('.dashboard-card').filter({
+    has: page.getByRole('heading', { name: uid('estimator') + '@example.invalid', exact: true }),
+  });
+  const access = estimator.locator('select[name=status]');
+  await access.selectOption('disabled');
+  await estimator.getByRole('button', { name: 'Save access' }).click();
+  await expect(estimator).toContainText('Pat Homeowner · Assigned bathroom · link created');
+  await expect(estimator).toContainText('Estimator · active');
+  await estimator.getByRole('button', { name: 'Keep access' }).click();
+  await expect(access).toHaveValue('active');
+  await expect(estimator).toContainText('Estimator · active');
+  await access.selectOption('disabled');
+  await estimator.locator('select[name=role]').selectOption('office');
+  await estimator.getByRole('button', { name: 'Save access' }).click();
+  await estimator.getByRole('button', { name: 'Yes, remove access' }).click();
+  await expect(page.locator('#message')).toContainText('Access removed for');
+  await expect(estimator).toContainText('Office staff · disabled');
+});
+
+test.describe('signing-link listing failure', () => {
+  // A routed failure must reach the page, not be answered by the app's service worker.
+  test.use({ serviceWorkers: 'block' });
+  test('owner can still remove access when pending signing links fail to load', async ({
+    page,
+  }) => {
+    await start(page, 'owner');
+    await page.route('**/api/companies/*/team/*/signing-links', (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: '{"detail":"Unavailable"}',
+      }),
+    );
+    await page
+      .locator('#workspaceMenuToggle:visible')
+      .click({ timeout: 1000 })
+      .catch(() => {});
+    await page.locator('#dashboardTeam').click();
+    const estimator = page.locator('.dashboard-card').filter({
+      has: page.getByRole('heading', { name: uid('estimator') + '@example.invalid', exact: true }),
+    });
+    await estimator.getByRole('button', { name: 'Remove access' }).click();
+    await expect(estimator).toContainText("Couldn't load pending signing links");
+    const confirm = estimator.getByRole('button', { name: 'Yes, remove access' });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect(estimator).toContainText('Estimator · disabled');
+    await estimator.locator('select[name=status]').selectOption('active');
+    await estimator.getByRole('button', { name: 'Save access' }).click();
+    await expect(estimator).toContainText('Estimator · active');
+  });
+  test('owner can still save Access: Disabled when pending signing links fail to load', async ({
+    page,
+  }) => {
+    await start(page, 'owner');
+    await page.route('**/api/companies/*/team/*/signing-links', (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: '{"detail":"Unavailable"}',
+      }),
+    );
+    await page
+      .locator('#workspaceMenuToggle:visible')
+      .click({ timeout: 1000 })
+      .catch(() => {});
+    await page.locator('#dashboardTeam').click();
+    const estimator = page.locator('.dashboard-card').filter({
+      has: page.getByRole('heading', { name: uid('estimator') + '@example.invalid', exact: true }),
+    });
+    await estimator.locator('select[name=status]').selectOption('disabled');
+    await estimator.getByRole('button', { name: 'Save access' }).click();
+    await expect(estimator).toContainText("Couldn't load pending signing links");
+    const confirm = estimator.getByRole('button', { name: 'Yes, remove access' });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect(estimator).toContainText('Estimator · disabled');
+  });
+});
+
 test('offline job list keeps the customer name saved with the local copy', async ({
   page,
   context,

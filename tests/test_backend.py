@@ -1080,6 +1080,7 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('GET', '/api/companies/{company_id}'),
         ('PUT', '/api/companies/{company_id}'),
         ('GET', '/api/companies/{company_id}/team'),
+        ('GET', '/api/companies/{company_id}/team/{member_uid}/signing-links'),
         ('PUT', '/api/companies/{company_id}/team/{member_uid}'),
         ('GET', '/api/companies/{company_id}/invitations'),
         ('POST', '/api/companies/{company_id}/invitations'),

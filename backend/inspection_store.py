@@ -920,3 +920,17 @@ class InspectionStore(JobStore):
             return None
 
         return self._atomic(checkpoint)
+
+
+def link_voided(record, link):
+    """A pending signing link cannot sign once its job is signed or its estimate has changed."""
+    if record['status'] == 'signed':
+        return True
+    try:
+        InspectionStore._signable(
+            record,
+            {'expected_revision': link['revision'], 'proposal_hash': link['proposal_hash']},
+        )
+    except Conflict:
+        return True
+    return False

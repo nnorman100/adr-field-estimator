@@ -19,7 +19,7 @@ import uvicorn
 from fastapi import Request, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
-from backend import places, ai_features, monitoring_store, price_books
+from backend import places, ai_features, monitoring_store, price_books, signing_links
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
 from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
@@ -454,6 +454,27 @@ async def expire_signing_links():
             link['expires'] = 0
             expired += 1
     return {'expired': expired}
+
+
+@bm.app.post('/__test/pending-signing-link')
+async def pending_signing_link():
+    # Audits the seeded estimator job and mints a real link, so the owner's remove-access
+    # confirmation has something to list.
+    from backend.contracts import AIResult
+
+    job_id = 'ADR-INS-' + 'c' * 32
+    uid = 'test-owner-ws-estimator'
+    record = store.get_inspection(uid, job_id)
+    documents = bm.make_documents(
+        InspectionData.model_validate(record['data']),
+        [],
+        AIResult(summary='Confirmed', suggestions=[], unpriced_work=[]),
+        store.workspaces.snapshot(uid),
+    )
+    record = store.save_audit(uid, job_id, record['revision'], documents)
+    signing_links.mint(store, uid, job_id, record['revision'], record['audit']['proposal_hash'])
+    store.db.records['_workspace_jobs/' + job_id].update(customer_name='Pat Homeowner')
+    return {'created': True}
 
 
 @bm.app.post('/__test/document-links')
