@@ -20,6 +20,7 @@ OLD = 'a' * 40
 NEW = 'b' * 40
 TAG = 'a' + NEW[:7]
 URL = 'https://abbbbbbb---alert-disaster-field-estimator-545776254070.us-west2.run.app'
+SERVICE_URL = 'https://alert-disaster-field-estimator-545776254070.us-west2.run.app'
 BASELINE = {
     'WORKSPACES_ENABLED': 'true',
     'AI_FEATURES': 'readiness',
@@ -68,9 +69,11 @@ class FakeRunner:
         releases=None,
         log_output='Merge pull request #185 from nnorman100/fm/feature\x1ffeat: add version numbers\x1e',
         migrations=None,
-        root=ROOT,
+        serving_version='unknown',
+        health_version=None,
+        ledger=None,
+        branch='master',
     ):
-        self.root = root
         self.calls = []
         self.sleeps = []
         self.changed = list(changed)
@@ -78,6 +81,12 @@ class FakeRunner:
         self.fail = set(fail)
         self.refused_status = refused_status
         self.health_commit = health_commit
+        self.health_version = health_version
+        self.staged_version = None
+        self.serving = (serving_commit, serving_version)
+        self.live = self.serving
+        self.ledger = ledger
+        self.branch = branch
         self.traffic = traffic or [{'revisionName': 'rev-old', 'percent': 100}]
         self.revisions = {
             'rev-old': revision(serving_commit),
@@ -143,6 +152,7 @@ class FakeRunner:
             if needle in text:
                 if name == 'stage':
                     tag = argv[argv.index('--tag') + 1]
+                    self.staged_version = argv[argv.index('--version') + 1]
                     self.traffic.append(
                         {'revisionName': 'rev-new', 'percent': 0, 'tag': tag, 'url': URL}
                     )
@@ -179,7 +189,11 @@ class FakeRunner:
                 )
             return self.completed(argv, out=self.head + '\n')
         if argv[1] == 'fetch':
-            return self.completed(argv, 0)
+            return self.completed(argv, 1 if 'fetch' in self.fail else 0)
+        if argv[1] == 'symbolic-ref':
+            return self.completed(argv, 0 if self.branch else 1, out=(self.branch or '') + '\n')
+        if argv[1] == 'describe':
+            return self.completed(argv, 1)
         if argv[1] == 'tag':
             if argv[2] == '--points-at':
                 target = argv[3]
@@ -193,6 +207,8 @@ class FakeRunner:
             self.tags[tag_name] = commit
             return self.completed(argv, 0)
         if argv[1] == 'ls-remote':
+            if 'ls-remote' in self.fail:
+                return self.completed(argv, 1)
             ref = argv[-1].removeprefix('refs/tags/')
             commit = self.remote_tags.get(ref, '')
             return self.completed(argv, 0, out=(f'{commit}\trefs/tags/{ref}\n' if commit else ''))
@@ -205,6 +221,9 @@ class FakeRunner:
         if argv[1] == 'show':
             return self.completed(argv, 0, out='2026-11-02\n')
         if argv[1] == 'checkout':
+            if '--detach' not in argv:
+                self.head = NEW if argv[-1] == self.branch else argv[-1]
+                return self.completed(argv, 0)
             self.head = argv[-1]
             self.health_commit = self.head
             self.revisions['rev-new'] = revision(self.head)
@@ -220,12 +239,17 @@ class FakeRunner:
         raise AssertionError(argv)
 
     def service(self):
-        return {'status': {'traffic': self.traffic}}
+        return {'status': {'url': SERVICE_URL, 'traffic': self.traffic}}
 
     def update_traffic(self, argv):
         flag = next(item for item in argv if item.startswith(('--to-tags=', '--to-revisions=')))
         target = flag.split('=', 1)[1].rsplit('=', 1)[0]
         name = target if flag.startswith('--to-revisions') else 'rev-new'
+        self.live = (
+            self.serving
+            if flag.startswith('--to-revisions')
+            else (self.health_commit, self.health_version or self.staged_version)
+        )
         self.traffic = [
             {**entry, 'percent': 100 if entry['revisionName'] == name else 0}
             for entry in self.traffic
@@ -237,14 +261,20 @@ class FakeRunner:
 
     def fetch(self, url, method='GET', body=None, headers=None, timeout=30):
         if url.endswith('/api/health'):
+            commit, version = (
+                self.live
+                if url.startswith(SERVICE_URL)
+                else (self.health_commit, self.health_version or self.staged_version)
+            )
             payload = {
                 'status': 'healthy',
                 'schema_version': 3,
-                'source_commit': self.health_commit,
+                'version': version,
+                'source_commit': commit,
             }
             return 200, json.dumps(payload)
         if 'documents/_migrations' in url:
-            return 200, json.dumps({'documents': self.migrations})
+            return self.ledger or (200, json.dumps({'documents': self.migrations}))
         if 'firebasehosting.googleapis.com' in url:
             return 200, json.dumps(
                 {
@@ -424,6 +454,7 @@ def test_a_staged_staff_list_that_differs_from_serving_is_refused(summary):
     'kwargs',
     [
         {'health_commit': OLD},
+        {'health_version': 'unknown'},
         {'refused_status': 200},
         {'refused_status': 500},
         {'staged_env': {'INVITATION_TRANSPORT': None}},
@@ -611,15 +642,21 @@ def test_overlong_explicit_tag_is_refused_before_anything_runs():
     )
 
 
-def release_argv(run_id):
-    job = yaml.safe_load(WORKFLOW)['jobs']['deploy']
-    step = next(step for step in job['steps'] if step.get('name') == 'Release')
-    env = {'COMMIT': NEW, 'RUN_ID': run_id, 'DEPLOY_ARGS': ''}
+def deploy_job():
+    return yaml.safe_load(WORKFLOW)['jobs']['deploy']
+
+
+def step_argv(name, env):
+    step = next(step for step in deploy_job()['steps'] if step.get('name') == name)
     tokens = shlex.split(step['run'], comments=True)
-    for name, value in env.items():
-        tokens = [token.replace(f'${name}', value) for token in tokens]
+    for key, value in env.items():
+        tokens = [token.replace(f'${key}', value) for token in tokens]
     tokens = [token for token in tokens if token]
     return tokens[tokens.index('scripts/auto_deploy.py') + 1 :]
+
+
+def release_argv(run_id):
+    return step_argv('Release', {'COMMIT': NEW, 'RUN_ID': run_id, 'DEPLOY_ARGS': ''})
 
 
 def test_workflow_release_step_stages_a_tag_cloud_run_accepts():
@@ -634,18 +671,39 @@ def test_workflow_release_step_stages_a_tag_cloud_run_accepts():
     assert tag.endswith('0166919')
 
 
+def ledger_doc(migration_id, commit, applied_at='2026-11-01T10:00:00.123456Z'):
+    return {
+        'name': f'projects/p/databases/(default)/documents/_migrations/{migration_id}',
+        'fields': {
+            'migration_id': {'stringValue': migration_id},
+            'applied_at': {'timestampValue': applied_at},
+            'source_commit': {'stringValue': commit},
+        },
+    }
+
+
+def rollback_runner(**kwargs):
+    return FakeRunner(
+        serving_commit=NEW,
+        ancestors={(OLD, NEW), (OLD, OLD), (NEW, 'master'), (OLD, 'master')},
+        tags={'2026.10.30-1': OLD, '2026.11.02-1': NEW},
+        **kwargs,
+    )
+
+
 def test_version_numbering_counts_up_per_utc_day_and_publishes_github_release(summary):
     runner = FakeRunner()
     assert auto.next_version(runner, NEW, today='2026.11.02') == '2026.11.02-1'
     runner.tags['2026.11.02-1'] = OLD
     runner.tags['2026.11.02-2'] = 'c' * 40
     assert auto.next_version(runner, NEW, today='2026.11.02') == '2026.11.02-3'
-    assert release(runner, '--title', 'Customer Portal Milestone') == 0
+    assert release(runner) == 0
+    assert not any(c == NEW for c in runner.tags.values())
+    assert auto.main(['--publish', NEW], runner=runner) == 0
     created_ver = next(v for v, c in runner.tags.items() if c == NEW)
     assert runner.remote_tags[created_ver] == NEW
-    assert created_ver in runner.releases
     rel = runner.releases[created_ver]
-    assert rel['title'] == f'{created_ver} — Customer Portal Milestone'
+    assert rel['title'] == created_ver
     assert '- Add version numbers (#185)' in rel['notes']
     stage = next(argv for key, argv in runner.calls if key == 'stage')
     assert stage[stage.index('--version') + 1] == created_ver
@@ -657,16 +715,20 @@ def test_version_numbering_counts_up_per_utc_day_and_publishes_github_release(su
 def test_failed_deploy_never_creates_a_version_tag_or_github_release(summary):
     runner = FakeRunner(fail={'verify'})
     assert release(runner) == 1
+    assert auto.main(['--publish', NEW], runner=runner) == 0
     assert runner.tags == {} and runner.releases == {}
+    assert 'not what is serving' in summary.text()
 
 
 def test_rerun_on_same_commit_is_idempotent_and_never_moves_existing_tag(summary):
     runner = FakeRunner(
         serving_commit=NEW,
+        serving_version='2026.11.02-1',
         tags={'2026.11.02-1': NEW},
         releases={'2026.11.02-1': {'title': '2026.11.02-1', 'notes': 'existing'}},
     )
     assert release(runner) == 0
+    assert auto.main(['--publish', NEW], runner=runner) == 0
     assert runner.tags == {'2026.11.02-1': NEW}
     assert not any(argv[:3] == ['gh', 'release', 'create'] for _, argv in runner.calls)
     record = auto.Record()
@@ -674,86 +736,189 @@ def test_rerun_on_same_commit_is_idempotent_and_never_moves_existing_tag(summary
         auto.publish_release(runner, record, '2026.11.02-1', OLD)
 
 
-def test_rollback_to_version_redeploys_tag_and_warns_when_target_is_older_than_migration(
-    summary, tmp_path, capsys
+def test_publish_tags_the_version_the_live_backend_reports_not_a_new_number(summary):
+    runner = FakeRunner(serving_commit=NEW, serving_version='2026.10.30-4')
+    assert auto.main(['--publish', NEW], runner=runner) == 0
+    assert runner.tags == {'2026.10.30-4': NEW}
+    assert runner.remote_tags == {'2026.10.30-4': NEW}
+    assert '2026.10.30-4' in runner.releases
+
+
+@pytest.mark.parametrize('version', ['unknown', None, '2026.11.02-1-dirty'])
+def test_publish_reports_an_unversioned_live_release_and_invents_no_number(
+    summary, capsys, version
 ):
-    releases_md = tmp_path / 'RELEASES.md'
-    releases_md.write_text(
-        '| Date | Backend | Frontend | Source commit | Traffic | Notes |\n'
-        '| --- | --- | --- | --- | --- | --- |\n'
-        f'| 2026-11-01 | — (`migrate_price_books.py --apply`) | — | `{NEW}` | one-time migration | applied |\n',
-        encoding='utf8',
+    runner = FakeRunner(serving_commit=NEW, serving_version=version)
+    assert auto.main(['--publish', NEW], runner=runner) == 0
+    assert runner.tags == {} and runner.releases == {}
+    assert '::warning::' in capsys.readouterr().err
+
+
+def test_publish_refuses_when_the_live_health_cannot_be_read(summary):
+    runner = FakeRunner(serving_commit=NEW, serving_version='2026.11.02-1')
+    runner.fetch = lambda url, **kwargs: (503, 'down')
+    assert auto.main(['--publish', NEW], runner=runner) == 1
+    assert runner.tags == {}
+
+
+def test_publish_refuses_when_the_remote_tag_points_at_another_commit(summary):
+    runner = FakeRunner(serving_commit=NEW, serving_version='2026.11.02-1')
+    runner.remote_tags['2026.11.02-1'] = OLD
+    assert auto.main(['--publish', NEW], runner=runner) == 1
+    assert runner.tags == {} and runner.releases == {}
+    assert not any(argv[:2] == ['git', 'push'] for _, argv in runner.calls)
+    assert 'refusing to move it' in summary.text()
+
+
+def test_publish_refuses_when_the_remote_tags_cannot_be_read(summary):
+    runner = FakeRunner(serving_commit=NEW, serving_version='2026.11.02-1', fail={'ls-remote'})
+    assert auto.main(['--publish', NEW], runner=runner) == 1
+    assert runner.tags == {} and runner.releases == {}
+
+
+def test_next_version_prints_the_number_for_a_hand_release(capsys):
+    runner = FakeRunner()
+    assert auto.main(['--next-version'], runner=runner) == 0
+    assert auto.valid_version(capsys.readouterr().out.strip())
+    assert ['git', 'fetch', '--tags', '--quiet'] in [argv for _, argv in runner.calls]
+
+
+def test_next_version_prints_no_number_when_the_tags_cannot_be_fetched(capsys):
+    assert auto.main(['--next-version'], runner=FakeRunner(fail={'fetch'})) == 1
+    assert capsys.readouterr().out == ''
+
+
+def test_rollback_past_a_migration_warns_and_stops_before_staging(summary, capsys):
+    runner = rollback_runner(
+        migrations=[ledger_doc('workspaces', OLD), ledger_doc('price-books-v1', NEW)]
     )
-    migrations = [
-        {
-            'name': 'projects/p/databases/(default)/documents/_migrations/workspaces',
-            'fields': {
-                'migration_id': {'stringValue': 'workspaces'},
-                'applied_at': {'stringValue': '2026-10-12T03:19:56Z'},
-                'source_commit': {'stringValue': OLD},
-            },
-        },
-        {
-            'name': 'projects/p/databases/(default)/documents/_migrations/price_books',
-            'fields': {
-                'migration_id': {'stringValue': 'price_books'},
-                'applied_at': {'stringValue': '2026-11-01T10:00:00Z'},
-                'source_commit': {'stringValue': NEW},
-            },
-        },
-    ]
-    runner = FakeRunner(
-        serving_commit=NEW,
-        ancestors={(OLD, NEW), (OLD, OLD), (NEW, 'master'), (OLD, 'master')},
-        tags={'2026.10.30-1': OLD, '2026.11.02-1': NEW},
-        migrations=migrations,
-        root=tmp_path,
-    )
-    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 0
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 1
     err = capsys.readouterr().err
     assert '::warning::Target version 2026.10.30-1' in err
-    assert 'price_books' in err
+    assert 'price-books-v1 (applied 2026-11-01T10:00:00.123456Z at ' + NEW[:12] in err
     assert 'workspaces' not in err
     assert 'Migration warning' in summary.text()
+    assert 'confirm-past-migration' in summary.text()
+    assert not {'stage', 'traffic', 'stamp', 'hosting-deploy'} & set(runner.keys())
+    assert runner.head == NEW
+
+
+def test_confirmed_rollback_past_a_migration_redeploys_the_tag(summary, capsys):
+    runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
+    argv = ['--rollback', '2026.10.30-1', '--confirm-past-migration']
+    assert auto.main(argv, runner=runner) == 0
+    assert '::warning::' in capsys.readouterr().err
     assert 'rolled back to 2026.10.30-1' in summary.text()
     stage = next(argv for key, argv in runner.calls if key == 'stage')
     assert stage[stage.index('--version') + 1] == '2026.10.30-1'
+    assert 'AUTO_DEPLOY_ENABLED' in summary.text() and 'before the next merge' in summary.text()
+    assert runner.tags == {'2026.10.30-1': OLD, '2026.11.02-1': NEW}
 
 
-def test_rollback_without_newer_migrations_passes_cleanly(summary, tmp_path, capsys):
-    (tmp_path / 'RELEASES.md').write_text(
-        '| Date | Backend | Frontend | Source commit | Traffic | Notes |\n', encoding='utf8'
-    )
-    migrations = [
-        {
-            'name': 'projects/p/databases/(default)/documents/_migrations/workspaces',
-            'fields': {
-                'migration_id': {'stringValue': 'workspaces'},
-                'applied_at': {'stringValue': '2026-10-12T03:19:56Z'},
-                'source_commit': {'stringValue': OLD},
-            },
-        }
-    ]
-    runner = FakeRunner(
-        serving_commit=NEW,
-        ancestors={(OLD, NEW), (OLD, OLD), (NEW, 'master'), (OLD, 'master')},
-        tags={'2026.11.01-1': OLD},
-        migrations=migrations,
-        root=tmp_path,
-    )
-    assert auto.main(['--rollback', '2026.11.01-1', '--check-only'], runner=runner) == 0
+def test_check_only_rollback_past_a_migration_warns_and_stages_nothing(summary, capsys):
+    runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
+    assert auto.main(['--rollback', '2026.10.30-1', '--check-only'], runner=runner) == 0
+    assert '::warning::' in capsys.readouterr().err
+    assert 'stage' not in runner.keys()
+
+
+def test_rollback_without_newer_migrations_passes_cleanly(summary, capsys):
+    runner = rollback_runner(migrations=[ledger_doc('workspaces', OLD)])
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 0
     assert '::warning::' not in capsys.readouterr().err
     assert 'no applied migrations newer than target version' in summary.text()
+    assert 'stage' in runner.keys()
 
 
-def test_rollback_workflow_is_pinned_and_uses_keyless_auth():
-    rollback_wf = (ROOT / '.github' / 'workflows' / 'rollback.yml').read_text(encoding='utf8')
-    assert 'name: Roll back to version' in rollback_wf
-    assert 'workflow_dispatch:' in rollback_wf
-    assert 'scripts/auto_deploy.py --rollback' in rollback_wf
-    assert 'credentials_json' not in rollback_wf and 'secrets.' not in rollback_wf
-    assert 'firebase deploy' not in rollback_wf
-    for line in rollback_wf.splitlines():
-        match = re.search(r'uses: (\S+)', line)
-        if match:
-            assert re.search(r'@[0-9a-f]{40}$', match.group(1)), line
+@pytest.mark.parametrize(
+    'ledger',
+    [
+        (500, '{}'),
+        (403, '{}'),
+        (404, '{}'),
+        (0, 'timed out'),
+        (200, 'not json'),
+        (200, json.dumps({'documents': [], 'nextPageToken': 'more'})),
+    ],
+)
+def test_unreadable_ledger_warns_and_stops_instead_of_reporting_a_pass(summary, capsys, ledger):
+    runner = rollback_runner(ledger=ledger)
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 1
+    assert '::warning::Could not read' in capsys.readouterr().err
+    assert 'Migration check passed' not in summary.text()
+    assert 'stage' not in runner.keys()
+
+
+def test_ledger_commit_marked_dirty_is_compared_by_its_commit(summary, capsys):
+    runner = rollback_runner(migrations=[ledger_doc('workspaces', OLD + '-dirty')])
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 0
+    assert '::warning::' not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('commit', ['unknown', 'c' * 40])
+def test_ledger_commit_that_is_unknown_or_not_an_ancestor_counts_as_newer(summary, commit):
+    runner = rollback_runner(migrations=[ledger_doc('adr-company-v1', commit)])
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 1
+    assert 'stage' not in runner.keys()
+
+
+@pytest.mark.parametrize('fail', [(), ('verify',)])
+def test_rollback_returns_the_checkout_to_its_branch(summary, fail):
+    runner = rollback_runner(fail=fail)
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == (1 if fail else 0)
+    checkouts = [argv for _, argv in runner.calls if argv[:2] == ['git', 'checkout']]
+    assert checkouts == [
+        ['git', 'checkout', '--detach', OLD],
+        ['git', 'checkout', 'master'],
+    ]
+    assert runner.head == NEW
+
+
+def test_rollback_from_a_detached_checkout_returns_to_that_commit(summary):
+    runner = rollback_runner(branch=None)
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 0
+    assert runner.head == NEW
+
+
+def test_workflow_offers_a_rollback_with_an_explicit_migration_confirmation():
+    inputs = yaml.safe_load(WORKFLOW)[True]['workflow_dispatch']['inputs']
+    assert inputs['version']['required'] is False
+    assert inputs['confirm_past_migration']['default'] == 'no'
+    assert inputs['confirm_past_migration']['options'] == ['no', 'yes']
+
+
+def test_workflow_rollback_step_stops_at_a_migration_unless_confirmed(summary):
+    env = {'ROLLBACK_VERSION': '2026.10.30-1', 'RUN_ID': '41140166919', 'ROLLBACK_ARGS': ''}
+    plain = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': ''})
+    runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
+    assert auto.main(plain, runner=runner) == 1
+    assert 'stage' not in runner.keys()
+    confirmed = step_argv(
+        'Roll back to version', {**env, 'CONFIRM_ARGS': '--confirm-past-migration'}
+    )
+    runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
+    assert auto.main(confirmed, runner=runner) == 0
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--tag') + 1].endswith('0166919')
+
+
+def test_workflow_publish_step_publishes_the_commit_that_was_released(summary):
+    argv = step_argv('Publish version', {'COMMIT': NEW})
+    runner = FakeRunner(serving_commit=NEW, serving_version='2026.11.02-1')
+    assert auto.main(argv, runner=runner) == 0
+    assert runner.remote_tags == {'2026.11.02-1': NEW}
+
+
+def test_only_the_publish_step_receives_a_github_write_token():
+    job = deploy_job()
+    assert job['permissions'] == {'contents': 'write', 'id-token': 'write'}
+    assert 'GH_TOKEN' not in job['env']
+    checkout = job['steps'][0]
+    assert checkout['uses'].startswith('actions/checkout@')
+    assert checkout['with']['persist-credentials'] is False
+    holders = [step for step in job['steps'] if 'github.token' in json.dumps(step)]
+    assert [step['name'] for step in holders] == ['Publish version']
+    assert holders[0]['env'] == {'GH_TOKEN': '${{ github.token }}'}
+    assert holders[0]['if'] == "${{ github.event_name == 'workflow_run' }}"
+    run = holders[0]['run']
+    assert not {'npm', 'npx', 'pip', 'deploy_backend'} & set(shlex.split(run))

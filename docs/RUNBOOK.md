@@ -19,7 +19,11 @@ Check the live version (`YYYY.MM.DD-N`) in the app footer or **Account** menu (`
 Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. Operator-run, with the owner's go. Full commands: `docs/firebase-isolation.md`. Once the owner has set it up, `.github/workflows/deploy.yml` also releases master commits after CI, assigns the next `YYYY.MM.DD-N` version tag and GitHub Release after verification succeeds, and rolls back on failure (`docs/firebase-isolation.md#automatic-deploys`); it stops and leaves the commit for a manual release when rules or indexes changed.
 
 ## Roll back
-For a one-step rollback to an earlier `YYYY.MM.DD-N` version, run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or trigger the `workflow_dispatch` rollback in GitHub Actions (**Deploy** with `version` input, or **Roll back to version**). It checks `_migrations` and `RELEASES.md` and warns when the target version is older than a database/data migration (because code rollback does not undo data changes), then redeploys that version's backend and Hosting and verifies health. For an immediate traffic-only restore, point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. Do not retry a failed deploy immediately.
+For a one-step rollback to an earlier `YYYY.MM.DD-N` version, run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or trigger **Deploy** in GitHub Actions with the `version` input (it needs `AUTO_DEPLOY_ENABLED` set to `true`; while paused, use the command). It checks `_migrations`, and when the target version is older than a database/data migration or the ledger cannot be read it warns and stops before staging, because code rollback does not undo data changes; rerun with `--confirm-past-migration` (workflow input `confirm_past_migration` set to `yes`) to go ahead. It then redeploys that version's backend and Hosting and verifies health.
+
+**After a rollback, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge. Otherwise the next release brings it back.**
+
+For an immediate traffic-only restore, point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. Do not retry a failed deploy immediately.
 
 ## Common problems
 | Symptom | First checks |

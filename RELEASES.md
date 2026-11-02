@@ -34,9 +34,9 @@ the revision that serves traffic instead.
 - **Numbering (`YYYY.MM.DD-N` in UTC)**: Every successful production release automatically receives a
   date-style version number (for example `2026.11.02-1`, `2026.11.02-2`, counting up from `1` within
   each UTC day). The git tag and GitHub Release are created only after backend promotion, Hosting
-  deployment, and `node scripts/verify_hosting.js` succeed. Workflow re-runs are idempotent and tags are
-  never moved. Big milestones can be named in the GitHub Release title (`--title "Milestone name"` or by
-  editing the GitHub Release title on GitHub) without changing the `YYYY.MM.DD-N` tag.
+  deployment, and `node scripts/verify_hosting.js` succeed, and they always carry the version the live
+  backend reports. Workflow re-runs are idempotent and tags are never moved. Big milestones can be named
+  by editing the GitHub Release title on GitHub without changing the `YYYY.MM.DD-N` tag.
 - **How to find the live version**:
   - **In the app**: check the bottom footer (`App version YYYY.MM.DD-N`) or open **Account** in the top
     bar (`DryScope · App version YYYY.MM.DD-N`).
@@ -47,24 +47,32 @@ the revision that serves traffic instead.
     pull requests in plain words.
 - **One-step rollback to a version**:
   - **GitHub Actions**: trigger **Deploy** (`workflow_dispatch`, entering the target `YYYY.MM.DD-N` in
-    the `version` input; works immediately with the existing Workload Identity provider condition) or
-    **Roll back to version** (`.github/workflows/rollback.yml`, `workflow_dispatch` with `version`; works
-    once `scripts/setup_auto_deploy.sh` is re-run to include `rollback.yml` in the OIDC condition).
+    the `version` input). This needs `AUTO_DEPLOY_ENABLED` set to `true`; while it is paused, use the
+    command below.
   - **Single operator CLI command**:
     ```bash
+    git fetch --tags
     python3 scripts/auto_deploy.py --rollback 2026.11.02-1
     # Dry-run preflight and migration check only:
     python3 scripts/auto_deploy.py --rollback 2026.11.02-1 --check-only
     ```
   - **Data migration warning**: During rollback, `scripts/auto_deploy.py` reads the Firestore
-    `_migrations` ledger (#184) and the migration rows in `RELEASES.md`. If the target version is older
-    than an applied database/data migration, it prints a `::warning::` banner and records a `Migration
-    warning` in the job summary because rolling back code does not undo Firestore data changes.
+    `_migrations` ledger (#184). If the target version is older than an applied database/data migration,
+    or the ledger cannot be read, it prints a `::warning::` banner, records a `Migration warning` in the
+    job summary and stops before staging, because rolling back code does not undo Firestore data
+    changes. To go ahead anyway, rerun with `--confirm-past-migration` (workflow input
+    `confirm_past_migration` set to `yes`).
+  - **After a rollback**: the next release brings the bad change back. Pause automatic deploys
+    (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge.
 
 ## Recording a release
 
-1. `python scripts/deploy_backend.py --workspaces on|off --tag <tag> ... --yes` stamps the image and
-   its `source-commit` label. Every deploy sets `WORKSPACES_ENABLED`, `AI_FEATURES` and
+Every production release gets a version, including a hand release of a Firestore rules or index change.
+Start with `VERSION=$(python3 scripts/auto_deploy.py --next-version)`, which fetches tags and prints the
+number for the checked-out commit.
+
+1. `python scripts/deploy_backend.py --workspaces on|off --tag <tag> --version "$VERSION" ... --yes` stamps
+   the image and its `source-commit` label. Every deploy sets `WORKSPACES_ENABLED`, `AI_FEATURES` and
    `PRICE_BOOKS_ENABLED` from this command, not from the latest Cloud Run template. The defaults are
    the current production baseline: `AI_FEATURES=readiness` and `PRICE_BOOKS_ENABLED=false`. Pass
    `--ai-features` (or `none`) and `--price-books on|off` only to change that baseline on purpose.
@@ -72,9 +80,13 @@ the revision that serves traffic instead.
    and append it.
 2. After `gcloud run services update-traffic ... --to-tags=<tag>=100`, append the same revision with
    `100% (promoted)`.
-3. `python scripts/stamp_hosting.py` stamps the Hosting shell and prints a row. Deploy only
-   `hosting:alert-disaster`, fill in the Hosting version, append the row, then run
+3. `python scripts/stamp_hosting.py --version "$VERSION"` stamps the Hosting shell and prints a row.
+   Deploy only `hosting:alert-disaster`, fill in the Hosting version, append the row, then run
    `python scripts/stamp_hosting.py --reset`.
+4. After `node scripts/verify_hosting.js` passes, run
+   `python3 scripts/auto_deploy.py --publish "$(git rev-parse HEAD)"` with `gcloud` and `gh` signed in. It
+   creates the git tag and GitHub Release for the version the live backend reports, so this release can
+   be chosen for a rollback.
 
 ### Firestore TTL policies
 

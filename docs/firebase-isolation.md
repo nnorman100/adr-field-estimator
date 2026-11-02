@@ -122,7 +122,7 @@ the staged revision's environment, secret bindings, service account and limits m
 revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3, the release `version` and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
 only then does traffic move. Next it stamps the shell with `--version <YYYY.MM.DD-N>`, deploys only `hosting:alert-disaster`, runs
-`verify_hosting.js`, resets the stamp, and—only after verification succeeds—creates the immutable git tag `YYYY.MM.DD-N` and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after
+`verify_hosting.js` and resets the stamp. Only after verification succeeds, a separate workflow step (the only one holding a GitHub write token) creates the immutable git tag for the version the live backend reports and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after
 it restores traffic to the revision that was serving, clones the previous Hosting version back to the
 live channel and fails the run without creating a tag. One release runs at a time (`concurrency: production-deploy`).
 
@@ -205,10 +205,10 @@ The [original review](https://chatgpt.com/space/page_4a5293fc2ec481918bd32e5c78f
 
 To roll back to a previous `YYYY.MM.DD-N` release version in one step:
 
-- **GitHub Actions**: run **Deploy** (`workflow_dispatch` with `version` set to the target `YYYY.MM.DD-N`, which works immediately with the existing Workload Identity provider binding) or **Roll back to version** (`.github/workflows/rollback.yml`, `workflow_dispatch` with `version`, which is authorized once `scripts/setup_auto_deploy.sh` is re-run).
+- **GitHub Actions**: run **Deploy** (`workflow_dispatch` with `version` set to the target `YYYY.MM.DD-N`). This needs `AUTO_DEPLOY_ENABLED` set to `true`.
 - **Single operator command**: `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (add `--check-only` to run only refusal and migration checks).
 
-The rollback resolves the version tag, checks the Firestore `_migrations` ledger (#184) and `RELEASES.md` for any applied data migrations newer than the target version (emitting a `::warning::` banner and job-summary warning when found, because rolling back code does not undo Firestore data changes), and redeploys that tag's backend and Hosting through the same staged checks and `verify_hosting.js` verification.
+The rollback resolves the version tag and checks the Firestore `_migrations` ledger (#184) for any applied data migrations newer than the target version. When it finds one, or cannot read the ledger, it emits a `::warning::` banner and job-summary warning and stops before staging, because rolling back code does not undo Firestore data changes; `--confirm-past-migration` (workflow input `confirm_past_migration` set to `yes`) goes ahead anyway. It then redeploys that tag's backend and Hosting through the same staged checks and `verify_hosting.js` verification. Afterwards, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge, otherwise the next release brings it back.
 
 The previous dedicated backend revisions also remain available for manual traffic restoration. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
 

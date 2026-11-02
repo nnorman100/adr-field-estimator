@@ -56,7 +56,7 @@ if ! exists gcloud iam workload-identity-pools describe "$POOL" \
   do_it gcloud iam workload-identity-pools create "$POOL" \
     --location=global --display-name="GitHub Actions" --project="$PROJECT"
 fi
-CONDITION="assertion.repository == '$REPO' && assertion.ref == 'refs/heads/master' && (assertion.job_workflow_ref.startsWith('$REPO/.github/workflows/deploy.yml@') || assertion.job_workflow_ref.startsWith('$REPO/.github/workflows/rollback.yml@'))"
+CONDITION="assertion.repository == '$REPO' && assertion.ref == 'refs/heads/master' && assertion.job_workflow_ref.startsWith('$REPO/.github/workflows/deploy.yml@')"
 PROVIDER_ARGS=(
   --location=global --workload-identity-pool="$POOL" --project="$PROJECT"
   --issuer-uri=https://token.actions.githubusercontent.com
