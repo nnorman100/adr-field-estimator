@@ -7,8 +7,10 @@ from typing import Literal, Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 try:
+    from .price_books import known_calculation_version
     from .shot_list import known_shot
 except ImportError:
+    from price_books import known_calculation_version
     from shot_list import known_shot
 
 
@@ -490,6 +492,12 @@ class CompanyIdentity(StrictModel):
     water_heater_notice: str = ''
 
 
+def known_calculation(value):
+    if not known_calculation_version(value):
+        raise ValueError('Unknown calculation version.')
+    return value
+
+
 class PriceBasis(StrictModel):
     """Rates that produced one audit. Absent on documents priced before company price books."""
 
@@ -497,7 +505,7 @@ class PriceBasis(StrictModel):
     version_id: str = Field(min_length=1, max_length=128)
     sequence: int = Field(ge=0)
     content_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
-    calculation_version: Literal['adr-residential-v1']
+    calculation_version: Annotated[str, AfterValidator(known_calculation)]
     priced_at: str = Field(min_length=1, max_length=40)
     rates: dict[str, str]
 

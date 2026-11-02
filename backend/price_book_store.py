@@ -24,6 +24,7 @@ try:
         blank_rates,
         calculation_policy,
         content_hash,
+        known_calculation_version,
         diff_rates,
         label_for,
         normalize_rates,
@@ -49,6 +50,7 @@ except ImportError:
         blank_rates,
         calculation_policy,
         content_hash,
+        known_calculation_version,
         diff_rates,
         label_for,
         normalize_rates,
@@ -151,8 +153,9 @@ class PriceBookStore:
             if (
                 not version
                 or version.get('company_id') != company_id
-                or version.get('calculation_version') != CALCULATION_VERSION
-                or version.get('content_sha256') != content_hash(version['rates'])
+                or not known_calculation_version(version.get('calculation_version'))
+                or version.get('content_sha256')
+                != content_hash(version['rates'], version['calculation_version'])
             ):
                 raise Conflict('This company price book cannot be used. Contact support.')
             # ADR's rates held by another company do not count as that company's prices.
@@ -235,7 +238,7 @@ class PriceBookStore:
             'effective_from': book.get('effective_from'),
             'source': book.get('source', 'seed'),
             'change_reason': reason if manage or support else '',
-            'calculation': calculation_policy(),
+            'calculation': calculation_policy(book['calculation_version']),
             'priced_extras': extras,
             'can_manage': manage,
             'rates': public_rates(book['rates'], editable_additional_work=extras),
@@ -328,7 +331,9 @@ class PriceBookStore:
             'warnings': warnings,
             'diff': rows,
             'no_changes': not rows,
-            'sample_before': None if _is_unset(book) else sample_totals(book['rates']),
+            'sample_before': None
+            if _is_unset(book)
+            else sample_totals(book['rates'], book['calculation_version']),
             'sample_after': sample_totals(rates),
             'source': payload.get('source') or 'manual',
             'import_digest': payload.get('import_digest'),
@@ -713,7 +718,7 @@ class PriceBookStore:
                 'version_id': chosen['version_id'],
                 'sequence': chosen.get('sequence', 0),
                 'content_sha256': chosen['content_sha256'],
-                'calculation_version': CALCULATION_VERSION,
+                'calculation_version': chosen['calculation_version'],
                 'rates': dict(chosen['rates']),
                 'priced_at': now(),
                 'reason': reason,
@@ -727,10 +732,10 @@ class PriceBookStore:
         if (
             not pin
             or pin.get('company_id') != company_id
-            or pin.get('calculation_version') != CALCULATION_VERSION
+            or not known_calculation_version(pin.get('calculation_version'))
             or not isinstance(pin.get('rates'), dict)
             or set(pin['rates']) != set(KEYS)
-            or content_hash(pin['rates']) != pin.get('content_sha256')
+            or content_hash(pin['rates'], pin['calculation_version']) != pin.get('content_sha256')
         ):
             raise Conflict("This draft's saved prices are missing. Contact support.")
         _refuse_adr_rates(company_id, pin['rates'])
@@ -739,7 +744,7 @@ class PriceBookStore:
             'version_id': pin['version_id'],
             'sequence': pin.get('sequence', 0),
             'content_sha256': pin['content_sha256'],
-            'calculation_version': CALCULATION_VERSION,
+            'calculation_version': pin['calculation_version'],
             'priced_at': pin['priced_at'],
             'rates': {key: pin['rates'][key] for key in KEYS},
         }
@@ -831,10 +836,14 @@ class PriceBookStore:
             raise Conflict(_not_set_message(actor['role']))
 
         data = InspectionData.model_validate(record['data'])
-        old_items, old_total = price_scope(data, pin['rates'])
-        new_items, new_total = price_scope(data, book['rates'])
-        old_low, old_high = proposal_range(data, old_items)
-        new_low, new_high = proposal_range(data, new_items)
+        old_version = pin.get('calculation_version', CALCULATION_VERSION)
+        if not known_calculation_version(old_version):
+            raise Conflict("This draft's saved prices are missing. Contact support.")
+        new_version = book['calculation_version']
+        old_items, old_total = price_scope(data, pin['rates'], old_version)
+        new_items, new_total = price_scope(data, book['rates'], new_version)
+        old_low, old_high = proposal_range(data, old_items, old_version)
+        new_low, new_high = proposal_range(data, new_items, new_version)
         return {
             'revision': record['revision'],
             'from_version_id': pin['version_id'],
@@ -896,7 +905,7 @@ class PriceBookStore:
                 'priced_at': now(),
                 'reason': 'explicit_reprice',
                 'pin_version': pin.get('pin_version', 1) + 1,
-                'calculation_version': CALCULATION_VERSION,
+                'calculation_version': book['calculation_version'],
             }
             record['revision'] = record['revision'] + 1
             record['audit'] = None

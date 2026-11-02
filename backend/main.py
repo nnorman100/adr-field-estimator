@@ -1506,7 +1506,11 @@ async def audit_inspection(
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
     # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
     rates = adr_rates() if pin is None else pin['rates']
-    items, total = price_scope(data, rates)
+    items, total = (
+        price_scope(data, rates)
+        if pin is None
+        else price_scope(data, rates, basis['calculation_version'])
+    )
     if total <= 0:
         raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
     deadline = time.monotonic() + 30

@@ -8,10 +8,19 @@ spelled out rather than read from ADR's price book, because existing pins carry 
 from decimal import Decimal
 
 import pytest
-from backend.claims import make_documents, price_scope, proposal_range
-from backend.contracts import AIResult, InspectionData
+from backend import claims, price_books
+from backend.claims import line, make_documents, price_scope, proposal_range
+from backend.contracts import AIResult, InspectionData, PriceBasis
+from backend.inspection_store import Conflict
+from backend.price_books import calculation_policy, content_hash, sample_totals
+from pydantic import ValidationError
+from tests.test_workspaces import ID, api, data, store  # noqa: F401
 
 V1 = 'adr-residential-v1'
+NEXT = 'test-next-version'
+UNKNOWN = 'adr-residential-v9'
+# Hash of V1_RATES under v1, as saved in existing pins and signed documents.
+V1_HASH = 'e4c41407ed544b53d4cb88ff75024399021a45401699b23a2733a3609063b2b5'
 V1_RATES = {
     'demo_cat1_unfinished': '1.21',
     'demo_cat1_finished': '2.78',
@@ -95,9 +104,7 @@ def test_v1_range_at_the_area_threshold(square_feet, after_hours, itemized, low,
         (True, '3844.12', '4223.50', '5361.66'),
     ],
 )
-def test_v1_category_3_cabinetry_doubles_only_finished_demolition(
-    after_hours, itemized, low, high
-):
+def test_v1_category_3_cabinetry_doubles_only_finished_demolition(after_hours, itemized, low, high):
     scope = cabinetry(is_after_hours=after_hours)
     items, total = price_scope(scope, V1_RATES)
     demolition = [item for item in items if item['code'] == 'ADR-DEMO']
@@ -205,3 +212,273 @@ def test_v1_documents_print_the_pinned_numbers():
         'Itemized charges at base rates: $4,640.09. Customer estimate range: $4,640.09 to $5,218.67.'
         in documents['iicrc_defense_letter']
     )
+
+
+def test_v1_hash_and_policy_summary_are_unchanged():
+    assert content_hash(V1_RATES) == V1_HASH
+    assert content_hash(V1_RATES, V1) == V1_HASH
+    assert calculation_policy() == {
+        'calculation_version': V1,
+        'cabinetry_factor': '2',
+        'after_hours_factor': '1.2',
+        'range_factor_below_1001_sf': '1.5',
+        'range_factor_at_or_above_1001_sf': '1.2',
+        'range_threshold_sf': '1001',
+        'currency': 'USD',
+    }
+    assert calculation_policy(V1) == calculation_policy()
+
+
+def test_a_saved_v1_pin_reproduces_its_basis_exactly(store):
+    pin = {
+        'inspection_id': ID,
+        'company_id': 'adr',
+        'pin_version': 1,
+        'version_id': 'seed',
+        'sequence': 0,
+        'content_sha256': V1_HASH,
+        'calculation_version': V1,
+        'rates': dict(V1_RATES),
+        'priced_at': '2026-11-02T00:00:00+00:00',
+        'reason': 'first_price',
+    }
+    assert store.workspaces.prices.basis_for(pin, 'adr') == {
+        'company_id': 'adr',
+        'version_id': 'seed',
+        'sequence': 0,
+        'content_sha256': V1_HASH,
+        'calculation_version': V1,
+        'priced_at': '2026-11-02T00:00:00+00:00',
+        'rates': V1_RATES,
+    }
+
+
+def test_every_known_version_has_formulas():
+    assert V1 in claims.POLICIES
+    assert all(price_books.known_calculation_version(version) for version in claims.POLICIES)
+    assert set(claims.POLICIES) == set(price_books.CALCULATION_FACTORS)
+
+
+def test_an_omitted_version_prices_with_v1():
+    scope = cat2(1001)
+    items, total = price_scope(scope, V1_RATES)
+    assert (items, total) == price_scope(scope, V1_RATES, V1)
+    assert proposal_range(scope, items) == proposal_range(scope, items, V1)
+
+
+@pytest.fixture
+def next_version(monkeypatch):
+    """A second registered version with obviously different numbers, to prove the dispatch."""
+
+    def scope(_data, rates=None):
+        return [line('ADR-TRIP', 'Next trip', 1, 'EA', 7)], 7.0
+
+    def estimate(_data, _items):
+        return Decimal('10.00'), Decimal('20.00')
+
+    monkeypatch.setitem(claims.POLICIES, NEXT, claims.CalculationPolicy(scope, estimate))
+    monkeypatch.setitem(price_books.CALCULATION_FACTORS, NEXT, {'range': 'next'})
+    price_books.set_enabled(True)
+    yield
+    price_books.set_enabled(None)
+
+
+def test_the_version_selects_the_formulas(next_version):
+    scope = cat2(1001)
+    items, total = price_scope(scope, V1_RATES, NEXT)
+    assert total == 7.0 and [item['description'] for item in items] == ['Next trip']
+    assert proposal_range(scope, items, NEXT) == (Decimal('10.00'), Decimal('20.00'))
+    assert price_scope(scope, V1_RATES)[1] == 4640.09
+    assert sample_totals(V1_RATES, NEXT)['itemized'] == '7.00'
+    assert sample_totals(V1_RATES)['itemized'] != '7.00'
+    assert calculation_policy(NEXT) == {
+        'calculation_version': NEXT,
+        'range': 'next',
+        'currency': 'USD',
+    }
+
+
+def test_the_same_rates_hash_differently_under_another_version(next_version):
+    assert content_hash(V1_RATES, NEXT) != V1_HASH
+
+
+def basis(version):
+    return dict(
+        company_id='adr',
+        version_id='seed',
+        sequence=0,
+        content_sha256=V1_HASH,
+        calculation_version=version,
+        priced_at='2026-11-02T00:00:00+00:00',
+        rates=V1_RATES,
+    )
+
+
+def test_documents_price_with_the_version_on_their_basis(next_version):
+    documents = make_documents(cat2(1001), [], AI, rates=V1_RATES, price_basis=basis(NEXT))
+    assert documents['xactimate_total'] == 7.0
+    assert documents['adr_estimate']['proposed_cost_low'] == 10.0
+    assert documents['adr_estimate']['proposed_cost'] == 20.0
+    assert documents['price_basis']['calculation_version'] == NEXT
+    v1 = make_documents(cat2(1001), [], AI, rates=V1_RATES, price_basis=basis(V1))
+    assert v1['adr_estimate']['proposed_cost'] == 5218.67
+    assert v1['price_basis']['calculation_version'] == V1
+
+
+def test_price_basis_accepts_only_known_versions(next_version):
+    assert PriceBasis(**basis(V1)).calculation_version == V1
+    assert PriceBasis(**basis(NEXT)).calculation_version == NEXT
+    for bad in (UNKNOWN, '', None, ['adr-residential-v1']):
+        with pytest.raises(ValidationError):
+            PriceBasis(**basis(bad))
+
+
+@pytest.mark.parametrize('bad', [UNKNOWN, None, ['adr-residential-v1']])
+def test_an_unknown_version_has_no_formulas(bad):
+    with pytest.raises(ValueError):
+        claims.policy_for(bad)
+    with pytest.raises(ValueError):
+        price_scope(cat2(10), V1_RATES, bad)
+    with pytest.raises(ValueError):
+        proposal_range(cat2(10), [], bad)
+
+
+def pin_for(version, digest=None):
+    return {
+        'inspection_id': ID,
+        'company_id': 'adr',
+        'pin_version': 1,
+        'version_id': 'next-book',
+        'sequence': 1,
+        'content_sha256': digest or content_hash(V1_RATES, version),
+        'calculation_version': version,
+        'rates': dict(V1_RATES),
+        'priced_at': '2026-11-02T00:00:00+00:00',
+        'reason': 'first_price',
+    }
+
+
+def publish_directly(store, version):
+    store.db.records['_company_price_books/adr'] = {
+        'latest_version_id': 'next-book',
+        'generation': 1,
+        'next_sequence': 2,
+    }
+    store.db.records['_price_book_versions/next-book'] = {
+        'version_id': 'next-book',
+        'company_id': 'adr',
+        'sequence': 1,
+        'rates': dict(V1_RATES),
+        'content_sha256': content_hash(V1_RATES, version),
+        'calculation_version': version,
+        'source': 'manual',
+    }
+
+
+def test_a_pin_on_another_version_prices_audits_signing_and_reprice(api, next_version):  # noqa: F811
+    client, current, store = api
+    current['uid'] = 'estimator'
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert created.status_code == 200, created.text
+    store.db.records['_job_pricing/' + ID] = pin_for(NEXT)
+
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    documents = audited.json()['audit']['documents']
+    assert documents['xactimate_total'] == 7.0
+    assert documents['adr_estimate']['proposed_cost_low'] == 10.0
+    assert documents['adr_estimate']['proposed_cost'] == 20.0
+    assert documents['price_basis']['calculation_version'] == NEXT
+    assert documents['price_basis']['content_sha256'] == content_hash(V1_RATES, NEXT)
+    # The signing check accepts the pin it priced from, and refuses a basis on another version.
+    prices = store.workspaces.prices
+    prices.assert_pin({'inspection_id': ID}, documents['price_basis'])
+    with pytest.raises(Conflict):
+        prices.assert_pin(
+            {'inspection_id': ID}, {**documents['price_basis'], 'calculation_version': V1}
+        )
+
+    current['uid'] = 'owner'
+    preview = client.post(f'/api/inspections/{ID}/pricing/reprice-preview')
+    assert preview.status_code == 200, preview.text
+    review = preview.json()
+    assert review['before'] == {'itemized': '7.00', 'low': '10.00', 'high': '20.00'}
+    # The destination book is the v1 seed, so the other side of the preview uses v1's formulas.
+    expected = price_scope(
+        InspectionData.model_validate(store.db.records['inspections/' + ID]['data']), V1_RATES
+    )
+    assert review['after']['itemized'] == f'{expected[1]:.2f}'
+    applied = client.post(
+        f'/api/inspections/{ID}/pricing/reprice',
+        json={
+            'expected_revision': review['revision'],
+            'expected_pin_hash': review['from_hash'],
+            'destination_version_id': review['to_version_id'],
+            'destination_hash': review['to_hash'],
+        },
+    )
+    assert applied.status_code == 200, applied.text
+    moved = store.db.records['_job_pricing/' + ID]
+    assert moved['calculation_version'] == V1 and moved['content_sha256'] == V1_HASH
+
+
+def test_a_new_pin_takes_the_version_of_its_published_book(api, next_version):  # noqa: F811
+    client, current, store = api
+    publish_directly(store, NEXT)
+    current['uid'] = 'owner'
+    view = client.get('/api/companies/adr/prices')
+    assert view.status_code == 200, view.text
+    assert view.json()['calculation'] == calculation_policy(NEXT)
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={
+            'rates': {**V1_RATES, 'emergency_call': '150.00'},
+            'acknowledgements': [],
+            'change_reason': 'Trip charge for this company',
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()['sample_before']['itemized'] == '7.00'
+
+    current['uid'] = 'estimator'
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert created.status_code == 200, created.text
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    documents = audited.json()['audit']['documents']
+    assert documents['xactimate_total'] == 7.0
+    assert documents['price_basis']['calculation_version'] == NEXT
+    assert store.db.records['_job_pricing/' + ID]['calculation_version'] == NEXT
+
+
+@pytest.mark.parametrize('bad', [UNKNOWN, None, ['adr-residential-v1']])
+def test_a_pin_on_an_unknown_version_is_refused(api, next_version, bad):  # noqa: F811
+    client, current, store = api
+    current['uid'] = 'estimator'
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert created.status_code == 200, created.text
+    store.db.records['_job_pricing/' + ID] = pin_for(bad, V1_HASH)
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 409, audited.text
+    current['uid'] = 'owner'
+    preview = client.post(f'/api/inspections/{ID}/pricing/reprice-preview')
+    assert preview.status_code == 409, preview.text
+
+
+def test_a_pin_hash_is_bound_to_its_version(store, next_version):
+    with pytest.raises(Conflict):
+        store.workspaces.prices.basis_for(pin_for(NEXT, V1_HASH), 'adr')
+    with pytest.raises(Conflict):
+        store.workspaces.prices.basis_for(pin_for(V1, content_hash(V1_RATES, NEXT)), 'adr')
+
+
+def test_a_book_on_an_unknown_version_cannot_be_used(api, next_version):  # noqa: F811
+    client, current, store = api
+    publish_directly(store, UNKNOWN)
+    current['uid'] = 'owner'
+    assert client.get('/api/companies/adr/prices').status_code == 409
+    current['uid'] = 'estimator'
+    created = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert created.status_code == 200, created.text
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 409, audited.text
