@@ -170,7 +170,7 @@ def test_v2_template_csv_xlsx_round_trip_and_rejects_v1_template():
     assert price_table.normalize_items(xlsx_round_trip, publish=True) == items
 
     # A v1 template uploaded to a v2 company is rejected
-    v1_csv = export_csv('adr', 'v2-ver-1', 2, seed_rates())
+    v1_csv = export_csv('adr', 'v2-ver-1', 2, adr_rates())
     with pytest.raises(ValueError, match='this file is not the current DryScope price template'):
         parse_upload(
             v1_csv,
@@ -181,7 +181,7 @@ def test_v2_template_csv_xlsx_round_trip_and_rejects_v1_template():
             calculation_version=price_table.CALCULATION_VERSION,
         )
 
-    v1_xlsx = export_xlsx('adr', 'v2-ver-1', 2, seed_rates())
+    v1_xlsx = export_xlsx('adr', 'v2-ver-1', 2, adr_rates())
     with pytest.raises(ValueError, match='this file is not the current DryScope price template'):
         parse_upload(
             v1_xlsx,
@@ -203,5 +203,7 @@ def test_v2_text_round_trips_unchanged_through_csv_and_xlsx():
     table['items'][0]['name'] = 'Call-out, "emergency" & after 5 pm'
     items = price_table.normalize_table(table, publish=True)['items']
     version = price_table.CALCULATION_VERSION
-    assert parse_upload(export_csv('adr', 'v', 1, items), 'text/csv', 'adr', 'v', 1, version) == items
+    assert (
+        parse_upload(export_csv('adr', 'v', 1, items), 'text/csv', 'adr', 'v', 1, version) == items
+    )
     assert parse_upload(export_xlsx('adr', 'v', 1, items), XLSX, 'adr', 'v', 1, version) == items

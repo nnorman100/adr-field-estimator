@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend import claims, main as bm, price_books, price_table, pricing
+from backend.adr_price_book import adr_rates
 from backend.contracts import (
     InspectionData,
     PriceBasis,
@@ -30,7 +31,7 @@ def test_starter_catalog_has_no_prices_and_nothing_from_the_workbook():
     assert 1 <= len(items) <= price_table.MAX_ITEMS
 
     v1_descriptions = {row['description'].strip().lower() for row in price_books.ITEMS}
-    v1_seeds = {row['seed'] for row in price_books.ITEMS}
+    v1_seeds = set(adr_rates().values())
 
     seen_ids = set()
     seen_codes = set()
@@ -376,11 +377,11 @@ def test_price_basis_v2_requires_policy_and_v1_requires_rates():
             priced_at='2026-11-02T19:00:00+00:00',
             policy=PricingPolicy(**table['policy']),
             item_count=10,
-            rates=price_books.seed_rates(),
+            rates=adr_rates(),
         )
 
     # v1 requires rates and rejects policy or item_count
-    v1_rates = price_books.seed_rates()
+    v1_rates = adr_rates()
     v1_digest = price_books.content_hash(v1_rates)
     v1_basis = PriceBasis(
         company_id='adr',
@@ -424,7 +425,7 @@ def test_pricing_dispatch_runs_v1_and_stubs_v2():
         dehumidifiers=1,
         drying_days=3,
     )
-    rates = price_books.seed_rates()
+    rates = adr_rates()
     result = pricing.price_and_range(
         job_data,
         {'calculation_version': 'adr-residential-v1', 'rates': rates},
@@ -588,6 +589,77 @@ def test_formula_leading_text_is_refused_for_every_exported_or_printed_label(lea
 
 
 def test_v1_pin_without_rates_never_prices_at_the_seed():
-    for pin in ({'calculation_version': 'adr-residential-v1'}, {'rates': price_books.seed_rates()}):
+    for pin in ({'calculation_version': 'adr-residential-v1'}, {'rates': adr_rates()}):
         with pytest.raises(ValueError):
             pricing.price_and_range(InspectionData(), pin)
+
+
+def _diff_row(diff, item_id):
+    return next(row for row in diff['items'] if row['item_id'] == item_id)
+
+
+def test_large_change_warns_when_a_price_moves_with_enabled_or_from_zero():
+    before = _priced_starter()
+    before['items'][0].update(unit_price='10.00', enabled=False)
+    before['items'][1].update(unit_price='0.00', allow_zero=True)
+    after = copy.deepcopy(before)
+    after['items'][0].update(unit_price='100.00', enabled=True)
+    after['items'][1].update(unit_price='100.00')
+    diff, warnings = price_table.diff_tables(before, after)
+
+    moved = _diff_row(diff, before['items'][0]['item_id'])
+    assert (moved['change'], moved['percent']) == ('enabled', '900.0')
+    assert moved['warnings'] == ['large_change']
+    from_zero = _diff_row(diff, before['items'][1]['item_id'])
+    assert (from_zero['change'], from_zero['percent']) == ('price', None)
+    assert from_zero['warnings'] == ['large_change']
+    assert 'large_change' in warnings
+
+
+def test_large_change_uses_the_exact_percent_not_the_rounded_one():
+    before = _priced_starter()
+    before['items'][0]['unit_price'] = '10000.00'
+    just_under = copy.deepcopy(before)
+    just_under['items'][0]['unit_price'] = '14996.00'
+    diff, warnings = price_table.diff_tables(before, just_under)
+    assert _diff_row(diff, before['items'][0]['item_id'])['percent'] == '50.0'
+    assert 'large_change' not in warnings
+
+    exactly = copy.deepcopy(before)
+    exactly['items'][0]['unit_price'] = '15000.00'
+    assert 'large_change' in price_table.diff_tables(before, exactly)[1]
+
+
+def test_disabled_zero_item_needs_no_acknowledgement_in_either_check():
+    table = _priced_starter()
+    disabled = next(item for item in table['items'] if not item['enabled'])
+    disabled.update(unit_price='0.00', allow_zero=True)
+    normalized = price_table.normalize_table(table, publish=True)
+    assert price_table.publish_problems(normalized) == []
+
+    disabled['enabled'] = True
+    with pytest.raises(ValueError, match='confirm that a zero unit price'):
+        price_table.normalize_table(table, publish=True)
+    assert price_table.publish_problems(price_table.normalize_table(table, publish=False))
+
+
+def test_public_diff_shows_only_items_enabled_in_the_version():
+    before = _priced_starter()
+    hidden = next(item for item in before['items'] if not item['enabled'])
+    hidden['unit_price'] = '77.00'
+    after = copy.deepcopy(before)
+    just_disabled = after['items'][0]
+    just_disabled['enabled'] = False
+    removed = after['items'].pop(1)
+    newly_enabled = next(it for it in after['items'] if it['item_id'] == hidden['item_id'])
+    newly_enabled.update(enabled=True, unit_price='88.00')
+
+    diff, warnings = price_table.public_diff(before, after)
+    assert {row['item_id'] for row in diff['items']} == {hidden['item_id']}
+    row = _diff_row(diff, hidden['item_id'])
+    assert (row['change'], row['before'], row['after']) == ('added', None, '88.00')
+    assert 'disabled_items' not in warnings
+    assert just_disabled['item_id'] != removed['item_id']
+
+    first, _ = price_table.public_diff(None, before)
+    assert hidden['item_id'] not in {row['item_id'] for row in first['items']}

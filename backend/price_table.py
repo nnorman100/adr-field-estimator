@@ -670,7 +670,7 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
                     raise ValueError(
                         f'{where}: zero is not a valid unit price unless allow_zero is enabled.'
                     )
-                if publish and item_id not in acked and code not in acked:
+                if publish and enabled and item_id not in acked and code not in acked:
                     raise ValueError(
                         f'{where}: confirm that a zero unit price for {name} is intentional.'
                     )
@@ -1247,19 +1247,24 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
                 row_warnings.append('disabled_items')
         elif before_it['unit_price'] != after_it['unit_price']:
             change = 'price'
-            if before_it['unit_price'] != '' and after_it['unit_price'] != '':
-                old_p = Decimal(before_it['unit_price'])
-                new_p = Decimal(after_it['unit_price'])
-                if old_p > 0:
-                    pct = ((new_p - old_p) / old_p * Decimal(100)).quantize(
-                        Decimal('0.1'), rounding=ROUND_HALF_UP
-                    )
-                    percent = f'{pct:.1f}'
-                    if abs(pct) >= Decimal('50.0'):
-                        warning_set.add('large_change')
-                        row_warnings.append('large_change')
         else:
             change = 'fields'
+
+        if (
+            before_it['unit_price'] != ''
+            and after_it['unit_price'] != ''
+            and before_it['unit_price'] != after_it['unit_price']
+        ):
+            old_p = Decimal(before_it['unit_price'])
+            new_p = Decimal(after_it['unit_price'])
+            large = True
+            if old_p > 0:
+                pct = (new_p - old_p) / old_p * Decimal(100)
+                percent = f'{pct.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP):.1f}'
+                large = abs(pct) >= Decimal('50')
+            if large:
+                warning_set.add('large_change')
+                row_warnings.append('large_change')
 
         if before_it['taxable'] != after_it['taxable']:
             warning_set.add('tax_change')
@@ -1321,3 +1326,17 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
         if code in warning_set
     ]
     return {'items': item_diffs, 'policy': policy_diffs}, ordered_warnings
+
+
+def public_diff(before: dict | None, after: dict) -> tuple[dict, list[str]]:
+    """The diff a price reader may see: only items enabled in the version shown."""
+
+    def enabled(table):
+        return {
+            'items': [item for item in table['items'] if item['enabled']],
+            'policy': table['policy'],
+        }
+
+    diff, warnings = diff_tables(enabled(before) if before else None, enabled(after))
+    rows = [row for row in diff['items'] if row['change'] != 'removed']
+    return {**diff, 'items': rows}, [code for code in warnings if code != 'disabled_items']

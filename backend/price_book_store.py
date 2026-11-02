@@ -43,8 +43,10 @@ try:
         content_hash as v2_content_hash,
         diff_tables,
         normalize_table,
+        public_diff,
         public_table,
         publish_problems,
+        starter_table,
     )
     from .pricing import price_and_range
     from .workspaces import AccessDenied
@@ -79,8 +81,10 @@ except ImportError:
         content_hash as v2_content_hash,
         diff_tables,
         normalize_table,
+        public_diff,
         public_table,
         publish_problems,
+        starter_table,
     )
     from pricing import price_and_range
     from workspaces import AccessDenied
@@ -95,6 +99,7 @@ DOMAIN = 'pricing'
 V1_SIZE_LIMIT = 32768
 V2_SIZE_LIMIT = 200 * 1024
 V2_PRICING_UNAVAILABLE = 'v2 pricing is not available yet.'
+STARTER_VERSION = 'starter'
 
 
 class Expired(Exception):
@@ -307,6 +312,8 @@ class PriceBookStore:
                 'prices_set': False,
                 'prices_not_set_message': _not_set_message(actor.get('role')),
             }
+        if _is_v2(book):
+            return {**view, 'prices_set': True}
         return {**view, 'prices_set': True, 'price_display': price_display(book['rates'])}
 
     def _actor_name(self, company_id, uid, tx=None):
@@ -330,6 +337,11 @@ class PriceBookStore:
             'updated_at': draft.get('updated_at'),
         }
 
+    def _starts_from_catalog(self, company_id):
+        if company_id == ADR_COMPANY_ID:
+            return False
+        return not (self._head(company_id) or {}).get('latest_version_id')
+
     def _view(self, actor, company, support=False):
         book = self.effective(company)
         manage = (not support) and actor.get('role') == 'owner'
@@ -340,14 +352,38 @@ class PriceBookStore:
         extras = ai_features.enabled('priced_extras')
         reason = _shown_reason(book)
         unset = _is_unset(book)
+        draft = self._draft(company['company_id']) if manage else None
+        if self._starts_from_catalog(company['company_id']):
+            pub = public_table(starter_table(), manage=manage)
+            return {
+                'company_id': company['company_id'],
+                'company_name': (company.get('profile') or {}).get('name', ''),
+                'calculation_version': None,
+                'starter': True,
+                'prices_set': False,
+                'generation': 0,
+                'version_id': None,
+                'sequence': 0,
+                'label': 'Not set up yet',
+                'published_at': None,
+                'effective_from': None,
+                'source': STARTER_VERSION,
+                'change_reason': '',
+                'items': pub['items'],
+                'policy': pub['policy'],
+                'working_copy': self._working_copy_view(draft),
+                'can_manage': manage,
+                'priced_extras': extras,
+                'used_for': _not_set_message(actor.get('role') if not support else None),
+            }
         if _is_v2(book):
             pub = public_table(book, manage=manage)
-            draft = self._draft(company['company_id']) if manage else None
             return {
                 'company_id': company['company_id'],
                 'company_name': (company.get('profile') or {}).get('name', ''),
                 'calculation_version': V2_CALCULATION_VERSION,
                 'starter': False,
+                'prices_set': True,
                 'generation': book['generation'],
                 'version_id': book['version_id'],
                 'sequence': book['sequence'],
@@ -358,12 +394,12 @@ class PriceBookStore:
                 'change_reason': reason if manage or support else '',
                 'items': pub['items'],
                 'policy': pub['policy'],
-                'working_copy': self._working_copy_view(draft) if manage else None,
+                'working_copy': self._working_copy_view(draft),
                 'can_manage': manage,
                 'priced_extras': extras,
                 'used_for': 'New pricing uses these rates. Existing jobs keep their saved rates.',
             }
-        return {
+        view = {
             'company_id': company['company_id'],
             'company_name': (company.get('profile') or {}).get('name', ''),
             'generation': book['generation'],
@@ -383,6 +419,9 @@ class PriceBookStore:
             if unset
             else 'New pricing uses these rates. Existing jobs keep their saved rates.',
         }
+        if draft:
+            view['working_copy'] = self._working_copy_view(draft)
+        return view
 
     def read_company(self, uid, company_id):
         self._require()
@@ -561,11 +600,7 @@ class PriceBookStore:
         company = actor['company']
         if 'prices_manage' not in actor['capabilities']:
             raise AccessDenied('Only the company owner can change prices.')
-        if isinstance(payload, dict) and (
-            'items' in payload
-            or 'policy' in payload
-            or payload.get('calculation_version') == V2_CALCULATION_VERSION
-        ):
+        if 'items' in payload or 'policy' in payload:
             return self._preview_v2(uid, company_id, company, payload)
 
         if _is_v2(self.effective(company)):
@@ -727,7 +762,7 @@ class PriceBookStore:
             }
             if head['generation'] != expected_generation:
                 raise Conflict('Prices changed. Review the new published values before publishing.')
-            if _is_v2(preview) or 'items' in preview:
+            if _is_v2(preview):
                 return self._commit_v2_publish(
                     tx, uid, company_id, company, head, preview_id, preview
                 )
@@ -882,13 +917,12 @@ class PriceBookStore:
         tx.set(self.ws.ref(HEAD, company_id), head)
         if existing_draft:
             tx.delete(self.ws.ref(DRAFTS, company_id))
-        extras_rate = ''
+        profile = dict(company.get('profile') or {})
+        profile.pop('additional_work_rate', None)
         for item in table['items']:
             if item['group'] == 'extras' and item['enabled'] and item['unit_price'] != '':
-                extras_rate = item['unit_price']
+                profile['additional_work_rate'] = item['unit_price']
                 break
-        profile = dict(company.get('profile') or {})
-        profile['additional_work_rate'] = extras_rate
         company['profile'] = profile
         tx.set(self.ws.ref('_companies', company_id), company)
         preview['result_version_id'] = preview_id
@@ -991,7 +1025,7 @@ class PriceBookStore:
         company_id = version['company_id']
         if _is_v2(version):
             before = parent if (parent and _is_v2(parent)) else None
-            diff, warnings = diff_tables(before, version)
+            diff, warnings = (diff_tables if manage else public_diff)(before, version)
             pub = public_table(version, manage=manage)
             detail = {
                 'version_id': version['version_id'],
@@ -1082,9 +1116,11 @@ class PriceBookStore:
             generation = head['generation'] if head else 0
             # Historical exports are viewable. Restoring one still requires a current-base preview.
             base_generation = generation
-            base_version = (head or {}).get('latest_version_id') or (
-                'starter' if _is_v2(book) else 'seed'
-            )
+            base_version = (head or {}).get('latest_version_id') or 'seed'
+        elif self._starts_from_catalog(company_id):
+            book = {**starter_table(), 'calculation_version': V2_CALCULATION_VERSION}
+            base_generation = 0
+            base_version = STARTER_VERSION
         else:
             book = self.effective(company)
             base_generation = book['generation']
@@ -1243,7 +1279,7 @@ class PriceBookStore:
         company = self.ws.read('_companies', job['company_id'])
         book = self.effective(company)
         pin = self._pin(record['inspection_id'])
-        if pin and record.get('status') != 'signed':
+        if pin and not _is_v2(pin) and record.get('status') != 'signed':
             _refuse_adr_rates(job['company_id'], pin['rates'])
         manage = actor['role'] == 'owner' and record.get('status') != 'signed'
         unset = _is_unset(book)
@@ -1261,14 +1297,14 @@ class PriceBookStore:
                 'pinned': None
                 if not pin
                 else {
-                    'label': label_for(pin.get('sequence', 0)),
+                    'label': label_for(pin.get('sequence', 0), job['company_id']),
                     'sequence': pin.get('sequence', 0),
                     'version_id': pin['version_id'],
                     'priced_at': pin.get('priced_at'),
                     'reason': pin.get('reason'),
                 },
                 'latest': {
-                    'label': label_for(book.get('sequence', 0)),
+                    'label': label_for(book.get('sequence', 0), job['company_id']),
                     'sequence': book.get('sequence', 0),
                     'version_id': book['version_id'],
                 },
@@ -1278,7 +1314,7 @@ class PriceBookStore:
                     'version_id': active['version_id'],
                     'content_sha256': active['content_sha256'],
                     'sequence': active.get('sequence', 0),
-                    'label': label_for(active.get('sequence', 0)),
+                    'label': label_for(active.get('sequence', 0), job['company_id']),
                     'items': pub['items'],
                     'policy': pub['policy'],
                 },
@@ -1332,7 +1368,8 @@ class PriceBookStore:
         pin = self._pin(record['inspection_id'])
         if not pin:
             raise Conflict('This draft has no saved prices yet. Finish and review it first.')
-        _refuse_adr_rates(job['company_id'], pin['rates'])
+        if not _is_v2(pin):
+            _refuse_adr_rates(job['company_id'], pin['rates'])
         company = self.ws.read('_companies', job['company_id'])
         book = self.effective(company)
         if _is_unset(book):
@@ -1493,12 +1530,10 @@ class PriceBookStore:
 
     def approval_source(self, company, tx=None):
         """The book a new additional-work approval is priced from, when price books are on."""
-        if not price_books_enabled():
-            return None
         book = self.effective(company, tx)
         if _is_v2(book):
             raise Conflict(V2_PRICING_UNAVAILABLE)
-        return book
+        return book if price_books_enabled() else None
 
 
 def _stamp(value):

@@ -152,9 +152,7 @@ def parse_upload(
         raise ValueError('Row 2: this file is not the current DryScope price template.')
 
     if fmt == 'v2':
-        return _table_to_items(
-            table, company_id, str(base_version_id or 'starter'), str(base_generation)
-        )
+        return _table_to_items(table, company_id, str(base_version_id), str(base_generation))
     return _table_to_rates(table, company_id, str(base_version_id), str(base_generation))
 
 
@@ -177,7 +175,7 @@ def _row_v2(company_id, base_version_id, base_generation, item):
     return {
         'template_version': V2_TEMPLATE_VERSION,
         'company_id': company_id,
-        'base_version_id': base_version_id or 'starter',
+        'base_version_id': base_version_id,
         'base_generation': str(base_generation),
         'item_id': item['item_id'],
         'code': item['code'],
