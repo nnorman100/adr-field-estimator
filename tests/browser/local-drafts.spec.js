@@ -89,6 +89,13 @@ test('offline draft with several photos survives reload with images intact and b
   }
   await expect(page.locator('#photoCount')).toContainText('3 photos');
   await expect(page.locator('#saveStatus')).toHaveText('Offline · saved on phone');
+  // The status shows before the last photo is written; wait for all three to be on the phone.
+  await expect
+    .poll(async () => {
+      const { drafts, photos } = await storage(page);
+      return [photos.length, drafts.some((r) => r.draft.photos.length === 3)];
+    })
+    .toEqual([3, true]);
   await page.reload();
   await page.locator('.task-nav [data-task="walkthrough"]').click();
   await expect(page.locator('#photoGallery img')).toHaveCount(3);

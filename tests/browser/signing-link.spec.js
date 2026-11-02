@@ -20,7 +20,10 @@ async function sendLink(page) {
   await page.locator('#sendHomeownerLink').click();
   await expect(page.locator('#homeownerLinkPanel')).toBeVisible();
   await expect(page.locator('#homeownerLinkStatus')).toContainText('Waiting for the homeowner');
-  expect(await page.locator('#homeownerQr').evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+  // The image decodes after the panel shows, so wait for it instead of reading the width once.
+  await expect
+    .poll(() => page.locator('#homeownerQr').evaluate((img) => img.complete && img.naturalWidth))
+    .toBeGreaterThan(0);
   const url = await page.locator('#homeownerLinkUrl').inputValue();
   expect(url).toMatch(/^https:\/\/(localhost|127\.0\.0\.1):\d+\/sign#[A-Za-z0-9_-]{43}$/);
   return url;
