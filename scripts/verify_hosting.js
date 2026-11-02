@@ -81,13 +81,12 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
   );
   const displayedVersions = [...shell.matchAll(/App version ([^<]+)<\/small>/g)].map((m) => m[1]);
   const shortCommit = marker.slice(0, 12) + (marker.endsWith('-dirty') ? '-dirty' : '');
-  const versionPattern = /^\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*(?:-dirty)?$/;
+  const versionPattern = /^\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*$/;
   assert(
     displayedVersions.length === 2 &&
       displayedVersions[0] === displayedVersions[1] &&
       (displayedVersions[0] === shortCommit ||
-        (versionPattern.test(displayedVersions[0]) &&
-          displayedVersions[0].endsWith('-dirty') === marker.endsWith('-dirty'))),
+        (versionPattern.test(displayedVersions[0]) && !marker.endsWith('-dirty'))),
     'Displayed app version is not the stamped commit or release version: ' +
       displayedVersions.join(', '),
   );

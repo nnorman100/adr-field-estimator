@@ -4,6 +4,7 @@ Backend and Hosting releases carry the same stamp so the deployed pair can be co
 recorded in RELEASES.md.
 """
 
+import argparse
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -11,19 +12,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMIT_PATTERN = r'[0-9a-f]{40}(?:-dirty)?'
-VERSION_PATTERN = r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*(?:-dirty)?'
+VERSION_PATTERN = r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*'
 
 
-def valid_version(value, allow_dirty=False):
+def valid_version(value):
     """Return True when value is a well-formed YYYY.MM.DD-N release version."""
-    if not isinstance(value, str):
-        return False
-    pattern = (
-        VERSION_PATTERN
-        if allow_dirty
-        else r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*'
-    )
-    if not re.fullmatch(pattern, value):
+    if not isinstance(value, str) or not re.fullmatch(VERSION_PATTERN, value):
         return False
     date_part = value.split('-', 1)[0]
     try:
@@ -31,6 +25,15 @@ def valid_version(value, allow_dirty=False):
     except ValueError:
         return False
     return True
+
+
+def release_version(value):
+    """The argparse type of a --version flag."""
+    if not valid_version(value):
+        raise argparse.ArgumentTypeError(
+            'use date-style version YYYY.MM.DD-N (for example 2026.11.02-1)'
+        )
+    return value
 
 
 class DirtyTree(RuntimeError):

@@ -22,7 +22,7 @@ commit to protected master; manual releases still append RELEASES.md rows.
 --publish creates the git tag and GitHub Release for the version the live backend reports. It runs as its
 own step, because only it holds a GitHub write token, and a hand release runs it too. --rollback
 redeploys an earlier version and stops before staging when a data migration is newer than that version,
-unless --confirm-past-migration is given. --next-version prints the number a hand release should use.
+or Firestore rules or indexes changed since it, unless --confirm-past-migration is given. --next-version prints the number a hand release should use.
 """
 
 import argparse
@@ -385,9 +385,7 @@ def version_tags_at(runner, commit):
     if result.returncode != 0:
         return []
     tags = [
-        line.strip()
-        for line in (result.stdout or '').splitlines()
-        if valid_version(line.strip(), allow_dirty=False)
+        line.strip() for line in (result.stdout or '').splitlines() if valid_version(line.strip())
     ]
     return sorted(tags, key=lambda item: (item.split('-', 1)[0], int(item.split('-', 1)[1])))
 
@@ -403,23 +401,14 @@ def next_version(runner, commit, today=None):
     numbers = []
     for line in (result.stdout or '').splitlines():
         tag = line.strip()
-        if tag.startswith(prefix) and valid_version(tag, allow_dirty=False):
+        if tag.startswith(prefix) and valid_version(tag):
             numbers.append(int(tag.split('-', 1)[1]))
     return f'{prefix}{max(numbers, default=0) + 1}'
 
 
-def plain_commit_line(subject, body=''):
-    """Format one commit or merge commit as a plain-English release note bullet."""
-    subject = (subject or '').strip()
-    first_body = next((line.strip() for line in (body or '').splitlines() if line.strip()), '')
-    pr_merge = re.match(r'^Merge pull request #(\d+)\b', subject)
-    if pr_merge:
-        num = pr_merge.group(1)
-        summary = first_body or subject
-        summary = re.sub(r'^[a-z]+(?:\([^)]+\))?!?:\s*', '', summary)
-        if summary:
-            summary = summary[0].upper() + summary[1:]
-        return f'- {summary} (#{num})'
+def plain_commit_line(subject):
+    """Format one squash-merge subject as a plain-English release note bullet."""
+    subject = subject.strip()
     cleaned = re.sub(r'^[a-z]+(?:\([^)]+\))?!?:\s*', '', subject)
     if cleaned:
         cleaned = cleaned[0].upper() + cleaned[1:]
@@ -443,23 +432,18 @@ def previous_version(runner, commit):
 
 def release_notes(runner, commit):
     """Build plain-word release notes listing the merged PRs in this release."""
-    log_args = ['log', '--first-parent', '--pretty=format:%s%x1f%b%x1e']
+    log_args = ['log', '--first-parent', '--pretty=format:%s']
     previous = previous_version(runner, commit)
     if previous:
         log_args.append(f'{previous}..{commit}')
     else:
         log_args.extend(['-n', '1', commit])
     result = git(runner, *log_args, check=False)
-    bullets = []
-    for raw in (result.stdout or '').split('\x1e'):
-        raw = raw.strip()
-        if not raw:
-            continue
-        parts = raw.split('\x1f', 1)
-        subject = parts[0].strip()
-        body = parts[1] if len(parts) > 1 else ''
-        if subject:
-            bullets.append(plain_commit_line(subject, body))
+    bullets = [
+        plain_commit_line(subject)
+        for subject in (result.stdout or '').splitlines()
+        if subject.strip()
+    ]
     if not bullets:
         bullets.append(f'- Release commit {commit[:12]}.')
     return 'Changes in this release:\n\n' + '\n'.join(bullets)
@@ -516,7 +500,7 @@ def publish_live_version(runner, record, commit):
     if health.get('source_commit') != commit:
         raise Skipped(f'{commit[:12]} is not what is serving; nothing to publish.')
     version = health.get('version')
-    if not valid_version(version, allow_dirty=False):
+    if not valid_version(version):
         warning = (
             f'{commit[:12]} is serving but reports version {version!r}, so no tag or GitHub Release '
             'was created. Redeploy it with --version to give it a number.'
@@ -556,6 +540,26 @@ def firestore_migrations(runner):
     return items
 
 
+def warn(record, fact, warning):
+    print(f'::warning::{warning}', file=sys.stderr)
+    record.set(fact, warning)
+    record.note('WARNING: ' + warning)
+
+
+def check_rollback_rules(record, names, target_commit, version):
+    """Return the warning when rules or indexes differ between the target and what is serving."""
+    changed = [name for name in HAND_RELEASED if name in names]
+    if not changed:
+        return None
+    warning = (
+        f'{", ".join(changed)} changed between target version {version} ({target_commit[:12]}) and '
+        'what is serving. A rollback does not roll back rules or indexes; they stay at the newer '
+        'hand-released version.'
+    )
+    warn(record, 'Rules and indexes warning', warning)
+    return warning
+
+
 def check_rollback_migrations(runner, record, target_commit, version):
     """Return the warning when the target is older than a migration, or that cannot be ruled out."""
     ledger = firestore_migrations(runner)
@@ -586,9 +590,7 @@ def check_rollback_migrations(runner, record, target_commit, version):
                 f'migration(s): {", ".join(newer)}. Code rollback does not undo database/data changes.'
             )
     if warning:
-        print(f'::warning::{warning}', file=sys.stderr)
-        record.set('Migration warning', warning)
-        record.note('WARNING: ' + warning)
+        warn(record, 'Migration warning', warning)
         return warning
     record.set('Migration check', 'no applied migrations newer than target version')
     record.note('Migration check passed: target version is not older than any applied migration.')
@@ -597,7 +599,7 @@ def check_rollback_migrations(runner, record, target_commit, version):
 
 def resolve_rollback_version(runner, version):
     """Resolve a YYYY.MM.DD-N release tag to its commit on master."""
-    if not valid_version(version, allow_dirty=False):
+    if not valid_version(version):
         raise Refused(
             f'Version {version!r} is not a valid YYYY.MM.DD-N release version (for example 2026.11.02-1).'
         )
@@ -810,9 +812,7 @@ def release(runner, record, commit, tag, check_only=False):
     )
 
 
-def rollback_to_version(
-    runner, record, version, tag=None, run_id='', check_only=False, confirm_past_migration=False
-):
+def rollback_to_version(runner, record, version, tag=None, run_id='', confirm_past_migration=False):
     target_commit = resolve_rollback_version(runner, version)
     tag = check_tag(tag) if tag else default_tag(target_commit, run_id)
     service = service_state(runner)
@@ -830,23 +830,20 @@ def rollback_to_version(
             f'Serving commit {serving_commit[:12]} is not in this checkout. Release by hand.'
         )
     names = git(runner, 'diff', '--name-only', f'{target_commit}..{serving_commit}').stdout.split()
-    check_hand_released(names)
     check_ttls(runner)
     serving_summary = spec_summary(serving)
     staff_emails = serving_staff_emails(serving_summary)
-    warning = check_rollback_migrations(runner, record, target_commit, version)
-    if warning and not check_only and not confirm_past_migration:
+    rules_warning = check_rollback_rules(record, names, target_commit, version)
+    migration_warning = check_rollback_migrations(runner, record, target_commit, version)
+    if (rules_warning or migration_warning) and not confirm_past_migration:
         raise Refused(
             f'Rollback to {version} stopped; nothing was staged. To roll back anyway, rerun with '
             '--confirm-past-migration (workflow input confirm_past_migration=yes).'
         )
     record.note(
-        f'Rollback target {version} ({target_commit[:12]}) verified; no rules or indexes changed; TTL policies in place.'
+        f'Rollback target {version} ({target_commit[:12]}) verified; TTL policies in place.'
     )
     record.note('The serving STAFF_EMAILS is set and is carried explicitly to the staged revision.')
-    if check_only:
-        record.note(f'Check only (rollback to {version}): nothing staged or deployed.')
-        return
     head = git(runner, 'rev-parse', 'HEAD').stdout.strip()
     original = (
         git(runner, 'symbolic-ref', '-q', '--short', 'HEAD', check=False).stdout or ''
@@ -892,19 +889,22 @@ def main(argv=None, runner=None):
     parser.add_argument(
         '--check-only',
         action='store_true',
-        help='run every refusal and migration check; stage and deploy nothing',
+        help='with --commit: run every refusal check; stage and deploy nothing',
     )
     parser.add_argument(
         '--confirm-past-migration',
         action='store_true',
-        help='let --rollback continue when the target is older than a data migration',
+        help='let --rollback continue past a data migration or a rules or index change',
     )
     args = parser.parse_args(argv)
+    if args.check_only and not args.commit:
+        print('--check-only works only with --commit.', file=sys.stderr)
+        return 2
     commit = args.commit or args.publish
     if commit and not COMMIT.fullmatch(commit):
         print('--commit and --publish need a full lowercase commit hash.', file=sys.stderr)
         return 2
-    if args.rollback and not valid_version(args.rollback, allow_dirty=False):
+    if args.rollback and not valid_version(args.rollback):
         print(
             '--rollback must be a date-style version YYYY.MM.DD-N (for example 2026.11.02-1).',
             file=sys.stderr,
@@ -939,14 +939,9 @@ def main(argv=None, runner=None):
                 args.rollback,
                 tag=tag,
                 run_id=args.run_id,
-                check_only=args.check_only,
                 confirm_past_migration=args.confirm_past_migration,
             )
-            outcome = (
-                'checked, nothing deployed'
-                if args.check_only
-                else f'rolled back to {args.rollback}'
-            )
+            outcome = f'rolled back to {args.rollback}'
         elif args.publish:
             publish_live_version(runner, record, args.publish)
             outcome = 'published'

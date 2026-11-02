@@ -24,7 +24,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 | Job summaries and AI usage | yes | flag off | no | |
 | Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built |
 | Automatic deploys after CI | yes (#171) | not recorded | n/a | Needs the owner's one-time setup in `docs/firebase-isolation.md#automatic-deploys`; runs are recorded in the Actions job summary, not `RELEASES.md` |
-| Release version numbers (`YYYY.MM.DD-N`) and one-step rollback | yes | yes | no | Shown in `/api/health`, app footer and Account menu; automatic git tag + plain-word GitHub Release after deploy verification; `auto_deploy.py --rollback <version>` and workflow dispatch warn and stop when rolling back past a `_migrations` data migration, unless confirmed |
+| Release version numbers (`YYYY.MM.DD-N`) and one-step rollback | yes | not yet released | no | Shown in `/api/health`, app footer and Account menu; automatic git tag + plain-word GitHub Release after deploy verification; `auto_deploy.py --rollback <version>` and workflow dispatch warn and stop when rolling back past a `_migrations` data migration or a rules or index change, unless confirmed |
 | Vault backup | yes | yes | n/a | Verified Oct 27 |
 | Landing page at `/` | yes | yes | no | |
 

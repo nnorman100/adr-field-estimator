@@ -21,6 +21,7 @@ from scripts.release_stamp import (
     COMMIT_PATTERN,
     DirtyTree,
     release_row,
+    release_version,
     source_commit,
     valid_version,
 )
@@ -42,32 +43,17 @@ TARGETS = {
 }
 
 
-def release_version(value):
-    if not valid_version(value, allow_dirty=False):
-        raise argparse.ArgumentTypeError(
-            'use date-style version YYYY.MM.DD-N (for example 2026.11.02-1)'
-        )
-    return value
-
-
 def display(marker, version=None):
-    """The Account menu and footer show the release version (or short commit); the dirty mark stays visible."""
+    """The Account menu and footer show the release version, or a short commit with its dirty mark."""
     if version:
-        if marker == PLACEHOLDER:
-            return PLACEHOLDER
-        dirty = marker.endswith('-dirty') and not version.endswith('-dirty')
-        return version + ('-dirty' if dirty else '')
+        return version
     if re.fullmatch(COMMIT_PATTERN, marker):
         return marker[:12] + ('-dirty' if marker.endswith('-dirty') else '')
     return marker
 
 
 def _valid_display(value, marker):
-    if value == display(marker):
-        return True
-    if not valid_version(value, allow_dirty=True):
-        return False
-    return value.endswith('-dirty') == marker.endswith('-dirty')
+    return value == display(marker) or (valid_version(value) and not marker.endswith('-dirty'))
 
 
 def stamp(text, rules, marker, version=None):
@@ -186,6 +172,13 @@ def main(argv=None, git=subprocess.run):
             print('Hosting shell reset to the unstamped placeholder.')
             return 0
         commit = source_commit(DEPLOYED, args.allow_dirty, git)
+        if args.version and commit.endswith('-dirty'):
+            print(
+                'Refusing to stamp Hosting: --version needs a clean tree. Commit first, or drop '
+                '--version so the dirty build shows its commit.',
+                file=sys.stderr,
+            )
+            return 2
         if args.version:
             write(commit, version=args.version)
         else:

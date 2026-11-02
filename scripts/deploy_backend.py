@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.release_stamp import DirtyTree, release_row, source_commit, valid_version
+from scripts.release_stamp import DirtyTree, release_row, release_version, source_commit
 
 PROJECT = 'alert-disaster-field-2026'
 # The Maps key for address suggestions and the job map: a Secret Manager secret that adr-runtime may
@@ -172,14 +172,6 @@ def revision_tag(value):
     return value
 
 
-def release_version(value):
-    if not valid_version(value, allow_dirty=False):
-        raise argparse.ArgumentTypeError(
-            'use date-style version YYYY.MM.DD-N (for example 2026.11.02-1)'
-        )
-    return value
-
-
 def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--workspaces', choices=('on', 'off'), required=True)
@@ -237,6 +229,13 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
             file=sys.stderr,
         )
         return 2
+    if args.version and commit.endswith('-dirty'):
+        print(
+            'Refusing to stamp the backend: --version needs a clean tree. Commit first, or drop '
+            '--version so the dirty build shows its commit.',
+            file=sys.stderr,
+        )
+        return 2
     if not args.staff_emails and not template_staff_emails(describe or describe_service):
         print(
             'Refusing to deploy: the Cloud Run service template has no STAFF_EMAILS (or could not '
@@ -249,14 +248,11 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     argv = command(
         args.workspaces, args.tag, commit, args.ai_features, args.price_books, args.staff_emails
     )
-    version_stamp = None
-    if args.version:
-        version_stamp = args.version + ('-dirty' if commit.endswith('-dirty') else '')
     print(baseline_line(assignments))
     if args.staff_emails:
         print('STAFF_EMAILS: set explicitly on this revision.')
-    if version_stamp:
-        print(f'Release version: {version_stamp}')
+    if args.version:
+        print(f'Release version: {args.version}')
     if args.dry_run:
         print(shlex.join(argv))
         return 0
@@ -266,7 +262,7 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
             file=sys.stderr,
         )
         return 2
-    stamp_body = f'{commit}\n{version_stamp}\n' if version_stamp else commit + '\n'
+    stamp_body = f'{commit}\n{args.version}\n' if args.version else commit + '\n'
     STAMP.write_text(stamp_body, encoding='utf8')
     try:
         code = run([shutil.which('gcloud') or 'gcloud', *argv[1:]], cwd=ROOT).returncode
@@ -278,8 +274,8 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
             f'AI_FEATURES={args.ai_features or "(none)"}; '
             f'price books {args.price_books}'
         )
-        if version_stamp:
-            notes += f'; version {version_stamp}'
+        if args.version:
+            notes += f'; version {args.version}'
         print(
             'Append to RELEASES.md, replacing REVISION with the revision suffix printed above (for example 00017-kap):\n'
             + release_row(

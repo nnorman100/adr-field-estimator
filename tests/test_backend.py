@@ -536,9 +536,6 @@ def test_source_commit_comes_only_from_a_well_formed_deploy_stamp(tmp_path):
     stamp.write_text('a' * 40 + '\n2026.11.02-1\n')
     assert bm.read_source_commit(str(stamp)) == 'a' * 40
     assert bm.read_release_version(str(stamp)) == '2026.11.02-1'
-    stamp.write_text('a' * 40 + '-dirty\n2026.11.02-1-dirty\n')
-    assert bm.read_source_commit(str(stamp)) == 'a' * 40 + '-dirty'
-    assert bm.read_release_version(str(stamp)) == '2026.11.02-1-dirty'
     for value in [
         '',
         'abc123',
@@ -547,6 +544,7 @@ def test_source_commit_comes_only_from_a_well_formed_deploy_stamp(tmp_path):
         'a' * 40 + '\n<script>',
         'a' * 40 + '\n2026.11.02-0\n',
         'a' * 40 + '\n2026.13.02-1\n',
+        'a' * 40 + '-dirty\n2026.11.02-1-dirty\n',
         'a' * 40 + '\n2026.11.02-1\nextra\n',
     ]:
         stamp.write_text(value)

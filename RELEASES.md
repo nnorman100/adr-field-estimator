@@ -53,8 +53,6 @@ the revision that serves traffic instead.
     ```bash
     git fetch --tags
     python3 scripts/auto_deploy.py --rollback 2026.11.02-1
-    # Dry-run preflight and migration check only:
-    python3 scripts/auto_deploy.py --rollback 2026.11.02-1 --check-only
     ```
   - **Data migration warning**: During rollback, `scripts/auto_deploy.py` reads the Firestore
     `_migrations` ledger (#184). If the target version is older than an applied database/data migration,
@@ -62,6 +60,10 @@ the revision that serves traffic instead.
     job summary and stops before staging, because rolling back code does not undo Firestore data
     changes. To go ahead anyway, rerun with `--confirm-past-migration` (workflow input
     `confirm_past_migration` set to `yes`).
+  - **Rules and indexes warning**: A rollback does not roll back `firestore.rules` or
+    `firestore.indexes.json`; they stay at the newer hand-released version. When either changed between
+    the target and what is serving, it warns and stops the same way, with the same confirmation. The next
+    automatic release then stops for a hand release, because those files differ again.
   - **After a rollback**: the next release brings the bad change back. Pause automatic deploys
     (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge.
 

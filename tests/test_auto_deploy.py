@@ -67,7 +67,7 @@ class FakeRunner:
         traffic=None,
         tags=None,
         releases=None,
-        log_output='Merge pull request #185 from nnorman100/fm/feature\x1ffeat: add version numbers\x1e',
+        log_output='feat: add version numbers (#185)',
         migrations=None,
         serving_version='unknown',
         health_version=None,
@@ -815,11 +815,38 @@ def test_confirmed_rollback_past_a_migration_redeploys_the_tag(summary, capsys):
     assert runner.tags == {'2026.10.30-1': OLD, '2026.11.02-1': NEW}
 
 
-def test_check_only_rollback_past_a_migration_warns_and_stages_nothing(summary, capsys):
-    runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
-    assert auto.main(['--rollback', '2026.10.30-1', '--check-only'], runner=runner) == 0
-    assert '::warning::' in capsys.readouterr().err
+@pytest.mark.parametrize(
+    'argv', [['--rollback', '2026.10.30-1', '--check-only'], ['--publish', NEW, '--check-only']]
+)
+def test_check_only_is_refused_outside_a_release(argv):
+    runner = FakeRunner(serving_commit=NEW, serving_version='2026.11.02-1')
+    assert auto.main(argv, runner=runner) == 2
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize('name', ['firestore.rules', 'firestore.indexes.json'])
+def test_rollback_across_a_rules_or_index_change_warns_and_stops_unless_confirmed(
+    summary, capsys, name
+):
+    runner = rollback_runner(changed=['backend/main.py', name])
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 1
+    err = capsys.readouterr().err
+    assert '::warning::' + name in err and 'stay at the newer hand-released version' in err
+    assert 'since the serving commit' not in summary.text()
+    assert 'confirm-past-migration' in summary.text()
     assert 'stage' not in runner.keys()
+
+    runner = rollback_runner(changed=['backend/main.py', name])
+    argv = ['--rollback', '2026.10.30-1', '--confirm-past-migration']
+    assert auto.main(argv, runner=runner) == 0
+    assert 'stage' in runner.keys()
+    assert 'no rules or indexes changed' not in summary.text()
+
+
+def test_release_notes_list_each_squash_merged_pr_in_plain_words():
+    runner = FakeRunner(log_output='feat(backend): add a thing (#7)\nfix: repair a thing (#8)')
+    notes = auto.release_notes(runner, NEW)
+    assert notes.splitlines()[2:] == ['- Add a thing (#7)', '- Repair a thing (#8)']
 
 
 def test_rollback_without_newer_migrations_passes_cleanly(summary, capsys):
@@ -882,13 +909,14 @@ def test_rollback_from_a_detached_checkout_returns_to_that_commit(summary):
 
 def test_workflow_offers_a_rollback_with_an_explicit_migration_confirmation():
     inputs = yaml.safe_load(WORKFLOW)[True]['workflow_dispatch']['inputs']
+    assert set(inputs) == {'version', 'confirm_past_migration'}
     assert inputs['version']['required'] is False
     assert inputs['confirm_past_migration']['default'] == 'no'
     assert inputs['confirm_past_migration']['options'] == ['no', 'yes']
 
 
 def test_workflow_rollback_step_stops_at_a_migration_unless_confirmed(summary):
-    env = {'ROLLBACK_VERSION': '2026.10.30-1', 'RUN_ID': '41140166919', 'ROLLBACK_ARGS': ''}
+    env = {'ROLLBACK_VERSION': '2026.10.30-1', 'RUN_ID': '41140166919'}
     plain = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': ''})
     runner = rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)])
     assert auto.main(plain, runner=runner) == 1

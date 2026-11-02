@@ -233,9 +233,7 @@ LIVE_REVOCATION = ['revocation:live']
 
 
 COMMIT_PATTERN = re.compile(r'[0-9a-f]{40}(?:-dirty)?')
-VERSION_PATTERN = re.compile(
-    r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*(?:-dirty)?'
-)
+VERSION_PATTERN = re.compile(r'\d{4}\.(?:0[1-9]|1[0-2])\.(?:0[1-9]|[12]\d|3[01])-[1-9]\d*')
 
 
 def _read_stamp_lines(path):

@@ -24,7 +24,7 @@ The owner approves every production release. Follow the recipe at the top of `RE
 - [ ] For a manual release, append the rows to `RELEASES.md`; reset the stamp (`stamp_hosting.py --reset`); both `index.html` copies identical
 
 ## If a check fails
-Run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (or restore traffic to the recorded rollback revision and the recorded Hosting version), note any `_migrations` data migration warning (the rollback stops there unless rerun with `--confirm-past-migration`), record the failed attempt and the rollback, and do not retry blindly. (This is what happened with release 5 on Oct 26.)
+Run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (or restore traffic to the recorded rollback revision and the recorded Hosting version), note any `_migrations` data migration or rules and indexes warning (the rollback stops there unless rerun with `--confirm-past-migration`), record the failed attempt and the rollback, and do not retry blindly. (This is what happened with release 5 on Oct 26.)
 
 ## After (owner)
 - [ ] Phone check of each new screen on a real phone (record separately from automated results)
