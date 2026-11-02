@@ -18,8 +18,15 @@ test('Year built accepts the current year when the clock reads 2027', async ({ p
   await page.goto('/app');
   const year = page.locator('#yearBuilt');
   await expect(year).toHaveAttribute('max', '2027');
-  await year.evaluate((el) => (el.value = '2027'));
-  expect(await year.evaluate((el) => el.validity.rangeOverflow)).toBe(false);
-  await year.evaluate((el) => (el.value = '2028'));
-  expect(await year.evaluate((el) => el.validity.rangeOverflow)).toBe(true);
+  // Set the value and read the validity in one evaluate: the browser runs it without
+  // interleaving any other app work, so no refill can land between the two steps.
+  const checks = await year.evaluate((el) => {
+    const check = (value) => {
+      el.value = value;
+      return { value: el.value, rangeOverflow: el.validity.rangeOverflow };
+    };
+    return { current: check('2027'), next: check('2028') };
+  });
+  expect(checks.current).toEqual({ value: '2027', rangeOverflow: false });
+  expect(checks.next).toEqual({ value: '2028', rangeOverflow: true });
 });
