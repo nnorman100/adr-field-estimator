@@ -66,6 +66,7 @@ test('fresh Kitchen autofill and explicit confirmation reach review with zero ma
 test('Undo restores the original room and manual edits are retained', async ({ page }) => {
   await ready(page);
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
   await room(page, 'name').locator('..').getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(room(page, 'name')).toHaveValue('Room 1');
@@ -81,6 +82,7 @@ test('Undo restores the original room and manual edits are retained', async ({ p
     .click();
   await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
   await room(page, 'finished_sf').fill('95');
   await expect(room(page, 'finished_sf').locator('..').locator('.walkthrough-edit')).toHaveCount(0);
@@ -141,6 +143,7 @@ test('initial-walk photo labels follow the default-room rename and name Undo thr
   const original = await page.evaluate(() => state.record.photos[0]);
   expect(original.room).toBe('Room 1');
   await page.locator('#fillScope').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(room(page, 'name')).toHaveValue('Kitchen');
   await saveDraft(page);
   await expect.poll(() => page.evaluate(() => state.record.photos[0].room)).toBe('Kitchen');
@@ -162,6 +165,7 @@ test('a manually entered room is preserved and Undo removes only a newly added r
   await room(page, 'name').fill('Office');
   await room(page, 'finished_sf').fill('10');
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(page.locator('#rooms .room')).toHaveCount(2);
   await expect(room(page, 'name')).toHaveValue('Office');
   await expect(room(page, 'finished_sf')).toHaveValue('10');
@@ -183,6 +187,7 @@ async function fillBesideOffice(page) {
   await room(page, 'name').fill('Office');
   await room(page, 'finished_sf').fill('10');
   await page.locator('#fillScopeProperty').click();
+  await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
   await expect(kitchen(page, 'name')).toHaveValue('Kitchen');
 }
 
