@@ -257,6 +257,121 @@ def proposal_date():
     return datetime.now(ZoneInfo('America/Los_Angeles')).strftime('%m-%d-%Y')
 
 
+V2 = 'dryscope-v2'
+# Engine line keys that the printed claim carries; the engine's own working keys stay out.
+V2_LINE_KEYS = (
+    'code',
+    'description',
+    'quantity',
+    'unit',
+    'unit_price',
+    'waste_percent',
+    'total',
+    'xactimate_code',
+)
+
+
+BASELINE_SOURCES = {f'field:{field}' for _, _, field, _, _ in BASELINE} | {'after_hours'}
+ROOM_QUANTITY_LABELS = {
+    'unfinished_sf': 'Unfinished area',
+    'finished_sf': 'Finished area',
+    'wet_floor_sf': 'Wet floor area',
+    'floor_sf': 'Floor area',
+}
+JOB_QUANTITY_LABELS = {
+    'emergency_calls': 'Emergency service calls',
+    'monitoring_hours': 'Monitoring hours',
+    'haul_loads': 'Haul loads',
+    'air_scrubbers': 'Air scrubbers',
+    'hepa_filters': 'HEPA filters',
+    'matterport_scans': 'Matterport scans',
+    'dump_truck_loads': 'Dump truck loads',
+    'equipment_decon': 'Equipment decontamination',
+    'power_distribution': 'Power distribution',
+    'labor_hours': 'Labor hours',
+    'air_movers': 'Air movers',
+    'dehumidifiers': 'Dehumidifiers',
+    'drying_days': 'Drying days',
+    'wood_floor_systems': 'Wood floor systems',
+    'wood_floor_days': 'Wood floor days',
+}
+
+
+def percent_text(value):
+    """'20.00' -> '20', '12.5' -> '12.5': a percent as an owner would write it."""
+    return format(Decimal(str(value)).normalize(), 'f')
+
+
+def end_summary(raw):
+    """One end of a v2 estimate as the engine returned it; every printed line is a cent amount."""
+    return dict(
+        subtotal=float(amount(raw['subtotal'])),
+        after_hours=float(amount(raw['after_hours'])),
+        minimum_charge=float(amount(raw['minimum_charge'])),
+        overhead_profit=float(amount(raw['overhead_profit'])),
+        tax=float(amount(raw['tax'])),
+        total=float(amount(raw['total'])),
+    )
+
+
+def v2_estimate(priced, policy):
+    """The estimate summary printed on v2 documents, from the engine's totals and the pinned policy."""
+    totals = priced.totals
+    if not totals or totals.get('low') is None:
+        raise ValueError('The saved price table did not produce an estimate.')
+    mode = totals['mode']
+    multiplier = Decimal(str(policy['after_hours']['multiplier']))
+    tax = policy['sales_tax']
+    return dict(
+        mode=mode,
+        low=end_summary(totals['low']),
+        high=end_summary(totals['high']) if mode == 'range' else None,
+        after_hours_label=policy['after_hours']['label'],
+        after_hours_percent=percent_text((multiplier - 1) * 100),
+        overhead_profit_percent=percent_text(policy['overhead_profit_percent']),
+        sales_tax_percent=percent_text(tax['percent']) if tax['enabled'] else '0',
+        explanation=totals['range_explanation'] if mode == 'range' else totals['explanation'],
+        show_line_breakdown=bool(policy['show_line_breakdown']),
+    )
+
+
+def quantity_notes(data):
+    """Estimator overrides of measured quantities the engine applies, for the owner."""
+    rooms = {' '.join(room.name.split()).lower(): room.name for room in data.rooms}
+    notes = []
+    for key, override in (data.quantity_overrides or {}).items():
+        name, _, field = key.rpartition(':')
+        room = rooms.get(' '.join(name.split()).lower())
+        label = ROOM_QUANTITY_LABELS.get(field) if room else JOB_QUANTITY_LABELS.get(key)
+        if label and override.measured != override.entered:
+            notes.append(
+                dict(
+                    label=label,
+                    room=room,
+                    measured=float(override.measured),
+                    entered=float(override.entered),
+                    reason=override.reason,
+                )
+            )
+    return notes
+
+
+def has_priced_work(lines, pin, data):
+    """v1's work test over priced lines: baseline charges and unentered typed items are not work."""
+    sources = {item['item_id']: item['quantity_source'] for item in pin['items']}
+    entered = data.scope_items or {}
+
+    def is_work(line):
+        source = sources.get(line.get('item_id'))
+        if source is None:
+            return True
+        if source.startswith('typed'):
+            return line['item_id'] in entered and line['group'] != 'job_charges'
+        return source not in BASELINE_SOURCES
+
+    return any(is_work(line) for line in lines)
+
+
 def words(text):
     return re.findall(r"[\w']+", text.casefold())
 
@@ -337,6 +452,25 @@ def addressee(claim):
     )
 
 
+def estimate_sentence(estimate, total, low, high, items):
+    """The letter's pricing sentence: v1 keeps the estimating-sheet wording."""
+    if estimate is None:
+        return (
+            f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${low:,.2f} to ${high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope'
+            + (
+                '; approved additional work is added at its approved amount to both ends.'
+                if any(item['code'] == 'ADR-EXTRA' for item in items)
+                else '.'
+            )
+        )
+    if estimate['mode'] == 'single':
+        return f'Itemized total: ${total:,.2f}.'
+    sentence = (
+        f'Itemized total: ${total:,.2f}. Customer estimate range: ${low:,.2f} to ${high:,.2f}.'
+    )
+    return f'{sentence} {estimate["explanation"]}' if estimate['explanation'] else sentence
+
+
 def make_documents(
     data: InspectionData,
     photos,
@@ -346,6 +480,7 @@ def make_documents(
     claim=None,
     rates=None,
     price_basis=None,
+    pin=None,
 ):
     # Company details come only from the issuing company's profile; empty fields print nothing.
     company = identity or {}
@@ -373,20 +508,38 @@ def make_documents(
         raise ValueError('Enter the address, year built and rooms before auditing.')
     if data.package_price is not None:
         raise ValueError('Update the app and clear the old package-tier selection before auditing.')
-    # The saved basis names the formulas; a job without one predates company price books.
-    calculation_version = (price_basis or {}).get('calculation_version', CALCULATION_VERSION)
-    items, total = price_scope(data, rates, calculation_version)
+    estimate = None
+    if (pin or {}).get('calculation_version') == V2:
+        # Company price table: the engine prices the pinned table; wording and clauses stay below.
+        try:
+            from .pricing import price_and_range
+        except ImportError:
+            from pricing import price_and_range
+        priced = price_and_range(data, pin)
+        estimate = v2_estimate(priced, pin['policy'])
+        items = [dict(line) for line in priced.lines]
+        total = estimate['low']['total']
+        estimate_low = Decimal(str(total))
+        estimate_high = Decimal(str(estimate['high']['total'])) if estimate['high'] else None
+        extra_lines = [item for item in items if item['group'] == 'extras']
+    elif dict(price_basis or {}).get('calculation_version') == V2:
+        raise ValueError('The saved price table is required to build these documents.')
+    else:
+        # The saved basis names the formulas; a job without one predates company price books.
+        calculation_version = (price_basis or {}).get('calculation_version', CALCULATION_VERSION)
+        items, total = price_scope(data, rates, calculation_version)
+        estimate_low, estimate_high = proposal_range(data, items, calculation_version)
+        extra_lines = [item for item in items if item['code'] == 'ADR-EXTRA']
+        if total <= 0:
+            raise ValueError(
+                'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'
+            )
     approved = [extra for extra in data.extras if extra.approval]
-    for item, extra in zip((i for i in items if i['code'] == 'ADR-EXTRA'), approved):
+    for item, extra in zip(extra_lines, approved):
         item['description'] = wording(extra, clause_company)
     covered = {extra.description for extra in approved}
     unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
     pending = sum(extra.approval is None for extra in data.extras)
-    estimate_low, estimate_high = proposal_range(data, items, calculation_version)
-    if total <= 0:
-        raise ValueError(
-            'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'
-        )
     before = data.year_built < 1978
     age = (
         f'Due to property age ({data.year_built}), California State Law requires third-party lead and asbestos testing prior to destructive demolition.'
@@ -414,7 +567,11 @@ def make_documents(
     recommendations = (
         ([TESTING] if before else [])
         + [PROTECTION.format(company=clause_company)]
-        + [i['description'] for i in items if i['code'] not in SCOPE_EXCLUDED]
+        + [
+            i['description']
+            for i in items
+            if (i.get('group') != 'job_charges' if estimate else i['code'] not in SCOPE_EXCLUDED)
+        ]
         + [ADDITIONAL]
     )
     customer = customer_name.strip()
@@ -447,23 +604,22 @@ def make_documents(
         + [
             'Scope:\n' + '\n'.join(recommendations),
             '\n'.join(clauses),
-            f'Itemized charges at base rates: ${total:,.2f}. Customer estimate range: ${estimate_low:,.2f} to ${estimate_high:,.2f}. The range applies the estimating sheet labor/material allowance to the priced scope'
-            + (
-                '; approved additional work is added at its approved amount to both ends.'
-                if any(item['code'] == 'ADR-EXTRA' for item in items)
-                else '.'
-            ),
+            estimate_sentence(estimate, total, estimate_low, estimate_high, items),
             '\n'.join(line for line in ('Sincerely,', signoff, company_name) if line.strip()),
         ]
     )
     has_work = (
-        any(r.unfinished_sf or r.finished_sf for r in data.rooms)
-        or data.air_movers
-        or data.dehumidifiers
-        or data.wood_floor_systems
-        or data.labor_hours
-        or approved
-        or any(getattr(data, field) for _, _, field, _ in OPTIONAL_CHARGES)
+        has_priced_work(items, pin, data)
+        if estimate
+        else (
+            any(r.unfinished_sf or r.finished_sf for r in data.rooms)
+            or data.air_movers
+            or data.dehumidifiers
+            or data.wood_floor_systems
+            or data.labor_hours
+            or approved
+            or any(getattr(data, field) for _, _, field, _ in OPTIONAL_CHARGES)
+        )
     )
     documents = AuditDocuments(
         company_identity=identity,
@@ -473,14 +629,19 @@ def make_documents(
             property_address=data.address,
             customer_name=customer,
             date=proposal_date(),
-            proposed_cost=float(estimate_high),
-            proposed_cost_low=float(estimate_low),
+            proposed_cost=float(estimate_high if estimate_high is not None else estimate_low),
+            proposed_cost_low=None
+            if estimate and estimate['mode'] == 'single'
+            else float(estimate_low),
+            estimate_mode=estimate['mode'] if estimate else None,
             lead_notice_required=before,
             findings=observations,
             recommendations=recommendations,
             disclaimers=[PHOTO_LOCATION_PRIVACY, ADDRESS_LOCATION_PRIVACY] + clauses,
         ),
-        xactimate_scope=items,
+        xactimate_scope=[{key: item[key] for key in V2_LINE_KEYS if key in item} for item in items]
+        if estimate
+        else items,
         xactimate_total=total,
         iicrc_defense_letter=letter,
         compliance_notes=[age] + clauses,
@@ -507,6 +668,8 @@ def make_documents(
         unpriced_work=[plain(text) for text in unpriced],
         pending_extras=pending,
         price_basis=price_basis,
+        estimate=estimate,
+        quantity_notes=(quantity_notes(data) or None) if estimate else None,
         signable=bool(
             not setup
             and data.scope_confirmed

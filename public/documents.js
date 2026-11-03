@@ -1,7 +1,8 @@
 /* The four claim documents, built from text nodes only; shared by the app and the homeowner signing page. */
 'use strict';
 (function (root) {
-  const { money, estimateLabel, claimLines, locationLabel, locationUrl } = root.ADRCore;
+  const { money, estimateLabel, estimateHeading, claimLines, locationLabel, locationUrl } =
+    root.ADRCore;
   const $ = (id) => document.getElementById(id);
   function node(tag, text, className) {
     const el = document.createElement(tag);
@@ -37,14 +38,90 @@
     if (sequence) return 'Priced from Prices v' + sequence + '.';
     return basis?.company_id === 'adr' ? 'Priced from ADR starting prices.' : '';
   }
+  // The summary lines that add up to a total, from the saved estimate. A line prints when either
+  // end has an amount, so low and high columns always show the same rows.
+  function summaryLines(estimate) {
+    const { low, high } = estimate,
+      both = (key) => Number(low[key]) > 0 || (high && Number(high[key]) > 0),
+      percent = (value) => ' (' + value + '%)';
+    return [
+      ['Subtotal of itemized work', 'subtotal', true],
+      [
+        estimate.after_hours_label + percent(estimate.after_hours_percent),
+        'after_hours',
+        both('after_hours'),
+      ],
+      ['Minimum job charge', 'minimum_charge', both('minimum_charge')],
+      [
+        'Overhead and profit' + percent(estimate.overhead_profit_percent),
+        'overhead_profit',
+        both('overhead_profit'),
+      ],
+      ['Sales tax' + percent(estimate.sales_tax_percent), 'tax', both('tax')],
+      ['Total', 'total', true],
+    ].filter(([, , show]) => show);
+  }
+  function summaryTable(estimate) {
+    const table = node('table', undefined, 'estimate-summary'),
+      head = node('tr'),
+      ranged = !!estimate.high;
+    head.append(
+      node('th', ''),
+      node('th', ranged ? 'Low' : 'Price'),
+      ...(ranged ? [node('th', 'High')] : []),
+    );
+    const thead = node('thead'),
+      body = node('tbody');
+    thead.append(head);
+    for (const [label, key] of summaryLines(estimate)) {
+      const row = node('tr', undefined, key === 'total' ? 'estimate-total' : '');
+      row.append(
+        node('th', label),
+        node('td', money(estimate.low[key])),
+        ...(ranged ? [node('td', money(estimate.high[key]))] : []),
+      );
+      body.append(row);
+    }
+    table.append(thead, body);
+    // Not .table-scroll: phones hide that class and show the claim cards instead.
+    const wrap = node('div', undefined, 'estimate-summary-wrap');
+    wrap.append(table);
+    return wrap;
+  }
+  // Under the itemized table: the low end's subtotal and adjustments, then the claim total.
+  function claimAdjustmentLines(estimate) {
+    return summaryLines({ ...estimate, high: null })
+      .filter(([, key]) => key !== 'total')
+      .map(([label, key]) => node('p', label + ': ' + money(estimate.low[key])));
+  }
+  function lineBreakdown(lines) {
+    const list = node('ul', undefined, 'line-breakdown');
+    for (const item of lines)
+      list.append(
+        node(
+          'li',
+          item.description +
+            ' · ' +
+            String(item.quantity) +
+            ' ' +
+            item.unit +
+            ' · ' +
+            money(item.total),
+        ),
+      );
+    return list;
+  }
   function render(docs, photos, photoUrl) {
     const identity = docs.company_identity || {};
     const license = identity.license ? 'CSLB #' + identity.license : '';
     const estimator = [identity.signoff, license].filter(Boolean).join(' · ');
-    $('estimateRange').textContent = estimateLabel(docs.adr_estimate);
-    $('itemizedTotal').textContent = money(docs.xactimate_total);
     const p = docs.adr_estimate,
-      body = $('proposalBody'),
+      estimate = docs.estimate;
+    $('estimateHeading').textContent = estimateHeading(p.estimate_mode);
+    $('estimateRange').textContent = estimateLabel(p);
+    $('itemizedHeading').textContent = estimate ? 'Itemized total' : 'Itemized scope total';
+    $('itemizedTotal').textContent = money(docs.xactimate_total);
+    const body = $('proposalBody'),
       customer = p.customer_name ? ['Customer: ' + p.customer_name] : [],
       // The claim details saved with the audit; documents from before claim details carry none.
       claim = claimLines(docs.claim);
@@ -56,10 +133,14 @@
       ...(estimator ? ['Estimator: ' + estimator] : []),
       ...claim,
     ]);
-    body.append(
-      node('p', 'Customer estimate range: ' + estimateLabel(p), 'money'),
-      node('p', 'Itemized scope total: ' + money(docs.xactimate_total)),
-    );
+    body.append(node('p', estimateHeading(p.estimate_mode) + ': ' + estimateLabel(p), 'money'));
+    if (estimate) {
+      // Price-table documents show how the amount adds up; the explanation follows it.
+      body.append(summaryTable(estimate));
+      if (estimate.explanation) body.append(node('p', estimate.explanation));
+      if (estimate.show_line_breakdown)
+        body.append(lineBreakdown(estimate.lines || docs.xactimate_scope || []));
+    } else body.append(node('p', 'Itemized scope total: ' + money(docs.xactimate_total)));
     const priced = pricedFrom(docs.price_basis);
     if (priced) body.append(node('p', priced));
     // A read-only document link outside the proposal's set delivers the proposal emptied.
@@ -82,10 +163,34 @@
       }
       $('auditNotes').hidden = !notes.childElementCount;
     }
+    // Quantity overrides reach only the owner: the server omits them for everyone else, and the
+    // panel sits on Check Scope, away from the review screen used for in-person signing.
+    const quantity = $('quantityNotesBody');
+    if (quantity) {
+      quantity.replaceChildren();
+      for (const note of docs.quantity_notes || [])
+        quantity.append(
+          node(
+            'p',
+            [
+              note.label + (note.room ? ' (' + note.room + ')' : ''),
+              'measured ' + note.measured + ', entered ' + note.entered,
+              'Reason: ' + note.reason,
+            ].join(' · '),
+          ),
+        );
+      $('quantityNotes').hidden = !quantity.childElementCount;
+    }
     $('claimParty').replaceChildren();
     paragraphs($('claimParty'), [...customer, 'Property: ' + p.property_address, ...claim]);
     $('claimItems').replaceChildren();
-    const scope = docs.xactimate_scope || [];
+    const scope = docs.xactimate_scope || [],
+      // The Xactimate column appears only when the company entered a code on at least one line.
+      withCodes = scope.some((item) => item.xactimate_code);
+    $('claimXactimateHead').hidden = !withCodes;
+    $('claimHint').textContent = withCodes
+      ? 'Xactimate codes shown where the company entered them. This is not an Xactimate (ESX) file.'
+      : 'Internal scope codes (not Xactimate codes). JSON export does not guarantee Xactimate import compatibility.';
     for (const item of scope) {
       const row = node('tr');
       for (const text of [
@@ -94,6 +199,7 @@
         money(item.unit_price ?? item.price),
         String(item.waste_percent ?? item.waste ?? 0) + '%',
         money(item.total),
+        ...(withCodes ? [item.xactimate_code || ''] : []),
       ])
         row.append(node('td', text));
       $('claimItems').append(row);
@@ -113,10 +219,13 @@
             money(item.unit_price ?? item.price),
         ),
         node('div', 'Waste: ' + String(item.waste_percent ?? item.waste ?? 0) + '%'),
+        ...(item.xactimate_code ? [node('div', 'Xactimate: ' + item.xactimate_code)] : []),
         node('p', 'Total: ' + money(item.total), 'item-total'),
       );
       $('claimCards').append(card);
     }
+    $('claimAdjustments').className = 'claim-summary';
+    $('claimAdjustments').replaceChildren(...(estimate ? claimAdjustmentLines(estimate) : []));
     $('claimTotal').textContent = 'Itemized claim total: ' + money(docs.xactimate_total);
     $('defenseBody').textContent = docs.iicrc_defense_letter || '';
     $('photoParty').replaceChildren();

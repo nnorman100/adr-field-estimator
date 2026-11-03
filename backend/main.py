@@ -630,8 +630,16 @@ def reusable_audit(record, revision, identity, customer, claim=None, price_basis
     )
 
 
-def public_record(record, *, readiness_state=None):
+def public_record(record, *, readiness_state=None, quantity_notes=False):
     result = {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
+    if not quantity_notes:
+        if result.get('documents'):
+            result['documents'] = signing_links.without_quantity_notes(result['documents'])
+        if result.get('audit'):
+            result['audit'] = {
+                **result['audit'],
+                'documents': signing_links.without_quantity_notes(result['audit']['documents']),
+            }
     # An unsigned draft carries the equipment-sizing check for its saved data; it is derived on
     # every read, never stored, and a signed record keeps only what its documents printed.
     if 'data' in result and 'auth_id' not in result and result.get('status') != 'signed':
@@ -642,6 +650,15 @@ def public_record(record, *, readiness_state=None):
         result['equipment_sizing'] = equipment_sizing(data)
         if ai_features.enabled('readiness') and readiness_state is not None:
             result['readiness'] = readiness_state
+    return result
+
+
+def support_record(record):
+    """A job as superadmin support reads it: the company's entered overrides stay in the company."""
+    result = public_record(record)
+    for key in ('data', 'inspection'):
+        if result.get(key):
+            result[key] = {k: v for k, v in result[key].items() if k != 'quantity_overrides'}
     return result
 
 
@@ -657,6 +674,19 @@ async def saved_readiness(store, uid, record):
     return readiness(record['data'], record.get('photos', []), claim, log['readings'])
 
 
+async def reads_quantity_notes(store, uid, record):
+    documents = record.get('documents') or (record.get('audit') or {}).get('documents') or {}
+    if 'quantity_notes' not in documents:
+        return False
+    try:
+        await stored(store._access, uid, record, 'quantity_notes_read')
+    except HTTPException as error:
+        if error.status_code != 403:
+            raise
+        return False
+    return True
+
+
 async def draft_record(store, uid, record):
     state = None
     if (
@@ -666,7 +696,11 @@ async def draft_record(store, uid, record):
         and record.get('status') != 'signed'
     ):
         state = await saved_readiness(store, uid, record)
-    return public_record(record, readiness_state=state)
+    return public_record(
+        record,
+        readiness_state=state,
+        quantity_notes=await reads_quantity_notes(store, uid, record),
+    )
 
 
 def parse_json_from_llm(text):
@@ -2008,7 +2042,7 @@ async def support_job(
 ):
     workspace_client(request)
     record, job = await stored(store.support_inspection, staff['uid'], company_id, inspection_id)
-    return {'inspection': public_record(record), 'job': job}
+    return {'inspection': support_record(record), 'job': job}
 
 
 @app.get('/api/admin/companies/{company_id}/jobs/{inspection_id}/photos/{photo_id}')
@@ -2041,7 +2075,7 @@ async def support_authorization(
     record, job, delivery = await stored(
         store.support_authorization, staff['uid'], company_id, auth_id
     )
-    result = {'authorization': public_record(record), 'job': job, 'delivery': delivery}
+    result = {'authorization': support_record(record), 'job': job, 'delivery': delivery}
     if ai_features.enabled('drying_watch') and (record.get('inspection') or {}).get('drying_days'):
         result['monitoring'] = await stored(
             store.workspaces.monitoring.view, staff['uid'], job['job_id'], company_id

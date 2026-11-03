@@ -1,4 +1,5 @@
 const { saveDraft } = require('./actions');
+const { routeDocuments } = require('./v2-documents');
 const { test, expect } = require('@playwright/test');
 // Two browser contexts: the signed-in technician, and a homeowner context with no sign-in at all.
 test.setTimeout(90000);
@@ -28,11 +29,14 @@ async function sendLink(page) {
   expect(url).toMatch(/^https:\/\/(localhost|127\.0\.0\.1):\d+\/sign#[A-Za-z0-9_-]{43}$/);
   return url;
 }
-async function homeowner(browser, url) {
+async function homeowner(browser, url, setup) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 390, height: 844 },
+    // A worker-handled fetch bypasses routes in WebKit, so routed pages run without the worker.
+    ...(setup ? { serviceWorkers: 'block' } : {}),
   });
+  await setup?.(context);
   const page = await context.newPage();
   const requests = [];
   page.on('request', (request) =>
@@ -364,4 +368,60 @@ test('homeowner retry submits the current email choice', async ({ page, browser 
   );
   expect(posted.map((request) => JSON.parse(request.body).email_copy)).toEqual([true, false]);
   await home.context.close();
+});
+
+test.describe('price-table documents', () => {
+  test.use({ serviceWorkers: 'block' });
+  for (const mode of ['range', 'single']) {
+    test(
+      'the homeowner link shows the same price-table proposal in ' + mode + ' mode',
+      async ({ page, browser }) => {
+        await routeDocuments(page, /\/api\/audit$/, mode);
+        await technician(page);
+        await audit(page, 'Synthetic price-table signing-link property');
+        const url = await sendLink(page);
+        const home = await homeowner(browser, url, (context) =>
+          routeDocuments(context, /\/api\/sign$/, mode),
+        );
+        const view = home.page;
+        await expect(view.locator('#documents')).toBeVisible();
+        await expect(view.locator('#estimateHeading')).toHaveText(
+          mode === 'range' ? 'Customer estimate range' : 'Price',
+        );
+        await expect(view.locator('#proposalBody .estimate-summary')).toBeVisible();
+        await expect(view.locator('#proposalBody .estimate-summary tbody tr').last()).toContainText(
+          mode === 'range' ? 'Total$8,489.80$11,896.00' : 'Total$8,489.80',
+        );
+        const text = (target) =>
+          target.evaluate(() =>
+            [
+              'estimateHeading',
+              'estimateRange',
+              'itemizedHeading',
+              'itemizedTotal',
+              'proposalBody',
+              'claimHint',
+              'claimItems',
+              'claimAdjustments',
+              'claimTotal',
+            ].map((id) => document.getElementById(id).textContent),
+          );
+        expect(await text(view)).toEqual(await text(page));
+        await expect(view.locator('#claimHint')).toHaveText(
+          'Xactimate codes shown where the company entered them. This is not an Xactimate (ESX) file.',
+        );
+        await view.locator('[data-tab="claim"]').click();
+        await expect(view.locator('#claimAdjustments p').first()).toHaveCSS('text-align', 'right');
+        // The override note is the owner's: neither signing screen has a place for it.
+        await expect(page.locator('#panel-review #quantityNotes')).toHaveCount(0);
+        await expect(page.locator('#quantityNotes')).toBeHidden();
+        await expect(view.locator('#quantityNotes')).toHaveCount(0);
+        await expect(view.locator('body')).not.toContainText('Closet not wet');
+        expect(await view.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+          false,
+        );
+        await home.context.close();
+      },
+    );
+  }
 });

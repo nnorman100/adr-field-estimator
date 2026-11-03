@@ -1311,6 +1311,35 @@ summary {
   font-size: 1.6rem;
   margin-top: 0.25rem;
 }
+.estimate-summary-wrap {
+  overflow: auto;
+}
+.estimate-summary {
+  margin: 0.75rem 0;
+}
+.estimate-summary tbody th {
+  background: transparent;
+  font-weight: 400;
+}
+.estimate-summary thead th:not(:first-child),
+.estimate-summary td {
+  text-align: right;
+}
+.estimate-summary .estimate-total th,
+.estimate-summary .estimate-total td {
+  font-weight: 700;
+}
+body:not(.has-documents) #quantityNotes {
+  display: none;
+}
+.claim-summary p {
+  margin: 0.25rem 0;
+  text-align: right;
+}
+.line-breakdown {
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+}
 .review-progress {
   font-size: 0.875rem;
   color: var(--text-2);

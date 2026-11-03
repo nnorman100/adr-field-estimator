@@ -59,6 +59,7 @@ CAPABILITIES = {
         'profile_manage',
         'delivery_manage',
         'delivery_resend',
+        'quantity_notes_read',
     ],
     'estimator': [
         'jobs_read',

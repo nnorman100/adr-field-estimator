@@ -10,8 +10,8 @@ Words as used in this repo. Entries marked [confirm] are my wording of industry 
 | Live | The real-time Gemini voice/video coaching session |
 | Offline notes | Record-now, process-later voice notes for bad reception |
 | Scope | The confirmed rooms, measured areas, categories, equipment and charges |
-| Proposal | Document 1: low–high estimate plus e-signature |
-| Itemized claim | Document 2: ADR scope codes with waste factors (not Xactimate codes) |
+| Proposal | Document 1: low–high estimate, or one price, plus e-signature |
+| Itemized claim | Document 2: internal scope codes with waste factors; Xactimate codes appear only in an optional column, where a company entered them |
 | Scope defense letter | Document 3: IICRC S500/S520 justification addressed to the adjuster |
 | Photo moisture log | Document 4: photos with room, time, location and meter reading |
 | Water category 1/2/3 | Clean / gray / contaminated water classes that set demolition rates |

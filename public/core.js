@@ -55,6 +55,8 @@
     proposal.proposed_cost_low == null
       ? money(proposal.proposed_cost)
       : money(proposal.proposed_cost_low) + '–' + money(proposal.proposed_cost);
+  // A company that prices one amount shows "Price"; documents from before price tables are ranges.
+  const estimateHeading = (mode) => (mode === 'single' ? 'Price' : 'Customer estimate range');
   // Company jobs list rows are {id, kind: 'draft' | 'signed' | 'local', address, customer, claim,
   // label, open}; a device-only local draft counts as a draft.
   const JOB_TABS = [
@@ -876,6 +878,7 @@
     stable,
     money,
     estimateLabel,
+    estimateHeading,
     filterJobs,
     jobTabs,
     pcmToFloat,

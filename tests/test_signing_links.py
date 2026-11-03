@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import backend.main as bm
 import backend.signing_links as sl
 from tests.fakes import png
-from tests.test_backend import context, inspect, audit, photo, data, as_user, ID
+from tests.test_backend import context, inspect, audit, photo, data, as_user, sign_payload, ID
 from tests.test_workspaces import api, store, data as company_data
 
 SIGNER = dict(
@@ -149,6 +149,99 @@ def test_a_chain_without_the_hosting_hops_records_no_address(context):
     assert response.status_code == 200, response.text
     signer = store.db.records['authorizations/' + response.json()['auth_id']]['signer']
     assert signer['ip_address'] is None
+
+
+def stored_documents(store):
+    return store.db.records['inspections/' + ID]['audit']['documents']
+
+
+def test_link_never_delivers_quantity_notes_before_or_after_signing(ready):
+    _, store, _, value = ready
+    note = dict(label='Labor hours', measured=8, entered=6, reason='Crew left early')
+    stored_documents(store)['quantity_notes'] = [note]
+    pending = homeowner(value).get('/api/sign')
+    assert pending.json()['status'] == 'pending'
+    assert 'quantity_notes' not in pending.json()['documents']
+    assert 'Crew left early' not in pending.text
+    saved = sign(value)
+    assert saved.status_code == 200, saved.text
+    signed = homeowner(value).get('/api/sign')
+    assert signed.json()['status'] == 'signed'
+    assert 'quantity_notes' not in signed.json()['documents']
+    assert 'Crew left early' not in signed.text
+    # The signed record itself is unchanged.
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['documents']['quantity_notes'] == [note]
+
+
+def test_link_never_delivers_the_entered_overrides_before_or_after_signing(ready):
+    _, store, _, value = ready
+    overrides = {'labor_hours': dict(measured='8', entered='6', reason='Synthetic entered reason')}
+    store.db.records['inspections/' + ID]['data']['quantity_overrides'] = overrides
+    pending = homeowner(value).get('/api/sign')
+    assert pending.json()['status'] == 'pending'
+    assert 'Synthetic entered reason' not in pending.text
+    saved = sign(value)
+    assert saved.status_code == 200, saved.text
+    assert 'Synthetic entered reason' not in saved.text
+    # The signed record's own copy of the job data keeps them, and the link still leaves them out.
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['inspection']['quantity_overrides'] == overrides
+    signed = homeowner(value).get('/api/sign')
+    assert signed.json()['status'] == 'signed'
+    assert 'Synthetic entered reason' not in signed.text
+
+
+@pytest.mark.parametrize(
+    'detail',
+    [
+        dict(
+            calculation_version='dryscope-v2', item_count=26, policy=dict(minimum_job_charge='9000')
+        ),
+        dict(calculation_version='adr-residential-v1', rates=dict(air_mover='30')),
+    ],
+    ids=['policy', 'rates'],
+)
+def test_link_identifies_the_price_basis_without_the_owners_pricing(ready, detail):
+    _, store, _, value = ready
+    basis = dict(
+        company_id='adr',
+        version_id='v4',
+        sequence=4,
+        content_sha256='a' * 64,
+        priced_at='2026-11-01T12:00:00Z',
+        **detail,
+    )
+    expected = {k: v for k, v in basis.items() if k not in ('policy', 'rates')}
+    stored_documents(store)['price_basis'] = basis
+    pending = homeowner(value).get('/api/sign').json()
+    assert pending['status'] == 'pending' and pending['documents']['price_basis'] == expected
+    saved = sign(value)
+    assert saved.status_code == 200, saved.text
+    signed = homeowner(value).get('/api/sign').json()
+    assert signed['status'] == 'signed' and signed['documents']['price_basis'] == expected
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['documents']['price_basis'] == basis
+
+
+def test_single_price_proposal_signs_through_the_link(ready):
+    _, store, _, value = ready
+    del stored_documents(store)['adr_estimate']['proposed_cost_low']
+    saved = sign(value)
+    assert saved.status_code == 200, saved.text
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['proposed_cost_low'] is None
+    assert agreement['proposed_cost'] == agreement['documents']['adr_estimate']['proposed_cost']
+
+
+def test_single_price_proposal_signs_on_the_device(context):
+    client, store = context
+    record = audit(client, recognized(client, inspect(client)))
+    del stored_documents(store)['adr_estimate']['proposed_cost_low']
+    saved = client.post('/api/authorize', json=sign_payload(record))
+    assert saved.status_code == 200, saved.text
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['proposed_cost_low'] is None
 
 
 def test_technician_reads_the_current_link_state_without_the_token(ready):

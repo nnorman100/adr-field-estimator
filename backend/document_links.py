@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 
 try:
     from .inspection_store import reserve_slot
-    from .signing_links import TOKEN, iso, link_id as digest_of
+    from .signing_links import TOKEN, iso, link_documents, link_id as digest_of
     from .workspaces import AccessDenied
 except ImportError:
     from inspection_store import reserve_slot
-    from signing_links import TOKEN, iso, link_id as digest_of
+    from signing_links import TOKEN, iso, link_documents, link_id as digest_of
     from workspaces import AccessDenied
 
 # The owner can change how long a link works; the roadmap's default is 30 days.
@@ -33,8 +33,24 @@ SETS = {
     'adjuster': ('claim', 'defense'),
 }
 UNAVAILABLE = 'This document link is not available. Ask your restoration company for a new link.'
-# Notes the estimator sees in the app; they are never part of a delivered document.
-ESTIMATOR_ONLY = ('ai_summary', 'ai_suggestions', 'unpriced_work', 'company_setup_missing')
+# Notes the company sees in the app; they are never part of a delivered document.
+ESTIMATOR_ONLY = (
+    'ai_summary',
+    'ai_suggestions',
+    'unpriced_work',
+    'company_setup_missing',
+    'quantity_notes',
+)
+
+
+# What the itemized claim prints from the estimate: the lines that add up to the claim total.
+CLAIM_ESTIMATE_KEYS = (
+    'low',
+    'after_hours_label',
+    'after_hours_percent',
+    'overhead_profit_percent',
+    'sales_tax_percent',
+)
 
 
 def link_id(token):
@@ -171,12 +187,23 @@ def _resolve(store, key, count=False):
 
 def delivered_documents(documents, tabs):
     """The saved documents reduced to one set: other documents are emptied, never summarized."""
-    kept = {k: v for k, v in documents.items() if k not in ESTIMATOR_ONLY}
+    kept = {k: v for k, v in link_documents(documents).items() if k not in ESTIMATOR_ONLY}
     if 'proposal' not in tabs:
         proposal = documents.get('adr_estimate') or {}
         # The claim and letter still name the customer and property; the priced proposal stays out.
         kept['adr_estimate'] = {
             k: proposal[k] for k in ('customer_name', 'property_address', 'date') if k in proposal
+        }
+    estimate = documents.get('estimate')
+    if estimate and 'proposal' not in tabs:
+        kept['estimate'] = {k: estimate[k] for k in CLAIM_ESTIMATE_KEYS}
+    elif estimate and estimate['show_line_breakdown'] and 'claim' not in tabs:
+        kept['estimate'] = {
+            **estimate,
+            'lines': [
+                {k: line[k] for k in ('description', 'quantity', 'unit', 'total')}
+                for line in documents['xactimate_scope']
+            ],
         }
     if 'claim' not in tabs:
         kept['xactimate_scope'] = []

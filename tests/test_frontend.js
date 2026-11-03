@@ -1102,3 +1102,267 @@ console.log(
     process.exit(1);
   });
 }
+
+{
+  // Documents: the proposal heading, summary block and itemized-claim columns follow the saved estimate.
+  const element = (tag) => ({
+    tag,
+    children: [],
+    hidden: false,
+    className: '',
+    textContent: '',
+    get childElementCount() {
+      return this.children.length;
+    },
+    append(...kids) {
+      this.children.push(...kids);
+    },
+    replaceChildren(...kids) {
+      this.children = kids;
+    },
+  });
+  const flat = (el) =>
+    el.children.length ? el.children.map(flat).join(' | ') : String(el.textContent);
+  const ids = [
+    'estimateHeading',
+    'estimateRange',
+    'itemizedHeading',
+    'itemizedTotal',
+    'proposalBody',
+    'claimParty',
+    'claimHint',
+    'claimXactimateHead',
+    'claimItems',
+    'claimCards',
+    'claimAdjustments',
+    'claimTotal',
+    'defenseBody',
+    'photoParty',
+    'photoAuditLog',
+    'auditWarnings',
+  ];
+  const page = (extra = []) => {
+    const els = Object.fromEntries([...ids, ...extra].map((id) => [id, element('div')]));
+    const context = {
+      ADRCore: core,
+      document: {
+        getElementById: (id) => els[id] || null,
+        createElement: element,
+        querySelectorAll: () => [],
+      },
+    };
+    context.window = context;
+    vm.runInNewContext(fs.readFileSync('public/documents.js', 'utf8'), context);
+    return { els, render: (docs) => context.ADRDocuments.render(docs, [], () => '') };
+  };
+  const end = (total, extras = {}) => ({
+    subtotal: 6640,
+    after_hours: 0,
+    minimum_charge: 0,
+    overhead_profit: 0,
+    tax: 0,
+    total,
+    ...extras,
+  });
+  const line = (code, extras = {}) => ({
+    code,
+    description: code + ' work',
+    quantity: 2,
+    unit: 'each',
+    unit_price: 10,
+    waste_percent: 0,
+    total: 20,
+    ...extras,
+  });
+  const documents = (mode, extras = {}) => ({
+    adr_estimate: {
+      property_address: '12 Test Lane',
+      date: '11-02-2026',
+      proposed_cost: 11896,
+      proposed_cost_low: mode === 'single' ? undefined : 8489.8,
+      estimate_mode: mode,
+      findings: [],
+      recommendations: [],
+      disclaimers: [],
+    },
+    xactimate_total: 8489.8,
+    xactimate_scope: [line('FAN', { xactimate_code: 'WTR DMO' }), line('LAB')],
+    iicrc_defense_letter: '',
+    photo_audit_log: [],
+    price_basis: { sequence: 4 },
+    estimate: {
+      mode,
+      low: end(8489.8, { after_hours: 1030, overhead_profit: 767, tax: 52.8 }),
+      high:
+        mode === 'single'
+          ? undefined
+          : end(11896, { subtotal: 9215, after_hours: 1545, overhead_profit: 1076, tax: 60 }),
+      after_hours_label: 'Night work',
+      after_hours_percent: '20',
+      overhead_profit_percent: '10',
+      sales_tax_percent: '8',
+      explanation: 'The low amount is the itemized total.',
+      show_line_breakdown: false,
+    },
+    ...extras,
+  });
+
+  assert.equal(core.estimateHeading('single'), 'Price');
+  assert.equal(core.estimateHeading('range'), 'Customer estimate range');
+  assert.equal(core.estimateHeading(undefined), 'Customer estimate range');
+
+  const ranged = page();
+  ranged.render(documents('range'));
+  assert.equal(ranged.els.estimateHeading.textContent, 'Customer estimate range');
+  assert.equal(ranged.els.estimateRange.textContent, '$8,489.80–$11,896.00');
+  assert.equal(ranged.els.itemizedHeading.textContent, 'Itemized total');
+  const body = flat(ranged.els.proposalBody);
+  assert.match(body, /Customer estimate range: \$8,489\.80–\$11,896\.00/);
+  assert.match(body, /Low \| High/);
+  assert.match(body, /Subtotal of itemized work \| \$6,640\.00 \| \$9,215\.00/);
+  assert.match(body, /Night work \(20%\) \| \$1,030\.00 \| \$1,545\.00/);
+  assert.match(body, /Overhead and profit \(10%\) \| \$767\.00 \| \$1,076\.00/);
+  assert.match(body, /Sales tax \(8%\) \| \$52\.80 \| \$60\.00/);
+  assert.match(body, /Total \| \$8,489\.80 \| \$11,896\.00/);
+  assert.doesNotMatch(body, /Minimum job charge/);
+  assert.match(body, /The low amount is the itemized total\./);
+  assert.match(body, /Priced from Prices v4\./);
+  assert.doesNotMatch(body, /Itemized scope total/);
+  // Lines are not repeated on the proposal unless the owner asks.
+  assert.doesNotMatch(body, /FAN work · 2 each/);
+  // The Xactimate column appears because one line has a code; only that row carries a value.
+  assert.equal(ranged.els.claimXactimateHead.hidden, false);
+  assert.match(flat(ranged.els.claimItems.children[0]), /\$20\.00 \| WTR DMO$/);
+  assert.match(flat(ranged.els.claimItems.children[1]), /\$20\.00 \| $/);
+  assert.equal(
+    flat(ranged.els.claimAdjustments),
+    'Subtotal of itemized work: $6,640.00 | Night work (20%): $1,030.00 | Overhead and profit (10%): $767.00 | Sales tax (8%): $52.80',
+  );
+  assert.equal(ranged.els.claimAdjustments.className, 'claim-summary');
+  assert.equal(ranged.els.claimTotal.textContent, 'Itemized claim total: $8,489.80');
+  assert.equal(
+    ranged.els.claimHint.textContent,
+    'Xactimate codes shown where the company entered them. This is not an Xactimate (ESX) file.',
+  );
+
+  const single = page();
+  single.render(documents('single'));
+  assert.equal(single.els.estimateHeading.textContent, 'Price');
+  assert.equal(single.els.estimateRange.textContent, '$11,896.00');
+  assert.match(flat(single.els.proposalBody), /Price: \$11,896\.00/);
+  assert.match(
+    flat(single.els.proposalBody),
+    /Price \| Subtotal of itemized work \| \$6,640\.00 \|/,
+  );
+  assert.doesNotMatch(flat(single.els.proposalBody), /High/);
+
+  const breakdown = page();
+  const withLines = documents('range');
+  withLines.estimate.show_line_breakdown = true;
+  breakdown.render(withLines);
+  assert.match(flat(breakdown.els.proposalBody), /FAN work · 2 each · \$20\.00/);
+
+  // A homeowner's document link has no claim lines: the proposal prints the lines delivered with it.
+  const homeownerLink = page();
+  const copy = documents('range', { xactimate_scope: [] });
+  copy.estimate.show_line_breakdown = true;
+  copy.estimate.lines = [{ description: 'FAN work', quantity: 2, unit: 'each', total: 20 }];
+  homeownerLink.render(copy);
+  assert.match(flat(homeownerLink.els.proposalBody), /FAN work · 2 each · \$20\.00/);
+  const aliased = page();
+  const legacyLine = documents('range', {
+    xactimate_scope: [{ desc: 'Old name', qty: 9, unit: 'hour', total: 0 }],
+  });
+  legacyLine.estimate.show_line_breakdown = true;
+  aliased.render(legacyLine);
+  assert.doesNotMatch(flat(aliased.els.proposalBody), /Old name · 9 hour/);
+  assert.equal(homeownerLink.els.claimItems.children.length, 0);
+
+  // An adjuster's link holds the low end's amounts and an emptied proposal: its claim adds up.
+  const adjusterLink = page();
+  adjusterLink.render({
+    ...documents('range'),
+    adr_estimate: { property_address: '12 Test Lane' },
+    estimate: {
+      low: end(8489.8, { after_hours: 1030, overhead_profit: 767, tax: 52.8 }),
+      after_hours_label: 'Night work',
+      after_hours_percent: '20',
+      overhead_profit_percent: '10',
+      sales_tax_percent: '8',
+    },
+  });
+  assert.equal(
+    flat(adjusterLink.els.claimAdjustments),
+    'Subtotal of itemized work: $6,640.00 | Night work (20%): $1,030.00 | Overhead and profit (10%): $767.00 | Sales tax (8%): $52.80',
+  );
+  assert.equal(adjusterLink.els.claimTotal.textContent, 'Itemized claim total: $8,489.80');
+  assert.doesNotMatch(flat(adjusterLink.els.proposalBody), /undefined/);
+
+  // No cushion sentence in range mode when the first tier is 0%: nothing prints in its place.
+  const noCushion = page();
+  const zeroTier = documents('range');
+  delete zeroTier.estimate.explanation;
+  noCushion.render(zeroTier);
+  assert.match(
+    flat(noCushion.els.proposalBody),
+    /Total \| \$8,489\.80 \| \$11,896\.00 \| Priced from/,
+  );
+
+  const minimum = page();
+  const floor = documents('range');
+  floor.estimate.low.minimum_charge = 510.2;
+  minimum.render(floor);
+  assert.match(flat(minimum.els.proposalBody), /Minimum job charge \| \$510\.20 \| \$0\.00/);
+
+  // Estimator-only quantity notes appear where the page has a place for them, never on the signing page.
+  const withNotes = page(['quantityNotes', 'quantityNotesBody']);
+  withNotes.render(
+    documents('range', {
+      quantity_notes: [
+        {
+          label: 'Finished area',
+          room: 'Hall',
+          measured: 650,
+          entered: 400,
+          reason: 'Carpet already out',
+        },
+      ],
+    }),
+  );
+  assert.equal(
+    flat(withNotes.els.quantityNotesBody),
+    'Finished area (Hall) · measured 650, entered 400 · Reason: Carpet already out',
+  );
+  assert.equal(withNotes.els.quantityNotes.hidden, false);
+
+  // A document audited before price tables renders exactly as before.
+  const legacy = page();
+  const old = documents('range');
+  delete old.estimate;
+  delete old.adr_estimate.estimate_mode;
+  old.xactimate_scope = [line('ADR-FAN')];
+  old.adr_estimate.proposed_cost_low = 8489.8;
+  legacy.render(old);
+  assert.equal(legacy.els.estimateHeading.textContent, 'Customer estimate range');
+  assert.equal(legacy.els.itemizedHeading.textContent, 'Itemized scope total');
+  assert.equal(
+    flat(legacy.els.proposalBody),
+    [
+      '12 Test Lane',
+      '11-02-2026',
+      'Customer estimate range: $8,489.80–$11,896.00',
+      'Itemized scope total: $8,489.80',
+      'Priced from Prices v4.',
+      'Findings',
+      'Proposed scope',
+    ].join(' | '),
+  );
+  assert.equal(legacy.els.claimXactimateHead.hidden, true);
+  assert.equal(
+    legacy.els.claimHint.textContent,
+    'Internal scope codes (not Xactimate codes). JSON export does not guarantee Xactimate import compatibility.',
+  );
+  assert.equal(legacy.els.claimAdjustments.children.length, 0);
+  assert.doesNotMatch(flat(legacy.els.claimItems), /\| $/);
+  console.log('PASS: v2 documents print the summary block, mode heading and Xactimate column');
+}

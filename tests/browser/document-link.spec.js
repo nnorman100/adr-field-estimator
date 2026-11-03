@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { routeDocuments } = require('./v2-documents');
 // The read-only document link: a signed agreement's documents at /documents, with no sign-in and
 // no signing. Links are minted on the server after signing; the test harness mints them directly.
 test.setTimeout(90000);
@@ -40,11 +41,12 @@ async function mint(page, documentSet, role = 'estimator') {
   expect(url).toMatch(/^https:\/\/(localhost|127\.0\.0\.1):\d+\/documents#[A-Za-z0-9_-]{43}$/);
   return url;
 }
-async function recipient(browser, url) {
+async function recipient(browser, url, setup) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     viewport: { width: 390, height: 844 },
   });
+  await setup?.(context);
   const page = await context.newPage();
   const requests = [];
   page.on('request', (request) =>
@@ -345,3 +347,34 @@ test('older signed records open without invented claim details or locations', as
   await expect(reader.page.locator('#photoAuditLog')).toContainText('No location recorded');
   await reader.context.close();
 });
+
+for (const mode of ['range', 'single']) {
+  test(
+    'the read-only link prints a signed price-table proposal in ' + mode + ' mode',
+    async ({ page, browser }) => {
+      const url = await mint(page, 'homeowner');
+      const home = await recipient(browser, url, (context) =>
+        routeDocuments(context, /\/api\/documents$/, mode),
+      );
+      const view = home.page;
+      await expect(view.locator('#documents')).toBeVisible();
+      await expect(view.locator('#estimateHeading')).toHaveText(
+        mode === 'range' ? 'Customer estimate range' : 'Price',
+      );
+      await expect(view.locator('#estimateRange')).toHaveText(
+        mode === 'range' ? '$8,489.80–$11,896.00' : '$8,489.80',
+      );
+      const summary = view.locator('#proposalBody .estimate-summary');
+      await expect(summary).toBeVisible();
+      await expect(summary.locator('tbody tr').last()).toContainText(
+        mode === 'range' ? 'Total$8,489.80$11,896.00' : 'Total$8,489.80',
+      );
+      await expect(view.locator('#proposalBody')).toContainText('Priced from Prices v4.');
+      await expect(view.locator('#quantityNotes')).toHaveCount(0);
+      expect(await view.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+        false,
+      );
+      await home.context.close();
+    },
+  );
+}
