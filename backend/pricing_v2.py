@@ -8,9 +8,23 @@ dropping when work is added.
 from decimal import Decimal, ROUND_HALF_UP
 
 try:
-    from .price_table import BUCKET_OF_GROUP, DEFAULT_AFTER_HOURS_LABEL, GROUPS, parse_source
+    from .price_table import (
+        BUCKET_OF_GROUP,
+        COUNT_DAYS_SOURCES,
+        DEFAULT_AFTER_HOURS_LABEL,
+        FIELD_SOURCES,
+        GROUPS,
+        parse_source,
+    )
 except ImportError:
-    from price_table import BUCKET_OF_GROUP, DEFAULT_AFTER_HOURS_LABEL, GROUPS, parse_source
+    from price_table import (
+        BUCKET_OF_GROUP,
+        COUNT_DAYS_SOURCES,
+        DEFAULT_AFTER_HOURS_LABEL,
+        FIELD_SOURCES,
+        GROUPS,
+        parse_source,
+    )
 
 CENT = Decimal('0.01')
 HUNDRED = Decimal(100)
@@ -23,40 +37,29 @@ MINIMUM_CHARGE_LABEL = 'Minimum job charge'
 ZERO_TOTAL = 'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'
 ROOM_FIELDS = frozenset(('unfinished_sf', 'finished_sf', 'wet_floor_sf', 'floor_sf'))
 # Job numbers an estimator can override: every number a quantity source reads.
-JOB_FIELDS = frozenset(
-    (
-        'emergency_calls',
-        'monitoring_hours',
-        'haul_loads',
-        'air_scrubbers',
-        'hepa_filters',
-        'matterport_scans',
-        'dump_truck_loads',
-        'equipment_decon',
-        'power_distribution',
-        'labor_hours',
-        'air_movers',
-        'dehumidifiers',
-        'drying_days',
-        'wood_floor_systems',
-        'wood_floor_days',
-    )
-)
+JOB_FIELDS = frozenset(FIELD_SOURCES).union(*COUNT_DAYS_SOURCES)
 SAMPLE_NOTICE = 'Sample job only. This does not price a saved job.'
-# Every job number is stated, so InspectionData's own quantity defaults never reach a sample.
+# Every job number is stated, so a table's default_quantity never reaches a sample.
 _SAMPLE_BASE = dict(
     emergency_calls=0,
     monitoring_hours=0,
     haul_loads=0,
     air_scrubbers=0,
     hepa_filters=0,
+    matterport_scans=0,
+    dump_truck_loads=0,
+    equipment_decon=0,
+    power_distribution=0,
     labor_hours=0,
+    wood_floor_systems=0,
+    wood_floor_days=1,
 )
 SAMPLE_JOBS = (
     {
         'key': 'small',
         'label': 'Clean-water kitchen leak',
         'description': '250 sq ft of category 1 demolition with 4 air movers and 1 dehumidifier for 3 days.',
+        'notice': SAMPLE_NOTICE,
         'data': dict(
             _SAMPLE_BASE,
             rooms=[
@@ -80,6 +83,7 @@ SAMPLE_JOBS = (
         'key': 'medium',
         'label': 'Gray-water main floor',
         'description': '1,000 sq ft of category 2 demolition with 8 air movers and 2 dehumidifiers for 4 days and 4 labor hours.',
+        'notice': SAMPLE_NOTICE,
         'data': dict(
             _SAMPLE_BASE,
             rooms=[
@@ -101,6 +105,7 @@ SAMPLE_JOBS = (
         'key': 'large',
         'label': 'Mold remediation, after hours',
         'description': '2,500 sq ft of category 3 demolition in two rooms, one with custom cabinetry, with 10 air movers and 3 dehumidifiers for 5 days and 8 labor hours, after hours.',
+        'notice': SAMPLE_NOTICE,
         'data': dict(
             _SAMPLE_BASE,
             rooms=[
@@ -190,13 +195,21 @@ def _room_quantity(room, source, policy, overrides):
 
 
 def _job_quantity(item, source, data, overrides):
-    def read(field):
-        return overrides[field] if field in overrides else _dec(getattr(data, field))
+    def read(*fields):
+        quantity = ONE
+        for field in fields:
+            if field in overrides:
+                quantity *= overrides[field]
+            elif field in data.model_fields_set:
+                quantity *= _dec(getattr(data, field))
+            else:
+                return Decimal(item['default_quantity'])
+        return quantity
 
     if source.kind == 'field':
         return read(source.field)
     if source.kind == 'count_days':
-        return read(source.count_field) * read(source.days_field)
+        return read(source.count_field, source.days_field)
     if source.kind == 'after_hours':
         return ONE if data.is_after_hours else ZERO
     entry = (data.scope_items or {}).get(item['item_id'])
@@ -205,6 +218,11 @@ def _job_quantity(item, source, data, overrides):
     if source.kind == 'typed_count_days':
         return ZERO if entry is None else Decimal(entry.count * entry.days)
     raise RuntimeError(f'Unknown quantity source kind: {source.kind}')
+
+
+def _has_unpriced_quantity(item, data):
+    entry = (data.scope_items or {}).get(item['item_id'])
+    return Decimal(item['default_quantity']) > 0 or (entry is not None and entry.quantity > 0)
 
 
 def _line(item, description, quantity, price, waste, room=None, area=None):
@@ -276,9 +294,14 @@ def price_scope(data, table):
     categories = {room.category for room in data.rooms}
     lines = []
     enabled = (item for item in table['items'] if item['enabled'])
+    extras_taxable = False
     for item in sorted(
         enabled, key=lambda row: (_GROUP_RANK.get(row['group'], len(GROUPS)), row['sort_order'])
     ):
+        if item['group'] == EXTRAS_GROUP:
+            extras_taxable = item['taxable']
+            if _has_unpriced_quantity(item, data):
+                warnings.append(dict(code='unpriced_extras_quantity', item_id=item['item_id']))
         if item['unit_price'] == '':
             warnings.append(dict(code='blank_price_item', item_id=item['item_id']))
             continue
@@ -318,7 +341,7 @@ def price_scope(data, table):
                     unit_price=float(extra.approval.rate),
                     waste_percent=0.0,
                     total=float(total),
-                    taxable=False,
+                    taxable=extras_taxable,
                     xactimate_code='',
                     room=None,
                     area=None,
@@ -431,7 +454,7 @@ def totals(data, lines, policy):
         labor_material_high=high_lm,
         after_hours_label=policy['after_hours']['label'],
         minimum_charge_label=MINIMUM_CHARGE_LABEL,
-        explanation=explanation(policy, data, minimum_applied=low['minimum_charge'] > 0),
+        explanation=explanation(policy, data),
         range_explanation=range_explanation(policy),
     )
 
@@ -453,16 +476,11 @@ def range_explanation(policy):
     )
 
 
-def explanation(policy, data, *, minimum_applied=False):
+def explanation(policy, data):
     """The plain-language explanation printed under the amounts, from the pinned policy."""
     if policy['estimate_mode'] == 'single':
-        sentences = ['The price covers the itemized scope below.']
-    else:
-        sentences = _range_sentences(policy, data)
-    if minimum_applied:
-        amount = _money(Decimal(policy['minimum_job_charge']))
-        sentences.append(f'The minimum job charge of ${amount:,.2f} applies to this job.')
-    return ' '.join(sentences)
+        return 'The price covers the itemized scope below.'
+    return ' '.join(_range_sentences(policy, data))
 
 
 def _range_sentences(policy, data):
