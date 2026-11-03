@@ -176,6 +176,32 @@ test('a draft not yet priced before the switch stays on the v1 form offline', as
   await context.setOffline(false);
 });
 
+test('a draft begun before the switch that never reached the server shows the v1 form offline', async ({
+  page,
+  context,
+}) => {
+  await start(page, 'owner');
+  await publishRates(page);
+  await page.route('**/api/inspections**', (route) =>
+    ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
+  );
+  await page.evaluate(() => openNew().catch(() => {}));
+  const id = await page.evaluate(() => state.draft.inspection_id);
+  await publishSwitch(page);
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
+  await expect
+    .poll(() => page.evaluate(() => [state.session.pricing_version, !!state.session.switched_at]))
+    .toEqual(['dryscope-v2', true]);
+  await context.setOffline(true);
+  await page.evaluate((value) => restoreDraft(value), id);
+  expect(await page.evaluate(() => state.record)).toBeNull();
+  await checkScope(page);
+  await expect(page.locator('#v1Scope')).toBeVisible();
+  await expect(page.locator('#v2Scope')).toBeHidden();
+  await context.setOffline(false);
+});
+
 test('discarding the switch returns to the rate book, and only the owner is offered it', async ({
   page,
   browser,

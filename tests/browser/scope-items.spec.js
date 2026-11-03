@@ -385,6 +385,50 @@ test.describe('without a service worker', () => {
     await expect(list).toContainText('2 air mover, 5 days');
   });
 
+  test('turning the flag off shows the v1 form on a phone holding the draft, and on brings the list back unchanged', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    const typed = page.locator('[data-scope-item=odor_treatment][data-scope-key=quantity]');
+    await typed.fill('3');
+    await page.locator('#airMovers').fill('2');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const held = () =>
+      page.evaluate(async (value) => {
+        await persist();
+        return (await localDrafts()).find((row) => row.draft.inspection_id === value).pricing;
+      }, id);
+    const pricing = await held();
+    expect(pricing.calculation_version).toBe('dryscope-v2');
+
+    await request.post('/__test/price-books', { data: { enabled: false } });
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#v1Scope')).toBeVisible();
+    await expect(page.locator('#v2Scope')).toBeHidden();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#v1Scope')).toBeVisible();
+    await expect(page.locator('#v2Scope')).toBeHidden();
+    await expect(page.locator('#airMovers')).toHaveValue('2');
+    await page.locator('#airMovers').fill('4');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect(await held()).toEqual(pricing);
+    const saved = (await remote(page, id)).data;
+    expect(Number(saved.scope_items.odor_treatment.quantity)).toBe(3);
+    expect(saved.air_movers).toBe(4);
+
+    await request.post('/__test/price-books', { data: { enabled: true } });
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#v2Scope')).toBeVisible();
+    await expect(page.locator('#v1Scope')).toBeHidden();
+    await expect(typed).toHaveValue('3');
+    await expect(page.locator('#v2Scope #airMovers')).toHaveValue('4');
+    expect(await held()).toEqual(pricing);
+  });
+
   test('a job carrying overrides keeps them current on the v1 form after a rollback', async ({
     page,
     request,

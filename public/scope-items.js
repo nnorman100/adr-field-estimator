@@ -347,17 +347,20 @@
     return isV2Table(company?.table) ? company.table : null;
   }
   // A job the server saved before its company switched stays on its rate book, as the server rules.
+  // At a switched company, a job the server has not seen and the table did not start reads as v1.
   function beforeSwitch() {
     const switched = state?.session?.switched_at;
-    if (!switched || !state.record) return false;
+    if (!switched) return false;
+    if (!state.record) return !state.draft?.data?.seeded_from_version;
     const created = Date.parse(state.record.created_at);
     return Number.isNaN(created) || created < Date.parse(switched);
   }
   const companyOnTable = () => state?.session?.pricing_version === V2 && !beforeSwitch();
   // The mode follows the job's pin: a v2 company's older draft pinned at v1 keeps the v1 form.
+  // With the flag off every job shows the v1 form; its stored pricing stays for when it is on.
   function active() {
     const id = draftId();
-    if (!id || !state?.session) return false;
+    if (!id || !state?.session || state.session.price_books_enabled === false) return false;
     const pinned = jobs.get(id)?.pricing?.calculation_version;
     return pinned ? pinned === V2 : companyOnTable();
   }

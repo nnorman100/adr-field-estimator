@@ -345,6 +345,14 @@ def seed_other_prices():
     )
 
 
+# The flag alone, as a release changes it: the jobs and prices already stored stay.
+@bm.app.post('/__test/price-books')
+async def price_books_fixture(request: Request):
+    body = await request.json()
+    price_books.set_enabled(bool(body['enabled']))
+    return {'enabled': bool(body['enabled'])}
+
+
 # A rate book already on file for the other company: the API refuses a new company a first one.
 @bm.app.post('/__test/other-prices')
 async def other_prices_fixture():
