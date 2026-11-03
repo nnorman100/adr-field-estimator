@@ -302,6 +302,7 @@ class PriceBookStore:
             'price_display': None,
             'prices_not_set_message': None,
             'pricing_version': None,
+            'pricing_table_version': None,
         }
         if not actor.get('company'):
             return view
@@ -318,7 +319,12 @@ class PriceBookStore:
             }
         version = book.get('calculation_version') if price_books_enabled() else None
         if _is_v2(book):
-            return {**view, 'prices_set': True, 'pricing_version': version}
+            return {
+                **view,
+                'prices_set': True,
+                'pricing_version': version,
+                'pricing_table_version': book['version_id'] if version else None,
+            }
         return {
             **view,
             'prices_set': True,

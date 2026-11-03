@@ -173,11 +173,11 @@ def _overrides(data, warnings):
 
 def _room_quantity(room, source, policy, overrides):
     def read(field):
-        entered = overrides.get((_room_key(room.name), field))
-        if entered is not None:
-            return entered
         value = getattr(room, field)
-        return None if value is None else _dec(value)
+        if value is None:
+            return None
+        entered = overrides.get((_room_key(room.name), field))
+        return entered if entered is not None else _dec(value)
 
     def wet_floor():
         wet = read('wet_floor_sf')

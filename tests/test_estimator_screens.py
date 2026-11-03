@@ -11,6 +11,7 @@ from backend import ai_features, price_books, price_table
 from backend.contracts import CreateInspection, InspectionData, UpdateInspection
 from pydantic import ValidationError
 from backend.readiness import readiness
+from tests.test_backend import sign_payload
 from tests.test_price_books import _publish_v2, _v2_table, enabled  # noqa: F401
 from tests.test_workspaces import ID, OTHER, api, data, store  # noqa: F401
 
@@ -39,10 +40,24 @@ def test_session_reports_pricing_version(api, enabled):  # noqa: F811
     assert session(client, current, 'other-owner')['pricing_version'] != V2
 
 
+def test_session_reports_the_table_version_so_a_republish_is_noticed(api, enabled):  # noqa: F811
+    client, current, store = api
+    assert session(client, current, 'estimator')['pricing_table_version'] is None
+    current['uid'] = 'owner'
+    first = _publish_v2(client, _v2_table('30.00'))
+    assert session(client, current, 'estimator')['pricing_table_version'] == first['version_id']
+    current['uid'] = 'owner'
+    second = _publish_v2(client, _v2_table('45.00'), 'Raise every price')
+    current['uid'] = 'estimator'
+    assert client.get('/api/access').json()['pricing_table_version'] == second['version_id']
+    assert session(client, current, 'other-owner')['pricing_table_version'] is None
+
+
 def test_session_pricing_version_is_absent_with_the_flag_off(api):
     client, current, store = api
     assert price_books.price_books_enabled() is False
     assert session(client, current, 'estimator')['pricing_version'] is None
+    assert session(client, current, 'estimator')['pricing_table_version'] is None
 
 
 def test_create_pins_v2_drafts_and_skips_companies_without_prices(api, enabled):  # noqa: F811
@@ -76,6 +91,32 @@ def test_create_pins_v2_drafts_and_skips_companies_without_prices(api, enabled):
     assert view['table']['version_id'] == first['version_id']
     assert view['newer_available'] is True
     assert {i['unit_price'] for i in view['table']['items'] if i['unit_price']} == {'30.00'}
+
+
+def test_copying_a_signed_job_pins_the_copy_like_any_new_v2_draft(api, enabled):  # noqa: F811
+    client, current, store = api
+    current['uid'] = 'estimator'
+    record = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()}).json()
+    record = client.post(
+        '/api/audit', json={'inspection_id': ID, 'expected_revision': record['revision']}
+    ).json()
+    current['uid'] = 'owner'
+    signed = client.post('/api/authorize', json=sign_payload(record))
+    assert signed.status_code == 200, signed.text
+    first = _publish_v2(client, _v2_table('30.00'))
+    current['uid'] = 'estimator'
+    copied = client.post(
+        '/api/authorizations/' + signed.json()['auth_id'] + '/copy',
+        json={'inspection_id': OTHER},
+    )
+    assert copied.status_code == 200, copied.text
+    assert store.db.records['_job_pricing/' + OTHER]['version_id'] == first['version_id']
+    # A later publication leaves the copy on the table it started with.
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('45.00'), 'Raise every price')
+    current['uid'] = 'estimator'
+    view = client.get('/api/inspections/' + OTHER + '/pricing').json()
+    assert view['table']['version_id'] == first['version_id']
 
 
 def test_create_leaves_office_and_v1_companies_unpinned(api, enabled):  # noqa: F811

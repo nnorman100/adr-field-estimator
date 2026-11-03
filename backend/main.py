@@ -1128,17 +1128,15 @@ async def copy_signed_job(
 ):
     await stored(store.quota, staff['uid'], 'draft', 60)
     data, copied_from = await stored(store.copy_source, staff['uid'], auth_id)
-    return await draft_record(
-        store,
+    created = await stored(
+        store.create_inspection,
         staff['uid'],
-        await stored(
-            store.create_inspection,
-            staff['uid'],
-            req.inspection_id,
-            inspection_payload(data),
-            copied_from,
-        ),
+        req.inspection_id,
+        inspection_payload(data),
+        copied_from,
     )
+    await pin_new_draft(store, staff['uid'], created)
+    return await draft_record(store, staff['uid'], created)
 
 
 @app.get('/api/inspections')

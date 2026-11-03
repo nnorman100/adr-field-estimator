@@ -868,6 +868,23 @@ def test_quantity_sources_edge_rules():
     # A stated zero wet floor is zero: it does not fall back to the floor area.
     stated = job([room(unfinished_sf=11, floor_sf=44, wet_floor_sf=0)])
     assert _quantity(stated, 'room:wet_floor')[0] == []
+    # Clearing a walkthrough-filled wet floor records entered 0 but leaves the room blank: whole floor.
+    cleared = job(
+        [room(unfinished_sf=11, floor_sf=120)],
+        quantity_overrides={
+            'Room:wet_floor_sf': {'measured': '40', 'entered': '0', 'reason': 'Whole floor wet'}
+        },
+    )
+    assert _quantity(cleared, 'room:wet_floor')[0] == [120.0]
+    assert _quantity(cleared, 'room:basis', chosen_policy=wet)[0] == [120.0]
+    # An entered value on a room that holds one still wins.
+    changed = job(
+        [room(unfinished_sf=11, floor_sf=120, wet_floor_sf=60)],
+        quantity_overrides={
+            'Room:wet_floor_sf': {'measured': '40', 'entered': '60', 'reason': 'More of it wet'}
+        },
+    )
+    assert _quantity(changed, 'room:wet_floor')[0] == [60.0]
 
     # after_hours is 1 with the flag, 0 without.
     assert _quantity(job(is_after_hours=True), 'after_hours', 'each', 'job_charges')[0] == [1.0]

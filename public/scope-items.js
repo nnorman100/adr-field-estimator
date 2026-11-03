@@ -913,9 +913,11 @@
     render();
     await pull();
   }
-  // The session changed after sign-in: the company table may have appeared, gone or moved company.
+  // The session changed after sign-in: the company table may have appeared, gone, been republished
+  // or moved company.
   const tableStale = (before) =>
     before?.pricing_version !== state.session?.pricing_version ||
+    before?.pricing_table_version !== state.session?.pricing_table_version ||
     before?.company_id !== state.session?.company_id ||
     (state.session?.pricing_version === V2 && !companyView());
   async function sessionChanged() {

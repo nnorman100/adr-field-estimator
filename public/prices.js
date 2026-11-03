@@ -376,6 +376,7 @@
       price_display: session.price_display,
       prices_not_set_message: session.prices_not_set_message,
       pricing_version: session.pricing_version,
+      pricing_table_version: session.pricing_table_version,
     };
     await window.ScopeItems?.sessionChanged();
     syncNotice();

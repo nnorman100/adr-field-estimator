@@ -421,6 +421,26 @@ test.describe('without a service worker', () => {
     await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
   });
 
+  test('a republish reaches a phone that stayed open: new jobs seed from the new table', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await publish(request, {
+      items: {
+        ...ITEMS,
+        service_call: { unit_price: '150.00', default_quantity: '3' },
+        setup_documentation: { unit_price: '40.00', default_quantity: '4' },
+      },
+    });
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await page.evaluate(() => openNew());
+    await expect(page.locator('#emergencyCalls')).toHaveValue('3');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('4');
+  });
+
   test('a first publish leaves quantities the technician already changed', async ({
     page,
     request,
