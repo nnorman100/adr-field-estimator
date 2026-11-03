@@ -119,6 +119,96 @@ def test_copying_a_signed_job_pins_the_copy_like_any_new_v2_draft(api, enabled):
     assert view['table']['version_id'] == first['version_id']
 
 
+def test_seed_quantities_are_the_table_defaults_and_no_sheet_charge_it_lacks():
+    table = {
+        'version_id': 'version-1',
+        'items': [
+            dict(
+                item_id=item_id,
+                group=group,
+                quantity_source=source,
+                default_quantity=default,
+                enabled=enabled,
+            )
+            for item_id, group, source, default, enabled in (
+                ('service_call', 'job_charges', 'field:emergency_calls', '2', True),
+                ('monitoring', 'job_charges', 'field:monitoring_hours', '9999', True),
+                ('hepa', 'job_charges', 'field:hepa_filters', '4', False),
+                ('fans', 'drying_equipment', 'count_days:air_movers*drying_days', '3', True),
+                ('setup', 'job_charges', 'typed', '2.5', True),
+                ('zero', 'job_charges', 'typed', '0', True),
+                ('crew', 'labor', 'typed_count_days', '2', True),
+            )
+        ],
+    }
+    start = bm.inspection_payload(InspectionData(address='Office intake'))
+    before = json.dumps(start, sort_keys=True)
+    seeded = price_table.seed_quantities(start, table)
+    assert json.dumps(start, sort_keys=True) == before, 'the input is not changed'
+    assert seeded['seeded_from_version'] == 'version-1'
+    assert seeded['emergency_calls'] == 2
+    assert seeded['monitoring_hours'] == 500
+    assert seeded['air_movers'] == 3
+    assert (seeded['haul_loads'], seeded['air_scrubbers'], seeded['hepa_filters']) == (0, 0, 0)
+    assert seeded['scope_items'] == {
+        'setup': {'quantity': '2.5', 'count': 0, 'days': 0},
+        'crew': {'quantity': '0', 'count': 2, 'days': 3},
+    }
+    # The stored shape is what the contract accepts and saves back unchanged.
+    assert bm.inspection_payload(InspectionData.model_validate(seeded)) == seeded
+
+
+def test_office_create_is_seeded_by_the_server_only_on_a_v2_table(api, enabled):  # noqa: F811
+    client, current, store = api
+    empty = bm.inspection_payload(InspectionData(address='Office intake'))
+    current['uid'] = 'office'
+    made = client.post('/api/inspections', json={'inspection_id': OTHER, 'data': empty})
+    assert made.status_code == 200, made.text
+    assert made.json()['data'] == empty, 'no v2 table, nothing to seed'
+
+    current['uid'] = 'owner'
+    published = _publish_v2(client, _v2_table('30.00'))
+    current['uid'] = 'office'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': empty})
+    assert made.status_code == 200, made.text
+    saved = made.json()['data']
+    assert saved['seeded_from_version'] == published['version_id']
+    assert saved['monitoring_hours'] != empty['monitoring_hours']
+    assert saved['address'] == 'Office intake'
+    assert store.db.records['inspections/' + ID]['data'] == saved
+    # An office job still has to start empty: a client cannot send its own quantities.
+    worked = {**empty, 'air_movers': 3}
+    refused = client.post(
+        '/api/inspections', json={'inspection_id': 'ADR-INS-' + 'e' * 32, 'data': worked}
+    )
+    assert refused.status_code == 403, refused.text
+
+
+def test_office_create_is_not_seeded_with_the_flag_off(api):
+    client, current, store = api
+    empty = bm.inspection_payload(InspectionData(address='Office intake'))
+    current['uid'] = 'office'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': empty})
+    assert made.status_code == 200, made.text
+    assert made.json()['data'] == empty
+
+
+def test_the_seed_version_never_reaches_a_model():
+    from backend import prompts
+    from backend.scope import scope_prompt
+
+    draft = bm.inspection_payload(
+        InspectionData(address='300 Elm St', year_built=1990, seeded_from_version='version-secret')
+    )
+    assert draft['seeded_from_version'] == 'version-secret'
+    for prompt in (
+        prompts.audit_prompt(draft, [], {}),
+        prompts.live_prompt(draft),
+        scope_prompt(InspectionData.model_validate(draft), None),
+    ):
+        assert 'version-secret' not in prompt
+
+
 def test_create_leaves_office_and_v1_companies_unpinned(api, enabled):  # noqa: F811
     client, current, store = api
     current['uid'] = 'owner'

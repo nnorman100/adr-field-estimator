@@ -67,27 +67,6 @@
   const DECIMAL_FIELDS = ['monitoring_hours', 'labor_hours'];
   // Room measurements the walkthrough fills and the estimator may override with a reason.
   const OVERRIDE_ROOM_FIELDS = ['unfinished_sf', 'finished_sf', 'floor_sf', 'wet_floor_sf'];
-  // The sheet quantities the server puts in a job that office staff create (empty scope).
-  const SHEET_CHARGES = {
-    emergency_calls: 1,
-    monitoring_hours: 13.25,
-    haul_loads: 1,
-    air_scrubbers: 1,
-    hepa_filters: 1,
-  };
-
-  // Quantities no job holds before it has a table, so a value here was entered.
-  const ENTERED_ONLY_FIELDS = [
-    'labor_hours',
-    'matterport_scans',
-    'dump_truck_loads',
-    'equipment_decon',
-    'power_distribution',
-    'air_movers',
-    'dehumidifiers',
-    'wood_floor_systems',
-  ];
-
   // ---- pure helpers (also used by the node tests) ------------------------------------------
   function parseSource(text) {
     if (typeof text !== 'string') return null;
@@ -220,22 +199,8 @@
           },
         };
     }
-    for (const key of Object.keys(SHEET_CHARGES)) if (!seen.has(key)) data[key] = 0;
+    data.seeded_from_version = table.version_id;
     return data;
-  }
-  // A job still at its starting quantities: the server's sheet charges (office staff created it, or
-  // it began on the v1 form), or zeros when it began before the phone had a table. Zeros on any other
-  // job are the technician's own.
-  function untouched(data, beganWithoutTable = false) {
-    const charges = Object.entries(SHEET_CHARGES);
-    return (
-      !data.scope_confirmed &&
-      !data.scope_items &&
-      !data.quantity_overrides &&
-      ENTERED_ONLY_FIELDS.every((key) => !(data[key] > 0)) &&
-      (charges.every(([key, value]) => Number(data[key]) === value) ||
-        (beganWithoutTable && charges.every(([key]) => Number(data[key]) === 0)))
-    );
   }
   // Quantities saved for items the current table does not list as typed items.
   function unlisted(data, table) {
@@ -273,12 +238,7 @@
     return orderedItems(table)
       .filter((item) => {
         const kind = parseSource(item.quantity_source).kind;
-        return (
-          item.group !== 'extras' &&
-          kind !== 'after_hours' &&
-          !keepsRow(item, data) &&
-          (!kind.startsWith('typed') || data.scope_items?.[item.item_id])
-        );
+        return item.group !== 'extras' && kind !== 'after_hours' && !keepsRow(item, data);
       })
       .map((item) => enteredText(item, data))
       .filter(Boolean);
@@ -369,7 +329,7 @@
   const dom = () =>
     typeof document !== 'undefined' && typeof document.getElementById === 'function';
   let company = null; // the company's current table, cached on the phone
-  const jobs = new Map(); // inspection id -> { pricing, start }
+  const jobs = new Map(); // inspection id -> { pricing }
   let rendered = null; // the form and table the screen was last built for
   let renderedRows = null; // the item rows it was last built with
   const homes = new Map(); // moved element -> { parent, text }
@@ -380,7 +340,7 @@
 
   const draftId = () => state?.draft?.inspection_id || null;
   const job = (id) => {
-    if (!jobs.has(id)) jobs.set(id, { pricing: null, start: 'table' });
+    if (!jobs.has(id)) jobs.set(id, { pricing: null });
     return jobs.get(id);
   };
   function companyView() {
@@ -412,15 +372,8 @@
     const t = jobs.get(id)?.pricing || (state?.session?.pricing_version === V2 && companyView());
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
-  // How a job began decides what defaults may replace: 'table' (nothing), 'noTable' (sheet or zero
-  // charges), 'unknown' (no row on this phone: nothing until pull reads its pin), 'unpinned' (no row
-  // and no pin, so it never had a table: sheet charges).
   function seed(id, row) {
-    const start = !row ? 'unknown' : row.pricing ? 'table' : 'noTable';
-    jobs.set(id, { pricing: row?.pricing || null, start });
-  }
-  function seedNew(id) {
-    jobs.set(id, { pricing: null, start: companyView() ? 'table' : 'noTable' });
+    jobs.set(id, { pricing: row?.pricing || null });
   }
   function forget() {
     jobs.clear();
@@ -648,7 +601,7 @@
     }
     const q = data.scope_items?.[item.item_id];
     if (source.kind === 'typed') {
-      const n = Number(q ? q.quantity : item.default_quantity) || 0;
+      const n = Number(q?.quantity) || 0;
       return n > 0 ? formatQuantity(n) + ' ' + name : '';
     }
     if (source.kind === 'typed_count_days' && q?.count > 0)
@@ -707,7 +660,7 @@
         field(
           item.name + ' (' + (UNIT_NAMES[item.unit] || item.unit) + ')',
           'quantity',
-          saved ? saved.quantity : formatQuantity(item.default_quantity),
+          saved ? saved.quantity : 0,
           100000,
           0.01,
         ),
@@ -865,22 +818,14 @@
         ids = new Set(boxes.map((box) => box.dataset.scopeItem));
       for (const id of ids) {
         const mine = boxes.filter((box) => box.dataset.scopeItem === id),
-          item = table().items.find((i) => i.item_id === id),
           next = { quantity: '0', count: 0, days: 0, ...(items[id] || {}) };
         for (const box of mine) {
           const value = box.value === '' ? 0 : Number(box.value);
           next[box.dataset.scopeKey] =
             box.dataset.scopeKey === 'quantity' ? decimalText(value) : Math.trunc(value);
         }
-        // Defaults only count while the job has no saved value; a deliberate 0 is kept.
-        if (
-          items[id] ||
-          Number(next.quantity) ||
-          next.count ||
-          next.days ||
-          Number(item?.default_quantity) > 0
-        )
-          items[id] = next;
+        // A saved value stays, including a deliberate 0.
+        if (items[id] || Number(next.quantity) || next.count || next.days) items[id] = next;
       }
       if (Object.keys(items).length) data.scope_items = items;
       else delete data.scope_items;
@@ -902,33 +847,9 @@
       mine.pricing && (mine.pricing.version_id || '') + (mine.pricing.content_sha256 || '');
     return before !== after;
   }
-  // Before the form is filled: a job office staff created carries the server's sheet quantities
-  // until an estimator first opens it; those become the table's defaults.
-  function prepare() {
-    const id = draftId();
-    if (!dom() || !id || !active() || !table() || !canEdit()) return;
-    takeDefaults();
-  }
-  // Once only, and never to a job that began from a table: its quantities are the technician's own.
-  function takeDefaults() {
-    const mine = job(draftId()),
-      data = state.draft.data,
-      start = mine.start;
-    if (start === 'table' || start === 'unknown') return false;
-    mine.start = 'table';
-    if (!untouched(data, start === 'noTable')) return false;
-    applyDefaults(data, table());
-    changed(false);
-    return true;
-  }
-  // What the screen should show has changed. A job that was on the v1 form or had no table, and is
-  // still at its starting quantities, takes the table's defaults now.
+  // What the screen should show has changed. Quantities stay as they are: a job is seeded once, at
+  // New job on the phone or at office create on the server.
   function settle() {
-    const noTableBefore = rendered === 'v1' || rendered === 'v2:';
-    if (noTableBefore && active() && table() && canEdit() && takeDefaults()) {
-      fillForm();
-      return;
-    }
     render();
     renderRooms();
     renderReadiness();
@@ -944,9 +865,7 @@
       const view = await jsonApi('/api/inspections/' + id + '/pricing');
       if (mine !== seq || draftId() !== id) return;
       if (adopt(id, view)) schedulePersist();
-      if (job(id).start === 'unknown') job(id).start = view.pinned ? 'table' : 'unpinned';
-      if (active() && table() && canEdit() && takeDefaults()) fillForm();
-      else if (shownView() !== rendered) settle();
+      if (shownView() !== rendered) settle();
     } catch {
       /* the saved screen stays: a job not on the server yet has no pin to read */
     }
@@ -969,9 +888,6 @@
     if (shownView() !== rendered) settle();
     await pull();
   }
-  const canEdit = () =>
-    !state.signed && (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('scope'));
-
   root.ScopeItems = {
     GROUP_NAMES,
     UNIT_NAMES,
@@ -983,7 +899,6 @@
     roomQuantity,
     pricesFromWetFloor,
     applyDefaults,
-    untouched,
     unlisted,
     unlistedFields,
     offCategory,
@@ -1003,9 +918,7 @@
     readinessPricing,
     rowExtras,
     seed,
-    seedNew,
     forget,
-    prepare,
     refresh,
     pull,
     render,

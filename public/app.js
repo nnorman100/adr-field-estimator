@@ -972,8 +972,20 @@ async function absorbNotes(remote) {
   await persist();
   renderNotes();
 }
+// The server seeds an office-created job at create, so the phone's copy takes those quantities.
+function adoptServerSeed(record) {
+  if (record.data.seeded_from_version === state.draft.data.seeded_from_version) return false;
+  state.draft.data = record.data;
+  state.ack = stable(record.data);
+  fillForm();
+  return true;
+}
 async function reconcile() {
   const remote = await jsonApi('/api/inspections/' + state.draft.inspection_id);
+  if (state.ack === null && remote.status !== 'signed') {
+    absorb(remote);
+    if (adoptServerSeed(remote)) return;
+  }
   if (remote.status !== 'signed' && state.ack !== null && stable(remote.data) !== state.ack)
     await absorbNotes(remote);
   if (remote.status === 'signed' || (state.ack !== null && stable(remote.data) !== state.ack)) {
@@ -1007,6 +1019,7 @@ async function doSync() {
         const record = await jsonApi('/api/inspections', 'POST', { inspection_id: id, data });
         state.ack = stable(data);
         absorb(record);
+        adoptServerSeed(record);
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
@@ -1760,7 +1773,6 @@ function fillForm() {
     $('liveTranscriptPreview').textContent = '';
   }
 
-  window.ScopeItems?.prepare();
   const defaults = emptyData();
   for (const [id, key] of Object.entries({
     address: 'address',
@@ -2784,7 +2796,7 @@ async function openNew(data = null, photos = []) {
     }));
     state.draft.data.scope_confirmed = false;
   }
-  window.ScopeItems?.seedNew(state.draft.inspection_id);
+  window.ScopeItems?.seed(state.draft.inspection_id, null);
   confirmedAuthorization = null;
   $('retrySavedEvidence').hidden = true;
   $('signedEvidenceStatus').textContent = '';

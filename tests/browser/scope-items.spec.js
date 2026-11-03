@@ -90,6 +90,7 @@ test.describe('without a service worker', () => {
     expect(record.data.emergency_calls).toBe(2);
     expect(record.data.monitoring_hours).toBe(0);
     expect(numbers(record.data.scope_items).setup_documentation.quantity).toBe(1);
+    expect(record.data.seeded_from_version).toBeTruthy();
     const pricing = await (
       await page.request.get('/api/inspections/' + (await jobId(page)) + '/pricing', {
         headers: auth('owner'),
@@ -283,77 +284,6 @@ test.describe('without a service worker', () => {
     await expect(showing(78)).toHaveCount(0);
   });
 
-  test('an office job seeded from the table lists no sheet charge nobody entered', async ({
-    page,
-    request,
-  }) => {
-    await publish(request, {
-      items: { ...ITEMS, hepa_filter: { enabled: false, unit_price: '' } },
-    });
-    await open(page);
-    await page.evaluate(() => {
-      // A job this phone began before it had a table.
-      ScopeItems.seed(state.draft.inspection_id, {});
-      Object.assign(state.draft.data, {
-        emergency_calls: 1,
-        monitoring_hours: 13.25,
-        haul_loads: 1,
-        air_scrubbers: 1,
-        hepa_filters: 1,
-      });
-      delete state.draft.data.scope_items;
-      ScopeItems.prepare();
-      fillForm();
-    });
-    await expect(page.locator('#v2Unlisted')).toBeHidden();
-    expect(await page.evaluate(() => state.draft.data.hepa_filters)).toBe(0);
-  });
-
-  test('reopening a first-revision job keeps what the technician entered', async ({
-    page,
-    request,
-  }) => {
-    await publish(request);
-    await open(page);
-    const reopened = (changes, row) =>
-      page.evaluate(
-        ({ changes, row }) => {
-          const data = state.draft.data;
-          delete data.scope_items;
-          Object.assign(data, changes);
-          state.record.revision = 1;
-          if (row) ScopeItems.seed(state.draft.inspection_id, row);
-          ScopeItems.prepare();
-          return { emergency: data.emergency_calls, dump: data.dump_truck_loads };
-        },
-        { changes, row },
-      );
-    const zeros = {
-      emergency_calls: 0,
-      monitoring_hours: 0,
-      haul_loads: 0,
-      air_scrubbers: 0,
-      hepa_filters: 0,
-    };
-    // A quantity entered on a job otherwise at the start.
-    expect(await reopened({ ...zeros, dump_truck_loads: 2 })).toEqual({ emergency: 0, dump: 2 });
-    // A deliberate zero on a job that has had its table.
-    expect(await reopened({ ...zeros, dump_truck_loads: 0 })).toEqual({ emergency: 0, dump: 0 });
-    // The same zeros on a phone that never had a table are where the job began, and only once.
-    expect(await reopened(zeros, {})).toEqual({ emergency: 2, dump: 0 });
-    expect(await reopened(zeros)).toEqual({ emergency: 0, dump: 0 });
-    // Reopened before its first save, such a job has no revision yet and still starts from the table.
-    const neverSaved = await page.evaluate((changes) => {
-      const data = state.draft.data;
-      Object.assign(data, changes);
-      state.record = null;
-      ScopeItems.seed(state.draft.inspection_id, {});
-      ScopeItems.prepare();
-      return data.emergency_calls;
-    }, zeros);
-    expect(neverSaved).toBe(2);
-  });
-
   test("a technician's zero on a job begun from the table survives a reopen", async ({
     page,
     context,
@@ -514,10 +444,10 @@ test.describe('without a service worker', () => {
     await expect(page.locator('#emergencyCalls')).toHaveValue('1');
     await publish(request);
     await page.evaluate(() => WorkspaceUI.refresh());
-    // The open job has not been touched, so it moves to the table's defaults too.
+    // A job is seeded once, when it is started: the open job keeps its quantities.
     await expect(page.locator('#v2Scope')).toBeVisible();
-    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
-    await expect(page.locator('#monitoringHours')).toHaveValue('0');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('1');
+    await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
     await page.evaluate(() => openNew());
     await expect(page.locator('#emergencyCalls')).toHaveValue('2');
     await expect(page.locator('#monitoringHours')).toHaveValue('0');
@@ -578,14 +508,7 @@ test.describe('without a service worker', () => {
     expect(fetched).toBe(0);
   });
 
-  test('an office job whose address was saved takes the defaults when an estimator first opens it', async ({
-    page,
-    context,
-    request,
-  }) => {
-    await publish(request, {
-      items: { ...ITEMS, hepa_filter: { enabled: false, unit_price: '' } },
-    });
+  const startOfficeJob = async (context) => {
     const office = await context.newPage();
     await office.addInitScript(
       (value) => sessionStorage.setItem('synthetic-uid', value),
@@ -595,7 +518,32 @@ test.describe('without a service worker', () => {
     await expect(office.locator('#workspaceDashboard')).toBeVisible();
     await office.getByRole('button', { name: 'New job', exact: true }).click();
     await expect(office.locator('#saveStatus')).toHaveText('Saved');
+    return office;
+  };
+  const openOn = async (context, id, role = 'owner') => {
+    const other = await context.newPage();
+    await other.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid(role));
+    await other.goto('/app');
+    await expect(other.locator('#workspaceDashboard')).toBeVisible();
+    await other.evaluate((value) => restoreDraft(value), id);
+    await checkScope(other);
+    return other;
+  };
+
+  test('an office job starts at the table defaults, seeded by the server', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, hepa_filter: { enabled: false, unit_price: '' } },
+    });
+    const office = await startOfficeJob(context);
     const id = await jobId(office);
+    // The office phone holds the server's copy, so reopening it is not a sync conflict.
+    await expect(office.locator('#emergencyCalls')).toHaveValue('2');
+    await office.evaluate((value) => restoreDraft(value), id);
+    await expect(office.locator('#conflictActions')).toBeHidden();
     const path = '/api/jobs/' + id + '/coordination';
     const headers = { ...auth('office'), 'X-ADR-Workspace-Protocol': '1' };
     const coordination = await (await office.request.get(path, { headers })).json();
@@ -614,8 +562,12 @@ test.describe('without a service worker', () => {
     expect(saved.ok()).toBe(true);
     await office.close();
     await open(page);
-    expect((await remote(page, id)).revision).toBeGreaterThan(1);
-    expect((await remote(page, id)).data.monitoring_hours).toBe(13.25);
+    const before = await remote(page, id);
+    expect(before.revision).toBeGreaterThan(1);
+    expect(before.data.address).toBe('Synthetic office intake');
+    expect(before.data.monitoring_hours).toBe(0);
+    expect(before.data.hepa_filters).toBe(0);
+    expect(before.data.seeded_from_version).toBeTruthy();
     await page.evaluate((value) => restoreDraft(value), id);
     await checkScope(page);
     await expect(page.locator('#emergencyCalls')).toHaveValue('2');
@@ -623,18 +575,75 @@ test.describe('without a service worker', () => {
     await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
     await expect(page.locator('#v2Unlisted')).toBeHidden();
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
-    const job = (await remote(page, id)).data;
-    expect(job.address).toBe('Synthetic office intake');
-    expect(job.monitoring_hours).toBe(0);
-    expect(job.hepa_filters).toBe(0);
-    // A later reopen on this phone leaves the estimator's own values alone.
-    await page.locator('#monitoringHours').fill('13.25');
-    await expect(page.locator('#saveStatus')).toHaveText('Saved');
-    await page.evaluate((value) => restoreDraft(value), id);
-    await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+    expect((await remote(page, id)).revision).toBe(before.revision);
   });
 
-  test('a job begun before the first publish takes the defaults on a phone with no row for it', async ({
+  test('an office phone that lost the create response still takes the seeded copy', async ({
+    context,
+    request,
+  }) => {
+    await publish(request);
+    const office = await context.newPage();
+    await office.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('office'),
+    );
+    await office.goto('/app');
+    await expect(office.locator('#workspaceDashboard')).toBeVisible();
+    // The server saves the job, but its answer never reaches the phone.
+    let lost = 0;
+    await office.route('**/api/inspections', async (route) => {
+      if (route.request().method() !== 'POST' || lost) return route.fallback();
+      lost++;
+      await route.fetch();
+      return route.abort();
+    });
+    await office.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(office.locator('#emergencyCalls')).toHaveValue('1');
+    await expect.poll(() => lost).toBe(1);
+    await expect(office.locator('#saveStatus')).not.toHaveText('Saving…');
+    expect(await office.evaluate(() => state.record)).toBeNull();
+    await office.evaluate(() => syncDraft().catch(() => {}));
+    await expect(office.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(office.locator('#conflictActions')).toBeHidden();
+    const id = await jobId(office);
+    await office.evaluate((value) => restoreDraft(value), id);
+    await expect(office.locator('#conflictActions')).toBeHidden();
+    await expect(office.locator('#emergencyCalls')).toHaveValue('2');
+    await office.close();
+  });
+
+  test("a worked office job keeps the estimator's zero on a phone with no row for it", async ({
+    page,
+    context,
+    browser,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, air_mover: { unit_price: '30.00', default_quantity: '3' } },
+    });
+    const office = await startOfficeJob(context);
+    const id = await jobId(office);
+    await office.close();
+    await open(page);
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('0');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const before = await remote(page, id);
+    // The same person on another phone: a fresh browser profile holds no row for the job.
+    const phone = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block' });
+    const other = await openOn(phone, id);
+    await expect(other.locator('#airMovers')).toHaveValue('0');
+    await other.waitForTimeout(1500);
+    const after = await remote(other, id);
+    expect(after.revision).toBe(before.revision);
+    expect(after.data.air_movers).toBe(0);
+    await phone.close();
+  });
+
+  test('a job begun before the first publish is left as it is when opened', async ({
     page,
     context,
     request,
@@ -643,24 +652,16 @@ test.describe('without a service worker', () => {
     const id = await jobId(page);
     await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const before = await remote(page, id, 'estimator');
     await publish(request);
-    const owner = await context.newPage();
-    await owner.addInitScript(
-      (value) => sessionStorage.setItem('synthetic-uid', value),
-      uid('owner'),
-    );
-    await owner.goto('/app');
-    await expect(owner.locator('#workspaceDashboard')).toBeVisible();
-    await owner.evaluate((value) => restoreDraft(value), id);
-    await checkScope(owner);
+    const owner = await openOn(context, id);
     await expect(owner.locator('#v2Scope')).toBeVisible();
-    await expect(owner.locator('#rooms .room')).toHaveCount(1);
-    await expect(owner.locator('#emergencyCalls')).toHaveValue('2');
-    await expect(owner.locator('#monitoringHours')).toHaveValue('0');
-    await expect(owner.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
-    await expect(owner.locator('#v2Unlisted')).toBeHidden();
-    await expect(owner.locator('#saveStatus')).toHaveText('Saved');
-    expect((await remote(owner, id)).data.monitoring_hours).toBe(0);
+    await expect(owner.locator('#monitoringHours')).toHaveValue('13.25');
+    await expect(owner.locator('[data-scope-item="setup_documentation"]')).toHaveValue('0');
+    await owner.waitForTimeout(1500);
+    const after = await remote(owner, id);
+    expect(after.revision).toBe(before.revision);
+    expect(after.data.seeded_from_version).toBeUndefined();
     await owner.close();
   });
 
@@ -1159,13 +1160,15 @@ test.describe('with the service worker', () => {
     await expect(page.locator('#v1Scope')).toBeHidden();
     // Rooms still work.
     await expect(page.locator('#rooms .room')).toHaveCount(1);
-    // A job begun with no table takes its defaults once the phone connects and loads it.
+    // A job begun with no table stays at zero; the next new job has the table once connected.
     await page.evaluate(() => openNew());
     await checkScope(page);
     await expect(page.locator('#emergencyCalls')).toHaveValue('0');
     await context.setOffline(false);
     await page.evaluate(() => WorkspaceUI.refresh());
     await expect(page.locator('#v2ScopeStatus')).toHaveText('');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+    await page.evaluate(() => openNew());
     await expect(page.locator('#emergencyCalls')).toHaveValue('2');
     await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
   });

@@ -42,6 +42,7 @@ try:
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         SCHEMA_VERSION as V2_SCHEMA_VERSION,
         content_hash as v2_content_hash,
+        seed_quantities,
         diff_tables,
         normalize_table,
         public_diff,
@@ -81,6 +82,7 @@ except ImportError:
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         SCHEMA_VERSION as V2_SCHEMA_VERSION,
         content_hash as v2_content_hash,
+        seed_quantities,
         diff_tables,
         normalize_table,
         public_diff,
@@ -1284,6 +1286,17 @@ class PriceBookStore:
             or pin.get('version_id') != basis.get('version_id')
         ):
             raise Conflict('The saved prices no longer match this draft. Review before signing.')
+
+    def seed_office_job(self, company, record, tx):
+        """Give a new office-created job the company's current v2 table defaults."""
+        if not price_books_enabled():
+            return
+        try:
+            book = self.effective(company, tx)
+        except Conflict:
+            return
+        if _is_v2(book):
+            record['data'] = seed_quantities(record['data'], book)
 
     def job_prices_unset(self, uid, record):
         """True when the job has no pin and its company has no published prices to pin."""

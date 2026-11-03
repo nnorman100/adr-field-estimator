@@ -571,6 +571,7 @@ def scope_prompt(data, claim=None):
                         # Priced-item quantities and estimator overrides are not model input.
                         'scope_items',
                         'quantity_overrides',
+                        'seeded_from_version',
                     },
                 ),
                 **({'current_claim': claim} if claim is not None else {}),

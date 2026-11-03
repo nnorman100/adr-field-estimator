@@ -45,6 +45,7 @@ test('a new draft starts at the table defaults and seeds typed items', () => {
     item('off', 'job_charges', 'field:haul_loads', { default_quantity: '5', enabled: false }),
   ]);
   const data = ScopeItems.applyDefaults(core.emptyData({ v2: true }), t);
+  assert.equal(data.seeded_from_version, 'v1', 'the job records the table it started from');
   assert.equal(data.emergency_calls, 2);
   // The screen's own input accepts at most 500 hours, so a larger default cannot make the form invalid.
   assert.equal(data.monitoring_hours, 500);
@@ -75,24 +76,6 @@ test('count items seed their count; days stay at the job default for those days'
   assert.equal(data.drying_days, 3);
   assert.equal(data.wood_floor_days, 7);
   assert.deepEqual(plain(data.scope_items), { crew: { quantity: '0', count: 2, days: 3 } });
-});
-
-test('seeding leaves no sheet charge the table does not list', () => {
-  const t = table([
-    item('service_call', 'job_charges', 'field:emergency_calls', { default_quantity: '2' }),
-    item('hepa', 'job_charges', 'field:hepa_filters', { enabled: false, default_quantity: '4' }),
-  ]);
-  const data = ScopeItems.applyDefaults(core.emptyData(), t);
-  assert.equal(data.emergency_calls, 2);
-  for (const key of ['monitoring_hours', 'haul_loads', 'air_scrubbers', 'hepa_filters'])
-    assert.equal(data[key], 0, key);
-  assert.deepEqual(Array.from(ScopeItems.unlistedFields(data, t)), []);
-  const untable = core.emptyData();
-  assert.equal(
-    ScopeItems.applyDefaults(untable, null).monitoring_hours,
-    13.25,
-    'no table, no change',
-  );
 });
 
 test('room items show their quantity, own unit and unit price', () => {
@@ -302,47 +285,6 @@ test('field quantities whose item is gone are named; day counts and zeros are no
     Array.from(ScopeItems.unlisted({ scope_items: { kept: { quantity: '1' } } }, null)),
     [],
   );
-});
-
-test('only an untouched office-created job is given the table defaults', () => {
-  const sheet = {
-    emergency_calls: 1,
-    monitoring_hours: 13.25,
-    haul_loads: 1,
-    air_scrubbers: 1,
-    hepa_filters: 1,
-    labor_hours: 0,
-    matterport_scans: 0,
-    scope_confirmed: false,
-  };
-  assert.equal(ScopeItems.untouched(sheet), true);
-  assert.equal(ScopeItems.untouched({ ...sheet, monitoring_hours: 8 }), false);
-  assert.equal(ScopeItems.untouched({ ...sheet, scope_confirmed: true }), false);
-  assert.equal(ScopeItems.untouched({ ...sheet, scope_items: {} }), false);
-  // A count the walkthrough filled is never overwritten by a default.
-  assert.equal(ScopeItems.untouched({ ...sheet, air_movers: 3 }), false);
-  // A walkthrough measurement means the job has been worked on, even when it measured 0.
-  const measured = { air_movers: { measured: '0', entered: '0' } };
-  assert.equal(ScopeItems.untouched({ ...sheet, quantity_overrides: measured }), false);
-  // Every quantity a default would overwrite counts as work once it is entered.
-  for (const key of [
-    'labor_hours',
-    'matterport_scans',
-    'dump_truck_loads',
-    'equipment_decon',
-    'power_distribution',
-    'air_movers',
-    'dehumidifiers',
-    'wood_floor_systems',
-  ]) {
-    assert.equal(ScopeItems.untouched({ ...sheet, [key]: 2 }), false, key);
-    assert.equal(ScopeItems.untouched({ ...core.emptyData({ v2: true }), [key]: 2 }, true), false);
-  }
-  // Zero charges are a starting point only for a job begun before the phone had a table.
-  const zero = core.emptyData({ v2: true });
-  assert.equal(ScopeItems.untouched(zero, true), true);
-  assert.equal(ScopeItems.untouched(zero), false, 'otherwise the zeros were chosen');
-  assert.equal(ScopeItems.untouched({ ...zero, haul_loads: 1 }, true), false, 'neither start');
 });
 
 test('an override keeps its entered value current and a reason only while the value differs', () => {

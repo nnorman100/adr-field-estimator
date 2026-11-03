@@ -73,6 +73,14 @@ FIELD_SOURCES = (
 # The other job fields, and every count, are whole numbers: a fractional default could never be saved.
 DECIMAL_FIELD_SOURCES = ('monitoring_hours', 'labor_hours')
 
+SHEET_CHARGE_FIELDS = (
+    'emergency_calls',
+    'monitoring_hours',
+    'haul_loads',
+    'air_scrubbers',
+    'hepa_filters',
+)
+
 COUNT_DAYS_SOURCES = {
     ('air_movers', 'drying_days'),
     ('dehumidifiers', 'drying_days'),
@@ -573,6 +581,46 @@ def _decimal_str(
     if '.' in normalized:
         normalized = normalized.rstrip('0').rstrip('.')
     return normalized or '0'
+
+
+def seed_quantities(data: dict, table: dict) -> dict:
+    """An office-created job's starting quantities: the table's defaults, zero for any sheet charge
+    the table does not list, and the version they came from. Matches applyDefaults on the phone."""
+    seeded = copy.deepcopy(data)
+    seen = set()
+    enabled = [item for item in table['items'] if item.get('enabled', True)]
+    for item in sorted(
+        enabled,
+        key=lambda i: (GROUPS.index(i['group']), i.get('sort_order', 0), i['item_id']),
+    ):
+        source = parse_source(item['quantity_source'])
+        quantity = Decimal(item['default_quantity'])
+        if source.kind == 'field' and source.field not in seen:
+            seen.add(source.field)
+            if source.field in DECIMAL_FIELD_SOURCES:
+                seeded[source.field] = float(min(quantity, Decimal(500)))
+            else:
+                seeded[source.field] = int(min(quantity, Decimal(100)))
+        elif source.kind == 'count_days' and source.count_field not in seen:
+            seen.add(source.count_field)
+            seeded[source.count_field] = int(min(quantity, Decimal(100)))
+        elif source.kind == 'typed' and quantity > 0:
+            seeded.setdefault('scope_items', {})[item['item_id']] = {
+                'quantity': item['default_quantity'],
+                'count': 0,
+                'days': 0,
+            }
+        elif source.kind == 'typed_count_days' and quantity > 0:
+            seeded.setdefault('scope_items', {})[item['item_id']] = {
+                'quantity': '0',
+                'count': int(min(quantity, Decimal(100))),
+                'days': seeded['drying_days'],
+            }
+    for field in SHEET_CHARGE_FIELDS:
+        if field not in seen:
+            seeded[field] = 0
+    seeded['seeded_from_version'] = table['version_id']
+    return seeded
 
 
 def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:

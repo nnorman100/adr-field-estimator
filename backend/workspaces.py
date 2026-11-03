@@ -1345,6 +1345,7 @@ class WorkspaceStore:
                 actual.pop('extras', None)
             if actual != defaults:
                 raise AccessDenied('Office-created jobs must start with empty scope.')
+            self.prices.seed_office_job(actor['company'], record, tx)
         job = dict(
             job_id=record['inspection_id'],
             company_id=actor['company_id'],

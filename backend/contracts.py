@@ -253,6 +253,10 @@ class InspectionData(StrictModel):
     scope_items: dict[Annotated[str, Field(pattern=ITEM_ID)], ScopeQuantity] | None = Field(
         default=None, max_length=150, exclude_if=lambda value: value is None
     )
+    # The price table whose default quantities this job started from; absent otherwise, as above.
+    seeded_from_version: str | None = Field(
+        default=None, max_length=120, exclude_if=lambda value: value is None
+    )
     # Estimator overrides of walkthrough-measured quantities; absent until set, as above.
     quantity_overrides: (
         dict[Annotated[str, Field(min_length=1, max_length=120)], QuantityOverride] | None
