@@ -292,10 +292,9 @@ test.describe('without a service worker', () => {
     });
     await open(page);
     await page.evaluate(() => {
-      // A job this phone has no row for, as when an estimator first opens an office job.
-      ScopeItems.seed(state.draft.inspection_id, null);
+      // A job this phone began before it had a table.
+      ScopeItems.seed(state.draft.inspection_id, {});
       Object.assign(state.draft.data, {
-        rooms: [],
         emergency_calls: 1,
         monitoring_hours: 13.25,
         haul_loads: 1,
@@ -633,6 +632,36 @@ test.describe('without a service worker', () => {
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
     await page.evaluate((value) => restoreDraft(value), id);
     await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+  });
+
+  test('a job begun before the first publish takes the defaults on a phone with no row for it', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await open(page, 'estimator');
+    const id = await jobId(page);
+    await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await publish(request);
+    const owner = await context.newPage();
+    await owner.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('owner'),
+    );
+    await owner.goto('/app');
+    await expect(owner.locator('#workspaceDashboard')).toBeVisible();
+    await owner.evaluate((value) => restoreDraft(value), id);
+    await checkScope(owner);
+    await expect(owner.locator('#v2Scope')).toBeVisible();
+    await expect(owner.locator('#rooms .room')).toHaveCount(1);
+    await expect(owner.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(owner.locator('#monitoringHours')).toHaveValue('0');
+    await expect(owner.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await expect(owner.locator('#v2Unlisted')).toBeHidden();
+    await expect(owner.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(owner, id)).data.monitoring_hours).toBe(0);
+    await owner.close();
   });
 
   test('a worked job opened on a phone with no row for it keeps its deliberate zeros', async ({

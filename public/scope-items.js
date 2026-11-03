@@ -413,9 +413,10 @@
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   // How a job began decides what defaults may replace: 'table' (nothing), 'noTable' (sheet or zero
-  // charges), or 'intake' (no row on this phone: only a job as office intake leaves it, with no rooms).
+  // charges), 'unknown' (no row on this phone: nothing until pull reads its pin), 'unpinned' (no row
+  // and no pin, so it never had a table: sheet charges).
   function seed(id, row) {
-    const start = !row ? 'intake' : row.pricing ? 'table' : 'noTable';
+    const start = !row ? 'unknown' : row.pricing ? 'table' : 'noTable';
     jobs.set(id, { pricing: row?.pricing || null, start });
   }
   function seedNew(id) {
@@ -913,8 +914,8 @@
     const mine = job(draftId()),
       data = state.draft.data,
       start = mine.start;
+    if (start === 'table' || start === 'unknown') return false;
     mine.start = 'table';
-    if (start === 'table' || (start === 'intake' && data.rooms?.length)) return false;
     if (!untouched(data, start === 'noTable')) return false;
     applyDefaults(data, table());
     changed(false);
@@ -943,7 +944,9 @@
       const view = await jsonApi('/api/inspections/' + id + '/pricing');
       if (mine !== seq || draftId() !== id) return;
       if (adopt(id, view)) schedulePersist();
-      if (shownView() !== rendered) settle();
+      if (job(id).start === 'unknown') job(id).start = view.pinned ? 'table' : 'unpinned';
+      if (active() && table() && canEdit() && takeDefaults()) fillForm();
+      else if (shownView() !== rendered) settle();
     } catch {
       /* the saved screen stays: a job not on the server yet has no pin to read */
     }
