@@ -567,6 +567,42 @@ test.describe('without a service worker', () => {
     );
   });
 
+  test('Save draft says so when a missing reason keeps the change on the phone', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    await page.locator('#address').fill('Synthetic save property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#airMovers').fill('5');
+    await saveDraft(page);
+    const reason = page.locator('[data-override-reason="air_movers"]');
+    const message = page.locator('#message');
+    await expect(message).toContainText('Saved on this phone only');
+    await expect(message).not.toContainText('saved privately');
+    await expect(page.locator('#validationFeedback')).toBeVisible();
+    await expect(reason).toBeFocused();
+    expect((await remote(page, id)).data.air_movers).toBe(3);
+    // Going back to the measured value leaves nothing to explain, so the prompt goes too.
+    await page.locator('#airMovers').fill('3');
+    await expect(page.locator('#validationFeedback')).toBeHidden();
+    await page.locator('#airMovers').fill('5');
+    await saveDraft(page);
+    await expect(page.locator('#validationFeedback')).toBeVisible();
+    await reason.fill('Two more fans for the hall');
+    await expect(page.locator('#validationFeedback')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await saveDraft(page);
+    await expect(message).toContainText('Draft saved privately');
+    expect((await remote(page, id)).data.air_movers).toBe(5);
+  });
+
   test('undoing a walkthrough value asks for no reason', async ({ page, request }) => {
     await publish(request);
     await open(page);

@@ -490,6 +490,7 @@
       input.setCustomValidity(
         open && !reasonOk(input.value) ? 'Enter a short reason (at least 3 characters).' : '',
       );
+      if (input === validationControl && input.validity.valid) clearValidationFeedback();
     }
   }
   // Called from changed(): keep data.quantity_overrides in step with what is on screen.

@@ -5646,6 +5646,14 @@ async function initialize() {
     collect();
     await syncDraft();
     if (state.conflict) throw Error('Choose a recovery action before cloud saving.');
+    if (window.ScopeItems?.missingReason(state.draft.data)) {
+      showTask('property', false);
+      const box = $('inspectionForm').querySelector('[data-override-reason]:invalid');
+      if (box) showValidationFeedback(box);
+      throw Error(
+        'Saved on this phone only. Give the reason for the changed walkthrough value to save it to the cloud.',
+      );
+    }
     say(navigator.onLine ? 'Draft saved privately.' : 'Draft saved on this device.', 'success');
   });
   click('finishAudit', () =>
