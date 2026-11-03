@@ -2783,7 +2783,7 @@ async function openNew(data = null, photos = []) {
     }));
     state.draft.data.scope_confirmed = false;
   }
-  window.ScopeItems?.seed(state.draft.inspection_id, null);
+  window.ScopeItems?.seedNew(state.draft.inspection_id);
   confirmedAuthorization = null;
   $('retrySavedEvidence').hidden = true;
   $('signedEvidenceStatus').textContent = '';

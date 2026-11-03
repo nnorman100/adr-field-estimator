@@ -268,10 +268,25 @@ test('only an untouched office-created job is given the table defaults', () => {
   assert.equal(ScopeItems.untouched({ ...sheet, scope_items: {} }), false);
   // A count the walkthrough filled is never overwritten by a default.
   assert.equal(ScopeItems.untouched({ ...sheet, air_movers: 3 }), false);
-  // A job begun before the phone had a table starts at zero charges.
+  // Every quantity a default would overwrite counts as work once it is entered.
+  for (const key of [
+    'labor_hours',
+    'matterport_scans',
+    'dump_truck_loads',
+    'equipment_decon',
+    'power_distribution',
+    'air_movers',
+    'dehumidifiers',
+    'wood_floor_systems',
+  ]) {
+    assert.equal(ScopeItems.untouched({ ...sheet, [key]: 2 }), false, key);
+    assert.equal(ScopeItems.untouched({ ...core.emptyData({ v2: true }), [key]: 2 }, true), false);
+  }
+  // Zero charges are a starting point only for a job begun before the phone had a table.
   const zero = core.emptyData({ v2: true });
-  assert.equal(ScopeItems.untouched(zero), true);
-  assert.equal(ScopeItems.untouched({ ...zero, haul_loads: 1 }), false, 'neither start');
+  assert.equal(ScopeItems.untouched(zero, true), true);
+  assert.equal(ScopeItems.untouched(zero), false, 'otherwise the zeros were chosen');
+  assert.equal(ScopeItems.untouched({ ...zero, haul_loads: 1 }, true), false, 'neither start');
 });
 
 test('an override keeps its entered value current and a reason only while the value differs', () => {

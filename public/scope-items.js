@@ -76,6 +76,18 @@
     hepa_filters: 1,
   };
 
+  // Quantities a job starts at zero in every form, so a value here was entered.
+  const ENTERED_ONLY_FIELDS = [
+    'labor_hours',
+    'matterport_scans',
+    'dump_truck_loads',
+    'equipment_decon',
+    'power_distribution',
+    'air_movers',
+    'dehumidifiers',
+    'wood_floor_systems',
+  ];
+
   // ---- pure helpers (also used by the node tests) ------------------------------------------
   function parseSource(text) {
     if (typeof text !== 'string') return null;
@@ -190,19 +202,16 @@
     return data;
   }
   // A job still at its starting quantities: the server's sheet charges (office staff created it, or
-  // it began on the v1 form) or zeros (it began before the phone had the table).
-  function untouched(data) {
+  // it began on the v1 form), or zeros when it began before the phone had a table. Zeros on any other
+  // job are the technician's own.
+  function untouched(data, beganWithoutTable = false) {
     const charges = Object.entries(SHEET_CHARGES);
     return (
       !data.scope_confirmed &&
       !data.scope_items &&
-      !(data.labor_hours > 0) &&
-      !(data.matterport_scans > 0) &&
-      !(data.air_movers > 0) &&
-      !(data.dehumidifiers > 0) &&
-      !(data.wood_floor_systems > 0) &&
+      ENTERED_ONLY_FIELDS.every((key) => !(data[key] > 0)) &&
       (charges.every(([key, value]) => Number(data[key]) === value) ||
-        charges.every(([key]) => Number(data[key]) === 0))
+        (beganWithoutTable && charges.every(([key]) => Number(data[key]) === 0)))
     );
   }
   // Quantities saved for items the current table does not list as typed items.
@@ -322,7 +331,7 @@
   const dom = () =>
     typeof document !== 'undefined' && typeof document.getElementById === 'function';
   let company = null; // the company's current table, cached on the phone
-  const jobs = new Map(); // inspection id -> { pricing }
+  const jobs = new Map(); // inspection id -> { pricing, beganWithoutTable }
   let rendered = null; // the form and table the screen was last built for
   const homes = new Map(); // moved element -> { parent, text }
   const snapshots = new Map(); // parent element -> its children in the original order
@@ -365,7 +374,10 @@
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   function seed(id, row) {
-    jobs.set(id, { pricing: row?.pricing || null });
+    jobs.set(id, { pricing: row?.pricing || null, beganWithoutTable: !!row && !row.pricing });
+  }
+  function seedNew(id) {
+    jobs.set(id, { pricing: null, beganWithoutTable: !companyView() });
   }
   function forget() {
     jobs.clear();
@@ -823,19 +835,24 @@
   function prepare() {
     const id = draftId();
     if (!dom() || !id || !active() || !table() || !canEdit()) return;
-    if (state.record?.revision === 1 && untouched(state.draft.data)) {
-      applyDefaults(state.draft.data, table());
-      changed(false);
-    }
+    if ((state.record?.revision ?? 1) === 1) takeDefaults();
+  }
+  // Once only: after a job has been offered the table's defaults, its zeros are the technician's own.
+  function takeDefaults() {
+    const mine = job(draftId()),
+      data = state.draft.data,
+      beganWithoutTable = mine.beganWithoutTable;
+    mine.beganWithoutTable = false;
+    if (!untouched(data, beganWithoutTable)) return false;
+    applyDefaults(data, table());
+    changed(false);
+    return true;
   }
   // What the screen should show has changed. A job that was on the v1 form or had no table, and is
   // still at its starting quantities, takes the table's defaults now.
   function settle() {
-    const noTableBefore = rendered === 'v1' || rendered === 'v2:',
-      data = state.draft.data;
-    if (noTableBefore && active() && table() && canEdit() && untouched(data)) {
-      applyDefaults(data, table());
-      changed(false);
+    const noTableBefore = rendered === 'v1' || rendered === 'v2:';
+    if (noTableBefore && active() && table() && canEdit() && takeDefaults()) {
       fillForm();
       return;
     }
@@ -905,6 +922,7 @@
     readinessPricing,
     rowExtras,
     seed,
+    seedNew,
     forget,
     prepare,
     refresh,

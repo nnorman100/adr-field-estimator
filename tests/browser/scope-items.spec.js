@@ -307,6 +307,51 @@ test.describe('without a service worker', () => {
     expect(await page.evaluate(() => state.draft.data.hepa_filters)).toBe(0);
   });
 
+  test('reopening a first-revision job keeps what the technician entered', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const reopened = (changes, row) =>
+      page.evaluate(
+        ({ changes, row }) => {
+          const data = state.draft.data;
+          delete data.scope_items;
+          Object.assign(data, changes);
+          state.record.revision = 1;
+          if (row) ScopeItems.seed(state.draft.inspection_id, row);
+          ScopeItems.prepare();
+          return { emergency: data.emergency_calls, dump: data.dump_truck_loads };
+        },
+        { changes, row },
+      );
+    const zeros = {
+      emergency_calls: 0,
+      monitoring_hours: 0,
+      haul_loads: 0,
+      air_scrubbers: 0,
+      hepa_filters: 0,
+    };
+    // A quantity entered on a job otherwise at the start.
+    expect(await reopened({ ...zeros, dump_truck_loads: 2 })).toEqual({ emergency: 0, dump: 2 });
+    // A deliberate zero on a job that has had its table.
+    expect(await reopened({ ...zeros, dump_truck_loads: 0 })).toEqual({ emergency: 0, dump: 0 });
+    // The same zeros on a phone that never had a table are where the job began, and only once.
+    expect(await reopened(zeros, {})).toEqual({ emergency: 2, dump: 0 });
+    expect(await reopened(zeros)).toEqual({ emergency: 0, dump: 0 });
+    // Reopened before its first save, such a job has no revision yet and still starts from the table.
+    const neverSaved = await page.evaluate((changes) => {
+      const data = state.draft.data;
+      Object.assign(data, changes);
+      state.record = null;
+      ScopeItems.seed(state.draft.inspection_id, {});
+      ScopeItems.prepare();
+      return data.emergency_calls;
+    }, zeros);
+    expect(neverSaved).toBe(2);
+  });
+
   test('a job carrying overrides keeps them current on the v1 form after a rollback', async ({
     page,
     request,
