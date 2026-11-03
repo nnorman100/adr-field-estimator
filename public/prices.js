@@ -572,6 +572,20 @@
     'count_days:wood_floor_systems*wood_floor_days',
     'after_hours',
   ];
+  const ITEM_FIELD_LABELS = {
+    name: 'name',
+    customer_description: 'description on documents',
+    code: 'claim code',
+    group: 'group',
+    unit: 'unit',
+    quantity_source: 'quantity',
+    default_quantity: 'starting quantity',
+    waste_percent: 'waste',
+    categories: 'water categories',
+    taxable: 'taxable',
+    allow_zero: 'zero price allowed',
+    xactimate_code: 'Xactimate code',
+  };
   const POLICY_LABELS = {
     estimate_mode: 'Estimate style',
     area_basis: 'Area basis',
@@ -864,9 +878,10 @@
         editStatus(conflict ? error.message : 'Not saved: ' + error.message, 'error');
         const reload = $('priceReload');
         if (conflict && reload) reload.hidden = false;
-        const editor = $('priceEditor');
-        if (conflict && editor)
-          for (const control of editor.querySelectorAll('input,select,textarea,button')) {
+        if (conflict)
+          for (const control of document.querySelectorAll(
+            '#priceEditor input,#priceEditor select,#priceEditor button,#priceUnpublished button',
+          )) {
             control.dataset.locked = 'true';
             control.disabled = true;
           }
@@ -1407,7 +1422,7 @@
         ?.after(
           node(
             'p',
-            'Publishing this replaces your unpublished changes. They will be lost.',
+            'Publishing this replaces your unpublished changes, settings included. They will be lost.',
             'price-warning',
           ),
         );
@@ -1424,21 +1439,40 @@
         (row.after ? ' at $' + row.after : '')
       );
     if (row.change === 'removed') return 'Removed ' + row.name;
-    const named = row.name + ' (' + unitLabel(row.unit) + ')',
-      amounts =
-        (row.before ? '$' + row.before : 'no price') +
-        ' to ' +
-        (row.after ? '$' + row.after : 'no price') +
-        (row.percent ? ' (' + (Number(row.percent) > 0 ? '+' : '') + row.percent + '%)' : '');
-    if (row.change === 'price') return named + ': ' + amounts;
-    if (row.change === 'enabled')
+    return (
+      row.name +
+      ' (' +
+      unitLabel(row.unit) +
+      '): ' +
+      row.fields.map((change) => itemChange(change, row.percent)).join(', ')
+    );
+  }
+  function itemChange({ field, before, after }, percent) {
+    if (field === 'enabled') return 'switched ' + (after ? 'on' : 'off');
+    if (field === 'sort_order') return 'moved on the list';
+    if (field === 'unit_price')
       return (
-        named +
-        ': switched ' +
-        (row.warnings?.includes('disabled_items') ? 'off' : 'on') +
-        (row.before !== row.after ? ', ' + amounts : '')
+        (before ? '$' + before : 'no price') +
+        ' to ' +
+        (after ? '$' + after : 'no price') +
+        (percent ? ' (' + (Number(percent) > 0 ? '+' : '') + percent + '%)' : '')
       );
-    return row.name + ': details changed';
+    return (
+      ITEM_FIELD_LABELS[field] +
+      ' ' +
+      itemFieldValue(field, before) +
+      ' -> ' +
+      itemFieldValue(field, after)
+    );
+  }
+  function itemFieldValue(field, value) {
+    if (typeof value === 'boolean') return value ? 'yes' : 'no';
+    if (field === 'unit') return unitLabel(value);
+    if (field === 'group') return groupLabel(value);
+    if (field === 'quantity_source') return sourceLabel(value);
+    if (field === 'waste_percent') return value + '%';
+    if (field === 'categories') return value.length ? value.join(' and ') : 'all';
+    return value === '' ? 'none' : String(value);
   }
   function policyValue(field, value) {
     if (typeof value === 'boolean') return value ? 'on' : 'off';
@@ -1524,14 +1558,13 @@
     // A save still waiting on its timer must not bring the copy back after the discard.
     clearTimeout(ed.saveTimer);
     clearTimeout(ed.sampleTimer);
-    const mine = ed,
-      conflicted = mine.stale;
+    const mine = ed;
     mine.stale = true;
     await mine.chain.catch(() => {});
     try {
       await jsonApi(mine.base + '/working-copy/discard', 'POST');
     } catch (error) {
-      mine.stale = conflicted;
+      mine.stale = false;
       saveCopy(mine).catch(saveLost);
       throw error;
     }

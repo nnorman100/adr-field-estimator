@@ -1981,6 +1981,31 @@ def test_import_replaces_items_and_keeps_policy(api, enabled):
     assert price_table.starter_table()['items'][0]['item_id'] == view['items'][0]['item_id']
 
 
+def test_import_that_raises_a_waste_shows_it_in_the_review(api, enabled):
+    from backend import price_book_import
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'), 'Head before the waste change')
+    company, base_version, generation, exported = db.workspaces.prices.export_rows('owner', 'adr')
+    changed = deepcopy(exported)
+    changed[0]['waste_percent'] = '50'
+    raw = price_book_import.export_csv(company, base_version, generation, changed)
+
+    preview = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=_import_body(raw, 'xBOUNDARYx', change_reason='Waste from the file'),
+        headers={'Content-Type': 'multipart/form-data; boundary=xBOUNDARYx'},
+    )
+    assert preview.status_code == 200, preview.text
+    row = preview.json()['diff']['items'][0]
+    assert row['item_id'] == changed[0]['item_id']
+    assert row['change'] == 'fields'
+    assert [field['field'] for field in row['fields']] == ['waste_percent']
+    assert row['fields'][0]['before'] == exported[0]['waste_percent']
+    assert Decimal(row['fields'][0]['after']) == 50
+
+
 def test_calculate_is_stateless_and_quota_limited(api, enabled):
     client, current, db = api
     table = _v2_table('30.00')

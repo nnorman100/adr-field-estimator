@@ -746,6 +746,8 @@ test('a save conflict locks the editor and keeps saying so', async ({ page, brow
   await expect(price).toBeDisabled();
   await expect(page.locator('input[name=policy_minimum_job_charge]')).toBeDisabled();
   await expect(status).toContainText('another device');
+  await expect(page.getByRole('button', { name: 'Discard changes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Reload prices' }).click();
   await expect(price).toBeEnabled();
   await expect(price).toHaveValue('12.00');
@@ -882,4 +884,36 @@ test.describe('leaving the page during a slow review', () => {
         .click();
     });
   });
+});
+
+test('an import that raises a waste shows it in the review', async ({ page, request }) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  await navigate(page, 'dashboardPrices');
+  await priceEverything(page);
+  await publishTable(page);
+  const template = await page.evaluate(async () => {
+    const base = '/api/companies/' + state.session.company_id + '/prices';
+    return (await api(base + '/export?format=csv')).text();
+  });
+  const [header, ...body] = csvRows(template.replace(/^\ufeff/, '')),
+    row = body.find((line) => line[header.indexOf('item_id')] === 'air_mover');
+  row[header.indexOf('waste_percent')] = '50';
+  await page.locator('#priceImportFile').setInputFiles({
+    name: 'prices.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csvText([header, ...body]) + '\n'),
+  });
+  await page.locator('#priceImportReason').fill('Waste from the spreadsheet');
+  await page.getByRole('button', { name: 'Import prices' }).click();
+  await expect(page.locator('#priceReview')).toContainText(
+    /Air mover.*waste 0(\.00)?% -> 50(\.00)?%/,
+  );
 });

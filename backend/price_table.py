@@ -1263,6 +1263,25 @@ def _nested_get(mapping: dict, path: tuple[str, ...]):
     return cur
 
 
+_DIFF_ITEM_FIELDS = (
+    'enabled',
+    'unit_price',
+    'name',
+    'customer_description',
+    'code',
+    'group',
+    'unit',
+    'quantity_source',
+    'default_quantity',
+    'waste_percent',
+    'categories',
+    'taxable',
+    'allow_zero',
+    'xactimate_code',
+    'sort_order',
+)
+
+
 def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
     """Compute item and policy changes plus warning codes between two v2 tables."""
     after_norm = normalize_table(after, publish=False)
@@ -1360,6 +1379,11 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
                 'after': after_it['unit_price'],
                 'percent': percent,
                 'warnings': row_warnings,
+                'fields': [
+                    {'field': key, 'before': before_it[key], 'after': after_it[key]}
+                    for key in _DIFF_ITEM_FIELDS
+                    if before_it[key] != after_it[key]
+                ],
             }
         )
 
@@ -1412,5 +1436,14 @@ def public_diff(before: dict | None, after: dict) -> tuple[dict, list[str]]:
         }
 
     diff, warnings = diff_tables(enabled(before) if before else None, enabled(after))
-    rows = [row for row in diff['items'] if row['change'] != 'removed']
+    rows = []
+    for row in diff['items']:
+        if row['change'] == 'removed':
+            continue
+        if 'fields' in row:
+            shown = [field for field in row['fields'] if field['field'] in _PUBLIC_ITEM_KEYS]
+            if not shown:
+                continue
+            row = {**row, 'fields': shown}
+        rows.append(row)
     return {**diff, 'items': rows}, [code for code in warnings if code != 'disabled_items']

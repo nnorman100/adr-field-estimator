@@ -342,35 +342,27 @@ test('a unit always agrees with where the quantity comes from', () => {
 });
 
 test('the review says which way an item was switched and any price that moved with it', () => {
-  const row = {
-    name: 'Service call',
-    unit: 'each',
-    change: 'enabled',
-    before: '20.00',
-    after: '200.00',
-    percent: '900.0',
-    warnings: [],
-  };
+  const on = { field: 'enabled', before: false, after: true },
+    off = { field: 'enabled', before: true, after: false },
+    row = { name: 'Service call', unit: 'each', change: 'enabled', percent: '900.0' };
   assert.equal(
-    Prices.diffText(row),
+    Prices.diffText({
+      ...row,
+      fields: [on, { field: 'unit_price', before: '20.00', after: '200.00' }],
+    }),
     'Service call (each): switched on, $20.00 to $200.00 (+900.0%)',
-  );
-  assert.equal(
-    Prices.diffText({ ...row, before: '', percent: null }),
-    'Service call (each): switched on, no price to $200.00',
   );
   assert.equal(
     Prices.diffText({
       ...row,
-      before: '200.00',
       percent: null,
-      warnings: ['disabled_items'],
+      fields: [on, { field: 'unit_price', before: '', after: '200.00' }],
     }),
-    'Service call (each): switched off',
+    'Service call (each): switched on, no price to $200.00',
   );
   assert.equal(
-    Prices.diffText({ ...row, change: 'fields', before: '5.00', after: '5.00' }),
-    'Service call: details changed',
+    Prices.diffText({ ...row, percent: null, fields: [off] }),
+    'Service call (each): switched off',
   );
 });
 
@@ -396,4 +388,43 @@ test('a move still works when imported items share a sort order', () => {
   Prices.moveItem(items, 'b', -1);
   const shown = Array.from(Prices.groupOrder(items)[0].rows, (row) => row.item_id);
   assert.deepEqual(shown, ['b', 'a', 'c']);
+});
+
+test('the review names each changed detail of an item with its before and after', () => {
+  const row = (...fields) => ({
+    name: 'Air mover',
+    unit: 'unit_day',
+    change: 'fields',
+    percent: null,
+    fields: fields.map(([field, before, after]) => ({ field, before, after })),
+  });
+  const shown = (...field) => Prices.diffText(row(field));
+  assert.equal(shown('waste_percent', '0', '50'), 'Air mover (unit per day): waste 0% -> 50%');
+  assert.equal(
+    shown('default_quantity', '0', '2'),
+    'Air mover (unit per day): starting quantity 0 -> 2',
+  );
+  assert.equal(
+    shown('unit', 'each', 'unit_day'),
+    'Air mover (unit per day): unit each -> unit per day',
+  );
+  assert.equal(
+    shown('quantity_source', 'typed', 'after_hours'),
+    'Air mover (unit per day): quantity Quantity typed on the job -> One when the job is after hours',
+  );
+  assert.equal(
+    shown('categories', [], [1, 2]),
+    'Air mover (unit per day): water categories all -> 1 and 2',
+  );
+  assert.equal(shown('taxable', false, true), 'Air mover (unit per day): taxable no -> yes');
+  assert.equal(shown('code', 'AM', 'AM-2'), 'Air mover (unit per day): claim code AM -> AM-2');
+  assert.equal(
+    shown('xactimate_code', '', 'WTR'),
+    'Air mover (unit per day): Xactimate code none -> WTR',
+  );
+  assert.equal(shown('sort_order', 1, 2), 'Air mover (unit per day): moved on the list');
+  assert.equal(
+    Prices.diffText(row(['unit_price', '10.00', '12.00'], ['waste_percent', '0', '5'])),
+    'Air mover (unit per day): $10.00 to $12.00, waste 0% -> 5%',
+  );
 });
