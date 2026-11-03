@@ -116,8 +116,7 @@
     const license = identity.license ? 'CSLB #' + identity.license : '';
     const estimator = [identity.signoff, license].filter(Boolean).join(' · ');
     const p = docs.adr_estimate,
-      estimate = docs.estimate,
-      summary = estimate?.low.subtotal == null ? null : estimate;
+      estimate = docs.estimate;
     $('estimateHeading').textContent = estimateHeading(p.estimate_mode);
     $('estimateRange').textContent = estimateLabel(p);
     $('itemizedHeading').textContent = estimate ? 'Itemized total' : 'Itemized scope total';
@@ -135,11 +134,12 @@
       ...claim,
     ]);
     body.append(node('p', estimateHeading(p.estimate_mode) + ': ' + estimateLabel(p), 'money'));
-    if (summary) {
+    if (estimate) {
       // Price-table documents show how the amount adds up; the explanation follows it.
-      body.append(summaryTable(summary), node('p', summary.explanation));
-      if (summary.show_line_breakdown)
-        body.append(lineBreakdown(summary.lines || docs.xactimate_scope || []));
+      body.append(summaryTable(estimate));
+      if (estimate.explanation) body.append(node('p', estimate.explanation));
+      if (estimate.show_line_breakdown)
+        body.append(lineBreakdown(estimate.lines || docs.xactimate_scope || []));
     } else body.append(node('p', 'Itemized scope total: ' + money(docs.xactimate_total)));
     const priced = pricedFrom(docs.price_basis);
     if (priced) body.append(node('p', priced));
@@ -224,7 +224,7 @@
       $('claimCards').append(card);
     }
     $('claimAdjustments').className = 'claim-summary';
-    $('claimAdjustments').replaceChildren(...(summary ? claimAdjustmentLines(summary) : []));
+    $('claimAdjustments').replaceChildren(...(estimate ? claimAdjustmentLines(estimate) : []));
     $('claimTotal').textContent = 'Itemized claim total: ' + money(docs.xactimate_total);
     $('defenseBody').textContent = docs.iicrc_defense_letter || '';
     $('photoParty').replaceChildren();

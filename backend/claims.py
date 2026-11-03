@@ -267,12 +267,7 @@ V2_LINE_KEYS = (
     'unit_price',
     'waste_percent',
     'total',
-    'item_id',
-    'group',
-    'bucket',
-    'taxable',
     'xactimate_code',
-    'room',
 )
 
 
@@ -336,7 +331,7 @@ def v2_estimate(priced, policy):
         after_hours_percent=percent_text((multiplier - 1) * 100),
         overhead_profit_percent=percent_text(policy['overhead_profit_percent']),
         sales_tax_percent=percent_text(tax['percent']) if tax['enabled'] else '0',
-        explanation=totals['explanation'],
+        explanation=totals['range_explanation'] if mode == 'range' else totals['explanation'],
         show_line_breakdown=bool(policy['show_line_breakdown']),
     )
 
@@ -471,8 +466,11 @@ def estimate_sentence(estimate, total, low, high, items):
             )
         )
     if estimate['mode'] == 'single':
-        return f'Itemized total: ${total:,.2f}. Price: ${low:,.2f}. {estimate["explanation"]}'
-    return f'Itemized total: ${total:,.2f}. Customer estimate range: ${low:,.2f} to ${high:,.2f}. {estimate["explanation"]}'
+        return f'Itemized total: ${total:,.2f}.'
+    sentence = (
+        f'Itemized total: ${total:,.2f}. Customer estimate range: ${low:,.2f} to ${high:,.2f}.'
+    )
+    return f'{sentence} {estimate["explanation"]}' if estimate['explanation'] else sentence
 
 
 def make_documents(
@@ -521,11 +519,11 @@ def make_documents(
             from pricing import price_and_range
         priced = price_and_range(data, pin)
         estimate = v2_estimate(priced, pin['policy'])
-        items = [{key: line[key] for key in V2_LINE_KEYS if key in line} for line in priced.lines]
+        items = [dict(line) for line in priced.lines]
         total = estimate['low']['total']
         estimate_low = Decimal(str(total))
         estimate_high = Decimal(str(estimate['high']['total'])) if estimate['high'] else None
-        extra_codes = ('EXTRA',)
+        extra_lines = [item for item in items if item['group'] == 'extras']
     elif dict(price_basis or {}).get('calculation_version') == V2:
         raise ValueError('The saved price table is required to build these documents.')
     else:
@@ -533,13 +531,13 @@ def make_documents(
         calculation_version = (price_basis or {}).get('calculation_version', CALCULATION_VERSION)
         items, total = price_scope(data, rates, calculation_version)
         estimate_low, estimate_high = proposal_range(data, items, calculation_version)
-        extra_codes = ('ADR-EXTRA',)
+        extra_lines = [item for item in items if item['code'] == 'ADR-EXTRA']
         if total <= 0:
             raise ValueError(
                 'The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.'
             )
     approved = [extra for extra in data.extras if extra.approval]
-    for item, extra in zip((i for i in items if i['code'] in extra_codes), approved):
+    for item, extra in zip(extra_lines, approved):
         item['description'] = wording(extra, clause_company)
     covered = {extra.description for extra in approved}
     unpriced = [text for text in ai.unpriced_work if plain(text) not in covered]
@@ -643,7 +641,9 @@ def make_documents(
             recommendations=recommendations,
             disclaimers=[PHOTO_LOCATION_PRIVACY, ADDRESS_LOCATION_PRIVACY] + clauses,
         ),
-        xactimate_scope=items,
+        xactimate_scope=[{key: item[key] for key in V2_LINE_KEYS if key in item} for item in items]
+        if estimate
+        else items,
         xactimate_total=total,
         iicrc_defense_letter=letter,
         compliance_notes=[age] + clauses,

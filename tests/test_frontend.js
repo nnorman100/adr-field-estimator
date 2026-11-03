@@ -1271,17 +1271,35 @@ console.log(
   assert.match(flat(homeownerLink.els.proposalBody), /FAN work · 2 each · \$20\.00/);
   assert.equal(homeownerLink.els.claimItems.children.length, 0);
 
-  // An adjuster's link holds only the totals and an emptied proposal: nothing prints from them.
+  // An adjuster's link holds the low end's amounts and an emptied proposal: its claim adds up.
   const adjusterLink = page();
   adjusterLink.render({
     ...documents('range'),
     adr_estimate: { property_address: '12 Test Lane' },
-    estimate: { mode: 'range', low: { total: 8489.8 }, high: { total: 11896 } },
+    estimate: {
+      low: end(8489.8, { after_hours: 1030, overhead_profit: 767, tax: 52.8 }),
+      after_hours_label: 'Night work',
+      after_hours_percent: '20',
+      overhead_profit_percent: '10',
+      sales_tax_percent: '8',
+    },
   });
-  assert.equal(adjusterLink.els.claimAdjustments.children.length, 0);
+  assert.equal(
+    flat(adjusterLink.els.claimAdjustments),
+    'Subtotal of itemized work: $6,640.00 | Night work (20%): $1,030.00 | Overhead and profit (10%): $767.00 | Sales tax (8%): $52.80',
+  );
   assert.equal(adjusterLink.els.claimTotal.textContent, 'Itemized claim total: $8,489.80');
   assert.doesNotMatch(flat(adjusterLink.els.proposalBody), /undefined/);
-  assert.doesNotMatch(flat(adjusterLink.els.proposalBody), /Subtotal of itemized work/);
+
+  // No cushion sentence in range mode when the first tier is 0%: nothing prints in its place.
+  const noCushion = page();
+  const zeroTier = documents('range');
+  delete zeroTier.estimate.explanation;
+  noCushion.render(zeroTier);
+  assert.match(
+    flat(noCushion.els.proposalBody),
+    /Total \| \$8,489\.80 \| \$11,896\.00 \| Priced from/,
+  );
 
   const minimum = page();
   const floor = documents('range');

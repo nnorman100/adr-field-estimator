@@ -786,6 +786,7 @@ D_HIGH = dict(
     tax=60.00,
     total=11896.00,
 )
+D_RANGE_SENTENCE = 'The high end allows 50% extra on the first 1,000 sq ft of work and 20% beyond, for hidden damage.'
 D_EXPLANATION = (
     'The low amount is the itemized total. The high amount adds an allowance to labor and materials '
     'for conditions found during the work: 50% on the first 1000 square feet of area-priced work '
@@ -820,6 +821,7 @@ def d_totals(mode='range', **more):
         explanation=D_EXPLANATION
         if mode == 'range'
         else 'The price covers the itemized scope below.',
+        range_explanation=D_RANGE_SENTENCE if mode == 'range' else None,
     )
     totals.update(more)
     return totals
@@ -877,10 +879,10 @@ def test_v2_documents_range_mode_print_summary_lines_and_explanation(monkeypatch
     ) == ('After-hours adjustment', '20', '10', '8')
     for unused in ('labor_material_low', 'labor_material_high', 'minimum_job_charge', 'range_rule'):
         assert unused not in estimate
-    assert estimate['explanation'] == D_EXPLANATION
+    assert estimate['explanation'] == D_RANGE_SENTENCE
     assert (
         'Itemized total: $8,489.80. Customer estimate range: $8,489.80 to $11,896.00. '
-        + D_EXPLANATION
+        + D_RANGE_SENTENCE
         in docs['iicrc_defense_letter']
     )
     assert 'estimating sheet' not in docs['iicrc_defense_letter']
@@ -893,10 +895,8 @@ def test_v2_documents_single_mode_omit_the_low(monkeypatch):
     assert docs['adr_estimate']['estimate_mode'] == 'single'
     assert 'high' not in docs['estimate'] and docs['estimate']['mode'] == 'single'
     assert docs['xactimate_total'] == 8489.80
-    assert (
-        'Itemized total: $8,489.80. Price: $8,489.80. The price covers the itemized scope below.'
-        in docs['iicrc_defense_letter']
-    )
+    assert docs['estimate']['explanation'] == 'The price covers the itemized scope below.'
+    assert 'Itemized total: $8,489.80.\n\nSincerely,' in docs['iicrc_defense_letter']
     assert 'Customer estimate range' not in docs['iicrc_defense_letter']
 
 
@@ -943,19 +943,15 @@ def test_line_breakdown_flag_and_xactimate_codes_flow_to_documents(monkeypatch):
     docs = v2_documents(monkeypatch, policy=dict(D_POLICY, show_line_breakdown=True))
     assert docs['estimate']['show_line_breakdown'] is True
     assert v2_documents(monkeypatch)['estimate']['show_line_breakdown'] is False
-    demo = next(line for line in docs['xactimate_scope'] if line['item_id'] == 'demo_cat3_wall')
-    assert demo['xactimate_code'] == 'WTR DMO' and demo['room'] == 'Kitchen'
-    assert (demo['group'], demo['bucket'], demo['taxable']) == (
-        'demolition',
-        'labor_material',
-        False,
-    )
+    demo = next(line for line in docs['xactimate_scope'] if line['code'] == 'DEMO3W')
+    assert demo['xactimate_code'] == 'WTR DMO'
     antimicrobial = next(
-        line for line in docs['xactimate_scope'] if line['item_id'] == 'antimicrobial'
+        line for line in docs['xactimate_scope'] if 'Antimicrobial' in line['description']
     )
-    assert antimicrobial['taxable'] is True and 'xactimate_code' not in antimicrobial
-    # The engine's working key for the cushion never reaches a stored document.
-    assert all('area' not in line for line in docs['xactimate_scope'])
+    assert 'xactimate_code' not in antimicrobial
+    # The engine's working keys never reach a stored document, a link or a scope export.
+    for line in docs['xactimate_scope']:
+        assert not {'item_id', 'group', 'bucket', 'taxable', 'room', 'area'} & set(line)
     # Job charges are priced and itemized but are not scope the customer reads as work to perform.
     assert 'Emergency service call' in [line['description'] for line in docs['xactimate_scope']]
     assert 'Emergency service call' not in docs['adr_estimate']['recommendations']
@@ -1086,17 +1082,25 @@ def test_homeowner_link_carries_the_printed_lines_only_when_the_breakdown_is_on(
 
 
 @pytest.mark.parametrize('mode', ['range', 'single'])
-def test_adjuster_link_carries_only_the_estimate_totals(monkeypatch, mode):
+def test_adjuster_link_carries_the_amounts_that_add_up_to_its_claim(monkeypatch, mode):
     docs = v2_documents(
         monkeypatch,
         totals=d_totals(mode),
         policy=dict(D_POLICY, show_line_breakdown=True),
     )
     delivered = document_links.delivered_documents(docs, document_links.SETS['adjuster'])
-    expected = dict(mode=mode, low=dict(total=8489.80))
-    if mode == 'range':
-        expected['high'] = dict(total=11896.00)
-    assert delivered['estimate'] == expected
+    assert delivered['estimate'] == dict(
+        low=D_LOW,
+        after_hours_label='After-hours adjustment',
+        after_hours_percent='20',
+        overhead_profit_percent='10',
+        sales_tax_percent='8',
+    )
+    low = delivered['estimate']['low']
+    assert low['total'] == delivered['xactimate_total']
+    parts = ('subtotal', 'after_hours', 'minimum_charge', 'overhead_profit', 'tax')
+    assert sum(low[part] for part in parts) == pytest.approx(low['total'])
+    assert delivered['adr_estimate'].keys() <= {'customer_name', 'property_address', 'date'}
     assert delivered['xactimate_scope'] == docs['xactimate_scope']
 
 
@@ -1152,6 +1156,53 @@ def test_quantity_overrides_become_an_estimator_only_note(monkeypatch):
     delivered = document_links.delivered_documents(docs, ('proposal', 'photos'))
     assert 'quantity_notes' not in delivered
     assert 'quantity_notes' not in v2_documents(monkeypatch)
+
+
+def test_first_tier_of_zero_prints_no_cushion_sentence(monkeypatch):
+    docs = v2_documents(monkeypatch, totals=d_totals(range_explanation=None))
+    assert 'explanation' not in docs['estimate']
+    assert '0% on the first' not in docs['iicrc_defense_letter']
+    assert (
+        'Customer estimate range: $8,489.80 to $11,896.00.\n\nSincerely,'
+        in docs['iicrc_defense_letter']
+    )
+
+
+def test_extra_wording_skips_a_catalog_line_the_owner_coded_extra(monkeypatch):
+    extra = dict(
+        id='e' * 32,
+        description='Move and reset toilet',
+        hours='2.5',
+        origin='manual',
+        unpriced_item='Move and reset toilet',
+        approval=dict(
+            accepted_by_uid='owner',
+            accepted_by_name='Test Owner',
+            accepted_at='2026-10-25T12:00:00Z',
+            rate='50',
+            total='125.00',
+            company_id='c1',
+            company_version=1,
+        ),
+    )
+    lines = [
+        d_line(
+            'EXTRA', 'supervisor_labor', 'labor', 'labor_material', 'Supervisor', 1, 'hour', 80, 80
+        ),
+        d_line('EXTRA', None, 'extras', 'fixed', 'Move and reset toilet', 2.5, 'hour', 50, 125),
+    ]
+    data = InspectionData.model_validate(
+        dict(
+            address='Synthetic',
+            year_built=1960,
+            rooms=[{'name': 'Kitchen', 'category': 3, 'finished_sf': 300}],
+            scope_confirmed=True,
+            extras=[extra],
+        )
+    )
+    catalog, approved = v2_documents(monkeypatch, lines=lines, data=data)['xactimate_scope']
+    assert catalog['description'] == 'Supervisor'
+    assert approved['description'].startswith('Additional work, not in Test Co price sheet:')
 
 
 def test_extra_wording_replaces_the_description_on_v2_extra_lines(monkeypatch):

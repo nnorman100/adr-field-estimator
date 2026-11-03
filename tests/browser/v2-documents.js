@@ -43,26 +43,11 @@ function v2Documents(documents, mode = 'range', { breakdown = false } = {}) {
     xactimate_total: LOW.total,
     price_basis: { ...documents.price_basis, sequence: 4, calculation_version: 'dryscope-v2' },
     xactimate_scope: [
-      line('SVC', 'Emergency service call', 1, 'each', 150, 150, {
-        item_id: 'service_call',
-        group: 'job_charges',
-        bucket: 'fixed',
-        taxable: false,
-      }),
+      line('SVC', 'Emergency service call', 1, 'each', 150, 150, {}),
       line('DEMO3W', 'Kitchen: Category 3 or mold drywall and trim removal', 300, 'sf', 16, 4800, {
-        item_id: 'demo_cat3_wall',
-        group: 'demolition',
-        bucket: 'labor_material',
-        taxable: false,
         xactimate_code: 'WTR DMO',
-        room: 'Kitchen',
       }),
-      line('FAN', 'Air mover', 6, 'unit_day', 30, 180, {
-        item_id: 'air_mover',
-        group: 'drying_equipment',
-        bucket: 'equipment',
-        taxable: true,
-      }),
+      line('FAN', 'Air mover', 6, 'unit_day', 30, 180, {}),
     ],
     estimate: {
       calculation_version: 'dryscope-v2',
@@ -74,7 +59,7 @@ function v2Documents(documents, mode = 'range', { breakdown = false } = {}) {
       overhead_profit_percent: '10',
       sales_tax_percent: '8',
       explanation: range
-        ? 'The low amount is the itemized total. The high amount adds an allowance to labor and materials for conditions found during the work.'
+        ? 'The high end allows 50% extra on the first 1,000 sq ft of work and 20% beyond, for hidden damage.'
         : 'The price covers the itemized scope below.',
       show_line_breakdown: breakdown,
     },

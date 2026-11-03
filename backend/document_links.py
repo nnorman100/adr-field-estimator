@@ -43,6 +43,16 @@ ESTIMATOR_ONLY = (
 )
 
 
+# What the itemized claim prints from the estimate: the lines that add up to the claim total.
+CLAIM_ESTIMATE_KEYS = (
+    'low',
+    'after_hours_label',
+    'after_hours_percent',
+    'overhead_profit_percent',
+    'sales_tax_percent',
+)
+
+
 def link_id(token):
     if not isinstance(token, str) or not TOKEN.fullmatch(token):
         raise LookupError(UNAVAILABLE)
@@ -186,11 +196,7 @@ def delivered_documents(documents, tabs):
         }
     estimate = documents.get('estimate')
     if estimate and 'proposal' not in tabs:
-        kept['estimate'] = {
-            'mode': estimate['mode'],
-            'low': {'total': estimate['low']['total']},
-            **({'high': {'total': estimate['high']['total']}} if estimate.get('high') else {}),
-        }
+        kept['estimate'] = {k: estimate[k] for k in CLAIM_ESTIMATE_KEYS}
     elif estimate and estimate['show_line_breakdown'] and 'claim' not in tabs:
         kept['estimate'] = {
             **estimate,

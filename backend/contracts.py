@@ -486,13 +486,8 @@ class LineItem(StrictModel):
     unit_price: float
     waste_percent: float
     total: float
-    # Added with company price tables; documents audited before them omit these.
-    item_id: str | None = None
-    group: str | None = None
-    bucket: str | None = None
-    taxable: bool | None = None
+    # Added with company price tables; documents audited before them omit it.
     xactimate_code: str | None = None
-    room: str | None = None
 
 
 class Proposal(StrictModel):
@@ -672,7 +667,9 @@ class EstimateSummary(StrictModel):
     after_hours_percent: str = Field(max_length=12)
     overhead_profit_percent: str = Field(max_length=12)
     sales_tax_percent: str = Field(max_length=12)
-    explanation: str = Field(max_length=2000)
+    # Under the amounts: the cushion-tier sentence in range mode, absent when there is no cushion
+    # to name; the single-price sentence otherwise.
+    explanation: str | None = Field(default=None, max_length=2000)
     show_line_breakdown: bool = False
 
 
