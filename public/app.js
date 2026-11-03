@@ -6011,6 +6011,8 @@ async function applyUser(user) {
   if (stale()) return;
   state.user = user;
   state.session = null;
+  // A usage reply can repaint the old session's counts while the awaits above run.
+  window.InsightUI?.reset();
   if (!user) resetShellBranding();
   state.workspaceInitializing = true;
   document.body.classList.remove('dashboard-open', 'office-view');

@@ -218,3 +218,36 @@ test('an auth-state change clears private counts and cached summary UI', async (
   await expect(page.locator('#jobInsight')).toHaveText('');
   await expect(page.locator('.ai-usage')).toHaveCount(0);
 });
+
+test('a usage reply landing mid sign-out cannot restore the private counts', async ({ page }) => {
+  await start(page, 'owner');
+  let releaseSession;
+  const sessionHeld = new Promise((resolve) => (releaseSession = resolve));
+  await page.route('**/api/session', async (route) => {
+    await sessionHeld;
+    await route.continue();
+  });
+  // Hold sign-out after the displayed inspection is cleared but before the session is dropped.
+  await page.evaluate(() => {
+    const original = clearLocal;
+    window.clearLocal = async () => {
+      await original();
+      await new Promise((resolve) => (window.finishClearLocal = resolve));
+    };
+  });
+  const usageRequest = page.waitForRequest('**/api/session');
+  await page.locator('#accountMenu > summary').click();
+  await usageRequest;
+  await expect(page.locator('#aiQuota')).toContainText('AI calls left today');
+  await page.evaluate(() => {
+    window.__testAuthChanged(null);
+  });
+  await page.waitForFunction(() => window.finishClearLocal);
+  await expect(page.locator('#aiQuota')).toHaveText('');
+  releaseSession();
+  await expect(page.locator('#aiQuota')).toContainText('AI calls left today');
+  await page.evaluate(() => window.finishClearLocal());
+  await expect(page.locator('#authPanel')).toBeVisible();
+  await expect(page.locator('#aiQuota')).toBeHidden();
+  await expect(page.locator('#aiQuota')).toHaveText('');
+});
