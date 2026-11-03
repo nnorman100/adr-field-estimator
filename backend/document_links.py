@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 
 try:
     from .inspection_store import reserve_slot
-    from .signing_links import TOKEN, iso, link_id as digest_of
+    from .signing_links import TOKEN, iso, link_documents, link_id as digest_of
     from .workspaces import AccessDenied
 except ImportError:
     from inspection_store import reserve_slot
-    from signing_links import TOKEN, iso, link_id as digest_of
+    from signing_links import TOKEN, iso, link_documents, link_id as digest_of
     from workspaces import AccessDenied
 
 # The owner can change how long a link works; the roadmap's default is 30 days.
@@ -187,7 +187,7 @@ def _resolve(store, key, count=False):
 
 def delivered_documents(documents, tabs):
     """The saved documents reduced to one set: other documents are emptied, never summarized."""
-    kept = {k: v for k, v in documents.items() if k not in ESTIMATOR_ONLY}
+    kept = {k: v for k, v in link_documents(documents).items() if k not in ESTIMATOR_ONLY}
     if 'proposal' not in tabs:
         proposal = documents.get('adr_estimate') or {}
         # The claim and letter still name the customer and property; the priced proposal stays out.

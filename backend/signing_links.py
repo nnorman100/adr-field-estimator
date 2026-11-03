@@ -235,8 +235,27 @@ def copy_address(store, record):
     return local[0] + '•••@' + domain
 
 
+LINK_BASIS_KEYS = (
+    'company_id',
+    'version_id',
+    'sequence',
+    'content_sha256',
+    'calculation_version',
+    'priced_at',
+    'item_count',
+)
+
+
 def without_quantity_notes(documents):
     return {k: v for k, v in documents.items() if k != 'quantity_notes'}
+
+
+def link_documents(documents):
+    """Saved documents as anyone outside the company receives them: no owner notes or pricing policy."""
+    kept = without_quantity_notes(documents)
+    if kept.get('price_basis'):
+        kept['price_basis'] = {k: v for k, v in kept['price_basis'].items() if k in LINK_BASIS_KEYS}
+    return kept
 
 
 def view(store, token):
@@ -247,7 +266,7 @@ def view(store, token):
             result,
             status='pending',
             expires_at=iso(link['expires']),
-            documents=without_quantity_notes(record['audit']['documents']),
+            documents=link_documents(record['audit']['documents']),
             email_to=copy_address(store, record),
         )
     agreement = _agreement(store, link)
@@ -255,7 +274,7 @@ def view(store, token):
         result,
         status='signed',
         view_until=iso(link['signed_at'] + SIGNED_VIEW_SECONDS),
-        documents=without_quantity_notes(agreement['documents']),
+        documents=link_documents(agreement['documents']),
         receipt=dict(
             auth_id=agreement['auth_id'],
             timestamp=agreement['created_at'],

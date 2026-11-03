@@ -84,6 +84,35 @@ def test_homeowner_link_reads_the_signed_proposal_photos_and_signature_many_time
     assert store.db.records['authorizations/' + AUTH] == agreement
 
 
+V2_BASIS = dict(
+    company_id='adr',
+    version_id='v4',
+    sequence=4,
+    content_sha256='a' * 64,
+    calculation_version='dryscope-v2',
+    priced_at='2026-11-01T12:00:00Z',
+    item_count=26,
+)
+PRICING_DETAIL = [
+    dict(V2_BASIS, policy=dict(minimum_job_charge='9000', range=dict(first_percent='50'))),
+    dict(V2_BASIS, calculation_version='adr-residential-v1', rates=dict(air_mover='30')),
+]
+
+
+@pytest.mark.parametrize('basis', PRICING_DETAIL, ids=['policy', 'rates'])
+@pytest.mark.parametrize('document_set', ['homeowner', 'adjuster'])
+def test_link_identifies_the_price_basis_without_the_owners_pricing(signed, document_set, basis):
+    client, store, agreement = signed
+    agreement['documents']['price_basis'] = basis
+    value, _ = dl.mint(store, 'owner', AUTH, document_set)
+    delivered = reader(value).get('/api/documents').json()['documents']['price_basis']
+    assert not {'policy', 'rates'} & set(delivered)
+    assert delivered == {k: v for k, v in basis.items() if k not in ('policy', 'rates')}
+    # The company's own view and the signed record keep the full basis.
+    assert agreement['documents']['price_basis'] == basis
+    assert client.get('/api/authorizations/' + AUTH).json()['documents']['price_basis'] == basis
+
+
 @pytest.mark.parametrize('document_set', ['homeowner', 'adjuster'])
 def test_link_never_delivers_quantity_notes_or_the_entered_overrides(signed, document_set):
     _, store, agreement = signed

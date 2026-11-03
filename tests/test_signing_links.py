@@ -192,6 +192,38 @@ def test_link_never_delivers_the_entered_overrides_before_or_after_signing(ready
     assert 'Synthetic entered reason' not in signed.text
 
 
+@pytest.mark.parametrize(
+    'detail',
+    [
+        dict(
+            calculation_version='dryscope-v2', item_count=26, policy=dict(minimum_job_charge='9000')
+        ),
+        dict(calculation_version='adr-residential-v1', rates=dict(air_mover='30')),
+    ],
+    ids=['policy', 'rates'],
+)
+def test_link_identifies_the_price_basis_without_the_owners_pricing(ready, detail):
+    _, store, _, value = ready
+    basis = dict(
+        company_id='adr',
+        version_id='v4',
+        sequence=4,
+        content_sha256='a' * 64,
+        priced_at='2026-11-01T12:00:00Z',
+        **detail,
+    )
+    expected = {k: v for k, v in basis.items() if k not in ('policy', 'rates')}
+    stored_documents(store)['price_basis'] = basis
+    pending = homeowner(value).get('/api/sign').json()
+    assert pending['status'] == 'pending' and pending['documents']['price_basis'] == expected
+    saved = sign(value)
+    assert saved.status_code == 200, saved.text
+    signed = homeowner(value).get('/api/sign').json()
+    assert signed['status'] == 'signed' and signed['documents']['price_basis'] == expected
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['documents']['price_basis'] == basis
+
+
 def test_single_price_proposal_signs_through_the_link(ready):
     _, store, _, value = ready
     del stored_documents(store)['adr_estimate']['proposed_cost_low']

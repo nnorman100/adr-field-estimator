@@ -597,7 +597,7 @@ import json  # noqa: E402
 from pathlib import Path  # noqa: E402
 from backend import pricing  # noqa: E402
 from backend.claims import EXCLUSIONS, PROTECTION  # noqa: E402
-from backend import document_links  # noqa: E402
+from backend import document_links, price_table  # noqa: E402
 from backend.claims import end_summary  # noqa: E402
 from backend.contracts import EstimateEnd  # noqa: E402
 from backend.price_table import STARTER_ITEMS  # noqa: E402
@@ -855,6 +855,103 @@ def v2_documents(monkeypatch, lines=None, totals=None, policy=None, data=None, p
     )
 
 
+def real_engine_documents(**policy):
+    """Documents from the real engine and a table normalized by the real publish rules."""
+    table = price_table.starter_table()
+    for item in table['items']:
+        item.update(unit_price='10.00', taxable=True)
+    table['policy'].update(
+        after_hours=dict(table['policy']['after_hours'], multiplier='1.200'),
+        overhead_profit_percent='10',
+        sales_tax=dict(enabled=True, percent='8'),
+        **policy,
+    )
+    table = price_table.normalize_table(table, publish=True)
+    data = InspectionData.model_validate(
+        dict(
+            address='Synthetic',
+            year_built=1990,
+            rooms=[{'name': 'Kitchen', 'category': 3, 'finished_sf': 1200}],
+            air_movers=3,
+            dehumidifiers=1,
+            labor_hours=4,
+            is_after_hours=True,
+            scope_confirmed=True,
+        )
+    )
+    basis = dict(
+        company_id='c1',
+        version_id='v4',
+        sequence=4,
+        content_sha256='a' * 64,
+        calculation_version='dryscope-v2',
+        priced_at='2026-11-01T12:00:00Z',
+        policy=table['policy'],
+        item_count=len(table['items']),
+    )
+    return make_documents(
+        data,
+        [],
+        AIResult(summary='Reviewed', suggestions=[], unpriced_work=[]),
+        dict(
+            company_id='c1',
+            version=1,
+            name='Test Co',
+            address='Office',
+            phone='',
+            email='',
+            license='1',
+            signoff='Estimator',
+        ),
+        pin=dict(table, calculation_version='dryscope-v2'),
+        price_basis=basis,
+    )
+
+
+def assert_adds_up(end):
+    parts = ('subtotal', 'after_hours', 'minimum_charge', 'overhead_profit', 'tax')
+    assert sum(end[part] for part in parts) == pytest.approx(end['total'])
+
+
+def test_real_engine_range_documents_add_up_and_name_the_cushion_tiers():
+    docs = real_engine_documents(estimate_mode='range')
+    estimate, proposal = docs['estimate'], docs['adr_estimate']
+    assert_adds_up(estimate['low'])
+    assert_adds_up(estimate['high'])
+    assert estimate['high']['total'] > estimate['low']['total']
+    assert proposal['proposed_cost_low'] == docs['xactimate_total'] == estimate['low']['total']
+    assert proposal['proposed_cost'] == estimate['high']['total']
+    assert proposal['estimate_mode'] == 'range'
+    assert sum(line['total'] for line in docs['xactimate_scope']) == pytest.approx(
+        estimate['low']['subtotal']
+    )
+    assert estimate['explanation'].startswith('The high end allows 50% extra on the first 1,000')
+    assert estimate['explanation'] in docs['iicrc_defense_letter']
+    assert 'Customer estimate range:' in docs['iicrc_defense_letter']
+    assert estimate['low']['after_hours'] > 0 and estimate['low']['tax'] > 0
+    assert docs['signable']
+    for line in docs['xactimate_scope']:
+        assert not {'item_id', 'group', 'bucket', 'taxable', 'room', 'area'} & set(line)
+
+
+def test_real_engine_single_documents_add_up_and_omit_the_low():
+    docs = real_engine_documents(estimate_mode='single')
+    estimate, proposal = docs['estimate'], docs['adr_estimate']
+    assert_adds_up(estimate['low'])
+    assert 'high' not in estimate and 'proposed_cost_low' not in proposal
+    assert proposal['proposed_cost'] == docs['xactimate_total'] == estimate['low']['total']
+    assert estimate['explanation'] == 'The price covers the itemized scope below.'
+    assert estimate['explanation'] not in docs['iicrc_defense_letter']
+    assert docs['signable']
+
+
+def test_real_engine_minimum_charge_reaches_the_printed_lines():
+    docs = real_engine_documents(estimate_mode='single', minimum_job_charge='100000')
+    low = docs['estimate']['low']
+    assert low['minimum_charge'] > 0
+    assert_adds_up(low)
+
+
 def test_v2_documents_range_mode_print_summary_lines_and_explanation(monkeypatch):
     docs = v2_documents(monkeypatch)
     proposal, estimate = docs['adr_estimate'], docs['estimate']
@@ -1040,7 +1137,7 @@ def test_a_typed_item_counts_as_work_only_when_entered_outside_job_charges(monke
     )['signable']
 
 
-# One end of an estimate as pricing_v2.totals on fm/dry-pricing-v2-engine returns it.
+# One end of an estimate as pricing_v2.totals returns it.
 ENGINE_END = dict(
     subtotal=Decimal('8489.80'),
     after_hours=Decimal('0.00'),
