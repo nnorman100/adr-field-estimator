@@ -1027,6 +1027,34 @@ test('real sample totals show under the settings and before and after in the rev
   await expect(review).toContainText('Sample job only. This does not price a saved job.');
 });
 
+test('after a dropped connection the sample line catches up with the saved edit', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const line = page.locator('#priceSamples p').first(),
+    status = page.locator('#priceSaveStatus'),
+    call = page.locator('input[name=price_service_call]');
+  await call.fill('150');
+  await expect(line).toContainText(' prices at $');
+  await expect(status).toContainText('Saved');
+  const before = await line.textContent();
+  await call.fill('175');
+  await page.context().setOffline(true);
+  await expect(status).toContainText('Not saved');
+  // Past the edit's sample delay, so only the reconnect can bring the line up to date.
+  await page.waitForTimeout(1500);
+  await expect(line).toHaveText(before);
+  await page.context().setOffline(false);
+  await expect(status).toContainText('Saved');
+  await expect(line).not.toHaveText(before);
+  const caughtUp = await line.textContent();
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
+  await expect(call).toHaveValue('175.00');
+  await expect(line).toHaveText(caughtUp);
+});
+
 test('correcting the reason closes the review, so history keeps the corrected reason', async ({
   page,
   request,

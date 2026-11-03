@@ -852,8 +852,11 @@
       say('Your last price change was not saved: ' + error.message, 'error');
   }
   // Only the editor on screen resends; a return to the page flushes one left behind.
+  // The samples catch up too, because a refresh that came due offline was skipped.
   function resendCopy() {
-    if (ed && $('priceSaveStatus')) saveCopy(ed).catch(saveLost);
+    if (!ed || !$('priceSaveStatus')) return;
+    saveCopy(ed).catch(saveLost);
+    refreshSamples().catch(() => {});
   }
   function saveCopy(mine) {
     clearTimeout(mine.saveTimer);
