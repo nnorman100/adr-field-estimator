@@ -12,7 +12,7 @@ ADR's rates are ADR's proprietary data. They sit in `backend/adr_price_book.py` 
 
 For pricing work outside the catalog and its treatment in the estimate range, see [Priced additional work](priced-extras.md).
 
-Each job's saved prices record a calculation version, and that version selects the formulas used to price the job (`POLICIES` in `backend/claims.py`, `CALCULATION_FACTORS` in `backend/price_books.py`). `adr-residential-v1` and `dryscope-v2` are the versions with formulas, and `backend/pricing.py` chooses between them. A `dryscope-v2` table can be published, but audits and additional-work approvals still refuse it with a conflict until the estimator screens are connected and the audit route passes the pinned table (see [Documents from a company price table](#documents-from-a-company-price-table-calculation-dryscope-v2)). A version's formulas never change once saved prices use it, so existing drafts and signed documents keep their numbers; new formulas get a new version. An unknown version is refused, never priced with another version's formulas.
+Each job's saved prices record a calculation version, and that version selects the formulas used to price the job (`POLICIES` in `backend/claims.py`, `CALCULATION_FACTORS` in `backend/price_books.py`). `adr-residential-v1` and `dryscope-v2` are the versions with formulas, and `backend/pricing.py` chooses between them. Audits, additional-work approvals and reprice price a job from the table pinned to it (see [Documents from a company price table](#documents-from-a-company-price-table-calculation-dryscope-v2)). A version's formulas never change once saved prices use it, so existing drafts and signed documents keep their numbers; new formulas get a new version. An unknown version is refused, never priced with another version's formulas.
 
 ## Company-defined tables (`dryscope-v2`)
 
@@ -63,9 +63,21 @@ The itemized total printed beside the range is the low total. A single-price com
 
 **Sample jobs.** `SAMPLE_JOBS` are three made-up jobs for previews: "Clean-water kitchen leak", "Gray-water main floor" and "Mold remediation, after hours". Each carries the notice "Sample job only. This does not price a saved job." and states every job number and room area, so a default quantity reaches a preview only through a typed-quantity item, which the sample cannot state. A starting quantity on such an item raises every sample it applies to.
 
+## Switching from a rate book to a table
+
+An owner on `adr-residential-v1` moves with **Switch to v2** (`POST /api/companies/{id}/prices/start-v2`). `price_table.from_v1_rates` maps that company's own 21 rates to items with the same prices and quantity sources, and sets the policy to the rate book's rules: range 1,000 sq ft / 50% / 20%, after-hours x1.2, cabinetry x2 on finished surfaces, demolition area basis, no overhead and profit or tax. A company holding no prices of its own, including one holding ADR's rates, starts from the blank starter list instead.
+
+For the same job the table matches the rate book at or below 1,000 sq ft, low and high, after hours included. It differs in three ways, which `price_table.switch_differences` states in plain words on the Switch card, in the review and in a draft's reprice review:
+
+1. The high end tapers above 1,000 sq ft instead of stepping down at 1,001.
+2. Labor hours carry 50% at every size. The rate book dropped them to 20% above 1,000 sq ft.
+3. The after-hours 20% prints as its own line inside the itemized total. The rate book left it out of that total and added it in the range only.
+
+Publishing records `source: from_v1`, continues the version numbering, and stores `switched_at` and `last_v1_version_id` on the company head. A draft created before `switched_at` with no pin yet prices from that last rate book (ADR's from its starting book if it had published none). Pinned drafts keep their pins. Either kind moves only when the owner applies the table to that draft (`explicit_reprice`), and signed documents never change. A rate book cannot be restored after the switch.
+
 ## Documents from a company price table (calculation `dryscope-v2`)
 
-The documents are built for this calculation, but no job reaches it yet: the audit route does not pass `pin` yet (see [Status](STATUS.md)). Once it does, the server prices a job from the table pinned to it (see [Company workspaces](company-workspaces.md#company-prices)), then writes the four documents. The mandatory clauses, the 1978 pre-test notice, findings, signability rules and the photo log are the same as for the rate book; only the pricing text changes.
+The server prices a job from the table pinned to it (see [Company workspaces](company-workspaces.md#company-prices)), then writes the four documents. The mandatory clauses, the 1978 pre-test notice, findings, signability rules and the photo log are the same as for the rate book; only the pricing text changes.
 
 - **Amount.** `adr_estimate.proposed_cost` is the high end, or the single price when the company prices one amount; `proposed_cost_low` is absent in single mode and `estimate_mode` names the mode. `xactimate_total` is the low total, which includes the after-hours adjustment, minimum job charge, overhead and profit and sales tax. Documents audited on the rate book have none of the new keys and render as before.
 - **Summary.** `estimate` carries the lines that add up to each end (subtotal of itemized work, after-hours adjustment under the owner's label, minimum job charge, overhead and profit, sales tax, total), the percents from the pinned policy and one plain sentence under the amounts: the engine's `range_explanation` naming the cushion tiers in range mode (none when the first tier is 0%), or its single-price sentence. The proposal prints it under the amount; the itemized claim prints the low end's lines before its total. Labels: "Price", "Customer estimate range", "Subtotal of itemized work", the owner's after-hours label (default "After-hours adjustment"), "Minimum job charge", "Overhead and profit", "Sales tax", "Total".

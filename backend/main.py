@@ -76,6 +76,7 @@ try:
     from . import tags as qr_tags
     from .adr_price_book import adr_rates
     from .claims import make_documents, price_scope, proposal_date
+    from .pricing import price_and_range
     from .sizing import equipment_sizing
     from .prompts import (
         live_prompt,
@@ -145,6 +146,7 @@ except ImportError:
     import tags as qr_tags
     from adr_price_book import adr_rates
     from claims import make_documents, price_scope, proposal_date
+    from pricing import price_and_range
     from sizing import equipment_sizing
     from prompts import (
         live_prompt,
@@ -1607,19 +1609,25 @@ async def audit_inspection(
     pin = None
     basis = None
     if WORKSPACES_ENABLED and getattr(store, 'workspaces', None):
-        pin = await stored(
-            store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id, True
-        )
+        pin = await stored(store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id)
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
-    # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
-    rates = adr_rates() if pin is None else pin['rates']
-    items, total = (
-        price_scope(data, rates)
-        if pin is None
-        else price_scope(data, rates, basis['calculation_version'])
-    )
-    if total <= 0:
-        raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
+    if basis and basis['calculation_version'] == V2_CALCULATION_VERSION:
+        # A company price table: the pinned table, the same engine with PRICE_BOOKS_ENABLED on or off.
+        rates = None
+        try:
+            items = price_and_range(data, pin).lines
+        except ValueError as error:
+            raise HTTPException(400, str(error))
+    else:
+        # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
+        rates = adr_rates() if pin is None else pin['rates']
+        items, total = (
+            price_scope(data, rates)
+            if pin is None
+            else price_scope(data, rates, basis['calculation_version'])
+        )
+        if total <= 0:
+            raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
     deadline = time.monotonic() + 30
     while (
         any(p['ocr_status'] == 'pending' for p in record['photos']) and time.monotonic() < deadline
@@ -1660,6 +1668,7 @@ async def audit_inspection(
             claim,
             rates,
             basis,
+            pin,
         )
     except (ValueError, ValidationError):
         raise HTTPException(

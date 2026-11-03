@@ -314,6 +314,52 @@ def _starts_from_catalog_fixture(self, company_id):
 PriceBookStore._starts_from_catalog = _starts_from_catalog_fixture
 
 
+def seed_other_prices():
+    rates = {key: '12.34' for key in price_books.KEYS}
+    stamp = '2026-01-01T00:00:00+00:00'
+    store.db.records['_price_book_versions/other-own-prices'] = dict(
+        version_id='other-own-prices',
+        company_id='other',
+        sequence=1,
+        parent_version_id=None,
+        catalog_version=price_books.CATALOG_VERSION,
+        calculation_version=price_books.CALCULATION_VERSION,
+        currency=price_books.CURRENCY,
+        rates=rates,
+        content_sha256=price_books.content_hash(rates),
+        published_by_uid='test-owner-ws-other',
+        published_at=stamp,
+        effective_from=stamp,
+        source='manual',
+        change_reason='Other company prices',
+        import_digest=None,
+    )
+    store.db.records['_company_price_books/other'] = dict(
+        company_id='other',
+        schema_version=1,
+        generation=1,
+        latest_version_id='other-own-prices',
+        next_sequence=2,
+        started_at=stamp,
+        updated_at=stamp,
+    )
+
+
+# The flag alone, as a release changes it: the jobs and prices already stored stay.
+@bm.app.post('/__test/price-books')
+async def price_books_fixture(request: Request):
+    body = await request.json()
+    price_books.set_enabled(bool(body['enabled']))
+    return {'enabled': bool(body['enabled'])}
+
+
+# A rate book already on file for the other company: the API refuses a new company a first one.
+@bm.app.post('/__test/other-prices')
+async def other_prices_fixture():
+    seed_other_prices()
+    return {'seeded': True}
+
+
 @bm.app.post('/__test/workspaces')
 async def workspaces_fixture(request: Request):
     global store, accounts
@@ -358,34 +404,7 @@ async def workspaces_fixture(request: Request):
         )
     # A company has no prices until it publishes some, so the fixture's other company has its own.
     if body.get('other_prices', True):
-        rates = {key: '12.34' for key in price_books.KEYS}
-        stamp = '2026-01-01T00:00:00+00:00'
-        store.db.records['_price_book_versions/other-own-prices'] = dict(
-            version_id='other-own-prices',
-            company_id='other',
-            sequence=1,
-            parent_version_id=None,
-            catalog_version=price_books.CATALOG_VERSION,
-            calculation_version=price_books.CALCULATION_VERSION,
-            currency=price_books.CURRENCY,
-            rates=rates,
-            content_sha256=price_books.content_hash(rates),
-            published_by_uid='test-owner-ws-other',
-            published_at=stamp,
-            effective_from=stamp,
-            source='manual',
-            change_reason='Other company prices',
-            import_digest=None,
-        )
-        store.db.records['_company_price_books/other'] = dict(
-            company_id='other',
-            schema_version=1,
-            generation=1,
-            latest_version_id='other-own-prices',
-            next_sequence=2,
-            started_at=stamp,
-            updated_at=stamp,
-        )
+        seed_other_prices()
     for role in ('owner', 'estimator', 'office', 'other'):
         uid = 'test-owner-ws-' + role
         store.db.records['_memberships/' + uid] = dict(

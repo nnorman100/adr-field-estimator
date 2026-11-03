@@ -1221,6 +1221,34 @@ def from_v1_rates(rates: dict[str, str]) -> dict:
     return normalize_table({'items': items, 'policy': policy}, publish=False)
 
 
+def switch_differences(policy: dict) -> list[str]:
+    """Where a table prices the same job differently from the rate book it replaces, in plain words."""
+    after_hours = Decimal(policy['after_hours']['multiplier'])
+    range_rule = policy['range']
+    first_sf = f'{range_rule["first_sf"]:,}'
+    percent = (after_hours - 1) * 100
+    late = (
+        f'The after-hours {percent.normalize():f}% now prints as its own line inside the itemized '
+        'total. Before, it was left out of the itemized total.'
+        if after_hours > 1
+        else 'After-hours work has no percentage on this table. Before, it added 20% to labor '
+        'and materials in the customer range.'
+    )
+    if policy['estimate_mode'] == 'single':
+        return [
+            'The estimate is one price, the itemized total. Before, it was a low to high range.',
+            late,
+        ]
+    return [
+        f'The high end now tapers above {first_sf} square feet instead of stepping down at 1,001: '
+        f'{range_rule["first_percent"]}% on the first {first_sf} square feet of area-priced work, '
+        f'highest-priced areas first, and {range_rule["beyond_percent"]}% beyond that.',
+        f'Labor hours carry {range_rule["first_percent"]}% on the high end at every job size. '
+        'Before, they dropped to 20% on jobs above 1,000 square feet.',
+        late,
+    ]
+
+
 _POLICY_DIFF_PATHS = (
     ('estimate_mode', ('estimate_mode',)),
     ('area_basis', ('area_basis',)),

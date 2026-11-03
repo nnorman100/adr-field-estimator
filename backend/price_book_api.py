@@ -114,6 +114,10 @@ def register_price_book_routes(app, identity, get_store, stored, live):
             books(store).save_working_copy, claims['uid'], company_id, body.model_dump()
         )
 
+    @app.post('/api/companies/{company_id}/prices/start-v2')
+    async def company_start_v2(company_id: str, claims=live_identity, store=Depends(get_store)):
+        return await stored(books(store).start_v2, claims['uid'], company_id)
+
     @app.delete('/api/companies/{company_id}/prices/working-copy')
     async def company_discard_working_copy(
         company_id: str, claims=live_identity, store=Depends(get_store)
