@@ -434,6 +434,27 @@ test.describe('without a service worker', () => {
     await expect(off).toBeHidden();
   });
 
+  test('the not-priced list follows the drying days edited on another row', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, air_mover: { unit_price: '30.00', categories: [3] } },
+    });
+    await open(page);
+    await page.locator('[data-room-index="0"][data-room-key="category"]').selectOption('1');
+    await page.evaluate(() => {
+      state.draft.data.air_movers = 2;
+      changed();
+      fillForm();
+    });
+    const list = page.locator('#v2OffCategoryList');
+    await page.locator('#v2OffCategory summary').click();
+    await expect(list).toContainText('2 air mover, 3 days');
+    await page.locator('#dryingDays').fill('5');
+    await expect(list).toContainText('2 air mover, 5 days');
+  });
+
   test('a job carrying overrides keeps them current on the v1 form after a rollback', async ({
     page,
     request,

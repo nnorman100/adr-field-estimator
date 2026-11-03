@@ -664,6 +664,11 @@
     groupsOf(t, data)
       .flatMap((group) => group.items.map((item) => item.item_id))
       .join();
+  function readOnlyRow(text) {
+    const row = node('div', undefined, 'scope-row');
+    row.append(node('p', text));
+    return row;
+  }
   function updateSummaries() {
     if (!dom() || !active() || !state?.draft) return;
     const t = table();
@@ -675,6 +680,9 @@
       const item = t.items.find((i) => i.item_id === line.dataset.fromRooms);
       if (item) line.textContent = fromRoomsText(item, state.draft.data.rooms, t.policy);
     }
+    const offRows = offCategory(state.draft.data, t);
+    $('v2OffCategory').hidden = !offRows.length;
+    $('v2OffCategoryList').replaceChildren(...offRows.map(readOnlyRow));
   }
 
   function typedRow(item, source, data) {
@@ -826,22 +834,14 @@
     // Quantities saved for items the table no longer lists stay with the job, visibly.
     const orphans = unlisted(data, t),
       fields = unlistedFields(data, t);
-    const unlistedRow = (text) => {
-      const row = node('div', undefined, 'scope-row');
-      row.append(node('p', text));
-      return row;
-    };
-    const offRows = offCategory(data, t);
-    $('v2OffCategory').hidden = !offRows.length;
-    $('v2OffCategoryList').replaceChildren(...offRows.map(unlistedRow));
     $('v2Unlisted').hidden = !orphans.length && !fields.length;
     $('v2UnlistedList').replaceChildren(
       ...fields.map((field) =>
-        unlistedRow(field.replace(/_/g, ' ') + ' · ' + formatQuantity(data[field])),
+        readOnlyRow(field.replace(/_/g, ' ') + ' · ' + formatQuantity(data[field])),
       ),
       ...orphans.map((id) => {
         const q = data.scope_items[id];
-        return unlistedRow(
+        return readOnlyRow(
           id.replace(/_/g, ' ') +
             ' · ' +
             formatQuantity(q.quantity) +
