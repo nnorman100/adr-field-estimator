@@ -25,6 +25,14 @@ For a one-step rollback to an earlier `YYYY.MM.DD-N` version, run `python3 scrip
 
 For an immediate traffic-only restore, point Cloud Run traffic to the recorded rollback revision (explicit project and region), clone the recorded rollback Hosting version to the live channel, read back both, and append rows to `RELEASES.md`. Do not retry a failed deploy immediately.
 
+### Turning company prices off
+Redeploy the backend with `--price-books off` (`docs/firebase-isolation.md#deployment`) and promote it. That hides the price editor, the **Switch to v2** card and the estimator's item list, and the app shows the v1 form. It does not touch the data or the calculation, so nothing already priced moves:
+
+- A job pinned to a company table keeps pricing from it, because the engine is not behind the flag. Documents print as before.
+- A job started while the flag is off pins at its first audit, to the company's current table if it has one. Quantities only the item list collects (owner-added items) keep their saved values and cannot be edited until the flag is back on.
+- A company that switched stays switched: no release can return it to its rate book. To change its prices the flag must be on.
+- Unpublished working copies stay saved. Turning the flag on again brings them back.
+
 ## Common problems
 | Symptom | First checks |
 |---|---|

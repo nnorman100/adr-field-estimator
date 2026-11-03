@@ -133,10 +133,16 @@
       preview = await jsonApi('/api/inspections/' + id + '/pricing/reprice-preview', 'POST'),
       actions = $('jobPricingActions');
     actions.replaceChildren();
-    for (const row of preview.diff)
-      actions.append(
-        node('p', row.description + ': ' + (row.before || 'not set') + ' to ' + row.after),
-      );
+    if (Array.isArray(preview.diff))
+      for (const row of preview.diff)
+        actions.append(
+          node('p', row.description + ': ' + (row.before || 'not set') + ' to ' + row.after),
+        );
+    else {
+      for (const row of preview.diff.items) actions.append(node('p', diffText(row)));
+      for (const row of preview.diff.policy) actions.append(node('p', policyChange(row)));
+    }
+    for (const text of preview.differences || []) actions.append(node('p', text));
     actions.append(
       node(
         'p',
@@ -144,14 +150,10 @@
           preview.before.itemized +
           ' to ' +
           preview.after.itemized +
-          '. Customer range ' +
-          preview.before.low +
-          '–' +
-          preview.before.high +
+          '. Customer estimate ' +
+          amountText(preview.before) +
           ' to ' +
-          preview.after.low +
-          '–' +
-          preview.after.high +
+          amountText(preview.after) +
           '.',
       ),
     );
@@ -179,9 +181,13 @@
         await persist();
         say('New prices apply to this draft. Confirm scope and finish review again.', 'success');
         noteJob();
+        await window.ScopeItems?.pull();
       }),
     );
     actions.append(button('Keep saved prices', () => noteJob()));
+  }
+  function amountText(end) {
+    return end.high ? end.low + '–' + end.high : end.low;
   }
   function warningText(code) {
     if (code === 'large_change')
@@ -764,7 +770,7 @@
     if (!ed.manage) return false;
     if (ed.edits !== ed.savedEdits) return true;
     if (!ed.workingCopy) return false;
-    return ed.view.starter || canon(ed.workingCopy) !== canon(ed.view);
+    return ed.view.starter || !!ed.view.switch || canon(ed.workingCopy) !== canon(ed.view);
   }
   function editStatus(text, kind) {
     const status = $('priceSaveStatus');
@@ -1501,6 +1507,46 @@
         : 'finished-surface demolition only';
     return String(value);
   }
+  function policyChange(row) {
+    return (
+      (POLICY_LABELS[row.field] || row.field) +
+      ': ' +
+      policyValue(row.field, row.before) +
+      ' to ' +
+      policyValue(row.field, row.after)
+    );
+  }
+  // What a switch changes, in the words the server sends. A company with no prices has none to list.
+  function switchNotes(notice) {
+    const notes = node('div');
+    if (notice.differences.length) {
+      notes.append(node('p', 'What changes for the same job:'));
+      const list = node('ul');
+      for (const text of notice.differences) list.append(node('li', text));
+      notes.append(list);
+    }
+    notes.append(node('p', notice.effect));
+    return notes;
+  }
+  function switchCard(view, base) {
+    const card = node('section', undefined, 'price-card');
+    card.id = 'priceSwitch';
+    card.append(
+      node('h2', 'Switch to v2: your own price table'),
+      node(
+        'p',
+        view.switch.carries_prices
+          ? 'Your current prices carry over into a list of items and estimate settings you can edit. Nothing changes until you review and publish.'
+          : 'Start from the starter list of common items and enter your own prices. Nothing changes until you review and publish.',
+      ),
+      switchNotes(view.switch),
+      button('Switch to v2', async () => {
+        await jsonApi(base + '/start-v2', 'POST');
+        await open();
+      }),
+    );
+    return card;
+  }
   function reviewPanelV2(preview, onPublish) {
     const panel = node('section', undefined, 'price-card');
     panel.id = 'priceReview';
@@ -1511,18 +1557,9 @@
     panel.append(node('h2', 'Review changes'));
     const items = (preview.diff && preview.diff.items) || [],
       policy = (preview.diff && preview.diff.policy) || [];
+    if (preview.switch) panel.append(switchNotes(preview.switch));
     for (const row of items) panel.append(node('p', diffText(row)));
-    for (const row of policy)
-      panel.append(
-        node(
-          'p',
-          (POLICY_LABELS[row.field] || row.field) +
-            ': ' +
-            policyValue(row.field, row.before) +
-            ' to ' +
-            policyValue(row.field, row.after),
-        ),
-      );
+    for (const row of policy) panel.append(node('p', policyChange(row)));
     for (const warning of preview.warnings || [])
       panel.append(node('p', WARNING_WORDS[warning] || warning, 'price-warning'));
     for (const [title, list] of [
@@ -1634,7 +1671,7 @@
       policy: clone(source.policy),
       workingCopy: manage ? view.working_copy : null,
       workingVersion: view.working_copy ? view.working_copy.working_version : 0,
-      publishedIds: new Set(view.starter ? [] : view.items.map((item) => item.item_id)),
+      publishedIds: new Set((view.items || []).map((item) => item.item_id)),
       problems: [],
       samples: [],
       sampleTurn: 0,
@@ -1660,6 +1697,7 @@
         ),
       );
     if (!manage) head.append(node('p', 'Read only. Only the company owner can change prices.'));
+    if (view.switch) head.append(node('h3', 'Switching to v2'), switchNotes(view.switch));
     content.append(head);
     if (manage) {
       const save = node('p');
@@ -1722,16 +1760,19 @@
     const view = await jsonApi(base);
     if (epoch !== WorkspaceUI.pageEpoch()) return;
     const content = $('dashboardContent'),
-      tables = view.calculation_version === 'dryscope-v2' || view.starter === true,
-      manage = !!view.can_manage && !support;
+      manage = !!view.can_manage && !support,
+      // A rate-book company mid-switch edits its saved table; its rate-book tools wait until it ends.
+      switching = manage && !!view.switch && !!view.working_copy,
+      tables = view.calculation_version === 'dryscope-v2' || view.starter === true || switching;
     content.dataset.companyId = companyId;
     if (tables) await showEditor(view, companyId, base, support);
     else {
       content.append(node('p', 'Current: ' + view.label + '. ' + view.used_for));
+      if (manage && view.switch_available) content.append(switchCard(view, base));
       renderRates(content, view, manage);
     }
-    tools(content, base, manage, view);
-    await history(content, base, manage, companyId);
+    tools(content, base, manage && !switching, view);
+    await history(content, base, manage && !switching, companyId);
     if (epoch !== WorkspaceUI.pageEpoch()) return;
     WorkspaceUI.policy();
   }

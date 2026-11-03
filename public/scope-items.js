@@ -840,7 +840,7 @@
       mine.pricing && (mine.pricing.version_id || '') + (mine.pricing.content_sha256 || '');
     if (view.calculation_version === V2 && view.table) {
       mine.pricing = pricingCopy({ calculation_version: V2, ...view.table });
-    } else if (view.pinned)
+    } else if (view.pinned || view.calculation_version)
       mine.pricing = { calculation_version: view.calculation_version || 'adr-residential-v1' };
     else mine.pricing = null;
     const after =

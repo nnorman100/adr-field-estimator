@@ -1130,6 +1130,7 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('PUT', '/api/companies/{company_id}/prices/working-copy'),
         ('DELETE', '/api/companies/{company_id}/prices/working-copy'),
         ('POST', '/api/companies/{company_id}/prices/working-copy/discard'),
+        ('POST', '/api/companies/{company_id}/prices/start-v2'),
         ('POST', '/api/companies/{company_id}/prices/calculate'),
         ('GET', '/api/companies/{company_id}/prices/versions'),
         ('GET', '/api/companies/{company_id}/prices/versions/{version_id}'),

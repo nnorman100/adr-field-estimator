@@ -1,6 +1,5 @@
 // Documents as the server writes them for a company price table (dryscope-v2), laid over a real
-// audit response. The audit route cannot price a table until the engine and the estimator screens
-// land, so these specs route the document body and drive the real pages that render it.
+// audit response. A fixed body lets these specs check exact numbers on the real pages that render it.
 const END = (extra) => ({
   after_hours: 0,
   minimum_charge: 0,

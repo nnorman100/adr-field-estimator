@@ -1251,3 +1251,77 @@ def test_v2_publish_and_working_copy_transactions():
         assert stored(stores[0].db, '_companies/adr')['version'] == 1
     finally:
         price_books.set_enabled(None)
+
+
+def test_switch_from_a_rate_book_and_reprice_transactions():
+    """Starting and publishing the switch and repricing a kept draft run in real transactions."""
+    from backend import price_books, price_table
+
+    price_books.set_enabled(True)
+    try:
+        stores = instances(CompanyInspectionStore)
+        db = stores[0].db
+        seed_company(db)
+        books = stores[0].workspaces.prices
+        rates = adr_rates()
+        rates['emergency_call'] = '150.00'
+        preview = books.preview(
+            'owner',
+            'adr',
+            {
+                'rates': rates,
+                'acknowledgements': [],
+                'change_reason': 'Starting rates',
+                'source': 'manual',
+            },
+        )
+        first = books.publish('owner', 'adr', preview['preview_id'], preview['generation'])
+        record = stores[0].create_inspection('owner', ID, data())
+        assert stored(db, '_job_pricing/' + ID) is None
+
+        started = books.start_v2('owner', 'adr')
+        with pytest.raises(Conflict):
+            stores[1].workspaces.prices.start_v2('owner', 'adr')
+        copy = started['working_copy']
+        assert stored(db, '_company_price_books/adr').get('calculation_version') != (
+            price_table.CALCULATION_VERSION
+        )
+        preview = books.preview(
+            'owner',
+            'adr',
+            {
+                'items': copy['items'],
+                'policy': copy['policy'],
+                'acknowledgements': [
+                    row['item_id'] for row in copy['items'] if row['unit_price'] == '0.00'
+                ],
+                'change_reason': 'Move to our own table',
+                'source': 'manual',
+            },
+        )
+        books.publish('owner', 'adr', preview['preview_id'], preview['generation'])
+        head = stored(db, '_company_price_books/adr')
+        assert head['calculation_version'] == price_table.CALCULATION_VERSION
+        assert head['last_v1_version_id'] == first['version_id']
+        assert stored(db, '_price_book_drafts/adr') is None
+
+        # The draft begun earlier stays on the rate book, and only the owner's reprice moves it.
+        record = stores[0].get_inspection('owner', ID)
+        review = books.reprice_preview('owner', record)
+        assert review['from_version_id'] == first['version_id']
+        books.reprice(
+            'owner',
+            ID,
+            {
+                'expected_revision': review['revision'],
+                'expected_pin_hash': review['from_hash'],
+                'destination_version_id': review['to_version_id'],
+                'destination_hash': review['to_hash'],
+            },
+        )
+        pin = stored(db, '_job_pricing/' + ID)
+        assert pin['calculation_version'] == price_table.CALCULATION_VERSION
+        assert pin['reason'] == 'explicit_reprice'
+        assert stored(db, 'inspections/' + ID)['audit'] is None
+    finally:
+        price_books.set_enabled(None)

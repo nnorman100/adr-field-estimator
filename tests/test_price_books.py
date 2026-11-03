@@ -1470,11 +1470,9 @@ def _approved_extra(store):
 
 
 @pytest.mark.parametrize('with_extras', [True, False])
-def test_additional_work_refuses_a_v2_book_with_the_flag_off(
+def test_additional_work_prices_from_a_v2_book_with_the_flag_off(
     api, enabled, with_extras, monkeypatch
 ):
-    from backend.workspaces import Conflict
-
     if with_extras:
         monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
     client, current, store = api
@@ -1490,11 +1488,20 @@ def test_additional_work_refuses_a_v2_book_with_the_flag_off(
 
     extra_id, request = _approved_extra(store)
     price_books.set_enabled(False)
-    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
-        store.quote_extra('owner', ID, 2)
-    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
-        store.approve_extra('owner', ID, extra_id, request)
-    assert store.db.records['inspections/' + ID]['data']['extras'][0].get('approval') is None
+    if not with_extras:
+        # ADR's own book must not fill in for a table whose additional-work item is off.
+        with pytest.raises(ValueError, match='additional-work hourly rate'):
+            store.quote_extra('owner', ID, 2)
+        with pytest.raises(ValueError, match='additional-work hourly rate'):
+            store.approve_extra('owner', ID, extra_id, request)
+        assert store.db.records['inspections/' + ID]['data']['extras'][0].get('approval') is None
+        return
+    quote = store.quote_extra('owner', ID, 2)
+    assert (quote['rate'], quote['total']) == ('25.00', '50.00')
+    request.expected_price_hash = quote['price_rate_fingerprint']
+    store.approve_extra('owner', ID, extra_id, request)
+    approval = store.db.records['inspections/' + ID]['data']['extras'][0]['approval']
+    assert approval['rate'] == '25.00'
 
 
 def test_additional_work_keeps_the_profile_rate_with_the_flag_off(api):
@@ -1805,7 +1812,7 @@ def test_working_copy_keeps_a_locked_extras_item_and_reports_it_like_publish(api
     assert any('Turn this item off' in row['message'] for row in calculated.json()['problems'])
 
 
-def test_v2_book_gives_readable_conflicts_and_audit_adds_no_pin(api, enabled):
+def test_v2_book_audits_from_its_pin_and_reprices_only_on_the_owners_word(api, enabled):
     client, current, store = api
     current['uid'] = 'owner'
     _publish_v2(client, _v2_table('25.00'))
@@ -1816,41 +1823,52 @@ def test_v2_book_gives_readable_conflicts_and_audit_adds_no_pin(api, enabled):
     created = client.post('/api/inspections', json={'inspection_id': ID, 'data': job})
     assert created.status_code == 200, created.text
     pinned = store.db.records.get(f'_job_pricing/{ID}')
+    assert pinned['calculation_version'] == 'dryscope-v2'
     audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
-    assert audited.status_code == 409, audited.text
-    assert 'v2 pricing is not available yet' in audited.json()['detail']
-    # The audit writes no pin of its own; any pin is the one made when the draft was created.
+    assert audited.status_code == 200, audited.text
+    documents = audited.json()['audit']['documents']
+    assert documents['price_basis']['calculation_version'] == 'dryscope-v2'
+    assert documents['estimate']['mode'] == 'range'
+    # The audit writes no pin of its own; the pin is the one made when the draft was created.
     assert store.db.records.get(f'_job_pricing/{ID}') == pinned
 
     prices = store.workspaces.prices
-    record = store.get_inspection('estimator', ID)
-    pin = prices.ensure_pin('estimator', ID)
-    # An existing v2 pin is refused the same way when the caller prices the job.
-    repeat = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
-    assert repeat.status_code == 409
-    assert 'v2 pricing is not available yet' in repeat.json()['detail']
-
     current['uid'] = 'owner'
+    record = store.get_inspection('owner', ID)
     assert prices.job_view('owner', record)['can_reprice'] is False
+    _publish_v2(client, _v2_table('30.00'), 'Raise every price')
+    record = store.get_inspection('owner', ID)
+    view = prices.job_view('owner', record)
+    assert view['newer_available'] is True and view['can_reprice'] is True
+    # Nothing moves until the owner applies the table to this draft.
+    assert store.db.records[f'_job_pricing/{ID}'] == pinned
+    assert record['audit'] is not None
+
     preview = client.post(f'/api/inspections/{ID}/pricing/reprice-preview')
-    assert preview.status_code == 409
-    assert 'v2 pricing is not available yet' in preview.json()['detail']
+    assert preview.status_code == 200, preview.text
+    review = preview.json()
+    assert review['from_calculation_version'] == review['to_calculation_version'] == 'dryscope-v2'
+    assert review['differences'] == []
+    assert any(row['change'] == 'price' for row in review['diff']['items'])
+    assert float(review['after']['low']) > float(review['before']['low'])
     applied = client.post(
         f'/api/inspections/{ID}/pricing/reprice',
         json={
-            'expected_revision': record['revision'],
-            'expected_pin_hash': pin['content_sha256'],
-            'destination_version_id': pin['version_id'],
-            'destination_hash': pin['content_sha256'],
+            'expected_revision': review['revision'],
+            'expected_pin_hash': review['from_hash'],
+            'destination_version_id': review['to_version_id'],
+            'destination_hash': review['to_hash'],
         },
     )
-    assert applied.status_code == 409
-    assert 'v2 pricing is not available yet' in applied.json()['detail']
+    assert applied.status_code == 200, applied.text
+    moved = store.db.records[f'_job_pricing/{ID}']
+    assert moved['version_id'] == review['to_version_id']
+    assert moved['reason'] == 'explicit_reprice' and moved['pin_version'] == 2
+    assert 'rates' not in moved and moved['items'][0]['unit_price'] == '30.00'
+    assert store.db.records['inspections/' + ID]['audit'] is None
 
 
-def test_v1_pinned_draft_is_not_offered_or_moved_to_a_v2_book(api, enabled):
-    from backend.workspaces import Conflict
-
+def test_v1_pinned_draft_is_offered_a_v2_book_and_moves_only_when_applied(api, enabled):
     client, current, store = api
     current['uid'] = 'estimator'
     client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
@@ -1863,32 +1881,41 @@ def test_v1_pinned_draft_is_not_offered_or_moved_to_a_v2_book(api, enabled):
     book = prices.effective(store.workspaces.read('_companies', 'adr'))
     record = store.get_inspection('owner', ID)
     view = prices.job_view('owner', record)
-    assert view['newer_available'] is True and view['can_reprice'] is False
-    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
-        prices.reprice_preview('owner', record)
-    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
-        prices.reprice(
-            'owner',
-            ID,
-            {
-                'expected_revision': record['revision'],
-                'expected_pin_hash': pin['content_sha256'],
-                'destination_version_id': book['version_id'],
-                'destination_hash': book['content_sha256'],
-            },
-        )
+    assert view['newer_available'] is True and view['can_reprice'] is True
     assert store.db.records[f'_job_pricing/{ID}']['version_id'] == pin['version_id']
 
+    review = prices.reprice_preview('owner', record)
+    assert review['from_calculation_version'] == price_books.CALCULATION_VERSION
+    assert review['to_calculation_version'] == 'dryscope-v2'
+    assert len(review['differences']) == 3
+    prices.reprice(
+        'owner',
+        ID,
+        {
+            'expected_revision': record['revision'],
+            'expected_pin_hash': pin['content_sha256'],
+            'destination_version_id': book['version_id'],
+            'destination_hash': book['content_sha256'],
+        },
+    )
+    moved = store.db.records[f'_job_pricing/{ID}']
+    assert moved['version_id'] == book['version_id']
+    assert moved['calculation_version'] == 'dryscope-v2'
+    assert 'rates' not in moved
 
-def test_additional_work_on_a_v2_book_answers_a_readable_conflict(api, enabled):
-    from backend.workspaces import Conflict
 
+def test_additional_work_on_a_v2_book_prices_from_its_extras_item(api, enabled, extras_on):
     client, current, store = api
     current['uid'] = 'owner'
-    _publish_v2(client, _v2_table('25.00'))
+    _publish_v2(client, _v2_table('25.00', extras=True))
     company = store.db.records['_companies/adr']
-    with pytest.raises(Conflict, match='v2 pricing is not available yet'):
-        store.workspaces.prices.approval_source(company)
+    source = store.workspaces.prices.approval_source(company)
+    assert source['calculation_version'] == 'dryscope-v2'
+    current['uid'] = 'estimator'
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    quote = client.post(f'/api/inspections/{ID}/extras/quote', json={'hours': '2.5'})
+    assert quote.status_code == 200, quote.text
+    assert quote.json()['rate'] == '25.00' and quote.json()['total'] == '62.50'
 
 
 @pytest.mark.parametrize('audited', [False, True])

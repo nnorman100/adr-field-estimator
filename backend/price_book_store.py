@@ -15,6 +15,7 @@ from google.cloud import firestore
 
 try:
     from . import pricing_v2
+    from .pricing import price_and_range
     from .adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from .claims import price_scope, proposal_range
     from .cloud_log import event
@@ -43,7 +44,9 @@ try:
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         SCHEMA_VERSION as V2_SCHEMA_VERSION,
         content_hash as v2_content_hash,
+        from_v1_rates,
         seed_quantities,
+        switch_differences,
         diff_tables,
         normalize_table,
         public_diff,
@@ -56,6 +59,7 @@ try:
     from .workspaces import AccessDenied
 except ImportError:
     import pricing_v2
+    from pricing import price_and_range
     from adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from claims import price_scope, proposal_range
     from cloud_log import event
@@ -84,7 +88,9 @@ except ImportError:
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         SCHEMA_VERSION as V2_SCHEMA_VERSION,
         content_hash as v2_content_hash,
+        from_v1_rates,
         seed_quantities,
+        switch_differences,
         diff_tables,
         normalize_table,
         public_diff,
@@ -106,7 +112,10 @@ DRAFTS = '_price_book_drafts'
 DOMAIN = 'pricing'
 V1_SIZE_LIMIT = 32768
 V2_SIZE_LIMIT = 200 * 1024
-V2_PRICING_UNAVAILABLE = 'v2 pricing is not available yet.'
+SWITCH_EFFECT = (
+    'New jobs use this table from the time of publication. Drafts already started keep their '
+    'current prices until you apply the new table to one draft. Signed documents never change.'
+)
 
 
 class Expired(Exception):
@@ -161,11 +170,16 @@ def _head_is_v2(head) -> bool:
     return (head or {}).get('calculation_version') == V2_CALCULATION_VERSION
 
 
-def _refuse_v1_to_v2(head):
-    if head and head.get('latest_version_id') and not _head_is_v2(head):
+def _on_rate_book(head) -> bool:
+    return bool(head and head.get('latest_version_id') and not _head_is_v2(head))
+
+
+def _refuse_v1_to_v2(head, draft):
+    """A company on a rate book moves only through the owner's switch, which saves a working copy."""
+    if _on_rate_book(head) and not draft:
         raise Conflict(
             'This company uses the previous calculation. '
-            'It cannot move to an owner price table until the cutover is available.'
+            'Start the switch to an owner price table first.'
         )
 
 
@@ -232,6 +246,67 @@ def _sample_jobs(table):
             }
         )
     return samples
+
+
+def _rate_book_samples(rates, calculation_version):
+    """The same made-up sample jobs priced from a rate book, so a switch shows before and after."""
+    samples = []
+    for sample in pricing_v2.SAMPLE_JOBS:
+        data = InspectionData.model_validate(sample['data'])
+        lines, total = price_scope(data, rates, calculation_version)
+        if total <= 0:
+            continue
+        low, high = proposal_range(data, lines, calculation_version)
+        samples.append(
+            {
+                'key': sample['key'],
+                'label': sample['label'],
+                'description': sample['description'],
+                'notice': sample['notice'],
+                'mode': 'range',
+                'low': f'${low:,.2f}',
+                'high': f'${high:,.2f}',
+                'incomplete': False,
+            }
+        )
+    return samples
+
+
+def _pin_body(inspection_id, company_id, chosen, reason, pin_version=1):
+    """One job pin: the table or rate book the job prices from, copied whole."""
+    body = {
+        'inspection_id': inspection_id,
+        'company_id': company_id,
+        'pin_version': pin_version,
+        'version_id': chosen['version_id'],
+        'sequence': chosen.get('sequence', 1 if _is_v2(chosen) else 0),
+        'content_sha256': chosen['content_sha256'],
+        'calculation_version': chosen['calculation_version'],
+        'priced_at': now(),
+        'reason': reason,
+    }
+    if _is_v2(chosen):
+        body.update(items=copy.deepcopy(chosen['items']), policy=copy.deepcopy(chosen['policy']))
+        if len(json.dumps(body).encode('utf-8')) > V2_SIZE_LIMIT:
+            _raise_size_limit()
+    else:
+        body['rates'] = dict(chosen['rates'])
+    return body
+
+
+def _priced_totals(data, source):
+    """What a draft comes to on a pin or book, for the owner's before-and-after reprice review."""
+    try:
+        priced = price_and_range(data, source)
+    except ValueError:
+        # A scope the table prices at nothing is not an error until the job is audited.
+        return {'itemized': '0.00', 'low': '0.00', 'high': None if _is_single(source) else '0.00'}
+    high = None if priced.high is None else f'{priced.high:.2f}'
+    return {'itemized': f'{priced.xactimate_total:.2f}', 'low': f'{priced.low:.2f}', 'high': high}
+
+
+def _is_single(source):
+    return _is_v2(source) and source['policy'].get('estimate_mode') == 'single'
 
 
 def _raise_size_limit():
@@ -441,6 +516,10 @@ class PriceBookStore:
             if unset
             else 'New pricing uses these rates. Existing jobs keep their saved rates.',
         }
+        view['calculation_version'] = book['calculation_version']
+        if manage and not self._starts_from_catalog(company['company_id']):
+            view['switch_available'] = not draft
+            view['switch'] = self._switch_notice(company, book)
         if self._starts_from_catalog(company['company_id']):
             # The blank rows remain for API compatibility and the v1 template; the editor reads items.
             pub = public_table(starter_table(), manage=manage)
@@ -529,6 +608,90 @@ class PriceBookStore:
             'base_generation': saved['base_generation'],
             'base_version_id': saved['base_version_id'],
             'problems': problems,
+            'working_copy': self._working_copy_view(saved),
+        }
+
+    def _switch_notice(self, company, book):
+        """What the owner reads before and during a switch. An unset book carries nothing over."""
+        carries = not _is_unset(book)
+        return {
+            'carries_prices': carries,
+            'differences': switch_differences(self._switch_table(company, book)['policy'])
+            if carries
+            else [],
+            'effect': SWITCH_EFFECT,
+        }
+
+    def _switch_table(self, company, book):
+        """The table a switch starts from: this company's own rates mapped, or the blank starter.
+
+        effective() already keeps ADR's rates from any other company, and reads as unset then.
+        """
+        if _is_unset(book):
+            return starter_table()
+        _refuse_adr_rates(company['company_id'], book['rates'])
+        table = from_v1_rates(book['rates'])
+        if self._locked_keys():
+            # A rate book keeps this rate while priced extras are off; a table switches the item off.
+            for item in table['items']:
+                if item['group'] == 'extras':
+                    item['enabled'] = False
+        return table
+
+    def start_v2(self, uid, company_id):
+        """The owner's switch: save a working copy to review. Pricing moves only at publish."""
+        self._require()
+        actor = self.ws.company_actor(uid, company_id, manage=True)
+        if 'prices_manage' not in actor['capabilities']:
+            raise AccessDenied('Only the company owner can change prices.')
+
+        def start(tx):
+            tx_actor = self.ws.company_actor(uid, company_id, manage=True, tx=tx)
+            if 'prices_manage' not in tx_actor['capabilities']:
+                raise AccessDenied('Only the company owner can change prices.')
+            company = self.ws.read('_companies', company_id, tx)
+            if not company or company.get('status') != 'active':
+                raise Conflict('Company prices cannot be changed while the company is suspended.')
+            head = self._head(company_id, tx) or {}
+            if _head_is_v2(head):
+                raise Conflict('This company already uses an owner price table.')
+            if self._draft(company_id, tx):
+                raise Conflict('Unpublished price changes are already saved. Reload.')
+            book = self.effective(company, tx)
+            table = self._switch_table(company, book)
+            doc = {
+                'company_id': company_id,
+                'working_version': 1,
+                'base_generation': head.get('generation', 0),
+                'base_version_id': head.get('latest_version_id'),
+                'items': table['items'],
+                'policy': table['policy'],
+                'updated_by_uid': uid,
+                'updated_at': now(),
+            }
+            tx.set(self.ws.ref(DRAFTS, company_id), doc)
+            self._event(
+                tx,
+                uid,
+                'price_switch_started',
+                company_id,
+                {
+                    'from_version_id': book['version_id'],
+                    'from_calculation_version': book['calculation_version'],
+                    'carries_prices': not _is_unset(book),
+                },
+            )
+            return doc
+
+        saved = self._run(start)
+        event(
+            'Price switch started', logging.INFO, operation='price_book', outcome='switch_started'
+        )
+        return {
+            'working_version': saved['working_version'],
+            'base_generation': saved['base_generation'],
+            'base_version_id': saved['base_version_id'],
+            'problems': self._publish_problems(saved, []),
             'working_copy': self._working_copy_view(saved),
         }
 
@@ -681,7 +844,8 @@ class PriceBookStore:
         table = normalize_table(payload, publish=True, acknowledgements=acks)
         reason = reason_text(payload.get('change_reason', ''))
         head = self._head(company_id)
-        _refuse_v1_to_v2(head)
+        draft = self._draft(company_id)
+        _refuse_v1_to_v2(head, draft)
         self._refuse_locked_extras(table)
         if head and head.get('latest_version_id'):
             current = self._version(head['latest_version_id'])
@@ -694,7 +858,17 @@ class PriceBookStore:
             base_version_id = None
             next_seq = 1
         before_table = current if (current and _is_v2(current)) else None
-        diff, warnings = diff_tables(before_table, table)
+        book = self.effective(company)
+        switching = None
+        # ADR's unpublished starting book is a rate book too, with no head yet.
+        if _on_rate_book(head) or (draft and not _is_v2(book) and not _is_unset(book)):
+            switching = self._switch_notice(company, book)
+            if switching['carries_prices']:
+                switching['differences'] = switch_differences(table['policy'])
+            # Against the mapped table, the review lists only what the owner changed.
+            diff, warnings = diff_tables(self._switch_table(company, book), table)
+        else:
+            diff, warnings = diff_tables(before_table, table)
         digest = v2_content_hash(table)
         no_changes = bool(before_table and before_table.get('content_sha256') == digest)
         preview_id = uuid4().hex
@@ -715,9 +889,14 @@ class PriceBookStore:
             'warnings': warnings,
             'diff': diff,
             'no_changes': no_changes,
-            'sample_before': _sample_jobs(before_table) if before_table else [],
+            'sample_before': _rate_book_samples(book['rates'], book['calculation_version'])
+            if switching and switching['carries_prices']
+            else (_sample_jobs(before_table) if before_table else []),
             'sample_after': _sample_jobs(table),
-            'source': payload.get('source') or 'manual',
+            'source': 'from_v1'
+            if switching and switching['carries_prices']
+            else payload.get('source') or 'manual',
+            'switch': switching,
             'import_digest': payload.get('import_digest'),
             'created_at': now(),
             'expires': (
@@ -736,7 +915,9 @@ class PriceBookStore:
         return self._preview_response(body, {'sequence': next_seq - 1 if next_seq > 1 else 0})
 
     def _preview_response(self, body, book):
+        switching = body.get('switch')
         return {
+            **({'switch': switching} if switching else {}),
             'preview_id': None if body['no_changes'] else body['preview_id'],
             'no_changes': body['no_changes'],
             'generation': body['base_generation'],
@@ -747,7 +928,9 @@ class PriceBookStore:
             'sample_before': body['sample_before'],
             'sample_after': body['sample_after'],
             'label': label_for(book['sequence'], body['company_id']),
-            'effect': 'New pricing uses these rates from the time of publication. Existing jobs keep their saved rates.',
+            'effect': switching['effect']
+            if switching
+            else 'New pricing uses these rates from the time of publication. Existing jobs keep their saved rates.',
         }
 
     def _load_preview(self, preview_id, company_id, uid, tx):
@@ -897,11 +1080,11 @@ class PriceBookStore:
         }
 
     def _commit_v2_publish(self, tx, uid, company_id, company, head, preview_id, preview):
-        _refuse_v1_to_v2(head)
+        existing_draft = self._draft(company_id, tx)
+        _refuse_v1_to_v2(head, existing_draft)
         current_version = (
             self._version(head['latest_version_id'], tx) if head.get('latest_version_id') else None
         )
-        existing_draft = self._draft(company_id, tx)
         table = normalize_table(
             {'items': preview['items'], 'policy': preview['policy']},
             publish=True,
@@ -942,6 +1125,11 @@ class PriceBookStore:
             _raise_size_limit()
         tx.create(self.ws.ref(VERSIONS, preview_id), version)
         head.setdefault('started_at', published)
+        if preview.get('source') == 'from_v1':
+            # Drafts begun before this moment have no pin yet and stay on this rate book.
+            head['switched_at'] = published
+            if current_version:
+                head['last_v1_version_id'] = current_version['version_id']
         head.update(
             generation=head['generation'] + 1,
             latest_version_id=preview_id,
@@ -1171,11 +1359,45 @@ class PriceBookStore:
             return company_id, base_version, base_generation, items
         return company_id, base_version, base_generation, book['rates']
 
-    def ensure_pin(self, uid, inspection_id, priceable_only=False):
-        """Create the job pin once. Later audits reuse it. A signed job is never pinned again.
+    def _book_for_job(self, company, record, book, tx=None):
+        """Which book an unpinned draft prices from, and why. A draft stays on what it began on."""
+        company_id = company['company_id']
+        head = self._head(company_id, tx) or {}
+        created = _stamp(record.get('created_at'))
+        started = _stamp(head.get('started_at'))
+        grandfather = bool(record.get('audit')) or (
+            started is not None and (created is None or created < started)
+        )
+        if company_id == ADR_COMPANY_ID and grandfather and book.get('source') != 'seed':
+            rates = _adr_starting_rates(company)
+            return {
+                'version_id': 'seed',
+                'sequence': 0,
+                'rates': rates,
+                'content_sha256': content_hash(rates),
+                'calculation_version': CALCULATION_VERSION,
+                'source': 'seed',
+            }, 'legacy_rollout'
+        reason = 'first_price' if not record.get('audit') else 'legacy_rollout'
+        switched = _stamp(head.get('switched_at'))
+        if switched is not None and (created is None or created < switched):
+            version = self._version(head.get('last_v1_version_id'), tx)
+            if not version or version.get('company_id') != company_id or not _valid_v1_doc(version):
+                raise Conflict('This company price book cannot be used. Contact support.')
+            return version, reason
+        return book, reason
 
-        priceable_only refuses a v2 pin, before any write, for callers that price the job now.
-        """
+    def _unpinned_v1(self, company, record, book, tx=None):
+        """The rate book a draft with no pin stays on after its company switched, if it has one."""
+        if not _is_v2(book) or record.get('status') == 'signed':
+            return None
+        if not (self._head(company['company_id'], tx) or {}).get('switched_at'):
+            return None
+        chosen, _ = self._book_for_job(company, record, book, tx)
+        return None if _is_v2(chosen) else chosen
+
+    def ensure_pin(self, uid, inspection_id):
+        """Create the job pin once. Later audits reuse it. A signed job is never pinned again."""
 
         def pin(tx):
             record = (
@@ -1192,8 +1414,6 @@ class PriceBookStore:
                 raise Conflict('Signed inspections keep the prices they were signed with.')
             existing = self._pin(inspection_id, tx)
             if existing:
-                if priceable_only and _is_v2(existing):
-                    raise Conflict(V2_PRICING_UNAVAILABLE)
                 self.basis_for(existing, job['company_id'])
                 basis = saved_basis(current.get('audit'))
                 if basis:
@@ -1205,57 +1425,8 @@ class PriceBookStore:
             book = self.effective(company, tx)
             if _is_unset(book):
                 raise Conflict(_not_set_message(actor.get('role')))
-            created = _stamp(current.get('created_at'))
-            started = _stamp((self._head(job['company_id'], tx) or {}).get('started_at'))
-            grandfather = bool(current.get('audit')) or (
-                started is not None and (created is None or created < started)
-            )
-            if job['company_id'] == ADR_COMPANY_ID and grandfather and book.get('source') != 'seed':
-                rates = _adr_starting_rates(company)
-                chosen = {
-                    'version_id': 'seed',
-                    'sequence': 0,
-                    'rates': rates,
-                    'content_sha256': content_hash(rates),
-                    'calculation_version': CALCULATION_VERSION,
-                    'source': 'seed',
-                }
-                reason = 'legacy_rollout'
-            else:
-                chosen = book
-                reason = 'first_price' if not current.get('audit') else 'legacy_rollout'
-            if _is_v2(chosen):
-                if priceable_only:
-                    raise Conflict(V2_PRICING_UNAVAILABLE)
-                body = {
-                    'inspection_id': inspection_id,
-                    'company_id': job['company_id'],
-                    'pin_version': 1,
-                    'version_id': chosen['version_id'],
-                    'sequence': chosen.get('sequence', 1),
-                    'content_sha256': chosen['content_sha256'],
-                    'calculation_version': V2_CALCULATION_VERSION,
-                    'items': copy.deepcopy(chosen['items']),
-                    'policy': copy.deepcopy(chosen['policy']),
-                    'priced_at': now(),
-                    'reason': reason,
-                }
-                if len(json.dumps(body).encode('utf-8')) > V2_SIZE_LIMIT:
-                    _raise_size_limit()
-                tx.create(self.ws.ref(PINS, inspection_id), body)
-                return body
-            body = {
-                'inspection_id': inspection_id,
-                'company_id': job['company_id'],
-                'pin_version': 1,
-                'version_id': chosen['version_id'],
-                'sequence': chosen.get('sequence', 0),
-                'content_sha256': chosen['content_sha256'],
-                'calculation_version': chosen['calculation_version'],
-                'rates': dict(chosen['rates']),
-                'priced_at': now(),
-                'reason': reason,
-            }
+            chosen, reason = self._book_for_job(company, current, book, tx)
+            body = _pin_body(inspection_id, job['company_id'], chosen, reason)
             tx.create(self.ws.ref(PINS, inspection_id), body)
             return body
 
@@ -1342,13 +1513,15 @@ class PriceBookStore:
             _refuse_adr_rates(job['company_id'], pin['rates'])
         manage = actor['role'] == 'owner' and record.get('status') != 'signed'
         unset = _is_unset(book)
+        kept = None if pin else self._unpinned_v1(company, record, book)
+        held = pin or kept
         newer = bool(
-            pin
+            held
             and not unset
-            and book['version_id'] != pin.get('version_id')
-            and book['content_sha256'] != pin.get('content_sha256')
+            and book['version_id'] != held.get('version_id')
+            and book['content_sha256'] != held.get('content_sha256')
         )
-        active = pin if pin else book
+        active = held or book
         if _is_v2(active):
             pub = public_table(active, manage=False)
             return {
@@ -1368,7 +1541,7 @@ class PriceBookStore:
                     'version_id': book['version_id'],
                 },
                 'newer_available': newer,
-                'can_reprice': False,
+                'can_reprice': bool(manage and newer),
                 'table': {
                     'version_id': active['version_id'],
                     'content_sha256': active['content_sha256'],
@@ -1379,7 +1552,7 @@ class PriceBookStore:
                 },
                 'pending_note': None if pin else 'Prices are confirmed at the first online save.',
             }
-        display = pin['rates'] if pin else book['rates']
+        display = active['rates']
         adr_book = adr_rates()
         display_rates = {
             'after_hours_job_charge': display['after_hours_job_charge'],
@@ -1388,6 +1561,7 @@ class PriceBookStore:
         if pin or not unset:
             display_rates['standard_job_charges'] = price_display(display)['standard_job_charges']
         return {
+            **({'calculation_version': kept['calculation_version']} if kept else {}),
             'pinned': None
             if not pin
             else {
@@ -1403,7 +1577,7 @@ class PriceBookStore:
                 'version_id': book['version_id'],
             },
             'newer_available': newer,
-            'can_reprice': bool(manage and newer and not _is_v2(book)),
+            'can_reprice': bool(manage and newer),
             'sheet_rates': job['company_id'] == ADR_COMPANY_ID
             and display['after_hours_job_charge'] == adr_book['after_hours_job_charge']
             and display['sheet_labor_hourly'] == adr_book['sheet_labor_hourly'],
@@ -1424,27 +1598,31 @@ class PriceBookStore:
             raise AccessDenied('Only the company owner can apply new prices to a draft.')
         if record.get('status') == 'signed':
             raise Conflict('Signed inspections keep the prices they were signed with.')
+        company = self.ws.read('_companies', job['company_id'])
         pin = self._pin(record['inspection_id'])
+        if pin and not _is_v2(pin):
+            _refuse_adr_rates(job['company_id'], pin['rates'])
+        book = self.effective(company)
+        pin = pin or self._unpinned_v1(company, record, book)
         if not pin:
             raise Conflict('This draft has no saved prices yet. Finish and review it first.')
-        if not _is_v2(pin):
-            _refuse_adr_rates(job['company_id'], pin['rates'])
-        company = self.ws.read('_companies', job['company_id'])
-        book = self.effective(company)
         if _is_unset(book):
             raise Conflict(_not_set_message(actor['role']))
-        if _is_v2(pin) or _is_v2(book):
-            raise Conflict(V2_PRICING_UNAVAILABLE)
-
-        data = InspectionData.model_validate(record['data'])
+        if _is_v2(pin) and not _is_v2(book):
+            raise Conflict(
+                'This version uses the previous calculation. Start from the current table.'
+            )
         old_version = pin.get('calculation_version')
-        if not known_calculation_version(old_version):
+        if not (_is_v2(pin) or known_calculation_version(old_version)):
             raise Conflict("This draft's saved prices are missing. Contact support.")
-        new_version = book['calculation_version']
-        old_items, old_total = price_scope(data, pin['rates'], old_version)
-        new_items, new_total = price_scope(data, book['rates'], new_version)
-        old_low, old_high = proposal_range(data, old_items, old_version)
-        new_low, new_high = proposal_range(data, new_items, new_version)
+        data = InspectionData.model_validate(record['data'])
+        crossing = _is_v2(book) and not _is_v2(pin)
+        if _is_v2(book):
+            # From a rate book the review compares against its own rates carried over.
+            before = pin if _is_v2(pin) else self._switch_table(company, pin)
+            diff = diff_tables(before, book)[0]
+        else:
+            diff = diff_rates(pin['rates'], book['rates'])[0]
         return {
             'revision': record['revision'],
             'from_version_id': pin['version_id'],
@@ -1452,17 +1630,12 @@ class PriceBookStore:
             'to_version_id': book['version_id'],
             'to_hash': book['content_sha256'],
             'to_label': label_for(book.get('sequence', 0), job['company_id']),
-            'diff': diff_rates(pin['rates'], book['rates'])[0],
-            'before': {
-                'itemized': f'{old_total:.2f}',
-                'low': f'{old_low:.2f}',
-                'high': f'{old_high:.2f}',
-            },
-            'after': {
-                'itemized': f'{new_total:.2f}',
-                'low': f'{new_low:.2f}',
-                'high': f'{new_high:.2f}',
-            },
+            'from_calculation_version': old_version,
+            'to_calculation_version': book['calculation_version'],
+            'differences': switch_differences(book['policy']) if crossing else [],
+            'diff': diff,
+            'before': _priced_totals(data, pin),
+            'after': _priced_totals(data, book),
         }
 
     def reprice(self, uid, inspection_id, expected):
@@ -1483,15 +1656,17 @@ class PriceBookStore:
                 or record['revision'] != expected['expected_revision']
             ):
                 raise Conflict('Restore the latest unsigned draft before applying new prices.')
-            pin = self._pin(inspection_id, tx)
-            if not pin or pin.get('content_sha256') != expected['expected_pin_hash']:
-                raise Conflict("This draft's prices changed. Review them again.")
             company = self.ws.read('_companies', job['company_id'], tx)
             book = self.effective(company, tx)
             if _is_unset(book):
                 raise Conflict(_not_set_message(actor['role']))
-            if _is_v2(pin) or _is_v2(book):
-                raise Conflict(V2_PRICING_UNAVAILABLE)
+            pin = self._pin(inspection_id, tx) or self._unpinned_v1(company, record, book, tx)
+            if not pin or pin.get('content_sha256') != expected['expected_pin_hash']:
+                raise Conflict("This draft's prices changed. Review them again.")
+            if _is_v2(pin) and not _is_v2(book):
+                raise Conflict(
+                    'This version uses the previous calculation. Start from the current table.'
+                )
             if (
                 book['version_id'] != expected['destination_version_id']
                 or book['content_sha256'] != expected['destination_hash']
@@ -1499,17 +1674,13 @@ class PriceBookStore:
                 raise Conflict('Company prices changed. Review the latest prices again.')
             if book['content_sha256'] == pin.get('content_sha256'):
                 return record
-            replacement = {
-                **pin,
-                'version_id': book['version_id'],
-                'sequence': book.get('sequence', 0),
-                'content_sha256': book['content_sha256'],
-                'rates': dict(book['rates']),
-                'priced_at': now(),
-                'reason': 'explicit_reprice',
-                'pin_version': pin.get('pin_version', 1) + 1,
-                'calculation_version': book['calculation_version'],
-            }
+            replacement = _pin_body(
+                inspection_id,
+                job['company_id'],
+                book,
+                'explicit_reprice',
+                pin.get('pin_version', 0) + 1,
+            )
             record['revision'] = record['revision'] + 1
             record['audit'] = None
             record['status'] = 'draft'
@@ -1590,9 +1761,8 @@ class PriceBookStore:
     def approval_source(self, company, tx=None):
         """The book a new additional-work approval is priced from, when price books are on."""
         book = self.effective(company, tx)
-        if _is_v2(book):
-            raise Conflict(V2_PRICING_UNAVAILABLE)
-        return book if price_books_enabled() else None
+        # A table prices with the flag on or off. With it off, an owner just cannot edit the table.
+        return book if price_books_enabled() or _is_v2(book) else None
 
 
 def _stamp(value):
