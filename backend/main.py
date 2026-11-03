@@ -75,7 +75,7 @@ try:
     from . import document_links
     from . import tags as qr_tags
     from .adr_price_book import adr_rates
-    from .claims import make_documents, price_scope, proposal_date
+    from .claims import make_documents, price_scope, proposal_date, without_saved_prices
     from .pricing import price_and_range
     from .sizing import equipment_sizing
     from .prompts import (
@@ -145,7 +145,7 @@ except ImportError:
     import document_links
     import tags as qr_tags
     from adr_price_book import adr_rates
-    from claims import make_documents, price_scope, proposal_date
+    from claims import make_documents, price_scope, proposal_date, without_saved_prices
     from pricing import price_and_range
     from sizing import equipment_sizing
     from prompts import (
@@ -636,6 +636,13 @@ def reusable_audit(record, revision, identity, customer, claim=None, price_basis
 
 def public_record(record, *, readiness_state=None, quantity_notes=False):
     result = {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
+    if result.get('documents'):
+        result['documents'] = without_saved_prices(result['documents'])
+    if result.get('audit'):
+        result['audit'] = {
+            **result['audit'],
+            'documents': without_saved_prices(result['audit']['documents']),
+        }
     if not quantity_notes:
         if result.get('documents'):
             result['documents'] = signing_links.without_quantity_notes(result['documents'])

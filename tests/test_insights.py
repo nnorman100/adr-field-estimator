@@ -428,3 +428,11 @@ def test_signed_summary_uses_current_claim_without_changing_signed_source(api, m
     assert removed['stale'] and removed['narrative'] is None
     assert store.db.records['authorizations/' + auth_id] == signed_source
     assert store.db.records['inspections/' + ID] == inspection
+
+
+@pytest.mark.parametrize('sentence', ['Budget $750.', 'The cost is high.', 'Total 3 rooms.'])
+def test_a_job_summary_uses_the_shared_price_check(monkeypatch, sentence):
+    pack = fact_pack(dict(job_id='j'), dict(), {}, None, None)
+    monkeypatch.setattr('backend.insights.sentences', lambda _pack: {'rooms': sentence})
+    with pytest.raises(ValueError):
+        validate_summary({'topics': ['rooms']}, pack)

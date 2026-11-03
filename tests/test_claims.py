@@ -1,4 +1,5 @@
 from decimal import Decimal
+import logging
 import pytest
 from pydantic import ValidationError
 from backend.claims import (
@@ -14,7 +15,9 @@ from backend.claims import (
 )
 from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import InspectionData, AIResult
-from backend.prompts import audit_prompt
+from backend import claims
+from backend.claims import plain, states_price, without_saved_prices
+from backend.prompts import AUDIT_INSTRUCTIONS, audit_prompt
 from tests.fakes import ADR_PROFILE
 
 
@@ -1332,3 +1335,118 @@ def test_extra_wording_replaces_the_description_on_v2_extra_lines(monkeypatch):
     docs = v2_documents(monkeypatch, lines=lines, data=data)
     sentence = 'Additional work, not in Test Co price sheet: Move and reset toilet, 2.5 h at $50.00/h, approved by Test Owner on 2026-10-25.'
     assert docs['xactimate_scope'][-1]['description'] == sentence
+
+
+CLEAN_AI = AIResult(
+    summary='Office has drywall removal.\nHallway is inspected only.',
+    suggestions=['Confirm the laminate area.', 'Document drying progress.'],
+    unpriced_work=[],
+    testing_advice=['Lead and asbestos testing may be required before demolition.'],
+)
+PRICED_AI = AIResult(
+    summary='Office has drywall removal. Estimated cost $500.\n'
+    'Hallway is inspected only. Budget $750 for paint.',
+    suggestions=[
+        'Confirm the laminate area. Repairs should run about five hundred dollars.',
+        'Total 1,200 for the room.',
+        'Document drying progress.',
+    ],
+    unpriced_work=[],
+    testing_advice=[
+        'Lead and asbestos testing may be required before demolition. Testing runs $300.'
+    ],
+)
+
+
+def test_a_model_written_price_never_reaches_the_documents(monkeypatch):
+    logged = []
+    monkeypatch.setattr(claims, 'event', lambda *args, **fields: logged.append((args, fields)))
+    docs = make_documents(acme(year_built=1960), [], PRICED_AI)
+    # The audit still succeeds: only the offending sentences go, and only from the model's notes.
+    assert docs == make_documents(acme(year_built=1960), [], CLEAN_AI)
+    assert docs['ai_summary'] == 'Office has drywall removal.\nHallway is inspected only.'
+    assert docs['ai_suggestions'] == [
+        'Confirm the laminate area.',
+        'Document drying progress.',
+        'Lead and asbestos testing may be required before demolition.',
+    ]
+    for figure in ['$500', '$750', '$300', '1,200', 'five hundred']:
+        assert figure not in str(docs)
+    # A code only: the dropped words never reach the log.
+    assert logged and all(
+        args == ('Audit note sentence dropped', logging.WARNING) for args, _ in logged
+    )
+    assert all(fields == dict(operation='audit', outcome='price_text') for _, fields in logged)
+
+
+def test_a_note_made_only_of_prices_leaves_no_blank_entry():
+    ai = AIResult(summary='Estimated cost $500.', suggestions=['Budget $750.'], unpriced_work=[])
+    docs = make_documents(acme(), [], ai)
+    assert docs['ai_summary'] == '' and docs['ai_suggestions'] == []
+
+
+def test_a_price_word_in_an_unpriced_work_flag_still_blocks_signing():
+    # Dropping a flag would unlock signing, so the check covers only the advisory notes.
+    ai = AIResult(
+        summary='Reviewed', suggestions=[], unpriced_work=['Cabinet removal has no price.']
+    )
+    docs = make_documents(acme(), [], ai)
+    assert docs['unpriced_work'] == ['Cabinet removal has no price.'] and not docs['signable']
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        '$500',
+        '$ 500 for the room.',
+        'About 500 dollars.',
+        'USD 500.',
+        'Should run 5k.',
+        'The cost is high.',
+        'Pricing depends on the carrier.',
+        'Total 1,200.',
+        'The estimate is five hundred.',
+        'A budget of 750.',
+        'The priced_scope has 2 lines.',
+    ],
+)
+def test_states_price_catches_money_and_price_words(text):
+    assert states_price(plain(text))
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        'Office has drywall removal.',
+        'Confirm 120 sq ft of drywall.',
+        'The priced scope does not cover the toilet reset.',
+        'Check that the estimate covers the cabinets.',
+        'The scope review lists 2 unpriced items.',
+        'Room 2 needs a meter photo at 18 percent.',
+    ],
+)
+def test_states_price_leaves_scope_words_alone(text):
+    assert not states_price(text)
+
+
+def test_an_older_saved_note_with_a_price_is_clean_when_read_back():
+    saved = dict(
+        ai_summary='Office has drywall removal. Estimated cost $500.',
+        ai_suggestions=['Budget $750.', 'Confirm the  laminate area.'],
+        adr_estimate=dict(findings=['Stored as signed.']),
+    )
+    read = without_saved_prices(saved)
+    assert read['ai_summary'] == 'Office has drywall removal.'
+    # Text without a price comes back exactly as stored, and the stored record is not touched.
+    assert read['ai_suggestions'] == ['Confirm the  laminate area.']
+    assert read['adr_estimate'] == saved['adr_estimate']
+    assert saved['ai_summary'].endswith('$500.')
+    # Records saved before the notes existed stay as they were.
+    assert without_saved_prices(dict(adr_estimate={})) == dict(adr_estimate={})
+    assert without_saved_prices(dict(ai_summary=None)) == dict(ai_summary=None)
+
+
+def test_the_audit_prompt_keeps_the_notes_away_from_homeowners_and_prices():
+    assert 'shown to the homeowner' not in AUDIT_INSTRUCTIONS
+    assert 'never to the homeowner or adjuster' in AUDIT_INSTRUCTIONS
+    assert 'Never state a dollar amount' in AUDIT_INSTRUCTIONS

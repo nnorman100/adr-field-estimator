@@ -63,6 +63,22 @@ def ready(context):
     return client, store, record, token(link)
 
 
+def assert_no_estimator_notes(body):
+    for hidden in sl.ESTIMATOR_ONLY:
+        assert hidden not in body['documents']
+
+
+def test_a_signing_link_never_carries_the_ai_notes_saved_with_the_audit(ready):
+    _client, store, record, value = ready
+    saved = store.db.records['inspections/' + ID]['audit']['documents']
+    # The record keeps them for the estimator, even one saved before the price check.
+    saved.update(ai_summary='Estimated cost $500.', ai_suggestions=['Budget $750.'])
+    assert record['audit']['documents']['ai_summary']
+    body = homeowner(value).get('/api/sign').json()
+    assert 'ai_summary' not in body['documents'] and 'ai_suggestions' not in body['documents']
+    assert '$500' not in json.dumps(body) and '$750' not in json.dumps(body)
+
+
 def test_link_reads_the_bound_documents_and_signs_once_as_the_technician(ready):
     client, store, record, value = ready
     stored_links = [k for k in store.db.records if k.startswith('_signing_links/')]
@@ -72,7 +88,9 @@ def test_link_reads_the_bound_documents_and_signs_once_as_the_technician(ready):
     view = homeowner(value).get('/api/sign')
     assert view.status_code == 200, view.text
     body = view.json()
-    assert body['status'] == 'pending' and body['documents'] == record['audit']['documents']
+    assert body['status'] == 'pending'
+    assert body['documents'] == sl.link_documents(record['audit']['documents'])
+    assert_no_estimator_notes(body)
     assert body['consent'] == dict(version=sl.CONSENT_VERSION, statements=sl.CONSENT)
     assert 'owner_uid' not in json.dumps(body) and 'users/' not in json.dumps(body)
     # Documents saved without a company identity get no built-in one.
@@ -114,7 +132,9 @@ def test_link_reads_the_bound_documents_and_signs_once_as_the_technician(ready):
     assert staff_view['signer']['name'] == 'Synthetic Signer'
     # Read-only after signing: the signed copy, receipt and signature stay viewable.
     signed = homeowner(value).get('/api/sign').json()
-    assert signed['status'] == 'signed' and signed['documents'] == agreement['documents']
+    assert signed['status'] == 'signed'
+    assert signed['documents'] == sl.link_documents(agreement['documents'])
+    assert_no_estimator_notes(signed)
     assert signed['receipt'] == dict(
         auth_id=receipt['auth_id'],
         timestamp=receipt['timestamp'],
