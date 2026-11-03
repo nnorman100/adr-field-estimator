@@ -33,7 +33,7 @@ SETS = {
     'adjuster': ('claim', 'defense'),
 }
 UNAVAILABLE = 'This document link is not available. Ask your restoration company for a new link.'
-# Notes the estimator sees in the app; they are never part of a delivered document.
+# Notes the company sees in the app; they are never part of a delivered document.
 ESTIMATOR_ONLY = (
     'ai_summary',
     'ai_suggestions',
