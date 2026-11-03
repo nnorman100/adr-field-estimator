@@ -295,6 +295,7 @@ test.describe('without a service worker', () => {
       // A job this phone has no row for, as when an estimator first opens an office job.
       ScopeItems.seed(state.draft.inspection_id, null);
       Object.assign(state.draft.data, {
+        rooms: [],
         emergency_calls: 1,
         monitoring_hours: 13.25,
         haul_loads: 1,
@@ -632,6 +633,51 @@ test.describe('without a service worker', () => {
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
     await page.evaluate((value) => restoreDraft(value), id);
     await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+  });
+
+  test('a worked job opened on a phone with no row for it keeps its deliberate zeros', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request, {
+      items: {
+        ...ITEMS,
+        service_call: { unit_price: '150.00', default_quantity: '1' },
+        setup_documentation: { unit_price: '40.00', default_quantity: '0' },
+        monitoring_visit: { unit_price: '25.00', default_quantity: '13.25' },
+        debris_haul: { unit_price: '25.00', default_quantity: '1' },
+        air_scrubber: { unit_price: '25.00', default_quantity: '1' },
+        hepa_filter: { unit_price: '25.00', default_quantity: '1' },
+        air_mover: { unit_price: '30.00', default_quantity: '3' },
+      },
+    });
+    await open(page, 'estimator');
+    const id = await jobId(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('0');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#technicianNotes').fill('Second save');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const before = await remote(page, id, 'estimator');
+    expect(before.revision).toBeGreaterThan(1);
+    const owner = await context.newPage();
+    await owner.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('owner'),
+    );
+    await owner.goto('/app');
+    await expect(owner.locator('#workspaceDashboard')).toBeVisible();
+    await owner.evaluate((value) => restoreDraft(value), id);
+    await checkScope(owner);
+    await expect(owner.locator('#airMovers')).toHaveValue('0');
+    await owner.evaluate(() => syncChain);
+    await owner.waitForTimeout(1500);
+    await expect(owner.locator('#saveStatus')).toHaveText('Saved');
+    const after = await remote(owner, id);
+    expect(after.revision).toBe(before.revision);
+    expect(after.data.air_movers).toBe(0);
+    await owner.close();
   });
 
   test('a first publish leaves quantities the technician already changed', async ({

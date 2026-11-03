@@ -231,6 +231,7 @@
     return (
       !data.scope_confirmed &&
       !data.scope_items &&
+      !data.quantity_overrides &&
       ENTERED_ONLY_FIELDS.every((key) => !(data[key] > 0)) &&
       (charges.every(([key, value]) => Number(data[key]) === value) ||
         (beganWithoutTable && charges.every(([key]) => Number(data[key]) === 0)))
@@ -368,7 +369,7 @@
   const dom = () =>
     typeof document !== 'undefined' && typeof document.getElementById === 'function';
   let company = null; // the company's current table, cached on the phone
-  const jobs = new Map(); // inspection id -> { pricing, beganWithoutTable }
+  const jobs = new Map(); // inspection id -> { pricing, start }
   let rendered = null; // the form and table the screen was last built for
   let renderedRows = null; // the item rows it was last built with
   const homes = new Map(); // moved element -> { parent, text }
@@ -379,8 +380,7 @@
 
   const draftId = () => state?.draft?.inspection_id || null;
   const job = (id) => {
-    if (!jobs.has(id))
-      jobs.set(id, { pricing: null, beganWithoutTable: false, defaultsOffered: false });
+    if (!jobs.has(id)) jobs.set(id, { pricing: null, start: 'table' });
     return jobs.get(id);
   };
   function companyView() {
@@ -412,16 +412,14 @@
     const t = jobs.get(id)?.pricing || (state?.session?.pricing_version === V2 && companyView());
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
+  // How a job began decides what defaults may replace: 'table' (nothing), 'noTable' (sheet or zero
+  // charges), or 'intake' (no row on this phone: only a job as office intake leaves it, with no rooms).
   function seed(id, row) {
-    jobs.set(id, {
-      pricing: row?.pricing || null,
-      beganWithoutTable: !!row && !row.pricing,
-      defaultsOffered: !!row?.pricing,
-    });
+    const start = !row ? 'intake' : row.pricing ? 'table' : 'noTable';
+    jobs.set(id, { pricing: row?.pricing || null, start });
   }
   function seedNew(id) {
-    const hasTable = !!companyView();
-    jobs.set(id, { pricing: null, beganWithoutTable: !hasTable, defaultsOffered: hasTable });
+    jobs.set(id, { pricing: null, start: companyView() ? 'table' : 'noTable' });
   }
   function forget() {
     jobs.clear();
@@ -913,10 +911,11 @@
   // Once only, and never to a job that began from a table: its quantities are the technician's own.
   function takeDefaults() {
     const mine = job(draftId()),
-      data = state.draft.data;
-    if (mine.defaultsOffered) return false;
-    mine.defaultsOffered = true;
-    if (!untouched(data, mine.beganWithoutTable)) return false;
+      data = state.draft.data,
+      start = mine.start;
+    mine.start = 'table';
+    if (start === 'table' || (start === 'intake' && data.rooms?.length)) return false;
+    if (!untouched(data, start === 'noTable')) return false;
     applyDefaults(data, table());
     changed(false);
     return true;

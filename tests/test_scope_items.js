@@ -321,6 +321,9 @@ test('only an untouched office-created job is given the table defaults', () => {
   assert.equal(ScopeItems.untouched({ ...sheet, scope_items: {} }), false);
   // A count the walkthrough filled is never overwritten by a default.
   assert.equal(ScopeItems.untouched({ ...sheet, air_movers: 3 }), false);
+  // A walkthrough measurement means the job has been worked on, even when it measured 0.
+  const measured = { air_movers: { measured: '0', entered: '0' } };
+  assert.equal(ScopeItems.untouched({ ...sheet, quantity_overrides: measured }), false);
   // Every quantity a default would overwrite counts as work once it is entered.
   for (const key of [
     'labor_hours',
