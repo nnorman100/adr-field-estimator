@@ -653,10 +653,10 @@ class EstimateEnd(StrictModel):
     """One end of the estimate: the summary lines that add up to its total."""
 
     subtotal: float
-    after_hours: float = 0
-    minimum_adjustment: float = 0
-    overhead_profit: float = 0
-    tax: float = 0
+    after_hours: float
+    minimum_charge: float
+    overhead_profit: float
+    tax: float
     total: float
 
 
@@ -667,15 +667,11 @@ class EstimateSummary(StrictModel):
     mode: Literal['range', 'single']
     low: EstimateEnd
     high: EstimateEnd | None = None
-    labor_material_low: float
-    labor_material_high: float
     after_hours_label: str = Field(max_length=80)
     # Percent strings; '0' when the company has the adjustment off.
     after_hours_percent: str = Field(max_length=12)
     overhead_profit_percent: str = Field(max_length=12)
     sales_tax_percent: str = Field(max_length=12)
-    minimum_job_charge: str = Field(max_length=12)
-    range_rule: dict[str, str | int]
     explanation: str = Field(max_length=2000)
     show_line_breakdown: bool = False
 

@@ -1130,6 +1130,7 @@ console.log(
     'itemizedTotal',
     'proposalBody',
     'claimParty',
+    'claimHint',
     'claimXactimateHead',
     'claimItems',
     'claimCards',
@@ -1157,7 +1158,7 @@ console.log(
   const end = (total, extras = {}) => ({
     subtotal: 6640,
     after_hours: 0,
-    minimum_adjustment: 0,
+    minimum_charge: 0,
     overhead_profit: 0,
     tax: 0,
     total,
@@ -1200,7 +1201,6 @@ console.log(
       after_hours_percent: '20',
       overhead_profit_percent: '10',
       sales_tax_percent: '8',
-      minimum_job_charge: '0',
       explanation: 'The low amount is the itemized total.',
       show_line_breakdown: false,
     },
@@ -1238,7 +1238,12 @@ console.log(
     flat(ranged.els.claimAdjustments),
     'Subtotal of itemized work: $6,640.00 | Night work (20%): $1,030.00 | Overhead and profit (10%): $767.00 | Sales tax (8%): $52.80',
   );
+  assert.equal(ranged.els.claimAdjustments.className, 'claim-summary');
   assert.equal(ranged.els.claimTotal.textContent, 'Itemized claim total: $8,489.80');
+  assert.equal(
+    ranged.els.claimHint.textContent,
+    'Xactimate codes shown where the company entered them. This is not an Xactimate (ESX) file.',
+  );
 
   const single = page();
   single.render(documents('single'));
@@ -1257,9 +1262,30 @@ console.log(
   breakdown.render(withLines);
   assert.match(flat(breakdown.els.proposalBody), /FAN work · 2 each · \$20\.00/);
 
+  // A homeowner's document link has no claim lines: the proposal prints the lines delivered with it.
+  const homeownerLink = page();
+  const copy = documents('range', { xactimate_scope: [] });
+  copy.estimate.show_line_breakdown = true;
+  copy.estimate.lines = [{ description: 'FAN work', quantity: 2, unit: 'each', total: 20 }];
+  homeownerLink.render(copy);
+  assert.match(flat(homeownerLink.els.proposalBody), /FAN work · 2 each · \$20\.00/);
+  assert.equal(homeownerLink.els.claimItems.children.length, 0);
+
+  // An adjuster's link holds only the totals and an emptied proposal: nothing prints from them.
+  const adjusterLink = page();
+  adjusterLink.render({
+    ...documents('range'),
+    adr_estimate: { property_address: '12 Test Lane' },
+    estimate: { mode: 'range', low: { total: 8489.8 }, high: { total: 11896 } },
+  });
+  assert.equal(adjusterLink.els.claimAdjustments.children.length, 0);
+  assert.equal(adjusterLink.els.claimTotal.textContent, 'Itemized claim total: $8,489.80');
+  assert.doesNotMatch(flat(adjusterLink.els.proposalBody), /undefined/);
+  assert.doesNotMatch(flat(adjusterLink.els.proposalBody), /Subtotal of itemized work/);
+
   const minimum = page();
   const floor = documents('range');
-  floor.estimate.low.minimum_adjustment = 510.2;
+  floor.estimate.low.minimum_charge = 510.2;
   minimum.render(floor);
   assert.match(flat(minimum.els.proposalBody), /Minimum job charge \| \$510\.20 \| \$0\.00/);
 
@@ -1269,8 +1295,8 @@ console.log(
     documents('range', {
       quantity_notes: [
         {
-          item: 'demo_cat3_wall:hall',
-          label: 'Wall removal',
+          item: 'Hall:finished_sf',
+          label: 'Finished area',
           room: 'Hall',
           measured: 650,
           entered: 400,
@@ -1281,7 +1307,7 @@ console.log(
   );
   assert.equal(
     flat(withNotes.els.quantityNotesBody),
-    'Wall removal (Hall) · measured 650, entered 400 · Reason: Carpet already out',
+    'Finished area (Hall) · measured 650, entered 400 · Reason: Carpet already out',
   );
   assert.equal(withNotes.els.quantityNotes.hidden, false);
 
@@ -1308,6 +1334,10 @@ console.log(
     ].join(' | '),
   );
   assert.equal(legacy.els.claimXactimateHead.hidden, true);
+  assert.equal(
+    legacy.els.claimHint.textContent,
+    'Internal scope codes (not Xactimate codes). JSON export does not guarantee Xactimate import compatibility.',
+  );
   assert.equal(legacy.els.claimAdjustments.children.length, 0);
   assert.doesNotMatch(flat(legacy.els.claimItems), /\| $/);
   console.log('PASS: v2 documents print the summary block, mode heading and Xactimate column');

@@ -235,6 +235,10 @@ def copy_address(store, record):
     return local[0] + '•••@' + domain
 
 
+def homeowner_documents(documents):
+    return {k: v for k, v in documents.items() if k != 'quantity_notes'}
+
+
 def view(store, token):
     link, record = _resolve(store, link_id(token), count=True)
     result = dict(consent=dict(version=CONSENT_VERSION, statements=CONSENT))
@@ -243,7 +247,7 @@ def view(store, token):
             result,
             status='pending',
             expires_at=iso(link['expires']),
-            documents=record['audit']['documents'],
+            documents=homeowner_documents(record['audit']['documents']),
             email_to=copy_address(store, record),
         )
     agreement = _agreement(store, link)
@@ -251,7 +255,7 @@ def view(store, token):
         result,
         status='signed',
         view_until=iso(link['signed_at'] + SIGNED_VIEW_SECONDS),
-        documents=agreement['documents'],
+        documents=homeowner_documents(agreement['documents']),
         receipt=dict(
             auth_id=agreement['auth_id'],
             timestamp=agreement['created_at'],

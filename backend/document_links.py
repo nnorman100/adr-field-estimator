@@ -184,6 +184,21 @@ def delivered_documents(documents, tabs):
         kept['adr_estimate'] = {
             k: proposal[k] for k in ('customer_name', 'property_address', 'date') if k in proposal
         }
+    estimate = documents.get('estimate')
+    if estimate and 'proposal' not in tabs:
+        kept['estimate'] = {
+            'mode': estimate['mode'],
+            'low': {'total': estimate['low']['total']},
+            **({'high': {'total': estimate['high']['total']}} if estimate.get('high') else {}),
+        }
+    elif estimate and estimate['show_line_breakdown'] and 'claim' not in tabs:
+        kept['estimate'] = {
+            **estimate,
+            'lines': [
+                {k: line[k] for k in ('description', 'quantity', 'unit', 'total')}
+                for line in documents['xactimate_scope']
+            ],
+        }
     if 'claim' not in tabs:
         kept['xactimate_scope'] = []
     if 'defense' not in tabs:

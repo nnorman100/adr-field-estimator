@@ -400,12 +400,18 @@ test.describe('price-table documents', () => {
               'itemizedHeading',
               'itemizedTotal',
               'proposalBody',
+              'claimHint',
               'claimItems',
               'claimAdjustments',
               'claimTotal',
             ].map((id) => document.getElementById(id).textContent),
           );
         expect(await text(view)).toEqual(await text(page));
+        await expect(view.locator('#claimHint')).toHaveText(
+          'Xactimate codes shown where the company entered them. This is not an Xactimate (ESX) file.',
+        );
+        await view.locator('[data-tab="claim"]').click();
+        await expect(view.locator('#claimAdjustments p').first()).toHaveCSS('text-align', 'right');
         // The company-only override note is the estimator's: the homeowner page has no place for it.
         await expect(page.locator('#quantityNotes')).toBeVisible();
         await expect(view.locator('#quantityNotes')).toHaveCount(0);

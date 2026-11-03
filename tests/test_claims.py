@@ -598,6 +598,9 @@ from pathlib import Path  # noqa: E402
 from backend import pricing  # noqa: E402
 from backend.claims import EXCLUSIONS, PROTECTION  # noqa: E402
 from backend import document_links  # noqa: E402
+from backend.claims import end_summary  # noqa: E402
+from backend.contracts import EstimateEnd  # noqa: E402
+from backend.price_table import STARTER_ITEMS  # noqa: E402
 
 V1_GOLDEN = Path(__file__).parent / 'golden' / 'v1-documents.json'
 FIXED_DATE = '11-02-2026'
@@ -772,8 +775,17 @@ D_LINES[4].update(room='Kitchen', area=300, xactimate_code='WTR DMO')
 D_LINES[5].update(taxable=True, room='Kitchen', area=300)
 D_LINES[6].update(taxable=True)
 D_LINES[7].update(taxable=True)
-D_LOW = dict(subtotal=6640, after_hours=1030, overhead_profit=767, tax=52.80, total=8489.80)
-D_HIGH = dict(subtotal=9215, after_hours=1545, overhead_profit=1076, tax=60.00, total=11896.00)
+D_LOW = dict(
+    subtotal=6640, after_hours=1030, minimum_charge=0, overhead_profit=767, tax=52.80, total=8489.80
+)
+D_HIGH = dict(
+    subtotal=9215,
+    after_hours=1545,
+    minimum_charge=0,
+    overhead_profit=1076,
+    tax=60.00,
+    total=11896.00,
+)
 D_EXPLANATION = (
     'The low amount is the itemized total. The high amount adds an allowance to labor and materials '
     'for conditions found during the work: 50% on the first 1000 square feet of area-priced work '
@@ -793,10 +805,7 @@ D_POLICY = {
 }
 D_PIN = {
     'calculation_version': 'dryscope-v2',
-    'items': [
-        {'item_id': 'demo_cat3_wall', 'name': 'Category 3 or mold drywall and trim removal'},
-        {'item_id': 'additional_work', 'name': 'Additional work (owner approved)'},
-    ],
+    'items': STARTER_ITEMS,
     'policy': D_POLICY,
 }
 
@@ -854,21 +863,20 @@ def test_v2_documents_range_mode_print_summary_lines_and_explanation(monkeypatch
     assert estimate['low'] == dict(
         subtotal=6640,
         after_hours=1030,
-        minimum_adjustment=0,
+        minimum_charge=0,
         overhead_profit=767,
         tax=52.80,
         total=8489.80,
     )
     assert estimate['high']['total'] == 11896.00 and estimate['high']['tax'] == 60.00
-    assert (estimate['labor_material_low'], estimate['labor_material_high']) == (5150, 7725)
     assert (
         estimate['after_hours_label'],
         estimate['after_hours_percent'],
         estimate['overhead_profit_percent'],
         estimate['sales_tax_percent'],
-        estimate['minimum_job_charge'],
-    ) == ('After-hours adjustment', '20', '10', '8', '0')
-    assert estimate['range_rule'] == dict(first_sf=1000, first_percent='50', beyond_percent='20')
+    ) == ('After-hours adjustment', '20', '10', '8')
+    for unused in ('labor_material_low', 'labor_material_high', 'minimum_job_charge', 'range_rule'):
+        assert unused not in estimate
     assert estimate['explanation'] == D_EXPLANATION
     assert (
         'Itemized total: $8,489.80. Customer estimate range: $8,489.80 to $11,896.00. '
@@ -960,17 +968,12 @@ def test_minimum_job_charge_and_after_hours_label_print_from_the_policy(monkeypa
         minimum_job_charge='9000.00',
         after_hours=dict(D_POLICY['after_hours'], label='Night work'),
     )
-    low = dict(D_LOW, minimum_adjustment=510.20, total=9000.00)
+    low = dict(D_LOW, minimum_charge=510.20, total=9000.00)
     totals = d_totals(low=low, high=dict(D_HIGH))
     docs = v2_documents(monkeypatch, totals=totals, policy=policy)
     estimate = docs['estimate']
-    assert (
-        estimate['after_hours_label'] == 'Night work' and estimate['minimum_job_charge'] == '9000'
-    )
-    assert (
-        estimate['low']['minimum_adjustment'] == 510.20
-        and estimate['high']['minimum_adjustment'] == 0
-    )
+    assert estimate['after_hours_label'] == 'Night work'
+    assert estimate['low']['minimum_charge'] == 510.20 and estimate['high']['minimum_charge'] == 0
     assert docs['adr_estimate']['proposed_cost_low'] == 9000.00 == docs['xactimate_total']
     assert docs['adr_estimate']['proposed_cost'] >= docs['adr_estimate']['proposed_cost_low']
 
@@ -978,6 +981,129 @@ def test_minimum_job_charge_and_after_hours_label_print_from_the_policy(monkeypa
 def test_signable_requires_a_priced_line_in_v2(monkeypatch):
     assert v2_documents(monkeypatch)['signable']
     assert not v2_documents(monkeypatch, lines=[])['signable']
+
+
+def priced_line(item_id, group):
+    return d_line('X', item_id, group, 'fixed', item_id, 1, 'each', 100, 100)
+
+
+JOB_CHARGES_ONLY = [
+    priced_line('service_call', 'job_charges'),
+    priced_line('monitoring_visit', 'job_charges'),
+    priced_line('debris_haul', 'job_charges'),
+    priced_line('setup_documentation', 'job_charges'),
+    priced_line('after_hours_charge', 'job_charges'),
+    priced_line('air_scrubber', 'drying_equipment'),
+    priced_line('hepa_filter', 'drying_equipment'),
+]
+
+
+def scope_quantity(**items):
+    return InspectionData.model_validate(
+        dict(
+            address='Synthetic',
+            year_built=1960,
+            rooms=[{'name': 'Kitchen', 'category': 1}],
+            scope_confirmed=True,
+            scope_items=items,
+        )
+    )
+
+
+def test_baseline_charges_on_a_room_with_no_area_do_not_make_v2_signable(monkeypatch):
+    data = scope_quantity()
+    assert not v2_documents(monkeypatch, lines=JOB_CHARGES_ONLY, data=data)['signable']
+
+
+@pytest.mark.parametrize(
+    'line',
+    [
+        priced_line('demo_cat1_wall', 'demolition'),
+        priced_line('air_mover', 'drying_equipment'),
+        priced_line('technician_labor', 'labor'),
+        priced_line('scan_3d', 'optional_services'),
+        d_line('EXTRA', None, 'extras', 'fixed', 'Move toilet', 1, 'hour', 100, 100),
+    ],
+    ids=['room_area', 'equipment', 'labor', 'optional', 'approved_extra'],
+)
+def test_real_work_makes_v2_signable(monkeypatch, line):
+    data = scope_quantity()
+    assert v2_documents(monkeypatch, lines=[*JOB_CHARGES_ONLY, line], data=data)['signable']
+
+
+def test_a_typed_item_counts_as_work_only_when_entered_outside_job_charges(monkeypatch):
+    typed = priced_line('supervisor_labor', 'labor')
+    containment = priced_line('containment', 'job_charges')
+    entered = dict(quantity=1)
+    assert not v2_documents(monkeypatch, lines=[typed], data=scope_quantity())['signable']
+    assert v2_documents(monkeypatch, lines=[typed], data=scope_quantity(supervisor_labor=entered))[
+        'signable'
+    ]
+    assert not v2_documents(
+        monkeypatch, lines=[containment], data=scope_quantity(containment=entered)
+    )['signable']
+
+
+# One end of an estimate as pricing_v2.totals on fm/dry-pricing-v2-engine returns it.
+ENGINE_END = dict(
+    subtotal=Decimal('8489.80'),
+    after_hours=Decimal('0.00'),
+    minimum_charge=Decimal('510.20'),
+    overhead_profit=Decimal('900.00'),
+    tax=Decimal('52.80'),
+    total=Decimal('9952.80'),
+)
+
+
+def test_estimate_end_takes_exactly_the_engine_keys():
+    assert set(EstimateEnd.model_fields) == set(ENGINE_END)
+    summary = end_summary(ENGINE_END)
+    assert summary['minimum_charge'] == 510.20
+    assert EstimateEnd.model_validate(summary).minimum_charge == 510.20
+    with pytest.raises(ValidationError):
+        EstimateEnd.model_validate(dict(summary, minimum_adjustment=0))
+    for key in ENGINE_END:
+        with pytest.raises(KeyError):
+            end_summary({k: v for k, v in ENGINE_END.items() if k != key})
+
+
+def test_homeowner_link_carries_the_printed_lines_only_when_the_breakdown_is_on(monkeypatch):
+    tabs = document_links.SETS['homeowner']
+    plain_docs = v2_documents(monkeypatch)
+    delivered = document_links.delivered_documents(plain_docs, tabs)
+    assert 'lines' not in delivered['estimate'] and delivered['xactimate_scope'] == []
+    assert delivered['estimate'] == plain_docs['estimate']
+
+    docs = v2_documents(monkeypatch, policy=dict(D_POLICY, show_line_breakdown=True))
+    delivered = document_links.delivered_documents(docs, tabs)
+    assert delivered['xactimate_scope'] == []
+    assert delivered['estimate']['lines'] == [
+        {key: line[key] for key in ('description', 'quantity', 'unit', 'total')}
+        for line in docs['xactimate_scope']
+    ]
+    assert delivered['estimate']['lines']
+    assert 'lines' not in docs['estimate']
+
+
+@pytest.mark.parametrize('mode', ['range', 'single'])
+def test_adjuster_link_carries_only_the_estimate_totals(monkeypatch, mode):
+    docs = v2_documents(
+        monkeypatch,
+        totals=d_totals(mode),
+        policy=dict(D_POLICY, show_line_breakdown=True),
+    )
+    delivered = document_links.delivered_documents(docs, document_links.SETS['adjuster'])
+    expected = dict(mode=mode, low=dict(total=8489.80))
+    if mode == 'range':
+        expected['high'] = dict(total=11896.00)
+    assert delivered['estimate'] == expected
+    assert delivered['xactimate_scope'] == docs['xactimate_scope']
+
+
+def test_v1_documents_gain_no_estimate_on_either_link():
+    documents = dict(adr_estimate=dict(date='x'), xactimate_scope=[])
+    for tabs in document_links.SETS.values():
+        assert 'estimate' not in document_links.delivered_documents(documents, tabs)
 
 
 def test_v2_basis_without_the_saved_table_is_refused_not_priced_as_v1():
@@ -996,19 +1122,30 @@ def test_quantity_overrides_become_an_estimator_only_note(monkeypatch):
         rooms=[{'name': 'Kitchen', 'category': 3, 'finished_sf': 300}],
         scope_confirmed=True,
         quantity_overrides={
-            'demo_cat3_wall:hall': override,
-            'additional_work': dict(measured='3', entered='3', reason='Same'),
+            'Kitchen:finished_sf': override,
+            'labor_hours': dict(measured='8', entered='6', reason='Crew finished early'),
+            'air_movers': dict(measured='3', entered='3', reason='Same'),
+            'Attic:finished_sf': dict(measured='9', entered='1', reason='No such room'),
+            'not_a_quantity': dict(measured='9', entered='1', reason='Engine ignores it'),
         },
     )
     docs = v2_documents(monkeypatch, data=InspectionData.model_validate(values))
     assert docs['quantity_notes'] == [
         dict(
-            item='demo_cat3_wall:hall',
-            label='Category 3 or mold drywall and trim removal',
+            item='Kitchen:finished_sf',
+            label='Finished area',
+            room='Kitchen',
             measured=650.0,
             entered=400.0,
             reason='Hall carpet already removed',
-        )
+        ),
+        dict(
+            item='labor_hours',
+            label='Labor hours',
+            measured=8.0,
+            entered=6.0,
+            reason='Crew finished early',
+        ),
     ]
     # Document links deliver the documents to people outside the company: the note is held back.
     assert 'quantity_notes' in document_links.ESTIMATOR_ONLY

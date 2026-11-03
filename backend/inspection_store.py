@@ -737,7 +737,7 @@ class InspectionStore(JobStore):
             status='saved',
             address=record['data']['address'],
             proposed_cost=record['audit']['documents']['adr_estimate']['proposed_cost'],
-            proposed_cost_low=record['audit']['documents']['adr_estimate']['proposed_cost_low'],
+            proposed_cost_low=record['audit']['documents']['adr_estimate'].get('proposed_cost_low'),
             documents=record['audit']['documents'],
             inspection=record['data'],
             photos=record['photos'],

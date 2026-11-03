@@ -276,6 +276,32 @@ V2_LINE_KEYS = (
 )
 
 
+BASELINE_SOURCES = {f'field:{field}' for _, _, field, _, _ in BASELINE} | {'after_hours'}
+ROOM_QUANTITY_LABELS = {
+    'unfinished_sf': 'Unfinished area',
+    'finished_sf': 'Finished area',
+    'wet_floor_sf': 'Wet floor area',
+    'floor_sf': 'Floor area',
+}
+JOB_QUANTITY_LABELS = {
+    'emergency_calls': 'Emergency service calls',
+    'monitoring_hours': 'Monitoring hours',
+    'haul_loads': 'Haul loads',
+    'air_scrubbers': 'Air scrubbers',
+    'hepa_filters': 'HEPA filters',
+    'matterport_scans': 'Matterport scans',
+    'dump_truck_loads': 'Dump truck loads',
+    'equipment_decon': 'Equipment decontamination',
+    'power_distribution': 'Power distribution',
+    'labor_hours': 'Labor hours',
+    'air_movers': 'Air movers',
+    'dehumidifiers': 'Dehumidifiers',
+    'drying_days': 'Drying days',
+    'wood_floor_systems': 'Wood floor systems',
+    'wood_floor_days': 'Wood floor days',
+}
+
+
 def percent_text(value):
     """'20.00' -> '20', '12.5' -> '12.5': a percent as an owner would write it."""
     return format(Decimal(str(value)).normalize(), 'f')
@@ -285,10 +311,10 @@ def end_summary(raw):
     """One end of a v2 estimate as the engine returned it; every printed line is a cent amount."""
     return dict(
         subtotal=float(amount(raw['subtotal'])),
-        after_hours=float(amount(raw.get('after_hours', 0))),
-        minimum_adjustment=float(amount(raw.get('minimum_adjustment', 0))),
-        overhead_profit=float(amount(raw.get('overhead_profit', 0))),
-        tax=float(amount(raw.get('tax', 0))),
+        after_hours=float(amount(raw['after_hours'])),
+        minimum_charge=float(amount(raw['minimum_charge'])),
+        overhead_profit=float(amount(raw['overhead_profit'])),
+        tax=float(amount(raw['tax'])),
         total=float(amount(raw['total'])),
     )
 
@@ -299,7 +325,6 @@ def v2_estimate(priced, policy):
     if not totals or totals.get('low') is None:
         raise ValueError('The saved price table did not produce an estimate.')
     mode = totals['mode']
-    range_policy = policy['range']
     multiplier = Decimal(str(policy['after_hours']['multiplier']))
     tax = policy['sales_tax']
     return dict(
@@ -307,38 +332,51 @@ def v2_estimate(priced, policy):
         mode=mode,
         low=end_summary(totals['low']),
         high=end_summary(totals['high']) if mode == 'range' else None,
-        labor_material_low=float(amount(totals['labor_material_low'])),
-        labor_material_high=float(amount(totals['labor_material_high'])),
         after_hours_label=policy['after_hours']['label'],
         after_hours_percent=percent_text((multiplier - 1) * 100),
         overhead_profit_percent=percent_text(policy['overhead_profit_percent']),
         sales_tax_percent=percent_text(tax['percent']) if tax['enabled'] else '0',
-        minimum_job_charge=percent_text(policy['minimum_job_charge']),
-        range_rule=dict(
-            first_sf=int(range_policy['first_sf']),
-            first_percent=percent_text(range_policy['first_percent']),
-            beyond_percent=percent_text(range_policy['beyond_percent']),
-        ),
         explanation=totals['explanation'],
         show_line_breakdown=bool(policy['show_line_breakdown']),
     )
 
 
-def quantity_notes(data, pin):
-    """Estimator overrides of measured quantities, named by price-table item, for the owner."""
-    names = {item['item_id']: item['name'] for item in pin.get('items', [])}
-    return [
-        dict(
-            item=key,
-            label=names.get(key.split(':')[0], key),
-            room=getattr(override, 'room', None),
-            measured=float(override.measured),
-            entered=float(override.entered),
-            reason=override.reason,
-        )
-        for key, override in (data.quantity_overrides or {}).items()
-        if override.measured != override.entered
-    ]
+def quantity_notes(data):
+    """Estimator overrides of measured quantities the engine applies, for the owner."""
+    rooms = {' '.join(room.name.split()).lower(): room.name for room in data.rooms}
+    notes = []
+    for key, override in (data.quantity_overrides or {}).items():
+        name, _, field = key.rpartition(':')
+        room = rooms.get(' '.join(name.split()).lower())
+        label = ROOM_QUANTITY_LABELS.get(field) if room else JOB_QUANTITY_LABELS.get(key)
+        if label and override.measured != override.entered:
+            notes.append(
+                dict(
+                    item=key,
+                    label=label,
+                    room=room,
+                    measured=float(override.measured),
+                    entered=float(override.entered),
+                    reason=override.reason,
+                )
+            )
+    return notes
+
+
+def has_priced_work(lines, pin, data):
+    """v1's work test over priced lines: baseline charges and unentered typed items are not work."""
+    sources = {item['item_id']: item['quantity_source'] for item in pin['items']}
+    entered = data.scope_items or {}
+
+    def is_work(line):
+        source = sources.get(line.get('item_id'))
+        if source is None:
+            return True
+        if source.startswith('typed'):
+            return line['item_id'] in entered and line['group'] != 'job_charges'
+        return source not in BASELINE_SOURCES
+
+    return any(is_work(line) for line in lines)
 
 
 def words(text):
@@ -575,7 +613,7 @@ def make_documents(
         ]
     )
     has_work = (
-        bool(items)
+        has_priced_work(items, pin, data)
         if estimate
         else (
             any(r.unfinished_sf or r.finished_sf for r in data.rooms)
@@ -633,7 +671,7 @@ def make_documents(
         pending_extras=pending,
         price_basis=price_basis,
         estimate=estimate,
-        quantity_notes=(quantity_notes(data, pin) or None) if estimate else None,
+        quantity_notes=(quantity_notes(data) or None) if estimate else None,
         signable=bool(
             not setup
             and data.scope_confirmed

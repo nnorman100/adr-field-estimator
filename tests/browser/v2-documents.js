@@ -3,7 +3,7 @@
 // land, so these specs route the document body and drive the real pages that render it.
 const END = (extra) => ({
   after_hours: 0,
-  minimum_adjustment: 0,
+  minimum_charge: 0,
   overhead_profit: 0,
   tax: 0,
   ...extra,
@@ -69,14 +69,10 @@ function v2Documents(documents, mode = 'range', { breakdown = false } = {}) {
       mode,
       low: LOW,
       ...(range ? { high: HIGH } : {}),
-      labor_material_low: 5150,
-      labor_material_high: 7725,
       after_hours_label: 'After-hours adjustment',
       after_hours_percent: '20',
       overhead_profit_percent: '10',
       sales_tax_percent: '8',
-      minimum_job_charge: '0',
-      range_rule: { first_sf: 1000, first_percent: '50', beyond_percent: '20' },
       explanation: range
         ? 'The low amount is the itemized total. The high amount adds an allowance to labor and materials for conditions found during the work.'
         : 'The price covers the itemized scope below.',
@@ -84,8 +80,8 @@ function v2Documents(documents, mode = 'range', { breakdown = false } = {}) {
     },
     quantity_notes: [
       {
-        item: 'demo_cat3_wall',
-        label: 'Category 3 or mold drywall and trim removal',
+        item: 'Kitchen:finished_sf',
+        label: 'Finished area',
         room: 'Kitchen',
         measured: 320,
         entered: 300,
