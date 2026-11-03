@@ -1143,9 +1143,10 @@ test.describe('a slow sample answer', () => {
       const before = await publish.boundingBox();
       const x = before.x + before.width / 2,
         y = before.y + before.height / 2;
-      const firstInstant = publish.evaluate(
-        (button, point) =>
-          new Promise((done) => {
+      // The watcher is in place before the answer is let go, or it could miss the paint it measures.
+      await publish.evaluate(
+        (button, point) => {
+          window.firstInstant = new Promise((done) => {
             new MutationObserver((_, watcher) => {
               watcher.disconnect();
               done({
@@ -1153,13 +1154,14 @@ test.describe('a slow sample answer', () => {
                 underFinger: button.contains(document.elementFromPoint(point.x, point.y)),
               });
             }).observe(document.getElementById('priceSamples'), { childList: true });
-          }),
+          });
+        },
         { x, y },
       );
       await page.mouse.move(x, y);
       await page.mouse.down();
       release();
-      const landed = await firstInstant;
+      const landed = await page.evaluate(() => window.firstInstant);
       expect(landed.underFinger).toBe(true);
       expect(Math.abs(landed.top - before.y)).toBeLessThan(1);
       // Two frames, so any adjustment the browser makes on its own has happened as well.
