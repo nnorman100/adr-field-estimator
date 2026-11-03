@@ -46,9 +46,6 @@ except ImportError:
         normalize_items,
     )
 
-COLUMNS = V1_COLUMNS
-TEMPLATE_VERSION = V1_TEMPLATE_VERSION
-
 CSV_LIMIT = 256 * 1024
 XLSX_LIMIT = 1024 * 1024
 UNZIPPED_LIMIT = 5 * 1024 * 1024

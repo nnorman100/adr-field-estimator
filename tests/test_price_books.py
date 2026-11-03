@@ -1598,6 +1598,23 @@ def test_v2_publish_copies_only_a_valid_profile_rate(api, enabled, extras_on, pr
         assert 'additional_work_rate' not in profile
 
 
+def test_v1_publish_deletes_the_working_copy(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    saved = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json={'expected_working_version': 0, 'items': table['items'], 'policy': table['policy']},
+    )
+    assert saved.status_code == 200, saved.text
+    assert '_price_book_drafts/adr' in store.db.records
+
+    publish(client, rates(emergency_call='150.00'))
+
+    assert '_price_book_drafts/adr' not in store.db.records
+    assert client.get('/api/companies/adr/prices').json().get('working_copy') is None
+
+
 def test_locked_extras_are_refused_at_preview_and_the_profile_stays(api, enabled):
     client, current, store = api
     current['uid'] = 'owner'

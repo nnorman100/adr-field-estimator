@@ -754,6 +754,7 @@ class PriceBookStore:
                     tx, uid, company_id, company, head, preview_id, preview
                 )
             book = self.effective(company, tx)
+            existing_draft = self._draft(company_id, tx)
             if book['generation'] != head['generation']:
                 raise Conflict('Prices changed. Review the new published values before publishing.')
             rates = preview['rates']
@@ -802,6 +803,8 @@ class PriceBookStore:
                 updated_at=published,
             )
             tx.set(self.ws.ref(HEAD, company_id), head)
+            if existing_draft:
+                tx.delete(self.ws.ref(DRAFTS, company_id))
             profile = dict(company.get('profile') or {})
             profile['additional_work_rate'] = rates['additional_work_hourly']
             company['profile'] = profile
