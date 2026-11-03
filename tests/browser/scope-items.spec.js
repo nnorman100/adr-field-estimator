@@ -38,6 +38,46 @@ const numbers = (items) =>
 const jobId = (page) => page.evaluate(() => state.draft.inspection_id);
 const remote = async (page, id, role = 'owner') =>
   (await page.request.get('/api/inspections/' + id, { headers: auth(role) })).json();
+const storedRows = (page) =>
+  page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('adr-private-drafts-v2');
+        request.onerror = reject;
+        request.onsuccess = () => {
+          const db = request.result,
+            all = db.transaction(['drafts']).objectStore('drafts').getAll();
+          all.onsuccess = () => {
+            db.close();
+            resolve(all.result);
+          };
+        };
+      }),
+  );
+const cachedTable = async (page) =>
+  (await storedRows(page)).find((row) => row.key.startsWith('prices:'))?.prices || null;
+// The server answers the company table and the job's pin with this status.
+const answerPrices = (page, status) =>
+  Promise.all(
+    ['**/api/companies/*/prices', '**/api/inspections/*/pricing'].map((path) =>
+      page.route(path, (route) =>
+        route.fulfill({
+          status,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Not available.' }),
+        }),
+      ),
+    ),
+  );
+const stopAnswering = (page) =>
+  Promise.all(
+    ['**/api/companies/*/prices', '**/api/inspections/*/pricing'].map((path) => page.unroute(path)),
+  );
+const newJob = async (page) => {
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await checkScope(page);
+};
 
 test.describe('without a service worker', () => {
   test.use({ serviceWorkers: 'block' });
@@ -538,8 +578,9 @@ test.describe('without a service worker', () => {
     await page.evaluate(() => WorkspaceUI.refresh());
     expect(failed).toBe(1);
     await page.unroute('**/api/companies/*/prices');
+    // The phone's copy is older than the table the session names: a new job does not seed from it.
     await page.evaluate(() => openNew());
-    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('0');
     await page.evaluate(() => WorkspaceUI.refresh());
     await page.evaluate(() => openNew());
     await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('4');
@@ -550,6 +591,130 @@ test.describe('without a service worker', () => {
     });
     await page.evaluate(() => WorkspaceUI.refresh());
     expect(fetched).toBe(0);
+  });
+
+  test('a refused price list clears the copy on the phone, says so and seeds nothing', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await answerPrices(page, 403);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await expect.poll(() => cachedTable(page)).toBeNull();
+    await newJob(page);
+    await expect(page.locator('#v2ScopeStatus')).toContainText(
+      "You don't have access to your company's price list",
+    );
+    await expect(page.locator('#v2ScopeStatus')).toContainText(
+      'New jobs start with no default quantities',
+    );
+    await expect(page.locator('#v2Scope')).not.toContainText('$30.00');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+    expect(await page.evaluate(() => state.draft.data.seeded_from_version)).toBeUndefined();
+    // Access back: the next refresh loads the table and the next job seeds from it.
+    await stopAnswering(page);
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => WorkspaceUI.refresh());
+        return !!(await cachedTable(page));
+      })
+      .toBe(true);
+    await page.evaluate(() => openNew());
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
+  });
+
+  test('401, 403 and 404 each clear the copy on the phone', async ({ page, request }) => {
+    await publish(request);
+    await open(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    for (const status of [401, 403, 404]) {
+      await answerPrices(page, status);
+      await page.evaluate(() => ScopeItems.loadCompany());
+      expect(await cachedTable(page), 'cleared on ' + status).toBeNull();
+      await stopAnswering(page);
+      await page.evaluate(() => ScopeItems.loadCompany());
+      expect(await cachedTable(page), 'loaded after ' + status).toBeTruthy();
+    }
+  });
+
+  test('a server error serves no old prices, says so and keeps the copy for offline', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await answerPrices(page, 503);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await newJob(page);
+    await expect(page.locator('#v2ScopeStatus')).toContainText(
+      "Your company's price list could not load",
+    );
+    await expect(page.locator('#v2Scope')).not.toContainText('$30.00');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+    expect(await cachedTable(page)).toBeTruthy();
+  });
+
+  test('a phone copy older than the current table is dated and seeds nothing', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await publish(request, {
+      items: {
+        ...ITEMS,
+        service_call: { unit_price: '150.00', default_quantity: '3' },
+        setup_documentation: { unit_price: '40.00', default_quantity: '4' },
+      },
+    });
+    await page.route('**/api/companies/*/prices', (route) => route.abort());
+    await page.route('**/api/inspections/*/pricing', (route) => route.abort());
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    const status = page.locator('#v2ScopeStatus');
+    await expect(status).toContainText('Prices as of');
+    await expect(status).toContainText('Your company has newer prices');
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('0');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const id = await jobId(page);
+    await expect
+      .poll(async () => (await storedRows(page)).find((r) => r.draft?.inspection_id === id))
+      .toBeTruthy();
+    // The out-of-date copy is not kept beside the draft as if it were the job's table.
+    await page.waitForTimeout(1500);
+    const row = (await storedRows(page)).find((r) => r.draft?.inspection_id === id);
+    expect(row.pricing).toBeUndefined();
+    expect(row.draft.data.seeded_from_version).toBeUndefined();
+  });
+
+  test('a job already holding its table does not carry the price list warning', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect.poll(() => page.evaluate(() => ScopeItems.table()?.content_sha256)).toBeTruthy();
+    await page.route('**/api/companies/*/prices', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Not available.' }),
+      }),
+    );
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
   });
 
   const startOfficeJob = async (context) => {
@@ -1152,6 +1317,59 @@ test.describe('with the service worker', () => {
     const saved = await remote(page, id);
     expect(numbers(saved.data.scope_items).setup_documentation.quantity).toBe(5);
     expect(saved.data.technician_notes).toBe('Entered with no signal');
+  });
+
+  test('offline, a new job seeds from a current phone copy and shows its date', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await controlled(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await page.evaluate(() => syncChain);
+    await page.waitForTimeout(1500);
+    // Date the copy, so the screen can only be reading the cached date.
+    await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open('adr-private-drafts-v2');
+          open.onerror = reject;
+          open.onsuccess = () => {
+            const db = open.result,
+              tx = db.transaction(['drafts'], 'readwrite'),
+              store = tx.objectStore('drafts'),
+              all = store.getAll();
+            all.onsuccess = () => {
+              for (const row of all.result)
+                if (row.key.startsWith('prices:')) {
+                  row.prices.cached_at = '2026-10-05T12:00:00.000Z';
+                  store.put(row);
+                }
+            };
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+          };
+        }),
+    );
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('Prices as of Oct 5, 2026.');
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    // Back online, the same table is fetched fresh rather than kept as the dated copy.
+    const fetched = page.waitForRequest((sent) => sent.url().endsWith('/prices'));
+    await context.setOffline(false);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await fetched;
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
   });
 
   test('a phone that never loaded the price list says to connect once', async ({

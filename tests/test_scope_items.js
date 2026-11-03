@@ -464,3 +464,9 @@ test('device readiness mirrors the server price gaps', () => {
   assert.deepEqual(codes({ prices_set: true, area_basis: 'wet_floor' }), ['area_basis:Hall']);
   assert.deepEqual(codes({ prices_set: false }), ['prices']);
 });
+
+test('the price date reads the cached date and leaves out a date it cannot read', () => {
+  assert.equal(ScopeItems.asOfText('2026-10-05T12:00:00.000Z'), 'Prices as of Oct 5, 2026.');
+  assert.equal(ScopeItems.asOfText(undefined), 'Prices saved on this phone.');
+  assert.equal(ScopeItems.asOfText('not a date'), 'Prices saved on this phone.');
+});
