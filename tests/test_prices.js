@@ -373,3 +373,27 @@ test('the review says which way an item was switched and any price that moved wi
     'Service call: details changed',
   );
 });
+
+test('a move changes only the two items it swaps, and moving back restores them', () => {
+  const items = [
+    { item_id: 'a', group: 'labor', sort_order: 0 },
+    { item_id: 'b', group: 'labor', sort_order: 1 },
+    { item_id: 'c', group: 'labor', sort_order: 2 },
+  ];
+  const orders = () => items.map((row) => row.sort_order);
+  Prices.moveItem(items, 'c', -1);
+  assert.deepEqual(orders(), [0, 2, 1]);
+  Prices.moveItem(items, 'c', 1);
+  assert.deepEqual(orders(), [0, 1, 2]);
+});
+
+test('a move still works when imported items share a sort order', () => {
+  const items = [
+    { item_id: 'a', group: 'labor', sort_order: 5 },
+    { item_id: 'b', group: 'labor', sort_order: 5 },
+    { item_id: 'c', group: 'labor', sort_order: 5 },
+  ];
+  Prices.moveItem(items, 'b', -1);
+  const shown = Array.from(Prices.groupOrder(items)[0].rows, (row) => row.item_id);
+  assert.deepEqual(shown, ['b', 'a', 'c']);
+});

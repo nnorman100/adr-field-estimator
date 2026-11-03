@@ -807,3 +807,79 @@ test.describe('a failed discard', () => {
     await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
   });
 });
+
+test('moving an item and moving it back leaves nothing to publish', async ({ page, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const first = page.locator('[data-price-item=demo_cat1_floor]');
+  await first.getByRole('button', { name: 'Move down' }).click();
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await page
+    .locator('[data-price-item=demo_cat1_floor]')
+    .getByRole('button', { name: 'Move up' })
+    .click();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+});
+
+test('each settings choice names what it sets', async ({ page, request }) => {
+  await startUnset(page, request);
+  for (const [group, choice] of [
+    ['Estimate style', 'One price'],
+    ['Area basis', 'Wet floor area'],
+    ['Cabinetry applies to', 'All category 3 room lines'],
+  ])
+    await expect(page.getByRole('group', { name: group }).getByLabel(choice)).toBeVisible();
+});
+
+test.describe('leaving the page during a slow review', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('puts no review or Publish button on the next page', async ({ page, request }) => {
+    await startUnset(page, request);
+    await priceEverything(page);
+    await publishTable(page);
+    const slowly = async (url, start) => {
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      await page.route(url, async (route) => {
+        await held;
+        await route.fulfill({ json: { no_changes: true, diff: { items: [], policy: [] } } });
+      });
+      const answered = page.waitForResponse(url);
+      await start();
+      await navigate(page, 'dashboardTeam');
+      await expect(page.locator('#priceEditor')).toHaveCount(0);
+      release();
+      await answered;
+      await page.waitForTimeout(200);
+      await expect(page.locator('#priceReview')).toHaveCount(0);
+      await page.unroute(url);
+      await navigate(page, 'dashboardPrices');
+      await expect(page.locator('#priceEditor')).toBeVisible();
+    };
+    await slowly('**/prices/preview', async () => {
+      await page.locator('#priceReason').fill('Slow review');
+      await page.getByRole('button', { name: 'Review changes' }).click();
+    });
+    await slowly('**/prices/import-preview', async () => {
+      await page.locator('#priceImportFile').setInputFiles({
+        name: 'prices.csv',
+        mimeType: 'text/csv',
+        buffer: Buffer.from('x\n'),
+      });
+      await page.locator('#priceImportReason').fill('Slow import');
+      await page.getByRole('button', { name: 'Import prices' }).click();
+    });
+    await slowly('**/restore', async () => {
+      await page
+        .getByPlaceholder(/Reason for restoring/)
+        .first()
+        .fill('Slow restore');
+      await page
+        .getByRole('button', { name: /^Restore / })
+        .first()
+        .click();
+    });
+  });
+});

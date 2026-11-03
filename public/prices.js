@@ -342,19 +342,18 @@
             form.querySelector(':invalid')?.focus();
             return;
           }
-          const body = collect(form);
+          const body = collect(form),
+            page = WorkspaceUI.pageEpoch();
           const preview = await jsonApi(
             '/api/companies/' + view.company_id + '/prices/preview',
             'POST',
             { ...body, change_reason: area.value },
           );
+          if (page !== WorkspaceUI.pageEpoch()) return;
           $('priceReview')?.remove();
           content.append(
             reviewPanel(preview, () =>
-              publish(view.company_id, preview).catch((e) => {
-                $('pricePageStatus').textContent = e.message;
-                say(e.message, 'error');
-              }),
+              publish(view.company_id, preview).catch((e) => say(e.message, 'error')),
             ),
           );
           $('priceReview')?.querySelector('button')?.focus();
@@ -440,9 +439,11 @@
           for (const key of zeroKeys)
             if (priceForm?.elements['ack_' + key]?.checked) upload.append('acknowledgements', key);
           if (zeroBox.checked) upload.append('confirm_zero_prices', 'yes');
+          const page = WorkspaceUI.pageEpoch();
           const preview = await (
             await api(base + '/import-preview', { method: 'POST', body: upload })
           ).json();
+          if (page !== WorkspaceUI.pageEpoch()) return;
           $('priceReview')?.remove();
           content.append(
             replacingReview(preview, () =>
@@ -483,11 +484,13 @@
           reason,
           button('Restore ' + version.label, async () => {
             if (!restore.reportValidity()) return;
+            const page = WorkspaceUI.pageEpoch();
             const preview = await jsonApi(
               base + '/versions/' + version.version_id + '/restore',
               'POST',
               { change_reason: reason.value },
             );
+            if (page !== WorkspaceUI.pageEpoch()) return;
             $('priceReview')?.remove();
             content.append(
               replacingReview(preview, () =>
@@ -689,13 +692,18 @@
     if (!item) return items;
     const peers = items
         .filter((row) => row.group === item.group)
-        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+        .sort(
+          (a, b) =>
+            (a.sort_order || 0) - (b.sort_order || 0) ||
+            String(a.item_id).localeCompare(String(b.item_id)),
+        ),
       at = peers.indexOf(item),
       to = at + direction;
     if (to < 0 || to >= peers.length) return items;
-    peers.splice(at, 1);
-    peers.splice(to, 0, item);
-    peers.forEach((row, index) => (row.sort_order = index * 10));
+    const other = peers[to];
+    if ((other.sort_order || 0) === (item.sort_order || 0))
+      peers.forEach((row, index) => (row.sort_order = index * 10));
+    [item.sort_order, other.sort_order] = [other.sort_order, item.sort_order];
     return items;
   }
   function sortKeys(value) {
@@ -962,8 +970,9 @@
     select.addEventListener('change', () => onChange(select.value));
     return select;
   }
-  function radios(name, value, options, onChange) {
+  function radios(name, legend, value, options, onChange) {
     const group = node('fieldset', undefined, 'price-radios');
+    group.append(node('legend', legend));
     for (const [key, label] of options) {
       const radio = node('input');
       radio.type = 'radio';
@@ -1010,6 +1019,7 @@
     card.append(
       radios(
         'estimate_mode',
+        POLICY_LABELS.estimate_mode,
         ed.policy.estimate_mode,
         [
           ['range', 'Low to high range'],
@@ -1023,6 +1033,7 @@
       ),
       radios(
         'area_basis',
+        POLICY_LABELS.area_basis,
         ed.policy.area_basis,
         [
           ['demolition', 'Demolition area'],
@@ -1074,6 +1085,7 @@
       policyField('cabinetry.multiplier', 'Custom cabinetry', 'Applies to category 3 rooms.'),
       radios(
         'cabinetry_scope',
+        POLICY_LABELS['cabinetry.scope'],
         ed.policy.cabinetry.scope,
         [
           ['finished_only', 'Finished-surface demolition only'],
@@ -1487,6 +1499,7 @@
       reason.reportValidity();
       throw Error('Add a short reason for this change, then review it.');
     }
+    const page = WorkspaceUI.pageEpoch();
     await saveCopy(mine);
     const reviewed = mine.edits,
       preview = await jsonApi(mine.base + '/preview', 'POST', {
@@ -1495,16 +1508,13 @@
         acknowledgements: [...mine.acks],
         change_reason: reason.value.trim(),
       });
-    if (ed !== mine) return;
+    if (page !== WorkspaceUI.pageEpoch()) return;
     if (mine.edits !== reviewed)
       throw Error('Prices changed during the review. Review them again.');
     $('priceReview')?.remove();
     content.append(
       reviewFor(preview, () =>
-        publish(mine.view.company_id, preview).catch((e) => {
-          $('pricePageStatus').textContent = e.message;
-          say(e.message, 'error');
-        }),
+        publish(mine.view.company_id, preview).catch((e) => say(e.message, 'error')),
       ),
     );
     window.WorkspaceUI?.policy();
@@ -1584,9 +1594,6 @@
       chain: Promise.resolve(),
     };
     content.dataset.companyId = companyId;
-    const status = node('p');
-    status.id = 'pricePageStatus';
-    status.setAttribute('role', 'status');
     const head = node('section', undefined, 'price-card');
     head.append(
       node('h2', view.starter ? 'Prices: not set up yet' : 'Current: ' + view.label),
@@ -1600,7 +1607,7 @@
         ),
       );
     if (!manage) head.append(node('p', 'Read only. Only the company owner can change prices.'));
-    content.append(status, head);
+    content.append(head);
     if (manage) {
       const save = node('p');
       save.id = 'priceSaveStatus';
@@ -1664,10 +1671,7 @@
     content.dataset.companyId = companyId;
     if (tables) await showEditor(view, companyId, base, support);
     else {
-      const status = node('p');
-      status.id = 'pricePageStatus';
-      status.setAttribute('role', 'status');
-      content.append(status, node('p', 'Current: ' + view.label + '. ' + view.used_for));
+      content.append(node('p', 'Current: ' + view.label + '. ' + view.used_for));
       renderRates(content, view, manage);
     }
     tools(content, base, manage, view);
