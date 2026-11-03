@@ -235,13 +235,11 @@ test.describe('without a service worker', () => {
     await expect(page.locator('#v2UnlistedList')).toContainText('retired item');
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
     expect(numbers((await remote(page, id)).data.scope_items).retired_item.quantity).toBe(4);
-    await page.locator('#v2UnlistedList').getByRole('button', { name: 'Remove' }).click();
-    await expect(page.locator('#v2Unlisted')).toBeHidden();
-    await expect(page.locator('#saveStatus')).toHaveText('Saved');
-    expect((await remote(page, id)).data.scope_items.retired_item).toBeUndefined();
+    await expect(page.locator('#v2UnlistedList').getByRole('button')).toHaveCount(0);
+    await expect(page.locator('#v2UnlistedList input')).toHaveCount(0);
   });
 
-  test('a field quantity whose item is gone is listed and can be removed', async ({
+  test('a field quantity whose item is gone is listed read-only and stays with the job', async ({
     page,
     request,
   }) => {
@@ -259,10 +257,50 @@ test.describe('without a service worker', () => {
     await expect(page.locator('#v2Unlisted')).toBeVisible();
     await page.locator('#v2Unlisted summary').click();
     await expect(page.locator('#v2UnlistedList')).toContainText('air scrubbers · 2');
-    await page.locator('#v2UnlistedList').getByRole('button', { name: 'Remove' }).click();
-    await expect(page.locator('#v2Unlisted')).toBeHidden();
+    await expect(page.locator('#v2UnlistedList').getByRole('button')).toHaveCount(0);
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
-    expect((await remote(page, id)).data.air_scrubbers).toBe(0);
+    expect((await remote(page, id)).data.air_scrubbers).toBe(2);
+  });
+
+  test('room-sourced items show their unit price', async ({ page, request }) => {
+    await publish(request);
+    await open(page);
+    const line = page.locator('[data-from-rooms]').first();
+    await expect(line).toContainText('From rooms:');
+    await expect(line).toContainText('$25.00 per');
+  });
+
+  test('a first publish after sign-in reaches this phone: new jobs seed from the table', async ({
+    page,
+    request,
+  }) => {
+    await open(page);
+    await expect(page.locator('#v1Scope')).toBeVisible();
+    await expect(page.locator('#emergencyCalls')).toHaveValue('1');
+    await publish(request);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    // The open job has not been touched, so it moves to the table's defaults too.
+    await expect(page.locator('#v2Scope')).toBeVisible();
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('#monitoringHours')).toHaveValue('0');
+    await page.evaluate(() => openNew());
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('#monitoringHours')).toHaveValue('0');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+  });
+
+  test('a first publish leaves quantities the technician already changed', async ({
+    page,
+    request,
+  }) => {
+    await open(page);
+    await page.locator('details.sheet-charges summary').click();
+    await page.locator('#monitoringHours').fill('8');
+    await publish(request);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#v2Scope')).toBeVisible();
+    await expect(page.locator('#monitoringHours')).toHaveValue('8');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('1');
   });
 
   test('a company with no published prices gets the prices gap on the phone', async ({
@@ -546,6 +584,14 @@ test.describe('with the service worker', () => {
     await expect(page.locator('#v1Scope')).toBeHidden();
     // Rooms still work.
     await expect(page.locator('#rooms .room')).toHaveCount(1);
+    // A job begun with no table takes its defaults once the phone connects and loads it.
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
     await context.setOffline(false);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
   });
 });

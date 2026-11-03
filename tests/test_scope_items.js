@@ -51,7 +51,54 @@ test('a new draft starts at the table defaults and seeds typed items', () => {
   assert.equal(data.haul_loads, 0, 'a disabled item contributes nothing');
   assert.deepEqual(JSON.parse(JSON.stringify(data.scope_items)), {
     setup: { quantity: '1', count: 0, days: 0 },
+    desiccant: { quantity: '0', count: 3, days: 3 },
   });
+});
+
+test('count items seed their count; days stay at the job default for those days', () => {
+  const t = table([
+    item('fans', 'drying_equipment', 'count_days:air_movers*drying_days', {
+      default_quantity: '4',
+    }),
+    item('dehu', 'drying_equipment', 'count_days:dehumidifiers*drying_days', {
+      default_quantity: '500',
+    }),
+    item('floors', 'drying_equipment', 'count_days:wood_floor_systems*wood_floor_days', {
+      default_quantity: '1',
+    }),
+    item('crew', 'labor', 'typed_count_days', { default_quantity: '2.5' }),
+  ]);
+  const data = ScopeItems.applyDefaults(core.emptyData({ v2: true }), t);
+  assert.equal(data.air_movers, 4);
+  assert.equal(data.dehumidifiers, 100, 'capped at what the input accepts');
+  assert.equal(data.wood_floor_systems, 1);
+  assert.equal(data.drying_days, 3);
+  assert.equal(data.wood_floor_days, 7);
+  assert.deepEqual(plain(data.scope_items), { crew: { quantity: '0', count: 2, days: 3 } });
+});
+
+test('room items show their quantity, own unit and unit price', () => {
+  const rooms = [{ category: 1, unfinished_sf: 100, finished_sf: 20, floor_sf: 150 }];
+  assert.equal(
+    ScopeItems.fromRoomsText(
+      item('drywall', 'demolition', 'room:demolition:unfinished', {
+        name: 'Drywall removal',
+        unit: 'sf',
+        unit_price: '3.25',
+      }),
+      rooms,
+      {},
+    ),
+    'From rooms: Drywall removal · 100 sq ft · $3.25 per sq ft',
+  );
+  assert.equal(
+    ScopeItems.fromRoomsText(
+      item('base', 'demolition', 'room:floor', { name: 'Baseboard', unit: 'lf', unit_price: '' }),
+      rooms,
+      {},
+    ),
+    'From rooms: Baseboard · 150 linear ft · Price not set',
+  );
 });
 
 test('a default quantity follows the type its job field stores', () => {
@@ -201,6 +248,12 @@ test('only an untouched office-created job is given the table defaults', () => {
   assert.equal(ScopeItems.untouched({ ...sheet, monitoring_hours: 8 }), false);
   assert.equal(ScopeItems.untouched({ ...sheet, scope_confirmed: true }), false);
   assert.equal(ScopeItems.untouched({ ...sheet, scope_items: {} }), false);
+  // A count the walkthrough filled is never overwritten by a default.
+  assert.equal(ScopeItems.untouched({ ...sheet, air_movers: 3 }), false);
+  // A job begun before the phone had a table starts at zero charges.
+  const zero = core.emptyData({ v2: true });
+  assert.equal(ScopeItems.untouched(zero), true);
+  assert.equal(ScopeItems.untouched({ ...zero, haul_loads: 1 }), false, 'neither start');
 });
 
 test('an override keeps its entered value current and a reason only while the value differs', () => {

@@ -297,7 +297,12 @@ class PriceBookStore:
 
     def session_view(self, actor):
         """What the app shows a member outside the price editor, for their own company only."""
-        view = {'prices_set': None, 'price_display': None, 'prices_not_set_message': None}
+        view = {
+            'prices_set': None,
+            'price_display': None,
+            'prices_not_set_message': None,
+            'pricing_version': None,
+        }
         if not actor.get('company'):
             return view
         try:
@@ -311,9 +316,15 @@ class PriceBookStore:
                 'prices_set': False,
                 'prices_not_set_message': _not_set_message(actor.get('role')),
             }
+        version = book.get('calculation_version') if price_books_enabled() else None
         if _is_v2(book):
-            return {**view, 'prices_set': True}
-        return {**view, 'prices_set': True, 'price_display': price_display(book['rates'])}
+            return {**view, 'prices_set': True, 'pricing_version': version}
+        return {
+            **view,
+            'prices_set': True,
+            'price_display': price_display(book['rates']),
+            'pricing_version': version,
+        }
 
     def _actor_name(self, company_id, uid, tx=None):
         member = self.ws.read('_memberships', uid, tx) if uid else None

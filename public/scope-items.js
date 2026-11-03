@@ -62,6 +62,7 @@
     'room:floor': 'floor_sf',
     'room:basis': 'basis',
   };
+  const TYPED_COUNT_MAX = 100;
   // Job fields the server stores as decimals; every other field quantity is a whole number.
   const DECIMAL_FIELDS = ['monitoring_hours', 'labor_hours'];
   // Room measurements the walkthrough fills and the estimator may override with a reason.
@@ -167,22 +168,40 @@
         seen.add(source.field);
         const capped = Math.min(quantity, FIELD_INPUTS[source.field][1]);
         data[source.field] = DECIMAL_FIELDS.includes(source.field) ? capped : Math.trunc(capped);
+      } else if (source.kind === 'count_days' && !seen.has(source.count)) {
+        seen.add(source.count);
+        data[source.count] = Math.trunc(Math.min(quantity, FIELD_INPUTS[source.count][1]));
       } else if (source.kind === 'typed' && quantity > 0)
         data.scope_items = {
           ...(data.scope_items || {}),
           [item.item_id]: { quantity: decimalText(quantity), count: 0, days: 0 },
         };
+      else if (source.kind === 'typed_count_days' && quantity > 0)
+        data.scope_items = {
+          ...(data.scope_items || {}),
+          [item.item_id]: {
+            quantity: '0',
+            count: Math.trunc(Math.min(quantity, TYPED_COUNT_MAX)),
+            days: data.drying_days,
+          },
+        };
     }
     return data;
   }
-  // A job office staff created still carries the server's sheet quantities until an estimator edits it.
+  // A job still at its starting quantities: the server's sheet charges (office staff created it, or
+  // it began on the v1 form) or zeros (it began before the phone had the table).
   function untouched(data) {
+    const charges = Object.entries(SHEET_CHARGES);
     return (
       !data.scope_confirmed &&
       !data.scope_items &&
       !(data.labor_hours > 0) &&
       !(data.matterport_scans > 0) &&
-      Object.entries(SHEET_CHARGES).every(([key, value]) => Number(data[key]) === value)
+      !(data.air_movers > 0) &&
+      !(data.dehumidifiers > 0) &&
+      !(data.wood_floor_systems > 0) &&
+      (charges.every(([key, value]) => Number(data[key]) === value) ||
+        charges.every(([key]) => Number(data[key]) === 0))
     );
   }
   // Quantities saved for items the current table does not list as typed items.
@@ -215,6 +234,18 @@
           Number(data?.[field]) > 0,
       )
       .sort();
+  }
+  function fromRoomsText(item, rooms, policy) {
+    return (
+      'From rooms: ' +
+      item.name +
+      ' · ' +
+      formatQuantity(roomQuantity(item, rooms, policy)) +
+      ' ' +
+      (UNIT_NAMES[item.unit] || item.unit) +
+      ' · ' +
+      unitPriceText(item)
+    );
   }
   function afterHoursText(table) {
     const item = orderedItems(table).find(
@@ -296,6 +327,7 @@
   const snapshots = new Map(); // parent element -> its children in the original order
   const openGroups = new Set(['job_charges', 'treatment', 'drying_equipment', 'labor']);
   let seq = 0;
+  let companySeq = 0;
 
   const draftId = () => state?.draft?.inspection_id || null;
   const job = (id) => {
@@ -341,13 +373,18 @@
   // Company table: fetched when online, kept in the drafts store for offline launches.
   const cacheKey = () => 'prices:' + state.user.uid + ':' + state.session.company_id;
   async function loadCompany() {
-    company = null;
-    if (!dom() || state?.session?.pricing_version !== V2 || !state.user) return;
+    const mine = ++companySeq;
+    if (!dom() || state?.session?.pricing_version !== V2 || !state.user) {
+      company = null;
+      return;
+    }
     const uid = state.user.uid,
       companyId = state.session.company_id;
     try {
       if (!navigator.onLine) throw Error('offline');
       const view = await jsonApi('/api/companies/' + companyId + '/prices');
+      if (mine !== companySeq) return;
+      company = null;
       if (view.calculation_version === V2) {
         company = {
           table: pricingCopy({
@@ -366,7 +403,7 @@
       }
     } catch {
       const row = await dbAction('readonly', (store) => store.get(cacheKey())).catch(() => null);
-      if (row?.prices?.table) company = row.prices;
+      if (mine === companySeq) company = row?.prices?.table ? row.prices : null;
     }
   }
   // A new draft for a v2 company: zero charge quantities, then the table's defaults.
@@ -550,13 +587,7 @@
     }
     for (const line of document.querySelectorAll('[data-from-rooms]')) {
       const item = t.items.find((i) => i.item_id === line.dataset.fromRooms);
-      if (item)
-        line.textContent =
-          'From rooms: ' +
-          item.name +
-          ' · ' +
-          formatQuantity(roomQuantity(item, state.draft.data.rooms, t.policy)) +
-          ' sq ft';
+      if (item) line.textContent = fromRoomsText(item, state.draft.data.rooms, t.policy);
     }
   }
 
@@ -703,26 +734,15 @@
     // Quantities saved for items the table no longer lists stay with the job, visibly.
     const orphans = unlisted(data, t),
       fields = unlistedFields(data, t);
-    const unlistedRow = (text, remove) => {
+    const unlistedRow = (text) => {
       const row = node('div', undefined, 'scope-row');
-      row.append(
-        node('p', text),
-        button('Remove', () => {
-          remove(state.draft.data);
-          changed();
-          render();
-        }),
-      );
+      row.append(node('p', text));
       return row;
     };
     $('v2Unlisted').hidden = !orphans.length && !fields.length;
     $('v2UnlistedList').replaceChildren(
       ...fields.map((field) =>
-        unlistedRow(field.replace(/_/g, ' ') + ' · ' + formatQuantity(data[field]), (current) => {
-          current[field] = 0;
-          $(FIELD_INPUTS[field][0]).value = 0;
-          if (current.quantity_overrides) delete current.quantity_overrides[field];
-        }),
+        unlistedRow(field.replace(/_/g, ' ') + ' · ' + formatQuantity(data[field])),
       ),
       ...orphans.map((id) => {
         const q = data.scope_items[id];
@@ -735,10 +755,6 @@
             ' × ' +
             q.days +
             ' days)',
-          (current) => {
-            delete current.scope_items[id];
-            if (!Object.keys(current.scope_items).length) delete current.scope_items;
-          },
         );
       }),
     );
@@ -803,6 +819,21 @@
       changed(false);
     }
   }
+  // What the screen should show has changed. A job that was on the v1 form or had no table, and is
+  // still at its starting quantities, takes the table's defaults now.
+  function settle() {
+    const noTableBefore = rendered === 'v1' || rendered === 'v2:',
+      data = state.draft.data;
+    if (noTableBefore && active() && table() && canEdit() && untouched(data)) {
+      applyDefaults(data, table());
+      changed(false);
+      fillForm();
+      return;
+    }
+    render();
+    renderRooms();
+    renderReadiness();
+  }
   // Read the job's pin from the server. The screen is rebuilt only if that changes what it shows,
   // so a technician mid-entry keeps focus and whatever is partly typed.
   async function pull() {
@@ -814,17 +845,24 @@
       const view = await jsonApi('/api/inspections/' + id + '/pricing');
       if (mine !== seq || draftId() !== id) return;
       if (adopt(id, view)) schedulePersist();
-      if (shownView() !== rendered) {
-        render();
-        renderRooms();
-        renderReadiness();
-      }
+      if (shownView() !== rendered) settle();
     } catch {
       /* the saved screen stays: a job not on the server yet has no pin to read */
     }
   }
   async function refresh() {
     render();
+    await pull();
+  }
+  // The session changed after sign-in: the company table may have appeared, gone or moved company.
+  const tableStale = (before) =>
+    before?.pricing_version !== state.session?.pricing_version ||
+    before?.company_id !== state.session?.company_id ||
+    (state.session?.pricing_version === V2 && !companyView());
+  async function sessionChanged() {
+    await loadCompany();
+    if (!dom() || !draftId() || !$('v2Scope')) return;
+    if (shownView() !== rendered) settle();
     await pull();
   }
   const canEdit = () =>
@@ -843,6 +881,7 @@
     untouched,
     unlisted,
     unlistedFields,
+    fromRoomsText,
     afterHoursText,
     overridesFor,
     missingReason,
@@ -851,6 +890,8 @@
     active,
     table,
     loadCompany,
+    tableStale,
+    sessionChanged,
     newData,
     readinessPricing,
     rowExtras,

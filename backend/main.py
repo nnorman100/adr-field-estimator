@@ -75,8 +75,7 @@ try:
     from . import document_links
     from . import tags as qr_tags
     from .adr_price_book import adr_rates
-    from .claims import make_documents, proposal_date
-    from .pricing import price_and_range
+    from .claims import make_documents, price_scope, proposal_date
     from .sizing import equipment_sizing
     from .prompts import (
         live_prompt,
@@ -145,8 +144,7 @@ except ImportError:
     import document_links
     import tags as qr_tags
     from adr_price_book import adr_rates
-    from claims import make_documents, proposal_date
-    from pricing import price_and_range
+    from claims import make_documents, price_scope, proposal_date
     from sizing import equipment_sizing
     from prompts import (
         live_prompt,
@@ -1018,9 +1016,6 @@ async def session_info(staff=Depends(current_staff)):
             get_job_store().workspaces.email_notice
         )
         result.update(await stored(get_job_store().workspaces.prices.session_view, actor))
-        result['pricing_version'] = await company_pricing_version(
-            get_job_store(), actor.get('company')
-        )
     else:
         result.update(prices_set=True, price_display=price_display(adr_rates()))
     if ai_features.enabled('ai_usage'):
@@ -1619,22 +1614,13 @@ async def audit_inspection(
         )
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
     # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
-    rates = adr_rates() if pin is None else pin.get('rates')
-    try:
-        priced = price_and_range(
-            data,
-            {'calculation_version': 'adr-residential-v1', 'rates': rates}
-            if pin is None
-            else {**pin, 'calculation_version': basis['calculation_version']},
-        )
-    except NotImplementedError:
-        raise HTTPException(
-            409, "This company's price list cannot be audited yet. Contact support."
-        )
-    except ValueError as error:
-        raise HTTPException(400, str(error))
-    items = priced.lines
-    if priced.xactimate_total <= 0:
+    rates = adr_rates() if pin is None else pin['rates']
+    items, total = (
+        price_scope(data, rates)
+        if pin is None
+        else price_scope(data, rates, basis['calculation_version'])
+    )
+    if total <= 0:
         raise HTTPException(400, 'Add measured work, equipment or charges before auditing.')
     deadline = time.monotonic() + 30
     while (

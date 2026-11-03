@@ -70,7 +70,7 @@ FIELD_SOURCES = (
     'labor_hours',
 )
 
-# Job fields stored as whole numbers: a fractional default could never be saved on a draft.
+# The other job fields, and every count, are whole numbers: a fractional default could never be saved.
 DECIMAL_FIELD_SOURCES = ('monitoring_hours', 'labor_hours')
 
 COUNT_DAYS_SOURCES = {
@@ -688,10 +688,9 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
             max_decimals=2,
         )
         if (
-            src.kind == 'field'
-            and src.field not in DECIMAL_FIELD_SOURCES
-            and Decimal(default_quantity) % 1 != 0
-        ):
+            (src.kind == 'field' and src.field not in DECIMAL_FIELD_SOURCES)
+            or src.kind in ('count_days', 'typed_count_days')
+        ) and Decimal(default_quantity) % 1 != 0:
             raise ValueError(f'{where}: default_quantity must be a whole number for this item.')
         waste_percent = _decimal_str(
             raw.get('waste_percent', '0'),

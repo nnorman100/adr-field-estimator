@@ -9,8 +9,6 @@ import pytest
 import backend.main as bm
 from backend import ai_features, price_books, price_table
 from backend.contracts import CreateInspection, InspectionData, UpdateInspection
-from backend.inspection_store import Conflict
-from backend.pricing import PricedJob
 from pydantic import ValidationError
 from backend.readiness import readiness
 from tests.test_price_books import _publish_v2, _v2_table, enabled  # noqa: F401
@@ -35,6 +33,8 @@ def test_session_reports_pricing_version(api, enabled):  # noqa: F811
     _publish_v2(client, _v2_table('30.00'))
     for uid in ('owner', 'estimator', 'office'):
         assert session(client, current, uid)['pricing_version'] == V2, uid
+        # The app's periodic access refresh must learn of a first publish too.
+        assert client.get('/api/access').json()['pricing_version'] == V2, uid
     # Another company's table never leaks to this one's session.
     assert session(client, current, 'other-owner')['pricing_version'] != V2
 
@@ -97,83 +97,19 @@ def test_create_leaves_office_and_v1_companies_unpinned(api, enabled):  # noqa: 
     assert '_job_pricing/ADR-INS-' + 'f' * 32 not in store.db.records
 
 
-def prepare_audit(client, current, store):
-    current['uid'] = 'owner'
-    _publish_v2(client, _v2_table('30.00'))
-    current['uid'] = 'estimator'
-    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
-    assert made.status_code == 200, made.text
-
-
-def let_v2_pin_through(store, monkeypatch):
-    """Until the engine PR, ensure_pin refuses a v2 pin to a pricing caller; let the pre-check see it."""
-    prices = store.workspaces.prices
-    original = prices.ensure_pin
-    monkeypatch.setattr(
-        prices,
-        'ensure_pin',
-        lambda uid, inspection_id, priceable_only=False: original(uid, inspection_id),
-    )
-
-
 def audit(client):
     return client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
 
 
-def test_audit_precheck_uses_price_and_range_on_the_pinned_table(api, enabled, monkeypatch):  # noqa: F811
+def test_audit_returns_409_when_prices_are_not_set(api, enabled):  # noqa: F811
     client, current, store = api
-    prepare_audit(client, current, store)
-    let_v2_pin_through(store, monkeypatch)
-    seen = []
-
-    def priced(inspection, pin):
-        seen.append(pin)
-        raise NotImplementedError('dryscope-v2 pricing is not available yet')
-
-    monkeypatch.setattr(bm, 'price_and_range', priced)
+    current['uid'] = 'other-owner'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
     response = audit(client)
     assert response.status_code == 409, response.text
-    assert 'price list' in response.json()['detail']
-    # The pre-check priced the job from the pin made when the draft was created.
-    assert seen and seen[0]['calculation_version'] == V2 and seen[0]['items']
-
-    def too_small(inspection, pin):
-        raise ValueError('The priced scope totals $0.00. Enter at least one quantity.')
-
-    monkeypatch.setattr(bm, 'price_and_range', too_small)
-    response = audit(client)
-    assert response.status_code == 400, response.text
-    assert response.json()['detail'].startswith('The priced scope totals $0.00')
-
-
-def test_audit_precheck_refuses_a_job_that_prices_to_nothing(api, enabled, monkeypatch):  # noqa: F811
-    client, current, store = api
-    prepare_audit(client, current, store)
-    let_v2_pin_through(store, monkeypatch)
-
-    def free(inspection, pin):
-        return PricedJob(lines=[], totals=None, calculation_version=V2, xactimate_total=0)
-
-    monkeypatch.setattr(bm, 'price_and_range', free)
-    response = audit(client)
-    assert response.status_code == 400, response.text
-    assert 'Add measured work' in response.json()['detail']
-
-
-def test_audit_returns_409_when_prices_are_not_set(api, enabled, monkeypatch):  # noqa: F811
-    client, current, store = api
-    prepare_audit(client, current, store)
-    seen = []
-
-    def unset(uid, inspection_id, priceable_only=False):
-        raise Conflict('Company prices are not set. The owner publishes prices under Prices first.')
-
-    monkeypatch.setattr(store.workspaces.prices, 'ensure_pin', unset)
-    monkeypatch.setattr(bm, 'price_and_range', lambda inspection, pin: seen.append(pin))
-    response = audit(client)
-    assert response.status_code == 409, response.text
-    assert 'Company prices are not set' in response.json()['detail']
-    assert not seen, 'nothing is priced without a table'
+    assert 'prices' in response.json()['detail'].lower()
+    assert '_job_pricing/' + ID not in store.db.records
 
 
 def test_v1_audit_still_prices_through_the_dispatch(api, enabled):  # noqa: F811
@@ -415,6 +351,10 @@ def test_whole_number_items_refuse_a_fractional_default_quantity():
         with pytest.raises(ValueError, match='whole number'):
             price_table.normalize_items([row('field:' + field, '1.5')], publish=True)
         assert price_table.normalize_items([row('field:' + field, '2')], publish=True)
+    for source in ('count_days:air_movers*drying_days', 'typed_count_days'):
+        with pytest.raises(ValueError, match='whole number'):
+            price_table.normalize_items([row(source, '1.5')], publish=True)
+        assert price_table.normalize_items([row(source, '2')], publish=True)
     for source, default in (
         ('field:monitoring_hours', '13.25'),
         ('field:labor_hours', '1.5'),
