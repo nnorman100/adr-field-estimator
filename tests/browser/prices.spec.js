@@ -456,6 +456,68 @@ test('a stale review is refused and the editor is disabled offline', async ({
   await other.close();
 });
 
+test('an edit caught by a dropped connection says it is not saved and saves on reconnect', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const status = page.locator('#priceSaveStatus'),
+    banner = page.locator('#priceUnpublishedText');
+  await page.locator('input[name=price_service_call]').fill('123');
+  await page.context().setOffline(true);
+  await expect(status).toContainText('Not saved');
+  await expect(status).not.toContainText('saved locally');
+  await expect(banner).not.toContainText('saved');
+  await page.context().setOffline(false);
+  await expect(status).toContainText('Saved');
+  await expect(banner).toContainText('saved but not published');
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('123.00');
+});
+
+test('opening Prices offline claims nothing saved and the waiting edit saves on return', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await page.locator('input[name=price_service_call]').fill('123');
+  await page.context().setOffline(true);
+  await expect(page.locator('#priceSaveStatus')).toContainText('Not saved');
+  await page.evaluate(() => window.Prices.open().catch((e) => say(e.message, 'error')));
+  await expect(page.locator('#message')).toContainText('You are offline');
+  await expect(page.locator('#message')).not.toContainText('saved locally');
+  await page.context().setOffline(false);
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('123.00');
+});
+
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test('every checkbox and radio in the editor sits beside its text', async ({ page, request }) => {
+    await startUnset(page, request);
+    const stacked = await page.locator('#priceEditor').evaluate((editor) => {
+      for (const more of editor.querySelectorAll('details')) more.open = true;
+      const controls = [...editor.querySelectorAll('input[type=checkbox],input[type=radio]')];
+      return {
+        count: controls.length,
+        stacked: controls
+          .filter((control) => {
+            const text = document.createRange();
+            text.selectNodeContents(control.closest('label'));
+            text.setStartAfter(control);
+            const box = text.getBoundingClientRect(),
+              own = control.getBoundingClientRect();
+            return own.right > box.left || own.bottom < box.top || own.top > box.bottom;
+          })
+          .map((control) => control.name),
+      };
+    });
+    expect(stacked.count).toBeGreaterThan(0);
+    expect(stacked.stacked).toEqual([]);
+  });
+});
+
 // WebKit does not show requests that go through the service worker to page.route.
 test.describe('review and samples', () => {
   test.use({ serviceWorkers: 'block' });

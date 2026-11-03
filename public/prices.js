@@ -798,13 +798,16 @@
   function paintBanner() {
     const banner = $('priceUnpublished');
     if (!banner || !ed) return;
-    const dirty = unpublished();
+    const dirty = unpublished(),
+      saved = ed.edits === ed.savedEdits;
     banner.hidden = !dirty;
     if (!dirty) return;
     $('priceUnpublishedText').textContent = ed.view.starter
-      ? 'These prices are saved but not published. Jobs cannot be priced until you publish them.'
+      ? 'These prices are ' +
+        (saved ? 'saved but ' : '') +
+        'not published. Jobs cannot be priced until you publish them.'
       : 'Unpublished changes' +
-        (ed.savedAt ? ' saved ' + ed.savedAt : '') +
+        (saved && ed.savedAt ? ' saved ' + ed.savedAt : '') +
         '. Jobs are still priced from ' +
         ed.view.label +
         ' until you publish.';
@@ -848,6 +851,10 @@
     if (!$('priceSaveStatus'))
       say('Your last price change was not saved: ' + error.message, 'error');
   }
+  // Only the editor on screen resends; a return to the page flushes one left behind.
+  function resendCopy() {
+    if (ed && $('priceSaveStatus')) saveCopy(ed).catch(saveLost);
+  }
   function saveCopy(mine) {
     clearTimeout(mine.saveTimer);
     mine.chain = mine.chain.catch(() => {}).then(() => writeCopy(mine));
@@ -871,11 +878,21 @@
       if (mine.edits === sent) mine.savedEdits = sent;
       if (ed === mine)
         editStatus(mine.edits === sent ? 'Saved ' + mine.savedAt : 'Saving…', 'saved');
-    } catch (error) {
-      const conflict = /another device/i.test(error.message);
+    } catch (failure) {
+      // The editor has no local queue, so the shared "saved locally" wording would be false here.
+      const offline = !navigator.onLine,
+        error = offline ? Error('You are offline.') : failure,
+        conflict = /another device/i.test(error.message);
       if (conflict) mine.stale = true;
       if (ed === mine) {
-        editStatus(conflict ? error.message : 'Not saved: ' + error.message, 'error');
+        editStatus(
+          conflict
+            ? error.message
+            : 'Not saved: ' +
+                error.message +
+                (offline ? ' Stay on this page and it saves when you reconnect.' : ''),
+          'error',
+        );
         const reload = $('priceReload');
         if (conflict && reload) reload.hidden = false;
         if (conflict)
@@ -1692,6 +1709,8 @@
         : 'Publishing applies to new pricing now. Saved drafts keep their prices until you apply new prices to one draft.',
       support ? 'READ-ONLY SUPPORT VIEW' : undefined,
     );
+    // Before the flush and the reset below, so an edit still waiting survives to be saved on return.
+    if (!navigator.onLine) throw Error('You are offline. Reconnect to open company prices.');
     if (ed) {
       clearTimeout(ed.sampleTimer);
       await saveCopy(ed).catch(saveLost);
@@ -1750,4 +1769,5 @@
     openSupport,
     syncNav,
   };
+  root.addEventListener?.('online', resendCopy);
 })(typeof window === 'undefined' ? globalThis : window);
