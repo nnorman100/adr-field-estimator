@@ -385,9 +385,10 @@
     await open();
   }
   function tools(content, base, manage, view) {
-    const actions = node('div', undefined, 'price-actions'),
+    const actions = node('form', undefined, 'price-actions'),
       // A company that starts from the catalog downloads the v2 starter template by name.
       suffix = view.starter ? '&version_id=starter' : '';
+    actions.addEventListener('submit', (event) => event.preventDefault());
     actions.append(
       button('Export CSV', () =>
         download(base + '/export?format=csv' + suffix, 'company-prices.csv').catch((e) =>
@@ -438,7 +439,6 @@
           const priceForm = $('priceForm');
           for (const key of zeroKeys)
             if (priceForm?.elements['ack_' + key]?.checked) upload.append('acknowledgements', key);
-          for (const id of ed?.acks || []) upload.append('acknowledgements', id);
           if (zeroBox.checked) upload.append('confirm_zero_prices', 'yes');
           const preview = await (
             await api(base + '/import-preview', { method: 'POST', body: upload })
@@ -478,6 +478,7 @@
         reason.minLength = 3;
         reason.maxLength = 500;
         reason.placeholder = 'Reason for restoring ' + version.label;
+        restore.addEventListener('submit', (event) => event.preventDefault());
         restore.append(
           reason,
           button('Restore ' + version.label, async () => {
@@ -568,13 +569,6 @@
     'count_days:wood_floor_systems*wood_floor_days',
     'after_hours',
   ];
-  const CHANGE_WORDS = {
-    added: 'Added',
-    removed: 'Removed',
-    price: 'Price',
-    enabled: 'Switched on or off',
-    fields: 'Details changed',
-  };
   const POLICY_LABELS = {
     estimate_mode: 'Estimate style',
     area_basis: 'Area basis',
@@ -622,7 +616,19 @@
     if (group === 'demolition')
       return ['room:demolition:unfinished', 'room:demolition:finished', 'typed'];
     if (group === 'extras') return ['typed'];
-    return ['room:demolition:unfinished', 'room:demolition:finished', ...ALL_SOURCES];
+    return [...ALL_SOURCES, 'room:demolition:unfinished', 'room:demolition:finished'];
+  }
+  // The unit a quantity source allows: room areas are square feet, and the server refuses a
+  // square-foot demolition item that does not take its quantity from the rooms.
+  function fittedUnit(group, source, unit) {
+    if (group === 'extras') return 'hour';
+    if (String(source).startsWith('room:')) return 'sf';
+    return group === 'demolition' && unit === 'sf' ? 'lf' : unit;
+  }
+  function lockUnit(select, group, source) {
+    const fixed = group === 'extras' || String(source).startsWith('room:');
+    select.dataset.locked = fixed ? 'true' : '';
+    select.disabled = fixed || !navigator.onLine;
   }
   function groupOrder(rows) {
     return grouped(
@@ -850,6 +856,11 @@
         editStatus(conflict ? error.message : 'Not saved: ' + error.message, 'error');
         const reload = $('priceReload');
         if (conflict && reload) reload.hidden = false;
+        if (conflict)
+          for (const control of $('priceEditor').querySelectorAll('input,select,textarea,button')) {
+            control.dataset.locked = 'true';
+            control.disabled = true;
+          }
       }
       throw error;
     } finally {
@@ -1162,7 +1173,18 @@
     if (ed.manage) row.append(on);
     row.append(node('small', sourceLabel(item.quantity_source), 'price-source'));
     row.append(node('p', undefined, 'price-problem'));
-    const more = node('details', undefined, 'price-more');
+    const more = node('details', undefined, 'price-more'),
+      unitSelect = selectInput(item.unit, Object.entries(UNIT_LABELS), (value) => {
+        setUnit(value);
+        edited();
+      }),
+      setUnit = (value) => {
+        item.unit = fittedUnit(item.group, item.quantity_source, value);
+        unitSelect.value = item.unit;
+        lockUnit(unitSelect, item.group, item.quantity_source);
+        priceLabel.firstChild.textContent = 'Price per ' + unitLabel(item.unit);
+      };
+    if (ed.manage) lockUnit(unitSelect, item.group, item.quantity_source);
     more.append(node('summary', 'More'));
     more.append(
       labeled(
@@ -1177,14 +1199,7 @@
         ),
         'Blank prints the name.',
       ),
-      labeled(
-        'Unit',
-        selectInput(item.unit, Object.entries(UNIT_LABELS), (value) => {
-          item.unit = value;
-          priceLabel.firstChild.textContent = 'Price per ' + unitLabel(value);
-          edited();
-        }),
-      ),
+      labeled('Unit', unitSelect),
       labeled(
         'Quantity comes from',
         selectInput(
@@ -1195,6 +1210,7 @@
           ]),
           (value) => {
             item.quantity_source = value;
+            setUnit(item.unit);
             edited();
             row.querySelector('.price-source').textContent = sourceLabel(value);
           },
@@ -1303,21 +1319,23 @@
   function addItemForm(group) {
     const form = node('div', undefined, 'price-add'),
       name = node('input'),
-      unit = selectInput('each', Object.entries(UNIT_LABELS), () => {}),
+      unit = selectInput('each', Object.entries(UNIT_LABELS), (value) => {
+        unit.value = fittedUnit(group, source.value, value);
+      }),
       source = selectInput(
         sourceOptions(group)[0],
         sourceOptions(group).map((s) => [s, sourceLabel(s)]),
-        () => {},
+        (value) => {
+          unit.value = fittedUnit(group, value, unit.value);
+          lockUnit(unit, group, value);
+        },
       );
     name.placeholder = 'New item name';
     name.maxLength = 80;
     name.autocomplete = 'off';
     name.setAttribute('aria-label', 'New item name in ' + groupLabel(group));
-    if (group === 'extras') {
-      unit.value = 'hour';
-      unit.disabled = true;
-      unit.dataset.locked = 'true';
-    } else if (group === 'demolition') unit.value = 'sf';
+    unit.value = fittedUnit(group, source.value, unit.value);
+    lockUnit(unit, group, source.value);
     form.append(
       name,
       labeled('Unit', unit),
@@ -1327,8 +1345,7 @@
           name.focus();
           throw Error('Name the new item first.');
         }
-        const unitValue = source.value.startsWith('room:') ? 'sf' : unit.value;
-        ed.items.push(newItem(group, name.value, unitValue, source.value, ed.items));
+        ed.items.push(newItem(group, name.value, unit.value, source.value, ed.items));
         edited();
         renderItems();
         $('priceItems')
@@ -1394,19 +1411,21 @@
         (row.after ? ' at $' + row.after : '')
       );
     if (row.change === 'removed') return 'Removed ' + row.name;
-    if (row.change === 'price')
-      return (
-        row.name +
-        ' (' +
-        unitLabel(row.unit) +
-        '): ' +
+    const named = row.name + ' (' + unitLabel(row.unit) + ')',
+      amounts =
         (row.before ? '$' + row.before : 'no price') +
         ' to ' +
         (row.after ? '$' + row.after : 'no price') +
-        (row.percent ? ' (' + (Number(row.percent) > 0 ? '+' : '') + row.percent + '%)' : '')
+        (row.percent ? ' (' + (Number(row.percent) > 0 ? '+' : '') + row.percent + '%)' : '');
+    if (row.change === 'price') return named + ': ' + amounts;
+    if (row.change === 'enabled')
+      return (
+        named +
+        ': switched ' +
+        (row.warnings?.includes('disabled_items') ? 'off' : 'on') +
+        (row.before !== row.after ? ', ' + amounts : '')
       );
-    if (row.change === 'enabled') return row.name + ': switched on or off';
-    return row.name + ': ' + (CHANGE_WORDS[row.change] || 'changed').toLowerCase();
+    return row.name + ': details changed';
   }
   function policyValue(field, value) {
     if (typeof value === 'boolean') return value ? 'on' : 'off';
@@ -1494,13 +1513,15 @@
     // A save still waiting on its timer must not bring the copy back after the discard.
     clearTimeout(ed.saveTimer);
     clearTimeout(ed.sampleTimer);
-    const mine = ed;
+    const mine = ed,
+      conflicted = mine.stale;
     mine.stale = true;
     await mine.chain.catch(() => {});
     try {
       await jsonApi(mine.base + '/working-copy/discard', 'POST');
     } catch (error) {
-      mine.stale = false;
+      mine.stale = conflicted;
+      saveCopy(mine).catch(saveLost);
       throw error;
     }
     say('Unpublished changes discarded.', 'success');
@@ -1675,6 +1696,8 @@
     unitLabel,
     sourceLabel,
     sourceOptions,
+    fittedUnit,
+    diffText,
     groupOrder,
     slugId,
     newItem,

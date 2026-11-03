@@ -439,7 +439,14 @@ test('a stale review is refused and the editor is disabled offline', async ({
   await expect(page.locator('#offlineBanner')).toBeVisible();
   await expect(page.locator('input[name=price_service_call]')).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export spreadsheet' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Import prices' })).toBeDisabled();
+  await expect(page.locator('#priceImportFile')).toBeDisabled();
+  await expect(page.locator('#priceImportReason')).toBeDisabled();
+  await expect(page.locator('#priceImportZero')).toBeDisabled();
   await page.context().setOffline(false);
+  await expect(page.getByRole('button', { name: 'Import prices' })).toBeEnabled();
   await other.close();
 });
 
@@ -641,7 +648,12 @@ test('a starter company imports its template, confirms a zero price and is warne
   });
   await start(page, 'other');
   await navigate(page, 'dashboardPrices');
-  await page.locator('input[name=price_service_call]').fill('33');
+  // A tick in the editor belongs to the editor: it does not confirm a zero in an uploaded file.
+  const callRow = page.locator('[data-price-item=service_call]');
+  await callRow.getByText('More', { exact: true }).click();
+  await callRow.getByLabel('Allow a zero price').check();
+  await callRow.locator('input[name=price_service_call]').fill('0');
+  await callRow.getByLabel('I confirm this zero price is intentional.').check();
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
   const template = await page.evaluate(async () => {
     const base = '/api/companies/' + state.session.company_id + '/prices';
@@ -650,10 +662,12 @@ test('a starter company imports its template, confirms a zero price and is warne
   const rows = csvRows(template.replace(/^\ufeff/, '')),
     [header, ...body] = rows,
     price = header.indexOf('unit_price'),
-    allow = header.indexOf('allow_zero');
+    allow = header.indexOf('allow_zero'),
+    id = header.indexOf('item_id');
   for (const row of body) row[price] = '10.00';
-  body[0][price] = '0.00';
-  body[0][allow] = 'yes';
+  const free = body.find((row) => row[id] === 'service_call');
+  free[price] = '0.00';
+  free[allow] = 'yes';
   const file = {
     name: 'prices.csv',
     mimeType: 'text/csv',
@@ -672,5 +686,95 @@ test('a starter company imports its template, confirms a zero price and is warne
   await page.getByRole('button', { name: 'Publish prices' }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1');
   await expect(page.locator('#priceUnpublished')).toBeHidden();
-  await expect(page.locator('input[name=price_service_call]')).not.toHaveValue('33.00');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('0.00');
+});
+
+test('a save conflict locks the editor and keeps saying so', async ({ page, browser, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const other = await browser.newPage();
+  await other.addInitScript(
+    (value) => sessionStorage.setItem('synthetic-uid', value),
+    uid('owner'),
+  );
+  await other.goto('/app');
+  await expect(other.locator('#workspaceDashboard')).toBeVisible();
+  const toggle = other.locator('#workspaceMenuToggle');
+  if (await toggle.isVisible()) await toggle.click();
+  await other.locator('#dashboardPrices').click();
+  await other.locator('input[name=price_service_call]').fill('12');
+  await other.locator('#priceReason').fill('Another phone');
+  await other.getByRole('button', { name: 'Review changes' }).click();
+  await other.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(other.locator('#dashboardContent')).toContainText('Prices v2');
+  await other.close();
+
+  const price = page.locator('input[name=price_service_call]');
+  await price.fill('11');
+  const status = page.locator('#priceSaveStatus');
+  await expect(status).toContainText('another device');
+  await expect(price).toBeDisabled();
+  await expect(page.locator('input[name=policy_minimum_job_charge]')).toBeDisabled();
+  await expect(status).toContainText('another device');
+  await page.getByRole('button', { name: 'Reload prices' }).click();
+  await expect(price).toBeEnabled();
+  await expect(price).toHaveValue('12.00');
+});
+
+test('add item keeps the chosen unit and never saves a pair the server refuses', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const charges = page.locator('details.price-group[data-group=job_charges]');
+  await charges.getByLabel('New item name in Job charges').fill('Permit fee');
+  await expect(charges.locator('.price-add').locator('select').first()).toHaveValue('each');
+  await charges.getByRole('button', { name: 'Add item' }).click();
+  const permit = page.locator('[data-price-item=permit_fee]');
+  await expect(permit.getByText('Price per each')).toBeVisible();
+  await expect(permit.locator('.price-source')).toHaveText('Quantity typed on the job');
+
+  const demolition = page.locator('details.price-group[data-group=demolition]');
+  const addForm = demolition.locator('.price-add');
+  await expect(addForm.locator('select').first()).toHaveValue('sf');
+  await expect(addForm.locator('select').first()).toBeDisabled();
+  await addForm.getByLabel('Quantity comes from').selectOption('typed');
+  await expect(addForm.locator('select').first()).toHaveValue('lf');
+  await expect(addForm.locator('select').first()).toBeEnabled();
+  await addForm.locator('select').first().selectOption('sf');
+  await expect(addForm.locator('select').first()).toHaveValue('lf');
+  await demolition.getByLabel('New item name in Demolition').fill('Tile removal');
+  await addForm.getByRole('button', { name: 'Add item' }).click();
+  const tile = page.locator('[data-price-item=tile_removal]');
+  await tile.getByText('More', { exact: true }).click();
+  await tile.locator('.price-more').locator('select').first().selectOption('sf');
+  await expect(tile.locator('.price-more').locator('select').first()).toHaveValue('lf');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await tile
+    .locator('.price-more')
+    .getByLabel('Quantity comes from')
+    .selectOption('room:demolition:finished');
+  await expect(tile.locator('.price-more').locator('select').first()).toHaveValue('sf');
+  await expect(tile.locator('.price-more').locator('select').first()).toBeDisabled();
+  await expect(tile.getByText('Price per sq ft')).toBeVisible();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+});
+
+test.describe('a failed discard', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('saves the edit it was holding back', async ({ page, request }) => {
+    await startUnset(page, request);
+    await priceEverything(page);
+    await publishTable(page);
+    await page.route('**/working-copy/discard', (route) => route.abort());
+    await page.locator('input[name=price_service_call]').fill('77');
+    await page.getByRole('button', { name: 'Discard changes' }).click();
+    await page.getByRole('button', { name: 'Yes, discard' }).click();
+    await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+    await page.unroute('**/working-copy/discard');
+    await page.reload();
+    await navigate(page, 'dashboardPrices');
+    await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
+  });
 });

@@ -329,3 +329,47 @@ test('the after-hours sentence comes from the pinned policy and charge item', ()
     'After-hours loss: 10% on labor and materials.',
   );
 });
+
+test('a unit always agrees with where the quantity comes from', () => {
+  assert.equal(Prices.sourceOptions('job_charges')[0], 'typed');
+  assert.equal(Prices.sourceOptions('demolition')[0], 'room:demolition:unfinished');
+  assert.equal(Prices.fittedUnit('job_charges', 'typed', 'each'), 'each');
+  assert.equal(Prices.fittedUnit('job_charges', 'typed', 'sf'), 'sf');
+  assert.equal(Prices.fittedUnit('treatment', 'room:floor', 'each'), 'sf');
+  assert.equal(Prices.fittedUnit('demolition', 'typed', 'sf'), 'lf');
+  assert.equal(Prices.fittedUnit('demolition', 'typed', 'each'), 'each');
+  assert.equal(Prices.fittedUnit('extras', 'typed', 'each'), 'hour');
+});
+
+test('the review says which way an item was switched and any price that moved with it', () => {
+  const row = {
+    name: 'Service call',
+    unit: 'each',
+    change: 'enabled',
+    before: '20.00',
+    after: '200.00',
+    percent: '900.0',
+    warnings: [],
+  };
+  assert.equal(
+    Prices.diffText(row),
+    'Service call (each): switched on, $20.00 to $200.00 (+900.0%)',
+  );
+  assert.equal(
+    Prices.diffText({ ...row, before: '', percent: null }),
+    'Service call (each): switched on, no price to $200.00',
+  );
+  assert.equal(
+    Prices.diffText({
+      ...row,
+      before: '200.00',
+      percent: null,
+      warnings: ['disabled_items'],
+    }),
+    'Service call (each): switched off',
+  );
+  assert.equal(
+    Prices.diffText({ ...row, change: 'fields', before: '5.00', after: '5.00' }),
+    'Service call: details changed',
+  );
+});
