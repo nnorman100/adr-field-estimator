@@ -689,10 +689,7 @@ test('a starter company imports its template, confirms a zero price and is warne
   await expect(page.locator('input[name=price_service_call]')).toHaveValue('0.00');
 });
 
-test('a save conflict locks the editor and keeps saying so', async ({ page, browser, request }) => {
-  await startUnset(page, request);
-  await priceEverything(page);
-  await publishTable(page);
+async function publishFromAnotherPhone(browser) {
   const other = await browser.newPage();
   await other.addInitScript(
     (value) => sessionStorage.setItem('synthetic-uid', value),
@@ -709,6 +706,38 @@ test('a save conflict locks the editor and keeps saying so', async ({ page, brow
   await other.getByRole('button', { name: 'Publish prices' }).click();
   await expect(other.locator('#dashboardContent')).toContainText('Prices v2');
   await other.close();
+}
+
+test('a conflict on the save made while leaving the editor reports the conflict', async ({
+  page,
+  browser,
+  request,
+}) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await publishFromAnotherPhone(browser);
+  await page.evaluate(() => {
+    const price = document.querySelector('input[name=price_service_call]');
+    price.value = '11';
+    price.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('dashboardPrices').click();
+  });
+  await expect(page.locator('#message')).toHaveText(
+    'Your last price change was not saved: Prices changed on another device. Reload.',
+  );
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('12.00');
+  await expect(page.locator('input[name=price_service_call]')).toBeEnabled();
+  expect(errors).toEqual([]);
+});
+
+test('a save conflict locks the editor and keeps saying so', async ({ page, browser, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await publishFromAnotherPhone(browser);
 
   const price = page.locator('input[name=price_service_call]');
   await price.fill('11');

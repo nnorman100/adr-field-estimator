@@ -856,8 +856,9 @@
         editStatus(conflict ? error.message : 'Not saved: ' + error.message, 'error');
         const reload = $('priceReload');
         if (conflict && reload) reload.hidden = false;
-        if (conflict)
-          for (const control of $('priceEditor').querySelectorAll('input,select,textarea,button')) {
+        const editor = $('priceEditor');
+        if (conflict && editor)
+          for (const control of editor.querySelectorAll('input,select,textarea,button')) {
             control.dataset.locked = 'true';
             control.disabled = true;
           }
