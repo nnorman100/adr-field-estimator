@@ -1504,7 +1504,7 @@ def test_additional_work_keeps_the_profile_rate_with_the_flag_off(api):
     assert store.quote_extra('owner', ID, 2)['rate'] == '47.46'
 
 
-def test_calculate_returns_publish_problems_until_v2_pricing_exists(api, enabled, caplog):
+def test_calculate_returns_samples_and_publish_problems(api, enabled, caplog):
     client, current, _ = api
     current['uid'] = 'owner'
     table = _v2_table('25.00')
@@ -1515,9 +1515,121 @@ def test_calculate_returns_publish_problems_until_v2_pricing_exists(api, enabled
             json={'items': table['items'], 'policy': table['policy']},
         )
     assert answer.status_code == 200, answer.text
-    assert answer.json()['samples'] == []
+    samples = answer.json()['samples']
+    assert [sample['key'] for sample in samples] == ['small', 'medium', 'large']
+    assert all(sample['incomplete'] for sample in samples)
     assert any('enter a unit price' in row['message'] for row in answer.json()['problems'])
     assert 'Storage operation failed' not in caplog.text
+
+
+def _calculate(client, table):
+    answer = client.post(
+        '/api/companies/adr/prices/calculate',
+        json={'items': table['items'], 'policy': table['policy']},
+    )
+    assert answer.status_code == 200, answer.text
+    return {sample['key']: sample for sample in answer.json()['samples']}
+
+
+def _engine_total(table, key, end):
+    from backend import price_table, pricing_v2
+
+    sample = next(row for row in pricing_v2.SAMPLE_JOBS if row['key'] == key)
+    data = InspectionData.model_validate(sample['data'])
+    normal = price_table.normalize_table(table, publish=False)
+    lines, _ = pricing_v2.price_scope(data, normal)
+    return pricing_v2.totals(data, lines, normal['policy'])[end]['total']
+
+
+def test_calculate_prices_each_sample_from_the_table_it_was_sent(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    samples = _calculate(client, table)
+    for key, sample in samples.items():
+        assert sample['notice'] == 'Sample job only. This does not price a saved job.'
+        assert sample['label'] and sample['description']
+        assert sample['mode'] == 'range' and sample['incomplete'] is False
+        assert sample['low'] == f'${_engine_total(table, key, "low"):,.2f}'
+        assert sample['high'] == f'${_engine_total(table, key, "high"):,.2f}'
+    dearer = _calculate(client, _v2_table('50.00'))
+    for key in samples:
+        assert Decimal(dearer[key]['low'].strip('$').replace(',', '')) > Decimal(
+            samples[key]['low'].strip('$').replace(',', '')
+        )
+
+    table['policy']['estimate_mode'] = 'single'
+    single = _calculate(client, table)['medium']
+    assert single['mode'] == 'single' and single['high'] is None
+
+
+def test_calculate_leaves_out_a_sample_nothing_priced_touches(api, enabled):
+    from backend import price_table
+
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = price_table.starter_table()
+    assert _calculate(client, table) == {}
+    for item in table['items']:
+        if item['item_id'] == 'service_call':
+            item['unit_price'] = '150.00'
+    samples = _calculate(client, table)
+    # Only the small sample has an emergency call.
+    assert list(samples) == ['small'] and samples['small']['incomplete'] is True
+
+
+@pytest.mark.parametrize('item_id', ['hepa_vacuum', 'surface_cleaning', 'antimicrobial'])
+def test_a_floor_priced_item_moves_the_mold_sample(api, enabled, item_id):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    before = _calculate(client, table)['large']
+    next(row for row in table['items'] if row['item_id'] == item_id)['unit_price'] = '50.00'
+    after = _calculate(client, table)['large']
+    assert after['low'] != before['low'] and after['high'] != before['high']
+
+
+def test_the_wet_floor_basis_prices_the_whole_mold_sample(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    for item in table['items']:
+        if item['group'] == 'demolition' and item['quantity_source'].startswith('room:demolition'):
+            item['quantity_source'] = 'room:basis'
+    table['policy']['area_basis'] = 'demolition'
+    demolition = _calculate(client, table)['large']
+    table['policy']['area_basis'] = 'wet_floor'
+    # The sample's wet floor is the same 2,500 sq ft as its demolition.
+    assert _calculate(client, table)['large']['low'] == demolition['low']
+
+
+def test_preview_stores_the_samples_before_and_after_the_change(api, enabled):
+    client, current, db = api
+    current['uid'] = 'owner'
+    first = _v2_table('25.00')
+    review = client.post(
+        '/api/companies/adr/prices/preview',
+        json={'items': first['items'], 'policy': first['policy'], 'change_reason': 'First table'},
+    ).json()
+    assert review['sample_before'] == []
+    assert [sample['key'] for sample in review['sample_after']] == ['small', 'medium', 'large']
+    _publish_v2(client, first, 'First table')
+
+    second = _v2_table('50.00')
+    review = client.post(
+        '/api/companies/adr/prices/preview',
+        json={'items': second['items'], 'policy': second['policy'], 'change_reason': 'Dearer'},
+    ).json()
+    assert [row['low'] for row in review['sample_before']] == [
+        sample['low'] for sample in _calculate(client, first).values()
+    ]
+    assert [row['low'] for row in review['sample_after']] == [
+        sample['low'] for sample in _calculate(client, second).values()
+    ]
+    assert review['sample_before'][0]['low'] != review['sample_after'][0]['low']
+    stored = db.workspaces.prices.ws.read('_price_book_previews', review['preview_id'])
+    assert stored['sample_before'] == review['sample_before']
+    assert stored['sample_after'] == review['sample_after']
 
 
 def test_calculate_refuses_a_sample_choice_it_cannot_honor(api, enabled):
@@ -1835,3 +1947,273 @@ def test_effective_takes_only_a_company_record(store):
         prices.effective('adr')
     with pytest.raises(TypeError):
         prices.effective('no-such-company')
+
+
+# --- Owner price-table editor (PR 4): routes the editor screen depends on ---
+
+
+def _wc_body(table, **extra):
+    return {
+        'items': table['items'],
+        'policy': table['policy'],
+        'expected_working_version': 0,
+        'expected_generation': 0,
+        **extra,
+    }
+
+
+def test_working_copy_routes_are_owner_only(api, enabled):
+    client, current, _ = api
+    table = _v2_table('30.00')
+    current['uid'] = 'owner'
+    head = _publish_v2(client, _v2_table('20.00'), 'Head for the working copy')
+    saved = client.put(
+        '/api/companies/adr/prices/working-copy',
+        json=_wc_body(table, expected_generation=head['generation']),
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['working_version'] == 1
+    assert saved.json()['working_copy']['items'][0]['unit_price'] == '30.00'
+    # The owner reads the copy back with the page, disabled items included.
+    page = client.get('/api/companies/adr/prices').json()
+    assert page['working_copy']['working_version'] == 1
+    assert any(not item['enabled'] for item in page['working_copy']['items'])
+
+    for uid in ('estimator', 'office', 'admin', 'other-owner'):
+        current['uid'] = uid
+        put = client.put(
+            '/api/companies/adr/prices/working-copy',
+            json=_wc_body(table, expected_generation=1, expected_working_version=1),
+        )
+        assert put.status_code in (403, 404), (uid, put.text)
+        assert client.post('/api/companies/adr/prices/working-copy/discard').status_code in (
+            403,
+            404,
+        ), uid
+    # Members who may read prices never receive the working copy.
+    current['uid'] = 'estimator'
+    read = client.get('/api/companies/adr/prices')
+    assert read.status_code == 200
+    assert read.json().get('working_copy') is None
+    assert read.json()['can_manage'] is False
+
+    price_books.set_enabled(False)
+    current['uid'] = 'owner'
+    assert (
+        client.put(
+            '/api/companies/adr/prices/working-copy',
+            json=_wc_body(table, expected_generation=1, expected_working_version=1),
+        ).status_code
+        == 404
+    )
+
+
+def test_preview_diff_lists_items_policy_and_warnings(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    head = _v2_table('20.00')
+    _publish_v2(client, head, 'First table')
+    changed = deepcopy(head)
+    changed['items'][0]['unit_price'] = '40.00'  # +100 percent
+    changed['items'][1]['enabled'] = False
+    changed['items'][2]['unit_price'] = '0.00'
+    changed['items'][2]['allow_zero'] = True
+    changed['items'][3]['taxable'] = True
+    changed['items'] = changed['items'][:-1] + [
+        {**deepcopy(changed['items'][-1]), 'item_id': 'extra_new', 'code': 'EXTRA-NEW'}
+    ]
+    changed['policy']['estimate_mode'] = 'single'
+    changed['policy']['sales_tax'] = {'enabled': True, 'percent': '8'}
+    changed['policy']['after_hours']['label'] = 'Night work'
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={
+            'items': changed['items'],
+            'policy': changed['policy'],
+            'acknowledgements': [changed['items'][2]['item_id']],
+            'change_reason': 'Quarterly review',
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    kinds = {(row['item_id'], row['change']) for row in body['diff']['items']}
+    assert (changed['items'][0]['item_id'], 'price') in kinds
+    assert (changed['items'][1]['item_id'], 'enabled') in kinds
+    assert ('extra_new', 'added') in kinds
+    assert (head['items'][-1]['item_id'], 'removed') in kinds
+    fields = {row['field'] for row in body['diff']['policy']}
+    assert {
+        'estimate_mode',
+        'sales_tax.enabled',
+        'sales_tax.percent',
+        'after_hours.label',
+    } <= fields
+    assert {'large_change', 'zero_price', 'disabled_items', 'mode_change', 'tax_change'} <= set(
+        body['warnings']
+    )
+
+
+def test_import_replaces_items_and_keeps_policy(api, enabled):
+    from backend import price_book_import, price_table
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    table['policy']['overhead_profit_percent'] = '10'
+    table['policy']['after_hours']['label'] = 'Night work'
+    _publish_v2(client, table, 'Head with a policy')
+    company, base_version, generation, exported = db.workspaces.prices.export_rows('owner', 'adr')
+    changed = deepcopy(exported)
+    changed[0]['unit_price'] = '31.00'
+    raw = price_book_import.export_csv(company, base_version, generation, changed)
+    boundary = 'xBOUNDARYx'
+    body = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="p.csv"\r\n'
+        f'Content-Type: text/csv\r\n\r\n'.encode()
+        + raw
+        + f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="change_reason"\r\n\r\n'
+        f'Imported prices\r\n--{boundary}--\r\n'.encode()
+    )
+    preview = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=body,
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
+    )
+    assert preview.status_code == 200, preview.text
+    result = preview.json()
+    assert [row['change'] for row in result['diff']['items']] == ['price']
+    assert result['diff']['policy'] == []
+    assert result['sample_before'] and result['sample_after']
+    client.post(
+        '/api/companies/adr/prices/publish',
+        json={'preview_id': result['preview_id'], 'expected_generation': result['generation']},
+    )
+    view = client.get('/api/companies/adr/prices').json()
+    assert view['policy']['overhead_profit_percent'] == '10'
+    assert view['policy']['after_hours']['label'] == 'Night work'
+    assert price_table.starter_table()['items'][0]['item_id'] == view['items'][0]['item_id']
+
+
+def test_import_that_raises_a_waste_shows_it_in_the_review(api, enabled):
+    from backend import price_book_import
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'), 'Head before the waste change')
+    company, base_version, generation, exported = db.workspaces.prices.export_rows('owner', 'adr')
+    changed = deepcopy(exported)
+    changed[0]['waste_percent'] = '50'
+    raw = price_book_import.export_csv(company, base_version, generation, changed)
+
+    preview = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=_import_body(raw, 'xBOUNDARYx', change_reason='Waste from the file'),
+        headers={'Content-Type': 'multipart/form-data; boundary=xBOUNDARYx'},
+    )
+    assert preview.status_code == 200, preview.text
+    row = preview.json()['diff']['items'][0]
+    assert row['item_id'] == changed[0]['item_id']
+    assert row['change'] == 'fields'
+    assert [field['field'] for field in row['fields']] == ['waste_percent']
+    assert row['fields'][0]['before'] == exported[0]['waste_percent']
+    assert Decimal(row['fields'][0]['after']) == 50
+
+
+def test_calculate_is_stateless_and_quota_limited(api, enabled):
+    client, current, db = api
+    table = _v2_table('30.00')
+    table['items'][0]['unit_price'] = ''
+    current['uid'] = 'owner'
+    before = {key for key in db.db.records}
+    result = client.post(
+        '/api/companies/adr/prices/calculate',
+        json={'items': table['items'], 'policy': table['policy']},
+    )
+    assert result.status_code == 200, result.text
+    assert any(row['item_id'] == table['items'][0]['item_id'] for row in result.json()['problems'])
+    created = {key for key in db.db.records} - before
+    assert not any(
+        key.startswith(('_price_book_drafts', '_price_book_previews')) for key in created
+    )
+    for uid in ('estimator', 'office'):
+        current['uid'] = uid
+        assert (
+            client.post(
+                '/api/companies/adr/prices/calculate',
+                json={'items': table['items'], 'policy': table['policy']},
+            ).status_code
+            == 403
+        ), uid
+    current['uid'] = 'owner'
+    statuses = [
+        client.post(
+            '/api/companies/adr/prices/calculate',
+            json={'items': table['items'], 'policy': table['policy']},
+        ).status_code
+        for _ in range(300)
+    ]
+    # The first call above used one of the 300.
+    assert statuses[0] == 200 and statuses[298] == 200 and statuses[299] == 429
+
+
+def test_heavy_sample_editing_cannot_block_preview_or_publish(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('30.00')
+    for _ in range(100):
+        assert (
+            client.post(
+                '/api/companies/adr/prices/calculate',
+                json={'items': table['items'], 'policy': table['policy']},
+            ).status_code
+            == 200
+        )
+    published = _publish_v2(client, table, 'Published after a long edit')
+    assert published['generation'] == 1
+
+
+def _import_body(raw, boundary, **fields):
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="p.csv"\r\n'
+        f'Content-Type: text/csv\r\n\r\n'.encode()
+        + raw
+        + b'\r\n'
+    ]
+    parts += [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        for name, value in fields.items()
+    ]
+    return b''.join(parts) + f'--{boundary}--\r\n'.encode()
+
+
+def test_import_with_a_zero_price_needs_the_confirmation(api, enabled):
+    from backend import price_book_import
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'), 'Head before a zero price')
+    company, base_version, generation, exported = db.workspaces.prices.export_rows('owner', 'adr')
+    changed = deepcopy(exported)
+    changed[0]['unit_price'] = '0.00'
+    changed[0]['allow_zero'] = True
+    changed[0]['enabled'] = True
+    raw = price_book_import.export_csv(company, base_version, generation, changed)
+    headers = {'Content-Type': 'multipart/form-data; boundary=xBOUNDARYx'}
+
+    refused = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=_import_body(raw, 'xBOUNDARYx', change_reason='Free first row'),
+        headers=headers,
+    )
+    assert refused.status_code == 400 or refused.status_code == 422, refused.text
+    assert 'confirm that a zero unit price' in refused.text
+
+    confirmed = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=_import_body(
+            raw, 'xBOUNDARYx', change_reason='Free first row', confirm_zero_prices='yes'
+        ),
+        headers=headers,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert 'zero_price' in confirmed.json()['warnings']

@@ -43,6 +43,7 @@ DAILY_LIMITS = {
     'places_details': 60,
     'places_map': 60,
     'price_preview': 60,
+    'price_calculate': 300,
 }
 TRANSCRIPT_LIMIT = 80000
 NOTE_ID_RE = re.compile(r'^[a-f0-9]{32}$')

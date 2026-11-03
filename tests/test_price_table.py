@@ -715,6 +715,83 @@ def test_large_change_warns_when_a_price_moves_with_enabled_or_from_zero():
     assert 'large_change' in warnings
 
 
+def test_a_diff_row_names_each_changed_field_with_before_and_after():
+    before = _priced_starter()
+    after = copy.deepcopy(before)
+    first, second = after['items'][0], after['items'][1]
+    original = before['items'][1]
+    first.update(unit_price='30.00', enabled=False)
+    second.update(
+        waste_percent='50',
+        default_quantity='2',
+        unit='each',
+        quantity_source='typed',
+        categories=[1, 2],
+        taxable=True,
+        code='NEW-CODE',
+    )
+    diff, _ = price_table.diff_tables(before, after)
+
+    both = _diff_row(diff, first['item_id'])
+    assert both['fields'] == [
+        {'field': 'enabled', 'before': True, 'after': False},
+        {'field': 'unit_price', 'before': '25.00', 'after': '30.00'},
+    ]
+    details = {row['field']: row for row in _diff_row(diff, second['item_id'])['fields']}
+    normalized = price_table.normalize_table(after, publish=False)['items'][1]
+    assert set(details) == {
+        'waste_percent',
+        'default_quantity',
+        'unit',
+        'quantity_source',
+        'categories',
+        'taxable',
+        'code',
+    }
+    for field, row in details.items():
+        assert (
+            row['before'] == price_table.normalize_table(before, publish=False)['items'][1][field]
+        )
+        assert row['after'] == normalized[field]
+    assert details['taxable'] == {'field': 'taxable', 'before': original['taxable'], 'after': True}
+
+
+def test_an_added_row_says_whether_the_item_is_switched_on():
+    before = _priced_starter()
+    after = copy.deepcopy(before)
+    after['items'].append(
+        {
+            **copy.deepcopy(after['items'][0]),
+            'item_id': 'new_off',
+            'code': 'NEW-OFF',
+            'enabled': False,
+        }
+    )
+    after['items'].append(
+        {**copy.deepcopy(after['items'][0]), 'item_id': 'new_on', 'code': 'NEW-ON', 'enabled': True}
+    )
+    diff, _ = price_table.diff_tables(before, after)
+    assert _diff_row(diff, 'new_off')['enabled'] is False
+    assert _diff_row(diff, 'new_on')['enabled'] is True
+
+
+def test_every_item_field_that_can_change_is_named_in_the_diff():
+    before = price_table.normalize_table(_priced_starter(), publish=False)
+    assert set(before['items'][0]) - {'item_id'} == set(price_table._DIFF_ITEM_FIELDS)
+
+
+def test_a_reader_diff_leaves_out_what_a_reader_cannot_see():
+    before = _priced_starter()
+    after = copy.deepcopy(before)
+    only_hidden, both = after['items'][0], after['items'][1]
+    only_hidden['allow_zero'] = True
+    both.update(allow_zero=True, waste_percent='5')
+    diff, _ = price_table.public_diff(before, after)
+
+    assert only_hidden['item_id'] not in {row['item_id'] for row in diff['items']}
+    assert [row['field'] for row in _diff_row(diff, both['item_id'])['fields']] == ['waste_percent']
+
+
 def test_large_change_uses_the_exact_percent_not_the_rounded_one():
     before = _priced_starter()
     before['items'][0]['unit_price'] = '10000.00'

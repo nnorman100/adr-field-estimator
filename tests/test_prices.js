@@ -207,3 +207,216 @@ test('the proposal names ADR starting prices for ADR only', () => {
   assert.equal(pricedFrom({ company_id: 'other', sequence: 1 }), 'Priced from Prices v1.');
   assert.equal(pricedFrom(undefined), '');
 });
+
+test('v2 items group in table order with plain labels', () => {
+  const rows = [
+    { item_id: 'b', group: 'labor', sort_order: 0 },
+    { item_id: 'c', group: 'job_charges', sort_order: 20 },
+    { item_id: 'a', group: 'job_charges', sort_order: 10 },
+    { item_id: 'd', group: 'extras', sort_order: 0 },
+  ];
+  const groups = Prices.groupOrder(rows);
+  assert.deepEqual(
+    Array.from(groups, (group) => group.name),
+    ['job_charges', 'labor', 'extras'],
+  );
+  assert.deepEqual(
+    Array.from(groups[0].rows, (row) => row.item_id),
+    ['a', 'c'],
+  );
+  assert.equal(Prices.groupLabel('drying_equipment'), 'Drying equipment');
+  assert.equal(Prices.groupLabel('extras'), 'Additional work');
+  assert.equal(Prices.unitLabel('unit_day'), 'unit per day');
+});
+
+test('quantity sources read in plain language and demolition only offers room sources', () => {
+  assert.equal(
+    Prices.sourceLabel('room:demolition:finished'),
+    'Rooms: finished, drywall and trim demolition sq ft',
+  );
+  assert.equal(
+    Prices.sourceLabel('count_days:air_movers*drying_days'),
+    'Air movers entered on the job times drying days',
+  );
+  assert.equal(Prices.sourceLabel('field:monitoring_hours'), 'Monitoring hours entered on the job');
+  assert.equal(Prices.sourceLabel('typed'), 'Quantity typed on the job');
+  assert.equal(Prices.sourceLabel('after_hours'), 'One when the job is after hours');
+  assert.deepEqual(Array.from(Prices.sourceOptions('extras')), ['typed']);
+  const demolition = Array.from(Prices.sourceOptions('demolition'));
+  assert.ok(demolition.every((source) => source.startsWith('room:') || source === 'typed'));
+  for (const source of Prices.sourceOptions('treatment'))
+    assert.notEqual(Prices.sourceLabel(source), source, source + ' has a plain label');
+});
+
+test('a new item gets a unique id and code and lands last in its group', () => {
+  const items = [
+    { item_id: 'wall_repair', code: 'WALL-REPAIR', group: 'treatment', sort_order: 10 },
+  ];
+  const added = Prices.newItem('treatment', 'Wall repair', 'sf', 'typed', items);
+  assert.equal(added.item_id, 'wall_repair_2');
+  assert.match(added.item_id, /^[a-z][a-z0-9_]{1,39}$/);
+  assert.match(added.code, /^[A-Z0-9][A-Z0-9-]{0,15}$/);
+  assert.notEqual(added.code, 'WALL-REPAIR');
+  assert.equal(added.sort_order, 20);
+  assert.equal(added.unit_price, '');
+  assert.equal(added.enabled, true);
+  assert.equal(Prices.slugId('3D scan!!', new Set()), 'item_3d_scan');
+  assert.match(Prices.slugId('x'.repeat(90), new Set()), /^[a-z][a-z0-9_]{1,39}$/);
+});
+
+test('moving an item swaps it with its neighbour inside the group only', () => {
+  const items = [
+    { item_id: 'a', group: 'labor', sort_order: 0 },
+    { item_id: 'b', group: 'labor', sort_order: 10 },
+    { item_id: 'x', group: 'extras', sort_order: 0 },
+  ];
+  Prices.moveItem(items, 'b', -1);
+  const order = (group) =>
+    items
+      .filter((row) => row.group === group)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((row) => row.item_id);
+  assert.deepEqual(order('labor'), ['b', 'a']);
+  Prices.moveItem(items, 'b', -1);
+  assert.deepEqual(order('labor'), ['b', 'a']);
+  assert.deepEqual(order('extras'), ['x']);
+});
+
+test('the unpublished-changes comparison ignores item order but sees every setting', () => {
+  const table = {
+    items: [
+      { item_id: 'a', unit_price: '1.00' },
+      { item_id: 'b', unit_price: '2.00' },
+    ],
+    policy: { range: { first_sf: 1000, first_percent: '50' }, minimum_job_charge: '0' },
+  };
+  const reordered = {
+    items: [...table.items].reverse(),
+    policy: { minimum_job_charge: '0', range: { first_percent: '50', first_sf: 1000 } },
+  };
+  assert.equal(Prices.canon(table), Prices.canon(reordered));
+  const changed = JSON.parse(JSON.stringify(table));
+  changed.policy.minimum_job_charge = '250.00';
+  assert.notEqual(Prices.canon(table), Prices.canon(changed));
+  const priced = JSON.parse(JSON.stringify(table));
+  priced.items[0].unit_price = '1.01';
+  assert.notEqual(Prices.canon(table), Prices.canon(priced));
+});
+
+test('a unit always agrees with where the quantity comes from', () => {
+  assert.equal(Prices.sourceOptions('job_charges')[0], 'typed');
+  assert.equal(Prices.sourceOptions('demolition')[0], 'room:demolition:unfinished');
+  assert.equal(Prices.fittedUnit('job_charges', 'typed', 'each'), 'each');
+  assert.equal(Prices.fittedUnit('job_charges', 'typed', 'sf'), 'sf');
+  assert.equal(Prices.fittedUnit('treatment', 'room:floor', 'each'), 'sf');
+  assert.equal(Prices.fittedUnit('demolition', 'typed', 'sf'), 'lf');
+  assert.equal(Prices.fittedUnit('demolition', 'typed', 'each'), 'each');
+  assert.equal(Prices.fittedUnit('extras', 'typed', 'each'), 'hour');
+});
+
+test('the review says which way an item was switched and any price that moved with it', () => {
+  const on = { field: 'enabled', before: false, after: true },
+    off = { field: 'enabled', before: true, after: false },
+    row = { name: 'Service call', unit: 'each', change: 'enabled', percent: '900.0' };
+  assert.equal(
+    Prices.diffText({
+      ...row,
+      fields: [on, { field: 'unit_price', before: '20.00', after: '200.00' }],
+    }),
+    'Service call (each): switched on, $20.00 to $200.00 (+900.0%)',
+  );
+  assert.equal(
+    Prices.diffText({
+      ...row,
+      percent: null,
+      fields: [on, { field: 'unit_price', before: '', after: '200.00' }],
+    }),
+    'Service call (each): switched on, no price to $200.00',
+  );
+  assert.equal(
+    Prices.diffText({ ...row, percent: null, fields: [off] }),
+    'Service call (each): switched off',
+  );
+});
+
+test('a move changes only the two items it swaps, and moving back restores them', () => {
+  const items = [
+    { item_id: 'a', group: 'labor', sort_order: 0 },
+    { item_id: 'b', group: 'labor', sort_order: 1 },
+    { item_id: 'c', group: 'labor', sort_order: 2 },
+  ];
+  const orders = () => items.map((row) => row.sort_order);
+  Prices.moveItem(items, 'c', -1);
+  assert.deepEqual(orders(), [0, 2, 1]);
+  Prices.moveItem(items, 'c', 1);
+  assert.deepEqual(orders(), [0, 1, 2]);
+});
+
+test('a move still works when imported items share a sort order', () => {
+  const items = [
+    { item_id: 'a', group: 'labor', sort_order: 5 },
+    { item_id: 'b', group: 'labor', sort_order: 5 },
+    { item_id: 'c', group: 'labor', sort_order: 5 },
+  ];
+  Prices.moveItem(items, 'b', -1);
+  const shown = Array.from(Prices.groupOrder(items)[0].rows, (row) => row.item_id);
+  assert.deepEqual(shown, ['b', 'a', 'c']);
+});
+
+test('the review names each changed detail of an item with its before and after', () => {
+  const row = (...fields) => ({
+    name: 'Air mover',
+    unit: 'unit_day',
+    change: 'fields',
+    percent: null,
+    fields: fields.map(([field, before, after]) => ({ field, before, after })),
+  });
+  const shown = (...field) => Prices.diffText(row(field));
+  assert.equal(shown('waste_percent', '0', '50'), 'Air mover (unit per day): waste 0% -> 50%');
+  assert.equal(
+    shown('default_quantity', '0', '2'),
+    'Air mover (unit per day): starting quantity 0 -> 2',
+  );
+  assert.equal(
+    shown('unit', 'each', 'unit_day'),
+    'Air mover (unit per day): unit each -> unit per day',
+  );
+  assert.equal(
+    shown('quantity_source', 'typed', 'after_hours'),
+    'Air mover (unit per day): quantity Quantity typed on the job -> One when the job is after hours',
+  );
+  assert.equal(
+    shown('categories', [], [1, 2]),
+    'Air mover (unit per day): water categories all -> 1 and 2',
+  );
+  assert.equal(shown('taxable', false, true), 'Air mover (unit per day): taxable no -> yes');
+  assert.equal(shown('code', 'AM', 'AM-2'), 'Air mover (unit per day): claim code AM -> AM-2');
+  assert.equal(
+    shown('xactimate_code', '', 'WTR'),
+    'Air mover (unit per day): Xactimate code none -> WTR',
+  );
+  assert.equal(shown('sort_order', 1, 2), 'Air mover (unit per day): moved on the list');
+  assert.equal(
+    Prices.diffText(row(['unit_price', '10.00', '12.00'], ['waste_percent', '0', '5'])),
+    'Air mover (unit per day): $10.00 to $12.00, waste 0% -> 5%',
+  );
+});
+
+test('the review says when an added item starts switched off', () => {
+  const row = { name: 'Generator', unit: 'day', change: 'added', after: '50.00' };
+  assert.equal(Prices.diffText({ ...row, enabled: true }), 'Added Generator (day) at $50.00');
+  assert.equal(
+    Prices.diffText({ ...row, enabled: false }),
+    'Added Generator (day) at $50.00, switched off',
+  );
+});
+
+test('a second additional-work item starts switched off, as the server allows only one on', () => {
+  const on = { item_id: 'additional_work', code: 'WORK', group: 'extras', enabled: true };
+  assert.equal(Prices.newItem('extras', 'Night work', 'hour', 'typed', [on]).enabled, false);
+  assert.equal(
+    Prices.newItem('extras', 'Night work', 'hour', 'typed', [{ ...on, enabled: false }]).enabled,
+    true,
+  );
+  assert.equal(Prices.newItem('labor', 'Crew', 'hour', 'typed', [on]).enabled, true);
+});

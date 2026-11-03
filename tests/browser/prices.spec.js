@@ -163,17 +163,30 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
 
   await page.getByRole('button', { name: 'Set company prices' }).click();
   await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
-  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices not set.');
   await expect(page.locator('#dashboardContent')).not.toContainText(adrRates);
-  await expect(page.locator('input[name=emergency_call]')).toHaveValue('');
   await expect(page.getByRole('button', { name: /Restore/ })).toHaveCount(0);
-  for (const input of await page.locator('input[data-price-key]').all()) await input.fill('12.34');
-  await page.locator('textarea[name=change_reason]').fill('Our first prices');
-  await page.getByRole('button', { name: 'Review changes' }).click();
-  await expect(page.locator('#priceReview')).toContainText('not set to 12.34');
-  await expect(page.locator('#priceReview')).not.toContainText('Sample before');
-  await expect(page.locator('#priceReview')).not.toContainText(adrRates);
-  await page.getByRole('button', { name: 'Publish prices' }).click();
+  // The Prices screen now offers the starter table; a rate book published through the API still
+  // proves that a company's own prices, and nothing of ADR's, price a job end to end.
+  const preview = await page.evaluate(async () => {
+    const base = '/api/companies/' + state.session.company_id + '/prices';
+    const view = await jsonApi(base);
+    const rates = Object.fromEntries(view.rates.map((row) => [row.key, '12.34']));
+    const reviewed = await jsonApi(base + '/preview', 'POST', {
+      rates,
+      change_reason: 'Our first prices',
+    });
+    await jsonApi(base + '/publish', 'POST', {
+      preview_id: reviewed.preview_id,
+      expected_generation: reviewed.generation,
+    });
+    return reviewed;
+  });
+  expect(preview.diff[0].before).toBeFalsy();
+  expect(preview.diff[0].after).toBe('12.34');
+  expect(preview.sample_before).toBeNull();
+  expect(JSON.stringify(preview)).not.toMatch(adrRates);
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1.');
   await expect(page.locator('input[name=emergency_call]')).toHaveValue('12.34');
 
@@ -184,6 +197,43 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
   await expect(page.locator('#documents')).toBeVisible();
   await expect(page.locator('#proposalBody')).toContainText('Priced from Prices v1.');
   await expect(page.locator('body')).not.toContainText(adrRates);
+});
+
+test('a company with no prices sets up and publishes its first table from the starter list', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  const adrRates =
+    /133\.95|47\.46|1,180\.20|159\.53|Workbook seed|workbook seed|ADR starting prices/;
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('#priceEditor')).toBeVisible();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices: not set up yet');
+  await expect(page.locator('#dashboardContent')).not.toContainText(adrRates);
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('');
+  await expect(page.getByRole('button', { name: /Restore/ })).toHaveCount(0);
+  await priceEverything(page, '12.34');
+  await page.locator('#priceReason').fill('Our first prices');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('Added');
+  await expect(page.locator('#priceReview')).not.toContainText(adrRates);
+  await expect(page.locator('#priceReview p', { hasText: 'Third-party' })).toContainText(
+    'switched off',
+  );
+  await expect(
+    page.locator('#priceReview p', { hasText: 'Emergency service call' }),
+  ).not.toContainText('switched off');
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('12.34');
 });
 
 test('an open job form picks up prices published on another device', async ({ page, request }) => {
@@ -231,4 +281,960 @@ test('ADR still sees its own prices on the estimate form, from the API', async (
     "After-hours loss: $200 job charge and 20% labor/material adjustment. Added labor uses the sheet's $47.46/hr estimate formula.",
   );
   await expect(page.locator('#pricesNotSet')).toBeHidden();
+});
+
+// --- Owner price-table editor (calculation dryscope-v2) ---
+
+async function startUnset(page, request, role = 'owner') {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      prices_unset: true,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, role);
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
+  await expect(page.locator('#priceEditor')).toBeVisible();
+}
+// Gives every blank price on the page a value, the way an owner would row by row.
+async function priceEverything(page, value = '10.00') {
+  // The evaluate below does not wait: on a page still loading it would find no inputs to fill.
+  await expect(page.locator('#priceEditor')).toBeVisible();
+  await page.evaluate((price) => {
+    document.querySelectorAll('details.price-group').forEach((d) => (d.open = true));
+    for (const input of document.querySelectorAll('input[name^="price_"]')) {
+      if (input.value) continue;
+      input.value = price;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }, value);
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+}
+async function publishTable(page, reason = 'First price table') {
+  await page.locator('#priceReason').fill(reason);
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v1');
+}
+
+test('owner builds a table from the starter, keeps a working copy across a reload and publishes it', async ({
+  page,
+  request,
+}) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await startUnset(page, request);
+  await expect(page.locator('#dashboardContent')).toContainText('Prices: not set up yet');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  // The starter carries no prices and nothing of any company's.
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('');
+  await expect(page.locator('#dashboardContent')).not.toContainText('133.95');
+  await page.locator('input[name=price_service_call]').fill('150');
+  await page.locator('input[name=policy_after_hours\\.label]').fill('Night and weekend work');
+  await page.locator('input[name=policy_minimum_job_charge]').fill('350');
+  await page.locator('input[name=policy_range\\.first_sf]').fill('1200');
+  await page.locator('input[name=policy_overhead_profit_percent]').fill('10');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await expect(page.locator('#priceUnpublished')).toContainText('not published');
+
+  // Blank prices cannot be published: the owner is told what is missing and nothing is published.
+  await page.locator('#priceReason').fill('First price table');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#message')).toContainText('unit price');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('150.00');
+  await expect(page.locator('input[name=policy_after_hours\\.label]')).toHaveValue(
+    'Night and weekend work',
+  );
+  await expect(page.locator('input[name=policy_minimum_job_charge]')).toHaveValue('350');
+  await expect(page.locator('input[name=policy_range\\.first_sf]')).toHaveValue('1200');
+  await expect(page.locator('input[name=policy_overhead_profit_percent]')).toHaveValue('10');
+
+  await priceEverything(page);
+  await publishTable(page);
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('150.00');
+  expect(errors).toEqual([]);
+});
+
+test('discarding unpublished changes restores the published table', async ({ page, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const price = page.locator('input[name=price_service_call]');
+  await price.fill('999');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await expect(page.locator('#priceUnpublished')).toContainText('Unpublished changes');
+  await page.getByRole('button', { name: 'Discard changes' }).click();
+  await page.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(price).toHaveValue('999');
+  await page.getByRole('button', { name: 'Discard changes' }).click();
+  await page.getByRole('button', { name: 'Yes, discard' }).click();
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('10.00');
+});
+
+test('estimator and support read the items and settings but cannot change them', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await start(page, 'estimator');
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('#dashboardContent')).toContainText('Read only');
+  await expect(page.locator('input[name=price_service_call]')).toBeDisabled();
+  await expect(page.locator('input[name=policy_minimum_job_charge]')).toBeDisabled();
+  // A reader's list holds only items in use, so it shows none of them as switched off.
+  await expect(page.locator('.price-off')).toHaveCount(0);
+  await expect(page.getByLabel('Used on estimates')).toHaveCount(0);
+  await expect(page.getByLabel('Allow a zero price')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Review changes' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Publish prices' })).toHaveCount(0);
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  await start(page, 'owner');
+  await navigate(page, 'dashboardAdmin');
+  await page.getByRole('button', { name: 'Manage company' }).first().click();
+  await page.getByRole('button', { name: 'Open read-only support view' }).click();
+  await page.getByRole('button', { name: 'Company prices (read only)' }).click();
+  await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
+  await expect(page.locator('input[name=price_service_call]')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Publish prices' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Review changes' })).toHaveCount(0);
+});
+
+test('a stale review is refused and the editor is disabled offline', async ({
+  page,
+  browser,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await page.locator('input[name=price_service_call]').fill('11');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.locator('#priceReason').fill('Raise the service call');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('Emergency service call');
+  const other = await browser.newPage();
+  await other.addInitScript(
+    (value) => sessionStorage.setItem('synthetic-uid', value),
+    uid('owner'),
+  );
+  await other.goto('/app');
+  await expect(other.locator('#workspaceDashboard')).toBeVisible();
+  const toggle = other.locator('#workspaceMenuToggle');
+  if (await toggle.isVisible()) await toggle.click();
+  await other.locator('#dashboardPrices').click();
+  await other.locator('input[name=price_service_call]').fill('12');
+  await other.locator('#priceReason').fill('Another phone');
+  await other.getByRole('button', { name: 'Review changes' }).click();
+  await other.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(other.locator('#dashboardContent')).toContainText('Prices v2');
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#message')).toContainText('Prices changed');
+  await page.context().setOffline(true);
+  await expect(page.locator('#offlineBanner')).toBeVisible();
+  await expect(page.locator('input[name=price_service_call]')).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export spreadsheet' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Import prices' })).toBeDisabled();
+  await expect(page.locator('#priceImportFile')).toBeDisabled();
+  await expect(page.locator('#priceImportReason')).toBeDisabled();
+  await expect(page.locator('#priceImportZero')).toBeDisabled();
+  await page.context().setOffline(false);
+  await expect(page.getByRole('button', { name: 'Import prices' })).toBeEnabled();
+  await other.close();
+});
+
+test('an edit caught by a dropped connection says it is not saved and saves on reconnect', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const status = page.locator('#priceSaveStatus'),
+    banner = page.locator('#priceUnpublishedText');
+  await page.locator('input[name=price_service_call]').fill('123');
+  await page.context().setOffline(true);
+  await expect(status).toContainText('Not saved');
+  await expect(status).not.toContainText('saved locally');
+  await expect(banner).not.toContainText('saved');
+  await page.context().setOffline(false);
+  await expect(status).toContainText('Saved');
+  await expect(banner).toContainText('saved but not published');
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('123.00');
+});
+
+test('opening Prices offline claims nothing saved and the waiting edit saves on return', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await page.locator('input[name=price_service_call]').fill('123');
+  await page.context().setOffline(true);
+  await expect(page.locator('#priceSaveStatus')).toContainText('Not saved');
+  await page.evaluate(() => window.Prices.open().catch((e) => say(e.message, 'error')));
+  await expect(page.locator('#message')).toContainText('You are offline');
+  await expect(page.locator('#message')).not.toContainText('saved locally');
+  await page.context().setOffline(false);
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('123.00');
+});
+
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test('every checkbox and radio in the editor sits beside its text', async ({ page, request }) => {
+    await startUnset(page, request);
+    const stacked = await page.locator('#priceEditor').evaluate((editor) => {
+      for (const more of editor.querySelectorAll('details')) more.open = true;
+      const controls = [...editor.querySelectorAll('input[type=checkbox],input[type=radio]')];
+      return {
+        count: controls.length,
+        stacked: controls
+          .filter((control) => {
+            const text = document.createRange();
+            text.selectNodeContents(control.closest('label'));
+            text.setStartAfter(control);
+            const box = text.getBoundingClientRect(),
+              own = control.getBoundingClientRect();
+            return own.right > box.left || own.bottom < box.top || own.top > box.bottom;
+          })
+          .map((control) => control.name),
+      };
+    });
+    expect(stacked.count).toBeGreaterThan(0);
+    expect(stacked.stacked).toEqual([]);
+  });
+});
+
+// WebKit does not show requests that go through the service worker to page.route.
+test.describe('review and samples', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('the review lists the change, large-change and zero-price warnings, and samples follow the price', async ({
+    page,
+    request,
+  }) => {
+    await startUnset(page, request);
+    await priceEverything(page);
+    await publishTable(page);
+    // Made-up samples that follow one price, so the display is checked apart from the formulas.
+    await page.route('**/prices/calculate', async (route) => {
+      const body = route.request().postDataJSON();
+      const call = body.items.find((item) => item.item_id === 'service_call');
+      const low = '$' + Number(call.unit_price).toFixed(2);
+      await route.fulfill({
+        json: {
+          problems: [],
+          samples: ['small', 'medium', 'large'].map((key) => ({
+            key,
+            label: 'The ' + key + ' sample',
+            description: 'A made-up job.',
+            notice: 'Sample job only. This does not price a saved job.',
+            itemized: low,
+            low,
+            high: null,
+            mode: 'single',
+          })),
+        },
+      });
+    });
+    const call = page.locator('input[name=price_service_call]');
+    await call.fill('40');
+    await expect(page.locator('#priceSamples')).toContainText(
+      'The medium sample prices at $40.00.',
+    );
+    await call.fill('55');
+    await expect(page.locator('#priceSamples')).toContainText(
+      'The medium sample prices at $55.00.',
+    );
+    await page.getByText('Show all samples').click();
+    await expect(page.locator('#priceSamples')).toContainText('The small sample prices at $55.00.');
+    await expect(page.locator('#priceSamples')).toContainText('The large sample prices at $55.00.');
+
+    await call.fill('0');
+    await expect(page.locator('#priceSaveStatus')).toContainText('zero');
+    await page.locator('[data-price-item="service_call"] summary', { hasText: 'More' }).click();
+    await page.getByLabel('Allow a zero price').first().check();
+    await page.getByLabel('I confirm this zero price is intentional.').first().check();
+    await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+    await page.locator('#priceReason').fill('Free service call');
+    await page.getByRole('button', { name: 'Review changes' }).click();
+    await expect(page.locator('#priceReview')).toContainText('zero price');
+    await expect(page.locator('#priceReview')).toContainText('Emergency service call');
+    await page.locator('input[name=policy_sales_tax\\.percent]').fill('8');
+    await page.getByLabel('Charge sales tax on items marked taxable').check();
+    await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+    await page.getByRole('button', { name: 'Review changes' }).click();
+    await expect(page.locator('#priceReview')).toContainText('Sales tax');
+    await expect(page.locator('#priceReview')).toContainText('Sales tax settings changed');
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+        false,
+      );
+    }
+  });
+});
+
+test('a new item is added to a group, saved and moved', async ({ page, request }) => {
+  await startUnset(page, request);
+  const group = page.locator('details.price-group[data-group=labor]');
+  await group.locator('> summary').click();
+  await group.getByLabel('New item name in Labor').fill('Content cleaning crew');
+  await group.getByRole('button', { name: 'Add item' }).click();
+  const added = page.locator('[data-price-item=content_cleaning_crew]');
+  await expect(added).toBeVisible();
+  await added.getByText('More', { exact: true }).click();
+  await expect(added.getByLabel('Short code on the claim')).toHaveCount(0);
+  await added.locator('input[name=price_content_cleaning_crew]').fill('44');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  for (let step = 0; step < 3; step += 1) {
+    await added.getByRole('button', { name: 'Move up' }).click();
+  }
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
+  await page.locator('details.price-group[data-group=labor] > summary').click();
+  await expect(
+    page.locator('details.price-group[data-group=labor] input[name=price_content_cleaning_crew]'),
+  ).toHaveValue('44.00');
+  await expect(
+    page.locator('details.price-group[data-group=labor] [data-price-item]').first(),
+  ).toHaveAttribute('data-price-item', 'content_cleaning_crew');
+});
+
+test('an estimator of a company with no prices is not told to enter them', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request, 'estimator');
+  await expect(page.locator('#dashboardContent')).toContainText('Read only');
+  await expect(page.locator('#dashboardContent')).not.toContainText('Enter your prices');
+  await expect(page.locator('.price-off')).toHaveCount(0);
+});
+
+test('a change after the review closes it, so publishing cannot drop the change', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const price = page.locator('input[name=price_service_call]');
+  await price.fill('11');
+  await page.locator('#priceReason').fill('Raise the service call');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('$11.00');
+  await price.fill('12');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Publish prices' })).toHaveCount(0);
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('$12.00');
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
+  await expect(price).toHaveValue('12.00');
+});
+
+test('reopening Prices keeps an edit still waiting to save', async ({ page, request }) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await page.locator('input[name=price_service_call]').fill('77');
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  // Nothing fires later from the page that was replaced.
+  await page.waitForTimeout(900);
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
+  expect(errors).toEqual([]);
+});
+
+test('confirming a zero price clears the problem it raised', async ({ page, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const row = page.locator('[data-price-item=service_call]');
+  await row.getByText('More', { exact: true }).click();
+  await row.getByLabel('Allow a zero price').check();
+  await row.locator('input[name=price_service_call]').fill('0');
+  await expect(row.locator('.price-problem')).toContainText('confirm');
+  await row.getByLabel('I confirm this zero price is intentional.').check();
+  await expect(row.locator('.price-problem')).toHaveText('');
+});
+
+function csvRows(text) {
+  const rows = [[]];
+  let cell = '',
+    quoted = false;
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at];
+    if (quoted && char === '"' && text[at + 1] === '"') {
+      cell += '"';
+      at += 1;
+    } else if (char === '"') quoted = !quoted;
+    else if (char === ',' && !quoted) {
+      rows[rows.length - 1].push(cell);
+      cell = '';
+    } else if (char === '\n' && !quoted) {
+      rows[rows.length - 1].push(cell);
+      cell = '';
+      rows.push([]);
+    } else cell += char;
+  }
+  return rows.filter((row) => row.length > 1);
+}
+function csvText(rows) {
+  return rows
+    .map((row) => row.map((cell) => '"' + cell.replaceAll('"', '""') + '"').join(','))
+    .join('\n');
+}
+
+test('a starter company imports its template, confirms a zero price and is warned about its working copy', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  await navigate(page, 'dashboardPrices');
+  // A tick in the editor belongs to the editor: it does not confirm a zero in an uploaded file.
+  const callRow = page.locator('[data-price-item=service_call]');
+  await callRow.getByText('More', { exact: true }).click();
+  await callRow.getByLabel('Allow a zero price').check();
+  await callRow.locator('input[name=price_service_call]').fill('0');
+  await callRow.getByLabel('I confirm this zero price is intentional.').check();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  const template = await page.evaluate(async () => {
+    const base = '/api/companies/' + state.session.company_id + '/prices';
+    return (await api(base + '/export?format=csv&version_id=starter')).text();
+  });
+  const rows = csvRows(template.replace(/^\ufeff/, '')),
+    [header, ...body] = rows,
+    price = header.indexOf('unit_price'),
+    allow = header.indexOf('allow_zero'),
+    id = header.indexOf('item_id');
+  for (const row of body) row[price] = '10.00';
+  const free = body.find((row) => row[id] === 'service_call');
+  free[price] = '0.00';
+  free[allow] = 'yes';
+  const file = {
+    name: 'prices.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csvText([header, ...body]) + '\n'),
+  };
+  await page.locator('#priceImportFile').setInputFiles(file);
+  await page.locator('#priceImportReason').fill('Prices from our spreadsheet');
+  await page.getByRole('button', { name: 'Import prices' }).click();
+  await expect(page.locator('#message')).toContainText('confirm that a zero unit price');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+
+  await page.getByLabel('Zero prices in this file are intentional').check();
+  await page.getByRole('button', { name: 'Import prices' }).click();
+  await expect(page.locator('#priceReview')).toContainText('zero price');
+  await expect(page.locator('#priceReview')).toContainText('replaces your unpublished changes');
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('0.00');
+});
+
+async function publishFromAnotherPhone(browser) {
+  const other = await browser.newPage();
+  await other.addInitScript(
+    (value) => sessionStorage.setItem('synthetic-uid', value),
+    uid('owner'),
+  );
+  await other.goto('/app');
+  await expect(other.locator('#workspaceDashboard')).toBeVisible();
+  const toggle = other.locator('#workspaceMenuToggle');
+  if (await toggle.isVisible()) await toggle.click();
+  await other.locator('#dashboardPrices').click();
+  await other.locator('input[name=price_service_call]').fill('12');
+  await other.locator('#priceReason').fill('Another phone');
+  await other.getByRole('button', { name: 'Review changes' }).click();
+  await other.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(other.locator('#dashboardContent')).toContainText('Prices v2');
+  await other.close();
+}
+
+test('a conflict on the save made while leaving the editor reports the conflict', async ({
+  page,
+  browser,
+  request,
+}) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await publishFromAnotherPhone(browser);
+  await page.evaluate(() => {
+    const price = document.querySelector('input[name=price_service_call]');
+    price.value = '11';
+    price.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('dashboardPrices').click();
+  });
+  await expect(page.locator('#message')).toHaveText(
+    'Your last price change was not saved: Prices changed on another device. Reload.',
+  );
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('12.00');
+  await expect(page.locator('input[name=price_service_call]')).toBeEnabled();
+  expect(errors).toEqual([]);
+});
+
+test('a save conflict locks the editor and keeps saying so', async ({ page, browser, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await publishFromAnotherPhone(browser);
+
+  const price = page.locator('input[name=price_service_call]');
+  await price.fill('11');
+  const status = page.locator('#priceSaveStatus');
+  await expect(status).toContainText('another device');
+  await expect(price).toBeDisabled();
+  await expect(page.locator('input[name=policy_minimum_job_charge]')).toBeDisabled();
+  await expect(status).toContainText('another device');
+  await expect(page.getByRole('button', { name: 'Discard changes' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Publish', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Reload prices' }).click();
+  await expect(price).toBeEnabled();
+  await expect(price).toHaveValue('12.00');
+});
+
+test('add item keeps the chosen unit and never saves a pair the server refuses', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const charges = page.locator('details.price-group[data-group=job_charges]');
+  await charges.getByLabel('New item name in Job charges').fill('Permit fee');
+  await expect(charges.locator('.price-add').locator('select').first()).toHaveValue('each');
+  await charges.getByRole('button', { name: 'Add item' }).click();
+  const permit = page.locator('[data-price-item=permit_fee]');
+  await expect(permit.getByText('Price per each')).toBeVisible();
+  await expect(permit.locator('.price-source')).toHaveText('Quantity typed on the job');
+
+  const demolition = page.locator('details.price-group[data-group=demolition]');
+  const addForm = demolition.locator('.price-add');
+  await expect(addForm.locator('select').first()).toHaveValue('sf');
+  await expect(addForm.locator('select').first()).toBeDisabled();
+  await addForm.getByLabel('Quantity comes from').selectOption('typed');
+  await expect(addForm.locator('select').first()).toHaveValue('lf');
+  await expect(addForm.locator('select').first()).toBeEnabled();
+  await addForm.locator('select').first().selectOption('sf');
+  await expect(addForm.locator('select').first()).toHaveValue('lf');
+  await demolition.getByLabel('New item name in Demolition').fill('Tile removal');
+  await addForm.getByRole('button', { name: 'Add item' }).click();
+  const tile = page.locator('[data-price-item=tile_removal]');
+  await tile.getByText('More', { exact: true }).click();
+  await tile.locator('.price-more').locator('select').first().selectOption('sf');
+  await expect(tile.locator('.price-more').locator('select').first()).toHaveValue('lf');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await tile
+    .locator('.price-more')
+    .getByLabel('Quantity comes from')
+    .selectOption('room:demolition:finished');
+  await expect(tile.locator('.price-more').locator('select').first()).toHaveValue('sf');
+  await expect(tile.locator('.price-more').locator('select').first()).toBeDisabled();
+  await expect(tile.getByText('Price per sq ft')).toBeVisible();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+});
+
+test.describe('a failed discard', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('saves the edit it was holding back', async ({ page, request }) => {
+    await startUnset(page, request);
+    await priceEverything(page);
+    await publishTable(page);
+    await page.route('**/working-copy/discard', (route) => route.abort());
+    await page.locator('input[name=price_service_call]').fill('77');
+    await page.getByRole('button', { name: 'Discard changes' }).click();
+    await page.getByRole('button', { name: 'Yes, discard' }).click();
+    await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+    await page.unroute('**/working-copy/discard');
+    await page.reload();
+    await navigate(page, 'dashboardPrices');
+    await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
+  });
+});
+
+test('moving an item and moving it back leaves nothing to publish', async ({ page, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const first = page.locator('[data-price-item=demo_cat1_floor]');
+  await first.getByRole('button', { name: 'Move down' }).click();
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await page
+    .locator('[data-price-item=demo_cat1_floor]')
+    .getByRole('button', { name: 'Move up' })
+    .click();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+});
+
+test('each settings choice names what it sets', async ({ page, request }) => {
+  await startUnset(page, request);
+  for (const [group, choice] of [
+    ['Estimate style', 'One price'],
+    ['Area basis', 'Wet floor area'],
+    ['Cabinetry applies to', 'All category 3 room lines'],
+  ])
+    await expect(page.getByRole('group', { name: group }).getByLabel(choice)).toBeVisible();
+});
+
+test.describe('leaving the page during a slow review', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('puts no review or Publish button on the next page', async ({ page, request }) => {
+    await startUnset(page, request);
+    await priceEverything(page);
+    await publishTable(page);
+    const slowly = async (url, start) => {
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      await page.route(url, async (route) => {
+        await held;
+        await route.fulfill({ json: { no_changes: true, diff: { items: [], policy: [] } } });
+      });
+      const answered = page.waitForResponse(url);
+      await start();
+      await navigate(page, 'dashboardTeam');
+      await expect(page.locator('#priceEditor')).toHaveCount(0);
+      release();
+      await answered;
+      await page.waitForTimeout(200);
+      await expect(page.locator('#priceReview')).toHaveCount(0);
+      await page.unroute(url);
+      await navigate(page, 'dashboardPrices');
+      await expect(page.locator('#priceEditor')).toBeVisible();
+    };
+    await slowly('**/prices/preview', async () => {
+      await page.locator('#priceReason').fill('Slow review');
+      await page.getByRole('button', { name: 'Review changes' }).click();
+    });
+    await slowly('**/prices/import-preview', async () => {
+      await page.locator('#priceImportFile').setInputFiles({
+        name: 'prices.csv',
+        mimeType: 'text/csv',
+        buffer: Buffer.from('x\n'),
+      });
+      await page.locator('#priceImportReason').fill('Slow import');
+      await page.getByRole('button', { name: 'Import prices' }).click();
+    });
+    await slowly('**/restore', async () => {
+      await page
+        .getByPlaceholder(/Reason for restoring/)
+        .first()
+        .fill('Slow restore');
+      await page
+        .getByRole('button', { name: /^Restore / })
+        .first()
+        .click();
+    });
+  });
+});
+
+test('an import that raises a waste shows it in the review', async ({ page, request }) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  await navigate(page, 'dashboardPrices');
+  await priceEverything(page);
+  await publishTable(page);
+  const template = await page.evaluate(async () => {
+    const base = '/api/companies/' + state.session.company_id + '/prices';
+    return (await api(base + '/export?format=csv')).text();
+  });
+  const [header, ...body] = csvRows(template.replace(/^\ufeff/, '')),
+    row = body.find((line) => line[header.indexOf('item_id')] === 'air_mover');
+  row[header.indexOf('waste_percent')] = '50';
+  await page.locator('#priceImportFile').setInputFiles({
+    name: 'prices.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csvText([header, ...body]) + '\n'),
+  });
+  await page.locator('#priceImportReason').fill('Waste from the spreadsheet');
+  await page.getByRole('button', { name: 'Import prices' }).click();
+  await expect(page.locator('#priceReview')).toContainText(
+    /Air mover.*waste 0(\.00)?% -> 50(\.00)?%/,
+  );
+});
+
+test('adding a second additional-work item keeps the editor saving', async ({ page, request }) => {
+  await startUnset(page, request);
+  const extras = page.locator('details.price-group[data-group=extras]');
+  await extras.locator('> summary').click();
+  await extras.getByLabel('New item name in Additional work').fill('Night work');
+  await extras.getByRole('button', { name: 'Add item' }).click();
+  const added = page.locator('[data-price-item=night_work]');
+  await expect(added.getByLabel('Used on estimates')).not.toBeChecked();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.locator('input[name=price_service_call]').fill('150');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+});
+
+test('real sample totals show under the settings and before and after in the review', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const samples = page.locator('#priceSamples');
+  await page.locator('input[name=price_service_call]').fill('150');
+  await expect(samples).toContainText('Clean-water kitchen leak prices at $');
+  await expect(samples).toContainText('Items with no price are left out.');
+  await expect(samples).toContainText('Sample job only. This does not price a saved job.');
+
+  await priceEverything(page);
+  await publishTable(page);
+  await expect(samples).toContainText('Gray-water main floor prices at $');
+  await expect(samples).not.toContainText('left out');
+  const before = await samples.locator('p').first().textContent();
+  await page.locator('details.price-group[data-group=labor] > summary').click();
+  await page.locator('input[name=price_technician_labor]').fill('100');
+  await expect(samples.locator('p').first()).not.toHaveText(before);
+  await page.locator('#priceReason').fill('Raise the labor rate');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  const review = page.locator('#priceReview');
+  await expect(review).toContainText('Before: ' + before);
+  await expect(review).toContainText('After: Gray-water main floor prices at $');
+  await expect(review).toContainText('Sample job only. This does not price a saved job.');
+});
+
+test('after a dropped connection the sample line catches up with the saved edit', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const line = page.locator('#priceSamples p').first(),
+    status = page.locator('#priceSaveStatus'),
+    call = page.locator('input[name=price_service_call]');
+  await call.fill('150');
+  await expect(line).toContainText(' prices at $');
+  await expect(status).toContainText('Saved');
+  const before = await line.textContent();
+  await call.fill('175');
+  await page.context().setOffline(true);
+  await expect(status).toContainText('Not saved');
+  // Past the edit's sample delay, so only the reconnect can bring the line up to date.
+  await page.waitForTimeout(1500);
+  await expect(line).toHaveText(before);
+  await page.context().setOffline(false);
+  await expect(status).toContainText('Saved');
+  await expect(line).not.toHaveText(before);
+  const caughtUp = await line.textContent();
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
+  await expect(call).toHaveValue('175.00');
+  await expect(line).toHaveText(caughtUp);
+});
+
+test('correcting the reason closes the review, so history keeps the corrected reason', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await page.locator('input[name=price_service_call]').fill('11');
+  const reason = page.locator('#priceReason');
+  await reason.fill('Spring prces');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toBeVisible();
+  await reason.fill('Spring prices');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
+  await expect(page.locator('#dashboardContent')).toContainText('Spring prices');
+  await expect(page.locator('#dashboardContent')).not.toContainText('Spring prces');
+});
+
+test.describe('a slow sample answer', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('never replaces a newer one', async ({ page, request }) => {
+    await startUnset(page, request);
+    const answer = (label) => ({
+      json: {
+        problems: [],
+        samples: [{ key: 'medium', label, low: '$1.00', high: null, notice: 'Sample job only.' }],
+      },
+    });
+    let calls = 0,
+      release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route('**/prices/calculate', async (route) => {
+      calls += 1;
+      if (calls === 1) {
+        await held;
+        await route.fulfill(answer('Older sample'));
+      } else await route.fulfill(answer('Newer sample'));
+    });
+    const call = page.locator('input[name=price_service_call]');
+    await call.fill('40');
+    await expect.poll(() => calls).toBe(1);
+    await call.fill('41');
+    const samples = page.locator('#priceSamples');
+    await expect(samples).toContainText('Newer sample');
+    const older = page.waitForResponse('**/prices/calculate');
+    release();
+    await older;
+    await page.waitForTimeout(200);
+    await expect(samples).toContainText('Newer sample');
+    await expect(samples).not.toContainText('Older sample');
+  });
+  // A browser's own scroll anchoring cannot be relied on: WebKit lost about one timed tap in four
+  // to it, too rarely to test directly. With it switched off, only the app can hold the button.
+  for (const [width, anchoring] of [
+    [1280, 'off'],
+    [390, 'off'],
+    [1280, 'on'],
+    [390, 'on'],
+  ]) {
+    test(`landing mid-tap leaves Publish prices under the finger at ${width}px, browser anchoring ${anchoring}`, async ({
+      page,
+      request,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await startUnset(page, request);
+      if (anchoring === 'off') await page.addStyleTag({ content: '* { overflow-anchor: none; }' });
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      await page.route('**/prices/calculate', async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      const asked = page.waitForRequest('**/prices/calculate');
+      await priceEverything(page);
+      await asked;
+      const line = page.locator('#priceSamples p').first();
+      await expect(line).toBeHidden();
+
+      await page.locator('#priceReason').fill('First price table');
+      await page.getByRole('button', { name: 'Review changes' }).click();
+      const publish = page.getByRole('button', { name: 'Publish prices' });
+      await publish.scrollIntoViewIfNeeded();
+      const before = await publish.boundingBox();
+      const x = before.x + before.width / 2,
+        y = before.y + before.height / 2;
+      // The watcher is in place before the answer is let go, or it could miss the paint it measures.
+      await publish.evaluate(
+        (button, point) => {
+          window.firstInstant = new Promise((done) => {
+            new MutationObserver((_, watcher) => {
+              watcher.disconnect();
+              done({
+                top: button.getBoundingClientRect().top,
+                underFinger: button.contains(document.elementFromPoint(point.x, point.y)),
+              });
+            }).observe(document.getElementById('priceSamples'), { childList: true });
+          });
+        },
+        { x, y },
+      );
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      release();
+      const landed = await page.evaluate(() => window.firstInstant);
+      expect(landed.underFinger).toBe(true);
+      expect(Math.abs(landed.top - before.y)).toBeLessThan(1);
+      // Two frames, so any adjustment the browser makes on its own has happened as well.
+      await page.evaluate(
+        () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+      );
+      const settled = await publish.boundingBox();
+      expect(Math.abs(settled.y - before.y)).toBeLessThan(1);
+      await page.mouse.up();
+      await expect(page.locator('#dashboardContent')).toContainText('Prices v1');
+    });
+  }
+  test('landing does not scroll the settings an owner is still editing', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await startUnset(page, request);
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route('**/prices/calculate', async (route) => {
+      await held;
+      await route.continue().catch(() => {});
+    });
+    const asked = page.waitForRequest('**/prices/calculate');
+    await priceEverything(page);
+    await asked;
+    const samples = page.locator('#priceSamples');
+    await samples.evaluate((box) => box.parentElement.scrollIntoView({ block: 'end' }));
+    const reason = await page.locator('#priceReason').boundingBox();
+    expect(reason.y).toBeGreaterThan(844);
+    const scrolled = await page.evaluate(() => window.scrollY);
+    release();
+    await expect(samples.locator('p').first()).toBeVisible();
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
+  });
+});
+
+test("a v2 job's after-hours sentence has the table's percent whichever code answers first", async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', {
+    data: {
+      items: { after_hours_charge: { unit_price: '200.00' } },
+      policy: { after_hours: { multiplier: '1.250' } },
+    },
+  });
+  await start(page, 'owner');
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await page.locator('.task-nav [data-task="property"]').click();
+  const sentence = page.locator('#afterHoursLabelV2');
+  await expect(sentence).toContainText('$200.00');
+  await expect(sentence).toContainText('25% on labor and materials');
+  await expect(sentence).not.toContainText('20%');
+
+  // The job's pricing answers after the form was built.
+  await page.evaluate(() => Prices.noteJob());
+  await expect(sentence).toContainText('25% on labor and materials');
+  await expect(page.locator('#afterHoursLabel')).toHaveCount(0);
+
+  // It answers before the form is built: nothing is written, and the form then sets the sentence.
+  const written = await page.evaluate(async () => {
+    const label = document.getElementById('afterHoursLabelV2');
+    label.id = 'afterHoursLabel';
+    label.textContent = 'not built yet';
+    await Prices.noteJob();
+    return label.textContent;
+  });
+  expect(written).toBe('not built yet');
+  await page.evaluate(() => ScopeItems.refresh());
+  await expect(sentence).toContainText('25% on labor and materials');
 });

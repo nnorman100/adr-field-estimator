@@ -1344,6 +1344,34 @@ def test_a_tables_default_quantity_never_reaches_a_sample():
         )
 
 
+def test_a_typed_items_default_quantity_does_reach_a_sample():
+    typed = copy.deepcopy(SCAN_ITEMS) + [
+        {
+            **copy.deepcopy(SCAN_ITEMS[0]),
+            'item_id': 'typed_fee',
+            'code': 'TYPED-FEE',
+            'group': 'job_charges',
+            'unit': 'each',
+            'quantity_source': 'typed',
+            'categories': [],
+            'default_quantity': '2',
+            'unit_price': '10.00',
+            'enabled': True,
+        }
+    ]
+    data = InspectionData.model_validate(pricing_v2.SAMPLE_JOBS[0]['data'])
+    lines, _ = pricing_v2.price_scope(data, table(typed))
+    assert next(line for line in lines if line['item_id'] == 'typed_fee')['total'] == 20.0
+
+
+def test_the_mold_sample_states_its_floor_areas():
+    large = InspectionData.model_validate(pricing_v2.SAMPLE_JOBS[2]['data'])
+    assert sum(room.floor_sf for room in large.rooms) == 2500
+    assert sum(room.wet_floor_sf for room in large.rooms) == 2500
+    _, warnings = pricing_v2.price_scope(large, table(SCAN_ITEMS))
+    assert not [row for row in warnings if row['code'] == 'missing_area']
+
+
 def test_explanation_text_comes_from_the_policy():
     chosen = table()['policy']
     assert pricing_v2.explanation(chosen, job()) == (
