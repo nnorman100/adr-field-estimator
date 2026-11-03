@@ -544,6 +544,96 @@ test.describe('without a service worker', () => {
     await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('4');
   });
 
+  test('a table reload that failed is tried again at the next refresh', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await publish(request, {
+      items: {
+        ...ITEMS,
+        setup_documentation: { unit_price: '40.00', default_quantity: '4' },
+      },
+    });
+    let failed = 0;
+    await page.route('**/api/companies/*/prices', (route) => {
+      failed++;
+      return route.abort();
+    });
+    await page.evaluate(() => WorkspaceUI.refresh());
+    expect(failed).toBe(1);
+    await page.unroute('**/api/companies/*/prices');
+    await page.evaluate(() => openNew());
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await page.evaluate(() => openNew());
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('4');
+    // Once current, a refresh does not fetch the table again.
+    let fetched = 0;
+    page.on('request', (sent) => {
+      if (sent.url().endsWith('/prices')) fetched++;
+    });
+    await page.evaluate(() => WorkspaceUI.refresh());
+    expect(fetched).toBe(0);
+  });
+
+  test('an office job whose address was saved takes the defaults when an estimator first opens it', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, hepa_filter: { enabled: false, unit_price: '' } },
+    });
+    const office = await context.newPage();
+    await office.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('office'),
+    );
+    await office.goto('/app');
+    await expect(office.locator('#workspaceDashboard')).toBeVisible();
+    await office.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(office.locator('#saveStatus')).toHaveText('Saved');
+    const id = await jobId(office);
+    const path = '/api/jobs/' + id + '/coordination';
+    const headers = { ...auth('office'), 'X-ADR-Workspace-Protocol': '1' };
+    const coordination = await (await office.request.get(path, { headers })).json();
+    const saved = await office.request.put(path, {
+      headers,
+      data: {
+        expected_version: coordination.version,
+        address: 'Synthetic office intake',
+        assigned_estimator_uid: null,
+        customer_name: '',
+        customer_phone: '',
+        customer_email: '',
+        office_notes: '',
+      },
+    });
+    expect(saved.ok()).toBe(true);
+    await office.close();
+    await open(page);
+    expect((await remote(page, id)).revision).toBeGreaterThan(1);
+    expect((await remote(page, id)).data.monitoring_hours).toBe(13.25);
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('#monitoringHours')).toHaveValue('0');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await expect(page.locator('#v2Unlisted')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const job = (await remote(page, id)).data;
+    expect(job.address).toBe('Synthetic office intake');
+    expect(job.monitoring_hours).toBe(0);
+    expect(job.hepa_filters).toBe(0);
+    // A later reopen on this phone leaves the estimator's own values alone.
+    await page.locator('#monitoringHours').fill('13.25');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.evaluate((value) => restoreDraft(value), id);
+    await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+  });
+
   test('a first publish leaves quantities the technician already changed', async ({
     page,
     request,
