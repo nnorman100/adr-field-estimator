@@ -394,3 +394,110 @@ def test_range_mentions_approved_work_only_with_an_approved_extra(with_extra):
     )
     assert (EXTRA_RANGE in docs['iicrc_defense_letter']) is with_extra
     assert 'to the priced scope' in docs['iicrc_defense_letter']
+
+
+def v2_source(*extras_rows):
+    from backend import price_table
+
+    table = price_table.starter_table()
+    table['items'] = [i for i in table['items'] if i['group'] != 'extras'] + list(extras_rows)
+    for item in table['items']:
+        if item['group'] != 'extras' and item['enabled']:
+            item['unit_price'] = '10.00'
+    return dict(
+        table,
+        calculation_version='dryscope-v2',
+        version_id='a' * 16,
+        content_sha256=price_table.content_hash(table),
+    )
+
+
+def v2_extras_row(price='62.50', **changes):
+    row = dict(
+        item_id='additional_work',
+        code='ADD-WORK',
+        group='extras',
+        name='Additional work (owner approved)',
+        customer_description='',
+        unit='hour',
+        quantity_source='typed',
+        unit_price=price,
+        allow_zero=False,
+        default_quantity='0',
+        waste_percent='0',
+        categories=[],
+        taxable=False,
+        xactimate_code='',
+        enabled=True,
+        sort_order=0,
+    )
+    return dict(row, **changes)
+
+
+COMPANY = dict(company_id='other', version=3, profile=dict(additional_work_rate='99.00'))
+
+
+def test_extras_rate_comes_from_the_extras_item_and_fingerprint_changes_with_it():
+    from backend import price_table
+    from backend.extras import quote, rate_for
+
+    source = v2_source(v2_extras_row())
+    # The table wins over the company profile's projected rate.
+    assert rate_for(COMPANY, source) == Decimal('62.50')
+    priced = quote(COMPANY, Decimal('2.5'), source)
+    assert priced['rate'] == '62.50' and priced['total'] == '156.25'
+    assert priced['company_version'] == 3
+    assert priced['price_version_id'] == source['version_id']
+    assert priced['price_content_sha256'] == source['content_sha256']
+    assert priced['price_rate_fingerprint'] == price_table.rate_fingerprint(source)
+
+    # A new rate moves the fingerprint, so an owner's review of the old rate no longer approves.
+    moved = quote(COMPANY, Decimal('2.5'), v2_source(v2_extras_row('70.00')))
+    assert moved['price_rate_fingerprint'] != priced['price_rate_fingerprint']
+
+    # An unrelated price edit leaves the fingerprint, so it does not void the review.
+    unrelated = v2_source(v2_extras_row())
+    next(i for i in unrelated['items'] if i['group'] != 'extras')['unit_price'] = '11.00'
+    assert (
+        quote(COMPANY, Decimal('2.5'), unrelated)['price_rate_fingerprint']
+        == priced['price_rate_fingerprint']
+    )
+
+
+@pytest.mark.parametrize(
+    'rows',
+    [
+        [],
+        [v2_extras_row('')],
+        [v2_extras_row('0.00', allow_zero=True)],
+        [v2_extras_row(enabled=False)],
+    ],
+)
+def test_v2_table_without_an_hourly_extras_price_asks_for_one(rows):
+    from backend.extras import rate_for
+
+    with pytest.raises(ValueError, match='additional-work hourly rate in Company prices'):
+        rate_for(COMPANY, v2_source(*rows))
+
+
+def test_published_v2_book_supplies_the_quote_rate(api, monkeypatch):
+    from backend import price_books, price_table
+    from backend.extras import quote
+    from tests.test_price_books import _publish_v2, _v2_table
+
+    client, current, db = api
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'priced_extras'})
+    price_books.set_enabled(True)
+    try:
+        current['uid'] = 'owner'
+        table = _v2_table('30.00', extras=True)
+        _publish_v2(client, table, 'First owner table')
+        company = db.db.records['_companies/adr']
+        # What a saved book really holds. Approvals stay refused on a v2 book until jobs can be
+        # priced from one (approval_source); this pins the rate that lift will read.
+        priced = quote(company, Decimal('2.5'), db.workspaces.prices.effective(company))
+        assert priced['rate'] == '30.00' and priced['total'] == '75.00'
+        assert priced['price_rate_fingerprint'] == price_table.rate_fingerprint(table)
+        assert priced['price_content_sha256'] == price_table.content_hash(table)
+    finally:
+        price_books.set_enabled(None)

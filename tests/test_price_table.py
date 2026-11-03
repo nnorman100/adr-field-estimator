@@ -1,4 +1,4 @@
-"""Unit tests for the v2 owner-defined price table model, contracts and stub dispatch."""
+"""Unit tests for the v2 owner-defined price table model, contracts and dispatch."""
 
 import copy
 import json
@@ -419,7 +419,7 @@ def test_price_basis_v2_requires_policy_and_v1_requires_rates():
         )
 
 
-def test_pricing_dispatch_runs_v1_and_stubs_v2():
+def test_pricing_dispatch_runs_v1_and_v2():
     job_data = InspectionData(
         address='10 Main St',
         rooms=[{'name': 'Kitchen', 'category': 2, 'finished_sf': 200}],
@@ -440,15 +440,17 @@ def test_pricing_dispatch_runs_v1_and_stubs_v2():
     assert result.totals is None
 
     table = _priced_starter()
-    with pytest.raises(NotImplementedError, match='dryscope-v2 pricing is not available yet'):
-        pricing.price_and_range(
-            job_data,
-            {
-                'calculation_version': 'dryscope-v2',
-                'items': table['items'],
-                'policy': table['policy'],
-            },
-        )
+    priced = pricing.price_and_range(
+        job_data,
+        {
+            'calculation_version': 'dryscope-v2',
+            'items': table['items'],
+            'policy': table['policy'],
+        },
+    )
+    assert priced.calculation_version == 'dryscope-v2'
+    assert priced.low > 0 and priced.high >= priced.low
+    assert priced.totals['mode'] == 'range'
 
 
 def _item(**changes):
