@@ -50,21 +50,26 @@ def other_job(client, current, uid='other-owner'):
     assert_no_adr_rate(made.text)
 
 
-def publish_own(client, current):
+def publish_own(db, current):
+    # The API refuses a new company a rate book, so a book of its own is stored directly.
     current['uid'] = 'other-owner'
-    preview = client.post(
-        '/api/companies/other/prices/preview',
-        json={'rates': OWN, 'change_reason': 'Our first prices'},
+    db.records['_price_book_versions/own'] = dict(
+        version_id='own',
+        company_id='other',
+        sequence=1,
+        calculation_version=price_books.CALCULATION_VERSION,
+        rates=OWN,
+        content_sha256=price_books.content_hash(OWN),
+        source='manual',
+        published_at='2026-01-01T00:00:00+00:00',
     )
-    assert preview.status_code == 200, preview.text
-    assert_no_adr_rate(preview.text)
-    body = preview.json()
-    saved = client.post(
-        '/api/companies/other/prices/publish',
-        json={'preview_id': body['preview_id'], 'expected_generation': body['generation']},
+    db.records['_company_price_books/other'] = dict(
+        company_id='other',
+        generation=1,
+        latest_version_id='own',
+        next_sequence=2,
+        started_at='2026-01-01T00:00:00+00:00',
     )
-    assert saved.status_code == 200, saved.text
-    return body
 
 
 def test_a_company_without_prices_sees_blanks_through_every_price_read(api, enabled):
@@ -114,7 +119,7 @@ def test_access_keeps_the_price_fields_current_like_the_session(api, enabled):
     )
     assert told == session_prices(client.get('/api/session').json())
 
-    publish_own(client, current)
+    publish_own(db, current)
     current['uid'] = 'other-estimator'
     published = session_prices(client.get('/api/access').json())
     assert published['prices_set'] is True and published['prices_not_set_message'] is None
@@ -156,8 +161,8 @@ def test_the_export_template_has_names_and_units_but_no_prices(api, enabled):
         files={'file': ('prices.csv', filled.encode(), 'text/csv')},
         data={'change_reason': 'Our first prices'},
     )
-    assert imported.status_code == 200, imported.text
-    assert imported.json()['sample_before'] is None
+    assert imported.status_code == 409, imported.text
+    assert 'price table, not a rate book' in imported.json()['detail']
     assert_no_adr_rate(imported.text)
     sheet = client.get('/api/companies/other/prices/export?format=xlsx')
     with zipfile.ZipFile(io.BytesIO(sheet.content)) as archive:
@@ -184,8 +189,26 @@ def test_there_is_no_seed_version_for_another_company(api, flag):
 
 
 def test_a_first_price_preview_has_no_adr_parent_or_sample(api, enabled):
-    client, current, _ = api
-    body = publish_own(client, current)
+    # Only a company already holding ADR's rates can still reach a first rate-book preview.
+    client, current, company_store = api
+    db = company_store.db
+    legacy_version(db)
+    db.records['_company_price_books/other'] = dict(
+        company_id='other', generation=3, latest_version_id='old-seed', next_sequence=2
+    )
+    current['uid'] = 'other-owner'
+    preview = client.post(
+        '/api/companies/other/prices/preview',
+        json={'rates': OWN, 'change_reason': 'Our first prices'},
+    )
+    assert preview.status_code == 200, preview.text
+    assert_no_adr_rate(preview.text)
+    body = preview.json()
+    saved = client.post(
+        '/api/companies/other/prices/publish',
+        json={'preview_id': body['preview_id'], 'expected_generation': body['generation']},
+    )
+    assert saved.status_code == 200, saved.text
     assert body['sample_before'] is None
     assert {row['before'] for row in body['diff']} == {''}
     assert 'large_change' not in body['warnings']
@@ -261,7 +284,7 @@ def test_job_pricing_and_reprice_refuse_without_prices(api, enabled):
 def test_after_publishing_a_company_prices_from_its_own_book(api, enabled):
     client, current, company_store = api
     db = company_store.db
-    publish_own(client, current)
+    publish_own(db, current)
     other_job(client, current)
     audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
     assert audited.status_code == 200, audited.text
@@ -276,7 +299,7 @@ def test_after_publishing_a_company_prices_from_its_own_book(api, enabled):
 def test_a_legacy_draft_in_another_company_never_falls_back_to_adr_rates(api, enabled):
     client, current, company_store = api
     db = company_store.db
-    publish_own(client, current)
+    publish_own(db, current)
     other_job(client, current)
     # Created before this company's prices started, which ADR's own drafts treat as legacy.
     db.records['inspections/' + ID]['created_at'] = '2000-01-01T00:00:00+00:00'
@@ -664,8 +687,8 @@ def test_a_restored_book_holding_adr_rates_does_not_count_as_prices(api, enabled
 
 
 def test_a_company_cannot_publish_adr_rates_as_its_own(api, enabled):
-    client, current, _ = api
-    current['uid'] = 'other-owner'
+    client, current, company_store = api
+    publish_own(company_store.db, current)
     assert_refused(
         client.post(
             '/api/companies/other/prices/preview',
@@ -771,8 +794,8 @@ def test_a_job_on_a_company_with_no_prices_has_no_job_charges_total(api, enabled
 
 
 def test_another_company_never_gets_the_sheet_sentence_signal(api, enabled):
-    client, current, _ = api
-    publish_own(client, current)
+    client, current, company_store = api
+    publish_own(company_store.db, current)
     other_job(client, current)
     assert client.get(f'/api/inspections/{ID}/pricing').json()['sheet_rates'] is False
 

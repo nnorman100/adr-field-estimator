@@ -346,12 +346,20 @@
   function companyView() {
     return isV2Table(company?.table) ? company.table : null;
   }
+  // A job the server saved before its company switched stays on its rate book, as the server rules.
+  function beforeSwitch() {
+    const switched = state?.session?.switched_at;
+    if (!switched || !state.record) return false;
+    const created = Date.parse(state.record.created_at);
+    return Number.isNaN(created) || created < Date.parse(switched);
+  }
+  const companyOnTable = () => state?.session?.pricing_version === V2 && !beforeSwitch();
   // The mode follows the job's pin: a v2 company's older draft pinned at v1 keeps the v1 form.
   function active() {
     const id = draftId();
     if (!id || !state?.session) return false;
     const pinned = jobs.get(id)?.pricing?.calculation_version;
-    return pinned ? pinned === V2 : state.session.pricing_version === V2;
+    return pinned ? pinned === V2 : companyOnTable();
   }
   function table() {
     const id = draftId(),
@@ -369,7 +377,7 @@
   });
   // The pricing row field that persist() stores beside a draft.
   function rowExtras(id) {
-    const t = jobs.get(id)?.pricing || (state?.session?.pricing_version === V2 && companyView());
+    const t = jobs.get(id)?.pricing || (companyOnTable() && companyView());
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   function seed(id, row) {

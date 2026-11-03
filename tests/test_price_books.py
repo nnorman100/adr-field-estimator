@@ -1350,7 +1350,7 @@ def test_no_book_company_template_and_view_for_readers_and_v1_file(api, enabled)
 
 
 def test_workbook_company_and_published_books_keep_the_v1_view_and_template(api, enabled):
-    client, current, _ = api
+    client, current, store = api
     current['uid'] = 'owner'
     view = client.get('/api/companies/adr/prices').json()
     assert 'starter' not in view and 'working_copy' not in view and view['rates']
@@ -1359,20 +1359,20 @@ def test_workbook_company_and_published_books_keep_the_v1_view_and_template(api,
     starter = {'version_id': 'starter'}
     assert client.get('/api/companies/adr/prices/export', params=starter).status_code == 404
 
+    # The API refuses a new company a rate book, so a book of its own is stored directly.
     current['uid'] = 'other-owner'
-    published = client.post(
-        '/api/companies/other/prices/preview',
-        json={
-            'rates': {**adr_rates(), 'additional_work_hourly': '', 'emergency_call': '150.00'},
-            'change_reason': 'A published v1 book',
-        },
+    book = {**adr_rates(), 'additional_work_hourly': '', 'emergency_call': '150.00'}
+    store.db.records['_price_book_versions/own'] = dict(
+        version_id='own',
+        company_id='other',
+        sequence=1,
+        rates=book,
+        content_sha256=price_books.content_hash(book),
+        calculation_version=price_books.CALCULATION_VERSION,
     )
-    assert published.status_code == 200, published.text
-    saved = client.post(
-        '/api/companies/other/prices/publish',
-        json={'preview_id': published.json()['preview_id'], 'expected_generation': 0},
+    store.db.records['_company_price_books/other'] = dict(
+        company_id='other', generation=1, latest_version_id='own', next_sequence=2
     )
-    assert saved.status_code == 200, saved.text
     view = client.get('/api/companies/other/prices').json()
     assert 'starter' not in view and view['rates']
     assert b'dryscope-prices-v1' in client.get('/api/companies/other/prices/export').content

@@ -165,26 +165,18 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
   await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
   await expect(page.locator('#dashboardContent')).not.toContainText(adrRates);
   await expect(page.getByRole('button', { name: /Restore/ })).toHaveCount(0);
-  // The Prices screen now offers the starter table; a rate book published through the API still
-  // proves that a company's own prices, and nothing of ADR's, price a job end to end.
-  const preview = await page.evaluate(async () => {
+  // The Prices screen offers the starter table and the API refuses a new company a rate book; a
+  // rate book on file still proves that a company's own prices, and nothing of ADR's, price a job.
+  const refused = await page.evaluate(async () => {
     const base = '/api/companies/' + state.session.company_id + '/prices';
     const view = await jsonApi(base);
     const rates = Object.fromEntries(view.rates.map((row) => [row.key, '12.34']));
-    const reviewed = await jsonApi(base + '/preview', 'POST', {
-      rates,
-      change_reason: 'Our first prices',
-    });
-    await jsonApi(base + '/publish', 'POST', {
-      preview_id: reviewed.preview_id,
-      expected_generation: reviewed.generation,
-    });
-    return reviewed;
+    return jsonApi(base + '/preview', 'POST', { rates, change_reason: 'Our first prices' }).catch(
+      (error) => error.status,
+    );
   });
-  expect(preview.diff[0].before).toBeFalsy();
-  expect(preview.diff[0].after).toBe('12.34');
-  expect(preview.sample_before).toBeNull();
-  expect(JSON.stringify(preview)).not.toMatch(adrRates);
+  expect(refused).toBe(409);
+  await request.post('/__test/other-prices');
   await page.reload();
   await navigate(page, 'dashboardPrices');
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1.');
@@ -251,17 +243,7 @@ test('an open job form picks up prices published on another device', async ({ pa
   await expect(page.locator('#pricesNotSet')).toBeVisible();
   await expect(page.locator('#jobChargesSummary')).toHaveText('· sheet quantities');
 
-  await page.evaluate(async () => {
-    const view = await jsonApi('/api/companies/other/prices');
-    const preview = await jsonApi('/api/companies/other/prices/preview', 'POST', {
-      rates: Object.fromEntries(view.rates.map((row) => [row.key, '12.34'])),
-      change_reason: 'Published on another device',
-    });
-    await jsonApi('/api/companies/other/prices/publish', 'POST', {
-      preview_id: preview.preview_id,
-      expected_generation: preview.generation,
-    });
-  });
+  await request.post('/__test/other-prices');
   await expect(page.locator('#pricesNotSet')).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
 
@@ -587,6 +569,15 @@ test.describe('review and samples', () => {
       );
     }
   });
+});
+
+test('a starter row can be deleted because nothing is published yet', async ({ page, request }) => {
+  await startUnset(page, request);
+  const row = page.locator('[data-price-item=service_call]');
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Delete' }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
 });
 
 test('a new item is added to a group, saved and moved', async ({ page, request }) => {

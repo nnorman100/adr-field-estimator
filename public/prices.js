@@ -107,7 +107,7 @@
       $('jobPricing').hidden = !view.pinned && state.session.prices_set === false;
       $('jobPricingStatus').textContent = view.pinned
         ? 'This job is priced from ' + view.pinned.label + '.'
-        : view.pending_note || 'Rates are confirmed at the first online pricing.';
+        : view.pending_note || '';
       if (view.newer_available)
         $('jobPricingStatus').textContent +=
           ' Newer company prices are available. This draft keeps its prices until an owner applies them.';
@@ -382,6 +382,7 @@
       prices_not_set_message: session.prices_not_set_message,
       pricing_version: session.pricing_version,
       pricing_table_version: session.pricing_table_version,
+      switched_at: session.switched_at,
     };
     await window.ScopeItems?.sessionChanged();
     syncNotice();
@@ -1671,7 +1672,7 @@
       policy: clone(source.policy),
       workingCopy: manage ? view.working_copy : null,
       workingVersion: view.working_copy ? view.working_copy.working_version : 0,
-      publishedIds: new Set((view.items || []).map((item) => item.item_id)),
+      publishedIds: new Set(view.starter ? [] : (view.items || []).map((item) => item.item_id)),
       problems: [],
       samples: [],
       sampleTurn: 0,

@@ -8,6 +8,7 @@ from backend import ai_features, price_books, price_table
 from backend.adr_price_book import adr_rates
 from backend.claims import price_scope, proposal_range
 from backend.contracts import InspectionData
+from backend.price_book_import import export_csv
 from backend.pricing import price_and_range
 from tests.test_backend import sign_payload
 from tests.test_price_books import _publish_v2, _v2_table, enabled, publish, rates  # noqa: F401
@@ -251,6 +252,23 @@ def test_new_company_has_no_v1_path(api, enabled):
     assert not {row['unit_price'] for row in view['items']} - {''}
     # Nothing is seeded by reading it, and starting saves only the blank starter list.
     assert '_company_price_books/other' not in store.db.records
+
+    # A rate book is refused however it arrives, and nothing is stored.
+    own = {key: '12.34' for key in price_books.KEYS}
+    typed = client.post(
+        '/api/companies/other/prices/preview',
+        json={'rates': own, 'acknowledgements': [], 'change_reason': 'Our own rates'},
+    )
+    uploaded = client.post(
+        '/api/companies/other/prices/import-preview',
+        files={'file': ('prices.csv', export_csv('other', 'unset', 0, own), 'text/csv')},
+        data={'change_reason': 'Our own rates'},
+    )
+    for refused in (typed, uploaded):
+        assert refused.status_code == 409, refused.text
+        assert 'price table, not a rate book' in refused.json()['detail']
+    assert not [key for key in store.db.records if key.startswith('_price_book_previews/')]
+
     started = client.post('/api/companies/other/prices/start-v2')
     assert started.status_code == 200, started.text
     copy = started.json()['working_copy']
@@ -296,25 +314,17 @@ def test_another_companys_switch_carries_only_its_own_rates(api, enabled):
     client, current, store = api
     current['uid'] = 'other-owner'
     own = {key: '12.34' for key in price_books.KEYS}
-    answer = client.post(
-        '/api/companies/other/prices/preview',
-        json={'rates': own, 'acknowledgements': [], 'change_reason': 'Our own rates'},
+    store.db.records['_price_book_versions/own'] = dict(
+        version_id='own',
+        company_id='other',
+        sequence=1,
+        rates=own,
+        content_sha256=price_books.content_hash(own),
+        calculation_version=price_books.CALCULATION_VERSION,
     )
-    # A first v1 publish is not offered to a new company in the app; a stored book is what matters.
-    if answer.status_code == 200:
-        publish_preview(client, answer.json(), 'other')
-    else:
-        store.db.records['_price_book_versions/own'] = dict(
-            version_id='own',
-            company_id='other',
-            sequence=1,
-            rates=own,
-            content_sha256=price_books.content_hash(own),
-            calculation_version=price_books.CALCULATION_VERSION,
-        )
-        store.db.records['_company_price_books/other'] = dict(
-            company_id='other', generation=1, latest_version_id='own', next_sequence=2
-        )
+    store.db.records['_company_price_books/other'] = dict(
+        company_id='other', generation=1, latest_version_id='own', next_sequence=2
+    )
     copy = client.post('/api/companies/other/prices/start-v2').json()['working_copy']
     assert {row['unit_price'] for row in copy['items']} == {'12.34'}
     assert not {row['unit_price'] for row in copy['items']} & set(adr_rates().values())
@@ -512,8 +522,64 @@ def test_signed_documents_do_not_change_when_the_company_switches(api, enabled):
     assert store.db.records[f'_job_pricing/{ID}'] == pin
     view = store.workspaces.prices.job_view('owner', store.get_inspection('owner', ID))
     assert view['can_reprice'] is False
+    assert view['newer_available'] is False
     refused = client.post(f'/api/inspections/{ID}/pricing/reprice-preview')
     assert refused.status_code == 409
+
+
+@pytest.mark.parametrize('company', ['adr', 'other'])
+def test_a_signed_job_with_no_pin_stays_on_the_rate_book_view(api, enabled, company):
+    client, current, store = api
+    if company == 'adr':
+        current['uid'] = 'owner'
+        publish(client, rates(emergency_call='150.00'))
+        held = adr_rates()
+    else:
+        current['uid'] = 'other-owner'
+        held = {key: '12.34' for key in price_books.KEYS}
+        store.db.records['_price_book_versions/own'] = dict(
+            version_id='own',
+            company_id='other',
+            sequence=1,
+            rates=held,
+            content_sha256=price_books.content_hash(held),
+            calculation_version=price_books.CALCULATION_VERSION,
+        )
+        store.db.records['_company_price_books/other'] = dict(
+            company_id='other', generation=1, latest_version_id='own', next_sequence=2
+        )
+    client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    signed = client.post('/api/authorize', json=sign_payload(audited.json()))
+    assert signed.status_code == 200, signed.text
+    # ADR's jobs signed before price books have no pin: the migration writes none.
+    del store.db.records[f'_job_pricing/{ID}']
+
+    switch(client, company)
+    view = client.get(f'/api/inspections/{ID}/pricing').json()
+    assert 'table' not in view and view['pinned'] is None
+    assert view['calculation_version'] == price_books.CALCULATION_VERSION
+    assert view['newer_available'] is False and view['can_reprice'] is False
+    assert view['pending_note'] is None
+    assert (
+        view['display_rates']['standard_job_charges']
+        == (price_books.price_display(held)['standard_job_charges'])
+    )
+    assert client.post(f'/api/inspections/{ID}/pricing/reprice-preview').status_code == 409
+    assert f'_job_pricing/{ID}' not in store.db.records
+
+
+def test_the_session_carries_when_the_company_switched_while_the_flag_is_on(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    publish(client, rates(emergency_call='150.00'))
+    assert client.get('/api/session').json()['switched_at'] is None
+    switch(client)
+    stamp = store.db.records['_company_price_books/adr']['switched_at']
+    assert client.get('/api/session').json()['switched_at'] == stamp
+    assert client.get('/api/access').json()['switched_at'] == stamp
+    price_books.set_enabled(False)
+    assert client.get('/api/session').json()['switched_at'] is None
 
 
 def test_flag_off_hides_editor_and_item_list_but_v2_pins_still_price(api, enabled):

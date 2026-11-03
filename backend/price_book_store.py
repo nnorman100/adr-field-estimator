@@ -407,6 +407,7 @@ class PriceBookStore:
             'prices_not_set_message': None,
             'pricing_version': None,
             'pricing_table_version': None,
+            'switched_at': None,
         }
         if not actor.get('company'):
             return view
@@ -428,6 +429,9 @@ class PriceBookStore:
                 'prices_set': True,
                 'pricing_version': version,
                 'pricing_table_version': book['version_id'] if version else None,
+                'switched_at': (self._head(actor['company']['company_id']) or {}).get('switched_at')
+                if version
+                else None,
             }
         return {
             **view,
@@ -800,6 +804,11 @@ class PriceBookStore:
 
         if _is_v2(self.effective(company)):
             raise Conflict('This company uses an owner price table. Send items and policy.')
+        if self._starts_from_catalog(company['company_id']):
+            raise Conflict(
+                'New companies set their prices in a price table, not a rate book. '
+                'Use the price table on Company prices, or download a new template.'
+            )
         rates = self._normalize(company, payload['rates'], payload.get('acknowledgements') or [])
         _refuse_adr_rates(company['company_id'], rates)
         reason = reason_text(payload.get('change_reason', ''))
@@ -1388,8 +1397,8 @@ class PriceBookStore:
         return book, reason
 
     def _unpinned_v1(self, company, record, book, tx=None):
-        """The rate book a draft with no pin stays on after its company switched, if it has one."""
-        if not _is_v2(book) or record.get('status') == 'signed':
+        """The rate book a job with no pin stays on after its company switched, if it has one."""
+        if not _is_v2(book):
             return None
         if not (self._head(company['company_id'], tx) or {}).get('switched_at'):
             return None
@@ -1511,12 +1520,14 @@ class PriceBookStore:
         pin = self._pin(record['inspection_id'])
         if pin and not _is_v2(pin) and record.get('status') != 'signed':
             _refuse_adr_rates(job['company_id'], pin['rates'])
-        manage = actor['role'] == 'owner' and record.get('status') != 'signed'
+        signed = record.get('status') == 'signed'
+        manage = actor['role'] == 'owner' and not signed
         unset = _is_unset(book)
         kept = None if pin else self._unpinned_v1(company, record, book)
         held = pin or kept
         newer = bool(
             held
+            and not signed
             and not unset
             and book['version_id'] != held.get('version_id')
             and book['content_sha256'] != held.get('content_sha256')
@@ -1550,7 +1561,9 @@ class PriceBookStore:
                     'items': pub['items'],
                     'policy': pub['policy'],
                 },
-                'pending_note': None if pin else 'Prices are confirmed at the first online save.',
+                'pending_note': None
+                if pin or signed
+                else 'Prices are confirmed at the first online save.',
             }
         display = active['rates']
         adr_book = adr_rates()
@@ -1583,7 +1596,7 @@ class PriceBookStore:
             and display['sheet_labor_hourly'] == adr_book['sheet_labor_hourly'],
             'display_rates': display_rates,
             'pending_note': None
-            if pin
+            if pin or signed
             else (
                 _not_set_message(actor['role'])
                 if unset
@@ -1742,6 +1755,7 @@ class PriceBookStore:
                 },
             )
         rates = version['rates']
+        _refuse_adr_rates(company_id, rates)
         acknowledgements = [
             key
             for key in ('emergency_call', 'after_hours_job_charge')

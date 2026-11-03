@@ -146,6 +146,36 @@ test('a draft saved but not yet priced before the switch stays on the v1 form', 
   await expect(page.locator('#v2Scope')).toBeHidden();
 });
 
+test('a draft not yet priced before the switch stays on the v1 form offline', async ({
+  page,
+  context,
+}) => {
+  await start(page, 'owner');
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  const id = await page.evaluate(() => state.draft.inspection_id);
+  // Left before the switch, so nothing has told this phone how the server rules on this draft.
+  await page.evaluate(() => openNew());
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(id);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await publishRates(page);
+  await publishSwitch(page);
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
+  await expect.poll(() => page.evaluate(() => state.session.pricing_version)).toBe('dryscope-v2');
+  await context.setOffline(true);
+  await page.evaluate((value) => restoreDraft(value), id);
+  await checkScope(page);
+  await expect(page.locator('#v1Scope')).toBeVisible();
+  await expect(page.locator('#v2Scope')).toBeHidden();
+  // A job started on this phone after the switch has no server record yet and shows the item list.
+  await page.evaluate(() => openNew());
+  await checkScope(page);
+  await expect(page.locator('#v2Scope')).toBeVisible();
+  await expect(page.locator('#v1Scope')).toBeHidden();
+  await context.setOffline(false);
+});
+
 test('discarding the switch returns to the rate book, and only the owner is offered it', async ({
   page,
   browser,
