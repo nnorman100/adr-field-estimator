@@ -17,7 +17,7 @@ from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import InspectionData, AIResult
 from backend import claims
 from backend.claims import plain, states_price, without_saved_prices
-from backend.prompts import AUDIT_INSTRUCTIONS, audit_prompt
+from backend.prompts import audit_prompt
 from tests.fakes import ADR_PROFILE
 
 
@@ -1446,7 +1446,8 @@ def test_an_older_saved_note_with_a_price_is_clean_when_read_back():
     assert without_saved_prices(dict(ai_summary=None)) == dict(ai_summary=None)
 
 
-def test_the_audit_prompt_keeps_the_notes_away_from_homeowners_and_prices():
-    assert 'shown to the homeowner' not in AUDIT_INSTRUCTIONS
-    assert 'never to the homeowner or adjuster' in AUDIT_INSTRUCTIONS
-    assert 'Never state a dollar amount' in AUDIT_INSTRUCTIONS
+def test_the_prompt_sent_to_the_model_keeps_the_notes_away_from_homeowners_and_prices():
+    prompt = audit_prompt(acme().model_dump(mode='json'), [], [])
+    assert 'shown to the homeowner' not in prompt
+    assert 'never to the homeowner or adjuster' in prompt
+    assert 'Never state a dollar amount' in prompt
