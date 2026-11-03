@@ -624,6 +624,82 @@ test.describe('without a service worker', () => {
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
   });
 
+  const roomField = (page, key) => page.locator(`[data-room-index="0"][data-room-key="${key}"]`);
+  const tapMold = async (page) => {
+    await page.locator('[name="room-loss-0"][value="mold"]').check({ force: true });
+    await page.locator('#rooms .room-more > summary').first().click();
+  };
+
+  test('a mold room on a price list asks for the floor area it prices from', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await tapMold(page);
+    await expect(roomField(page, 'floor_sf')).toBeVisible();
+    for (const hidden of ['wet_floor_sf', 'ceiling_height_ft', 'water_class'])
+      await expect(roomField(page, hidden)).toBeHidden();
+    await expect(page.locator('#rooms .room-sizing-title')).toBeHidden();
+    await roomField(page, 'floor_sf').fill('120');
+    await expect(
+      page.locator('[data-from-rooms="surface_cleaning"]', { hasText: '· 120 sq ft' }),
+    ).toHaveCount(1);
+    // Back on water the whole drying check returns.
+    await page.locator('[name="room-loss-0"][value="water"]').check({ force: true });
+    for (const shown of ['floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'])
+      await expect(roomField(page, shown)).toBeVisible();
+    await expect(page.locator('#rooms .room-sizing-title')).toBeVisible();
+  });
+
+  test('a mold room on a wet-floor price list keeps both areas', async ({ page, request }) => {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await publish(request, { policy: { area_basis: 'wet_floor' } });
+    await open(page);
+    await tapMold(page);
+    const wet = roomField(page, 'wet_floor_sf');
+    await expect(wet).toBeVisible();
+    expect(await wet.evaluate((el) => !el.closest('.room-more'))).toBe(true);
+    await expect(roomField(page, 'floor_sf')).toBeVisible();
+    await expect(roomField(page, 'ceiling_height_ft')).toBeHidden();
+    // Tapping back to water finds the wet floor input already on the card.
+    await page.locator('[name="room-loss-0"][value="water"]').check({ force: true });
+    await expect(roomField(page, 'ceiling_height_ft')).toBeVisible();
+    await expect(wet).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('a changed wet floor value on a room turned mold keeps its reason box', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const key = await page.evaluate(() => {
+      const room = state.draft.data.rooms[0];
+      room.wet_floor_sf = 40;
+      const name = room.name + ':wet_floor_sf';
+      state.draft.data.quantity_overrides = { [name]: { measured: '30', entered: '40' } };
+      changed();
+      fillForm();
+      return name;
+    });
+    await tapMold(page);
+    await expect(roomField(page, 'wet_floor_sf')).toBeVisible();
+    const reason = page.locator(`[data-override-reason="${key}"]`);
+    await expect(reason).toBeVisible();
+    await reason.fill('Only the closet floor stayed wet');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  });
+
+  test('a mold room on the v1 form still has no floor area input', async ({ page }) => {
+    await open(page);
+    await tapMold(page);
+    for (const hidden of ['floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'])
+      await expect(roomField(page, hidden)).toBeHidden();
+  });
+
   test('a wet-floor company enters the wet floor area on the room card', async ({
     page,
     request,

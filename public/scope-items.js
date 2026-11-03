@@ -552,6 +552,24 @@
   function wetFloorOnCard() {
     return active() && table()?.policy?.area_basis === 'wet_floor';
   }
+  // A mold room has no drying check, but a price list can price its floor area, and a value that
+  // needs a reason must stay reachable. Everything shows on a water room.
+  function fitSizing(sizing, room, mold) {
+    const overridden = (field) =>
+      !!state.draft?.data?.quantity_overrides?.[room.name + ':' + field];
+    const hide = (field, hidden) => {
+      const label = sizing.querySelector('[data-room-key="' + field + '"]')?.closest('label');
+      if (label) label.hidden = hidden;
+    };
+    const showFloor = !mold || active() || overridden('floor_sf'),
+      showWet = !mold || wetFloorOnCard() || overridden('wet_floor_sf');
+    sizing.hidden = !showFloor && !showWet;
+    sizing.querySelector('.room-sizing-title').hidden = mold;
+    hide('ceiling_height_ft', mold);
+    hide('water_class', mold);
+    hide('floor_sf', !showFloor);
+    hide('wet_floor_sf', !showWet);
+  }
   // The wet floor area moves from More room options to the room card when it is the pricing basis.
   function placeWetFloor(sizing, grid) {
     if (!wetFloorOnCard()) return;
@@ -935,6 +953,7 @@
     undoMeasured,
     renameRoom,
     watch,
+    fitSizing,
     placeWetFloor,
     wetFloorOnCard,
   };

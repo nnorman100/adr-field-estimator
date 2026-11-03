@@ -1841,6 +1841,7 @@ function renderRooms() {
       card.dataset.loss = roomLoss(room);
       // Mold-only rooms have no water class; the drying check applies to water rooms.
       sizing.hidden = roomLoss(room) === 'mold';
+      window.ScopeItems?.fitSizing(sizing, room, roomLoss(room) === 'mold');
     };
     tagRoom();
     head.append(node('h3', 'Room ' + (i + 1)));
