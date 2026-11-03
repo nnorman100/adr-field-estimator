@@ -400,10 +400,11 @@
         ),
       ),
     );
-    // Importing waits for the first published table, which sets the template the file must match.
-    if (manage && !view.starter) {
+    if (manage) {
       const file = node('input'),
-        importReason = node('input');
+        importReason = node('input'),
+        zeroBox = node('input'),
+        zeroLabel = node('label', undefined, 'price-check');
       file.type = 'file';
       file.accept =
         '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -413,9 +414,14 @@
       importReason.maxLength = 500;
       importReason.required = true;
       importReason.id = 'priceImportReason';
+      zeroBox.type = 'checkbox';
+      zeroBox.id = 'priceImportZero';
+      zeroLabel.append(zeroBox, node('span', 'Zero prices in this file are intentional'));
+      zeroLabel.hidden = !ed;
       actions.append(
         file,
         importReason,
+        zeroLabel,
         button('Import prices', async () => {
           if (!file.files?.[0]) {
             file.focus();
@@ -432,12 +438,14 @@
           const priceForm = $('priceForm');
           for (const key of zeroKeys)
             if (priceForm?.elements['ack_' + key]?.checked) upload.append('acknowledgements', key);
+          for (const id of ed?.acks || []) upload.append('acknowledgements', id);
+          if (zeroBox.checked) upload.append('confirm_zero_prices', 'yes');
           const preview = await (
             await api(base + '/import-preview', { method: 'POST', body: upload })
           ).json();
           $('priceReview')?.remove();
           content.append(
-            reviewFor(preview, () =>
+            replacingReview(preview, () =>
               publish(view.company_id, preview).catch((e) => say(e.message, 'error')),
             ),
           );
@@ -446,7 +454,7 @@
     }
     content.append(actions);
   }
-  async function history(content, base, manage, companyId, tables) {
+  async function history(content, base, manage, companyId) {
     const listing = await jsonApi(base + '/history'),
       card = node('section', undefined, 'price-card');
     card.append(node('h2', 'Price history'));
@@ -481,7 +489,7 @@
             );
             $('priceReview')?.remove();
             content.append(
-              reviewFor(preview, () =>
+              replacingReview(preview, () =>
                 publish(companyId, preview).catch((e) => say(e.message, 'error')),
               ),
             );
@@ -797,45 +805,52 @@
     }
   }
   function edited() {
-    ed.edits += 1;
+    const mine = ed;
+    mine.edits += 1;
     editStatus('Saving…', 'saving');
     paintBanner();
-    clearTimeout(ed.saveTimer);
-    ed.saveTimer = setTimeout(() => saveCopy().catch(() => {}), 700);
-    clearTimeout(ed.sampleTimer);
-    ed.sampleTimer = setTimeout(() => refreshSamples().catch(() => {}), 1200);
+    $('priceReview')?.remove();
+    clearTimeout(mine.saveTimer);
+    mine.saveTimer = setTimeout(() => saveCopy(mine).catch(saveLost), 700);
+    clearTimeout(mine.sampleTimer);
+    mine.sampleTimer = setTimeout(() => refreshSamples().catch(() => {}), 1200);
   }
-  function saveCopy() {
-    clearTimeout(ed.saveTimer);
-    ed.chain = ed.chain.catch(() => {}).then(() => writeCopy());
-    return ed.chain;
+  // With the editor on screen the save status carries the failure; once it is gone only this can.
+  function saveLost(error) {
+    if (!$('priceSaveStatus'))
+      say('Your last price change was not saved: ' + error.message, 'error');
   }
-  async function writeCopy() {
-    if (!ed || ed.stale || ed.edits === ed.savedEdits) return;
-    const mine = ed,
-      sent = ed.edits;
+  function saveCopy(mine) {
+    clearTimeout(mine.saveTimer);
+    mine.chain = mine.chain.catch(() => {}).then(() => writeCopy(mine));
+    return mine.chain;
+  }
+  async function writeCopy(mine) {
+    if (mine.stale || mine.edits === mine.savedEdits) return;
+    const sent = mine.edits;
     try {
       const result = await jsonApi(mine.base + '/working-copy', 'PUT', {
         items: mine.items,
         policy: mine.policy,
+        acknowledgements: [...mine.acks],
         expected_working_version: mine.workingVersion,
         expected_generation: mine.view.generation || 0,
       });
-      if (ed !== mine) return;
       mine.workingVersion = result.working_version;
       mine.workingCopy = result.working_copy;
       mine.problems = result.problems || [];
       mine.savedAt = stamp();
       if (mine.edits === sent) mine.savedEdits = sent;
-      editStatus(mine.edits === sent ? 'Saved ' + mine.savedAt : 'Saving…', 'saved');
+      if (ed === mine)
+        editStatus(mine.edits === sent ? 'Saved ' + mine.savedAt : 'Saving…', 'saved');
     } catch (error) {
-      if (ed !== mine) return;
-      if (/another device/i.test(error.message)) {
-        mine.stale = true;
-        editStatus(error.message, 'error');
+      const conflict = /another device/i.test(error.message);
+      if (conflict) mine.stale = true;
+      if (ed === mine) {
+        editStatus(conflict ? error.message : 'Not saved: ' + error.message, 'error');
         const reload = $('priceReload');
-        if (reload) reload.hidden = false;
-      } else editStatus('Not saved: ' + error.message, 'error');
+        if (conflict && reload) reload.hidden = false;
+      }
       throw error;
     } finally {
       if (ed === mine) {
@@ -857,6 +872,7 @@
       const result = await jsonApi(mine.base + '/calculate', 'POST', {
         items: mine.items,
         policy: mine.policy,
+        acknowledgements: [...mine.acks],
       });
       if (ed !== mine) return;
       mine.samples = result.samples || [];
@@ -1128,6 +1144,7 @@
       ack = checkInput(ed.acks.has(item.item_id), (checked) => {
         if (checked) ed.acks.add(item.item_id);
         else ed.acks.delete(item.item_id);
+        edited();
       });
     price.name = 'price_' + item.item_id;
     on.append(
@@ -1138,16 +1155,12 @@
       }),
       node('span', 'Used on estimates'),
     );
-    row.classList.toggle('price-off', !item.enabled);
+    row.classList.toggle('price-off', ed.manage && !item.enabled);
     zero.append(ack, node('span', 'I confirm this zero price is intentional.'));
     zero.hidden = !(item.allow_zero && Number(item.unit_price) === 0 && item.unit_price !== '');
-    row.append(
-      name,
-      priceLabel,
-      zero,
-      on,
-      node('small', sourceLabel(item.quantity_source), 'price-source'),
-    );
+    row.append(name, priceLabel, zero);
+    if (ed.manage) row.append(on);
+    row.append(node('small', sourceLabel(item.quantity_source), 'price-source'));
     row.append(node('p', undefined, 'price-problem'));
     const more = node('details', undefined, 'price-more');
     more.append(node('summary', 'More'));
@@ -1222,17 +1235,6 @@
         ),
         'Shown on the itemized claim only. Never priced.',
       ),
-      labeled(
-        'Short code on the claim',
-        textInput(
-          item.code,
-          (value) => {
-            item.code = value.trim().toUpperCase();
-            edited();
-          },
-          { max: 16 },
-        ),
-      ),
     );
     const cats = node('fieldset', undefined, 'price-radios'),
       legend = node('legend', 'Water categories (none checked means all)');
@@ -1268,7 +1270,8 @@
       }),
       node('span', 'Allow a zero price'),
     );
-    more.append(cats, taxable, allow);
+    more.append(cats, taxable);
+    if (ed.manage) more.append(allow);
     row.append(more);
     if (ed.manage) {
       const actions = node('div', undefined, 'price-actions');
@@ -1365,6 +1368,21 @@
       ? reviewPanel(preview, onPublish)
       : reviewPanelV2(preview, onPublish);
   }
+  // Import and restore publish their own table, and publishing clears the saved working copy.
+  function replacingReview(preview, onPublish) {
+    const panel = reviewFor(preview, onPublish);
+    if (ed && unpublished())
+      panel
+        .querySelector('h2')
+        ?.after(
+          node(
+            'p',
+            'Publishing this replaces your unpublished changes. They will be lost.',
+            'price-warning',
+          ),
+        );
+    return panel;
+  }
   function diffText(row) {
     if (row.change === 'added')
       return (
@@ -1441,24 +1459,29 @@
   }
 
   async function reviewCopy(content) {
-    if (ed.stale) throw Error('Prices changed on another device. Reload.');
+    const mine = ed;
+    if (mine.stale) throw Error('Prices changed on another device. Reload.');
     const reason = $('priceReason');
     if (!reason.checkValidity()) {
       reason.focus();
       reason.reportValidity();
       throw Error('Add a short reason for this change, then review it.');
     }
-    await saveCopy();
-    const preview = await jsonApi(ed.base + '/preview', 'POST', {
-      items: ed.items,
-      policy: ed.policy,
-      acknowledgements: [...ed.acks],
-      change_reason: reason.value.trim(),
-    });
+    await saveCopy(mine);
+    const reviewed = mine.edits,
+      preview = await jsonApi(mine.base + '/preview', 'POST', {
+        items: mine.items,
+        policy: mine.policy,
+        acknowledgements: [...mine.acks],
+        change_reason: reason.value.trim(),
+      });
+    if (ed !== mine) return;
+    if (mine.edits !== reviewed)
+      throw Error('Prices changed during the review. Review them again.');
     $('priceReview')?.remove();
     content.append(
       reviewFor(preview, () =>
-        publish(ed.view.company_id, preview).catch((e) => {
+        publish(mine.view.company_id, preview).catch((e) => {
           $('pricePageStatus').textContent = e.message;
           say(e.message, 'error');
         }),
@@ -1547,7 +1570,7 @@
       node('h2', view.starter ? 'Prices: not set up yet' : 'Current: ' + view.label),
       node('p', view.used_for),
     );
-    if (view.starter)
+    if (view.starter && manage)
       head.append(
         node(
           'p',
@@ -1606,6 +1629,10 @@
         : 'Publishing applies to new pricing now. Saved drafts keep their prices until you apply new prices to one draft.',
       support ? 'READ-ONLY SUPPORT VIEW' : undefined,
     );
+    if (ed) {
+      clearTimeout(ed.sampleTimer);
+      await saveCopy(ed).catch(saveLost);
+    }
     ed = null;
     const view = await jsonApi(base);
     if (epoch !== WorkspaceUI.pageEpoch()) return;
@@ -1622,7 +1649,7 @@
       renderRates(content, view, manage);
     }
     tools(content, base, manage, view);
-    await history(content, base, manage, companyId, tables);
+    await history(content, base, manage, companyId);
     if (epoch !== WorkspaceUI.pageEpoch()) return;
     WorkspaceUI.policy();
   }

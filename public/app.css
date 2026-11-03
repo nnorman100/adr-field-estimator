@@ -3136,11 +3136,6 @@ footer {
 .price-banner {
   border-color: var(--accent, #b45309);
 }
-.price-banner[hidden],
-#priceSamples[hidden],
-#priceProblems[hidden] {
-  display: none;
-}
 .price-field span,
 .price-source {
   font-size: 0.9rem;
@@ -3188,6 +3183,7 @@ footer {
   gap: 0.5rem;
   min-height: 44px;
 }
+.price-actions .price-check input,
 .price-card .price-check input,
 .price-card .price-radio input {
   width: auto;

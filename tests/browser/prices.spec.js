@@ -163,6 +163,58 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
 
   await page.getByRole('button', { name: 'Set company prices' }).click();
   await expect(page.locator('#dashboardHeading')).toHaveText('Company prices');
+  await expect(page.locator('#dashboardContent')).not.toContainText(adrRates);
+  await expect(page.getByRole('button', { name: /Restore/ })).toHaveCount(0);
+  // The Prices screen now offers the starter table; a rate book published through the API still
+  // proves that a company's own prices, and nothing of ADR's, price a job end to end.
+  const preview = await page.evaluate(async () => {
+    const base = '/api/companies/' + state.session.company_id + '/prices';
+    const view = await jsonApi(base);
+    const rates = Object.fromEntries(view.rates.map((row) => [row.key, '12.34']));
+    const reviewed = await jsonApi(base + '/preview', 'POST', {
+      rates,
+      change_reason: 'Our first prices',
+    });
+    await jsonApi(base + '/publish', 'POST', {
+      preview_id: reviewed.preview_id,
+      expected_generation: reviewed.generation,
+    });
+    return reviewed;
+  });
+  expect(preview.diff[0].before).toBeFalsy();
+  expect(preview.diff[0].after).toBe('12.34');
+  expect(preview.sample_before).toBeNull();
+  expect(JSON.stringify(preview)).not.toMatch(adrRates);
+  await page.reload();
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1.');
+  await expect(page.locator('input[name=emergency_call]')).toHaveValue('12.34');
+
+  await navigate(page, 'dashboardJobs');
+  await page.getByRole('button', { name: /Other company synthetic property/ }).click();
+  await expect(page.locator('#pricesNotSet')).toBeHidden();
+  await page.locator('#finishAudit').click();
+  await expect(page.locator('#documents')).toBeVisible();
+  await expect(page.locator('#proposalBody')).toContainText('Priced from Prices v1.');
+  await expect(page.locator('body')).not.toContainText(adrRates);
+});
+
+test('a company with no prices sets up and publishes its first table from the starter list', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  const adrRates =
+    /133\.95|47\.46|1,180\.20|159\.53|Workbook seed|workbook seed|ADR starting prices/;
+  await navigate(page, 'dashboardPrices');
   await expect(page.locator('#priceEditor')).toBeVisible();
   await expect(page.locator('#dashboardContent')).toContainText('Prices: not set up yet');
   await expect(page.locator('#dashboardContent')).not.toContainText(adrRates);
@@ -176,7 +228,6 @@ test('a company with no prices is told to set them, sees no ADR rate, then price
   await page.getByRole('button', { name: 'Publish prices' }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1');
   await expect(page.locator('input[name=price_service_call]')).toHaveValue('12.34');
-  // Pricing a job from a table waits for the calculation engine PR.
 });
 
 test('an open job form picks up prices published on another device', async ({ page, request }) => {
@@ -336,6 +387,10 @@ test('estimator and support read the items and settings but cannot change them',
   await expect(page.locator('#dashboardContent')).toContainText('Read only');
   await expect(page.locator('input[name=price_service_call]')).toBeDisabled();
   await expect(page.locator('input[name=policy_minimum_job_charge]')).toBeDisabled();
+  // A reader's list holds only items in use, so it shows none of them as switched off.
+  await expect(page.locator('.price-off')).toHaveCount(0);
+  await expect(page.getByLabel('Used on estimates')).toHaveCount(0);
+  await expect(page.getByLabel('Allow a zero price')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Review changes' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Publish prices' })).toHaveCount(0);
   await expect(page.locator('#priceUnpublished')).toBeHidden();
@@ -405,7 +460,6 @@ test.describe('review and samples', () => {
       const low = '$' + Number(call.unit_price).toFixed(2);
       await route.fulfill({
         json: {
-          engine_ready: true,
           problems: [],
           samples: ['small', 'medium', 'large'].map((key) => ({
             key,
@@ -465,6 +519,8 @@ test('a new item is added to a group, saved and moved', async ({ page, request }
   await group.getByRole('button', { name: 'Add item' }).click();
   const added = page.locator('[data-price-item=content_cleaning_crew]');
   await expect(added).toBeVisible();
+  await added.getByText('More', { exact: true }).click();
+  await expect(added.getByLabel('Short code on the claim')).toHaveCount(0);
   await added.locator('input[name=price_content_cleaning_crew]').fill('44');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
   for (let step = 0; step < 3; step += 1) {
@@ -480,4 +536,141 @@ test('a new item is added to a group, saved and moved', async ({ page, request }
   await expect(
     page.locator('details.price-group[data-group=labor] [data-price-item]').first(),
   ).toHaveAttribute('data-price-item', 'content_cleaning_crew');
+});
+
+test('an estimator of a company with no prices is not told to enter them', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request, 'estimator');
+  await expect(page.locator('#dashboardContent')).toContainText('Read only');
+  await expect(page.locator('#dashboardContent')).not.toContainText('Enter your prices');
+  await expect(page.locator('.price-off')).toHaveCount(0);
+});
+
+test('a change after the review closes it, so publishing cannot drop the change', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const price = page.locator('input[name=price_service_call]');
+  await price.fill('11');
+  await page.locator('#priceReason').fill('Raise the service call');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('$11.00');
+  await price.fill('12');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Publish prices' })).toHaveCount(0);
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText('$12.00');
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
+  await expect(price).toHaveValue('12.00');
+});
+
+test('reopening Prices keeps an edit still waiting to save', async ({ page, request }) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await page.locator('input[name=price_service_call]').fill('77');
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  // Nothing fires later from the page that was replaced.
+  await page.waitForTimeout(900);
+  await expect(page.locator('input[name=price_service_call]')).toHaveValue('77.00');
+  expect(errors).toEqual([]);
+});
+
+test('confirming a zero price clears the problem it raised', async ({ page, request }) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  const row = page.locator('[data-price-item=service_call]');
+  await row.getByText('More', { exact: true }).click();
+  await row.getByLabel('Allow a zero price').check();
+  await row.locator('input[name=price_service_call]').fill('0');
+  await expect(row.locator('.price-problem')).toContainText('confirm');
+  await row.getByLabel('I confirm this zero price is intentional.').check();
+  await expect(row.locator('.price-problem')).toHaveText('');
+});
+
+function csvRows(text) {
+  const rows = [[]];
+  let cell = '',
+    quoted = false;
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at];
+    if (quoted && char === '"' && text[at + 1] === '"') {
+      cell += '"';
+      at += 1;
+    } else if (char === '"') quoted = !quoted;
+    else if (char === ',' && !quoted) {
+      rows[rows.length - 1].push(cell);
+      cell = '';
+    } else if (char === '\n' && !quoted) {
+      rows[rows.length - 1].push(cell);
+      cell = '';
+      rows.push([]);
+    } else cell += char;
+  }
+  return rows.filter((row) => row.length > 1);
+}
+function csvText(rows) {
+  return rows
+    .map((row) => row.map((cell) => '"' + cell.replaceAll('"', '""') + '"').join(','))
+    .join('\n');
+}
+
+test('a starter company imports its template, confirms a zero price and is warned about its working copy', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: {
+      enabled: true,
+      price_books: true,
+      other_prices: false,
+      ai_features: ['priced_extras'],
+    },
+  });
+  await start(page, 'other');
+  await navigate(page, 'dashboardPrices');
+  await page.locator('input[name=price_service_call]').fill('33');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  const template = await page.evaluate(async () => {
+    const base = '/api/companies/' + state.session.company_id + '/prices';
+    return (await api(base + '/export?format=csv&version_id=starter')).text();
+  });
+  const rows = csvRows(template.replace(/^\ufeff/, '')),
+    [header, ...body] = rows,
+    price = header.indexOf('unit_price'),
+    allow = header.indexOf('allow_zero');
+  for (const row of body) row[price] = '10.00';
+  body[0][price] = '0.00';
+  body[0][allow] = 'yes';
+  const file = {
+    name: 'prices.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csvText([header, ...body]) + '\n'),
+  };
+  await page.locator('#priceImportFile').setInputFiles(file);
+  await page.locator('#priceImportReason').fill('Prices from our spreadsheet');
+  await page.getByRole('button', { name: 'Import prices' }).click();
+  await expect(page.locator('#message')).toContainText('confirm that a zero unit price');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+
+  await page.getByLabel('Zero prices in this file are intentional').check();
+  await page.getByRole('button', { name: 'Import prices' }).click();
+  await expect(page.locator('#priceReview')).toContainText('zero price');
+  await expect(page.locator('#priceReview')).toContainText('replaces your unpublished changes');
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  await expect(page.locator('input[name=price_service_call]')).not.toHaveValue('33.00');
 });

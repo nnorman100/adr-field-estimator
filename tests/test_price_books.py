@@ -2012,6 +2012,70 @@ def test_calculate_is_stateless_and_quota_limited(api, enabled):
             '/api/companies/adr/prices/calculate',
             json={'items': table['items'], 'policy': table['policy']},
         ).status_code
-        for _ in range(62)
+        for _ in range(300)
     ]
-    assert statuses[0] == 200 and statuses[-1] == 429
+    # The first call above used one of the 300.
+    assert statuses[0] == 200 and statuses[298] == 200 and statuses[299] == 429
+
+
+def test_heavy_sample_editing_cannot_block_preview_or_publish(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('30.00')
+    for _ in range(100):
+        assert (
+            client.post(
+                '/api/companies/adr/prices/calculate',
+                json={'items': table['items'], 'policy': table['policy']},
+            ).status_code
+            == 200
+        )
+    published = _publish_v2(client, table, 'Published after a long edit')
+    assert published['generation'] == 1
+
+
+def _import_body(raw, boundary, **fields):
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="p.csv"\r\n'
+        f'Content-Type: text/csv\r\n\r\n'.encode()
+        + raw
+        + b'\r\n'
+    ]
+    parts += [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        for name, value in fields.items()
+    ]
+    return b''.join(parts) + f'--{boundary}--\r\n'.encode()
+
+
+def test_import_with_a_zero_price_needs_the_confirmation(api, enabled):
+    from backend import price_book_import
+
+    client, current, db = api
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('25.00'), 'Head before a zero price')
+    company, base_version, generation, exported = db.workspaces.prices.export_rows('owner', 'adr')
+    changed = deepcopy(exported)
+    changed[0]['unit_price'] = '0.00'
+    changed[0]['allow_zero'] = True
+    changed[0]['enabled'] = True
+    raw = price_book_import.export_csv(company, base_version, generation, changed)
+    headers = {'Content-Type': 'multipart/form-data; boundary=xBOUNDARYx'}
+
+    refused = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=_import_body(raw, 'xBOUNDARYx', change_reason='Free first row'),
+        headers=headers,
+    )
+    assert refused.status_code == 400 or refused.status_code == 422, refused.text
+    assert 'confirm that a zero unit price' in refused.text
+
+    confirmed = client.post(
+        '/api/companies/adr/prices/import-preview',
+        content=_import_body(
+            raw, 'xBOUNDARYx', change_reason='Free first row', confirm_zero_prices='yes'
+        ),
+        headers=headers,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert 'zero_price' in confirmed.json()['warnings']

@@ -133,7 +133,7 @@ def register_price_book_routes(app, identity, get_store, stored, live):
         claims=live_identity,
         store=Depends(get_store),
     ):
-        await stored(store.quota, claims['uid'], 'price_preview')
+        await stored(store.quota, claims['uid'], 'price_calculate')
         return await stored(books(store).calculate, claims['uid'], company_id, body.model_dump())
 
     @app.get('/api/companies/{company_id}/prices/versions')
@@ -302,6 +302,9 @@ async def _upload(request: Request):
         'content_type': files[0]['content_type'],
         'change_reason': reasons[0] if reasons else '',
         'acknowledgements': acknowledgements,
+        'confirm_zero_prices': any(
+            part['name'] == 'confirm_zero_prices' and part['text'] == 'yes' for part in parts
+        ),
     }
 
 
@@ -377,13 +380,15 @@ def _import_preview(book, uid, company_id, upload):
         head = book._head(company_id)
         published = book._version(head.get('latest_version_id')) if head else None
         policy = (published or {}).get('policy') or starter_table()['policy']
+        zero_rows = [item['item_id'] for item in parsed if item['unit_price'] == '0.00']
         return book.preview(
             uid,
             company_id,
             {
                 'items': parsed,
                 'policy': policy,
-                'acknowledgements': upload['acknowledgements'],
+                'acknowledgements': upload['acknowledgements']
+                + (zero_rows if upload['confirm_zero_prices'] else []),
                 'change_reason': upload['change_reason'],
                 'source': 'import',
                 'import_digest': hashlib.sha256(upload['raw']).hexdigest(),
