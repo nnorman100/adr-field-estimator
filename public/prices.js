@@ -697,7 +697,7 @@
       categories: [],
       taxable: false,
       xactimate_code: '',
-      enabled: true,
+      enabled: group !== 'extras' || !inGroup.some((item) => item.enabled),
       sort_order: Math.min(10000, Math.max(-10, ...inGroup.map((i) => i.sort_order || 0)) + 10),
     };
   }
@@ -1436,7 +1436,8 @@
         ' (' +
         unitLabel(row.unit) +
         ')' +
-        (row.after ? ' at $' + row.after : '')
+        (row.after ? ' at $' + row.after : '') +
+        (row.enabled ? '' : ', switched off')
       );
     if (row.change === 'removed') return 'Removed ' + row.name;
     return (

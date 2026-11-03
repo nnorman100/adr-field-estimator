@@ -225,6 +225,12 @@ test('a company with no prices sets up and publishes its first table from the st
   await page.getByRole('button', { name: 'Review changes' }).click();
   await expect(page.locator('#priceReview')).toContainText('Added');
   await expect(page.locator('#priceReview')).not.toContainText(adrRates);
+  await expect(page.locator('#priceReview p', { hasText: 'Third-party' })).toContainText(
+    'switched off',
+  );
+  await expect(
+    page.locator('#priceReview p', { hasText: 'Emergency service call' }),
+  ).not.toContainText('switched off');
   await page.getByRole('button', { name: 'Publish prices' }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v1');
   await expect(page.locator('input[name=price_service_call]')).toHaveValue('12.34');
@@ -916,4 +922,17 @@ test('an import that raises a waste shows it in the review', async ({ page, requ
   await expect(page.locator('#priceReview')).toContainText(
     /Air mover.*waste 0(\.00)?% -> 50(\.00)?%/,
   );
+});
+
+test('adding a second additional-work item keeps the editor saving', async ({ page, request }) => {
+  await startUnset(page, request);
+  const extras = page.locator('details.price-group[data-group=extras]');
+  await extras.locator('> summary').click();
+  await extras.getByLabel('New item name in Additional work').fill('Night work');
+  await extras.getByRole('button', { name: 'Add item' }).click();
+  const added = page.locator('[data-price-item=night_work]');
+  await expect(added.getByLabel('Used on estimates')).not.toBeChecked();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.locator('input[name=price_service_call]').fill('150');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
 });

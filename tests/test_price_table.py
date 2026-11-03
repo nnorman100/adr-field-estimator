@@ -756,6 +756,25 @@ def test_a_diff_row_names_each_changed_field_with_before_and_after():
     assert details['taxable'] == {'field': 'taxable', 'before': original['taxable'], 'after': True}
 
 
+def test_an_added_row_says_whether_the_item_is_switched_on():
+    before = _priced_starter()
+    after = copy.deepcopy(before)
+    after['items'].append(
+        {
+            **copy.deepcopy(after['items'][0]),
+            'item_id': 'new_off',
+            'code': 'NEW-OFF',
+            'enabled': False,
+        }
+    )
+    after['items'].append(
+        {**copy.deepcopy(after['items'][0]), 'item_id': 'new_on', 'code': 'NEW-ON', 'enabled': True}
+    )
+    diff, _ = price_table.diff_tables(before, after)
+    assert _diff_row(diff, 'new_off')['enabled'] is False
+    assert _diff_row(diff, 'new_on')['enabled'] is True
+
+
 def test_every_item_field_that_can_change_is_named_in_the_diff():
     before = price_table.normalize_table(_priced_starter(), publish=False)
     assert set(before['items'][0]) - {'item_id'} == set(price_table._DIFF_ITEM_FIELDS)

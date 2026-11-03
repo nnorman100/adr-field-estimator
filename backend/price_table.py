@@ -1324,6 +1324,7 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
                     'after': after_it['unit_price'],
                     'percent': None,
                     'warnings': row_warnings,
+                    'enabled': after_it['enabled'],
                 }
             )
             continue

@@ -428,3 +428,22 @@ test('the review names each changed detail of an item with its before and after'
     'Air mover (unit per day): $10.00 to $12.00, waste 0% -> 5%',
   );
 });
+
+test('the review says when an added item starts switched off', () => {
+  const row = { name: 'Generator', unit: 'day', change: 'added', after: '50.00' };
+  assert.equal(Prices.diffText({ ...row, enabled: true }), 'Added Generator (day) at $50.00');
+  assert.equal(
+    Prices.diffText({ ...row, enabled: false }),
+    'Added Generator (day) at $50.00, switched off',
+  );
+});
+
+test('a second additional-work item starts switched off, as the server allows only one on', () => {
+  const on = { item_id: 'additional_work', code: 'WORK', group: 'extras', enabled: true };
+  assert.equal(Prices.newItem('extras', 'Night work', 'hour', 'typed', [on]).enabled, false);
+  assert.equal(
+    Prices.newItem('extras', 'Night work', 'hour', 'typed', [{ ...on, enabled: false }]).enabled,
+    true,
+  );
+  assert.equal(Prices.newItem('labor', 'Crew', 'hour', 'typed', [on]).enabled, true);
+});
