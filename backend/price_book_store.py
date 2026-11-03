@@ -442,7 +442,7 @@ class PriceBookStore:
             else 'New pricing uses these rates. Existing jobs keep their saved rates.',
         }
         if self._starts_from_catalog(company['company_id']):
-            # The blank rows stay beside the starter table, which is what the editor reads today.
+            # The blank rows remain for API compatibility and the v1 template; the editor reads items.
             pub = public_table(starter_table(), manage=manage)
             view.update(
                 starter=True,

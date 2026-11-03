@@ -118,10 +118,8 @@
             reviewReprice().catch((e) => say(e.message, 'error')),
           ),
         );
-      if ($('afterHoursLabel'))
-        $('afterHoursLabel').textContent = view.table?.policy
-          ? afterHoursSentenceFor(view.table)
-          : afterHoursSentence(view.display_rates, view.sheet_rates);
+      if ($('afterHoursLabel') && !view.table)
+        $('afterHoursLabel').textContent = afterHoursSentence(view.display_rates, view.sheet_rates);
       if (typeof renderJobChargesSummary === 'function') renderJobChargesSummary();
     } catch (e) {
       if (mine !== jobSeq) return;
@@ -736,27 +734,6 @@
       String(a.item_id).localeCompare(String(b.item_id)),
     );
     return JSON.stringify(sortKeys({ items, policy: (table && table.policy) || {} }));
-  }
-  function percentText(multiplier) {
-    const percent = Math.round((Number(multiplier) - 1) * 100000) / 1000;
-    return String(percent);
-  }
-  function money(value) {
-    return '$' + Number(value).toFixed(2);
-  }
-  // The sentence under the After-hours box for a v2 job, built from the table the job is priced from.
-  function afterHoursSentenceFor(table) {
-    const policy = (table && table.policy) || {},
-      charge = ((table && table.items) || []).find(
-        (item) => item.quantity_source === 'after_hours' && item.unit_price !== '',
-      ),
-      percent = percentText(policy.after_hours?.multiplier || '1');
-    const parts = [];
-    if (charge) parts.push(money(charge.unit_price) + ' job charge');
-    if (Number(percent) > 0) parts.push(percent + '% on labor and materials');
-    return parts.length
-      ? 'After-hours loss: ' + parts.join(' and ') + '.'
-      : 'After-hours loss: no extra charge.';
   }
   function problemKind(problem) {
     return /enter a unit price/.test(problem.message || '') ? 'blank' : 'other';
@@ -1775,7 +1752,6 @@
     AFTER_HOURS_DEFAULT,
     grouped,
     afterHoursSentence,
-    afterHoursSentenceFor,
     groupLabel,
     unitLabel,
     sourceLabel,

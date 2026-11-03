@@ -1201,3 +1201,40 @@ test.describe('a slow sample answer', () => {
     expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
   });
 });
+
+test("a v2 job's after-hours sentence has the table's percent whichever code answers first", async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', {
+    data: {
+      items: { after_hours_charge: { unit_price: '200.00' } },
+      policy: { after_hours: { multiplier: '1.250' } },
+    },
+  });
+  await start(page, 'owner');
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await page.locator('.task-nav [data-task="property"]').click();
+  const sentence = page.locator('#afterHoursLabelV2');
+  await expect(sentence).toContainText('$200.00');
+  await expect(sentence).toContainText('25% on labor and materials');
+  await expect(sentence).not.toContainText('20%');
+
+  // The job's pricing answers after the form was built.
+  await page.evaluate(() => Prices.noteJob());
+  await expect(sentence).toContainText('25% on labor and materials');
+  await expect(page.locator('#afterHoursLabel')).toHaveCount(0);
+
+  // It answers before the form is built: nothing is written, and the form then sets the sentence.
+  const written = await page.evaluate(async () => {
+    const label = document.getElementById('afterHoursLabelV2');
+    label.id = 'afterHoursLabel';
+    label.textContent = 'not built yet';
+    await Prices.noteJob();
+    return label.textContent;
+  });
+  expect(written).toBe('not built yet');
+  await page.evaluate(() => ScopeItems.refresh());
+  await expect(sentence).toContainText('25% on labor and materials');
+});

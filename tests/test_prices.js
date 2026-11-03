@@ -303,33 +303,6 @@ test('the unpublished-changes comparison ignores item order but sees every setti
   assert.notEqual(Prices.canon(table), Prices.canon(priced));
 });
 
-test('the after-hours sentence comes from the pinned policy and charge item', () => {
-  const table = (multiplier, price) => ({
-    policy: { after_hours: { multiplier } },
-    items: price === undefined ? [] : [{ quantity_source: 'after_hours', unit_price: price }],
-  });
-  assert.equal(
-    Prices.afterHoursSentenceFor(table('1.200', '200.00')),
-    'After-hours loss: $200.00 job charge and 20% on labor and materials.',
-  );
-  assert.equal(
-    Prices.afterHoursSentenceFor(table('1.250')),
-    'After-hours loss: 25% on labor and materials.',
-  );
-  assert.equal(
-    Prices.afterHoursSentenceFor(table('1.000', '75.5')),
-    'After-hours loss: $75.50 job charge.',
-  );
-  assert.equal(Prices.afterHoursSentenceFor(table('1.000')), 'After-hours loss: no extra charge.');
-  assert.equal(
-    Prices.afterHoursSentenceFor({
-      policy: { after_hours: { multiplier: '1.100' } },
-      items: [{ quantity_source: 'after_hours', unit_price: '' }],
-    }),
-    'After-hours loss: 10% on labor and materials.',
-  );
-});
-
 test('a unit always agrees with where the quantity comes from', () => {
   assert.equal(Prices.sourceOptions('job_charges')[0], 'typed');
   assert.equal(Prices.sourceOptions('demolition')[0], 'room:demolition:unfinished');
