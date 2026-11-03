@@ -1329,6 +1329,9 @@ summary {
 .estimate-summary .estimate-total td {
   font-weight: 700;
 }
+body:not(.has-documents) #quantityNotes {
+  display: none;
+}
 .claim-summary p {
   margin: 0.25rem 0;
   text-align: right;

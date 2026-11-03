@@ -157,9 +157,7 @@ def stored_documents(store):
 
 def test_link_never_delivers_quantity_notes_before_or_after_signing(ready):
     _, store, _, value = ready
-    note = dict(
-        item='labor_hours', label='Labor hours', measured=8, entered=6, reason='Crew left early'
-    )
+    note = dict(label='Labor hours', measured=8, entered=6, reason='Crew left early')
     stored_documents(store)['quantity_notes'] = [note]
     pending = homeowner(value).get('/api/sign')
     assert pending.json()['status'] == 'pending'

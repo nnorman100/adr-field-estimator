@@ -50,7 +50,6 @@ function v2Documents(documents, mode = 'range', { breakdown = false } = {}) {
       line('FAN', 'Air mover', 6, 'unit_day', 30, 180, {}),
     ],
     estimate: {
-      calculation_version: 'dryscope-v2',
       mode,
       low: LOW,
       ...(range ? { high: HIGH } : {}),
@@ -65,7 +64,6 @@ function v2Documents(documents, mode = 'range', { breakdown = false } = {}) {
     },
     quantity_notes: [
       {
-        item: 'Kitchen:finished_sf',
         label: 'Finished area',
         room: 'Kitchen',
         measured: 320,

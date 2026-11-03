@@ -658,7 +658,6 @@ class EstimateEnd(StrictModel):
 class EstimateSummary(StrictModel):
     """How a company price table produced the estimate; absent on documents priced before them."""
 
-    calculation_version: Literal['dryscope-v2']
     mode: Literal['range', 'single']
     low: EstimateEnd
     high: EstimateEnd | None = None
@@ -674,9 +673,8 @@ class EstimateSummary(StrictModel):
 
 
 class QuantityNote(StrictModel):
-    """An estimator's override of a walkthrough-measured quantity, for the owner's eyes only."""
+    """An estimator's override of a walkthrough-measured quantity, for the company owner only."""
 
-    item: str = Field(max_length=120)
     label: str = Field(max_length=120)
     room: str | None = Field(default=None, max_length=100)
     measured: float
@@ -703,5 +701,5 @@ class AuditDocuments(StrictModel):
     pending_extras: int = 0
     price_basis: PriceBasis | None = None
     estimate: EstimateSummary | None = None
-    # Estimator-only (never delivered by document links); absent when nothing was overridden.
+    # Owner-only (public_record, document and signing links remove it); absent when nothing was overridden.
     quantity_notes: list[QuantityNote] | None = None

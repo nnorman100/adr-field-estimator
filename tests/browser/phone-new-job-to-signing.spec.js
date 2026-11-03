@@ -117,13 +117,17 @@ test.describe('price-table documents', () => {
         await expect(page.locator('#proposalBody')).toContainText('Sales tax (8%)');
         await expect(page.locator('#proposalBody')).toContainText('Overhead and profit (10%)');
         await fits(page, 'price-table proposal');
-        // The estimator sees the company-only override note; it is not part of the proposal.
+        // The override note the server sends the owner stays off the in-person signing screen.
+        await expect(page.locator('#panel-review #quantityNotes')).toHaveCount(0);
+        await expect(page.locator('#quantityNotes')).toBeHidden();
+        await expect(page.locator('#proposalBody')).not.toContainText('Closet not wet');
+        await page.locator('.task-nav [data-task="property"]').click();
         await expect(page.locator('#quantityNotes')).toBeVisible();
         await page.locator('#quantityNotes > summary').click();
         await expect(page.locator('#quantityNotesBody')).toContainText(
           'measured 320, entered 300 · Reason: Closet not wet',
         );
-        await expect(page.locator('#proposalBody')).not.toContainText('Closet not wet');
+        await page.locator('.task-nav [data-task="review"]').click();
         // The itemized claim adds the Xactimate column and the adjustments before its total.
         await page.locator('[data-tab="claim"]').click();
         // Phones show the claim as cards; the Xactimate code rides on the line's card.

@@ -861,7 +861,7 @@ def test_v2_documents_range_mode_print_summary_lines_and_explanation(monkeypatch
     assert (proposal['proposed_cost_low'], proposal['proposed_cost']) == (8489.80, 11896.00)
     assert proposal['estimate_mode'] == 'range'
     assert docs['xactimate_total'] == 8489.80
-    assert estimate['calculation_version'] == 'dryscope-v2' and estimate['mode'] == 'range'
+    assert estimate['mode'] == 'range' and 'calculation_version' not in estimate
     assert estimate['low'] == dict(
         subtotal=6640,
         after_hours=1030,
@@ -1136,7 +1136,6 @@ def test_quantity_overrides_become_an_estimator_only_note(monkeypatch):
     docs = v2_documents(monkeypatch, data=InspectionData.model_validate(values))
     assert docs['quantity_notes'] == [
         dict(
-            item='Kitchen:finished_sf',
             label='Finished area',
             room='Kitchen',
             measured=650.0,
@@ -1144,7 +1143,6 @@ def test_quantity_overrides_become_an_estimator_only_note(monkeypatch):
             reason='Hall carpet already removed',
         ),
         dict(
-            item='labor_hours',
             label='Labor hours',
             measured=8.0,
             entered=6.0,

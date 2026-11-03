@@ -30,6 +30,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `profile_manage` | Company profile and logo | yes | no | no |
 | `delivery_manage` | Company delivery settings | yes | no | no |
 | `delivery_resend` | Resend signed documents | yes | no | yes |
+| `quantity_notes_read` | Receive estimator quantity-override notes with a job's documents (the API omits them for everyone else, including superadmin support and all links) | yes | no | no |
 | `prices_read` | See company price books, enabled items (including in version diffs) and settings (only when `PRICE_BOOKS_ENABLED`; added in `_capabilities`) | yes | yes | yes |
 | `prices_manage` | Edit company price books, items and settings, including the owner-only working copy; export disabled items (only when `PRICE_BOOKS_ENABLED`) | yes | no | no |
 

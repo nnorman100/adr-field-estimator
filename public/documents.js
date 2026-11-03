@@ -100,9 +100,9 @@
       list.append(
         node(
           'li',
-          (item.description || item.desc) +
+          item.description +
             ' · ' +
-            String(item.quantity ?? item.qty) +
+            String(item.quantity) +
             ' ' +
             item.unit +
             ' · ' +
@@ -163,7 +163,8 @@
       }
       $('auditNotes').hidden = !notes.childElementCount;
     }
-    // Quantity overrides are for the company: the signing page has no #quantityNotes.
+    // Quantity overrides reach only the owner: the server omits them for everyone else, and the
+    // panel sits on Check Scope, away from the review screen used for in-person signing.
     const quantity = $('quantityNotesBody');
     if (quantity) {
       quantity.replaceChildren();

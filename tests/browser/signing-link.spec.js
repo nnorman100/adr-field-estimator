@@ -412,8 +412,9 @@ test.describe('price-table documents', () => {
         );
         await view.locator('[data-tab="claim"]').click();
         await expect(view.locator('#claimAdjustments p').first()).toHaveCSS('text-align', 'right');
-        // The company-only override note is the estimator's: the homeowner page has no place for it.
-        await expect(page.locator('#quantityNotes')).toBeVisible();
+        // The override note is the owner's: neither signing screen has a place for it.
+        await expect(page.locator('#panel-review #quantityNotes')).toHaveCount(0);
+        await expect(page.locator('#quantityNotes')).toBeHidden();
         await expect(view.locator('#quantityNotes')).toHaveCount(0);
         await expect(view.locator('body')).not.toContainText('Closet not wet');
         expect(await view.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(

@@ -630,8 +630,16 @@ def reusable_audit(record, revision, identity, customer, claim=None, price_basis
     )
 
 
-def public_record(record, *, readiness_state=None):
+def public_record(record, *, readiness_state=None, quantity_notes=False):
     result = {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
+    if not quantity_notes:
+        if result.get('documents'):
+            result['documents'] = signing_links.without_quantity_notes(result['documents'])
+        if result.get('audit'):
+            result['audit'] = {
+                **result['audit'],
+                'documents': signing_links.without_quantity_notes(result['audit']['documents']),
+            }
     # An unsigned draft carries the equipment-sizing check for its saved data; it is derived on
     # every read, never stored, and a signed record keeps only what its documents printed.
     if 'data' in result and 'auth_id' not in result and result.get('status') != 'signed':
@@ -657,6 +665,19 @@ async def saved_readiness(store, uid, record):
     return readiness(record['data'], record.get('photos', []), claim, log['readings'])
 
 
+async def reads_quantity_notes(store, uid, record):
+    documents = record.get('documents') or (record.get('audit') or {}).get('documents') or {}
+    if 'quantity_notes' not in documents:
+        return False
+    try:
+        await stored(store._access, uid, record, 'quantity_notes_read')
+    except HTTPException as error:
+        if error.status_code != 403:
+            raise
+        return False
+    return True
+
+
 async def draft_record(store, uid, record):
     state = None
     if (
@@ -666,7 +687,11 @@ async def draft_record(store, uid, record):
         and record.get('status') != 'signed'
     ):
         state = await saved_readiness(store, uid, record)
-    return public_record(record, readiness_state=state)
+    return public_record(
+        record,
+        readiness_state=state,
+        quantity_notes=await reads_quantity_notes(store, uid, record),
+    )
 
 
 def parse_json_from_llm(text):

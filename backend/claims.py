@@ -323,7 +323,6 @@ def v2_estimate(priced, policy):
     multiplier = Decimal(str(policy['after_hours']['multiplier']))
     tax = policy['sales_tax']
     return dict(
-        calculation_version=V2,
         mode=mode,
         low=end_summary(totals['low']),
         high=end_summary(totals['high']) if mode == 'range' else None,
@@ -347,7 +346,6 @@ def quantity_notes(data):
         if label and override.measured != override.entered:
             notes.append(
                 dict(
-                    item=key,
                     label=label,
                     room=room,
                     measured=float(override.measured),

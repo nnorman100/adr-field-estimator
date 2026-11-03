@@ -2264,6 +2264,64 @@ def signed_job(client, current, store):
     store.create_inspection('other-owner', OTHER, data('Other company job'))
 
 
+QUANTITY_NOTE = dict(label='Labor hours', measured=8, entered=6, reason='Synthetic override reason')
+
+
+def with_note(documents):
+    documents['quantity_notes'] = [QUANTITY_NOTE]
+
+
+@pytest.mark.parametrize('uid, allowed', [('owner', True), ('estimator', False), ('office', False)])
+def test_only_the_owner_receives_quantity_notes_on_a_draft(api, uid, allowed):
+    client, current, store = api
+    store.create_inspection('estimator', ID, data())
+    current['uid'] = 'estimator'
+    client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    saved = store.db.records['inspections/' + ID]['audit']['documents']
+    with_note(saved)
+    current['uid'] = uid
+    assert ('quantity_notes_read' in client.get('/api/session').json()['capabilities']) is allowed
+    opened = client.get('/api/inspections/' + ID)
+    assert opened.status_code == 200, opened.text
+    assert ('quantity_notes' in opened.json()['audit']['documents']) is allowed
+    assert ('Synthetic override reason' in opened.text) is allowed
+    # The audit route's answer for an audit it can reuse goes through the same check.
+    if uid != 'office':
+        audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+        assert audited.status_code == 200, audited.text
+        assert ('quantity_notes' in audited.json()['audit']['documents']) is allowed
+    # Omitting the note from a response leaves the saved record as it was.
+    assert saved['quantity_notes'] == [QUANTITY_NOTE]
+
+
+@pytest.mark.parametrize('uid, allowed', [('owner', True), ('estimator', False), ('office', False)])
+def test_only_the_owner_receives_quantity_notes_on_a_signed_job(api, uid, allowed):
+    client, current, store = api
+    signed_job(client, current, store)
+    with_note(store.db.records['inspections/' + ID]['audit']['documents'])
+    with_note(store.db.records['authorizations/' + SIGNED]['documents'])
+    current['uid'] = uid
+    agreement = client.get('/api/authorizations/' + SIGNED)
+    assert agreement.status_code == 200, agreement.text
+    assert ('quantity_notes' in agreement.json()['documents']) is allowed
+    inspection = client.get('/api/inspections/' + ID)
+    assert inspection.status_code == 200, inspection.text
+    assert ('Synthetic override reason' in inspection.text) is allowed
+
+
+def test_superadmin_support_never_receives_quantity_notes(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    with_note(store.db.records['inspections/' + ID]['audit']['documents'])
+    with_note(store.db.records['authorizations/' + SIGNED]['documents'])
+    current['uid'] = 'admin'
+    base = '/api/admin/companies/adr'
+    for path in ('/jobs/' + ID, '/authorizations/' + SIGNED):
+        opened = client.get(base + path)
+        assert opened.status_code == 200, opened.text
+        assert 'Synthetic override reason' not in opened.text
+
+
 @pytest.mark.parametrize('uid', ['admin', 'owner'])
 def test_superadmin_support_reads_any_company_and_audits_each_view(api, uid):
     client, current, store = api

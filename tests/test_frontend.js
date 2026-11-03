@@ -1269,6 +1269,13 @@ console.log(
   copy.estimate.lines = [{ description: 'FAN work', quantity: 2, unit: 'each', total: 20 }];
   homeownerLink.render(copy);
   assert.match(flat(homeownerLink.els.proposalBody), /FAN work · 2 each · \$20\.00/);
+  const aliased = page();
+  const legacyLine = documents('range', {
+    xactimate_scope: [{ desc: 'Old name', qty: 9, unit: 'hour', total: 0 }],
+  });
+  legacyLine.estimate.show_line_breakdown = true;
+  aliased.render(legacyLine);
+  assert.doesNotMatch(flat(aliased.els.proposalBody), /Old name · 9 hour/);
   assert.equal(homeownerLink.els.claimItems.children.length, 0);
 
   // An adjuster's link holds the low end's amounts and an emptied proposal: its claim adds up.
@@ -1313,7 +1320,6 @@ console.log(
     documents('range', {
       quantity_notes: [
         {
-          item: 'Hall:finished_sf',
           label: 'Finished area',
           room: 'Hall',
           measured: 650,
