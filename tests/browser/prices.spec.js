@@ -301,6 +301,8 @@ async function startUnset(page, request, role = 'owner') {
 }
 // Gives every blank price on the page a value, the way an owner would row by row.
 async function priceEverything(page, value = '10.00') {
+  // The evaluate below does not wait: on a page still loading it would find no inputs to fill.
+  await expect(page.locator('#priceEditor')).toBeVisible();
   await page.evaluate((price) => {
     document.querySelectorAll('details.price-group').forEach((d) => (d.open = true));
     for (const input of document.querySelectorAll('input[name^="price_"]')) {
