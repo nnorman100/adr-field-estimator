@@ -310,6 +310,8 @@ async function priceEverything(page, value = '10.00') {
     }
   }, value);
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  // The first sample line pushes the page down; a click in that same instant misses on WebKit.
+  await expect(page.locator('#priceSamples p').first()).toBeVisible();
 }
 async function publishTable(page, reason = 'First price table') {
   await page.locator('#priceReason').fill(reason);
