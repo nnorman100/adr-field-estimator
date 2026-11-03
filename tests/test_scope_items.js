@@ -50,8 +50,22 @@ test('a new draft starts at the table defaults and seeds typed items', () => {
   assert.equal(data.monitoring_hours, 500);
   assert.equal(data.haul_loads, 0, 'a disabled item contributes nothing');
   assert.deepEqual(JSON.parse(JSON.stringify(data.scope_items)), {
-    setup: { quantity: 1, count: 0, days: 0 },
+    setup: { quantity: '1', count: 0, days: 0 },
   });
+});
+
+test('a default quantity follows the type its job field stores', () => {
+  const t = table([
+    item('hauling', 'job_charges', 'field:haul_loads', { default_quantity: '1.5' }),
+    item('monitoring', 'job_charges', 'field:monitoring_hours', { default_quantity: '13.25' }),
+    item('labor', 'labor', 'field:labor_hours', { default_quantity: '1.5' }),
+    item('setup', 'job_charges', 'typed', { default_quantity: '2.50' }),
+  ]);
+  const data = ScopeItems.applyDefaults(core.emptyData({ v2: true }), t);
+  assert.equal(data.haul_loads, 1, 'a table published earlier cannot break a new draft');
+  assert.equal(data.monitoring_hours, 13.25);
+  assert.equal(data.labor_hours, 1.5);
+  assert.equal(data.scope_items.setup.quantity, '2.5', "the server's canonical text");
 });
 
 test('a v2 draft never carries the sheet charge quantities', () => {
@@ -146,6 +160,32 @@ test('quantities for items the table no longer lists are kept and named', () => 
   assert.deepEqual(Array.from(ScopeItems.unlisted({}, t)), []);
 });
 
+test('field quantities whose item is gone are named; day counts and zeros are not', () => {
+  const t = table([
+    item('crew', 'labor', 'field:labor_hours'),
+    item('fans', 'drying_equipment', 'count_days:air_movers*drying_days'),
+  ]);
+  const data = {
+    labor_hours: 4,
+    air_movers: 2,
+    air_scrubbers: 1,
+    monitoring_hours: 13.25,
+    haul_loads: 0,
+    drying_days: 3,
+    wood_floor_days: 7,
+  };
+  assert.deepEqual(Array.from(ScopeItems.unlistedFields(data, t)), [
+    'air_scrubbers',
+    'monitoring_hours',
+  ]);
+  // With no table to compare against, nothing can be called removed.
+  assert.deepEqual(Array.from(ScopeItems.unlistedFields(data, null)), []);
+  assert.deepEqual(
+    Array.from(ScopeItems.unlisted({ scope_items: { kept: { quantity: '1' } } }, null)),
+    [],
+  );
+});
+
 test('only an untouched office-created job is given the table defaults', () => {
   const sheet = {
     emergency_calls: 1,
@@ -163,45 +203,106 @@ test('only an untouched office-created job is given the table defaults', () => {
   assert.equal(ScopeItems.untouched({ ...sheet, scope_items: {} }), false);
 });
 
-test('an override is recorded only with a short reason and only while the value differs', () => {
+test('an override keeps its entered value current and a reason only while the value differs', () => {
   const data = {
     air_movers: 5,
     rooms: [{ name: 'Kitchen', finished_sf: 160 }],
+    quantity_overrides: {
+      air_movers: { measured: '3', entered: '3' },
+      'Kitchen:finished_sf': { measured: '120', entered: '120' },
+    },
   };
-  const measured = { air_movers: 3, 'Kitchen:finished_sf': 120 };
-  assert.deepEqual(plain(ScopeItems.overridesFor(data, measured, {})), {}, 'no reason, no record');
-  assert.deepEqual(plain(ScopeItems.overridesFor(data, measured, { air_movers: 'ok' })), {});
-  const both = ScopeItems.overridesFor(data, measured, {
+  assert.deepEqual(
+    plain(ScopeItems.overridesFor(data, {})),
+    {
+      air_movers: { measured: '3', entered: '5' },
+      'Kitchen:finished_sf': { measured: '120', entered: '160' },
+    },
+    'no reason yet: measured and entered are kept, no reason is invented',
+  );
+  assert.equal(ScopeItems.missingReason(data), false, 'entered is still at the measured value');
+  assert.equal(
+    ScopeItems.missingReason({ quantity_overrides: ScopeItems.overridesFor(data, {}) }),
+    true,
+  );
+  assert.equal(ScopeItems.overridesFor(data, { air_movers: 'ok' }).air_movers.reason, undefined);
+  assert.equal(ScopeItems.overridesFor(data, { air_movers: '     ' }).air_movers.reason, undefined);
+  const both = ScopeItems.overridesFor(data, {
     air_movers: ' Added two fans  for the hall ',
     'Kitchen:finished_sf': 'Wet behind pantry',
   });
-  assert.deepEqual(JSON.parse(JSON.stringify(both)), {
-    air_movers: { measured: 3, entered: 5, reason: 'Added two fans for the hall' },
-    'Kitchen:finished_sf': {
-      measured: 120,
-      entered: 160,
-      reason: 'Wet behind pantry',
-    },
+  assert.deepEqual(plain(both), {
+    air_movers: { measured: '3', entered: '5', reason: 'Added two fans for the hall' },
+    'Kitchen:finished_sf': { measured: '120', entered: '160', reason: 'Wet behind pantry' },
   });
+  assert.equal(ScopeItems.missingReason({ quantity_overrides: both }), false);
   assert.deepEqual(
-    plain(ScopeItems.overridesFor({ ...data, air_movers: 3 }, measured, { air_movers: 'unused' })),
-    {},
+    plain(ScopeItems.overridesFor({ ...data, air_movers: 3 }, { air_movers: 'unused' })).air_movers,
+    { measured: '3', entered: '3' },
     'back at the measured value, nothing to explain',
   );
-  // An override saved earlier, or on another phone, is not dropped just because this phone has no measurement.
-  const elsewhere = {
-    ...data,
-    quantity_overrides: { hepa_filters: { measured: 1, entered: 2, reason: 'Second scrubber' } },
-  };
-  assert.deepEqual(plain(ScopeItems.overridesFor(elsewhere, {}, {})), {
-    hepa_filters: { measured: 1, entered: 2, reason: 'Second scrubber' },
+  // A measured value saved on another phone asks for a reason here too, with no local row at all.
+  const again = { ...data, air_movers: 7, quantity_overrides: both };
+  assert.deepEqual(plain(ScopeItems.overridesFor(again)).air_movers, {
+    measured: '3',
+    entered: '7',
+    reason: 'Added two fans for the hall',
   });
-  // A saved reason carries over when the screen has none to read.
-  const saved = { ...data, quantity_overrides: { air_movers: { reason: 'Hall corner was wet' } } };
+  // A removed room takes its values with it; clearing a value reads as 0.
+  assert.deepEqual(Object.keys(ScopeItems.overridesFor({ ...data, rooms: [] }, {})), [
+    'air_movers',
+  ]);
   assert.equal(
-    ScopeItems.overridesFor(saved, { air_movers: 3 }).air_movers.reason,
-    'Hall corner was wet',
+    ScopeItems.overridesFor({ ...data, rooms: [{ name: 'Kitchen' }] }, {})['Kitchen:finished_sf']
+      .entered,
+    '0',
   );
+});
+
+test('the reason rule is the one the server applies', () => {
+  for (const good of ['abc', ' a  b ', 'é'.repeat(3), 'Two fans 🙂'])
+    assert.equal(ScopeItems.reasonOk(good), true, good);
+  for (const bad of ['', '   ', 'ab', ' a ', 'x'.repeat(301), 'bad\u200bvalue', 'bad\u0001value'])
+    assert.equal(ScopeItems.reasonOk(bad), false, bad);
+});
+
+test('a room rename carries its measured values and leaves other rooms alone', () => {
+  const data = {
+    quantity_overrides: {
+      air_movers: { measured: '3', entered: '3' },
+      'Kitchen:finished_sf': { measured: '80', entered: '95', reason: 'Wet behind pantry' },
+      'Kitchen east:finished_sf': { measured: '10', entered: '10' },
+    },
+  };
+  ScopeItems.renameRoom('Kitchen', 'Galley', data);
+  assert.deepEqual(Object.keys(data.quantity_overrides).sort(), [
+    'Galley:finished_sf',
+    'Kitchen east:finished_sf',
+    'air_movers',
+  ]);
+  assert.equal(data.quantity_overrides['Galley:finished_sf'].reason, 'Wet behind pantry');
+});
+
+test('a walkthrough fill records what it measured, and Undo restores what came before', () => {
+  context.state = { draft: { inspection_id: 'job' }, session: { pricing_version: 'dryscope-v2' } };
+  const room = { name: 'Kitchen', finished_sf: 80 };
+  const data = { air_movers: 3, rooms: [room] };
+  const fans = { target: data, field: 'air_movers', before: 0, after: 3 };
+  const area = { target: room, field: 'finished_sf', before: 0, after: 80.5 };
+  ScopeItems.noteMeasured([fans, area, { target: room, field: 'name', after: 'Kitchen' }], data);
+  assert.deepEqual(plain(data.quantity_overrides), {
+    air_movers: { measured: '3', entered: '3' },
+    'Kitchen:finished_sf': { measured: '80.5', entered: '80.5' },
+  });
+  ScopeItems.undoMeasured(fans, data);
+  assert.deepEqual(Object.keys(data.quantity_overrides), ['Kitchen:finished_sf']);
+  // A second fill measures again; undoing it returns to the first measurement.
+  const second = { target: room, field: 'finished_sf', before: 80.5, after: 90 };
+  ScopeItems.noteMeasured([second], data);
+  assert.equal(data.quantity_overrides['Kitchen:finished_sf'].measured, '90');
+  ScopeItems.undoMeasured(second, data);
+  assert.equal(data.quantity_overrides['Kitchen:finished_sf'].measured, '80.5');
+  delete context.state;
 });
 
 test('the after-hours line names the charge and the percent from the pinned table', () => {
@@ -243,8 +344,10 @@ test('device readiness mirrors the server price gaps', () => {
     address: 'x',
     year_built: 2000,
     rooms: [
-      { name: 'Hall', loss: 'mold', category: 3, finished_sf: 5, wet_floor_sf: 0 },
+      { name: 'Hall', loss: 'mold', category: 3, finished_sf: 5 },
       { name: 'Den', loss: 'mold', category: 3, finished_sf: 5, wet_floor_sf: 20 },
+      { name: 'Bath', loss: 'mold', category: 3, finished_sf: 5, wet_floor_sf: 0 },
+      { name: 'Attic', loss: 'mold', category: 3, finished_sf: 5, floor_sf: 30 },
     ],
     air_movers: 1,
     scope_confirmed: true,

@@ -405,7 +405,12 @@
       const name = (room.name || '').trim() || 'Unnamed room';
       if (!(room.finished_sf > 0) && !(room.unfinished_sf > 0))
         add('demolition', 'No measured demolition area', name);
-      if (pricing?.prices_set && pricing.area_basis === 'wet_floor' && !(room.wet_floor_sf > 0))
+      if (
+        pricing?.prices_set &&
+        pricing.area_basis === 'wet_floor' &&
+        room.wet_floor_sf == null &&
+        room.floor_sf == null
+      )
         add('area_basis', 'No wet floor area entered; your company prices by wet floor area', name);
       if (!room.loss) add('loss', 'Loss type not confirmed', name);
       if (roomLoss(room) !== 'mold') {

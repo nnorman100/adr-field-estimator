@@ -1268,6 +1268,13 @@ class PriceBookStore:
         ):
             raise Conflict('The saved prices no longer match this draft. Review before signing.')
 
+    def job_prices_unset(self, uid, record):
+        """True when the job has no pin and its company has no published prices to pin."""
+        job, _ = self.ws.job_access(uid, record, 'read')
+        if self._pin(record['inspection_id']):
+            return False
+        return _is_unset(self.effective(self.ws.read('_companies', job['company_id'])))
+
     def job_view(self, uid, record):
         self._require()
         job, actor = self.ws.job_access(uid, record, 'read')

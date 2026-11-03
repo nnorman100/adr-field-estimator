@@ -4,11 +4,14 @@ import json
 import subprocess
 from pathlib import Path
 
+import anyio
 import pytest
 import backend.main as bm
 from backend import ai_features, price_books, price_table
+from backend.contracts import CreateInspection, InspectionData, UpdateInspection
 from backend.inspection_store import Conflict
 from backend.pricing import PricedJob
+from pydantic import ValidationError
 from backend.readiness import readiness
 from tests.test_price_books import _publish_v2, _v2_table, enabled  # noqa: F401
 from tests.test_workspaces import ID, OTHER, api, data, store  # noqa: F401
@@ -190,7 +193,7 @@ READINESS_CASES = [
     ('no pricing context', None, []),
     ('v2 table with demolition basis', {'prices_set': True, 'area_basis': 'demolition'}, []),
     (
-        'wet floor basis names each room without a wet area',
+        'wet floor basis names only a room with neither area',
         {'prices_set': True, 'area_basis': 'wet_floor'},
         ['area_basis:Hall'],
     ),
@@ -200,8 +203,11 @@ READINESS_DATA = {
     'address': 'Synthetic property',
     'year_built': 2000,
     'rooms': [
-        {'name': 'Hall', 'loss': 'mold', 'category': 3, 'finished_sf': 5, 'wet_floor_sf': 0},
+        {'name': 'Hall', 'loss': 'mold', 'category': 3, 'finished_sf': 5},
         {'name': 'Den', 'loss': 'mold', 'category': 3, 'finished_sf': 5, 'wet_floor_sf': 20},
+        # A deliberate 0 (only the walls are wet) and a whole-floor room are both answers.
+        {'name': 'Bath', 'loss': 'mold', 'category': 3, 'finished_sf': 5, 'wet_floor_sf': 0},
+        {'name': 'Attic', 'loss': 'mold', 'category': 3, 'finished_sf': 5, 'floor_sf': 30},
     ],
     'air_movers': 1,
     'scope_confirmed': True,
@@ -262,8 +268,163 @@ def test_saved_readiness_reports_a_wet_floor_basis_gap(api, enabled, monkeypatch
     assert 'area_basis' not in codes
 
 
+def test_saved_readiness_flags_a_company_with_no_published_prices(api, enabled):  # noqa: F811
+    client, current, store = api
+    current['uid'] = 'other-owner'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    record = store.get_inspection('other-owner', ID)
+    assert anyio.run(bm.readiness_pricing, store, 'other-owner', record) == {'prices_set': False}
+    # ADR always has its own prices, and a published v2 table reports its area basis.
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': OTHER, 'data': data()})
+    assert made.status_code == 200, made.text
+    record = store.get_inspection('estimator', OTHER)
+    assert anyio.run(bm.readiness_pricing, store, 'estimator', record) is None
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('30.00'))
+    assert anyio.run(bm.readiness_pricing, store, 'estimator', record) == {
+        'prices_set': True,
+        'area_basis': 'demolition',
+    }
+
+
+def test_saved_readiness_flags_no_prices_with_the_price_editor_flag_off(api):
+    client, current, store = api
+    assert price_books.price_books_enabled() is False
+    current['uid'] = 'other-owner'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    record = store.get_inspection('other-owner', ID)
+    assert anyio.run(bm.readiness_pricing, store, 'other-owner', record) == {'prices_set': False}
+
+
+def overridden(**override):
+    job = data()
+    job['air_movers'] = 5
+    job['quantity_overrides'] = {'air_movers': override}
+    return job
+
+
+@pytest.mark.parametrize(
+    'override',
+    [
+        {'measured': '3', 'entered': '5'},
+        {'measured': '3', 'entered': '5', 'reason': None},
+        {'measured': '3', 'entered': '5', 'reason': '     '},
+        {'measured': '3', 'entered': '5', 'reason': 'no'},
+        {'measured': '3', 'entered': '4', 'reason': 'Stale entered value'},
+    ],
+    ids=['no reason', 'null reason', 'blank reason', 'short reason', 'stale entered'],
+)
+def test_saves_refuse_a_changed_walkthrough_value_without_a_current_reason(api, override):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    refused = client.post(
+        '/api/inspections', json={'inspection_id': ID, 'data': overridden(**override)}
+    )
+    assert refused.status_code == 422, refused.text
+    assert ID not in str(list(store.db.records))
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    refused = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': 1, 'data': overridden(**override)},
+    )
+    assert refused.status_code == 422, refused.text
+    assert store.get_inspection('estimator', ID)['revision'] == 1
+
+
+def test_measured_value_is_stored_with_the_job_and_round_trips_unchanged(api):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    job = data()
+    job['air_movers'] = 3
+    job['quantity_overrides'] = {'air_movers': {'measured': '3', 'entered': '3'}}
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': job})
+    assert made.status_code == 200, made.text
+    # No reason key appears: the phone's copy and the server's must compare equal.
+    assert made.json()['data']['quantity_overrides'] == job['quantity_overrides']
+    job = overridden(measured='3', entered='5', reason='  Two more   fans ')
+    saved = client.put('/api/inspections/' + ID, json={'expected_revision': 1, 'data': job})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['data']['quantity_overrides']['air_movers'] == {
+        'measured': '3',
+        'entered': '5',
+        'reason': 'Two more fans',
+    }
+
+
+def test_room_overrides_must_name_a_room_and_a_measured_field():
+    room = dict(name='Kitchen: east', finished_sf=95, wet_floor_sf=None)
+    good = {'measured': '80', 'entered': '95', 'reason': 'Wet behind the pantry'}
+
+    def build(key, value=good):
+        return InspectionData(rooms=[room], quantity_overrides={key: value})
+
+    # The room name may itself hold a colon.
+    CreateInspection(inspection_id=ID, data=build('Kitchen: east:finished_sf'))
+    UpdateInspection(expected_revision=1, data=build('Kitchen: east:finished_sf'))
+    # A blank area reads as 0, so clearing a measured value needs a reason too.
+    blanked = {'measured': '80', 'entered': '0', 'reason': 'Whole floor after all'}
+    CreateInspection(inspection_id=ID, data=build('Kitchen: east:wet_floor_sf', blanked))
+    for key in ('Pantry:finished_sf', 'Kitchen: east:category', 'not_a_field', 'address'):
+        with pytest.raises(ValidationError):
+            CreateInspection(inspection_id=ID, data=build(key))
+
+
+def test_audit_refuses_a_saved_override_that_no_longer_matches_the_job(api, enabled):  # noqa: F811
+    client, current, store = api
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    stale = overridden(measured='3', entered='4', reason='Stale entered value')
+    stored = next(
+        value
+        for value in store.db.records.values()
+        if isinstance(value, dict) and value.get('inspection_id') == ID and 'data' in value
+    )
+    stored['data'] = bm.inspection_payload(InspectionData.model_validate(stale))
+    response = audit(client)
+    assert response.status_code == 400, response.text
+    assert 'does not match the entered value' in response.json()['detail']
+
+
+def test_whole_number_items_refuse_a_fractional_default_quantity():
+    def row(source, default):
+        return {
+            'item_id': 'sample_item',
+            'group': 'job_charges',
+            'name': 'Sample item',
+            'unit': 'each',
+            'quantity_source': source,
+            'unit_price': '10.00',
+            'default_quantity': default,
+        }
+
+    for field in (
+        'emergency_calls',
+        'haul_loads',
+        'air_scrubbers',
+        'hepa_filters',
+        'matterport_scans',
+        'dump_truck_loads',
+        'equipment_decon',
+        'power_distribution',
+    ):
+        with pytest.raises(ValueError, match='whole number'):
+            price_table.normalize_items([row('field:' + field, '1.5')], publish=True)
+        assert price_table.normalize_items([row('field:' + field, '2')], publish=True)
+    for source, default in (
+        ('field:monitoring_hours', '13.25'),
+        ('field:labor_hours', '1.5'),
+        ('typed', '2.5'),
+    ):
+        normalized = price_table.normalize_items([row(source, default)], publish=True)
+        assert normalized[0]['default_quantity'] == default
+
+
 def test_scope_prompt_accepts_company_price_quantities_and_never_offers_them_to_the_model():
-    from backend.contracts import InspectionData
     from backend.scope import scope_prompt
 
     job = InspectionData.model_validate(
@@ -280,7 +441,6 @@ def test_scope_prompt_accepts_company_price_quantities_and_never_offers_them_to_
 
 
 def test_scope_suggestions_validate_on_a_job_with_company_price_quantities():
-    from backend.contracts import InspectionData
     from backend.scope import ScopeChange, ScopeSuggestions, validate_suggestions
 
     job = InspectionData.model_validate(

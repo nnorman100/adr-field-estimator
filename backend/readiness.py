@@ -1,8 +1,9 @@
 """Advisory gaps only. Never stored, priced, or used as a signing gate.
 
 The device mirror is ADRCore.readiness / missingItems; shared fixtures pin parity.
-`pricing` is None for companies on the v1 rate book (no price gaps). For a v2 price table it is
-{'prices_set': bool, 'area_basis': 'demolition' | 'wet_floor'}.
+`pricing` is None for companies on the v1 rate book (no price gaps), {'prices_set': False} for a
+company with no published prices, and {'prices_set': True, 'area_basis': 'demolition' | 'wet_floor'}
+for a v2 price table. A wet floor area of 0 is deliberate; only a room with neither area is a gap.
 A setup reading is the first affected air or material reading in the drying log:
 there is no separate equipment setup timestamp or visit type in today's schema.
 """
@@ -53,7 +54,8 @@ def readiness(data, photos=None, claim=None, readings=None, pricing=None):
             pricing
             and pricing.get('prices_set')
             and pricing.get('area_basis') == 'wet_floor'
-            and not (room.get('wet_floor_sf') or 0) > 0
+            and room.get('wet_floor_sf') is None
+            and room.get('floor_sf') is None
         ):
             add(
                 'area_basis',

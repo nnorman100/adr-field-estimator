@@ -728,7 +728,7 @@ function absorb(record) {
   const firstSave = !state.record;
   state.record = record;
   // A draft first saved on the server is pinned there; read the table it was pinned to.
-  if (firstSave) window.ScopeItems?.refresh();
+  if (firstSave) window.ScopeItems?.pull();
   if (!record.audit) state.draft.homeowner_link_pending = false;
 
   window.InsightUI?.job(insightChanged);
@@ -918,6 +918,8 @@ function renderSaveStatus() {
   if (state.archived)
     show('Archived by the owner', 'Archived by the owner · local work kept on this phone');
   else if (state.conflict) show('Revision conflict', 'Revision conflict · local draft preserved');
+  else if (window.ScopeItems?.missingReason(state.draft.data))
+    show('Reason needed', 'Saved on this device · give the reason to save it to the cloud');
   else if (state.syncing) show('Saving…');
   else if (synced) show('Saved', 'Saved privately · revision ' + state.record.revision);
   else if (navigator.onLine)
@@ -993,6 +995,8 @@ async function doSync() {
     (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('jobs_create'))
   )
     return;
+  // The server refuses a changed walkthrough value with no reason; it stays on the phone until given.
+  if (window.ScopeItems?.missingReason(state.draft.data)) return renderSaveStatus();
   const id = state.draft.inspection_id;
   state.syncing = true;
   renderSaveStatus();
@@ -1150,7 +1154,12 @@ async function drainQueue() {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
       guard();
-      if (row.draft.inspection_id === state.draft?.inspection_id || row.archived) continue;
+      if (
+        row.draft.inspection_id === state.draft?.inspection_id ||
+        row.archived ||
+        window.ScopeItems?.missingReason(row.draft.data)
+      )
+        continue;
       const id = row.draft.inspection_id,
         path = '/api/inspections/' + id;
       let record;
@@ -1597,6 +1606,7 @@ function retagDefaultPhotos(before, after) {
   const rename = defaultPhotoRename(before, after);
   if (!rename) return;
   for (const photo of state.draft.photos) if (photo.room === rename.from) photo.room = rename.to;
+  window.ScopeItems?.renameRoom(rename.from, rename.to, after);
   retagScans(roomScans(after, rename.from), rename.to);
 }
 function renderWalkthroughEdits() {
@@ -1652,7 +1662,10 @@ function renderWalkthroughEdits() {
         }
         const before = structuredClone(edit.data);
         if (entry.removesRoom) edit.data.rooms.splice(edit.data.rooms.indexOf(entry.target), 1);
-        else entry.target[entry.field] = entry.before;
+        else {
+          entry.target[entry.field] = entry.before;
+          window.ScopeItems?.undoMeasured(entry, edit.data);
+        }
         retagDefaultPhotos(before, edit.data);
         edit.entries = edit.entries.filter((item) => item !== entry);
         for (const item of edit.entries)
@@ -1940,6 +1953,7 @@ function renderRooms() {
           input.setCustomValidity(roomNameTaken(input.value, room) ? ROOM_NAME_TAKEN : '');
           if (input.validationMessage === ROOM_NAME_TAKEN) return input.reportValidity();
         }
+        if (key === 'name') window.ScopeItems?.renameRoom(room.name, input.value, state.draft.data);
         room[key] = type === 'text' ? input.value : Number(input.value);
         if (key === 'name') {
           retagPhotos(photos, input.value);
@@ -2355,6 +2369,7 @@ function beginRoomRename(index) {
 function renameRoom(room, name) {
   const photos = roomPhotos(room.name),
     scans = roomScans(state.draft.data, room.name);
+  window.ScopeItems?.renameRoom(room.name, name, state.draft.data);
   room.name = name;
   retagPhotos(photos, name);
   retagScans(scans, name);

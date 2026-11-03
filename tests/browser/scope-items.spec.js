@@ -127,6 +127,73 @@ test.describe('without a service worker', () => {
     );
   });
 
+  test('a synced draft reopens with no conflict and keeps saving', async ({ page, request }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    await page.locator('[data-scope-item="setup_documentation"]').fill('2.5');
+    await page.locator('#technicianNotes').fill('Synced note');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    // The phone's acknowledged copy is byte-equal to the server's, and reopening stays clean.
+    const sameAsServer = () =>
+      page.evaluate(
+        async (value) => stable((await jsonApi('/api/inspections/' + value)).data) === state.ack,
+        id,
+      );
+    expect(await sameAsServer()).toBe(true);
+    await page.evaluate((value) => restoreDraft(value), id);
+    await expect(page.locator('#conflictActions')).toBeHidden();
+    expect(await page.evaluate(() => state.conflict)).toBe(false);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#conflictActions')).toBeHidden();
+    expect(await page.evaluate(() => state.conflict)).toBe(false);
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('[data-scope-item="setup_documentation"]').fill('4');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect(numbers((await remote(page, id)).data.scope_items).setup_documentation.quantity).toBe(4);
+  });
+
+  test('reading the pin does not rebuild a screen that already shows it', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const box = page.locator('[data-scope-item="setup_documentation"]');
+    await box.focus();
+    await box.evaluate((el) => (el.dataset.original = 'yes'));
+    await page.evaluate(() => ScopeItems.pull());
+    expect(await page.evaluate(() => document.activeElement.dataset.original)).toBe('yes');
+  });
+
+  test('a pin that differs from the company table rebuilds the room cards too', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, { policy: { area_basis: 'wet_floor' } });
+    await open(page);
+    const id = await jobId(page);
+    await publish(request, {
+      items: { ...ITEMS, air_mover: { unit_price: '35.00' } },
+      policy: { area_basis: 'demolition' },
+    });
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    const wet = page.locator('[data-room-index="0"][data-room-key="wet_floor_sf"]');
+    await page.evaluate((value) => {
+      // This phone has no row for the job: it starts from the company's current table.
+      ScopeItems.seed(value, null);
+      fillForm();
+    }, id);
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect.poll(() => wet.evaluate((el) => !el.closest('.room-more'))).toBe(true);
+  });
+
   test('a draft started before a publish keeps its pinned table and says newer prices exist', async ({
     page,
     request,
@@ -174,6 +241,50 @@ test.describe('without a service worker', () => {
     expect((await remote(page, id)).data.scope_items.retired_item).toBeUndefined();
   });
 
+  test('a field quantity whose item is gone is listed and can be removed', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, air_scrubber: { enabled: false, unit_price: '' } },
+    });
+    await open(page);
+    const id = await jobId(page);
+    await expect(page.locator('#v2Unlisted')).toBeHidden();
+    await page.evaluate(() => {
+      state.draft.data.air_scrubbers = 2;
+      changed();
+      fillForm();
+    });
+    await expect(page.locator('#v2Unlisted')).toBeVisible();
+    await page.locator('#v2Unlisted summary').click();
+    await expect(page.locator('#v2UnlistedList')).toContainText('air scrubbers · 2');
+    await page.locator('#v2UnlistedList').getByRole('button', { name: 'Remove' }).click();
+    await expect(page.locator('#v2Unlisted')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.air_scrubbers).toBe(0);
+  });
+
+  test('a company with no published prices gets the prices gap on the phone', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const pricing = await page.evaluate(() => {
+      const id = state.draft.inspection_id,
+        before = ScopeItems.readinessPricing();
+      state.session.prices_set = false;
+      const pinned = ScopeItems.readinessPricing();
+      state.session.pricing_version = null;
+      ScopeItems.seed(id, null);
+      return { before, pinned, unset: ScopeItems.readinessPricing() };
+    });
+    expect(pricing.before.prices_set).toBe(true);
+    expect(pricing.pinned.prices_set).toBe(true);
+    expect(pricing.unset).toEqual({ prices_set: false });
+  });
+
   test('a company on the v1 rate book sees the form it always had', async ({ page }) => {
     await open(page);
     await expect(page.locator('#v1Scope')).toBeVisible();
@@ -205,9 +316,18 @@ test.describe('without a service worker', () => {
     await expect(reason).toBeHidden();
     await page.locator('#airMovers').fill('5');
     await expect(reason).toBeVisible();
-    // Unexplained, the form refuses to go on and nothing is recorded.
+    // Unexplained, the form refuses to go on and the change stays on the phone.
     expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(false);
-    expect(await page.evaluate(() => state.draft.data.quantity_overrides)).toBeUndefined();
+    expect(await page.evaluate(() => state.draft.data.quantity_overrides.air_movers)).toEqual({
+      measured: '3',
+      entered: '5',
+    });
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
+    // Spaces are not a reason, whatever the browser's own length check would say.
+    await reason.fill('     ');
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(false);
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
+    expect((await remote(page, id)).data.air_movers).not.toBe(5);
     await reason.fill('Two more fans for the hall');
     expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(true);
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
@@ -220,7 +340,20 @@ test.describe('without a service worker', () => {
     await page.locator('#airMovers').fill('3');
     await expect(reason).toBeHidden();
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
-    expect((await remote(page, id)).data.quantity_overrides).toBeUndefined();
+    expect((await remote(page, id)).data.quantity_overrides.air_movers).toEqual({
+      measured: '3',
+      entered: '3',
+    });
+    // A later change is measured against the same value, with the entered value kept current.
+    await page.locator('#airMovers').fill('5');
+    await reason.fill('Two more fans for the hall');
+    await page.locator('#airMovers').fill('7');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.quantity_overrides.air_movers).toEqual({
+      measured: '3',
+      entered: '7',
+      reason: 'Two more fans for the hall',
+    });
     // A room measurement the walkthrough filled is covered the same way.
     const finished = page.locator('[data-room-index="0"][data-room-key="finished_sf"]');
     await expect(finished).toHaveValue('80');
@@ -234,6 +367,51 @@ test.describe('without a service worker', () => {
       entered: '95',
       reason: 'Wet behind the pantry',
     });
+    // Renaming the room keeps its measured value, its reason and its reason box.
+    await page.locator('[data-room-index="0"][data-room-key="name"]').fill('Pantry');
+    const renamed = page.locator('[data-override-reason="Pantry:finished_sf"]');
+    await expect(renamed).toBeVisible();
+    await renamed.fill('Wet behind the back wall');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const overrides = (await remote(page, id)).data.quantity_overrides;
+    expect(overrides['Kitchen:finished_sf']).toBeUndefined();
+    expect(overrides['Pantry:finished_sf']).toEqual({
+      measured: '80',
+      entered: '95',
+      reason: 'Wet behind the back wall',
+    });
+    // Another phone, with no local row, sees the same requirement.
+    await page.evaluate((value) => {
+      ScopeItems.forget();
+      ScopeItems.seed(value, null);
+      fillForm();
+    }, id);
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeVisible();
+    await page.locator('#airMovers').fill('9');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toHaveValue(
+      'Two more fans for the hall',
+    );
+  });
+
+  test('undoing a walkthrough value asks for no reason', async ({ page, request }) => {
+    await publish(request);
+    await open(page);
+    await page.locator('#address').fill('Synthetic undo property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page
+      .locator('label', { has: page.locator('#airMovers') })
+      .getByRole('button', { name: 'Undo' })
+      .click();
+    await expect(page.locator('#airMovers')).toHaveValue('0');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeHidden();
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(true);
+    expect(
+      await page.evaluate(() => state.draft.data.quantity_overrides.air_movers),
+    ).toBeUndefined();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
   });
 
   test('a wet-floor company enters the wet floor area on the room card', async ({
@@ -302,7 +480,7 @@ test.describe('with the service worker', () => {
         async () =>
           (await rows(page)).find((r) => r.draft?.inspection_id === id)?.draft.data.scope_items,
       )
-      .toMatchObject({ setup_documentation: { quantity: 5 } });
+      .toMatchObject({ setup_documentation: { quantity: '5' } });
     await page.reload();
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
     await page.evaluate((value) => restoreDraft(value), id);

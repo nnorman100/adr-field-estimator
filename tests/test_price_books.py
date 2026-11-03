@@ -1693,7 +1693,7 @@ def test_working_copy_keeps_a_locked_extras_item_and_reports_it_like_publish(api
     assert any('Turn this item off' in row['message'] for row in calculated.json()['problems'])
 
 
-def test_v2_book_gives_readable_conflicts_and_writes_no_pin(api, enabled):
+def test_v2_book_gives_readable_conflicts_and_audit_adds_no_pin(api, enabled):
     client, current, store = api
     current['uid'] = 'owner'
     _publish_v2(client, _v2_table('25.00'))

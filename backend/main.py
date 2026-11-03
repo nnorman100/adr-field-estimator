@@ -54,6 +54,7 @@ try:
         UpdateInspection,
         ClaimDetails,
         InspectionData,
+        check_quantity_overrides,
         PhotoUpload,
         PhotoRoomUpdate,
         PhotoShotUpdate,
@@ -121,6 +122,7 @@ except ImportError:
         UpdateInspection,
         ClaimDetails,
         InspectionData,
+        check_quantity_overrides,
         PhotoUpload,
         PhotoRoomUpdate,
         PhotoShotUpdate,
@@ -972,11 +974,16 @@ async def pin_new_draft(store, uid, record):
 
 
 async def readiness_pricing(store, uid, record):
-    """What the readiness check needs to know about the job's company prices (v2 only)."""
-    if not (WORKSPACES_ENABLED and price_books_enabled() and getattr(store, 'workspaces', None)):
+    """What the readiness check needs to know: no published prices, or the v2 table's area basis."""
+    if not (WORKSPACES_ENABLED and getattr(store, 'workspaces', None)):
         return None
+    prices = store.workspaces.prices
     try:
-        view = await run_in_threadpool(store.workspaces.prices.job_view, uid, record)
+        if await run_in_threadpool(prices.job_prices_unset, uid, record):
+            return {'prices_set': False}
+        if not price_books_enabled():
+            return None
+        view = await run_in_threadpool(prices.job_view, uid, record)
     except Conflict:
         return {'prices_set': False}
     except Exception:
@@ -1590,6 +1597,10 @@ async def audit_inspection(
         raise HTTPException(409, 'Restore the latest draft before auditing.')
     data = InspectionData.model_validate(record['data'])
     check_extras_input(data)
+    try:
+        check_quantity_overrides(data)
+    except ValueError as error:
+        raise HTTPException(400, str(error))
     if data.package_price is not None:
         raise HTTPException(
             409, 'Update the app and clear the old package-tier selection before auditing.'

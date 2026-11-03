@@ -62,6 +62,8 @@
     'room:floor': 'floor_sf',
     'room:basis': 'basis',
   };
+  // Job fields the server stores as decimals; every other field quantity is a whole number.
+  const DECIMAL_FIELDS = ['monitoring_hours', 'labor_hours'];
   // Room measurements the walkthrough fills and the estimator may override with a reason.
   const OVERRIDE_ROOM_FIELDS = ['unfinished_sf', 'finished_sf', 'floor_sf', 'wet_floor_sf'];
   // The sheet quantities the server puts in a job that office staff create (empty scope).
@@ -118,6 +120,10 @@
     }
     return out;
   }
+  const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
+  // The server stores these quantities as Decimals and returns them as strings: the same text here
+  // keeps a saved draft equal to the server's copy, so it never reads as a sync conflict.
+  const decimalText = (value) => String(round2(value));
   const money = (value) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value));
   function unitPriceText(item) {
@@ -127,7 +133,7 @@
       ? price + ' each'
       : price + ' per ' + (UNIT_NAMES[item.unit] || item.unit);
   }
-  const formatQuantity = (value) => String(Math.round((Number(value) || 0) * 100) / 100);
+  const formatQuantity = decimalText;
   function roomArea(field, room, policy) {
     const wet = room.wet_floor_sf ?? room.floor_sf ?? 0;
     if (field === 'wet_floor_sf') return wet;
@@ -159,11 +165,12 @@
         quantity = Number(item.default_quantity) || 0;
       if (source.kind === 'field' && !seen.has(source.field)) {
         seen.add(source.field);
-        data[source.field] = Math.min(quantity, FIELD_INPUTS[source.field][1]);
+        const capped = Math.min(quantity, FIELD_INPUTS[source.field][1]);
+        data[source.field] = DECIMAL_FIELDS.includes(source.field) ? capped : Math.trunc(capped);
       } else if (source.kind === 'typed' && quantity > 0)
         data.scope_items = {
           ...(data.scope_items || {}),
-          [item.item_id]: { quantity, count: 0, days: 0 },
+          [item.item_id]: { quantity: decimalText(quantity), count: 0, days: 0 },
         };
     }
     return data;
@@ -180,6 +187,7 @@
   }
   // Quantities saved for items the current table does not list as typed items.
   function unlisted(data, table) {
+    if (!isV2Table(table)) return [];
     const known = new Set(
       orderedItems(table)
         .filter((item) =>
@@ -189,6 +197,23 @@
     );
     return Object.keys(data?.scope_items || {})
       .filter((id) => !known.has(id))
+      .sort();
+  }
+  // Job-field quantities (not day counts) whose item the current table no longer lists.
+  function unlistedFields(data, table) {
+    if (!isV2Table(table)) return [];
+    const listed = new Set();
+    for (const item of orderedItems(table)) {
+      const source = parseSource(item.quantity_source);
+      listed.add(source.field).add(source.count);
+    }
+    return Object.keys(FIELD_INPUTS)
+      .filter(
+        (field) =>
+          !['drying_days', 'wood_floor_days'].includes(field) &&
+          !listed.has(field) &&
+          Number(data?.[field]) > 0,
+      )
       .sort();
   }
   function afterHoursText(table) {
@@ -206,47 +231,67 @@
       (parts.length ? ': ' + parts.join(' and ') : ' (no extra charge in your price list)')
     );
   }
-  const reasonOk = (text) => {
-    const clean = String(text || '')
+  const cleanReason = (text) =>
+    String(text || '')
       .replace(/\s+/g, ' ')
       .trim();
+  // The server's rule (backend/contracts.py QuantityOverride): 3 to 300 printable characters.
+  const reasonOk = (text) => {
+    const clean = cleanReason(text);
     return (
-      clean.length >= 3 && clean.length <= 300 && [...clean].every((c) => c >= ' ' && c !== '\x7f')
+      [...clean].length >= 3 &&
+      clean.length <= 300 &&
+      !/[\p{C}\p{Z}]/u.test(clean.replace(/ /g, ''))
     );
   };
-  const round2 = (value) => Math.round(Number(value) * 100) / 100;
-  // Rebuild data.quantity_overrides from the walkthrough's measured values: an entry exists only
-  // while the entered value differs and a reason is given. reasons: key -> text typed on screen.
-  function overridesFor(data, measured, reasons) {
-    // Overrides saved earlier (or on another phone) stay unless this phone measured the value itself.
+  const roomField = (key) => {
+    const split = key.lastIndexOf(':');
+    return split < 0 ? null : { room: key.slice(0, split), field: key.slice(split + 1) };
+  };
+  // The job's current value for an override key; undefined when its room is gone.
+  function overrideValue(data, key) {
+    const parts = roomField(key);
+    if (!parts) return data[key] ?? 0;
+    const room = (data.rooms || []).find((r) => r.name === parts.room);
+    return room && (room[parts.field] ?? 0);
+  }
+  const differs = (entry) => !!entry && Number(entry.entered) !== Number(entry.measured);
+  // data.quantity_overrides holds every walkthrough-filled value. Keep each entry's entered value
+  // current; a reason is kept only while the value differs. reasons: key -> text typed on screen.
+  function overridesFor(data, reasons) {
     const out = {};
-    for (const [key, saved] of Object.entries(data.quantity_overrides || {}))
-      if (!(key in (measured || {}))) out[key] = saved;
-    for (const [key, was] of Object.entries(measured || {})) {
-      let now;
-      const split = key.lastIndexOf(':');
-      if (split > 0) {
-        const room = key.slice(0, split);
-        now = (data.rooms || []).find((r) => r.name === room)?.[key.slice(split + 1)];
-      } else now = data[key];
-      if (now == null || now === '' || Number(now) === Number(was)) continue;
-      const reason =
-        reasons && key in reasons ? reasons[key] : data.quantity_overrides?.[key]?.reason;
-      if (!reasonOk(reason)) continue;
-      out[key] = {
-        measured: round2(was),
-        entered: round2(now),
-        reason: String(reason).replace(/\s+/g, ' ').trim(),
-      };
+    for (const [key, saved] of Object.entries(data.quantity_overrides || {})) {
+      const now = overrideValue(data, key);
+      if (now === undefined) continue;
+      const entry = { measured: saved.measured, entered: decimalText(now) };
+      if (differs(entry)) {
+        const reason = reasons && key in reasons ? reasons[key] : saved.reason;
+        if (reasonOk(reason)) entry.reason = cleanReason(reason);
+      } else entry.entered = saved.measured;
+      out[key] = entry;
     }
     return out;
+  }
+  // A changed walkthrough value with no reason yet: the server refuses to save it.
+  const missingReason = (data) =>
+    Object.values(data?.quantity_overrides || {}).some(
+      (entry) => differs(entry) && !reasonOk(entry.reason),
+    );
+  function renamedOverrides(overrides, from, to) {
+    return Object.fromEntries(
+      Object.entries(overrides).map(([key, entry]) => {
+        const parts = roomField(key);
+        return [parts?.room === from ? to + ':' + parts.field : key, entry];
+      }),
+    );
   }
 
   // ---- screen -------------------------------------------------------------------------------
   const dom = () =>
     typeof document !== 'undefined' && typeof document.getElementById === 'function';
   let company = null; // the company's current table, cached on the phone
-  const jobs = new Map(); // inspection id -> { pricing, measured }
+  const jobs = new Map(); // inspection id -> { pricing }
+  let rendered = null; // the form and table the screen was last built for
   const homes = new Map(); // moved element -> { parent, text }
   const snapshots = new Map(); // parent element -> its children in the original order
   const openGroups = new Set(['job_charges', 'treatment', 'drying_equipment', 'labor']);
@@ -254,7 +299,7 @@
 
   const draftId = () => state?.draft?.inspection_id || null;
   const job = (id) => {
-    if (!jobs.has(id)) jobs.set(id, { pricing: null, measured: {} });
+    if (!jobs.has(id)) jobs.set(id, { pricing: null });
     return jobs.get(id);
   };
   function companyView() {
@@ -281,17 +326,13 @@
     items: t.items,
     policy: t.policy,
   });
-  // The pricing row field and the walkthrough values that persist() stores beside a draft.
+  // The pricing row field that persist() stores beside a draft.
   function rowExtras(id) {
-    const mine = jobs.get(id);
-    const t = mine?.pricing || (state?.session?.pricing_version === V2 && companyView());
-    return {
-      ...(t && { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } }),
-      ...(mine && Object.keys(mine.measured).length && { measured: mine.measured }),
-    };
+    const t = jobs.get(id)?.pricing || (state?.session?.pricing_version === V2 && companyView());
+    return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   function seed(id, row) {
-    jobs.set(id, { pricing: row?.pricing || null, measured: { ...(row?.measured || {}) } });
+    jobs.set(id, { pricing: row?.pricing || null });
   }
   function forget() {
     jobs.clear();
@@ -334,6 +375,9 @@
     return applyDefaults(emptyData({ v2: true }), companyView());
   }
   function readinessPricing() {
+    const id = draftId();
+    if (state?.session?.prices_set === false && !(id && jobs.get(id)?.pricing))
+      return { prices_set: false };
     if (!active()) return null;
     const t = table();
     return t ? { prices_set: true, area_basis: t.policy.area_basis || 'demolition' } : null;
@@ -376,7 +420,6 @@
     const input = node('input');
     input.type = 'text';
     input.maxLength = 300;
-    input.minLength = 3;
     input.autocomplete = 'off';
     input.dataset.overrideReason = key;
     input.value = state.draft?.data?.quantity_overrides?.[key]?.reason || '';
@@ -388,45 +431,61 @@
   // Show each reason box only while its value differs from what the walkthrough measured.
   function updateOverrides() {
     if (!dom() || !state?.draft) return;
-    const measured = jobs.get(draftId())?.measured || {};
+    const overrides = state.draft.data.quantity_overrides || {};
     for (const input of document.querySelectorAll('[data-override-reason]')) {
-      const key = input.dataset.overrideReason,
-        data = state.draft.data,
-        split = key.lastIndexOf(':'),
-        now =
-          split > 0
-            ? (data.rooms || []).find((r) => r.name === key.slice(0, split))?.[key.slice(split + 1)]
-            : data[key],
-        differs =
-          key in measured && now != null && now !== '' && Number(now) !== Number(measured[key]);
-      input.closest('.override-reason').hidden = !differs;
-      input.disabled = !differs || !!state.signed;
-      input.required = differs;
+      const open = differs(overrides[input.dataset.overrideReason]);
+      input.closest('.override-reason').hidden = !open;
+      input.disabled = !open || !!state.signed;
+      input.setCustomValidity(
+        open && !reasonOk(input.value) ? 'Enter a short reason (at least 3 characters).' : '',
+      );
     }
   }
   // Called from changed(): keep data.quantity_overrides in step with what is on screen.
   function syncOverrides() {
     if (!dom() || !active() || !state?.draft || state.signed) return;
     const data = state.draft.data,
-      measured = jobs.get(draftId())?.measured || {},
       reasons = {};
     for (const input of document.querySelectorAll('[data-override-reason]'))
       if (!input.disabled) reasons[input.dataset.overrideReason] = input.value;
-    const next = overridesFor(data, measured, reasons);
+    const next = overridesFor(data, reasons);
     if (Object.keys(next).length) data.quantity_overrides = next;
     else delete data.quantity_overrides;
     updateOverrides();
   }
-  // Remember what a walkthrough fill measured, so a later edit can be explained.
+  const entryKey = (entry, data) => {
+    if (entry.target === data) return FIELD_INPUTS[entry.field] ? entry.field : null;
+    return OVERRIDE_ROOM_FIELDS.includes(entry.field) && entry.target?.name
+      ? entry.target.name + ':' + entry.field
+      : null;
+  };
+  // Record on the job what a walkthrough fill measured, so a later edit must be explained on any phone.
   function noteMeasured(entries, data) {
     if (!active()) return;
-    const mine = job(draftId());
     for (const entry of entries || []) {
-      if (typeof entry.after !== 'number') continue;
-      if (entry.target === data && FIELD_INPUTS[entry.field])
-        mine.measured[entry.field] = entry.after;
-      else if (OVERRIDE_ROOM_FIELDS.includes(entry.field) && entry.target?.name)
-        mine.measured[entry.target.name + ':' + entry.field] = entry.after;
+      const key = entryKey(entry, data);
+      if (!key || typeof entry.after !== 'number') continue;
+      data.quantity_overrides ||= {};
+      if (!('priorOverride' in entry)) entry.priorOverride = data.quantity_overrides[key] || null;
+      const value = decimalText(entry.after);
+      data.quantity_overrides[key] = { measured: value, entered: value };
+    }
+  }
+  // Undo returns the value the fill replaced, so what that fill measured no longer applies.
+  function undoMeasured(entry, data) {
+    const key = entryKey(entry, data);
+    if (!key || !data.quantity_overrides) return;
+    if (entry.priorOverride) data.quantity_overrides[key] = entry.priorOverride;
+    else delete data.quantity_overrides[key];
+  }
+  // A room's walkthrough values and their reason boxes follow its new name.
+  function renameRoom(from, to, data) {
+    if (from === to || !data?.quantity_overrides) return;
+    data.quantity_overrides = renamedOverrides(data.quantity_overrides, from, to);
+    if (!dom()) return;
+    for (const input of document.querySelectorAll('[data-override-reason]')) {
+      const parts = roomField(input.dataset.overrideReason);
+      if (parts?.room === from) input.dataset.overrideReason = to + ':' + parts.field;
     }
   }
   // A room measurement input: reason box under it while it differs from the walkthrough value.
@@ -538,9 +597,11 @@
     return row;
   }
 
+  const shownView = () => (active() ? 'v2:' + (table()?.version_id || '') : 'v1');
   function render() {
     if (!dom() || !$('v2Scope')) return;
     const on = active();
+    rendered = shownView();
     restoreAll();
     $('v1Scope').hidden = on;
     $('v2Scope').hidden = !on;
@@ -610,7 +671,7 @@
               label,
               source.days === 'wood_floor_days' ? 'Wood-floor drying days' : 'Drying days',
             );
-            row.append(label);
+            row.append(label, reasonBlock(source.days));
           }
         }
         row.append(priceNote(item));
@@ -640,33 +701,45 @@
       $('v2Sizing').replaceChildren(sizing);
     }
     // Quantities saved for items the table no longer lists stay with the job, visibly.
-    const orphans = unlisted(data, t);
-    $('v2Unlisted').hidden = !orphans.length;
+    const orphans = unlisted(data, t),
+      fields = unlistedFields(data, t);
+    const unlistedRow = (text, remove) => {
+      const row = node('div', undefined, 'scope-row');
+      row.append(
+        node('p', text),
+        button('Remove', () => {
+          remove(state.draft.data);
+          changed();
+          render();
+        }),
+      );
+      return row;
+    };
+    $('v2Unlisted').hidden = !orphans.length && !fields.length;
     $('v2UnlistedList').replaceChildren(
+      ...fields.map((field) =>
+        unlistedRow(field.replace(/_/g, ' ') + ' · ' + formatQuantity(data[field]), (current) => {
+          current[field] = 0;
+          $(FIELD_INPUTS[field][0]).value = 0;
+          if (current.quantity_overrides) delete current.quantity_overrides[field];
+        }),
+      ),
       ...orphans.map((id) => {
-        const q = data.scope_items[id],
-          row = node('div', undefined, 'scope-row');
-        row.append(
-          node(
-            'p',
-            id.replace(/_/g, ' ') +
-              ' · ' +
-              formatQuantity(q.quantity) +
-              ' (' +
-              q.count +
-              ' × ' +
-              q.days +
-              ' days)',
-          ),
-          button('Remove', () => {
-            delete state.draft.data.scope_items[id];
-            if (!Object.keys(state.draft.data.scope_items).length)
-              delete state.draft.data.scope_items;
-            changed();
-            render();
-          }),
+        const q = data.scope_items[id];
+        return unlistedRow(
+          id.replace(/_/g, ' ') +
+            ' · ' +
+            formatQuantity(q.quantity) +
+            ' (' +
+            q.count +
+            ' × ' +
+            q.days +
+            ' days)',
+          (current) => {
+            delete current.scope_items[id];
+            if (!Object.keys(current.scope_items).length) delete current.scope_items;
+          },
         );
-        return row;
       }),
     );
     updateSummaries();
@@ -683,16 +756,16 @@
       for (const id of ids) {
         const mine = boxes.filter((box) => box.dataset.scopeItem === id),
           item = table().items.find((i) => i.item_id === id),
-          next = { quantity: 0, count: 0, days: 0, ...(items[id] || {}) };
+          next = { quantity: '0', count: 0, days: 0, ...(items[id] || {}) };
         for (const box of mine) {
           const value = box.value === '' ? 0 : Number(box.value);
           next[box.dataset.scopeKey] =
-            box.dataset.scopeKey === 'quantity' ? round2(value) : Math.trunc(value);
+            box.dataset.scopeKey === 'quantity' ? decimalText(value) : Math.trunc(value);
         }
         // Defaults only count while the job has no saved value; a deliberate 0 is kept.
         if (
           items[id] ||
-          next.quantity ||
+          Number(next.quantity) ||
           next.count ||
           next.days ||
           Number(item?.default_quantity) > 0
@@ -730,20 +803,29 @@
       changed(false);
     }
   }
-  async function refresh() {
+  // Read the job's pin from the server. The screen is rebuilt only if that changes what it shows,
+  // so a technician mid-entry keeps focus and whatever is partly typed.
+  async function pull() {
     if (!dom() || !$('v2Scope')) return;
     const id = draftId();
-    render();
     if (!id || !navigator.onLine || !state.record || !state.session?.price_books_enabled) return;
     const mine = ++seq;
     try {
       const view = await jsonApi('/api/inspections/' + id + '/pricing');
       if (mine !== seq || draftId() !== id) return;
       if (adopt(id, view)) schedulePersist();
-      render();
+      if (shownView() !== rendered) {
+        render();
+        renderRooms();
+        renderReadiness();
+      }
     } catch {
       /* the saved screen stays: a job not on the server yet has no pin to read */
     }
+  }
+  async function refresh() {
+    render();
+    await pull();
   }
   const canEdit = () =>
     !state.signed && (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('scope'));
@@ -760,8 +842,10 @@
     applyDefaults,
     untouched,
     unlisted,
+    unlistedFields,
     afterHoursText,
     overridesFor,
+    missingReason,
     reasonOk,
     summaryOf,
     active,
@@ -774,10 +858,13 @@
     forget,
     prepare,
     refresh,
+    pull,
     render,
     collect,
     syncOverrides,
     noteMeasured,
+    undoMeasured,
+    renameRoom,
     watch,
     placeWetFloor,
     wetFloorOnCard,
