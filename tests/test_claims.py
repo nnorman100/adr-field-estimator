@@ -1403,19 +1403,24 @@ def test_a_price_word_in_an_unpriced_work_flag_still_blocks_signing():
         'Budget $750.',
         'About 500 dollars.',
         'USD 500.',
-        'Total 1,200.',
-        'Total 1,200 for the room.',
+        'Fee 500 plus tax.',
+        'Price range 500 to 700.',
+        'Budget band is 1200.',
+        'Total 3 rooms.',
+        'The cost is five hundred.',
+        'Total 1,200 sq ft of drywall is affected.',
+        'Total 2.5 hours of labor.',
         'Total: 1,200.',
-        'The estimate is five hundred.',
         'The total comes to two hundred and fifty.',
-        'A budget of 750.',
-        'The cost is about 500 to 700.',
-        'Priced at 500-700.',
         'Costs roughly 5k.',
-        'The fee is 500 per room.',
+        'Priced at 500-700.',
+        'Charged 40 for the visit.',
+        'The job totaled 900.',
+        'Quoting 300 for paint.',
+        'The priced_scope has 2 lines.',
     ],
 )
-def test_states_price_catches_real_money(text):
+def test_states_price_drops_currency_and_a_money_word_with_any_number(text):
     assert states_price(plain(text))
 
 
@@ -1432,22 +1437,19 @@ QUANTITY_NOTES = [
     + [
         'Office has drywall removal.',
         'Confirm 120 sq ft of drywall.',
-        'Total 3 rooms.',
-        'Total of 120 sq ft.',
-        'Total 3 to 5 rooms.',
-        'The total is 18%.',
+        'The estimate is five hundred.',
         'Estimate 40 hours of drying.',
         'A 12k BTU air mover is planned.',
         'The cost is high.',
         'Pricing depends on the carrier.',
+        'The tenant asked about the cost.',
         'The priced scope does not cover the toilet reset.',
-        'The priced_scope has 2 lines.',
         'Check that the estimate covers the cabinets.',
         'The scope review lists 2 unpriced items.',
         'Room 2 needs a meter photo at 18 percent.',
     ],
 )
-def test_states_price_leaves_quantities_and_scope_words_alone(text):
+def test_states_price_keeps_quantities_and_money_words_without_a_number(text):
     assert not states_price(plain(text))
 
 

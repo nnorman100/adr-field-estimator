@@ -79,23 +79,19 @@ JSON_TERM = re.compile(
     re.IGNORECASE,
 )
 FIELD_NAME = re.compile(r'\b[a-z]+(?:_[a-z]+)+\b')
-# Prices come only from the server. Model text is dropped only for stating money: a currency sign or
-# word, or a price word tied directly to an amount. A number followed by anything else is a quantity,
-# so "Total 3 rooms" and "Estimated drying time is 3 days" stay.
+# Prices come only from the server. A note sentence is dropped if it has a currency sign or word, or
+# a money word and any number anywhere in it, so "Total 3 rooms" goes too: a dropped sentence is
+# safer than a price. "Estimated" and "rate" are not money words; "The cost is high" has no number.
 MONEY = re.compile(r'[$€£]|\b(?:usd|dollars?|bucks?|cents?)\b', re.IGNORECASE)
-NUMBER_WORD = (
-    r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve'
-    r'|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty'
-    r'|hundred|thousand|million)\b'
+MONEY_WORD = re.compile(
+    r'\b(?:pric(?:e|es|ed|ing)|cost(?:s|ed|ing)?|fees?|charg(?:e|es|ed|ing)|budget(?:s|ed|ing)?'
+    r'|(?:sub)?total(?:s|ed|ing|led|ling)?|quot(?:e|es|ed|ing))\b',
+    re.IGNORECASE,
 )
-AMOUNT = rf'(?:\d[\d,.]*k?|{NUMBER_WORD})(?:[\s-]+(?:and\s+)?{NUMBER_WORD})*'
-PRICED_AMOUNT = re.compile(
-    r'\b(?:(?:sub)?totals?|costs?|costing|prices?|priced|pricing|budget(?:s|ed)?|fees?|charges?'
-    r'|quot(?:e|es|ed)|estimates?)\b'
-    r'(?:[\s:=~-]+(?:a|about|approximately|are|around|at|be|comes?|could|is|may|might|nearly|of'
-    r'|over|roughly|runs?|should|to|under|up|was|were|will|would)\b)*'
-    rf'[\s:=~-]+{AMOUNT}(?:\s*(?:-|–|to)\s*{AMOUNT})?'
-    r'(?=\s*(?:$|[.,;:!?)]|(?:for|per)\b))',
+NUMBER = re.compile(
+    r'\d|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve'
+    r'|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty'
+    r'|hundred|thousand|million|billion)\b',
     re.IGNORECASE,
 )
 
@@ -418,7 +414,7 @@ def technician_statement(data: InspectionData):
 
 
 def states_price(text):
-    return bool(MONEY.search(text) or PRICED_AMOUNT.search(text))
+    return bool(MONEY.search(text) or (MONEY_WORD.search(text) and NUMBER.search(text)))
 
 
 def plain(text):
