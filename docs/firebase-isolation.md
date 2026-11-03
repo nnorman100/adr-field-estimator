@@ -300,6 +300,10 @@ This check does not authenticate, create jobs or establish field-device acceptan
 If the browser closes before sign-in, authenticated verification has not run; restart the
 helper and complete sign-in before changing traffic or Hosting.
 
+## Estimate assist rollout
+
+`AI_FEATURES=estimate_assist` turns on the user-facing parts of [Estimate assist](estimate-assist.md). It needs no rules, index or data change. Turning it on is a separate owner decision: pass it with `--ai-features` on the release that changes it, keeping the features already on, and record it in `RELEASES.md`. Turning it off hides the suggestions. Counts already applied stay on their jobs.
+
 ## Drying watch rollout
 
 Deploy the `_job_monitoring` indexes in `firestore.indexes.json` separately

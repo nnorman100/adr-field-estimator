@@ -1,5 +1,6 @@
 """IICRC drying-equipment sizing check: recommended air movers and dehumidification beside the
-technician's counts. It never changes counts or prices; pricing reads only the entered counts.
+technician's counts. It never changes counts or prices; pricing reads only the entered counts. A
+suggested count (suggested_counts) reaches a job only when the technician's fill or tap applies it.
 
 Sources for the arithmetic (inputs are only technician-confirmed room values; nothing is guessed):
 
@@ -186,6 +187,40 @@ def equipment_sizing(data):
             reason=dehu_reason,
         ),
     )
+
+
+def suggested_counts(sizing, data):
+    """Counts below the check's numbers, raised to them. Never lowers one and never guesses."""
+    if sizing['status'] != 'available':
+        return []
+    suggested = []
+    movers, dehus = sizing['air_movers'], sizing['dehumidifiers']
+    if movers['min'] is not None and data.air_movers < movers['min']:
+        water = [room for room in sizing['rooms'] if room['status'] == 'available']
+        wet = sum(Decimal(str(room['wet_floor_sf'])) for room in water)
+        suggested.append(
+            dict(
+                field='air_movers',
+                value=movers['min'],
+                basis=(
+                    f'IICRC S500 minimum for {number(wet)} sq ft of wet floor across '
+                    f'{count(len(water), "room")}; the maximum is {movers["max"]}.'
+                ),
+            )
+        )
+    units = dehus['recommended_units']
+    if units is not None and data.dehumidifiers < units:
+        suggested.append(
+            dict(
+                field='dehumidifiers',
+                value=units,
+                basis=(
+                    f'{dehus["recommended_ppd"]} pints/day recommended for the stated room volumes '
+                    f'and classes; {count(units, "unit")} at {dehus["unit_ppd"]} pints/day each.'
+                ),
+            )
+        )
+    return suggested
 
 
 def letter_paragraph(sizing):

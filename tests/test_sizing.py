@@ -3,7 +3,7 @@ from pydantic import ValidationError
 
 from tests.adr_pricing import price_scope
 from backend.contracts import InspectionData, Room
-from backend.sizing import equipment_sizing, letter_paragraph, room_check
+from backend.sizing import equipment_sizing, letter_paragraph, room_check, suggested_counts
 
 
 def room(**values):
@@ -224,4 +224,82 @@ def test_wall_only_room_has_no_air_mover_recommendation_but_keeps_dehumidificati
     )
     assert lines[4] == (
         'Entered for this proposal: 5 air movers and 1 LGR dehumidifier rated 70 pints/day each.'
+    )
+
+
+def suggestions(**values):
+    data = InspectionData(**values)
+    return suggested_counts(equipment_sizing(data), data)
+
+
+def test_suggested_counts_raise_a_count_below_the_minimum_and_never_lower_one():
+    rooms = [sized()]
+    # 140 SF of wet floor: 3 to 4 air movers. 1,120 cu ft / 50 = 22.4, so 23 pints/day: 1 unit at 70.
+    below = suggestions(rooms=rooms, air_movers=1, dehumidifiers=0, dehumidifier_ppd=70)
+    assert [(row['field'], row['value']) for row in below] == [
+        ('air_movers', 3),
+        ('dehumidifiers', 1),
+    ]
+    # At the minimum, inside the range, at the unit count and above it nothing moves.
+    assert suggestions(rooms=rooms, air_movers=3, dehumidifiers=1, dehumidifier_ppd=70) == []
+    assert suggestions(rooms=rooms, air_movers=4, dehumidifiers=2, dehumidifier_ppd=70) == []
+    assert suggestions(rooms=rooms, air_movers=9, dehumidifiers=9, dehumidifier_ppd=70) == []
+    # The two counts are judged apart.
+    assert [
+        row['field']
+        for row in suggestions(rooms=rooms, air_movers=9, dehumidifiers=0, dehumidifier_ppd=70)
+    ] == ['dehumidifiers']
+
+
+def test_no_suggestion_without_a_rating_or_an_available_check():
+    # No AHAM rating: nothing to size a unit count from, and nothing is guessed.
+    assert [
+        row['field'] for row in suggestions(rooms=[sized()], air_movers=0, dehumidifiers=0)
+    ] == ['air_movers']
+    # A water room missing an input, or a wet floor larger than the floor: not available.
+    assert suggestions(rooms=[room(floor_sf=140)], air_movers=0, dehumidifier_ppd=70) == []
+    assert suggestions(rooms=[sized(wet_floor_sf=200)], air_movers=0, dehumidifier_ppd=70) == []
+    # Mold rooms only: not applicable.
+    mold = room(loss='mold', floor_sf=140, ceiling_height_ft=8, water_class=2)
+    assert suggestions(rooms=[mold], air_movers=0, dehumidifier_ppd=70) == []
+
+
+def test_a_wet_walls_only_room_suggests_no_air_movers_but_may_suggest_dehumidifiers():
+    walls = sized(wet_floor_sf=0)
+    rows = suggestions(rooms=[walls], air_movers=0, dehumidifiers=0, dehumidifier_ppd=70)
+    assert [(row['field'], row['value']) for row in rows] == [('dehumidifiers', 1)]
+
+
+def test_basis_text_names_the_wet_area_and_the_maximum():
+    hall = Room(
+        name='Hall',
+        category=1,
+        loss='water',
+        floor_sf=200,
+        wet_floor_sf=60,
+        ceiling_height_ft=8,
+        water_class=1,
+    )
+    mold = room(name='Attic', loss='mold')
+    rows = suggestions(rooms=[sized(), hall, mold], air_movers=0, dehumidifier_ppd=70)
+    assert rows == [
+        {
+            'field': 'air_movers',
+            'value': 5,
+            'basis': 'IICRC S500 minimum for 200 sq ft of wet floor across 2 rooms; the maximum is 7.',
+        },
+        {
+            'field': 'dehumidifiers',
+            'value': 1,
+            'basis': '39 pints/day recommended for the stated room volumes and classes; '
+            '1 unit at 70 pints/day each.',
+        },
+    ]
+    one = suggestions(rooms=[sized()], air_movers=0, dehumidifiers=0, dehumidifier_ppd=10)
+    assert one[0]['basis'] == (
+        'IICRC S500 minimum for 140 sq ft of wet floor across 1 room; the maximum is 4.'
+    )
+    assert one[1]['basis'] == (
+        '23 pints/day recommended for the stated room volumes and classes; '
+        '3 units at 10 pints/day each.'
     )

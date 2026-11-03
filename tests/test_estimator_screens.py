@@ -12,7 +12,8 @@ from backend.contracts import CreateInspection, InspectionData, UpdateInspection
 from pydantic import ValidationError
 from backend.readiness import readiness
 from tests.test_backend import sign_payload
-from tests.test_price_books import _publish_v2, _v2_table, enabled  # noqa: F401
+from tests.test_price_books import _publish_v2, _v2_table, enabled, publish, rates  # noqa: F401
+from tests.test_price_cutover import switch
 from tests.test_workspaces import ID, OTHER, api, data, store  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -532,3 +533,234 @@ def test_scope_suggestions_validate_on_a_job_with_company_price_quantities():
         ),
     )
     assert [c.field for c in checked.changes] == ['air_movers']
+
+
+SIZED_ROOM = {
+    'name': 'Kitchen',
+    'category': 2,
+    'loss': 'water',
+    'unfinished_sf': 0,
+    'finished_sf': 80,
+    'floor_sf': 140,
+    'ceiling_height_ft': 8,
+    'water_class': 2,
+}
+
+
+def sized_job(**values):
+    job = data()
+    job.update(
+        rooms=[dict(SIZED_ROOM)],
+        technician_notes='Kitchen drywall is wet. Use 3 fans.',
+        air_movers=0,
+        dehumidifiers=0,
+        dehumidifier_ppd=70,
+    )
+    job.update(values)
+    return job
+
+
+def fill(client, monkeypatch, changes=()):
+    async def generate(schema, *args, check=None, **kwargs):
+        assert schema is bm.ScopeSuggestions
+        result = bm.ScopeSuggestions(changes=list(changes), questions=[])
+        if check:
+            check(result)
+        return result
+
+    monkeypatch.setattr(bm, 'generate', generate)
+    response = client.post(
+        '/api/inspections/' + ID + '/scope-suggestions',
+        json={'inspection_id': ID, 'expected_revision': 1},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.fixture
+def assist_on(monkeypatch):
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+
+
+def on_table(client, current, job=None):
+    current['uid'] = 'owner'
+    _publish_v2(client, _v2_table('30.00'))
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': job or sized_job()})
+    assert made.status_code == 200, made.text
+
+
+def test_scope_suggestions_carry_suggested_counts_only_with_the_flag_and_a_v2_table(
+    api,
+    enabled,  # noqa: F811
+    assist_on,
+    monkeypatch,
+):
+    client, current, store = api
+    on_table(client, current)
+    body = fill(client, monkeypatch)
+    assert [(row['field'], row['value']) for row in body['suggested']] == [
+        ('air_movers', 3),
+        ('dehumidifiers', 1),
+    ]
+    assert body['suggested'][0]['basis'] == (
+        'IICRC S500 minimum for 140 sq ft of wet floor across 1 room; the maximum is 4.'
+    )
+    # Nothing is written: the phone applies them and the technician reviews them.
+    assert store.get_inspection('estimator', ID)['data']['air_movers'] == 0
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', set())
+    assert fill(client, monkeypatch)['suggested'] == []
+    assert 'estimate_assist' not in session(client, current, 'estimator')['ai_features']
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    assert 'estimate_assist' in session(client, current, 'estimator')['ai_features']
+
+
+def test_scope_suggestions_stay_empty_on_a_rate_book_draft(api, assist_on, monkeypatch):
+    client, current, store = api
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': sized_job()})
+    assert made.status_code == 200, made.text
+    assert fill(client, monkeypatch)['suggested'] == []
+
+
+def test_a_draft_held_on_the_rate_book_gets_no_suggestions_after_its_company_switches(
+    api,
+    enabled,  # noqa: F811
+    assist_on,
+    monkeypatch,
+):
+    client, current, store = api
+    current['uid'] = 'owner'
+    publish(client, rates(emergency_call='150.00'))
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': sized_job()})
+    assert made.status_code == 200, made.text
+    current['uid'] = 'owner'
+    switch(client)
+    current['uid'] = 'estimator'
+    assert session(client, current, 'estimator')['pricing_version'] == V2
+    held = store.workspaces.prices.job_view('estimator', store.get_inspection('estimator', ID))
+    assert held['calculation_version'] != V2
+    assert fill(client, monkeypatch)['suggested'] == []
+
+
+def test_a_spoken_count_wins_over_the_suggestion(api, enabled, assist_on, monkeypatch):  # noqa: F811
+    from backend.scope import ScopeChange
+
+    client, current, store = api
+    on_table(client, current)
+    spoken = ScopeChange(field='air_movers', value=2, source_quote='Use 3 fans.')
+    body = fill(client, monkeypatch, [spoken])
+    assert [change['value'] for change in body['changes']] == [2]
+    assert [row['field'] for row in body['suggested']] == ['dehumidifiers']
+
+
+def test_a_spoken_count_already_on_the_form_stays_too(api, enabled, assist_on, monkeypatch):  # noqa: F811
+    from backend.scope import ScopeChange
+
+    client, current, store = api
+    on_table(client, current, sized_job(air_movers=2))
+    same = ScopeChange(field='air_movers', value=2, source_quote='Use 3 fans.')
+    body = fill(client, monkeypatch, [same])
+    # Validation drops the no-op change, and the technician still said the number.
+    assert body['changes'] == []
+    assert [row['field'] for row in body['suggested']] == ['dehumidifiers']
+
+
+def test_rereading_never_undoes_a_recorded_or_explained_count(api, enabled, assist_on, monkeypatch):  # noqa: F811
+    client, current, store = api
+    on_table(
+        client,
+        current,
+        sized_job(
+            air_movers=2,
+            quantity_overrides={
+                'air_movers': {'measured': '3', 'entered': '2', 'reason': 'Small wet patch only'}
+            },
+        ),
+    )
+    assert [row['field'] for row in fill(client, monkeypatch)['suggested']] == ['dehumidifiers']
+
+
+def test_suggested_counts_run_on_the_filled_job_not_the_saved_one(
+    api,
+    enabled,  # noqa: F811
+    assist_on,
+    monkeypatch,
+):
+    from backend.scope import ScopeChange
+
+    client, current, store = api
+    # The saved room has no sizing inputs; the walkthrough states them in the same fill.
+    bare = {**SIZED_ROOM, 'floor_sf': None, 'ceiling_height_ft': None, 'water_class': None}
+    on_table(client, current, sized_job(rooms=[bare]))
+    quote = 'Kitchen drywall is wet.'
+    changes = [
+        ScopeChange(field='floor_sf', room='Kitchen', value=350, source_quote=quote),
+        ScopeChange(field='ceiling_height_ft', room='Kitchen', value=8, source_quote=quote),
+        ScopeChange(field='water_class', room='Kitchen', value=2, source_quote=quote),
+    ]
+    assert [
+        (row['field'], row['value']) for row in fill(client, monkeypatch, changes)['suggested']
+    ] == [
+        ('air_movers', 6),
+        ('dehumidifiers', 1),
+    ]
+
+
+def test_a_count_the_table_does_not_list_is_left_alone(api, enabled, assist_on, monkeypatch):  # noqa: F811
+    client, current, store = api
+    table = _v2_table('30.00')
+    for item in table['items']:
+        if 'air_movers' in item['quantity_source']:
+            item['enabled'] = False
+    current['uid'] = 'owner'
+    _publish_v2(client, table)
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': sized_job()})
+    assert made.status_code == 200, made.text
+    # The v2 form has no air mover input here, so a raised count could not be corrected.
+    assert [row['field'] for row in fill(client, monkeypatch)['suggested']] == ['dehumidifiers']
+
+
+def test_the_suggested_count_is_recorded_like_a_walkthrough_value(api, enabled):  # noqa: F811
+    client, current, store = api
+    # What the phone saves after applying a suggestion: measured and entered at the suggestion.
+    recorded = {'air_movers': {'measured': '3', 'entered': '3'}}
+    on_table(client, current, sized_job(air_movers=3, quantity_overrides=recorded))
+    lowered = sized_job(air_movers=2, quantity_overrides=recorded)
+    refused = client.put('/api/inspections/' + ID, json={'expected_revision': 1, 'data': lowered})
+    assert refused.status_code == 422, refused.text
+    no_reason = {'air_movers': {'measured': '3', 'entered': '2'}}
+    refused = client.put(
+        '/api/inspections/' + ID,
+        json={
+            'expected_revision': 1,
+            'data': sized_job(air_movers=2, quantity_overrides=no_reason),
+        },
+    )
+    assert refused.status_code == 422, refused.text
+    assert store.get_inspection('estimator', ID)['revision'] == 1
+    reason = {'air_movers': {'measured': '3', 'entered': '2', 'reason': 'Small wet patch only'}}
+    saved = client.put(
+        '/api/inspections/' + ID,
+        json={'expected_revision': 1, 'data': sized_job(air_movers=2, quantity_overrides=reason)},
+    )
+    assert saved.status_code == 200, saved.text
+
+
+def test_a_new_v2_draft_starts_at_the_tables_drying_days(api, enabled):  # noqa: F811
+    client, current, store = api
+    table = _v2_table('30.00')
+    table['policy']['assist']['drying_days'] = 5
+    current['uid'] = 'owner'
+    _publish_v2(client, table)
+    assert client.get('/api/companies/adr/prices').json()['policy']['assist']['drying_days'] == 5
+    # An office-created job is seeded on the server, from the table, and holds no measured value.
+    current['uid'] = 'office'
+    empty = bm.inspection_payload(InspectionData(address='Office intake'))
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': empty})
+    assert made.status_code == 200, made.text
+    assert made.json()['data']['drying_days'] == 5
+    assert not made.json()['data'].get('quantity_overrides')

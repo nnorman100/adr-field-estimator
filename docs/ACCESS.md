@@ -18,7 +18,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `jobs_copy` | Copy a signed job to a new draft | yes | yes | yes |
 | `coordination` | Job coordination and claim/loss details | yes | no | yes |
 | `assignment` | Assign estimators to jobs | yes | no | yes |
-| `scope` | Edit rooms, measurements, scope | yes | yes | no |
+| `scope` | Edit rooms, measurements, scope; accept suggested equipment counts | yes | yes | no |
 | `places` | Address suggestions and job map | yes | yes | no |
 | `photos` | Add photos | yes | yes | no |
 | `ocr` | Meter-photo recognition | yes | yes | no |

@@ -56,6 +56,33 @@ test('a new draft starts at the table defaults and seeds typed items', () => {
   });
 });
 
+test("a new draft starts at the table's drying days, and at 3 on a table without the setting", () => {
+  const desiccant = item('desiccant', 'drying_equipment', 'typed_count_days', {
+    default_quantity: '2',
+  });
+  const set = table([desiccant], {
+    assist: {
+      drying_days: 5,
+      range_method: 'cushion',
+      extra_drying_days: 0,
+      hidden_damage_percent: { 1: '0', 2: '0', 3: '0' },
+    },
+  });
+  const data = ScopeItems.applyDefaults(core.emptyData({ v2: true }), set);
+  assert.equal(data.drying_days, 5);
+  assert.equal(data.scope_items.desiccant.days, 5, 'a typed item starts at the same days');
+  assert.equal(data.quantity_overrides, undefined, 'a default is not a measured value');
+  const old = ScopeItems.applyDefaults(
+    { ...core.emptyData({ v2: true }), drying_days: 9 },
+    table([]),
+  );
+  assert.equal(old.drying_days, 3);
+  // The rate-book form is not touched.
+  const v1 = core.emptyData();
+  assert.equal(ScopeItems.applyDefaults(v1, { calculation_version: 'adr-residential-v1' }), v1);
+  assert.equal(v1.drying_days, core.emptyData().drying_days);
+});
+
 test('count items seed their count; days stay at the job default for those days', () => {
   const t = table([
     item('fans', 'drying_equipment', 'count_days:air_movers*drying_days', {
@@ -387,6 +414,67 @@ test('a walkthrough fill records what it measured, and Undo restores what came b
   ScopeItems.undoMeasured(second, data);
   assert.equal(data.quantity_overrides['Kitchen:finished_sf'].measured, '80.5');
   delete context.state;
+});
+
+test('a suggested count is recorded with its basis like a filled value, and Undo clears it', () => {
+  context.state = { draft: { inspection_id: 'job' }, session: { pricing_version: 'dryscope-v2' } };
+  const data = { air_movers: 1, rooms: [] };
+  const entry = {
+    target: data,
+    field: 'air_movers',
+    before: 1,
+    after: 4,
+    quotes: [],
+    basis: 'IICRC S500 minimum for 200 sq ft of wet floor across 1 room; the maximum is 5.',
+  };
+  ScopeItems.noteMeasured([entry], data);
+  assert.deepEqual(plain(data.quantity_overrides), {
+    air_movers: { measured: '4', entered: '4' },
+  });
+  ScopeItems.undoMeasured(entry, data);
+  assert.deepEqual(plain(data.quantity_overrides), {});
+  delete context.state;
+});
+
+test('suggested counts follow the server numbers and the items the table lists', () => {
+  const both = table([
+    item('fan', 'drying_equipment', 'count_days:air_movers*drying_days'),
+    item('dehu', 'drying_equipment', 'count_days:dehumidifiers*drying_days'),
+  ]);
+  const sizing = (movers, dehumidifiers) => ({
+    status: 'available',
+    air_movers: { entered: 1, min: 3, max: 4, ...movers },
+    dehumidifiers: { entered: 0, recommended_units: 2, ...dehumidifiers },
+  });
+  assert.deepEqual(plain(ScopeItems.suggestedCounts(sizing(), both)), [
+    { field: 'air_movers', value: 3 },
+    { field: 'dehumidifiers', value: 2 },
+  ]);
+  // Never lowers a count, and leaves one at or above the number alone.
+  assert.deepEqual(
+    plain(ScopeItems.suggestedCounts(sizing({ entered: 3 }, { entered: 2 }), both)),
+    [],
+  );
+  assert.deepEqual(
+    plain(ScopeItems.suggestedCounts(sizing({ entered: 9 }, { entered: 9 }), both)),
+    [],
+  );
+  // No wet floor sized, or no AHAM rating: nothing to suggest for that count.
+  assert.deepEqual(plain(ScopeItems.suggestedCounts(sizing({ min: null }), both)), [
+    { field: 'dehumidifiers', value: 2 },
+  ]);
+  assert.deepEqual(
+    plain(ScopeItems.suggestedCounts(sizing({}, { recommended_units: null }), both)),
+    [{ field: 'air_movers', value: 3 }],
+  );
+  assert.deepEqual(plain(ScopeItems.suggestedCounts({ status: 'not_available' }, both)), []);
+  assert.deepEqual(plain(ScopeItems.suggestedCounts(undefined, both)), []);
+  // A count the table does not list has no input on the form to correct it.
+  const onlyFans = table([item('fan', 'drying_equipment', 'count_days:air_movers*drying_days')]);
+  assert.deepEqual(plain(ScopeItems.suggestedCounts(sizing(), onlyFans)), [
+    { field: 'air_movers', value: 3 },
+  ]);
+  assert.deepEqual(plain(ScopeItems.suggestedCounts(sizing(), null)), []);
 });
 
 test('the after-hours line leaves out a charge no room on the job can take', () => {

@@ -152,13 +152,20 @@ async def generate(**kwargs):
                             'value': 80,
                             'source_quote': quote,
                         },
-                        {
-                            'field': 'air_movers',
-                            'room': None,
-                            'value': 3,
-                            'source_quote': 'Use 3 fans.',
-                        },
-                    ],
+                    ]
+                    # Only a technician who states the count has it read back.
+                    + (
+                        [
+                            {
+                                'field': 'air_movers',
+                                'room': None,
+                                'value': 3,
+                                'source_quote': 'Use 3 fans.',
+                            }
+                        ]
+                        if 'Use 3 fans.' in str(kwargs['contents'])
+                        else []
+                    ),
                     # Claim details only when the walkthrough states them (tests/browser/claim-details.spec.js).
                     'claim_changes': [
                         {'field': field, 'value': value, 'source_quote': CLAIM_WORDS}

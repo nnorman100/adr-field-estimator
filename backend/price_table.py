@@ -148,6 +148,26 @@ DEFAULT_POLICY = {
     'show_line_breakdown': False,
 }
 
+# The optional policy map behind estimate assist. A table stored without it keeps its hash, so
+# normalize_policy never adds the map and every reader goes through assist_of.
+DEFAULT_ASSIST = {
+    'drying_days': 3,
+    'range_method': 'cushion',
+    'extra_drying_days': 0,
+    'hidden_damage_percent': {'1': '0', '2': '0', '3': '0'},
+}
+STARTER_ASSIST = {
+    'drying_days': 3,
+    'range_method': 'uncertainty',
+    'extra_drying_days': 1,
+    'hidden_damage_percent': {'1': '10', '2': '15', '3': '25'},
+}
+
+
+def assist_of(policy: dict) -> dict:
+    """The stored assist map, or what a table without one reads as. Never writes to the policy."""
+    return copy.deepcopy(policy.get('assist') or DEFAULT_ASSIST)
+
 
 def _default_code(item_id: str) -> str:
     return item_id.upper().replace('_', '-')[:16]
@@ -494,7 +514,7 @@ def starter_table() -> dict:
     """Return a fresh deep copy of the vendor-neutral starter table with blank prices."""
     return {
         'items': copy.deepcopy(list(STARTER_ITEMS)),
-        'policy': copy.deepcopy(DEFAULT_POLICY),
+        'policy': {**copy.deepcopy(DEFAULT_POLICY), 'assist': copy.deepcopy(STARTER_ASSIST)},
     }
 
 
@@ -583,10 +603,21 @@ def _decimal_str(
     return normalized or '0'
 
 
+def listed_fields(table: dict) -> set[str]:
+    """Job fields an enabled item reads; a field outside it has no input on the v2 form."""
+    sources = [
+        parse_source(item['quantity_source'])
+        for item in table['items']
+        if item.get('enabled', True)
+    ]
+    return {source.field for source in sources} | {source.count_field for source in sources}
+
+
 def seed_quantities(data: dict, table: dict) -> dict:
     """An office-created job's starting quantities: the table's defaults, zero for any sheet charge
     the table does not list, and the version they came from. Matches applyDefaults on the phone."""
     seeded = copy.deepcopy(data)
+    seeded['drying_days'] = assist_of(table.get('policy') or {})['drying_days']
     seen = set()
     enabled = [item for item in table['items'] if item.get('enabled', True)]
     for item in sorted(
@@ -813,6 +844,41 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
     return normalized
 
 
+def _assist_int(raw: dict, field: str, low: int, high: int) -> int:
+    value = raw.get(field, DEFAULT_ASSIST[field])
+    if isinstance(value, bool) or not isinstance(value, int) or not (low <= value <= high):
+        raise ValueError(f'Settings: assist.{field} must be an integer from {low} to {high}.')
+    return value
+
+
+def _normalize_assist(raw) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError('Settings: assist must be an object.')
+    method = raw.get('range_method', DEFAULT_ASSIST['range_method'])
+    if method not in ('cushion', 'uncertainty'):
+        raise ValueError('Settings: assist.range_method must be "cushion" or "uncertainty".')
+    percents = raw.get('hidden_damage_percent', DEFAULT_ASSIST['hidden_damage_percent'])
+    if not isinstance(percents, dict) or {str(key) for key in percents} != {'1', '2', '3'}:
+        raise ValueError('Settings: assist.hidden_damage_percent must contain keys 1, 2 and 3.')
+    percents = {str(key): value for key, value in percents.items()}
+    return {
+        'drying_days': _assist_int(raw, 'drying_days', 1, 60),
+        'range_method': method,
+        'extra_drying_days': _assist_int(raw, 'extra_drying_days', 0, 30),
+        'hidden_damage_percent': {
+            key: _decimal_str(
+                percents[key],
+                where='Settings',
+                field=f'assist.hidden_damage_percent.{key}',
+                low=Decimal('0'),
+                high=Decimal('100'),
+                max_decimals=2,
+            )
+            for key in ('1', '2', '3')
+        },
+    }
+
+
 def normalize_policy(raw) -> dict:
     if not isinstance(raw, dict):
         raise ValueError('Settings: policy must be an object.')
@@ -945,7 +1011,7 @@ def normalize_policy(raw) -> dict:
     if not isinstance(show_line_breakdown, bool):
         raise ValueError(f'{where}: show_line_breakdown must be a boolean.')
 
-    return {
+    normalized = {
         'estimate_mode': estimate_mode,
         'area_basis': area_basis,
         'range': {
@@ -970,6 +1036,10 @@ def normalize_policy(raw) -> dict:
         },
         'show_line_breakdown': show_line_breakdown,
     }
+    # Absent stays absent: an added key would change the hash of every stored table and pin.
+    if raw.get('assist') is not None:
+        normalized['assist'] = _normalize_assist(raw['assist'])
+    return normalized
 
 
 def normalize_table(payload, *, publish: bool, acknowledgements=()) -> dict:
@@ -1217,6 +1287,8 @@ def from_v1_rates(rates: dict[str, str]) -> dict:
             'percent': '0',
         },
         'show_line_breakdown': False,
+        # The cushion, so the switched table's range matches the rate book it replaces.
+        'assist': copy.deepcopy(DEFAULT_ASSIST),
     }
     return normalize_table({'items': items, 'policy': policy}, publish=False)
 
@@ -1267,6 +1339,12 @@ _POLICY_DIFF_PATHS = (
     ('sales_tax.enabled', ('sales_tax', 'enabled')),
     ('sales_tax.percent', ('sales_tax', 'percent')),
     ('show_line_breakdown', ('show_line_breakdown',)),
+    ('assist.drying_days', ('assist', 'drying_days')),
+    ('assist.range_method', ('assist', 'range_method')),
+    ('assist.extra_drying_days', ('assist', 'extra_drying_days')),
+    ('assist.hidden_damage_percent.1', ('assist', 'hidden_damage_percent', '1')),
+    ('assist.hidden_damage_percent.2', ('assist', 'hidden_damage_percent', '2')),
+    ('assist.hidden_damage_percent.3', ('assist', 'hidden_damage_percent', '3')),
 )
 
 _LARGE_CHANGE_POLICY_FIELDS = {
@@ -1281,6 +1359,12 @@ _LARGE_CHANGE_POLICY_FIELDS = {
     'minimum_job_charge',
     'overhead_profit_percent',
     'sales_tax.percent',
+    'assist.drying_days',
+    'assist.range_method',
+    'assist.extra_drying_days',
+    'assist.hidden_damage_percent.1',
+    'assist.hidden_damage_percent.2',
+    'assist.hidden_damage_percent.3',
 }
 
 
@@ -1316,6 +1400,9 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
     if before is None or not before.get('items'):
         before_items: dict[str, dict] = {}
         before_policy = copy.deepcopy(DEFAULT_POLICY)
+        # A first table starts from the starter's settings, so only what the owner moved is listed.
+        if 'assist' in after_norm['policy']:
+            before_policy['assist'] = copy.deepcopy(STARTER_ASSIST)
     else:
         before_norm = normalize_table(before, publish=False)
         before_items = {it['item_id']: it for it in before_norm['items']}
@@ -1434,7 +1521,9 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
             )
 
     policy_diffs: list[dict] = []
-    after_policy = after_norm['policy']
+    # Both sides read through assist_of: adding the map at its absent values is no change.
+    before_policy = {**before_policy, 'assist': assist_of(before_policy)}
+    after_policy = {**after_norm['policy'], 'assist': assist_of(after_norm['policy'])}
     for label, path in _POLICY_DIFF_PATHS:
         old_val = _nested_get(before_policy, path)
         new_val = _nested_get(after_policy, path)

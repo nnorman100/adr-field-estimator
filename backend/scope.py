@@ -7,8 +7,12 @@ from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr, Valid
 
 try:
     from .contracts import ClaimDetails, StrictModel, InspectionData, Room, LossType
+    from .sizing import equipment_sizing, suggested_counts
+    from .price_table import listed_fields
 except ImportError:
     from contracts import ClaimDetails, StrictModel, InspectionData, Room, LossType
+    from sizing import equipment_sizing, suggested_counts
+    from price_table import listed_fields
 
 JobField = Literal[
     'address',
@@ -418,6 +422,26 @@ def validate_claim(source, claim, suggestions):
     return changes, list(dict.fromkeys(questions))
 
 
+def add_new_rooms(candidate, new_rooms, changes):
+    replace_default = (
+        len(candidate['rooms']) == 1
+        and untouched_default_room(candidate['rooms'][0])
+        and not any(c.room and normalized(c.room) == 'room 1' for c in changes)
+    )
+    for room in new_rooms.values():
+        if 'category' not in room or not ({'finished_sf', 'unfinished_sf'} & room.keys()):
+            raise ValueError(
+                'State the water category and measured demolition area for a new room, then retry.'
+            )
+        values = {**candidate['rooms'][0], **room} if replace_default else room
+        validated = Room.model_validate(values, strict=True).model_dump(mode='json')
+        if replace_default:
+            candidate['rooms'][0] = validated
+            replace_default = False
+        else:
+            candidate['rooms'].append(validated)
+
+
 def validate_suggestions(data, suggestions, claim=None):
     """claim is the job's saved claim details; None when claim details cannot be stored."""
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
@@ -477,23 +501,7 @@ def validate_suggestions(data, suggestions, claim=None):
                 continue
             target[change.field] = change.value
         changes.append(change)
-    replace_default = (
-        len(candidate['rooms']) == 1
-        and untouched_default_room(candidate['rooms'][0])
-        and not any(c.room and normalized(c.room) == 'room 1' for c in changes)
-    )
-    for room in new_rooms.values():
-        if 'category' not in room or not ({'finished_sf', 'unfinished_sf'} & room.keys()):
-            raise ValueError(
-                'State the water category and measured demolition area for a new room, then retry.'
-            )
-        values = {**candidate['rooms'][0], **room} if replace_default else room
-        validated = Room.model_validate(values, strict=True).model_dump(mode='json')
-        if replace_default:
-            candidate['rooms'][0] = validated
-            replace_default = False
-        else:
-            candidate['rooms'].append(validated)
+    add_new_rooms(candidate, new_rooms, changes)
     InspectionData.model_validate(candidate, strict=True)
     if any(len(q) > 1000 for q in suggestions.questions):
         raise ValueError('Clarification is too long.')
@@ -503,6 +511,45 @@ def validate_suggestions(data, suggestions, claim=None):
         claim_changes=claim_changes,
         questions=(claim_questions + suggestions.questions)[:20],
     )
+
+
+def filled_data(data, changes):
+    """The job as it reads with already validated changes applied, as the phone will apply them."""
+    candidate = data.model_dump(mode='json')
+    known = {normalized(room.name): i for i, room in enumerate(data.rooms)}
+    new_rooms = {}
+    for change in changes:
+        if change.room is None:
+            candidate[change.field] = change.value
+            continue
+        name = normalized(change.room)
+        target = (
+            candidate['rooms'][known[name]]
+            if name in known
+            else new_rooms.setdefault(name, {'name': change.room})
+        )
+        target[change.field] = change.value
+    add_new_rooms(candidate, new_rooms, changes)
+    return InspectionData.model_validate(candidate)
+
+
+def fill_counts(data, proposed, changes, table):
+    """Counts the sizing check would raise on the filled job, computed by the server, never the model.
+
+    A count the technician spoke stays, even one the fill had nothing to change for: proposed is
+    what the model read, before validation drops values already on the form. So does a count
+    already recorded from a walkthrough or explained with a reason: rereading must not undo it.
+    A count the job's table does not list has no input to correct it on the form, so it is left.
+    """
+    filled = filled_data(data, changes)
+    held = {change.field for change in proposed if change.room is None}
+    held.update(data.quantity_overrides or {})
+    listed = listed_fields(table)
+    return [
+        row
+        for row in suggested_counts(equipment_sizing(filled), filled)
+        if row['field'] in listed and row['field'] not in held
+    ]
 
 
 CLAIM_PROMPT = (

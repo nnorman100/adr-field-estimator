@@ -1229,3 +1229,57 @@ test("a v2 job's after-hours sentence has the table's percent whichever code ans
   await page.evaluate(() => ScopeItems.refresh());
   await expect(sentence).toContainText('25% on labor and materials');
 });
+
+test('the owner sets the drying days a new job starts at, and a publish carries it to a new job', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', { data: {} });
+  await start(page, 'owner');
+  await navigate(page, 'dashboardPrices');
+  const days = page.locator('input[name="policy_assist.drying_days"]');
+  await expect(days).toHaveValue('3');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  await days.fill('61');
+  await expect(page.locator('#priceSaveStatus')).toContainText(
+    'Settings: assist.drying_days must be an integer from 1 to 60.',
+  );
+  await days.fill('5');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await page.locator('#priceReason').fill('Longer default drying');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText(
+    'Drying days a new job starts at: 3 to 5',
+  );
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
+
+  await page.goto('/app');
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  const saved = await page.evaluate(() => state.record.data);
+  expect(saved.drying_days).toBe(5);
+  // A starting value is not a measured one, so changing it needs no reason.
+  expect(saved.quantity_overrides?.drying_days).toBeUndefined();
+});
+
+test('a table published before the setting shows the old value and no unpublished changes', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', { data: { policy: { assist: null } } });
+  await start(page, 'owner');
+  await navigate(page, 'dashboardPrices');
+  const days = page.locator('input[name="policy_assist.drying_days"]');
+  await expect(days).toHaveValue('3');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+  // Changing it and going back is no change, though the working copy now holds the full map.
+  await days.fill('4');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeVisible();
+  await days.fill('3');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+});
