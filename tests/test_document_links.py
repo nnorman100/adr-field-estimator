@@ -84,6 +84,22 @@ def test_homeowner_link_reads_the_signed_proposal_photos_and_signature_many_time
     assert store.db.records['authorizations/' + AUTH] == agreement
 
 
+@pytest.mark.parametrize('document_set', ['homeowner', 'adjuster'])
+def test_link_never_delivers_quantity_notes_or_the_entered_overrides(signed, document_set):
+    _, store, agreement = signed
+    agreement['inspection']['quantity_overrides'] = {
+        'labor_hours': dict(measured='8', entered='6', reason='Synthetic entered reason')
+    }
+    agreement['documents']['quantity_notes'] = [
+        dict(label='Labor hours', measured=8, entered=6, reason='Synthetic entered reason')
+    ]
+    value, _ = dl.mint(store, 'owner', AUTH, document_set)
+    view = reader(value).get('/api/documents')
+    assert view.status_code == 200, view.text
+    assert 'Synthetic entered reason' not in view.text
+    assert 'quantity_notes' not in view.json()['documents']
+
+
 def test_adjuster_link_reads_the_claim_and_letter_without_the_proposal_or_photos(signed):
     client, store, agreement = signed
     homeowner, _ = dl.mint(store, 'owner', AUTH, 'homeowner')

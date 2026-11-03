@@ -567,3 +567,12 @@ def test_crew_email_includes_power_distribution_without_prices(count, as_model):
             assert 'Equipment: none recorded.' in body
             assert 'power-distribution' not in body
         assert '$' not in body and '9999' not in body
+
+
+def test_crew_lead_email_leaves_out_the_entered_overrides():
+    company = deepcopy(COMPANY)
+    company['profile']['crew_lead_email'] = 'lead@example.invalid'
+    overrides = {'labor_hours': dict(measured='8', entered='6', reason='Synthetic entered reason')}
+    message = crew_lead_message(company, dict(job_scope(), quantity_overrides=overrides))
+    for body in (message['text'], message['html']):
+        assert 'Synthetic entered reason' not in body

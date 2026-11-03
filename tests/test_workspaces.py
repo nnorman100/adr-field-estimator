@@ -2309,6 +2309,38 @@ def test_only_the_owner_receives_quantity_notes_on_a_signed_job(api, uid, allowe
     assert ('Synthetic override reason' in inspection.text) is allowed
 
 
+OVERRIDES = {'labor_hours': dict(measured='8', entered='6', reason='Synthetic entered reason')}
+
+
+@pytest.mark.parametrize('uid', ['owner', 'estimator', 'office'])
+def test_company_roles_keep_the_entered_overrides_in_the_job_data(api, uid):
+    client, current, store = api
+    signed_job(client, current, store)
+    store.db.records['inspections/' + ID]['data']['quantity_overrides'] = OVERRIDES
+    store.db.records['authorizations/' + SIGNED]['inspection']['quantity_overrides'] = OVERRIDES
+    current['uid'] = uid
+    assert client.get('/api/inspections/' + ID).json()['data']['quantity_overrides'] == OVERRIDES
+    agreement = client.get('/api/authorizations/' + SIGNED).json()
+    assert agreement['inspection']['quantity_overrides'] == OVERRIDES
+
+
+def test_superadmin_support_never_receives_the_entered_overrides(api):
+    client, current, store = api
+    signed_job(client, current, store)
+    inspection = store.db.records['inspections/' + ID]['data']
+    agreement = store.db.records['authorizations/' + SIGNED]['inspection']
+    inspection['quantity_overrides'] = agreement['quantity_overrides'] = OVERRIDES
+    current['uid'] = 'admin'
+    base = '/api/admin/companies/adr'
+    for path in ('/jobs/' + ID, '/authorizations/' + SIGNED):
+        opened = client.get(base + path)
+        assert opened.status_code == 200, opened.text
+        assert 'Synthetic entered reason' not in opened.text
+    assert client.get(base + '/jobs/' + ID).json()['inspection']['data']['address']
+    # The saved records keep what was entered.
+    assert inspection['quantity_overrides'] == agreement['quantity_overrides'] == OVERRIDES
+
+
 def test_superadmin_support_never_receives_quantity_notes(api):
     client, current, store = api
     signed_job(client, current, store)

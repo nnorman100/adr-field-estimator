@@ -653,6 +653,15 @@ def public_record(record, *, readiness_state=None, quantity_notes=False):
     return result
 
 
+def support_record(record):
+    """A job as superadmin support reads it: the company's entered overrides stay in the company."""
+    result = public_record(record)
+    for key in ('data', 'inspection'):
+        if result.get(key):
+            result[key] = {k: v for k, v in result[key].items() if k != 'quantity_overrides'}
+    return result
+
+
 async def saved_readiness(store, uid, record):
     # Called only after the record's access check; recheck after sidecar reads as well.
     try:
@@ -2033,7 +2042,7 @@ async def support_job(
 ):
     workspace_client(request)
     record, job = await stored(store.support_inspection, staff['uid'], company_id, inspection_id)
-    return {'inspection': public_record(record), 'job': job}
+    return {'inspection': support_record(record), 'job': job}
 
 
 @app.get('/api/admin/companies/{company_id}/jobs/{inspection_id}/photos/{photo_id}')
@@ -2066,7 +2075,7 @@ async def support_authorization(
     record, job, delivery = await stored(
         store.support_authorization, staff['uid'], company_id, auth_id
     )
-    result = {'authorization': public_record(record), 'job': job, 'delivery': delivery}
+    result = {'authorization': support_record(record), 'job': job, 'delivery': delivery}
     if ai_features.enabled('drying_watch') and (record.get('inspection') or {}).get('drying_days'):
         result['monitoring'] = await stored(
             store.workspaces.monitoring.view, staff['uid'], job['job_id'], company_id

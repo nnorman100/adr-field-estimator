@@ -174,6 +174,24 @@ def test_link_never_delivers_quantity_notes_before_or_after_signing(ready):
     assert agreement['documents']['quantity_notes'] == [note]
 
 
+def test_link_never_delivers_the_entered_overrides_before_or_after_signing(ready):
+    _, store, _, value = ready
+    overrides = {'labor_hours': dict(measured='8', entered='6', reason='Synthetic entered reason')}
+    store.db.records['inspections/' + ID]['data']['quantity_overrides'] = overrides
+    pending = homeowner(value).get('/api/sign')
+    assert pending.json()['status'] == 'pending'
+    assert 'Synthetic entered reason' not in pending.text
+    saved = sign(value)
+    assert saved.status_code == 200, saved.text
+    assert 'Synthetic entered reason' not in saved.text
+    # The signed record's own copy of the job data keeps them, and the link still leaves them out.
+    agreement = store.db.records['authorizations/' + saved.json()['auth_id']]
+    assert agreement['inspection']['quantity_overrides'] == overrides
+    signed = homeowner(value).get('/api/sign')
+    assert signed.json()['status'] == 'signed'
+    assert 'Synthetic entered reason' not in signed.text
+
+
 def test_single_price_proposal_signs_through_the_link(ready):
     _, store, _, value = ready
     del stored_documents(store)['adr_estimate']['proposed_cost_low']
