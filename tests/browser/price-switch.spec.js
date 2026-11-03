@@ -178,47 +178,52 @@ test('a draft not yet priced before the switch stays on the v1 form offline', as
   await context.setOffline(false);
 });
 
-test('a draft begun before the switch that never reached the server shows the v1 form offline, then the table at its first save', async ({
-  page,
-  context,
-}) => {
-  await start(page, 'owner');
-  await publishRates(page);
-  await page.route('**/api/inspections**', (route) =>
-    ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
-  );
-  await page.evaluate(() => openNew().catch(() => {}));
-  const id = await page.evaluate(() => state.draft.inspection_id);
-  await publishSwitch(page);
-  await page.getByRole('button', { name: 'Publish prices' }).click();
-  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
-  await expect
-    .poll(() => page.evaluate(() => [state.session.pricing_version, !!state.session.switched_at]))
-    .toEqual(['dryscope-v2', true]);
-  await context.setOffline(true);
-  await page.evaluate((value) => restoreDraft(value), id);
-  expect(await page.evaluate(() => state.record)).toBeNull();
-  await checkScope(page);
-  await expect(page.locator('#v1Scope')).toBeVisible();
-  await expect(page.locator('#v2Scope')).toBeHidden();
-  await page.locator('#airMovers').fill('2');
+test.describe('without a service worker', () => {
+  // page.route cannot see a fetch that a controlling service worker handles, as in WebKit here.
+  test.use({ serviceWorkers: 'block' });
 
-  // Back online the server first sees the job now, so it is a new job on the published table.
-  await page.unroute('**/api/inspections**');
-  await context.setOffline(false);
-  await expect(page.locator('#v2Scope')).toBeVisible();
-  await expect(page.locator('#v1Scope')).toBeHidden();
-  await expect(page.locator('#v2Scope #airMovers')).toHaveValue('2');
-  await expect(page.locator('#saveStatus')).toHaveText('Saved');
-  const saved = await page.evaluate(async (value) => {
-    const pricing = await jsonApi('/api/inspections/' + value + '/pricing');
-    const record = await jsonApi('/api/inspections/' + value);
-    return { pricing, airMovers: record.data.air_movers };
-  }, id);
-  expect(saved.airMovers).toBe(2);
-  expect(saved.pricing.calculation_version).toBe('dryscope-v2');
-  expect(saved.pricing.pinned.reason).toBe('first_price');
-  expect(saved.pricing.can_reprice).toBe(false);
+  test('a draft begun before the switch that never reached the server shows the v1 form offline, then the table at its first save', async ({
+    page,
+    context,
+  }) => {
+    await start(page, 'owner');
+    await publishRates(page);
+    await page.route('**/api/inspections**', (route) =>
+      ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
+    );
+    await page.evaluate(() => openNew().catch(() => {}));
+    const id = await page.evaluate(() => state.draft.inspection_id);
+    await publishSwitch(page);
+    await page.getByRole('button', { name: 'Publish prices' }).click();
+    await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
+    await expect
+      .poll(() => page.evaluate(() => [state.session.pricing_version, !!state.session.switched_at]))
+      .toEqual(['dryscope-v2', true]);
+    await context.setOffline(true);
+    await page.evaluate((value) => restoreDraft(value), id);
+    expect(await page.evaluate(() => state.record)).toBeNull();
+    await checkScope(page);
+    await expect(page.locator('#v1Scope')).toBeVisible();
+    await expect(page.locator('#v2Scope')).toBeHidden();
+    await page.locator('#airMovers').fill('2');
+
+    // Back online the server first sees the job now, so it is a new job on the published table.
+    await page.unroute('**/api/inspections**');
+    await context.setOffline(false);
+    await expect(page.locator('#v2Scope')).toBeVisible();
+    await expect(page.locator('#v1Scope')).toBeHidden();
+    await expect(page.locator('#v2Scope #airMovers')).toHaveValue('2');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const saved = await page.evaluate(async (value) => {
+      const pricing = await jsonApi('/api/inspections/' + value + '/pricing');
+      const record = await jsonApi('/api/inspections/' + value);
+      return { pricing, airMovers: record.data.air_movers };
+    }, id);
+    expect(saved.airMovers).toBe(2);
+    expect(saved.pricing.calculation_version).toBe('dryscope-v2');
+    expect(saved.pricing.pinned.reason).toBe('first_price');
+    expect(saved.pricing.can_reprice).toBe(false);
+  });
 });
 
 test('discarding the switch returns to the rate book, and only the owner is offered it', async ({
