@@ -373,7 +373,7 @@
     !!company?.from_cache &&
     state?.session !== state?.offlineSession &&
     company.table?.version_id !== state?.session?.pricing_table_version;
-  const startingTable = () => (outdatedCopy() ? null : companyView());
+  const currentTable = () => (outdatedCopy() ? null : companyView());
   // When a new job began, kept on the phone's draft row only. A session that already names a switch
   // means the job began after it, even on a phone whose clock is behind the server's.
   function startedAt() {
@@ -419,7 +419,7 @@
   });
   // The pricing row field that persist() stores beside a draft.
   function rowExtras(id) {
-    const t = jobs.get(id)?.pricing || (companyOnTable() && startingTable());
+    const t = jobs.get(id)?.pricing || (companyOnTable() && currentTable());
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   function seed(id, row) {
@@ -450,6 +450,7 @@
       companyTrouble = '';
       if (view.calculation_version === V2) {
         company = {
+          key,
           table: pricingCopy({
             calculation_version: V2,
             version_id: view.version_id,
@@ -467,9 +468,9 @@
     } catch (e) {
       if (mine !== companySeq) return;
       if (e.status) {
-        company = null;
         const refused = REFUSED_STATUSES.includes(e.status),
           message = refused ? PRICES_REFUSED : PRICES_FAILED;
+        if (refused || company?.from_cache || company?.key !== key) company = null;
         if (message !== companyTrouble) say(message, 'error');
         companyTrouble = message;
         if (refused) await dbAction('readwrite', (store) => store.delete(key)).catch(() => {});
@@ -484,7 +485,7 @@
   // A new draft for a v2 company: zero charge quantities, then the table's defaults.
   function newData(emptyData) {
     if (state?.session?.pricing_version !== V2) return null;
-    return applyDefaults(emptyData({ v2: true }), startingTable());
+    return applyDefaults(emptyData({ v2: true }), companyTrouble ? null : currentTable());
   }
   function readinessPricing() {
     const id = draftId();
@@ -745,7 +746,9 @@
   function statusText() {
     const t = table();
     if (!t) return companyTrouble || PRICES_NEVER_LOADED;
-    if (t !== companyView() || !company.from_cache) return '';
+    if (state.record && t !== companyView()) return '';
+    if (companyTrouble) return companyTrouble;
+    if (!company?.from_cache || t.version_id !== companyView()?.version_id) return '';
     return asOfText(company.cached_at) + (outdatedCopy() ? PRICES_NEWER : '');
   }
   function render() {
@@ -952,7 +955,9 @@
     before?.pricing_table_version !== state.session?.pricing_table_version ||
     before?.company_id !== state.session?.company_id ||
     (state.session?.pricing_version === V2 &&
-      (!!company?.from_cache || companyView()?.version_id !== state.session.pricing_table_version));
+      (!!companyTrouble ||
+        !!company?.from_cache ||
+        companyView()?.version_id !== state.session.pricing_table_version));
   async function sessionChanged() {
     await loadCompany();
     if (!dom() || !draftId() || !$('v2Scope')) return;
