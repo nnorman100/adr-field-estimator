@@ -168,8 +168,16 @@
   ],
   "fieldOverrides": [
     { "collectionGroup": "_price_book_versions", "fieldPath": "rates", "indexes": [] },
+    { "collectionGroup": "_price_book_versions", "fieldPath": "items", "indexes": [] },
+    { "collectionGroup": "_price_book_versions", "fieldPath": "policy", "indexes": [] },
     { "collectionGroup": "_job_pricing", "fieldPath": "rates", "indexes": [] },
+    { "collectionGroup": "_job_pricing", "fieldPath": "items", "indexes": [] },
+    { "collectionGroup": "_job_pricing", "fieldPath": "policy", "indexes": [] },
     { "collectionGroup": "_price_book_previews", "fieldPath": "rates", "indexes": [] },
-    { "collectionGroup": "_price_book_previews", "fieldPath": "diff", "indexes": [] }
+    { "collectionGroup": "_price_book_previews", "fieldPath": "items", "indexes": [] },
+    { "collectionGroup": "_price_book_previews", "fieldPath": "policy", "indexes": [] },
+    { "collectionGroup": "_price_book_previews", "fieldPath": "diff", "indexes": [] },
+    { "collectionGroup": "_price_book_drafts", "fieldPath": "items", "indexes": [] },
+    { "collectionGroup": "_price_book_drafts", "fieldPath": "policy", "indexes": [] }
   ]
 }

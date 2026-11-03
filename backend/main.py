@@ -966,6 +966,11 @@ def inspection_payload(data):
         result.pop('extras', None)
     if not result.get('equipment_scans'):
         result.pop('equipment_scans', None)
+    for item in (result.get('scope_items') or {}).values():
+        if item.get('measured_quantity') is None:
+            item.pop('measured_quantity', None)
+        if item.get('override_reason') is None:
+            item.pop('override_reason', None)
     if result.get('coordinates') is None and 'coordinates' not in data.model_fields_set:
         result.pop('coordinates', None)
     return result
@@ -1502,7 +1507,9 @@ async def audit_inspection(
     pin = None
     basis = None
     if WORKSPACES_ENABLED and getattr(store, 'workspaces', None):
-        pin = await stored(store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id)
+        pin = await stored(
+            store.workspaces.prices.ensure_pin, staff['uid'], req.inspection_id, True
+        )
         basis = await stored(store.workspaces.prices.basis_for, pin, pin['company_id'])
     # Without workspaces the app is ADR's single-company rollback mode, so these are ADR's prices.
     rates = adr_rates() if pin is None else pin['rates']

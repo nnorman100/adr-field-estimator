@@ -5,18 +5,20 @@ import logging
 import re
 
 from fastapi import Depends, HTTPException, Query, Request, Response, Security
-from pydantic import Field
+from pydantic import Field, model_validator
 
 try:
     from .cloud_log import event
     from .contracts import StrictModel
     from .price_books import price_books_enabled
     from .price_book_import import export_csv, export_xlsx, parse_upload
+    from .price_table import starter_table
 except ImportError:
     from cloud_log import event
     from contracts import StrictModel
     from price_books import price_books_enabled
     from price_book_import import export_csv, export_xlsx, parse_upload
+    from price_table import starter_table
 
 
 XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -24,10 +26,36 @@ PRIVATE = {'Cache-Control': 'private, no-store'}
 
 
 class PricePreviewBody(StrictModel):
-    rates: dict[str, str]
+    rates: dict[str, str] | None = None
+    items: list[dict] | None = None
+    policy: dict | None = None
     acknowledgements: list[str] = Field(default_factory=list)
     change_reason: str = Field(min_length=1, max_length=500)
     source: str = 'manual'
+
+    @model_validator(mode='after')
+    def check_payload_shape(self):
+        has_v1 = self.rates is not None
+        has_v2 = self.items is not None or self.policy is not None
+        if has_v1 == has_v2:
+            raise ValueError('Send either v1 rates or v2 items and policy.')
+        if has_v2 and (self.items is None or self.policy is None):
+            raise ValueError('Send both items and policy.')
+        return self
+
+
+class PriceWorkingCopyBody(StrictModel):
+    items: list[dict]
+    policy: dict
+    expected_working_version: int | None = Field(default=None, ge=0)
+    expected_generation: int | None = Field(default=None, ge=0)
+    acknowledgements: list[str] = Field(default_factory=list)
+
+
+class PriceCalculateBody(StrictModel):
+    items: list[dict]
+    policy: dict
+    acknowledgements: list[str] = Field(default_factory=list)
 
 
 class PricePublishBody(StrictModel):
@@ -75,6 +103,39 @@ def register_price_book_routes(app, identity, get_store, stored, live):
     async def company_prices(company_id: str, claims=live_identity, store=Depends(get_store)):
         return await stored(books(store).read_company, claims['uid'], company_id)
 
+    @app.put('/api/companies/{company_id}/prices/working-copy')
+    async def company_save_working_copy(
+        company_id: str,
+        body: PriceWorkingCopyBody,
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        return await stored(
+            books(store).save_working_copy, claims['uid'], company_id, body.model_dump()
+        )
+
+    @app.delete('/api/companies/{company_id}/prices/working-copy')
+    async def company_discard_working_copy(
+        company_id: str, claims=live_identity, store=Depends(get_store)
+    ):
+        return await stored(books(store).discard_working_copy, claims['uid'], company_id)
+
+    @app.post('/api/companies/{company_id}/prices/working-copy/discard')
+    async def company_post_discard_working_copy(
+        company_id: str, claims=live_identity, store=Depends(get_store)
+    ):
+        return await stored(books(store).discard_working_copy, claims['uid'], company_id)
+
+    @app.post('/api/companies/{company_id}/prices/calculate')
+    async def company_calculate(
+        company_id: str,
+        body: PriceCalculateBody,
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        await stored(store.quota, claims['uid'], 'price_preview')
+        return await stored(books(store).calculate, claims['uid'], company_id, body.model_dump())
+
     @app.get('/api/companies/{company_id}/prices/versions')
     async def company_versions(company_id: str, claims=live_identity, store=Depends(get_store)):
         return await stored(books(store).versions, claims['uid'], company_id)
@@ -106,7 +167,7 @@ def register_price_book_routes(app, identity, get_store, stored, live):
         company_id: str, body: PricePreviewBody, claims=live_identity, store=Depends(get_store)
     ):
         await stored(store.quota, claims['uid'], 'price_preview')
-        payload = body.model_dump()
+        payload = body.model_dump(exclude_none=True)
         payload['source'] = 'manual'
         return await stored(books(store).preview, claims['uid'], company_id, payload)
 
@@ -297,20 +358,42 @@ def _disposition_param(header, name):
 
 
 def _import_preview(book, uid, company_id, upload):
-    company, base_version, generation, _rates = book.export_rows(uid, company_id)
+    company, base_version, generation, exported = book.export_rows(uid, company_id)
+    is_v2 = isinstance(exported, list)
     try:
-        rates = parse_upload(
-            upload['raw'], upload['content_type'], company, base_version, generation
+        parsed = parse_upload(
+            upload['raw'],
+            upload['content_type'],
+            company,
+            base_version,
+            generation,
+            calculation_version='dryscope-v2' if is_v2 else None,
         )
     except ValueError:
         event('Price import rejected', logging.INFO, operation='price_book', outcome='rejected')
         raise
     event('Price import parsed', logging.INFO, operation='price_book', outcome='parsed')
+    if isinstance(parsed, list):
+        head = book._head(company_id)
+        published = book._version(head.get('latest_version_id')) if head else None
+        policy = (published or {}).get('policy') or starter_table()['policy']
+        return book.preview(
+            uid,
+            company_id,
+            {
+                'items': parsed,
+                'policy': policy,
+                'acknowledgements': upload['acknowledgements'],
+                'change_reason': upload['change_reason'],
+                'source': 'import',
+                'import_digest': hashlib.sha256(upload['raw']).hexdigest(),
+            },
+        )
     return book.preview(
         uid,
         company_id,
         {
-            'rates': rates,
+            'rates': parsed,
             'acknowledgements': upload['acknowledgements'],
             'change_reason': upload['change_reason'],
             'source': 'import',

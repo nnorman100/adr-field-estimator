@@ -13,6 +13,7 @@ from backend.claims import line, make_documents, price_scope, proposal_range
 from backend.contracts import AIResult, InspectionData, PriceBasis
 from backend.inspection_store import Conflict
 from backend.price_books import calculation_policy, content_hash, sample_totals
+from backend.pricing import price_and_range
 from pydantic import ValidationError
 from tests.test_workspaces import ID, api, data, store  # noqa: F401
 
@@ -296,6 +297,14 @@ def test_the_version_selects_the_formulas(next_version):
         'range': 'next',
         'currency': 'USD',
     }
+
+
+def test_the_pricing_dispatch_uses_the_pins_version(next_version):
+    priced = price_and_range(cat2(1001), {'calculation_version': NEXT, 'rates': V1_RATES})
+    assert priced.calculation_version == NEXT and priced.xactimate_total == 7.0
+    assert (priced.low, priced.high) == (Decimal('10.00'), Decimal('20.00'))
+    with pytest.raises(ValueError, match='Unsupported calculation version'):
+        price_and_range(cat2(1001), {'calculation_version': UNKNOWN, 'rates': V1_RATES})
 
 
 def test_the_same_rates_hash_differently_under_another_version(next_version):

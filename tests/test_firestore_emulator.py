@@ -1103,3 +1103,151 @@ def test_price_publish_rolls_back_and_two_publishes_keep_one_generation():
         assert stored(stores[0].db, '_companies/adr')['version'] == 1
     finally:
         price_books.set_enabled(None)
+
+
+def test_v2_publish_and_working_copy_transactions():
+    """v2 publish rollback leaves working copy intact, competing publishes keep one generation,
+    winning publish deletes the working copy, and client rules deny _price_book_drafts."""
+    from backend import price_books, price_table
+
+    def stop():
+        raise RuntimeError('stop before the event')
+
+    def priced_v2(amount):
+        table = price_table.starter_table()
+        for item in table['items']:
+            if item['enabled']:
+                item['unit_price'] = amount
+            if item['group'] == 'extras':
+                item['enabled'] = False
+        return table
+
+    price_books.set_enabled(True)
+    try:
+        stores = instances(CompanyInspectionStore)
+        seed_company(stores[0].db)
+        books = stores[0].workspaces.prices
+        table_a = priced_v2('25.00')
+        table_b = priced_v2('35.00')
+
+        # Save a working copy and verify client rules deny direct access to _price_book_drafts
+        wc = books.save_working_copy(
+            'owner',
+            'adr',
+            {
+                'expected_working_version': 0,
+                'expected_generation': 0,
+                'items': table_a['items'],
+                'policy': table_a['policy'],
+            },
+        )
+        assert wc['working_version'] == 1
+        assert stored(stores[0].db, '_price_book_drafts/adr') is not None
+
+        for token in (browser_token('owner'), browser_token('owner', superadmin=True)):
+            for method, path, body in [
+                ('GET', '_price_book_drafts/adr', None),
+                ('GET', '_price_book_drafts', None),
+                (
+                    'PATCH',
+                    '_price_book_drafts/adr',
+                    {'fields': {'working_version': {'integerValue': '99'}}},
+                ),
+                ('DELETE', '_price_book_drafts/adr', None),
+            ]:
+                assert browser_request(method, path, token, body) == 403
+
+        # Competing working-copy saves at the same expected_working_version admit at most one
+        wc_outcomes = outcomes(
+            concurrently(
+                [
+                    lambda: books.save_working_copy(
+                        'owner',
+                        'adr',
+                        {
+                            'expected_working_version': 1,
+                            'expected_generation': 0,
+                            'items': table_a['items'],
+                            'policy': table_a['policy'],
+                        },
+                    ),
+                    lambda: stores[1].workspaces.prices.save_working_copy(
+                        'owner',
+                        'adr',
+                        {
+                            'expected_working_version': 1,
+                            'expected_generation': 0,
+                            'items': table_b['items'],
+                            'policy': table_b['policy'],
+                        },
+                    ),
+                ]
+            ),
+            refused=Conflict,
+        )
+        assert len(wc_outcomes) <= 1
+
+        # A publish failure before the audit event rolls back both the version and the working-copy deletion
+        preview_a = books.preview(
+            'owner',
+            'adr',
+            {
+                'items': table_a['items'],
+                'policy': table_a['policy'],
+                'acknowledgements': [],
+                'change_reason': 'First v2 table',
+                'source': 'manual',
+            },
+        )
+        books._before_event = stop
+        with pytest.raises(RuntimeError):
+            books.publish('owner', 'adr', preview_a['preview_id'], preview_a['generation'])
+        assert list(stores[0].db.collection('_price_book_versions').stream()) == []
+        assert stored(stores[0].db, '_company_price_books/adr') is None
+        assert stored(stores[0].db, '_price_book_drafts/adr') is not None
+        books._before_event = None
+
+        # Competing v2 publishes keep one generation and delete the working copy
+        first = books.preview(
+            'owner',
+            'adr',
+            {
+                'items': table_a['items'],
+                'policy': table_a['policy'],
+                'acknowledgements': [],
+                'change_reason': 'First v2 table',
+                'source': 'manual',
+            },
+        )
+        second = stores[1].workspaces.prices.preview(
+            'owner',
+            'adr',
+            {
+                'items': table_b['items'],
+                'policy': table_b['policy'],
+                'acknowledgements': [],
+                'change_reason': 'Competing v2 table',
+                'source': 'manual',
+            },
+        )
+        outcomes(
+            concurrently(
+                [
+                    lambda: books.publish('owner', 'adr', first['preview_id'], first['generation']),
+                    lambda: stores[1].workspaces.prices.publish(
+                        'owner', 'adr', second['preview_id'], second['generation']
+                    ),
+                ]
+            ),
+            refused=Conflict,
+        )
+        if not list(stores[0].db.collection('_price_book_versions').stream()):
+            books.publish('owner', 'adr', first['preview_id'], 0)
+        assert len(list(stores[0].db.collection('_price_book_versions').stream())) == 1
+        head = stored(stores[0].db, '_company_price_books/adr')
+        assert head['generation'] == 1
+        assert head['calculation_version'] == price_table.CALCULATION_VERSION
+        assert stored(stores[0].db, '_price_book_drafts/adr') is None
+        assert stored(stores[0].db, '_companies/adr')['version'] == 1
+    finally:
+        price_books.set_enabled(None)
