@@ -222,6 +222,45 @@ test('a room needs a wet floor input only when an enabled item prices its catego
   assert.equal(ScopeItems.pricesFromWetFloor(null, mold), false);
 });
 
+test('a non-room item shows only when a room on the job has one of its categories', () => {
+  const t = table([
+    item('containment', 'job_charges', 'typed', { categories: [2, 3], name: 'Containment' }),
+    item('fans', 'drying_equipment', 'count_days:air_movers*drying_days', {
+      categories: [3],
+      name: 'Air mover',
+    }),
+    item('scrub', 'job_charges', 'field:air_scrubbers', { name: 'Scrubber' }),
+    item('hepa', 'treatment', 'room:floor', { categories: [3], name: 'HEPA' }),
+  ]);
+  const data = {
+    rooms: [{ name: 'Hall', category: 1 }],
+    air_movers: 2,
+    drying_days: 3,
+    scope_items: { containment: { quantity: '200', count: 0, days: 0 } },
+  };
+  const ids = (job) =>
+    Array.from(ScopeItems.groupsOf(t, job)).flatMap((g) => Array.from(g.items, (i) => i.item_id));
+  assert.deepEqual(ids(data), ['scrub', 'hepa'], 'room lines keep their own category rule');
+  assert.deepEqual(Array.from(ScopeItems.offCategory(data, t)), [
+    '200 containment',
+    '2 air mover, 3 days',
+  ]);
+  const cat2 = { ...data, rooms: [{ name: 'Hall', category: 2 }] };
+  assert.ok(ids(cat2).includes('containment'));
+  assert.ok(!ids(cat2).includes('fans'));
+  assert.deepEqual(Array.from(ScopeItems.offCategory(cat2, t)), ['2 air mover, 3 days']);
+  assert.deepEqual(ids({ ...data, rooms: [] }), ['scrub', 'hepa'], 'no rooms, no category');
+  // Nothing entered, nothing to list.
+  assert.deepEqual(Array.from(ScopeItems.offCategory({ rooms: data.rooms, air_movers: 0 }, t)), []);
+  // A change still waiting for its reason keeps the row that holds the reason box.
+  const unexplained = {
+    ...data,
+    quantity_overrides: { air_movers: { measured: '3', entered: '2' } },
+  };
+  assert.ok(ids(unexplained).includes('fans'));
+  assert.deepEqual(Array.from(ScopeItems.offCategory(unexplained, t)), ['200 containment']);
+});
+
 test('quantities for items the table no longer lists are kept and named', () => {
   const t = table([
     item('kept', 'job_charges', 'typed'),
@@ -403,6 +442,24 @@ test('a walkthrough fill records what it measured, and Undo restores what came b
   ScopeItems.undoMeasured(second, data);
   assert.equal(data.quantity_overrides['Kitchen:finished_sf'].measured, '80.5');
   delete context.state;
+});
+
+test('the after-hours line leaves out a charge no room on the job can take', () => {
+  const t = table([
+    item('night', 'job_charges', 'after_hours', {
+      name: 'After-hours charge',
+      unit_price: '200',
+      categories: [3],
+    }),
+  ]);
+  assert.equal(
+    ScopeItems.afterHoursText(t, [{ category: 1 }]),
+    'After-hours loss (no extra charge in your price list)',
+  );
+  assert.equal(
+    ScopeItems.afterHoursText(t, [{ category: 3 }]),
+    'After-hours loss: $200.00 after-hours charge',
+  );
 });
 
 test('the after-hours line names the charge and the percent from the pinned table', () => {

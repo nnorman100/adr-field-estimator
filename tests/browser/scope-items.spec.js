@@ -292,6 +292,8 @@ test.describe('without a service worker', () => {
     });
     await open(page);
     await page.evaluate(() => {
+      // A job this phone has no row for, as when an estimator first opens an office job.
+      ScopeItems.seed(state.draft.inspection_id, null);
       Object.assign(state.draft.data, {
         emergency_calls: 1,
         monitoring_hours: 13.25,
@@ -350,6 +352,86 @@ test.describe('without a service worker', () => {
       return data.emergency_calls;
     }, zeros);
     expect(neverSaved).toBe(2);
+  });
+
+  test("a technician's zero on a job begun from the table survives a reopen", async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request, {
+      items: {
+        ...ITEMS,
+        service_call: { unit_price: '150.00', default_quantity: '1' },
+        setup_documentation: { unit_price: '40.00', default_quantity: '0' },
+        monitoring_visit: { unit_price: '25.00', default_quantity: '13.25' },
+        debris_haul: { unit_price: '25.00', default_quantity: '1' },
+        air_scrubber: { unit_price: '25.00', default_quantity: '1' },
+        hepa_filter: { unit_price: '25.00', default_quantity: '1' },
+        air_mover: { unit_price: '30.00', default_quantity: '3' },
+      },
+    });
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('owner'),
+    );
+    await page.goto('/app');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    // Offline, so the zero is already in the draft when the first save makes revision 1.
+    await context.setOffline(true);
+    await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await checkScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('0');
+    const id = await jobId(page);
+    await context.setOffline(false);
+    await saveDraft(page);
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).revision).toBe(1);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('0');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.air_movers).toBe(0);
+  });
+
+  test('an item limited to other categories hides, and its quantity stays visible and read-only', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    const box = page.locator('[data-scope-item="containment"]');
+    const off = page.locator('#v2OffCategory');
+    const category = page.locator('[data-room-index="0"][data-room-key="category"]');
+    await category.selectOption('1');
+    await expect(box).toHaveCount(0);
+    await expect(off).toBeHidden();
+    // A room in a matching category brings the item in, with no reload.
+    await category.selectOption('2');
+    await expect(box).toBeVisible();
+    await box.fill('200');
+    const summary = page.locator('[data-group-summary="job_charges"]');
+    await expect(summary).toContainText('containment');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    // Back to category 1 the entered quantity stays with the job, out of the priced list.
+    await category.selectOption('1');
+    await expect(box).toHaveCount(0);
+    await expect(off).toBeVisible();
+    await expect(off.locator('summary')).toHaveText("Not priced for this job's categories");
+    await off.locator('summary').click();
+    await expect(page.locator('#v2OffCategoryList')).toContainText('200');
+    await expect(page.locator('#v2OffCategoryList input')).toHaveCount(0);
+    await expect(page.locator('#v2OffCategoryList button')).toHaveCount(0);
+    await expect(summary).not.toContainText('containment');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect(numbers((await remote(page, id)).data.scope_items).containment.quantity).toBe(200);
+    await category.selectOption('3');
+    await expect(box).toHaveValue('200');
+    await expect(off).toBeHidden();
   });
 
   test('a job carrying overrides keeps them current on the v1 form after a rollback', async ({

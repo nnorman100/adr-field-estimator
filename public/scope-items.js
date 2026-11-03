@@ -76,7 +76,7 @@
     hepa_filters: 1,
   };
 
-  // Quantities a job starts at zero in every form, so a value here was entered.
+  // Quantities no job holds before it has a table, so a value here was entered.
   const ENTERED_ONLY_FIELDS = [
     'labor_hours',
     'matterport_scans',
@@ -121,11 +121,24 @@
           String(a.item_id).localeCompare(String(b.item_id)),
       );
   }
-  // Groups for the screen: the additional-work item belongs to the Additional work panel.
-  function groupsOf(table) {
+  // The server prices a non-room item only if a room on the job has one of its categories.
+  function appliesToRooms(item, rooms) {
+    return !item.categories?.length || (rooms || []).some((room) => coversRoom(item, room));
+  }
+  // A row stays while it can be priced, or while it holds a change that still needs its reason box.
+  function keepsRow(item, data) {
+    const source = parseSource(item.quantity_source);
+    if (source.kind === 'room' || appliesToRooms(item, data.rooms)) return true;
+    return [source.field, source.count, source.days].some((key) =>
+      differs(data.quantity_overrides?.[key]),
+    );
+  }
+  // Groups for the screen: the additional-work item belongs to the Additional work panel. Given the
+  // job, only the rows it can use.
+  function groupsOf(table, data) {
     const out = [];
     for (const item of orderedItems(table)) {
-      if (item.group === 'extras') continue;
+      if (item.group === 'extras' || (data && !keepsRow(item, data))) continue;
       let group = out.find((g) => g.name === item.group);
       if (!group)
         out.push((group = { name: item.group, title: GROUP_NAMES[item.group], items: [] }));
@@ -254,6 +267,21 @@
       )
       .sort();
   }
+  // Quantities saved for items no room on this job can price.
+  function offCategory(data, table) {
+    return orderedItems(table)
+      .filter((item) => {
+        const kind = parseSource(item.quantity_source).kind;
+        return (
+          item.group !== 'extras' &&
+          kind !== 'after_hours' &&
+          !keepsRow(item, data) &&
+          (!kind.startsWith('typed') || data.scope_items?.[item.item_id])
+        );
+      })
+      .map((item) => enteredText(item, data))
+      .filter(Boolean);
+  }
   function fromRoomsText(item, rooms, policy) {
     return (
       'From rooms: ' +
@@ -266,9 +294,9 @@
       unitPriceText(item)
     );
   }
-  function afterHoursText(table) {
+  function afterHoursText(table, rooms) {
     const item = orderedItems(table).find(
-      (i) => parseSource(i.quantity_source).kind === 'after_hours',
+      (i) => parseSource(i.quantity_source).kind === 'after_hours' && appliesToRooms(i, rooms),
     );
     const multiplier = Number(table?.policy?.after_hours?.multiplier) || 1;
     const percent = Math.round((multiplier - 1) * 1000) / 10;
@@ -342,6 +370,7 @@
   let company = null; // the company's current table, cached on the phone
   const jobs = new Map(); // inspection id -> { pricing, beganWithoutTable }
   let rendered = null; // the form and table the screen was last built for
+  let renderedRows = null; // the item rows it was last built with
   const homes = new Map(); // moved element -> { parent, text }
   const snapshots = new Map(); // parent element -> its children in the original order
   const openGroups = new Set(['job_charges', 'treatment', 'drying_equipment', 'labor']);
@@ -350,7 +379,8 @@
 
   const draftId = () => state?.draft?.inspection_id || null;
   const job = (id) => {
-    if (!jobs.has(id)) jobs.set(id, { pricing: null });
+    if (!jobs.has(id))
+      jobs.set(id, { pricing: null, beganWithoutTable: false, defaultsOffered: false });
     return jobs.get(id);
   };
   function companyView() {
@@ -383,10 +413,15 @@
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   function seed(id, row) {
-    jobs.set(id, { pricing: row?.pricing || null, beganWithoutTable: !!row && !row.pricing });
+    jobs.set(id, {
+      pricing: row?.pricing || null,
+      beganWithoutTable: !!row && !row.pricing,
+      defaultsOffered: !!row?.pricing,
+    });
   }
   function seedNew(id) {
-    jobs.set(id, { pricing: null, beganWithoutTable: !companyView() });
+    const hasTable = !!companyView();
+    jobs.set(id, { pricing: null, beganWithoutTable: !hasTable, defaultsOffered: hasTable });
   }
   function forget() {
     jobs.clear();
@@ -505,7 +540,6 @@
   // Called from changed(): keep data.quantity_overrides in step with what is on screen.
   function syncOverrides() {
     if (!dom() || !state?.draft || state.signed) return;
-    updateSummaries();
     const data = state.draft.data,
       reasons = {};
     for (const input of document.querySelectorAll('[data-override-reason]'))
@@ -513,7 +547,11 @@
     const next = overridesFor(data, reasons);
     if (Object.keys(next).length) data.quantity_overrides = next;
     else delete data.quantity_overrides;
-    updateOverrides();
+    if (active() && rowsKey(table(), data) !== renderedRows) render();
+    else {
+      updateSummaries();
+      updateOverrides();
+    }
   }
   const entryKey = (entry, data) => {
     if (entry.target === data) return FIELD_INPUTS[entry.field] ? entry.field : null;
@@ -596,42 +634,40 @@
     if (reason) grid.append(reason);
   }
 
-  function summaryOf(group, data) {
-    const parts = [];
-    for (const item of group.items) {
-      const source = parseSource(item.quantity_source);
-      if (source.kind === 'room') continue;
-      if (source.kind === 'after_hours') continue;
-      if (source.kind === 'field') {
-        const n = Number(data[source.field]) || 0;
-        if (n > 0) parts.push(formatQuantity(n) + ' ' + item.name.toLowerCase());
-      } else if (source.kind === 'count_days') {
-        const n = Number(data[source.count]) || 0;
-        if (n > 0)
-          parts.push(
-            formatQuantity(n) +
-              ' ' +
-              item.name.toLowerCase() +
-              ', ' +
-              (data[source.days] || 0) +
-              ' days',
-          );
-      } else if (source.kind === 'typed') {
-        const q = data.scope_items?.[item.item_id];
-        const n = Number(q ? q.quantity : item.default_quantity) || 0;
-        if (n > 0) parts.push(formatQuantity(n) + ' ' + item.name.toLowerCase());
-      } else if (source.kind === 'typed_count_days') {
-        const q = data.scope_items?.[item.item_id];
-        if (q?.count > 0)
-          parts.push(q.count + ' ' + item.name.toLowerCase() + ', ' + q.days + ' days');
-      }
+  function enteredText(item, data) {
+    const source = parseSource(item.quantity_source),
+      name = item.name.toLowerCase();
+    if (source.kind === 'field') {
+      const n = Number(data[source.field]) || 0;
+      return n > 0 ? formatQuantity(n) + ' ' + name : '';
     }
+    if (source.kind === 'count_days') {
+      const n = Number(data[source.count]) || 0;
+      return n > 0
+        ? formatQuantity(n) + ' ' + name + ', ' + (data[source.days] || 0) + ' days'
+        : '';
+    }
+    const q = data.scope_items?.[item.item_id];
+    if (source.kind === 'typed') {
+      const n = Number(q ? q.quantity : item.default_quantity) || 0;
+      return n > 0 ? formatQuantity(n) + ' ' + name : '';
+    }
+    if (source.kind === 'typed_count_days' && q?.count > 0)
+      return q.count + ' ' + name + ', ' + q.days + ' days';
+    return '';
+  }
+  function summaryOf(group, data) {
+    const parts = group.items.map((item) => enteredText(item, data)).filter(Boolean);
     return parts.length ? '· ' + parts.join(', ') : '· none entered';
   }
+  const rowsKey = (t, data) =>
+    groupsOf(t, data)
+      .flatMap((group) => group.items.map((item) => item.item_id))
+      .join();
   function updateSummaries() {
     if (!dom() || !active() || !state?.draft) return;
     const t = table();
-    for (const group of groupsOf(t)) {
+    for (const group of groupsOf(t, state.draft.data)) {
       const note = document.querySelector('[data-group-summary="' + group.name + '"]');
       if (note) note.textContent = summaryOf(group, state.draft.data);
     }
@@ -708,7 +744,8 @@
       : "Connect once to load your company's price list. Rooms and photos still work.";
     const placed = new Set(),
       nodes = [];
-    for (const group of groupsOf(t)) {
+    renderedRows = rowsKey(t, data);
+    for (const group of groupsOf(t, data)) {
       const details = node('details', undefined, 'claim-details scope-group'),
         note = node('span', '', 'summary-note');
       details.dataset.group = group.name;
@@ -772,7 +809,7 @@
       const text = $('afterHoursLabel');
       if (text) {
         text.id = 'afterHoursLabelV2';
-        text.textContent = afterHoursText(t);
+        text.textContent = afterHoursText(t, data.rooms);
       }
       const holder = nodes.find((n) => n.dataset.group === 'job_charges') || nodes[0];
       const row = node('div', undefined, 'scope-row');
@@ -794,6 +831,9 @@
       row.append(node('p', text));
       return row;
     };
+    const offRows = offCategory(data, t);
+    $('v2OffCategory').hidden = !offRows.length;
+    $('v2OffCategoryList').replaceChildren(...offRows.map(unlistedRow));
     $('v2Unlisted').hidden = !orphans.length && !fields.length;
     $('v2UnlistedList').replaceChildren(
       ...fields.map((field) =>
@@ -870,13 +910,13 @@
     if (!dom() || !id || !active() || !table() || !canEdit()) return;
     if ((state.record?.revision ?? 1) === 1) takeDefaults();
   }
-  // Once only: after a job has been offered the table's defaults, its zeros are the technician's own.
+  // Once only, and never to a job that began from a table: its quantities are the technician's own.
   function takeDefaults() {
     const mine = job(draftId()),
-      data = state.draft.data,
-      beganWithoutTable = mine.beganWithoutTable;
-    mine.beganWithoutTable = false;
-    if (!untouched(data, beganWithoutTable)) return false;
+      data = state.draft.data;
+    if (mine.defaultsOffered) return false;
+    mine.defaultsOffered = true;
+    if (!untouched(data, mine.beganWithoutTable)) return false;
     applyDefaults(data, table());
     changed(false);
     return true;
@@ -943,6 +983,8 @@
     untouched,
     unlisted,
     unlistedFields,
+    offCategory,
+    appliesToRooms,
     fromRoomsText,
     afterHoursText,
     overridesFor,
