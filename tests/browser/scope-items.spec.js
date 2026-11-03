@@ -268,6 +268,93 @@ test.describe('without a service worker', () => {
     const line = page.locator('[data-from-rooms]').first();
     await expect(line).toContainText('From rooms:');
     await expect(line).toContainText('$25.00 per');
+    // Room inputs save through their own handlers; the line still follows every room change.
+    const rooms = page.locator('[data-from-rooms]');
+    const showing = (quantity) => rooms.filter({ hasText: '· ' + quantity + ' sq ft' });
+    await page.locator('[data-room-index="0"][data-room-key="finished_sf"]').fill('77');
+    await expect.poll(() => showing(77).count()).toBeGreaterThan(0);
+    await page.locator('[data-room-index="0"][data-room-key="finished_sf"]').fill('78');
+    await expect.poll(() => showing(78).count()).toBeGreaterThan(0);
+    await expect(showing(77)).toHaveCount(0);
+    await page.evaluate(() => {
+      state.draft.data.rooms.splice(0, 1);
+      changed();
+    });
+    await expect(showing(78)).toHaveCount(0);
+  });
+
+  test('an office job seeded from the table lists no sheet charge nobody entered', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, hepa_filter: { enabled: false, unit_price: '' } },
+    });
+    await open(page);
+    await page.evaluate(() => {
+      Object.assign(state.draft.data, {
+        emergency_calls: 1,
+        monitoring_hours: 13.25,
+        haul_loads: 1,
+        air_scrubbers: 1,
+        hepa_filters: 1,
+      });
+      delete state.draft.data.scope_items;
+      ScopeItems.prepare();
+      fillForm();
+    });
+    await expect(page.locator('#v2Unlisted')).toBeHidden();
+    expect(await page.evaluate(() => state.draft.data.hepa_filters)).toBe(0);
+  });
+
+  test('a job carrying overrides keeps them current on the v1 form after a rollback', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    await page.locator('#address').fill('Synthetic rollback property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.evaluate((value) => {
+      // The flag is off again and this phone has no row for the job.
+      state.session.pricing_version = null;
+      state.session.price_books_enabled = false;
+      ScopeItems.seed(value, null);
+      fillForm();
+    }, id);
+    await expect(page.locator('#v1Scope')).toBeVisible();
+    await page.locator('#airMovers').fill('5');
+    const reason = page.locator('[data-override-reason="air_movers"]');
+    await expect(reason).toBeVisible();
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
+    await reason.fill('Two more fans for the hall');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.quantity_overrides.air_movers).toEqual({
+      measured: '3',
+      entered: '5',
+      reason: 'Two more fans for the hall',
+    });
+    const finished = page.locator('[data-room-index="0"][data-room-key="finished_sf"]');
+    await finished.fill('95');
+    const roomReason = page.locator('[data-override-reason="Kitchen:finished_sf"]');
+    await expect(roomReason).toBeVisible();
+    await roomReason.fill('Wet behind the pantry');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    // Removing the room takes its value with it, so the next save is not refused.
+    await page.evaluate(() => {
+      state.draft.data.rooms.splice(0, 1);
+      changed();
+      fillForm();
+    });
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const saved = (await remote(page, id)).data;
+    expect(saved.rooms).toEqual([]);
+    expect(saved.quantity_overrides['Kitchen:finished_sf']).toBeUndefined();
   });
 
   test('a first publish after sign-in reaches this phone: new jobs seed from the table', async ({
@@ -383,7 +470,11 @@ test.describe('without a service worker', () => {
       entered: '3',
     });
     // A later change is measured against the same value, with the entered value kept current.
+    // The earlier reason does not carry over: this change has to be explained on its own.
     await page.locator('#airMovers').fill('5');
+    await expect(reason).toHaveValue('');
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(false);
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
     await reason.fill('Two more fans for the hall');
     await page.locator('#airMovers').fill('7');
     await expect(page.locator('#saveStatus')).toHaveText('Saved');

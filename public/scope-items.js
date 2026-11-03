@@ -186,6 +186,7 @@
           },
         };
     }
+    for (const key of Object.keys(SHEET_CHARGES)) if (!seen.has(key)) data[key] = 0;
     return data;
   }
   // A job still at its starting quantities: the server's sheet charges (office staff created it, or
@@ -472,6 +473,7 @@
     for (const input of document.querySelectorAll('[data-override-reason]')) {
       const open = differs(overrides[input.dataset.overrideReason]);
       input.closest('.override-reason').hidden = !open;
+      if (!open) input.value = '';
       input.disabled = !open || !!state.signed;
       input.setCustomValidity(
         open && !reasonOk(input.value) ? 'Enter a short reason (at least 3 characters).' : '',
@@ -480,7 +482,8 @@
   }
   // Called from changed(): keep data.quantity_overrides in step with what is on screen.
   function syncOverrides() {
-    if (!dom() || !active() || !state?.draft || state.signed) return;
+    if (!dom() || !state?.draft || state.signed) return;
+    updateSummaries();
     const data = state.draft.data,
       reasons = {};
     for (const input of document.querySelectorAll('[data-override-reason]'))
@@ -498,10 +501,10 @@
   };
   // Record on the job what a walkthrough fill measured, so a later edit must be explained on any phone.
   function noteMeasured(entries, data) {
-    if (!active()) return;
     for (const entry of entries || []) {
       const key = entryKey(entry, data);
       if (!key || typeof entry.after !== 'number') continue;
+      if (!active() && !data.quantity_overrides?.[key]) continue;
       data.quantity_overrides ||= {};
       if (!('priorOverride' in entry)) entry.priorOverride = data.quantity_overrides[key] || null;
       const value = decimalText(entry.after);
@@ -527,8 +530,10 @@
   }
   // A room measurement input: reason box under it while it differs from the walkthrough value.
   function watch(wrap, room, field) {
-    if (!active() || !OVERRIDE_ROOM_FIELDS.includes(field) || !room?.name) return;
-    wrap.after(reasonBlock(room.name + ':' + field));
+    if (!OVERRIDE_ROOM_FIELDS.includes(field) || !room?.name) return;
+    const key = room.name + ':' + field;
+    if (!active() && !state.draft.data.quantity_overrides?.[key]) return;
+    wrap.after(reasonBlock(key));
     updateOverrides();
   }
   function wetFloorOnCard() {
@@ -643,6 +648,11 @@
     }
     if (!on) {
       $('v2ScopeGroups').replaceChildren();
+      for (const key of Object.keys(state?.draft?.data?.quantity_overrides || {})) {
+        const label = FIELD_INPUTS[key] && labelOf(FIELD_INPUTS[key][0]);
+        if (label) label.after(reasonBlock(key));
+      }
+      updateOverrides();
       return;
     }
     const t = table(),
@@ -791,7 +801,6 @@
       if (Object.keys(items).length) data.scope_items = items;
       else delete data.scope_items;
     }
-    updateSummaries();
     syncOverrides();
   }
 

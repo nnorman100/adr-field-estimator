@@ -77,6 +77,24 @@ test('count items seed their count; days stay at the job default for those days'
   assert.deepEqual(plain(data.scope_items), { crew: { quantity: '0', count: 2, days: 3 } });
 });
 
+test('seeding leaves no sheet charge the table does not list', () => {
+  const t = table([
+    item('service_call', 'job_charges', 'field:emergency_calls', { default_quantity: '2' }),
+    item('hepa', 'job_charges', 'field:hepa_filters', { enabled: false, default_quantity: '4' }),
+  ]);
+  const data = ScopeItems.applyDefaults(core.emptyData(), t);
+  assert.equal(data.emergency_calls, 2);
+  for (const key of ['monitoring_hours', 'haul_loads', 'air_scrubbers', 'hepa_filters'])
+    assert.equal(data[key], 0, key);
+  assert.deepEqual(Array.from(ScopeItems.unlistedFields(data, t)), []);
+  const untable = core.emptyData();
+  assert.equal(
+    ScopeItems.applyDefaults(untable, null).monitoring_hours,
+    13.25,
+    'no table, no change',
+  );
+});
+
 test('room items show their quantity, own unit and unit price', () => {
   const rooms = [{ category: 1, unfinished_sf: 100, finished_sf: 20, floor_sf: 150 }];
   assert.equal(
