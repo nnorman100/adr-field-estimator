@@ -1372,6 +1372,55 @@ test.describe('with the service worker', () => {
     await expect(page.locator('#v2ScopeStatus')).toHaveText('');
   });
 
+  test('offline, a stored session older than the phone copy does not mark the copy out of date', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await controlled(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await page.evaluate(() => syncChain);
+    await page.waitForTimeout(1500);
+    // The session stored beside the draft names an earlier table than the copy on the phone.
+    await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open('adr-private-drafts-v2');
+          open.onerror = reject;
+          open.onsuccess = () => {
+            const db = open.result,
+              tx = db.transaction(['drafts'], 'readwrite'),
+              store = tx.objectStore('drafts'),
+              all = store.getAll();
+            all.onsuccess = () => {
+              for (const row of all.result)
+                if (row.session) {
+                  row.session.pricing_table_version = 'an-earlier-table';
+                  store.put(row);
+                }
+            };
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+          };
+        }),
+    );
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    expect(await page.evaluate(() => state.session.pricing_table_version)).toBe('an-earlier-table');
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    await expect(page.locator('#v2ScopeStatus')).toContainText('Prices as of');
+    await expect(page.locator('#v2ScopeStatus')).not.toContainText('newer');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await context.setOffline(false);
+  });
+
   test('a phone that never loaded the price list says to connect once', async ({
     page,
     context,

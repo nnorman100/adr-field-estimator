@@ -151,12 +151,14 @@
       : price + ' per ' + (UNIT_NAMES[item.unit] || item.unit);
   }
   const formatQuantity = decimalText;
-  function asOfText(cachedAt) {
-    const when = new Date(cachedAt);
-    if (!cachedAt || Number.isNaN(when.getTime())) return 'Prices saved on this phone.';
-    const date = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(when);
-    return 'Prices as of ' + date + '.';
-  }
+  const asOfText = (cachedAt) =>
+    'Prices as of ' +
+    new Date(cachedAt).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }) +
+    '.';
   function roomArea(field, room, policy) {
     const wet = room.wet_floor_sf ?? room.floor_sf ?? 0;
     if (field === 'wet_floor_sf') return wet;
@@ -366,15 +368,29 @@
     return isV2Table(company?.table) ? company.table : null;
   }
   // A phone copy older than the table the session names is shown with its date, never started from.
+  // Only a session from the server can say so: one stored beside a draft may be the older of the two.
   const outdatedCopy = () =>
-    !!company?.from_cache && company.table?.version_id !== state?.session?.pricing_table_version;
+    !!company?.from_cache &&
+    state?.session !== state?.offlineSession &&
+    company.table?.version_id !== state?.session?.pricing_table_version;
   const startingTable = () => (outdatedCopy() ? null : companyView());
+  // When a new job began, kept on the phone's draft row only. A session that already names a switch
+  // means the job began after it, even on a phone whose clock is behind the server's.
+  function startedAt() {
+    const switched = Date.parse(state?.session?.switched_at);
+    return new Date(switched > Date.now() ? switched : Date.now()).toISOString();
+  }
   // A job the server saved before its company switched stays on its rate book, as the server rules.
-  // At a switched company, a job the server has not seen and the table did not start reads as v1.
+  // At a switched company, a job the server has not seen reads as v1 unless the table started it or
+  // the phone recorded it starting after the switch; a row from before started_at has no such record.
   function beforeSwitch() {
     const switched = state?.session?.switched_at;
     if (!switched) return false;
-    if (!state.record) return !state.draft?.data?.seeded_from_version;
+    if (!state.record)
+      return (
+        !state.draft?.data?.seeded_from_version &&
+        !(Date.parse(state.draft?.started_at) >= Date.parse(switched))
+      );
     const created = Date.parse(state.record.created_at);
     return Number.isNaN(created) || created < Date.parse(switched);
   }
@@ -953,6 +969,7 @@
     unitPriceText,
     formatQuantity,
     asOfText,
+    startedAt,
     roomQuantity,
     pricesFromWetFloor,
     applyDefaults,

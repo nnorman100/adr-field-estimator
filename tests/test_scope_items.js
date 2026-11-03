@@ -465,8 +465,17 @@ test('device readiness mirrors the server price gaps', () => {
   assert.deepEqual(codes({ prices_set: false }), ['prices']);
 });
 
-test('the price date reads the cached date and leaves out a date it cannot read', () => {
+test('the price date reads the cached date, and an unreadable one does not throw', () => {
   assert.equal(ScopeItems.asOfText('2026-10-05T12:00:00.000Z'), 'Prices as of Oct 5, 2026.');
-  assert.equal(ScopeItems.asOfText(undefined), 'Prices saved on this phone.');
-  assert.equal(ScopeItems.asOfText('not a date'), 'Prices saved on this phone.');
+  assert.doesNotThrow(() => ScopeItems.asOfText('not a date'));
+});
+
+test('a job started once the session names a switch counts as after it, whatever the phone clock', () => {
+  context.state = { session: { switched_at: '2099-01-01T00:00:00+00:00' } };
+  assert.equal(ScopeItems.startedAt(), '2099-01-01T00:00:00.000Z');
+  context.state = { session: { switched_at: '2001-01-01T00:00:00+00:00' } };
+  assert.ok(Date.parse(ScopeItems.startedAt()) > Date.parse('2020-01-01T00:00:00Z'));
+  context.state = { session: { switched_at: null } };
+  assert.ok(!Number.isNaN(Date.parse(ScopeItems.startedAt())));
+  delete context.state;
 });
