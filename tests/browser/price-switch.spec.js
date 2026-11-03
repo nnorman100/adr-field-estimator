@@ -189,7 +189,9 @@ test.describe('without a service worker', () => {
     await start(page, 'owner');
     await publishRates(page);
     await page.route('**/api/inspections**', (route) =>
-      ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
+      ['POST', 'PUT', 'PATCH'].includes(route.request().method())
+        ? route.abort()
+        : route.continue(),
     );
     await page.evaluate(() => openNew().catch(() => {}));
     const id = await page.evaluate(() => state.draft.inspection_id);
