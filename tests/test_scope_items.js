@@ -208,6 +208,20 @@ test('room-sourced items total the matching rooms the way the server prices them
   assert.equal(q('room:basis', [], { area_basis: 'wet_floor' }), 120);
 });
 
+test('a room needs a wet floor input only when an enabled item prices its category from it', () => {
+  const wet = (extra) => item('antimicrobial', 'treatment', 'room:wet_floor', extra);
+  const mold = { category: 3 },
+    water = { category: 1 };
+  assert.equal(ScopeItems.pricesFromWetFloor(table([wet()]), mold), true, 'every category');
+  const firstOnly = table([wet({ categories: [1] })]);
+  assert.equal(ScopeItems.pricesFromWetFloor(firstOnly, water), true);
+  assert.equal(ScopeItems.pricesFromWetFloor(firstOnly, mold), false);
+  assert.equal(ScopeItems.pricesFromWetFloor(table([wet({ enabled: false })]), mold), false);
+  const others = table([item('hepa', 'treatment', 'room:floor')]);
+  assert.equal(ScopeItems.pricesFromWetFloor(others, mold), false);
+  assert.equal(ScopeItems.pricesFromWetFloor(null, mold), false);
+});
+
 test('quantities for items the table no longer lists are kept and named', () => {
   const t = table([
     item('kept', 'job_charges', 'typed'),

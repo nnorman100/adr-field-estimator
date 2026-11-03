@@ -630,17 +630,22 @@ test.describe('without a service worker', () => {
     await page.locator('#rooms .room-more > summary').first().click();
   };
 
+  const NO_WET_FLOOR_ITEM = {
+    items: { ...ITEMS, antimicrobial: { enabled: false, unit_price: '' } },
+  };
+
   test('a mold room on a price list asks for the floor area it prices from', async ({
     page,
     request,
   }) => {
-    await publish(request);
+    await publish(request, NO_WET_FLOOR_ITEM);
     await open(page);
     await tapMold(page);
     await expect(roomField(page, 'floor_sf')).toBeVisible();
     for (const hidden of ['wet_floor_sf', 'ceiling_height_ft', 'water_class'])
       await expect(roomField(page, hidden)).toBeHidden();
     await expect(page.locator('#rooms .room-sizing-title')).toBeHidden();
+    await expect(page.locator('#rooms .wet-floor-hint')).toBeHidden();
     await roomField(page, 'floor_sf').fill('120');
     await expect(
       page.locator('[data-from-rooms="surface_cleaning"]', { hasText: '· 120 sq ft' }),
@@ -670,11 +675,45 @@ test.describe('without a service worker', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a changed wet floor value on a room turned mold keeps its reason box', async ({
+  test('a mold room shows the wet floor input an item prices it from, on any area basis', async ({
     page,
     request,
   }) => {
     await publish(request);
+    await open(page);
+    const wet = roomField(page, 'wet_floor_sf');
+    const line = page.locator('[data-from-rooms="antimicrobial"]');
+    await roomField(page, 'floor_sf').evaluate((el) => (el.closest('details').open = true));
+    await roomField(page, 'floor_sf').fill('120');
+    await wet.fill('40');
+    await expect(line).toContainText('· 40 sq ft');
+    await page.locator('[name="room-loss-0"][value="mold"]').check({ force: true });
+    // The saved area still prices the room, so it can still be corrected.
+    await expect(wet).toBeVisible();
+    await expect(page.locator('#rooms .wet-floor-hint')).toBeVisible();
+    await expect(roomField(page, 'ceiling_height_ft')).toBeHidden();
+    await wet.fill('');
+    await expect(line).toContainText('· 120 sq ft');
+  });
+
+  test('the wet floor input follows the categories the item prices', async ({ page, request }) => {
+    await publish(request, {
+      items: { ...ITEMS, antimicrobial: { unit_price: '25.00', categories: [1] } },
+    });
+    await open(page);
+    await tapMold(page);
+    const wet = roomField(page, 'wet_floor_sf');
+    await expect(wet).toBeHidden();
+    // On a mold room moved to a category the item prices, the same area counts again.
+    await roomField(page, 'category').selectOption('1');
+    await expect(wet).toBeVisible();
+  });
+
+  test('a changed wet floor value on a room turned mold keeps its reason box', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, NO_WET_FLOOR_ITEM);
     await open(page);
     const key = await page.evaluate(() => {
       const room = state.draft.data.rooms[0];

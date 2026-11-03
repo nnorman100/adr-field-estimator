@@ -158,16 +158,25 @@
     return room[field] || 0;
   }
   // "From rooms" total for one room-sourced item: matching rooms only, as the server prices them.
+  function coversRoom(item, room) {
+    const wanted = (item.categories || []).map(Number);
+    return !wanted.length || wanted.includes(Number(room.category));
+  }
   function roomQuantity(item, rooms, policy) {
     const source = parseSource(item.quantity_source);
     if (!source || source.kind !== 'room') return 0;
-    const wanted = (item.categories || []).map(Number);
     let total = 0;
     for (const room of rooms || []) {
-      if (wanted.length && !wanted.includes(Number(room.category))) continue;
+      if (!coversRoom(item, room)) continue;
       total += Number(roomArea(source.field, room, policy)) || 0;
     }
     return Math.round(total * 100) / 100;
+  }
+  function pricesFromWetFloor(table, room) {
+    return orderedItems(table).some(
+      (item) =>
+        parseSource(item.quantity_source).field === 'wet_floor_sf' && coversRoom(item, room),
+    );
   }
   // A new draft starts at the table's default quantities, never the sheet's.
   function applyDefaults(data, table) {
@@ -552,8 +561,8 @@
   function wetFloorOnCard() {
     return active() && table()?.policy?.area_basis === 'wet_floor';
   }
-  // A mold room has no drying check, but a price list can price its floor area, and a value that
-  // needs a reason must stay reachable. Everything shows on a water room.
+  // A mold room has no drying check, but any area a price list prices it from needs an input, and a
+  // value that needs a reason must stay reachable. Everything shows on a water room.
   function fitSizing(sizing, room, mold) {
     const overridden = (field) =>
       !!state.draft?.data?.quantity_overrides?.[room.name + ':' + field];
@@ -562,13 +571,18 @@
       if (label) label.hidden = hidden;
     };
     const showFloor = !mold || active() || overridden('floor_sf'),
-      showWet = !mold || wetFloorOnCard() || overridden('wet_floor_sf');
+      showWet =
+        !mold ||
+        wetFloorOnCard() ||
+        (active() && pricesFromWetFloor(table(), room)) ||
+        overridden('wet_floor_sf');
     sizing.hidden = !showFloor && !showWet;
     sizing.querySelector('.room-sizing-title').hidden = mold;
     hide('ceiling_height_ft', mold);
     hide('water_class', mold);
     hide('floor_sf', !showFloor);
     hide('wet_floor_sf', !showWet);
+    sizing.querySelector('.wet-floor-hint').hidden = !showWet;
   }
   // The wet floor area moves from More room options to the room card when it is the pricing basis.
   function placeWetFloor(sizing, grid) {
@@ -922,6 +936,7 @@
     unitPriceText,
     formatQuantity,
     roomQuantity,
+    pricesFromWetFloor,
     applyDefaults,
     untouched,
     unlisted,

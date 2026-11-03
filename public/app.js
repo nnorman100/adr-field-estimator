@@ -2058,15 +2058,15 @@ function sizingFields(room, i) {
     body.append(wrap);
     window.ScopeItems?.watch(wrap, room, key);
   }
-  group.append(
-    title,
-    body,
+  const hint = node('p', undefined, 'hint');
+  hint.append(
     node(
-      'p',
-      'Enter the room floor area, not the demolition area, and only values confirmed on site. Leave the wet floor area blank when the whole floor is wet.',
-      'hint',
+      'span',
+      'Enter the room floor area, not the demolition area, and only values confirmed on site. ',
     ),
+    node('span', 'Leave the wet floor area blank when the whole floor is wet.', 'wet-floor-hint'),
   );
+  group.append(title, body, hint);
   return group;
 }
 const sizingFlags = { below: 'Below', within: 'Within range', above: 'Above' };
