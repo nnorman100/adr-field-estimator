@@ -10,7 +10,7 @@ from pydantic import Field
 
 try:
     from .contracts import StrictModel, InspectionData
-    from .claims import JSON_TERM, FIELD_NAME, states_price
+    from .claims import JSON_TERM, FIELD_NAME
     from .readiness import readiness
     from .sizing import equipment_sizing, count
     from .delivery import public_delivery
@@ -18,7 +18,7 @@ try:
     from . import ai_features
 except ImportError:
     from contracts import StrictModel, InspectionData
-    from claims import JSON_TERM, FIELD_NAME, states_price
+    from claims import JSON_TERM, FIELD_NAME
     from readiness import readiness
     from sizing import equipment_sizing, count
     from delivery import public_delivery
@@ -204,7 +204,7 @@ def validate_summary(selection, pack):
     numbers = set(re.findall(r'\d+(?:\.\d+)?', json.dumps(pack)))
     if (
         len(text.split()) > 80
-        or states_price(text)
+        or '$' in text
         or JSON_TERM.search(text)
         or FIELD_NAME.search(text)
         or not set(re.findall(r'\d+(?:\.\d+)?', text)) <= numbers

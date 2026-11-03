@@ -79,20 +79,23 @@ JSON_TERM = re.compile(
     re.IGNORECASE,
 )
 FIELD_NAME = re.compile(r'\b[a-z]+(?:_[a-z]+)+\b')
-# Prices come only from the server. Model text is dropped for naming money or a price outright, or
-# for pairing a word that can introduce an amount with a number. "priced scope" alone is scope talk.
-MONEY = re.compile(
-    r'[$€£]|\b(?:usd|dollars?|bucks?|cents?|costs?|costing|prices?|pricing)\b|\b\d[\d,.]*\s?k\b',
-    re.IGNORECASE,
+# Prices come only from the server. Model text is dropped only for stating money: a currency sign or
+# word, or a price word tied directly to an amount. A number followed by anything else is a quantity,
+# so "Total 3 rooms" and "Estimated drying time is 3 days" stay.
+MONEY = re.compile(r'[$€£]|\b(?:usd|dollars?|bucks?|cents?)\b', re.IGNORECASE)
+NUMBER_WORD = (
+    r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve'
+    r'|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty'
+    r'|hundred|thousand|million)\b'
 )
-AMOUNT_WORD = re.compile(
-    r'\b(?:(?:sub)?totals?|estimated?|estimates|priced|budget(?:s|ed)?|fees?|charges?|amounts?'
-    r'|rates?|quot(?:e|es|ed))\b',
-    re.IGNORECASE,
-)
-NUMBER = re.compile(
-    r'\d|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven'
-    r'|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty|hundred|thousand|million)\b',
+AMOUNT = rf'(?:\d[\d,.]*k?|{NUMBER_WORD})(?:[\s-]+(?:and\s+)?{NUMBER_WORD})*'
+PRICED_AMOUNT = re.compile(
+    r'\b(?:(?:sub)?totals?|costs?|costing|prices?|priced|pricing|budget(?:s|ed)?|fees?|charges?'
+    r'|quot(?:e|es|ed)|estimates?)\b'
+    r'(?:[\s:=~-]+(?:a|about|approximately|are|around|at|be|comes?|could|is|may|might|nearly|of'
+    r'|over|roughly|runs?|should|to|under|up|was|were|will|would)\b)*'
+    rf'[\s:=~-]+{AMOUNT}(?:\s*(?:-|–|to)\s*{AMOUNT})?'
+    r'(?=\s*(?:$|[.,;:!?)]|(?:for|per)\b))',
     re.IGNORECASE,
 )
 
@@ -415,7 +418,7 @@ def technician_statement(data: InspectionData):
 
 
 def states_price(text):
-    return bool(MONEY.search(text) or (AMOUNT_WORD.search(text) and NUMBER.search(text)))
+    return bool(MONEY.search(text) or PRICED_AMOUNT.search(text))
 
 
 def plain(text):
@@ -447,20 +450,6 @@ def ai_note(text):
             )
         lines.append(' '.join(kept))
     return '\n'.join(line for line in lines if line)
-
-
-def without_saved_prices(documents):
-    """AI notes as they are read back: an audit saved before the check can still hold a figure."""
-    result = dict(documents)
-    if states_price(result.get('ai_summary') or ''):
-        result['ai_summary'] = ai_note(result['ai_summary'])
-    if result.get('ai_suggestions'):
-        result['ai_suggestions'] = [
-            note
-            for text in result['ai_suggestions']
-            if (note := ai_note(text) if states_price(text) else text)
-        ]
-    return result
 
 
 def claim_reference(claim):

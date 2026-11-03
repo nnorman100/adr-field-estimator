@@ -16,7 +16,7 @@ from backend.claims import (
 from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import InspectionData, AIResult
 from backend import claims
-from backend.claims import plain, states_price, without_saved_prices
+from backend.claims import plain, states_price
 from backend.prompts import audit_prompt
 from tests.fakes import ADR_PROFILE
 
@@ -1399,51 +1399,70 @@ def test_a_price_word_in_an_unpriced_work_flag_still_blocks_signing():
     [
         '$500',
         '$ 500 for the room.',
+        'Estimated cost $500.',
+        'Budget $750.',
         'About 500 dollars.',
         'USD 500.',
-        'Should run 5k.',
-        'The cost is high.',
-        'Pricing depends on the carrier.',
         'Total 1,200.',
+        'Total 1,200 for the room.',
+        'Total: 1,200.',
         'The estimate is five hundred.',
+        'The total comes to two hundred and fifty.',
         'A budget of 750.',
-        'The priced_scope has 2 lines.',
+        'The cost is about 500 to 700.',
+        'Priced at 500-700.',
+        'Costs roughly 5k.',
+        'The fee is 500 per room.',
     ],
 )
-def test_states_price_catches_money_and_price_words(text):
+def test_states_price_catches_real_money(text):
     assert states_price(plain(text))
+
+
+QUANTITY_NOTES = [
+    'Estimated 120 sq ft of drywall is affected.',
+    'Estimated drying time is 3 days.',
+    'Moisture rate is 18 percent in room 2.',
+]
 
 
 @pytest.mark.parametrize(
     'text',
-    [
+    QUANTITY_NOTES
+    + [
         'Office has drywall removal.',
         'Confirm 120 sq ft of drywall.',
+        'Total 3 rooms.',
+        'Total of 120 sq ft.',
+        'Total 3 to 5 rooms.',
+        'The total is 18%.',
+        'Estimate 40 hours of drying.',
+        'A 12k BTU air mover is planned.',
+        'The cost is high.',
+        'Pricing depends on the carrier.',
         'The priced scope does not cover the toilet reset.',
+        'The priced_scope has 2 lines.',
         'Check that the estimate covers the cabinets.',
         'The scope review lists 2 unpriced items.',
         'Room 2 needs a meter photo at 18 percent.',
     ],
 )
-def test_states_price_leaves_scope_words_alone(text):
-    assert not states_price(text)
+def test_states_price_leaves_quantities_and_scope_words_alone(text):
+    assert not states_price(plain(text))
 
 
-def test_an_older_saved_note_with_a_price_is_clean_when_read_back():
-    saved = dict(
-        ai_summary='Office has drywall removal. Estimated cost $500.',
-        ai_suggestions=['Budget $750.', 'Confirm the  laminate area.'],
-        adr_estimate=dict(findings=['Stored as signed.']),
+def test_ordinary_quantities_stay_in_the_notes(monkeypatch):
+    logged = []
+    monkeypatch.setattr(claims, 'event', lambda *args, **fields: logged.append((args, fields)))
+    ai = AIResult(
+        summary=' '.join(QUANTITY_NOTES),
+        suggestions=QUANTITY_NOTES,
+        unpriced_work=[],
     )
-    read = without_saved_prices(saved)
-    assert read['ai_summary'] == 'Office has drywall removal.'
-    # Text without a price comes back exactly as stored, and the stored record is not touched.
-    assert read['ai_suggestions'] == ['Confirm the  laminate area.']
-    assert read['adr_estimate'] == saved['adr_estimate']
-    assert saved['ai_summary'].endswith('$500.')
-    # Records saved before the notes existed stay as they were.
-    assert without_saved_prices(dict(adr_estimate={})) == dict(adr_estimate={})
-    assert without_saved_prices(dict(ai_summary=None)) == dict(ai_summary=None)
+    docs = make_documents(acme(), [], ai)
+    assert docs['ai_summary'] == ' '.join(QUANTITY_NOTES)
+    assert docs['ai_suggestions'] == QUANTITY_NOTES
+    assert logged == []
 
 
 def test_the_prompt_sent_to_the_model_keeps_the_notes_away_from_homeowners_and_prices():

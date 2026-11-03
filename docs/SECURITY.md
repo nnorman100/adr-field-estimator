@@ -13,7 +13,7 @@ Customer names, addresses, claim details and photos; signed agreements and evide
 5. **Superadmin access** is audited and read-only for customer data; refusals return no data and write no entry.
 6. **Signing:** audits and signatures bind to a saved revision and proposal hash; any edit invalidates them; success only after a durable server receipt.
 7. **Links:** signing links are single-use, 7 days; document links are read-only, bound to one agreement and set, 30 days, revocable. Tokens are stored as digests.
-8. **AI:** capped per user per day. A model never supplies a price or removes required wording: the server drops any sentence stating a price from the AI summary, suggestions and testing advice. Those notes stay with company staff; signing and document links omit them. Provider failure produces a retry error, never a signable fallback.
+8. **AI:** capped per user per day. A model never supplies a price or removes required wording: on each new audit the server drops any sentence stating a price (a currency sign or word, or a price word tied directly to an amount) from the AI summary, suggestions and testing advice; records already saved or signed stay as they are. Those notes stay with company staff; signing and document links omit them. Provider failure produces a retry error, never a signable fallback.
 9. **Logs:** allowlisted fields only. Never prompts, transcripts, emails, tokens, addresses, coordinates or paths.
 10. **Secrets:** Secret Manager only. Never in git, wiki or Notion. Do not commit service-account keys.
 11. **Dependencies:** hash-locked; CI runs `pip-audit` and `npm audit`. Ask before adding a dependency.
