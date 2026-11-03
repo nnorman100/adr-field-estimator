@@ -174,9 +174,22 @@ def equipment_sizing(data):
     units, dehu_flag, dehu_reason = dehumidifier_check(
         data.dehumidifiers, demand, data.dehumidifier_ppd
     )
+    basis = {}
+    if low is not None:
+        wet = sum(Decimal(str(room['wet_floor_sf'])) for room in water)
+        basis['air_movers'] = (
+            f'IICRC S500 minimum for {number(wet)} sq ft of wet floor across '
+            f'{count(len(water), "room")}; the maximum is {high}.'
+        )
+    if units is not None:
+        basis['dehumidifiers'] = (
+            f'{up(demand)} pints/day recommended for the stated room volumes and classes; '
+            f'{count(units, "unit")} at {data.dehumidifier_ppd} pints/day each.'
+        )
     return dict(
         status='available',
         rooms=rooms,
+        basis=basis,
         air_movers=dict(entered=data.air_movers, min=low, max=high, flag=flag, reason=reason),
         dehumidifiers=dict(
             entered=data.dehumidifiers,
@@ -196,29 +209,13 @@ def suggested_counts(sizing, data):
     suggested = []
     movers, dehus = sizing['air_movers'], sizing['dehumidifiers']
     if movers['min'] is not None and data.air_movers < movers['min']:
-        water = [room for room in sizing['rooms'] if room['status'] == 'available']
-        wet = sum(Decimal(str(room['wet_floor_sf'])) for room in water)
         suggested.append(
-            dict(
-                field='air_movers',
-                value=movers['min'],
-                basis=(
-                    f'IICRC S500 minimum for {number(wet)} sq ft of wet floor across '
-                    f'{count(len(water), "room")}; the maximum is {movers["max"]}.'
-                ),
-            )
+            dict(field='air_movers', value=movers['min'], basis=sizing['basis']['air_movers'])
         )
     units = dehus['recommended_units']
     if units is not None and data.dehumidifiers < units:
         suggested.append(
-            dict(
-                field='dehumidifiers',
-                value=units,
-                basis=(
-                    f'{dehus["recommended_ppd"]} pints/day recommended for the stated room volumes '
-                    f'and classes; {count(units, "unit")} at {dehus["unit_ppd"]} pints/day each.'
-                ),
-            )
+            dict(field='dehumidifiers', value=units, basis=sizing['basis']['dehumidifiers'])
         )
     return suggested
 

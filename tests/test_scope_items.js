@@ -477,6 +477,36 @@ test('suggested counts follow the server numbers and the items the table lists',
   assert.deepEqual(plain(ScopeItems.suggestedCounts(sizing(), null)), []);
 });
 
+test('suggested counts carry the server basis and leave a count explained with a reason', () => {
+  const both = table([
+    item('fan', 'drying_equipment', 'count_days:air_movers*drying_days'),
+    item('dehu', 'drying_equipment', 'count_days:dehumidifiers*drying_days'),
+  ]);
+  const sizing = {
+    status: 'available',
+    air_movers: { entered: 2, min: 3, max: 4 },
+    dehumidifiers: { entered: 0, recommended_units: 1 },
+    basis: { air_movers: 'movers basis', dehumidifiers: 'units basis' },
+  };
+  assert.deepEqual(plain(ScopeItems.suggestedCounts(sizing, both, { air_movers: 2 })), [
+    { field: 'air_movers', value: 3, basis: 'movers basis' },
+    { field: 'dehumidifiers', value: 1, basis: 'units basis' },
+  ]);
+  // An earlier suggestion has no reason, so it rises; a lowered, explained count stays.
+  const recorded = { air_movers: { measured: '2', entered: '2' } };
+  assert.deepEqual(
+    plain(ScopeItems.suggestedCounts(sizing, both, { quantity_overrides: recorded })).map(
+      (row) => row.field,
+    ),
+    ['air_movers', 'dehumidifiers'],
+  );
+  const explained = { air_movers: { measured: '3', entered: '2', reason: 'One wall is wet' } };
+  assert.deepEqual(
+    plain(ScopeItems.suggestedCounts(sizing, both, { quantity_overrides: explained })),
+    [{ field: 'dehumidifiers', value: 1, basis: 'units basis' }],
+  );
+});
+
 test('the after-hours line leaves out a charge no room on the job can take', () => {
   const t = table([
     item('night', 'job_charges', 'after_hours', {

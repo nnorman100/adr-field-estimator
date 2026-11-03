@@ -536,14 +536,15 @@ def filled_data(data, changes):
 def fill_counts(data, proposed, changes, table):
     """Counts the sizing check would raise on the filled job, computed by the server, never the model.
 
-    A count the technician spoke stays, even one the fill had nothing to change for: proposed is
-    what the model read, before validation drops values already on the form. So does a count
-    already recorded from a walkthrough or explained with a reason: rereading must not undo it.
-    A count the job's table does not list has no input to correct it on the form, so it is left.
+    A count the technician spoke in this fill stays, even one the fill had nothing to change for:
+    proposed is what the model read, before validation drops values already on the form. So does a
+    count explained with a reason: rereading must not undo it. An earlier suggestion carries no
+    reason, so it rises again when the rooms grow. A count the job's table does not list has no
+    input to correct it on the form, so it is left.
     """
     filled = filled_data(data, changes)
     held = {change.field for change in proposed if change.room is None}
-    held.update(data.quantity_overrides or {})
+    held.update(key for key, entry in (data.quantity_overrides or {}).items() if entry.reason)
     listed = listed_fields(table)
     return [
         row

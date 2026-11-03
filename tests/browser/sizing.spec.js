@@ -209,6 +209,42 @@ test.describe('Use suggested counts', () => {
     await expect(page.locator('[data-override-reason="air_movers"]')).toBeVisible();
   });
 
+  test('its counts carry the Undo badge, and a count explained with a reason gets no suggestion', async ({
+    page,
+    request,
+  }) => {
+    await onTable(page, request);
+    await useButton(page).click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    const badge = page.locator('#airMovers').locator('..').locator('.walkthrough-edit');
+    await expect(badge).toContainText('From sizing check · Undo');
+    await expect(badge).toHaveAttribute(
+      'title',
+      'IICRC S500 minimum for 140 sq ft of wet floor across 1 room; the maximum is 4.',
+    );
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+
+    await badge.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(page.locator('#airMovers')).toHaveValue('1');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const undone = await page.evaluate(() => state.record.data);
+    expect(undone.air_movers).toBe(1);
+    expect(undone.quantity_overrides.air_movers).toBeUndefined();
+    // Undo touches only its own count, and the suggestion is on offer again.
+    expect(undone.dehumidifiers).toBe(1);
+    await expect(page.locator('#dehumidifiers').locator('..')).toContainText('From sizing check');
+    await expect(useButton(page)).toBeVisible();
+
+    await useButton(page).click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('2');
+    await page.locator('[data-override-reason="air_movers"]').fill('Only one wall is wet');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');
+    await expect(useButton(page)).toBeHidden();
+  });
+
   test('it is absent with the flag off', async ({ page, request }) => {
     await onTable(page, request, []);
     await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');

@@ -2126,23 +2126,41 @@ function sizingSuggestions() {
     !canEditDraft('scope')
   )
     return [];
-  return ScopeItems.suggestedCounts(state.record?.equipment_sizing, ScopeItems.table());
+  return ScopeItems.suggestedCounts(
+    state.record?.equipment_sizing,
+    ScopeItems.table(),
+    state.draft?.data,
+  );
 }
 function useSuggestedCounts() {
   const rows = sizingSuggestions(),
     draft = state.draft;
   if (!rows.length || state.conflict || stable(draft.data) !== state.ack) return;
   const inputs = { air_movers: 'airMovers', dehumidifiers: 'dehumidifiers' },
-    entries = rows.map((row) => ({
-      target: draft.data,
-      field: row.field,
-      before: draft.data[row.field],
-      after: row.value,
-    }));
+    before = structuredClone(draft.data);
   for (const row of rows) {
     $(inputs[row.field]).value = row.value;
     draft.data[row.field] = row.value;
   }
+  const entries = rows.map((row) => ({
+      target: draft.data,
+      field: row.field,
+      before: before[row.field],
+      after: row.value,
+      removesRoom: false,
+      snapshot: stable(draft.data),
+      quotes: [],
+      basis: row.basis,
+    })),
+    previous = state.scopeEdits;
+  state.scopeEdits = {
+    draft,
+    data: draft.data,
+    entries: [
+      ...(previous?.draft === draft && previous.data === draft.data ? previous.entries : []),
+      ...entries,
+    ],
+  };
   ScopeItems.noteMeasured(entries, draft.data);
   changed();
   const told = rows.map((row) =>

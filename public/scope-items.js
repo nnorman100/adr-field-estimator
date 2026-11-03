@@ -227,23 +227,30 @@
     }
     return listed;
   }
-  // Counts the sizing check would raise, from the numbers on the server's record: the rule of
-  // suggested_counts in backend/sizing.py, with no sizing arithmetic here. A count the table does
-  // not list has no input on the form to correct it, so it is left alone.
-  function suggestedCounts(sizing, table) {
+  // Counts the sizing check would raise, from the numbers and basis on the server's record: the
+  // rule of suggested_counts in backend/sizing.py, with no sizing arithmetic here. A count the table
+  // does not list has no input on the form to correct it, and a count explained with a reason keeps
+  // that reason, as in the fill, so both are left alone.
+  function suggestedCounts(sizing, table, data) {
     if (sizing?.status !== 'available' || !isV2Table(table)) return [];
     const listed = listedFields(table),
       movers = sizing.air_movers,
       dehumidifiers = sizing.dehumidifiers,
       rows = [];
     if (movers.min != null && movers.entered < movers.min)
-      rows.push({ field: 'air_movers', value: movers.min });
+      rows.push({ field: 'air_movers', value: movers.min, basis: sizing.basis?.air_movers });
     if (
       dehumidifiers.recommended_units != null &&
       dehumidifiers.entered < dehumidifiers.recommended_units
     )
-      rows.push({ field: 'dehumidifiers', value: dehumidifiers.recommended_units });
-    return rows.filter((row) => listed.has(row.field));
+      rows.push({
+        field: 'dehumidifiers',
+        value: dehumidifiers.recommended_units,
+        basis: sizing.basis?.dehumidifiers,
+      });
+    return rows.filter(
+      (row) => listed.has(row.field) && !data?.quantity_overrides?.[row.field]?.reason,
+    );
   }
   function unlistedFields(data, table) {
     if (!isV2Table(table)) return [];

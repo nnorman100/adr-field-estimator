@@ -560,7 +560,7 @@ def sized_job(**values):
     return job
 
 
-def fill(client, monkeypatch, changes=()):
+def fill(client, monkeypatch, changes=(), revision=1):
     async def generate(schema, *args, check=None, **kwargs):
         assert schema is bm.ScopeSuggestions
         result = bm.ScopeSuggestions(changes=list(changes), questions=[])
@@ -571,7 +571,7 @@ def fill(client, monkeypatch, changes=()):
     monkeypatch.setattr(bm, 'generate', generate)
     response = client.post(
         '/api/inspections/' + ID + '/scope-suggestions',
-        json={'inspection_id': ID, 'expected_revision': 1},
+        json={'inspection_id': ID, 'expected_revision': revision},
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -668,7 +668,42 @@ def test_a_spoken_count_already_on_the_form_stays_too(api, enabled, assist_on, m
     assert [row['field'] for row in body['suggested']] == ['dehumidifiers']
 
 
-def test_rereading_never_undoes_a_recorded_or_explained_count(api, enabled, assist_on, monkeypatch):  # noqa: F811
+def test_a_count_an_earlier_fill_raised_rises_again_when_a_room_is_added(
+    api,
+    enabled,  # noqa: F811
+    assist_on,
+    monkeypatch,
+):
+    from backend.scope import ScopeChange
+
+    client, current, store = api
+    on_table(client, current, sized_job(air_movers=1))
+    first = {row['field']: row['value'] for row in fill(client, monkeypatch)['suggested']}
+    raised = first['air_movers']
+    # What the phone saves after that fill, and then a second room on the job.
+    recorded = {'air_movers': {'measured': str(raised), 'entered': str(raised)}}
+    saved = client.put(
+        '/api/inspections/' + ID,
+        json={
+            'expected_revision': 1,
+            'data': sized_job(
+                air_movers=raised,
+                quantity_overrides=recorded,
+                rooms=[SIZED_ROOM, {**SIZED_ROOM, 'name': 'Hall'}],
+            ),
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    second = fill(client, monkeypatch, revision=2)['suggested']
+    assert [row['field'] for row in second][0] == 'air_movers'
+    assert second[0]['value'] > raised
+    # The technician saying the count in this fill still wins over the larger minimum.
+    said = ScopeChange(field='air_movers', value=raised, source_quote='Use 3 fans.')
+    held = fill(client, monkeypatch, [said], revision=2)
+    assert 'air_movers' not in [row['field'] for row in held['suggested']]
+
+
+def test_rereading_never_undoes_an_explained_count(api, enabled, assist_on, monkeypatch):  # noqa: F811
     client, current, store = api
     on_table(
         client,
