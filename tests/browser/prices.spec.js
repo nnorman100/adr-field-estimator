@@ -310,8 +310,6 @@ async function priceEverything(page, value = '10.00') {
     }
   }, value);
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
-  // The first sample line pushes the page down; a click in that same instant misses on WebKit.
-  await expect(page.locator('#priceSamples p').first()).toBeVisible();
 }
 async function publishTable(page, reason = 'First price table') {
   await page.locator('#priceReason').fill(reason);
@@ -1110,5 +1108,92 @@ test.describe('a slow sample answer', () => {
     await page.waitForTimeout(200);
     await expect(samples).toContainText('Newer sample');
     await expect(samples).not.toContainText('Older sample');
+  });
+  // A browser's own scroll anchoring cannot be relied on: WebKit lost about one timed tap in four
+  // to it, too rarely to test directly. With it switched off, only the app can hold the button.
+  for (const [width, anchoring] of [
+    [1280, 'off'],
+    [390, 'off'],
+    [1280, 'on'],
+    [390, 'on'],
+  ]) {
+    test(`landing mid-tap leaves Publish prices under the finger at ${width}px, browser anchoring ${anchoring}`, async ({
+      page,
+      request,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await startUnset(page, request);
+      if (anchoring === 'off') await page.addStyleTag({ content: '* { overflow-anchor: none; }' });
+      let release;
+      const held = new Promise((resolve) => (release = resolve));
+      await page.route('**/prices/calculate', async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      const asked = page.waitForRequest('**/prices/calculate');
+      await priceEverything(page);
+      await asked;
+      const line = page.locator('#priceSamples p').first();
+      await expect(line).toBeHidden();
+
+      await page.locator('#priceReason').fill('First price table');
+      await page.getByRole('button', { name: 'Review changes' }).click();
+      const publish = page.getByRole('button', { name: 'Publish prices' });
+      await publish.scrollIntoViewIfNeeded();
+      const before = await publish.boundingBox();
+      const x = before.x + before.width / 2,
+        y = before.y + before.height / 2;
+      const firstInstant = publish.evaluate(
+        (button, point) =>
+          new Promise((done) => {
+            new MutationObserver((_, watcher) => {
+              watcher.disconnect();
+              done({
+                top: button.getBoundingClientRect().top,
+                underFinger: button.contains(document.elementFromPoint(point.x, point.y)),
+              });
+            }).observe(document.getElementById('priceSamples'), { childList: true });
+          }),
+        { x, y },
+      );
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      release();
+      const landed = await firstInstant;
+      expect(landed.underFinger).toBe(true);
+      expect(Math.abs(landed.top - before.y)).toBeLessThan(1);
+      // Two frames, so any adjustment the browser makes on its own has happened as well.
+      await page.evaluate(
+        () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+      );
+      const settled = await publish.boundingBox();
+      expect(Math.abs(settled.y - before.y)).toBeLessThan(1);
+      await page.mouse.up();
+      await expect(page.locator('#dashboardContent')).toContainText('Prices v1');
+    });
+  }
+  test('landing does not scroll the settings an owner is still editing', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await startUnset(page, request);
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route('**/prices/calculate', async (route) => {
+      await held;
+      await route.continue().catch(() => {});
+    });
+    const asked = page.waitForRequest('**/prices/calculate');
+    await priceEverything(page);
+    await asked;
+    const samples = page.locator('#priceSamples');
+    await samples.evaluate((box) => box.parentElement.scrollIntoView({ block: 'end' }));
+    const reason = await page.locator('#priceReason').boundingBox();
+    expect(reason.y).toBeGreaterThan(844);
+    const scrolled = await page.evaluate(() => window.scrollY);
+    release();
+    await expect(samples.locator('p').first()).toBeVisible();
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
   });
 });

@@ -943,8 +943,21 @@
       if (ed !== mine || turn !== mine.sampleTurn) return;
       mine.samples = [];
     }
-    paintSamples();
-    paintProblems();
+    keepPlace(() => {
+      paintSamples();
+      paintProblems();
+    });
+  }
+  // A late answer changes the height of what sits above the review. Moving the page in the same
+  // task means no tap can land between the two, which the browser's own anchoring cannot promise.
+  function keepPlace(paint) {
+    const below = $('priceReason');
+    if (!below) return;
+    const from = below.getBoundingClientRect().top,
+      hold = from < window.innerHeight || $('priceItems').getBoundingClientRect().top < 0;
+    paint();
+    const moved = below.getBoundingClientRect().top - from;
+    if (hold && moved) window.scrollBy(0, moved);
   }
   function paintSamples() {
     const target = $('priceSamples');
