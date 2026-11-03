@@ -65,6 +65,7 @@ test('owner switches, reviews the differences and publishes; a new job gets the 
   await expect(card).toContainText('Labor hours carry 50% on the high end at every job size');
   await expect(card).toContainText('after-hours 20% now prints as its own line');
   await expect(card).toContainText('Signed documents never change');
+  await expect(card).toContainText('connect their phones so open drafts sync before you publish');
   await page.getByRole('button', { name: 'Switch to v2' }).click();
 
   // The rates carried over and the working copy survives a reload; nothing is published yet.
@@ -87,6 +88,7 @@ test('owner switches, reviews the differences and publishes; a new job gets the 
   await expect(review).toContainText('Before: ');
   await expect(review).toContainText('After: ');
   await expect(review).toContainText('Drafts already started keep their current prices');
+  await expect(review).toContainText('connect their phones so open drafts sync before you publish');
   await page.getByRole('button', { name: 'Publish prices' }).click();
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
   await expect(page.locator('#priceUnpublished')).toBeHidden();
@@ -176,7 +178,7 @@ test('a draft not yet priced before the switch stays on the v1 form offline', as
   await context.setOffline(false);
 });
 
-test('a draft begun before the switch that never reached the server shows the v1 form offline', async ({
+test('a draft begun before the switch that never reached the server shows the v1 form offline, then the table at its first save', async ({
   page,
   context,
 }) => {
@@ -199,7 +201,24 @@ test('a draft begun before the switch that never reached the server shows the v1
   await checkScope(page);
   await expect(page.locator('#v1Scope')).toBeVisible();
   await expect(page.locator('#v2Scope')).toBeHidden();
+  await page.locator('#airMovers').fill('2');
+
+  // Back online the server first sees the job now, so it is a new job on the published table.
+  await page.unroute('**/api/inspections**');
   await context.setOffline(false);
+  await expect(page.locator('#v2Scope')).toBeVisible();
+  await expect(page.locator('#v1Scope')).toBeHidden();
+  await expect(page.locator('#v2Scope #airMovers')).toHaveValue('2');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  const saved = await page.evaluate(async (value) => {
+    const pricing = await jsonApi('/api/inspections/' + value + '/pricing');
+    const record = await jsonApi('/api/inspections/' + value);
+    return { pricing, airMovers: record.data.air_movers };
+  }, id);
+  expect(saved.airMovers).toBe(2);
+  expect(saved.pricing.calculation_version).toBe('dryscope-v2');
+  expect(saved.pricing.pinned.reason).toBe('first_price');
+  expect(saved.pricing.can_reprice).toBe(false);
 });
 
 test('discarding the switch returns to the rate book, and only the owner is offered it', async ({

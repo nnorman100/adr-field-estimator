@@ -114,7 +114,9 @@ V1_SIZE_LIMIT = 32768
 V2_SIZE_LIMIT = 200 * 1024
 SWITCH_EFFECT = (
     'New jobs use this table from the time of publication. Drafts already started keep their '
-    'current prices until you apply the new table to one draft. Signed documents never change.'
+    'current prices until you apply the new table to one draft. Signed documents never change. '
+    'Have everyone connect their phones so open drafts sync before you publish: a draft still '
+    'only on a phone at that moment prices from this table once it syncs.'
 )
 
 
