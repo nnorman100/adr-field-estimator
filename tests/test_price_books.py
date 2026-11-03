@@ -1504,7 +1504,7 @@ def test_additional_work_keeps_the_profile_rate_with_the_flag_off(api):
     assert store.quote_extra('owner', ID, 2)['rate'] == '47.46'
 
 
-def test_calculate_returns_publish_problems_until_v2_pricing_exists(api, enabled, caplog):
+def test_calculate_returns_samples_and_publish_problems(api, enabled, caplog):
     client, current, _ = api
     current['uid'] = 'owner'
     table = _v2_table('25.00')
@@ -1515,9 +1515,96 @@ def test_calculate_returns_publish_problems_until_v2_pricing_exists(api, enabled
             json={'items': table['items'], 'policy': table['policy']},
         )
     assert answer.status_code == 200, answer.text
-    assert answer.json()['samples'] == []
+    samples = answer.json()['samples']
+    assert [sample['key'] for sample in samples] == ['small', 'medium', 'large']
+    assert all(sample['incomplete'] for sample in samples)
     assert any('enter a unit price' in row['message'] for row in answer.json()['problems'])
     assert 'Storage operation failed' not in caplog.text
+
+
+def _calculate(client, table):
+    answer = client.post(
+        '/api/companies/adr/prices/calculate',
+        json={'items': table['items'], 'policy': table['policy']},
+    )
+    assert answer.status_code == 200, answer.text
+    return {sample['key']: sample for sample in answer.json()['samples']}
+
+
+def _engine_total(table, key, end):
+    from backend import price_table, pricing_v2
+
+    sample = next(row for row in pricing_v2.SAMPLE_JOBS if row['key'] == key)
+    data = InspectionData.model_validate(sample['data'])
+    normal = price_table.normalize_table(table, publish=False)
+    lines, _ = pricing_v2.price_scope(data, normal)
+    return pricing_v2.totals(data, lines, normal['policy'])[end]['total']
+
+
+def test_calculate_prices_each_sample_from_the_table_it_was_sent(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    samples = _calculate(client, table)
+    for key, sample in samples.items():
+        assert sample['notice'] == 'Sample job only. This does not price a saved job.'
+        assert sample['label'] and sample['description']
+        assert sample['mode'] == 'range' and sample['incomplete'] is False
+        assert sample['low'] == f'${_engine_total(table, key, "low"):,.2f}'
+        assert sample['high'] == f'${_engine_total(table, key, "high"):,.2f}'
+    dearer = _calculate(client, _v2_table('50.00'))
+    for key in samples:
+        assert Decimal(dearer[key]['low'].strip('$').replace(',', '')) > Decimal(
+            samples[key]['low'].strip('$').replace(',', '')
+        )
+
+    table['policy']['estimate_mode'] = 'single'
+    single = _calculate(client, table)['medium']
+    assert single['mode'] == 'single' and single['high'] is None
+
+
+def test_calculate_leaves_out_a_sample_nothing_priced_touches(api, enabled):
+    from backend import price_table
+
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = price_table.starter_table()
+    assert _calculate(client, table) == {}
+    for item in table['items']:
+        if item['item_id'] == 'service_call':
+            item['unit_price'] = '150.00'
+    samples = _calculate(client, table)
+    # Only the small sample has an emergency call.
+    assert list(samples) == ['small'] and samples['small']['incomplete'] is True
+
+
+def test_preview_stores_the_samples_before_and_after_the_change(api, enabled):
+    client, current, db = api
+    current['uid'] = 'owner'
+    first = _v2_table('25.00')
+    review = client.post(
+        '/api/companies/adr/prices/preview',
+        json={'items': first['items'], 'policy': first['policy'], 'change_reason': 'First table'},
+    ).json()
+    assert review['sample_before'] == []
+    assert [sample['key'] for sample in review['sample_after']] == ['small', 'medium', 'large']
+    _publish_v2(client, first, 'First table')
+
+    second = _v2_table('50.00')
+    review = client.post(
+        '/api/companies/adr/prices/preview',
+        json={'items': second['items'], 'policy': second['policy'], 'change_reason': 'Dearer'},
+    ).json()
+    assert [row['low'] for row in review['sample_before']] == [
+        sample['low'] for sample in _calculate(client, first).values()
+    ]
+    assert [row['low'] for row in review['sample_after']] == [
+        sample['low'] for sample in _calculate(client, second).values()
+    ]
+    assert review['sample_before'][0]['low'] != review['sample_after'][0]['low']
+    stored = db.workspaces.prices.ws.read('_price_book_previews', review['preview_id'])
+    assert stored['sample_before'] == review['sample_before']
+    assert stored['sample_after'] == review['sample_after']
 
 
 def test_calculate_refuses_a_sample_choice_it_cannot_honor(api, enabled):
@@ -1971,6 +2058,7 @@ def test_import_replaces_items_and_keeps_policy(api, enabled):
     result = preview.json()
     assert [row['change'] for row in result['diff']['items']] == ['price']
     assert result['diff']['policy'] == []
+    assert result['sample_before'] and result['sample_after']
     client.post(
         '/api/companies/adr/prices/publish',
         json={'preview_id': result['preview_id'], 'expected_generation': result['generation']},

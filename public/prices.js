@@ -913,7 +913,13 @@
   }
   function sampleSentence(sample) {
     const range = sample.high ? sample.low + ' to ' + sample.high : sample.low;
-    return sample.label + ' prices at ' + range + '.';
+    return (
+      sample.label +
+      ' prices at ' +
+      range +
+      '.' +
+      (sample.incomplete ? ' Items with no price are left out.' : '')
+    );
   }
   async function refreshSamples() {
     if (!ed || !ed.manage || !navigator.onLine) return;
@@ -946,12 +952,11 @@
     }
     target.hidden = false;
     const medium = ed.samples.find((s) => s.key === 'medium') || ed.samples[0];
-    target.append(node('p', sampleSentence(medium)));
+    target.append(node('p', sampleSentence(medium)), node('p', medium.notice));
     const all = node('details', undefined, 'price-samples');
     all.append(node('summary', 'Show all three samples'));
     for (const sample of ed.samples)
       all.append(node('p', sampleSentence(sample) + ' ' + (sample.description || '')));
-    all.append(node('p', 'Sample jobs only. They do not price a saved job.'));
     target.append(all);
   }
 
@@ -1532,6 +1537,7 @@
     ])
       for (const sample of Array.isArray(list) ? list : [])
         panel.append(node('p', title + ': ' + sampleSentence(sample)));
+    if (preview.sample_after?.length) panel.append(node('p', preview.sample_after[0].notice));
     if (preview.effect) panel.append(node('p', preview.effect));
     if (onPublish) {
       const actions = node('form', undefined, 'price-actions');
@@ -1554,15 +1560,16 @@
     const page = WorkspaceUI.pageEpoch();
     await saveCopy(mine);
     const reviewed = mine.edits,
+      said = reason.value.trim(),
       preview = await jsonApi(mine.base + '/preview', 'POST', {
         items: mine.items,
         policy: mine.policy,
         acknowledgements: [...mine.acks],
-        change_reason: reason.value.trim(),
+        change_reason: said,
       });
     if (page !== WorkspaceUI.pageEpoch()) return;
-    if (mine.edits !== reviewed)
-      throw Error('Prices changed during the review. Review them again.');
+    if (mine.edits !== reviewed || reason.value.trim() !== said)
+      throw Error('Something changed during the review. Review it again.');
     $('priceReview')?.remove();
     content.append(
       reviewFor(preview, () =>
@@ -1690,6 +1697,7 @@
       reason.required = true;
       reason.minLength = 3;
       reason.maxLength = 500;
+      reason.addEventListener('input', () => $('priceReview')?.remove());
       label.append(reason);
       actions.append(button('Review changes', () => reviewCopy(content)));
       reviewForm.append(label, actions);

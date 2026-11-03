@@ -528,7 +528,7 @@ test.describe('review and samples', () => {
     await startUnset(page, request);
     await priceEverything(page);
     await publishTable(page);
-    // The sample engine ships separately: answer the calculate call the way it will.
+    // Made-up samples that follow one price, so the display is checked apart from the formulas.
     await page.route('**/prices/calculate', async (route) => {
       const body = route.request().postDataJSON();
       const call = body.items.find((item) => item.item_id === 'service_call');
@@ -540,6 +540,7 @@ test.describe('review and samples', () => {
             key,
             label: 'The ' + key + ' sample',
             description: 'A made-up job.',
+            notice: 'Sample job only. This does not price a saved job.',
             itemized: low,
             low,
             high: null,
@@ -997,4 +998,52 @@ test('adding a second additional-work item keeps the editor saving', async ({ pa
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
   await page.locator('input[name=price_service_call]').fill('150');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+});
+
+test('real sample totals show under the settings and before and after in the review', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const samples = page.locator('#priceSamples');
+  await page.locator('input[name=price_service_call]').fill('150');
+  await expect(samples).toContainText('Clean-water kitchen leak prices at $');
+  await expect(samples).toContainText('Items with no price are left out.');
+  await expect(samples).toContainText('Sample job only. This does not price a saved job.');
+
+  await priceEverything(page);
+  await publishTable(page);
+  await expect(samples).toContainText('Gray-water main floor prices at $');
+  await expect(samples).not.toContainText('left out');
+  const before = await samples.locator('p').first().textContent();
+  await page.locator('details.price-group[data-group=labor] > summary').click();
+  await page.locator('input[name=price_technician_labor]').fill('100');
+  await expect(samples.locator('p').first()).not.toHaveText(before);
+  await page.locator('#priceReason').fill('Raise the labor rate');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  const review = page.locator('#priceReview');
+  await expect(review).toContainText('Before: ' + before);
+  await expect(review).toContainText('After: Gray-water main floor prices at $');
+  await expect(review).toContainText('Sample job only. This does not price a saved job.');
+});
+
+test('correcting the reason closes the review, so history keeps the corrected reason', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await page.locator('input[name=price_service_call]').fill('11');
+  const reason = page.locator('#priceReason');
+  await reason.fill('Spring prces');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toBeVisible();
+  await reason.fill('Spring prices');
+  await expect(page.locator('#priceReview')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
+  await expect(page.locator('#dashboardContent')).toContainText('Spring prices');
+  await expect(page.locator('#dashboardContent')).not.toContainText('Spring prces');
 });

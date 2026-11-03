@@ -14,6 +14,7 @@ from uuid import uuid4
 from google.cloud import firestore
 
 try:
+    from . import pricing_v2
     from .adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from .claims import price_scope, proposal_range
     from .cloud_log import event
@@ -54,6 +55,7 @@ try:
     )
     from .workspaces import AccessDenied
 except ImportError:
+    import pricing_v2
     from adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from claims import price_scope, proposal_range
     from cloud_log import event
@@ -205,6 +207,31 @@ def _valid_v1_doc(doc) -> bool:
     ):
         return False
     return content_hash(doc['rates'], doc['calculation_version']) == doc.get('content_sha256')
+
+
+def _sample_jobs(table):
+    """What the made-up sample jobs cost on a table. A sample nothing priced touches is left out."""
+    samples = []
+    for sample in pricing_v2.SAMPLE_JOBS:
+        data = InspectionData.model_validate(sample['data'])
+        lines, warnings = pricing_v2.price_scope(data, table)
+        try:
+            estimate = pricing_v2.totals(data, lines, table['policy'])
+        except ValueError:
+            continue
+        samples.append(
+            {
+                'key': sample['key'],
+                'label': sample['label'],
+                'description': sample['description'],
+                'notice': sample['notice'],
+                'mode': estimate['mode'],
+                'low': f'${estimate["low"]["total"]:,.2f}',
+                'high': f'${estimate["high"]["total"]:,.2f}' if estimate['high'] else None,
+                'incomplete': any(row['code'] == 'blank_price_item' for row in warnings),
+            }
+        )
+    return samples
 
 
 def _raise_size_limit():
@@ -543,7 +570,7 @@ class PriceBookStore:
             acknowledgements=payload.get('acknowledgements') or [],
         )
         return {
-            'samples': [],
+            'samples': _sample_jobs(table),
             'problems': self._publish_problems(table, payload.get('acknowledgements') or []),
         }
 
@@ -688,8 +715,8 @@ class PriceBookStore:
             'warnings': warnings,
             'diff': diff,
             'no_changes': no_changes,
-            'sample_before': [],
-            'sample_after': [],
+            'sample_before': _sample_jobs(before_table) if before_table else [],
+            'sample_after': _sample_jobs(table),
             'source': payload.get('source') or 'manual',
             'import_digest': payload.get('import_digest'),
             'created_at': now(),
