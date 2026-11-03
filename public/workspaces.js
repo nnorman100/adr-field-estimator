@@ -363,10 +363,12 @@ window.WorkspaceUI = (() => {
       const pricesChanged =
         state.session.prices_set !== access.prices_set ||
         JSON.stringify(state.session.price_display) !== JSON.stringify(access.price_display);
+      const sessionBefore = state.session;
       state.session = { ...state.session, ...access };
       state.queuePaused = !access.role;
       window.Prices?.syncNotice();
       await ready();
+      if (window.ScopeItems?.tableStale(sessionBefore)) await ScopeItems.sessionChanged();
       if (previous !== next) {
         say('Your company access changed. Local drafts are retained for authorized recovery.');
         await landing();
@@ -475,6 +477,7 @@ window.WorkspaceUI = (() => {
               state.session = await response.json();
               state.queuePaused = false;
               await ready();
+              await window.ScopeItems?.sessionChanged();
               await landing();
               say('Company invitation accepted.', 'success');
             }),

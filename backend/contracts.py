@@ -183,19 +183,27 @@ class ScopeQuantity(StrictModel):
 
 
 class QuantityOverride(StrictModel):
-    """Estimator override of a walkthrough-filled quantity (measured value, entered value, reason)."""
+    """A walkthrough-filled quantity: what was measured, what is entered now, and why they differ.
+
+    The reason is absent until the entered value moves away from the measured one.
+    """
 
     measured: Decimal = Field(ge=0, le=100000, decimal_places=2)
     entered: Decimal = Field(ge=0, le=100000, decimal_places=2)
-    reason: str = Field(min_length=3, max_length=300)
+    reason: str | None = Field(
+        default=None, min_length=3, max_length=300, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode='after')
     def validate_reason(self):
-        self.reason = ' '.join(self.reason.split())
-        if len(self.reason) < 3 or any(not c.isprintable() for c in self.reason):
-            raise ValueError(
-                'Enter a short reason for the quantity override (at least 3 characters).'
-            )
+        if self.reason is not None:
+            self.reason = ' '.join(self.reason.split())
+            if len(self.reason) < 3 or any(not c.isprintable() for c in self.reason):
+                raise ValueError(
+                    'Enter a short reason for the quantity override (at least 3 characters).'
+                )
+        elif self.entered != self.measured:
+            raise ValueError('Enter a short reason when changing a walkthrough-measured quantity.')
         return self
 
 
@@ -245,6 +253,10 @@ class InspectionData(StrictModel):
     scope_items: dict[Annotated[str, Field(pattern=ITEM_ID)], ScopeQuantity] | None = Field(
         default=None, max_length=150, exclude_if=lambda value: value is None
     )
+    # The price table whose default quantities this job started from; absent otherwise, as above.
+    seeded_from_version: str | None = Field(
+        default=None, max_length=120, exclude_if=lambda value: value is None
+    )
     # Estimator overrides of walkthrough-measured quantities; absent until set, as above.
     quantity_overrides: (
         dict[Annotated[str, Field(min_length=1, max_length=120)], QuantityOverride] | None
@@ -266,6 +278,48 @@ def distinct_rooms(data: InspectionData):
     return data
 
 
+OVERRIDE_JOB_FIELDS = frozenset(
+    {
+        'emergency_calls',
+        'monitoring_hours',
+        'haul_loads',
+        'air_scrubbers',
+        'hepa_filters',
+        'matterport_scans',
+        'dump_truck_loads',
+        'equipment_decon',
+        'power_distribution',
+        'labor_hours',
+        'air_movers',
+        'dehumidifiers',
+        'wood_floor_systems',
+        'drying_days',
+        'wood_floor_days',
+    }
+)
+OVERRIDE_ROOM_FIELDS = frozenset({'unfinished_sf', 'finished_sf', 'floor_sf', 'wet_floor_sf'})
+
+
+def check_quantity_overrides(data: InspectionData):
+    """Each override must describe the job's current value, so a stale `entered` never reaches the
+    owner. Keys are a job field, or "room name:field". A blank room area reads as 0, as on the phone.
+    Checked on saves and audits only: stored records load as they are."""
+    for key, override in (data.quantity_overrides or {}).items():
+        room_name, separator, field = key.rpartition(':')
+        if separator:
+            room = next((r for r in data.rooms if r.name == room_name), None)
+            if room is None or field not in OVERRIDE_ROOM_FIELDS:
+                raise ValueError(f'The quantity override "{key}" does not match a room value.')
+            current = getattr(room, field)
+        elif key in OVERRIDE_JOB_FIELDS:
+            current = getattr(data, key)
+        else:
+            raise ValueError(f'The quantity override "{key}" does not match a job value.')
+        if abs(Decimal(str(current or 0)) - override.entered) >= Decimal('0.01'):
+            raise ValueError(f'The quantity override "{key}" does not match the entered value.')
+    return data
+
+
 class CreateInspection(StrictModel):
     inspection_id: str = Field(pattern=r'^ADR-INS-[a-f0-9]{32}$')
     data: InspectionData = Field(default_factory=InspectionData)
@@ -273,6 +327,7 @@ class CreateInspection(StrictModel):
     @model_validator(mode='after')
     def rooms_distinct(self):
         distinct_rooms(self.data)
+        check_quantity_overrides(self.data)
         return self
 
 
@@ -287,6 +342,7 @@ class UpdateInspection(StrictModel):
     @model_validator(mode='after')
     def rooms_distinct(self):
         distinct_rooms(self.data)
+        check_quantity_overrides(self.data)
         return self
 
 

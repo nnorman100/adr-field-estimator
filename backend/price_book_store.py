@@ -42,6 +42,7 @@ try:
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         SCHEMA_VERSION as V2_SCHEMA_VERSION,
         content_hash as v2_content_hash,
+        seed_quantities,
         diff_tables,
         normalize_table,
         public_diff,
@@ -81,6 +82,7 @@ except ImportError:
         CALCULATION_VERSION as V2_CALCULATION_VERSION,
         SCHEMA_VERSION as V2_SCHEMA_VERSION,
         content_hash as v2_content_hash,
+        seed_quantities,
         diff_tables,
         normalize_table,
         public_diff,
@@ -297,7 +299,13 @@ class PriceBookStore:
 
     def session_view(self, actor):
         """What the app shows a member outside the price editor, for their own company only."""
-        view = {'prices_set': None, 'price_display': None, 'prices_not_set_message': None}
+        view = {
+            'prices_set': None,
+            'price_display': None,
+            'prices_not_set_message': None,
+            'pricing_version': None,
+            'pricing_table_version': None,
+        }
         if not actor.get('company'):
             return view
         try:
@@ -311,9 +319,20 @@ class PriceBookStore:
                 'prices_set': False,
                 'prices_not_set_message': _not_set_message(actor.get('role')),
             }
+        version = book.get('calculation_version') if price_books_enabled() else None
         if _is_v2(book):
-            return {**view, 'prices_set': True}
-        return {**view, 'prices_set': True, 'price_display': price_display(book['rates'])}
+            return {
+                **view,
+                'prices_set': True,
+                'pricing_version': version,
+                'pricing_table_version': book['version_id'] if version else None,
+            }
+        return {
+            **view,
+            'prices_set': True,
+            'price_display': price_display(book['rates']),
+            'pricing_version': version,
+        }
 
     def _actor_name(self, company_id, uid, tx=None):
         member = self.ws.read('_memberships', uid, tx) if uid else None
@@ -1267,6 +1286,24 @@ class PriceBookStore:
             or pin.get('version_id') != basis.get('version_id')
         ):
             raise Conflict('The saved prices no longer match this draft. Review before signing.')
+
+    def seed_office_job(self, company, record, tx):
+        """Give a new office-created job the company's current v2 table defaults."""
+        if not price_books_enabled():
+            return
+        try:
+            book = self.effective(company, tx)
+        except Conflict:
+            return
+        if _is_v2(book):
+            record['data'] = seed_quantities(record['data'], book)
+
+    def job_prices_unset(self, uid, record):
+        """True when the job has no pin and its company has no published prices to pin."""
+        job, _ = self.ws.job_access(uid, record, 'read')
+        if self._pin(record['inspection_id']):
+            return False
+        return _is_unset(self.effective(self.ws.read('_companies', job['company_id'])))
 
     def job_view(self, uid, record):
         self._require()

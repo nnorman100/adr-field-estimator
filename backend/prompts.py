@@ -103,7 +103,14 @@ def prompt_inspection(data):
     return {
         key: value
         for key, value in data.items()
-        if key not in ('equipment_scans', 'coordinates', 'scope_items', 'quantity_overrides')
+        if key
+        not in (
+            'equipment_scans',
+            'coordinates',
+            'scope_items',
+            'quantity_overrides',
+            'seeded_from_version',
+        )
     }
 
 

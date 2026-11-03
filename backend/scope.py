@@ -422,6 +422,10 @@ def validate_suggestions(data, suggestions, claim=None):
     """claim is the job's saved claim details; None when claim details cannot be stored."""
     source = normalized(data.technician_transcript + '\n' + data.technician_notes)
     candidate = data.model_dump(mode='json')
+    # Company-price quantities are never proposed or changed here, and their Decimal strings would
+    # not pass the strict revalidation below.
+    candidate.pop('scope_items', None)
+    candidate.pop('quantity_overrides', None)
     known = {}
     for i, room in enumerate(data.rooms):
         known.setdefault(normalized(room.name), []).append(i)
@@ -567,6 +571,7 @@ def scope_prompt(data, claim=None):
                         # Priced-item quantities and estimator overrides are not model input.
                         'scope_items',
                         'quantity_overrides',
+                        'seeded_from_version',
                     },
                 ),
                 **({'current_claim': claim} if claim is not None else {}),

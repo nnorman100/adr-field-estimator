@@ -1693,7 +1693,7 @@ def test_working_copy_keeps_a_locked_extras_item_and_reports_it_like_publish(api
     assert any('Turn this item off' in row['message'] for row in calculated.json()['problems'])
 
 
-def test_v2_book_gives_readable_conflicts_and_writes_no_pin(api, enabled):
+def test_v2_book_gives_readable_conflicts_and_audit_adds_no_pin(api, enabled):
     client, current, store = api
     current['uid'] = 'owner'
     _publish_v2(client, _v2_table('25.00'))
@@ -1703,10 +1703,12 @@ def test_v2_book_gives_readable_conflicts_and_writes_no_pin(api, enabled):
     job['scope_confirmed'] = True
     created = client.post('/api/inspections', json={'inspection_id': ID, 'data': job})
     assert created.status_code == 200, created.text
+    pinned = store.db.records.get(f'_job_pricing/{ID}')
     audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
     assert audited.status_code == 409, audited.text
     assert 'v2 pricing is not available yet' in audited.json()['detail']
-    assert f'_job_pricing/{ID}' not in store.db.records
+    # The audit writes no pin of its own; any pin is the one made when the draft was created.
+    assert store.db.records.get(f'_job_pricing/{ID}') == pinned
 
     prices = store.workspaces.prices
     record = store.get_inspection('estimator', ID)

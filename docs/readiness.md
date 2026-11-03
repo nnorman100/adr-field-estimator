@@ -23,6 +23,12 @@ missing explicit loss confirmation remains advisory. No equipment quantity or
 price is inferred. Claim values, customer names, coordinates and reading values
 are absent from the readiness payload; room names identify where to fix a gap.
 
+Two pricing gaps sit outside those fixtures. `prices` (**Company prices are not set
+up**) appears when the job has no saved prices and its company has no published
+prices. `area_basis` appears, per room, when a `dryscope-v2` table prices by wet
+floor area and the room has neither a wet floor nor a floor area; a wet floor area of
+0 is deliberate and is not a gap. A company on the v1 rate book gets neither gap.
+
 There is no setup timestamp/visit marker in the current log. The first affected-air
 or affected-material reading is treated as the setup reading; thermal, outside-air
 and dry-reference-only readings do not clear that gap. This is an initial-reading
@@ -32,7 +38,7 @@ The list needs no new network request. Existing reading-load failure stays retry
 through the drying-log reconnect path. AI/document generation remains online-only.
 
 Authorized draft responses derive readiness from the existing claim and reading
-sidecars. The relay rechecks job access when reading saved readiness, and appends
+sidecars and the job's price basis. The relay rechecks job access when reading saved readiness, and appends
 it to the existing shot-status context message under the [relay timing and access
 constraints](firebase-isolation.md). Saved draft changes that alter readiness, claim
 saves and reading saves/removals notify that channel. The gated

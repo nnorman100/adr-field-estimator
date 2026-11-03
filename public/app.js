@@ -508,6 +508,8 @@ async function localDrafts() {
   const rows = await dbAction('readonly', (store) => store.getAll());
   return rows.filter(
     (r) =>
+      // The cached company price table shares this store but is never a draft.
+      r.draft &&
       r.uid === state.user?.uid &&
       (!state.session?.workspaces_enabled ||
         r.company_id === state.session.company_id ||
@@ -537,6 +539,8 @@ async function persist() {
     ack: state.ack,
     session: state.session,
     updated_at: new Date().toISOString(),
+    // The price table the screen was built from and the walkthrough values behind any override.
+    ...window.ScopeItems?.rowExtras(state.draft.inspection_id),
     ...(state.archived && { archived: true }),
     // The estimator's customer panel, so it shows and sends without a connection.
     customer: window.WorkspaceUI?.customerCache?.() || null,
@@ -721,7 +725,10 @@ function absorb(record) {
   )
     invalidate();
   const insightChanged = state.record?.revision !== record.revision;
+  const firstSave = !state.record;
   state.record = record;
+  // A draft first saved on the server is pinned there; read the table it was pinned to.
+  if (firstSave) window.ScopeItems?.pull();
   if (!record.audit) state.draft.homeowner_link_pending = false;
 
   window.InsightUI?.job(insightChanged);
@@ -860,6 +867,7 @@ function clearDisplayedInspection() {
 function changed(resetConfirmation = true) {
   if (!state.draft || state.signed || confirmedAuthorization) return;
   state.localVersion++;
+  window.ScopeItems?.syncOverrides();
   renderReadiness();
   if (resetConfirmation) {
     // Say so, because a silent un-tick hid that the confirmed scope had moved.
@@ -910,6 +918,8 @@ function renderSaveStatus() {
   if (state.archived)
     show('Archived by the owner', 'Archived by the owner · local work kept on this phone');
   else if (state.conflict) show('Revision conflict', 'Revision conflict · local draft preserved');
+  else if (window.ScopeItems?.missingReason(state.draft.data))
+    show('Reason needed', 'Saved on this device · give the reason to save it to the cloud');
   else if (state.syncing) show('Saving…');
   else if (synced) show('Saved', 'Saved privately · revision ' + state.record.revision);
   else if (navigator.onLine)
@@ -962,8 +972,20 @@ async function absorbNotes(remote) {
   await persist();
   renderNotes();
 }
+// The server seeds an office-created job at create, so the phone's copy takes those quantities.
+function adoptServerSeed(record) {
+  if (record.data.seeded_from_version === state.draft.data.seeded_from_version) return false;
+  state.draft.data = record.data;
+  state.ack = stable(record.data);
+  fillForm();
+  return true;
+}
 async function reconcile() {
   const remote = await jsonApi('/api/inspections/' + state.draft.inspection_id);
+  if (state.ack === null && remote.status !== 'signed') {
+    absorb(remote);
+    if (adoptServerSeed(remote)) return;
+  }
   if (remote.status !== 'signed' && state.ack !== null && stable(remote.data) !== state.ack)
     await absorbNotes(remote);
   if (remote.status === 'signed' || (state.ack !== null && stable(remote.data) !== state.ack)) {
@@ -985,6 +1007,8 @@ async function doSync() {
     (window.WorkspaceUI?.enabled() && !WorkspaceUI.can('jobs_create'))
   )
     return;
+  // The server refuses a changed walkthrough value with no reason; it stays on the phone until given.
+  if (window.ScopeItems?.missingReason(state.draft.data)) return renderSaveStatus();
   const id = state.draft.inspection_id;
   state.syncing = true;
   renderSaveStatus();
@@ -995,6 +1019,7 @@ async function doSync() {
         const record = await jsonApi('/api/inspections', 'POST', { inspection_id: id, data });
         state.ack = stable(data);
         absorb(record);
+        adoptServerSeed(record);
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
@@ -1142,7 +1167,12 @@ async function drainQueue() {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
       guard();
-      if (row.draft.inspection_id === state.draft?.inspection_id || row.archived) continue;
+      if (
+        row.draft.inspection_id === state.draft?.inspection_id ||
+        row.archived ||
+        window.ScopeItems?.missingReason(row.draft.data)
+      )
+        continue;
       const id = row.draft.inspection_id,
         path = '/api/inspections/' + id;
       let record;
@@ -1493,6 +1523,7 @@ async function fillScopeFromWalkthrough() {
             entries.push({ ...entry, target, snapshot: stable(target) });
         }
       state.scopeEdits = { draft, data: filled, entries };
+      window.ScopeItems?.noteMeasured(entries, filled);
       fillForm();
     }
     const applied = draft.data;
@@ -1531,6 +1562,7 @@ async function fillScopeFromWalkthrough() {
           draft.photos,
           window.WorkspaceUI?.readinessClaim() || {},
           window.DryingLog?.readinessReadings() ?? null,
+          window.ScopeItems?.readinessPricing(),
         )
       : missingItems(filled, draft.photos);
     $('scopeMissing').replaceChildren(...missing.map((item) => node('li', item)));
@@ -1587,6 +1619,7 @@ function retagDefaultPhotos(before, after) {
   const rename = defaultPhotoRename(before, after);
   if (!rename) return;
   for (const photo of state.draft.photos) if (photo.room === rename.from) photo.room = rename.to;
+  window.ScopeItems?.renameRoom(rename.from, rename.to, after);
   retagScans(roomScans(after, rename.from), rename.to);
 }
 function renderWalkthroughEdits() {
@@ -1642,7 +1675,10 @@ function renderWalkthroughEdits() {
         }
         const before = structuredClone(edit.data);
         if (entry.removesRoom) edit.data.rooms.splice(edit.data.rooms.indexOf(entry.target), 1);
-        else entry.target[entry.field] = entry.before;
+        else {
+          entry.target[entry.field] = entry.before;
+          window.ScopeItems?.undoMeasured(entry, edit.data);
+        }
         retagDefaultPhotos(before, edit.data);
         edit.entries = edit.entries.filter((item) => item !== entry);
         for (const item of edit.entries)
@@ -1720,6 +1756,7 @@ function collect() {
   }))
     data[key] = $(id).checked;
   renderJobChargesSummary();
+  window.ScopeItems?.collect(data);
   window.WorkspaceUI?.scopeAddressChanged();
   window.PlacesUI?.render();
 }
@@ -1768,6 +1805,7 @@ function fillForm() {
     $(id).checked = !!data[key];
   renderJobChargesSummary();
   window.Prices?.noteJob();
+  window.ScopeItems?.refresh();
   $('scopeConfirmNotice').hidden = true;
   $('inspectionFields').disabled = !!state.signed || !!confirmedAuthorization || !state.session;
   window.PlacesUI?.render();
@@ -1815,6 +1853,7 @@ function renderRooms() {
       card.dataset.loss = roomLoss(room);
       // Mold-only rooms have no water class; the drying check applies to water rooms.
       sizing.hidden = roomLoss(room) === 'mold';
+      window.ScopeItems?.fitSizing(sizing, room, roomLoss(room) === 'mold');
     };
     tagRoom();
     head.append(node('h3', 'Room ' + (i + 1)));
@@ -1927,6 +1966,7 @@ function renderRooms() {
           input.setCustomValidity(roomNameTaken(input.value, room) ? ROOM_NAME_TAKEN : '');
           if (input.validationMessage === ROOM_NAME_TAKEN) return input.reportValidity();
         }
+        if (key === 'name') window.ScopeItems?.renameRoom(room.name, input.value, state.draft.data);
         room[key] = type === 'text' ? input.value : Number(input.value);
         if (key === 'name') {
           retagPhotos(photos, input.value);
@@ -1945,9 +1985,11 @@ function renderRooms() {
       });
       wrap.append(input);
       parent.append(wrap);
+      window.ScopeItems?.watch(wrap, room, key);
       if (key === 'category') grid.append(pills);
     }
     moreBody.append(sizing);
+    window.ScopeItems?.placeWetFloor(sizing, grid);
     // The shot list waits in a drawer on Check Scope; its summary counts the missing shots.
     const shotDrawer = node('details', undefined, 'shot-drawer');
     shotDrawer.append(node('summary'), node('div', undefined, 'room-shots'));
@@ -2026,16 +2068,17 @@ function sizingFields(room, i) {
     });
     wrap.append(input);
     body.append(wrap);
+    window.ScopeItems?.watch(wrap, room, key);
   }
-  group.append(
-    title,
-    body,
+  const hint = node('p', undefined, 'hint');
+  hint.append(
     node(
-      'p',
-      'Enter the room floor area, not the demolition area, and only values confirmed on site. Leave the wet floor area blank when the whole floor is wet.',
-      'hint',
+      'span',
+      'Enter the room floor area, not the demolition area, and only values confirmed on site. ',
     ),
+    node('span', 'Leave the wet floor area blank when the whole floor is wet.', 'wet-floor-hint'),
   );
+  group.append(title, body, hint);
   return group;
 }
 const sizingFlags = { below: 'Below', within: 'Within range', above: 'Above' };
@@ -2339,6 +2382,7 @@ function beginRoomRename(index) {
 function renameRoom(room, name) {
   const photos = roomPhotos(room.name),
     scans = roomScans(state.draft.data, room.name);
+  window.ScopeItems?.renameRoom(room.name, name, state.draft.data);
   room.name = name;
   retagPhotos(photos, name);
   retagScans(scans, name);
@@ -2726,7 +2770,7 @@ async function openNew(data = null, photos = []) {
     throw Error('Company access is required before starting an inspection.');
   // A blank job starts on Walk & Photo; forks and office intake open on Check Scope.
   const walkFirst = !data && state.session.role !== 'office';
-  data = data || emptyData();
+  data = data || window.ScopeItems?.newData(emptyData) || emptyData();
   if (state.session?.workspaces_enabled && state.session.role === 'office') {
     data = { ...emptyData(), address: data.address, rooms: [] };
     photos = [];
@@ -2752,6 +2796,7 @@ async function openNew(data = null, photos = []) {
     }));
     state.draft.data.scope_confirmed = false;
   }
+  window.ScopeItems?.seed(state.draft.inspection_id, null);
   confirmedAuthorization = null;
   $('retrySavedEvidence').hidden = true;
   $('signedEvidenceStatus').textContent = '';
@@ -2823,6 +2868,7 @@ async function restoreDraft(id) {
         data: remote.data,
         photos: remote.photos.map((p) => ({ ...p, uploaded: true })),
       };
+  window.ScopeItems?.seed(id, local);
   state.record = remote || local.record;
   state.ack = local ? local.ack : stable(remote.data);
   window.WorkspaceUI?.seedCustomer?.(local?.customer, id);
@@ -3235,6 +3281,7 @@ function currentReadiness() {
     state.draft.photos,
     window.WorkspaceUI?.readinessClaim() || {},
     readings,
+    window.ScopeItems?.readinessPricing(),
   );
 }
 function renderReadiness() {
@@ -5316,7 +5363,9 @@ const openDraftUnsynced = () =>
 const canonical = canonicalUrl(location.href);
 // Local drafts belong to this origin, so the app stays here until every one has synced.
 async function leaveForCanonical() {
-  const rows = await dbAction('readonly', (store) => store.getAll()).catch(() => []);
+  const rows = (await dbAction('readonly', (store) => store.getAll()).catch(() => [])).filter(
+    (r) => r.draft,
+  );
   if (openDraftUnsynced() || rows.some(unsynced) || (await pendingNoteKeys()).size) return false;
   // A Home Screen app keeps the origin it was added from; iOS opens the canonical one in a sheet.
   if (matchMedia('(display-mode: standalone)').matches || navigator.standalone)
@@ -5499,6 +5548,7 @@ async function initialize() {
     state.draft = null;
     state.record = null;
     state.signed = null;
+    window.ScopeItems?.forget();
     invalidate();
     await clearLocal();
     location.reload();
@@ -5609,6 +5659,14 @@ async function initialize() {
     collect();
     await syncDraft();
     if (state.conflict) throw Error('Choose a recovery action before cloud saving.');
+    if (window.ScopeItems?.missingReason(state.draft.data)) {
+      showTask('property', false);
+      const box = $('inspectionForm').querySelector('[data-override-reason]:invalid');
+      if (box) showValidationFeedback(box);
+      throw Error(
+        'Saved on this phone only. Give the reason for the changed walkthrough value to save it to the cloud.',
+      );
+    }
     say(navigator.onLine ? 'Draft saved privately.' : 'Draft saved on this device.', 'success');
   });
   click('finishAudit', () =>
@@ -5953,6 +6011,8 @@ async function applyUser(user) {
   if (stale()) return;
   state.user = user;
   state.session = null;
+  // A usage reply can repaint the old session's counts while the awaits above run.
+  window.InsightUI?.reset();
   if (!user) resetShellBranding();
   state.workspaceInitializing = true;
   document.body.classList.remove('dashboard-open', 'office-view');
@@ -6019,6 +6079,8 @@ async function applyUser(user) {
     state.queuePaused = false;
     if (state.session.workspaces_enabled) {
       await WorkspaceUI.ready();
+      if (stale()) return;
+      await window.ScopeItems?.loadCompany();
       if (stale()) return;
       if (!state.session.role) {
         state.queuePaused = true;
