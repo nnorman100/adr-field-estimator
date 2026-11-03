@@ -558,7 +558,7 @@ test.describe('review and samples', () => {
     await expect(page.locator('#priceSamples')).toContainText(
       'The medium sample prices at $55.00.',
     );
-    await page.getByText('Show all three samples').click();
+    await page.getByText('Show all samples').click();
     await expect(page.locator('#priceSamples')).toContainText('The small sample prices at $55.00.');
     await expect(page.locator('#priceSamples')).toContainText('The large sample prices at $55.00.');
 
@@ -1046,4 +1046,39 @@ test('correcting the reason closes the review, so history keeps the corrected re
   await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
   await expect(page.locator('#dashboardContent')).toContainText('Spring prices');
   await expect(page.locator('#dashboardContent')).not.toContainText('Spring prces');
+});
+
+test.describe('a slow sample answer', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('never replaces a newer one', async ({ page, request }) => {
+    await startUnset(page, request);
+    const answer = (label) => ({
+      json: {
+        problems: [],
+        samples: [{ key: 'medium', label, low: '$1.00', high: null, notice: 'Sample job only.' }],
+      },
+    });
+    let calls = 0,
+      release;
+    const held = new Promise((resolve) => (release = resolve));
+    await page.route('**/prices/calculate', async (route) => {
+      calls += 1;
+      if (calls === 1) {
+        await held;
+        await route.fulfill(answer('Older sample'));
+      } else await route.fulfill(answer('Newer sample'));
+    });
+    const call = page.locator('input[name=price_service_call]');
+    await call.fill('40');
+    await expect.poll(() => calls).toBe(1);
+    await call.fill('41');
+    const samples = page.locator('#priceSamples');
+    await expect(samples).toContainText('Newer sample');
+    const older = page.waitForResponse('**/prices/calculate');
+    release();
+    await older;
+    await page.waitForTimeout(200);
+    await expect(samples).toContainText('Newer sample');
+    await expect(samples).not.toContainText('Older sample');
+  });
 });

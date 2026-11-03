@@ -1578,6 +1578,31 @@ def test_calculate_leaves_out_a_sample_nothing_priced_touches(api, enabled):
     assert list(samples) == ['small'] and samples['small']['incomplete'] is True
 
 
+@pytest.mark.parametrize('item_id', ['hepa_vacuum', 'surface_cleaning', 'antimicrobial'])
+def test_a_floor_priced_item_moves_the_mold_sample(api, enabled, item_id):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    before = _calculate(client, table)['large']
+    next(row for row in table['items'] if row['item_id'] == item_id)['unit_price'] = '50.00'
+    after = _calculate(client, table)['large']
+    assert after['low'] != before['low'] and after['high'] != before['high']
+
+
+def test_the_wet_floor_basis_prices_the_whole_mold_sample(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('25.00')
+    for item in table['items']:
+        if item['group'] == 'demolition' and item['quantity_source'].startswith('room:demolition'):
+            item['quantity_source'] = 'room:basis'
+    table['policy']['area_basis'] = 'demolition'
+    demolition = _calculate(client, table)['large']
+    table['policy']['area_basis'] = 'wet_floor'
+    # The sample's wet floor is the same 2,500 sq ft as its demolition.
+    assert _calculate(client, table)['large']['low'] == demolition['low']
+
+
 def test_preview_stores_the_samples_before_and_after_the_change(api, enabled):
     client, current, db = api
     current['uid'] = 'owner'

@@ -926,17 +926,18 @@
     const mine = ed,
       target = $('priceSamples');
     if (!target) return;
+    const turn = ++mine.sampleTurn;
     try {
       const result = await jsonApi(mine.base + '/calculate', 'POST', {
         items: mine.items,
         policy: mine.policy,
         acknowledgements: [...mine.acks],
       });
-      if (ed !== mine) return;
+      if (ed !== mine || turn !== mine.sampleTurn) return;
       mine.samples = result.samples || [];
       mine.problems = result.problems || mine.problems;
     } catch {
-      if (ed !== mine) return;
+      if (ed !== mine || turn !== mine.sampleTurn) return;
       mine.samples = [];
     }
     paintSamples();
@@ -954,7 +955,7 @@
     const medium = ed.samples.find((s) => s.key === 'medium') || ed.samples[0];
     target.append(node('p', sampleSentence(medium)), node('p', medium.notice));
     const all = node('details', undefined, 'price-samples');
-    all.append(node('summary', 'Show all three samples'));
+    all.append(node('summary', 'Show all samples'));
     for (const sample of ed.samples)
       all.append(node('p', sampleSentence(sample) + ' ' + (sample.description || '')));
     target.append(all);
@@ -1643,6 +1644,7 @@
       publishedIds: new Set(view.starter ? [] : view.items.map((item) => item.item_id)),
       problems: [],
       samples: [],
+      sampleTurn: 0,
       acks: new Set(),
       open: new Set(['job_charges', 'demolition']),
       edits: 0,

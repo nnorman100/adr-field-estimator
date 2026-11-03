@@ -39,7 +39,7 @@ ROOM_FIELDS = frozenset(('unfinished_sf', 'finished_sf', 'wet_floor_sf', 'floor_
 # Job numbers an estimator can override: every number a quantity source reads.
 JOB_FIELDS = frozenset(FIELD_SOURCES).union(*COUNT_DAYS_SOURCES)
 SAMPLE_NOTICE = 'Sample job only. This does not price a saved job.'
-# Every job number is stated, so a table's default_quantity never reaches a sample.
+# Every job number is stated, so a default_quantity reaches a sample only through a typed item.
 _SAMPLE_BASE = dict(
     emergency_calls=0,
     monitoring_hours=0,
@@ -114,9 +114,18 @@ SAMPLE_JOBS = (
                     category=3,
                     finished_sf=800,
                     unfinished_sf=200,
+                    floor_sf=1000,
+                    wet_floor_sf=1000,
                     custom_cabinetry=True,
                 ),
-                dict(name='Lower level', category=3, finished_sf=1200, unfinished_sf=300),
+                dict(
+                    name='Lower level',
+                    category=3,
+                    finished_sf=1200,
+                    unfinished_sf=300,
+                    floor_sf=1500,
+                    wet_floor_sf=1500,
+                ),
             ],
             air_movers=10,
             dehumidifiers=3,
