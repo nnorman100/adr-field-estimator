@@ -178,9 +178,151 @@ test('a draft not yet priced before the switch stays on the v1 form offline', as
   await context.setOffline(false);
 });
 
+// A job started after the switch that has not reached the server: nothing seeded, still the item list.
+const switched = async (page) => {
+  await start(page, 'owner');
+  await publishRates(page);
+  await publishSwitch(page);
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
+  await expect.poll(() => page.evaluate(() => !!state.session.switched_at)).toBe(true);
+};
+const unsavedJob = async (page, context) => {
+  await page.route('**/api/inspections**', (route) =>
+    ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
+  );
+  await page.evaluate(() => openNew().catch(() => {}));
+  const id = await page.evaluate(() => state.draft.inspection_id);
+  await context.setOffline(true);
+  await page.evaluate((value) => restoreDraft(value), id);
+  expect(await page.evaluate(() => [state.record, state.draft.data.seeded_from_version])).toEqual([
+    null,
+    undefined,
+  ]);
+  await checkScope(page);
+  await expect(page.locator('#v2Scope')).toBeVisible();
+  await expect(page.locator('#v1Scope')).toBeHidden();
+  await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+  return page.locator('#v2ScopeStatus');
+};
+
+test('a job started after the switch stays on the item list across an offline reload, and started_at stays on the phone', async ({
+  page,
+  context,
+}) => {
+  await switched(page);
+  await page.evaluate(() => openNew());
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  const saved = await page.evaluate(async () => {
+    const id = state.draft.inspection_id,
+      record = await jsonApi('/api/inspections/' + id);
+    return { started: state.draft.started_at, record };
+  });
+  expect(Date.parse(saved.started)).not.toBeNaN();
+  expect(saved.record.started_at).toBeUndefined();
+  expect(saved.record.data.started_at).toBeUndefined();
+  // Let the debounced local save finish, then drop the table copy: this job can seed from nothing.
+  await page.evaluate(() => syncChain);
+  await page.waitForTimeout(1500);
+  await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const open = indexedDB.open('adr-private-drafts-v2');
+        open.onerror = reject;
+        open.onsuccess = () => {
+          const db = open.result,
+            tx = db.transaction(['drafts'], 'readwrite'),
+            store = tx.objectStore('drafts'),
+            all = store.getAll();
+          all.onsuccess = () => {
+            for (const row of all.result) if (row.key.startsWith('prices:')) store.delete(row.key);
+          };
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+        };
+      }),
+  );
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await page.evaluate(() => openNew());
+  const id = await page.evaluate(() => state.draft.inspection_id);
+  await checkScope(page);
+  await expect(page.locator('#v2Scope')).toBeVisible();
+  await expect(page.locator('#v2ScopeStatus')).toContainText('Connect once');
+  await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+  await page.locator('#technicianNotes').fill('Started offline');
+  await expect
+    .poll(() =>
+      page.evaluate(async (value) => {
+        const rows = await localDrafts();
+        return rows.find((r) => r.draft.inspection_id === value)?.draft.started_at;
+      }, id),
+    )
+    .toBeTruthy();
+  await page.reload();
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await page.evaluate((value) => restoreDraft(value), id);
+  await checkScope(page);
+  await expect(page.locator('#v2Scope')).toBeVisible();
+  await expect(page.locator('#v1Scope')).toBeHidden();
+  await context.setOffline(false);
+});
+
 test.describe('without a service worker', () => {
   // page.route cannot see a fetch that a controlling service worker handles, as in WebKit here.
   test.use({ serviceWorkers: 'block' });
+
+  for (const [status, text] of [
+    [401, "You don't have access to your company's price list"],
+    [503, "Your company's price list could not load"],
+  ])
+    test(
+      'a job started after the switch keeps the item list and the message when the table answers ' +
+        status,
+      async ({ page, context }) => {
+        await switched(page);
+        await page.route('**/api/companies/*/prices', (route) =>
+          route.fulfill({
+            status,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'Not available.' }),
+          }),
+        );
+        await page.evaluate(() => ScopeItems.loadCompany());
+        await expect(await unsavedJob(page, context)).toContainText(text);
+        await context.setOffline(false);
+      },
+    );
+
+  test('a job started after the switch from an out-of-date phone copy keeps the item list and its date', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await switched(page);
+    await expect.poll(() => page.evaluate(() => !!ScopeItems.table()?.version_id)).toBe(true);
+    const copy = await page.evaluate(() => ScopeItems.table().version_id);
+    // The owner republishes and this phone cannot fetch the new table: its copy is out of date.
+    await request.post('/__test/price-table', {
+      data: { items: { service_call: { unit_price: '160.00', default_quantity: '3' } } },
+    });
+    await page.route('**/api/companies/*/prices', (route) => route.abort());
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => WorkspaceUI.refresh());
+        return page.evaluate(() => state.session.pricing_table_version);
+      })
+      .not.toBe(copy);
+    expect(await page.evaluate(() => !!state.session.switched_at)).toBe(true);
+    expect(await page.evaluate(() => ScopeItems.table().version_id)).toBe(copy);
+    const status = await unsavedJob(page, context);
+    await expect(status).toContainText('Prices as of');
+    await expect(status).toContainText('Your company has newer prices');
+    await context.setOffline(false);
+  });
 
   test('a draft begun before the switch that never reached the server shows the v1 form offline, then the table at its first save', async ({
     page,

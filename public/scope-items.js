@@ -67,6 +67,18 @@
   const DECIMAL_FIELDS = ['monitoring_hours', 'labor_hours'];
   // Room measurements the walkthrough fills and the estimator may override with a reason.
   const OVERRIDE_ROOM_FIELDS = ['unfinished_sf', 'finished_sf', 'floor_sf', 'wet_floor_sf'];
+  // The server said no: the phone's copy of the price list is not this account's to use any more.
+  const REFUSED_STATUSES = [401, 403, 404];
+  const NO_DEFAULTS = 'New jobs start with no default quantities.';
+  const PRICES_REFUSED =
+    "You don't have access to your company's price list right now. Sign in again or ask your company owner. " +
+    NO_DEFAULTS;
+  const PRICES_FAILED =
+    "Your company's price list could not load just now. Rooms and photos still work. " +
+    NO_DEFAULTS;
+  const PRICES_NEVER_LOADED =
+    "Connect once to load your company's price list. Rooms and photos still work.";
+  const PRICES_NEWER = ' Your company has newer prices. ' + NO_DEFAULTS;
   // ---- pure helpers (also used by the node tests) ------------------------------------------
   function parseSource(text) {
     if (typeof text !== 'string') return null;
@@ -139,6 +151,14 @@
       : price + ' per ' + (UNIT_NAMES[item.unit] || item.unit);
   }
   const formatQuantity = decimalText;
+  const asOfText = (cachedAt) =>
+    'Prices as of ' +
+    new Date(cachedAt).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }) +
+    '.';
   function roomArea(field, room, policy) {
     const wet = room.wet_floor_sf ?? room.floor_sf ?? 0;
     if (field === 'wet_floor_sf') return wet;
@@ -359,7 +379,8 @@
   // ---- screen -------------------------------------------------------------------------------
   const dom = () =>
     typeof document !== 'undefined' && typeof document.getElementById === 'function';
-  let company = null; // the company's current table, cached on the phone
+  let company = null; // the company's current table; from_cache marks the copy kept on the phone
+  let companyTrouble = ''; // what to tell the user when the server would not give the table
   const jobs = new Map(); // inspection id -> { pricing }
   let rendered = null; // the form and table the screen was last built for
   let renderedRows = null; // the item rows it was last built with
@@ -377,12 +398,30 @@
   function companyView() {
     return isV2Table(company?.table) ? company.table : null;
   }
+  // A phone copy older than the table the session names is shown with its date, never started from.
+  // Only a session from the server can say so: one stored beside a draft may be the older of the two.
+  const outdatedCopy = () =>
+    !!company?.from_cache &&
+    state?.session !== state?.offlineSession &&
+    company.table?.version_id !== state?.session?.pricing_table_version;
+  const currentTable = () => (outdatedCopy() ? null : companyView());
+  // When a new job began, kept on the phone's draft row only. A session that already names a switch
+  // means the job began after it, even on a phone whose clock is behind the server's.
+  function startedAt() {
+    const switched = Date.parse(state?.session?.switched_at);
+    return new Date(switched > Date.now() ? switched : Date.now()).toISOString();
+  }
   // A job the server saved before its company switched stays on its rate book, as the server rules.
-  // At a switched company, a job the server has not seen and the table did not start reads as v1.
+  // At a switched company, a job the server has not seen reads as v1 unless the table started it or
+  // the phone recorded it starting after the switch; a row from before started_at has no such record.
   function beforeSwitch() {
     const switched = state?.session?.switched_at;
     if (!switched) return false;
-    if (!state.record) return !state.draft?.data?.seeded_from_version;
+    if (!state.record)
+      return (
+        !state.draft?.data?.seeded_from_version &&
+        !(Date.parse(state.draft?.started_at) >= Date.parse(switched))
+      );
     const created = Date.parse(state.record.created_at);
     return Number.isNaN(created) || created < Date.parse(switched);
   }
@@ -411,7 +450,7 @@
   });
   // The pricing row field that persist() stores beside a draft.
   function rowExtras(id) {
-    const t = jobs.get(id)?.pricing || (companyOnTable() && companyView());
+    const t = jobs.get(id)?.pricing || (companyOnTable() && currentTable());
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
   function seed(id, row) {
@@ -421,23 +460,28 @@
     jobs.clear();
   }
 
-  // Company table: fetched when online, kept in the drafts store for offline launches.
+  // Company table: fetched when online, kept in the drafts store for offline launches. Only a request
+  // that never got an answer falls back to that copy; an answer from the server is never overruled.
   const cacheKey = () => 'prices:' + state.user.uid + ':' + state.session.company_id;
   async function loadCompany() {
     const mine = ++companySeq;
     if (!dom() || state?.session?.pricing_version !== V2 || !state.user) {
       company = null;
+      companyTrouble = '';
       return;
     }
     const uid = state.user.uid,
-      companyId = state.session.company_id;
+      companyId = state.session.company_id,
+      key = cacheKey();
     try {
       if (!navigator.onLine) throw Error('offline');
       const view = await jsonApi('/api/companies/' + companyId + '/prices');
       if (mine !== companySeq) return;
       company = null;
+      companyTrouble = '';
       if (view.calculation_version === V2) {
         company = {
+          key,
           table: pricingCopy({
             calculation_version: V2,
             version_id: view.version_id,
@@ -449,18 +493,30 @@
           cached_at: new Date().toISOString(),
         };
         await dbAction('readwrite', (store) =>
-          store.put({ key: cacheKey(), uid, company_id: companyId, prices: company }),
+          store.put({ key, uid, company_id: companyId, prices: company }),
         ).catch(() => {});
       }
-    } catch {
-      const row = await dbAction('readonly', (store) => store.get(cacheKey())).catch(() => null);
-      if (mine === companySeq) company = row?.prices?.table ? row.prices : null;
+    } catch (e) {
+      if (mine !== companySeq) return;
+      if (e.status) {
+        const refused = REFUSED_STATUSES.includes(e.status),
+          message = refused ? PRICES_REFUSED : PRICES_FAILED;
+        if (refused || company?.from_cache || company?.key !== key) company = null;
+        if (message !== companyTrouble) say(message, 'error');
+        companyTrouble = message;
+        if (refused) await dbAction('readwrite', (store) => store.delete(key)).catch(() => {});
+        return;
+      }
+      companyTrouble = '';
+      const row = await dbAction('readonly', (store) => store.get(key)).catch(() => null);
+      if (mine === companySeq)
+        company = row?.prices?.table ? { ...row.prices, from_cache: true } : null;
     }
   }
   // A new draft for a v2 company: zero charge quantities, then the table's defaults.
   function newData(emptyData) {
     if (state?.session?.pricing_version !== V2) return null;
-    return applyDefaults(emptyData({ v2: true }), companyView());
+    return applyDefaults(emptyData({ v2: true }), companyTrouble ? null : currentTable());
   }
   function readinessPricing() {
     const id = draftId();
@@ -717,6 +773,15 @@
   }
 
   const shownView = () => (active() ? 'v2:' + (table()?.version_id || '') : 'v1');
+  // A job holding its own table is priced from it, so these notes are about the company's copy only.
+  function statusText() {
+    const t = table();
+    if (!t) return companyTrouble || PRICES_NEVER_LOADED;
+    if (state.record && t !== companyView()) return '';
+    if (companyTrouble) return companyTrouble;
+    if (!company?.from_cache || t.version_id !== companyView()?.version_id) return '';
+    return asOfText(company.cached_at) + (outdatedCopy() ? PRICES_NEWER : '');
+  }
   function render() {
     if (!dom() || !$('v2Scope')) return;
     const on = active();
@@ -741,9 +806,7 @@
     const t = table(),
       data = state.draft.data,
       groups = $('v2ScopeGroups');
-    $('v2ScopeStatus').textContent = t
-      ? ''
-      : "Connect once to load your company's price list. Rooms and photos still work.";
+    $('v2ScopeStatus').textContent = statusText();
     const placed = new Set(),
       nodes = [];
     renderedRows = rowsKey(t, data);
@@ -923,11 +986,14 @@
     before?.pricing_table_version !== state.session?.pricing_table_version ||
     before?.company_id !== state.session?.company_id ||
     (state.session?.pricing_version === V2 &&
-      companyView()?.version_id !== state.session.pricing_table_version);
+      (!!companyTrouble ||
+        !!company?.from_cache ||
+        companyView()?.version_id !== state.session.pricing_table_version));
   async function sessionChanged() {
     await loadCompany();
     if (!dom() || !draftId() || !$('v2Scope')) return;
     if (shownView() !== rendered) settle();
+    else if (active()) $('v2ScopeStatus').textContent = statusText();
     await pull();
   }
   root.ScopeItems = {
@@ -938,6 +1004,8 @@
     groupsOf,
     unitPriceText,
     formatQuantity,
+    asOfText,
+    startedAt,
     roomQuantity,
     pricesFromWetFloor,
     applyDefaults,
