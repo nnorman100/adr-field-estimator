@@ -3,6 +3,7 @@
 Everything outside the process is replaced by FakeRunner; no test touches Google Cloud, GitHub or git.
 """
 
+import importlib
 import json
 import re
 import shlex
@@ -14,6 +15,7 @@ import pytest
 import yaml
 
 from scripts import auto_deploy as auto
+from scripts import deploy_backend
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
@@ -498,6 +500,11 @@ def test_a_baseline_that_is_not_less_permissive_is_recorded_not_blocked(summary,
     assert "PRICE_BOOKS_ENABLED '(unset)' -> 'false'" in summary.text()
 
 
+def confirmations(expression):
+    """The flag each dispatch input turns on in a workflow expression."""
+    return dict(re.findall(r"inputs\.(\w+) == 'yes' && '(--[\w-]+)'", expression))
+
+
 def serving_with(runner, commit=OLD, **env):
     runner.revisions['rev-old'] = revision(commit, env)
     return runner
@@ -625,16 +632,21 @@ def test_automatic_rollback_after_a_confirmed_release_restores_the_serving_revis
 
 def test_the_automatic_workflow_can_never_confirm_a_lower_baseline():
     step = next(step for step in deploy_job()['steps'] if step.get('name') == 'Release')
-    assert '--confirm-baseline' not in step['run'] and 'CONFIRM' not in step['run']
-    assert '--confirm-baseline' not in deploy_job()['env']['DEPLOY_ARGS']
+    variables = {token for token in shlex.split(step['run'], comments=True) if '$' in token}
+    assert variables == {'$COMMIT', '$RUN_ID', '$DEPLOY_ARGS'}
+    assert confirmations(deploy_job()['env']['DEPLOY_ARGS']) == {}
 
 
-def test_one_constant_sets_the_baseline_for_both_deploy_scripts():
-    assert auto.PRICE_BOOKS == auto.DEFAULT_PRICE_BOOKS
-    assert auto.AI_FEATURES == auto.DEFAULT_AI_FEATURES
-    source = (ROOT / 'scripts' / 'auto_deploy.py').read_text(encoding='utf8')
-    assert 'PRICE_BOOKS = DEFAULT_PRICE_BOOKS' in source
-    assert 'AI_FEATURES = DEFAULT_AI_FEATURES' in source
+def test_one_constant_sets_the_baseline_for_both_deploy_scripts(monkeypatch):
+    for name, value in (('DEFAULT_PRICE_BOOKS', 'on'), ('DEFAULT_AI_FEATURES', 'job_summary')):
+        monkeypatch.setattr(deploy_backend, name, value)
+    try:
+        importlib.reload(auto)
+        assert auto.PRICE_BOOKS == 'on' and auto.AI_FEATURES == 'job_summary'
+    finally:
+        monkeypatch.undo()
+        importlib.reload(auto)
+    assert auto.PRICE_BOOKS == deploy_backend.DEFAULT_PRICE_BOOKS
 
 
 @pytest.mark.parametrize('argv', (['--publish', NEW], ['--next-version']))
@@ -1116,9 +1128,10 @@ def test_workflow_rollback_step_restores_an_older_revision_when_the_baseline_is_
 
 
 def test_workflow_passes_each_rollback_confirmation_from_its_own_input():
-    confirm = deploy_job()['env']['CONFIRM_ARGS']
-    assert "inputs.confirm_past_migration == 'yes' && '--confirm-past-migration'" in confirm
-    assert "inputs.confirm_baseline == 'yes' && '--confirm-baseline'" in confirm
+    assert confirmations(deploy_job()['env']['CONFIRM_ARGS']) == {
+        'confirm_past_migration': '--confirm-past-migration',
+        'confirm_baseline': '--confirm-baseline',
+    }
 
 
 def test_workflow_publish_step_publishes_the_commit_that_was_released(summary):
