@@ -196,6 +196,42 @@ def test_close_is_owner_or_office_only_and_needs_a_signed_job(api, assist, uid, 
         assert 'closed_at' not in row_of(store)
 
 
+def test_a_close_counts_against_the_draft_quota_and_over_the_limit_records_nothing(api, assist):
+    client, current, store = api
+    signed_job(client, current, store)
+    body = close_body(client, current)
+    counted = store.db.records.get('_limits/office', {}).get('draft', {}).get('count', 0)
+    assert client.post(f'/api/jobs/{ID}/close', json=body).status_code == 200
+    assert store.db.records['_limits/office']['draft']['count'] == counted + 1
+    # Wind the counter to the 60-a-minute limit; the next close is refused and changes nothing.
+    store.db.records['_limits/office']['draft']['count'] = 60
+    first = deepcopy(row_of(store))
+    over = client.post(f'/api/jobs/{ID}/close', json=dict(body, final_amount='1.00'))
+    assert over.status_code == 429, over.text
+    assert int(over.headers['Retry-After']) > 0
+    assert row_of(store) == first
+    assert len(admin_events(store)) == 1
+
+
+def test_an_estimator_off_the_job_cannot_close_and_nothing_is_recorded(api, assist):
+    client, current, store = api
+    signed_job(client, current, store)
+    body = close_body(client, current)
+    current['uid'] = 'estimator2'
+    answer = client.post(f'/api/jobs/{ID}/close', json=body)
+    assert answer.status_code == 404, answer.text
+    assert 'closed_at' not in row_of(store)
+    assert admin_events(store) == []
+
+
+def test_a_successful_close_is_never_cached(api, assist):
+    client, current, store = api
+    signed_job(client, current, store)
+    answer = close(client, current)
+    assert answer.status_code == 200
+    assert answer.headers['Cache-Control'] == 'private, no-store'
+
+
 def test_closing_an_unsigned_job_is_refused(api, assist):
     client, current, store = api
     current['uid'] = 'estimator'
