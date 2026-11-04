@@ -914,7 +914,11 @@ def assert_adds_up(end):
 
 
 def test_real_engine_range_documents_add_up_and_name_the_cushion_tiers():
-    docs = real_engine_documents(estimate_mode='range')
+    # The starter table now starts on the uncertainty method; this one chooses the cushion.
+    docs = real_engine_documents(
+        estimate_mode='range',
+        assist=dict(price_table.starter_table()['policy']['assist'], range_method='cushion'),
+    )
     estimate, proposal = docs['estimate'], docs['adr_estimate']
     assert_adds_up(estimate['low'])
     assert_adds_up(estimate['high'])
@@ -1332,3 +1336,28 @@ def test_extra_wording_replaces_the_description_on_v2_extra_lines(monkeypatch):
     docs = v2_documents(monkeypatch, lines=lines, data=data)
     sentence = 'Additional work, not in Test Co price sheet: Move and reset toilet, 2.5 h at $50.00/h, approved by Test Owner on 2026-10-25.'
     assert docs['xactimate_scope'][-1]['description'] == sentence
+
+
+def test_v2_documents_print_the_uncertainty_sentence_and_no_new_field():
+    assist = dict(
+        drying_days=3,
+        range_method='uncertainty',
+        extra_drying_days=1,
+        hidden_damage_percent={'1': '10', '2': '15', '3': '25'},
+    )
+    docs = real_engine_documents(estimate_mode='range', assist=assist)
+    estimate = docs['estimate']
+    sentence = (
+        'The high end allows for the equipment counts as entered for 4 drying days (1 more than '
+        'planned), and hidden damage of 25% in category 3 or mold rooms.'
+    )
+    assert estimate['explanation'] == sentence
+    assert sentence in docs['iicrc_defense_letter']
+    assert estimate['high']['total'] > estimate['low']['total']
+    assert_adds_up(estimate['high'])
+    assert docs['signable']
+    cushion = real_engine_documents(
+        estimate_mode='range', assist=dict(assist, range_method='cushion')
+    )
+    assert set(estimate) == set(cushion['estimate'])
+    assert cushion['estimate']['low'] == estimate['low']

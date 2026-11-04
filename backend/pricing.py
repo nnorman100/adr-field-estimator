@@ -31,7 +31,7 @@ def price_and_range(data: InspectionData, pin: dict[str, Any]) -> PricedJob:
     version = pin.get('calculation_version')
     if version == V2_CALCULATION_VERSION:
         lines, warnings = pricing_v2.price_scope(data, pin)
-        estimate = pricing_v2.totals(data, lines, pin['policy'])
+        estimate = pricing_v2.totals(data, lines, pin['policy'], pin['items'])
         low = estimate['low']['total']
         return PricedJob(
             lines=lines,

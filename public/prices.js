@@ -623,7 +623,7 @@
     extra_drying_days: 0,
     hidden_damage_percent: { 1: '0', 2: '0', 3: '0' },
   };
-  const WHOLE_NUMBER_POLICY = ['range.first_sf', 'assist.drying_days'];
+  const WHOLE_NUMBER_POLICY = ['range.first_sf', 'assist.drying_days', 'assist.extra_drying_days'];
   const withAssist = (policy) => ({ assist: clone(ABSENT_ASSIST), ...policy });
   const WARNING_WORDS = {
     large_change:
@@ -1067,7 +1067,17 @@
 
   function settingsCard() {
     const card = node('section', undefined, 'price-card'),
-      rangeBox = node('div', undefined, 'price-subgroup');
+      rangeBox = node('div', undefined, 'price-subgroup'),
+      rangeMethod = node('div'),
+      uncertainty = node('div');
+    // Which range settings apply: one price has no high end, and each method reads its own.
+    const showRange = () => {
+      const single = ed.policy.estimate_mode === 'single',
+        uncertain = ed.policy.assist.range_method === 'uncertainty';
+      rangeBox.hidden = single || uncertain;
+      rangeMethod.hidden = single;
+      uncertainty.hidden = single || !uncertain;
+    };
     card.id = 'priceSettings';
     card.append(node('h2', 'Estimate settings'));
     card.append(
@@ -1081,7 +1091,7 @@
         ],
         (value) => {
           ed.policy.estimate_mode = value;
-          rangeBox.hidden = value === 'single';
+          showRange();
           edited();
         },
       ),
@@ -1099,7 +1109,6 @@
         },
       ),
     );
-    rangeBox.hidden = ed.policy.estimate_mode === 'single';
     rangeBox.append(
       node('h3', 'Range cushion'),
       policyField(
@@ -1119,7 +1128,40 @@
     assist.append(
       node('h3', 'Estimate assist'),
       policyField('assist.drying_days', POLICY_LABELS['assist.drying_days'], '1 to 60.'),
+      rangeMethod,
+      uncertainty,
     );
+    rangeMethod.append(
+      radios(
+        'range_method',
+        POLICY_LABELS['assist.range_method'],
+        ed.policy.assist.range_method,
+        [
+          ['uncertainty', 'Built from the IICRC equipment range, extra days and hidden damage'],
+          ['cushion', 'A flat cushion on labor and materials'],
+        ],
+        (value) => {
+          ed.policy.assist.range_method = value;
+          showRange();
+          edited();
+        },
+      ),
+    );
+    uncertainty.append(
+      policyField(
+        'assist.extra_drying_days',
+        POLICY_LABELS['assist.extra_drying_days'],
+        '0 to 30.',
+      ),
+      ...['1', '2', '3'].map((category) =>
+        policyField(
+          'assist.hidden_damage_percent.' + category,
+          POLICY_LABELS['assist.hidden_damage_percent.' + category],
+          '0 to 100.',
+        ),
+      ),
+    );
+    showRange();
     card.append(assist);
     const afterHours = node('div', undefined, 'price-subgroup');
     afterHours.append(
@@ -1524,6 +1566,10 @@
     if (typeof value === 'boolean') return value ? 'on' : 'off';
     if (field === 'estimate_mode') return value === 'single' ? 'one price' : 'low to high range';
     if (field === 'area_basis') return value === 'wet_floor' ? 'wet floor area' : 'demolition area';
+    if (field === 'assist.range_method')
+      return value === 'uncertainty'
+        ? 'the IICRC equipment range and hidden damage'
+        : 'a flat cushion';
     if (field === 'cabinetry.scope')
       return value === 'all_cat3'
         ? 'all category 3 room lines'

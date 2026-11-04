@@ -26,7 +26,7 @@ A company on calculation version `dryscope-v2` prices from its own table: `items
 
 **Buckets.** A line's group sets its bucket: job charges, optional services and extras are fixed (`F`), drying equipment is equipment (`E`), and demolition, treatment and labor are labor and materials (`L`). `L_area` is the labor-and-material lines read from a room's area; `L_other` is the rest, such as labor hours.
 
-**The high end.** With `N = range.first_sf`, `X = first_percent / 100` and `Y = beyond_percent / 100`, `TopN` is the dollars of the `N` most expensive square feet of `L_area`, taking a partial line in proportion:
+**The high end.** A table's `assist.range_method` chooses how the high end is built: `cushion`, below, which is also how a table without the `assist` map reads, or `uncertainty` ([Range from real uncertainty](#range-from-real-uncertainty)). With `N = range.first_sf`, `X = first_percent / 100` and `Y = beyond_percent / 100`, `TopN` is the dollars of the `N` most expensive square feet of `L_area`, taking a partial line in proportion:
 
 ```
 H = round_cents( (1 + Y) × L_area + (X − Y) × TopN + (1 + X) × L_other )
@@ -57,11 +57,50 @@ The itemized total printed beside the range is the low total. A single-price com
 
 **Neither total drops when work is added.** Raising any room area, equipment count, day count, labor hour, charge count, approved extra, the after-hours flag or any unit price never lowers the low or the high beyond rounding (two cents at most). `tests/test_pricing_v2.py` scans this over 2,000 random tables and jobs on a fixed seed.
 
-**Explanation text.** `explanation()` builds the paragraph under the amounts from the pinned policy, and `range_explanation()` builds the one sentence naming the cushion tiers, such as "The high end allows 50% extra on the first 1,000 sq ft of work and 20% beyond, for hidden damage." Both are server text.
+**Explanation text.** `explanation()` builds the paragraph under the amounts from the pinned policy, and `range_explanation()` builds the one sentence naming how the high end is built, such as "The high end allows 50% extra on the first 1,000 sq ft of work and 20% beyond, for hidden damage." Both are server text.
 
 **Advisory warnings**, returned beside the lines and never blocking on their own: `missing_area`, `unknown_scope_item`, `unknown_quantity_override`, `blank_price_item` and `unpriced_extras_quantity` (an enabled `extras` item holds a `scope_items` quantity or a default quantity above zero, which is not priced).
 
 **Sample jobs.** `SAMPLE_JOBS` are three made-up jobs for previews: "Clean-water kitchen leak", "Gray-water main floor" and "Mold remediation, after hours". Each carries the notice "Sample job only. This does not price a saved job." and states every job number and room area, so a default quantity reaches a preview only through a typed-quantity item, which the sample cannot state. A starting quantity on such an item raises every sample it applies to.
+
+## Range from real uncertainty
+
+When `assist.range_method` is `uncertainty`, the low end and every summary rule above are unchanged, and the high end prices what could actually change on the job. It uses no model. The cushion settings are stored but unused. The owner's reasons and the rollout are in [Estimate assist](estimate-assist.md#2-the-range-from-real-uncertainty).
+
+**High-end job numbers** (`high_numbers`), from the IICRC sizing check (`backend/sizing.py`):
+
+```
+air movers    = max(entered, S500 maximum)       when the check is available and air movers are sized, else entered
+dehumidifiers = max(entered, recommended units)  when the check is available and a rating is stated, else entered
+drying days   = entered + assist.extra_drying_days
+```
+
+"Entered" is the number the low end prices, so an estimator's override counts.
+
+**Equipment.** The same enabled items make the same lines at those numbers, wherever a `count_days:` source reads them. `E_high` and `T_E_high` are the equipment-bucket totals of those lines. A count entered as 0 can make a line that appears only at the high end. A job number left unset keeps its item's default quantity at both ends. Every other bucket keeps its low lines, whatever its source reads.
+
+**Labor and materials.** With `p_c = assist.hidden_damage_percent[c] / 100` for a room of category `c`, and `p_top` the largest `p_c` among the job's rooms:
+
+```
+H        = round_cents( Σ area lines total × (1 + p_c)  +  L_other × (1 + p_top) )
+T_L_high = Σ taxable area lines total × (1 + p_c)  +  T_L_other × (1 + p_top)      (exact, never rounded on its own)
+```
+
+**Each end.** The low end is as above. The high end uses the same summary lines with `LM = H`, `E_high` in place of `E`, `T_E_high` in place of `T_E`, and `T_L_high` in place of `T_L × LM / L`, so tax is exact per line rather than a proportion. If `F + E_high + H + round_cents(H × (m − 1))` is below the minimum job charge, the high equals the low. A single-price table prints no high end; `H` and the numbers are still calculated.
+
+**Neither total drops when work is added.** The same rule holds as for the cushion, and for raising any of these: a room's areas or ceiling height, any unit price, the extra drying days, or a hidden-damage percent. `tests/test_pricing_v2.py` scans this over 2,000 random tables and jobs on a fixed seed. The S500 maximum and the recommended units only grow with those inputs, each high line is at least its low line, and a line's percent is never below zero. Two changes sit outside this rule because they make the check unavailable rather than add work: a wet floor area past the floor area, and a new room without its sizing inputs. Either one returns the high end's counts to the entered numbers until it is corrected.
+
+**Explanation text.** `range_explanation()` prints, for the categories on the job:
+
+> The high end allows for up to 4 air movers and 1 dehumidifier for 4 drying days (1 more than planned), the most the IICRC S500 placement recommends for the stated room sizes, and hidden damage of 15% in category 2 rooms.
+
+| Case | Wording |
+| --- | --- |
+| The check is unavailable, or there are no counts | "the equipment counts as entered for 4 drying days" with no S500 clause |
+| No extra days | the parenthesis is dropped |
+| A count above the check's number, or one it could not size | "the larger of the counts entered and what the IICRC S500 placement recommends for the stated room sizes" |
+| A count of zero | not named |
+| No equipment difference, no extra days and every named percent 0 | no sentence, because the two amounts are equal |
 
 ## Switching from a rate book to a table
 
