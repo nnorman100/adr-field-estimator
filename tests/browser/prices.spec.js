@@ -308,6 +308,13 @@ test('owner builds a table from the starter, keeps a working copy across a reloa
 }) => {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  // WebKit reports a sample request cut off by the reload as a page error, so the reload waits
+  // until none is in flight.
+  let sampling = 0;
+  const isSample = (sent) => sent.url().endsWith('/prices/calculate');
+  page.on('request', (sent) => isSample(sent) && sampling++);
+  page.on('requestfinished', (sent) => isSample(sent) && sampling--);
+  page.on('requestfailed', (sent) => isSample(sent) && sampling--);
   await startUnset(page, request);
   await expect(page.locator('#dashboardContent')).toContainText('Prices: not set up yet');
   await expect(page.locator('#priceUnpublished')).toBeHidden();
@@ -331,6 +338,7 @@ test('owner builds a table from the starter, keeps a working copy across a reloa
   await expect(page.locator('#message')).toContainText('unit price');
   await expect(page.locator('#priceReview')).toHaveCount(0);
 
+  await expect.poll(() => sampling).toBe(0);
   await page.reload();
   await expect(page.locator('#workspaceDashboard')).toBeVisible();
   await navigate(page, 'dashboardPrices');
