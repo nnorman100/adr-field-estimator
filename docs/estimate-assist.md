@@ -1,6 +1,6 @@
 # Estimate assist
 
-Four additions to owner-defined price tables. Each section belongs to one pull request, and sections 1 and 2 are built. All four are server arithmetic over data the app already holds: no model supplies a count, a price, a percent or a warning.
+Four additions to owner-defined price tables. Each section belongs to one pull request, and says so if it is not built yet. All four are server arithmetic over data the app already holds: no model supplies a count, a price, a percent or a warning.
 
 ## 1. Suggested counts and the assist settings
 
@@ -60,7 +60,37 @@ The owner chooses under **Estimate assist** in the price editor. Choosing the un
 
 ## 3. Job close and estimate accuracy
 
-Not built yet.
+Nothing here changes a signed record, a document, a signing link or the model prompt, and nothing is applied until the owner publishes it.
+
+**The history (`_estimate_history/{company_id}`).** One private document per company with a `rows` map keyed by job, at most 300 rows. Past that, the row with the oldest `signed_at` goes, but never the row being written. Each signature adds its row inside the signing transaction, with the flag on or off: the signed low and high, the area on the job's basis, the highest category, whether every room shares it, the low end's labor-and-material total and the planned days. A job signed earlier, or trimmed since, gets its row when it closes. A signature never fails because that total could not be worked out; the job then stays out of the overrun.
+
+**Closing a job.** `POST /api/jobs/{id}/close` takes `final_amount` (dollars and cents, 0.01 to 2,000,000.00), `actual_days` (0 to 365, or null), `note` (up to 300 characters) and `expected_signed_at`. It needs `coordination`, a signed job and a connection, and the app never queues it. Closing again overwrites the record. Each close writes a `job_closed` audit entry with the job and where it landed, and no amount.
+
+| Estimate | `landed` |
+|---|---|
+| Range | `inside` when low ≤ final ≤ high; `below` under the low; `above` over the high |
+| One price | `inside` at or under the price; `above` over it |
+
+`GET /api/jobs/{id}/outcome` returns the record and the prefilled days: the drying watch's day number when `drying_watch` is on and monitoring has finished (`dry_standard_met`, `marked_dry`, `closed`), otherwise the signed plan. An estimator on the job reads only whether it closed and when.
+
+**The numbers.** `GET /api/companies/{id}/estimate-accuracy` is for the owner (`prices_manage`), which also means price books are on. It counts where closed jobs landed, then works out two figures per job:
+
+- overrun: `max(0, final − low) / labor_material_low`, for jobs with labor and materials;
+- extra days: `max(0, actual − planned)`, for jobs with actual days.
+
+**Suggestions.** Each uses the nearest-rank 80th percentile, the smallest value that covers 4 of 5 jobs, and needs at least 5 qualifying jobs. Otherwise the value is null and the count is shown.
+
+| Setting | Method | Jobs | Value |
+|---|---|---|---|
+| `assist.hidden_damage_percent.{c}` | uncertainty | closed, every room category `c` | overrun as a percent, up to the next 5, at most 100 |
+| `assist.extra_drying_days` | uncertainty | closed, with actual days | extra days, at most 30 |
+| `range.first_percent` | cushion | all closed | overrun as a percent, up to the next 5, at most 100, and never below `range.beyond_percent` |
+
+A table refuses a `first_percent` below its `beyond_percent`, so the server holds the cushion suggestion at the published `beyond_percent` and the page says so. **Use suggestion** holds it at the working copy's value when an unpublished edit raised it further.
+
+The overrun is a coverage number. It counts everything that raised the invoice above the low end (hidden damage, more equipment, approved extras, more days), and the page says so. A company on a rate book gets the hit rate and day numbers, with `suggestions: null` and `reason: 'rate_book'`. A company that prints one price gets `reason: 'single_price'`, because these settings only shape a high end it does not print.
+
+**On the phone.** `public/job-close.js` is the **Job close** card on a signed job's Check Scope and Review, for owners and office staff. `public/estimate-accuracy.js` is the dashboard card and the section on the Prices page. **Use suggestion** writes into the working copy like a typed change, so the normal **Unpublished changes** and review apply. All of it needs a connection and says so.
 
 ## 4. Guard rails while estimating
 

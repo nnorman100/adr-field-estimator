@@ -846,6 +846,12 @@
     clearTimeout(mine.sampleTimer);
     mine.sampleTimer = setTimeout(() => refreshSamples().catch(() => {}), 1200);
   }
+  // A suggestion was written into the working copy: show it and save it like a typed change.
+  function suggestionUsed(path) {
+    const input = document.querySelector(`[name="policy_${path}"]`);
+    if (input) input.value = getPath(ed.policy, path);
+    edited();
+  }
   // With the editor on screen the save status carries the failure; once it is gone only this can.
   function saveLost(error) {
     if (!$('priceSaveStatus'))
@@ -1840,6 +1846,7 @@
       if (manage && view.switch_available) content.append(switchCard(view, base));
       renderRates(content, view, manage);
     }
+    if (manage) root.EstimateAccuracy?.section(content, companyId, ed, suggestionUsed);
     tools(content, base, manage && !switching, view);
     await history(content, base, manage && !switching, companyId);
     if (epoch !== WorkspaceUI.pageEpoch()) return;

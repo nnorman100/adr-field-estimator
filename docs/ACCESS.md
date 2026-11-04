@@ -16,7 +16,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `jobs_read` | See jobs (estimator: only jobs they created or are assigned) | yes | yes | yes |
 | `jobs_create` | Start a job (office: empty scope only) | yes | yes | yes |
 | `jobs_copy` | Copy a signed job to a new draft | yes | yes | yes |
-| `coordination` | Job coordination and claim/loss details | yes | no | yes |
+| `coordination` | Job coordination and claim/loss details; record a signed job's close (final invoiced amount, actual drying days) | yes | no | yes |
 | `assignment` | Assign estimators to jobs | yes | no | yes |
 | `scope` | Edit rooms, measurements, scope; accept suggested equipment counts | yes | yes | no |
 | `places` | Address suggestions and job map | yes | yes | no |
@@ -32,7 +32,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `delivery_resend` | Resend signed documents | yes | no | yes |
 | `quantity_notes_read` | Receive the printed quantity-override note with a job's documents (the API omits the note for everyone else, including superadmin support and all links). The entered overrides stay in the job's data for roles with job access; superadmin support and all links do not receive them either | yes | no | no |
 | `prices_read` | See company price books, enabled items (including in version diffs) and settings (only when `PRICE_BOOKS_ENABLED`; added in `_capabilities`) | yes | yes | yes |
-| `prices_manage` | Edit company price books, items and settings, including the owner-only working copy; start the switch from a rate book to a price table; export disabled items (only when `PRICE_BOOKS_ENABLED`) | yes | no | no |
+| `prices_manage` | Edit company price books, items and settings, including the owner-only working copy; start the switch from a rate book to a price table; export disabled items; read the estimate-accuracy statistics and apply a suggested setting to the working copy (only when `PRICE_BOOKS_ENABLED`) | yes | no | no |
 
 Office can read only active estimators' uid/email from the team, for assignment.
 

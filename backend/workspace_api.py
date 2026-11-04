@@ -3,7 +3,7 @@
 import json
 import logging
 
-from fastapi import Depends, HTTPException, Query, Request, Security
+from fastapi import Depends, HTTPException, Query, Request, Response, Security
 
 try:
     from .workspaces import (
@@ -30,6 +30,7 @@ try:
     from .cloud_log import event
     from .insights import Insights, JobSummary, validate_summary as validate_insight, sentences
     from .ai_usage import company_usage
+    from .outcomes import JobClose
     from .prompts import JOB_SUMMARY_INSTRUCTIONS
 except ImportError:
     from workspaces import (
@@ -56,11 +57,13 @@ except ImportError:
     from cloud_log import event
     from insights import Insights, JobSummary, validate_summary as validate_insight, sentences
     from ai_usage import company_usage
+    from outcomes import JobClose
     from prompts import JOB_SUMMARY_INSTRUCTIONS
 
 
 OWNER_LOGIN_FAILED = 'The owner login could not be created. Try again or contact support.'
 PASSWORD_CHANGE_FAILED = 'Your password could not be changed. Try again.'
+PRIVATE = {'Cache-Control': 'private, no-store'}
 
 
 async def failure_for(request: Request):
@@ -262,6 +265,40 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         await stored(watch.access, claims['uid'], inspection_id, 'coordination')
         await stored(store.quota, claims['uid'], 'drying_reminder', 6)
         return await stored(watch.remind, claims['uid'], inspection_id, req)
+
+    def outcomes(store):
+        if not ai_features.enabled('estimate_assist') or not getattr(store, 'workspaces', None):
+            raise HTTPException(404, 'Estimate assist is not enabled.')
+        return store.outcomes
+
+    @app.get('/api/jobs/{inspection_id}/outcome')
+    async def job_outcome(
+        inspection_id: str, response: Response, claims=live_identity, store=Depends(get_store)
+    ):
+        response.headers.update(PRIVATE)
+        return await stored(outcomes(store).view, claims['uid'], inspection_id)
+
+    @app.post('/api/jobs/{inspection_id}/close')
+    async def close_job(
+        inspection_id: str,
+        req: JobClose,
+        response: Response,
+        claims=live_identity,
+        store=Depends(get_store),
+    ):
+        response.headers.update(PRIVATE)
+        closing = outcomes(store)
+        await stored(store.quota, claims['uid'], 'draft', 60)
+        return await stored(closing.close, claims['uid'], inspection_id, req)
+
+    @app.get('/api/companies/{company_id}/estimate-accuracy')
+    async def estimate_accuracy(
+        company_id: str, response: Response, claims=live_identity, store=Depends(get_store)
+    ):
+        response.headers.update(PRIVATE)
+        accuracy = outcomes(store)
+        await stored(store.quota, claims['uid'], 'price_calculate')
+        return await stored(accuracy.accuracy, claims['uid'], company_id)
 
     @app.get('/api/access')
     async def access(claims=Depends(identity), store=Depends(get_store)):

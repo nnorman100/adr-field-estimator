@@ -545,6 +545,14 @@ async def drying_watch_fixture(request: Request):
     return {'job_id': job_id, 'auth_id': payload['auth_id']}
 
 
+@bm.app.post('/__test/estimate-history')
+async def estimate_history_fixture(request: Request):
+    """Closed jobs for the owner's accuracy numbers: made-up rows, nothing from any workbook."""
+    body = await request.json()
+    store.db.records['_estimate_history/adr'] = dict(company_id='adr', rows=body['rows'])
+    return {'rows': len(body['rows'])}
+
+
 @bm.app.post('/__test/expire-invitations')
 async def expire_invitations(request: Request):
     # Lets the browser list show an expired invitation without waiting seven days.

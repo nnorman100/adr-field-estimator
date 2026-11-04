@@ -10,6 +10,7 @@ try:
     from .cloud_log import event
     from .inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
     from .extras import quote
+    from .outcomes import Outcomes
     from .workspaces import WorkspaceStore, AccessDenied
     from .price_books import saved_basis
 except ImportError:
@@ -17,6 +18,7 @@ except ImportError:
     from cloud_log import event
     from inspection_store import InspectionStore, Conflict, now, saved, checked_metadata
     from extras import quote
+    from outcomes import Outcomes
     from workspaces import WorkspaceStore, AccessDenied
     from price_books import saved_basis
 
@@ -25,6 +27,7 @@ class CompanyInspectionStore(InspectionStore):
     def __init__(self, db=None, bucket=None):
         super().__init__(db, bucket)
         self.workspaces = WorkspaceStore(self.db, self._atomic)
+        self.outcomes = Outcomes(self.workspaces)
 
     def _sync_monitoring(self, inspection_id, log, tx):
         self.workspaces.monitoring.sync(inspection_id, tx, log=log)
@@ -124,6 +127,7 @@ class CompanyInspectionStore(InspectionStore):
     def _commit_authorization(self, uid, record, body, tx):
         job, actor = self.workspaces.job_access(uid, record, 'sign', tx)
         company = self.workspaces.read('_companies', job['company_id'], tx)
+        self.outcomes.record_signing(job, body, tx)
         skipped = skip_reasons(company, homeowner_skips(job, body))
         deliveries = Deliveries(self.workspaces)
         tx.create(

@@ -158,6 +158,10 @@ Prior matched production pair at start: backend alert-disaster-field-estimator-0
 
 Physical iPhone/Bluetooth acceptance remains open. This feature does not add billing, other-state rules, multiple-company membership, Live tools, Cloud Vision or automatic invitation background retries.
 
+## Job close and estimate accuracy
+
+Owners and office staff record a signed job's final invoiced amount and actual drying days on the job (`coordination`). The owner reads the hit rate and suggested settings (`prices_manage`). `_estimate_history/{company_id}` is one private document per company, written by the signing transaction and by the close, and never read by a signed document, a link or a model. See [Estimate assist](estimate-assist.md#3-job-close-and-estimate-accuracy).
+
 ## Drying watch
 
 See [Drying watch](drying-watch.md) for monitoring permissions, owner reminder
