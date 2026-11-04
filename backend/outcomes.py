@@ -139,17 +139,6 @@ def room_area(room, wet_basis):
     return Decimal(str((room.get('floor_sf') or 0) if wet is None else wet))
 
 
-def _signed_amount(value):
-    """An amount the agreement was signed on. Without one there is nothing to compare a final with."""
-    try:
-        amount = Decimal(str(value))
-        if amount.is_finite():
-            return _money(amount)
-    except ArithmeticError:
-        pass
-    raise ValueError(NO_AMOUNTS)
-
-
 def _row_details(body, data, pin):
     """What the statistics compare by. A record they cannot read leaves a row that counts in the
     hit rate and stays out of the overrun, the categories, the days and the typical-job check."""
@@ -192,14 +181,15 @@ def _row_details(body, data, pin):
 
 def history_row_at_signing(job, body, data, pin):
     """One signed job's row, from the proposal it was signed on. Takes no price from the phone."""
-    high = _signed_amount(body.get('proposed_cost'))
+    if body.get('proposed_cost') is None:
+        raise ValueError(NO_AMOUNTS)
     single = body.get('proposed_cost_low') is None
     return dict(
         auth_id=body.get('auth_id') or job.get('auth_id'),
         signed_at=job.get('signed_at') or body.get('created_at'),
         estimate_mode='single' if single else 'range',
-        low=high if single else _signed_amount(body['proposed_cost_low']),
-        high=None if single else high,
+        low=_money(body['proposed_cost'] if single else body['proposed_cost_low']),
+        high=None if single else _money(body['proposed_cost']),
         **_row_details(body, data, pin),
     )
 
@@ -215,17 +205,6 @@ def landed(final, row):
 
 def _landed_text(row):
     return LANDED_TEXT[row['estimate_mode']][row['landed']]
-
-
-def _stored_row(rows, job_id):
-    """This job's row, when close and the outcome card can read it. Close rebuilds any other."""
-    row = rows.get(job_id)
-    try:
-        landed(row['low'], row)
-        texts = LANDED_TEXT[row['estimate_mode']]
-        return row if not row.get('closed_at') or row['landed'] in texts else None
-    except (KeyError, TypeError, ValueError, ArithmeticError):
-        return None
 
 
 def p80(values):
@@ -389,18 +368,11 @@ class Outcomes:
         return self.ws.ref(HISTORY, company_id)
 
     def _rows(self, company_id, tx=None):
-        """The company's rows. A value that is not a row is dropped, here and at the next write."""
-        saved = (self.ws.read(HISTORY, company_id, tx) or {}).get('rows') or {}
-        is_map = isinstance(saved, dict)
-        rows = {key: row for key, row in saved.items() if isinstance(row, dict)} if is_map else {}
-        if not is_map or len(rows) != len(saved):
-            event(
-                'Estimate history skipped unreadable rows',
-                logging.WARNING,
-                operation='estimate_history',
-                outcome='unreadable_rows',
-            )
-        return rows
+        """The company's rows. An unreadable document or row counts as missing."""
+        saved = (self.ws.read(HISTORY, company_id, tx) or {}).get('rows')
+        if not isinstance(saved, dict):
+            return {}
+        return {key: row for key, row in saved.items() if isinstance(row, dict)}
 
     def _write(self, tx, company_id, rows, job_id, row):
         """The job being written always stays; past the limit the oldest other row goes."""
@@ -442,7 +414,11 @@ class Outcomes:
             days = _actual_days(req.actual_days)
             company_id = job['company_id']
             rows = self._rows(company_id, tx)
-            row = _stored_row(rows, job_id) or self._row_from_agreement(job, tx)
+            row = rows.get(job_id)
+            try:
+                _landed_text(dict(row, landed=landed(final, row)))
+            except (KeyError, TypeError, ValueError, ArithmeticError):
+                row = self._row_from_agreement(job, tx)
             row = dict(
                 row,
                 closed_at=now(),
@@ -478,7 +454,7 @@ class Outcomes:
         job, actor = self.ws.job_access(uid, {'inspection_id': job_id}, 'read')
         if not job.get('auth_exists'):
             raise LookupError('This job is not signed.')
-        row = _stored_row(self._rows(job['company_id']), job_id) or {}
+        row = self._rows(job['company_id']).get(job_id) or {}
         closed = bool(row.get('closed_at'))
         if 'coordination' not in actor['capabilities']:
             return dict(closed=closed, closed_at=row.get('closed_at'), can_close=False)

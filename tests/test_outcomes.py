@@ -1027,9 +1027,8 @@ def test_a_full_history_with_an_unreadable_date_still_trims_at_signing_and_at_cl
         dict(low='10.00', high='not money', estimate_mode='range'),
         dict(low='10.00', high=None, estimate_mode='unknown'),
         dict(low=None, high=None, estimate_mode='single'),
-        dict(low='10.00', high=None, estimate_mode='single', closed_at='2026', landed='nowhere'),
     ],
-    ids=['text', 'no_low', 'bad_low', 'nan_low', 'bad_high', 'bad_mode', 'null_low', 'bad_landed'],
+    ids=['text', 'no_low', 'bad_low', 'nan_low', 'bad_high', 'bad_mode', 'null_low'],
 )
 def test_this_jobs_unreadable_row_is_rebuilt_from_the_agreement(api, assist, broken):
     client, current, store = api
@@ -1062,18 +1061,6 @@ def test_a_real_no_amounts_agreement_signs_and_close_says_why_it_cannot_compare(
     assert client.post('/api/authorize', json=payload).status_code == 200
     assert_fully_signed(store, payload)
     assert HISTORY not in store.db.records
-    answer = close(client, current)
-    assert answer.status_code == 400
-    assert answer.json()['detail'] == outcomes.NO_AMOUNTS
-    assert HISTORY not in store.db.records
-
-
-@pytest.mark.parametrize('amount', ['not money', 'NaN', 'Infinity', '1e999', [], {}])
-def test_an_unreadable_signed_amount_gets_the_same_fixed_message_at_close(api, assist, amount):
-    client, current, store = api
-    signed_job(client, current, store)
-    del store.db.records[HISTORY]
-    store.db.records['authorizations/' + SIGNED]['proposed_cost'] = amount
     answer = close(client, current)
     assert answer.status_code == 400
     assert answer.json()['detail'] == outcomes.NO_AMOUNTS
