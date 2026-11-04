@@ -3533,6 +3533,20 @@ function confirmReadiness() {
     dialog.showModal();
   });
 }
+async function saveBeforeWarnings() {
+  if (!warningsEnabled() || !navigator.onLine) return;
+  ui.auditing = true;
+  renderControls();
+  try {
+    await syncDraft();
+  } catch (e) {
+    invalidate();
+    throw e;
+  } finally {
+    ui.auditing = false;
+    renderControls();
+  }
+}
 async function finishAudit() {
   if (!state.draft || state.signed || confirmedAuthorization)
     throw Error('Open an unsigned draft first.');
@@ -3561,6 +3575,9 @@ async function finishAudit() {
     );
     return;
   }
+  const draft = state.draft;
+  await saveBeforeWarnings();
+  if (state.draft !== draft || state.signed || confirmedAuthorization) return;
   if (!(await confirmReadiness())) return;
   if (!navigator.onLine)
     throw Error('Connect to generate documents. Your draft is saved on this device.');

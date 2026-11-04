@@ -153,8 +153,10 @@ def test_quantities_with_nothing_entered_or_a_listed_item_are_not_warned_about()
     assert 'unpriced_quantity' not in [w['code'] for w in run(job, off)]
     job = job_of([hall()], air_scrubbers=2)
     assert 'unpriced_quantity' not in [w['code'] for w in run(job, table_for())]
-    # A number the job never set is the form's default, not something a technician entered.
-    assert 'unpriced_quantity' not in [w['code'] for w in run(job_of([hall()]), off)]
+    # A saved default reads as entered, as it does on the phone's list.
+    assert [w['text'] for w in run(job_of([hall()]), off) if w['code'] == 'unpriced_quantity'] == [
+        '1 air scrubbers entered, but your price list has no item for it.'
+    ]
     # A day count on its own prices nothing, so it never reads as an entered quantity.
     table = table_for({'items': {'air_mover': {'enabled': False}}})
     found = run(job_of([hall()], air_movers=0, drying_days=5), table)

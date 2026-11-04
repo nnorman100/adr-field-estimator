@@ -94,7 +94,7 @@ def _quantity_warnings(data, table, engine):
     found = [
         _no_item(getattr(data, field), field)
         for field in QUANTITY_FIELDS
-        if field not in listed and field in data.model_fields_set and getattr(data, field) > 0
+        if field not in listed and getattr(data, field) > 0
     ]
     for warning in engine:
         if warning['code'] == 'unknown_scope_item':

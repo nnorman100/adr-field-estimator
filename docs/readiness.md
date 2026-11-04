@@ -76,6 +76,7 @@ regression tests exercise public routes, saved-state isolation and real UI actio
 
 Estimate warnings share the dialog. With `AI_FEATURES=estimate_assist` on, **Ready to
 review?** also lists the server's warnings for the saved draft under **Check before you
-finish**, and it opens for a new warning as it does for a new gap. With `readiness` off,
+finish**, and it opens for a new warning as it does for a new gap. Online, Finish saves
+the draft before this check, so an edit made a moment earlier is listed. With `readiness` off,
 the same dialog opens for warnings alone and the gaps, the **Still missing** count and
 the fill's extra gaps stay off. See [Estimate assist](estimate-assist.md#4-guard-rails-while-estimating).

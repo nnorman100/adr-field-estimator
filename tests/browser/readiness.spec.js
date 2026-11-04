@@ -338,6 +338,91 @@ test.describe('estimate warnings in the dialog', () => {
     await expect(dialogOf(page)).toBeHidden();
   });
 
+  const inspectionPut = /\/api\/inspections\/[^/]+$/;
+  async function holdSaves(page) {
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    await page.route(inspectionPut, async (route) => {
+      if (route.request().method() === 'PUT') await held;
+      await route.continue();
+    });
+    return release;
+  }
+
+  for (const ai_features of [['estimate_assist'], ['readiness', 'estimate_assist']])
+    test(`an edit made just before Finish is saved and listed with ${ai_features}`, async ({
+      page,
+      request,
+    }) => {
+      await features(request, ai_features);
+      await open(page, 'estimator');
+      await sized(page, 3);
+      const release = await holdSaves(page);
+      await page.locator('#airMovers').fill('9');
+      await page.locator('#scopeConfirmed').check();
+      expect(await page.evaluate(() => stable(state.draft.data) !== state.ack)).toBe(true);
+      await page.locator('#finishAudit').click();
+      const dialog = dialogOf(page),
+        section = page.locator('#readinessWarnings');
+      await expect(page.locator('#finishAudit')).toBeDisabled();
+      await expect(dialog).toBeHidden();
+      release();
+      await expect(dialog).toBeVisible();
+      await expect(section).toContainText(ABOVE);
+      await expect(section).not.toContainText(NOTE);
+      expect(await page.evaluate(() => state.record.data.air_movers)).toBe(9);
+      await page.locator('#readinessContinue').click();
+      await expect(page.locator('#documents')).toBeVisible();
+      await expect(page.locator('#auditWarnings')).toContainText(ABOVE);
+    });
+
+  test('a save that fails before the check keeps the draft, opens no dialog and runs no audit', async ({
+    page,
+    request,
+  }) => {
+    await features(request, ['readiness', 'estimate_assist']);
+    await open(page, 'estimator');
+    await sized(page, 3);
+    const audits = [];
+    page.on('request', (sent) => {
+      if (sent.url().endsWith('/api/audit')) audits.push(sent);
+    });
+    await page.route(inspectionPut, (route) =>
+      route.request().method() === 'PUT'
+        ? route.fulfill({ status: 500, json: { detail: 'Synthetic save failure.' } })
+        : route.continue(),
+    );
+    await page.locator('#airMovers').fill('9');
+    await page.locator('#scopeConfirmed').check();
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('#message')).toHaveText('Synthetic save failure.');
+    await expect(page.locator('#finishAudit')).toBeEnabled();
+    await expect(dialogOf(page)).toBeHidden();
+    await expect(page.locator('#documents')).toBeHidden();
+    expect(audits).toEqual([]);
+    expect(await page.evaluate(() => state.draft.data.air_movers)).toBe(9);
+    // Finish again once saves work: the warning for that edit is listed.
+    await page.unroute(inspectionPut);
+    await page.locator('#finishAudit').click();
+    await expect(dialogOf(page)).toBeVisible();
+    await expect(page.locator('#readinessWarnings')).toContainText(ABOVE);
+    await page.locator('#readinessBack').click();
+  });
+
+  test('with warnings off the readiness dialog does not wait for the save', async ({ page }) => {
+    await open(page, 'estimator');
+    await sized(page, 3);
+    const release = await holdSaves(page);
+    await page.locator('#airMovers').fill('9');
+    await page.locator('#scopeConfirmed').check();
+    await page.locator('#finishAudit').click();
+    await expect(dialogOf(page)).toBeVisible();
+    await page.locator('#readinessBack').click();
+    release();
+  });
+
   test('an unsaved change says warnings update, and a new one opens the dialog after the save', async ({
     page,
     request,
@@ -345,27 +430,26 @@ test.describe('estimate warnings in the dialog', () => {
     await features(request, ['readiness', 'estimate_assist']);
     await open(page, 'estimator');
     await sized(page, 3);
-    let release;
-    const held = new Promise((resolve) => {
-      release = resolve;
-    });
-    await page.route(/\/api\/inspections\/[^/]+$/, async (route) => {
-      if (route.request().method() === 'PUT') await held;
-      await route.continue();
-    });
     await page.locator('#airMovers').fill('9');
     await page.locator('#scopeConfirmed').check();
-    await page.locator('#finishAudit').click();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
     const dialog = dialogOf(page),
       section = page.locator('#readinessWarnings');
-    // The first Finish lists the job's gaps. The warning for the unsaved count is not known yet.
+    // A draft Finish could not save lists the job's gaps, and not the warning for older numbers.
+    const ack = await page.evaluate(() => {
+      const saved = state.ack;
+      state.ack = 'unsaved';
+      void confirmReadiness();
+      return saved;
+    });
     await expect(dialog).toBeVisible();
     await expect(section.locator('h3')).toHaveText(HEADING);
     await expect(section).toContainText(NOTE);
     await expect(section).not.toContainText(ABOVE);
     await page.locator('#readinessBack').click();
-    release();
-    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.evaluate((saved) => {
+      state.ack = saved;
+    }, ack);
     await page.locator('#finishAudit').click();
     await expect(dialog).toBeVisible();
     await expect(section).toContainText(ABOVE);
