@@ -1,6 +1,6 @@
 # Estimate assist
 
-Four additions to owner-defined price tables. Each section belongs to one pull request, and only the first has shipped. All four are server arithmetic over data the app already holds: no model supplies a count, a price, a percent or a warning.
+Four additions to owner-defined price tables. Each section belongs to one pull request, and sections 1 and 2 are built. All four are server arithmetic over data the app already holds: no model supplies a count, a price, a percent or a warning.
 
 ## 1. Suggested counts and the assist settings
 
@@ -30,7 +30,33 @@ The model never sees or produces these values.
 
 ## 2. The range from real uncertainty
 
-Not built yet. Until it ships, every table prices its high end from the range cushion, whatever `assist.range_method` says.
+A table on `assist.range_method = uncertainty` builds its high end from what could actually change on the job, instead of a flat percentage. This is the calculation itself, so it has no rollout switch: a pinned table prices the same way every time. Its editor fields come with the price editor (`PRICE_BOOKS_ENABLED`). The formulas are in [Pricing source](pricing-source.md#range-from-real-uncertainty).
+
+**What the high end prices.**
+
+- Air movers at the S500 maximum for the stated wet floor areas, or the entered count when that is higher.
+- Dehumidifiers at the recommended units, or the entered count when that is higher.
+- The planned drying days plus `assist.extra_drying_days`.
+- Labor and materials with `assist.hidden_damage_percent` added. An area line carries the percent of its room's category. A line with no area, such as labor hours, carries the largest percent among the job's rooms.
+
+The low end, job charges, approved additional work and every other line are the same in both amounts.
+
+**When the check cannot size a count, that count stays as entered.** A room missing its floor area, ceiling height or water class turns the whole check off, so a room added without them lowers the high end's equipment until they are stated. The readiness check already asks for them. A wet-walls-only room leaves air movers unsized, and no AHAM rating leaves dehumidifiers unsized (decision D5).
+
+**Who gets which method.**
+
+| Table | Method |
+| --- | --- |
+| Starter list for a new company | Uncertainty: 10 / 15 / 25% hidden damage for categories 1 / 2 / 3 and 1 extra drying day (decision D3) |
+| Mapped from a rate book at the switch | Cushion, so its numbers match the rate book |
+| Published before the `assist` map existed | Cushion, unchanged to the cent |
+| `adr-residential-v1` | Untouched |
+
+The owner chooses under **Estimate assist** in the price editor. Choosing the uncertainty method hides the **Range cushion** box and shows the extra days and the three percents; choosing the cushion does the reverse. One-price mode hides all of them, and no high end is calculated for printing. A change to the method or a percent counts as a large change in the publish review.
+
+**What the documents say.** `EstimateSummary` has no new field. `range_explanation` carries one sentence that names the counts, days and only the categories on the job. The sentence is left out when nothing separates the two amounts. No AI is involved.
+
+**Merge order.** Starter tables have carried `range_method = uncertainty` since section 1, and they priced from the cushion until this section. Merge this before `PRICE_BOOKS_ENABLED` goes on, so no table is published under the old reading.
 
 ## 3. Job close and estimate accuracy
 

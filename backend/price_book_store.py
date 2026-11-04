@@ -232,7 +232,7 @@ def _sample_jobs(table):
         data = InspectionData.model_validate(sample['data'])
         lines, warnings = pricing_v2.price_scope(data, table)
         try:
-            estimate = pricing_v2.totals(data, lines, table['policy'])
+            estimate = pricing_v2.totals(data, lines, table['policy'], table['items'])
         except ValueError:
             continue
         samples.append(

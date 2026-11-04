@@ -1,8 +1,8 @@
 """Calculation dryscope-v2: prices a job from the owner-defined table pinned to it.
 
-Pure Decimal functions with no I/O. docs/pricing-source.md states the formulas and why the
-high end tapers over the most expensive square feet: that is what keeps both totals from
-dropping when work is added.
+Pure Decimal functions with no I/O. docs/pricing-source.md states the formulas, why the cushion
+tapers over the most expensive square feet, and how the uncertainty method builds the high end
+instead: each is what keeps both totals from dropping when work is added.
 """
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -14,8 +14,10 @@ try:
         DEFAULT_AFTER_HOURS_LABEL,
         FIELD_SOURCES,
         GROUPS,
+        assist_of,
         parse_source,
     )
+    from .sizing import equipment_sizing, number
 except ImportError:
     from price_table import (
         BUCKET_OF_GROUP,
@@ -23,8 +25,10 @@ except ImportError:
         DEFAULT_AFTER_HOURS_LABEL,
         FIELD_SOURCES,
         GROUPS,
+        assist_of,
         parse_source,
     )
+    from sizing import equipment_sizing, number
 
 CENT = Decimal('0.01')
 HUNDRED = Decimal(100)
@@ -70,10 +74,13 @@ SAMPLE_JOBS = (
                     unfinished_sf=100,
                     floor_sf=200,
                     wet_floor_sf=150,
+                    ceiling_height_ft=8,
+                    water_class=2,
                 )
             ],
             air_movers=4,
             dehumidifiers=1,
+            dehumidifier_ppd=70,
             drying_days=3,
             emergency_calls=1,
             haul_loads=1,
@@ -93,10 +100,13 @@ SAMPLE_JOBS = (
                     finished_sf=1000,
                     floor_sf=1200,
                     wet_floor_sf=1000,
+                    ceiling_height_ft=8,
+                    water_class=2,
                 )
             ],
             air_movers=8,
             dehumidifiers=2,
+            dehumidifier_ppd=70,
             drying_days=4,
             labor_hours=4,
         ),
@@ -116,6 +126,8 @@ SAMPLE_JOBS = (
                     unfinished_sf=200,
                     floor_sf=1000,
                     wet_floor_sf=1000,
+                    ceiling_height_ft=8,
+                    water_class=2,
                     custom_cabinetry=True,
                 ),
                 dict(
@@ -125,10 +137,13 @@ SAMPLE_JOBS = (
                     unfinished_sf=300,
                     floor_sf=1500,
                     wet_floor_sf=1500,
+                    ceiling_height_ft=8,
+                    water_class=2,
                 ),
             ],
             air_movers=10,
             dehumidifiers=3,
+            dehumidifier_ppd=70,
             drying_days=5,
             labor_hours=8,
             is_after_hours=True,
@@ -203,16 +218,17 @@ def _room_quantity(room, source, policy, overrides):
     return read(source.field) or ZERO
 
 
-def _job_quantity(item, source, data, overrides):
+def _job_quantity(item, source, data, overrides, numbers):
     def read(*fields):
         quantity = ONE
         for field in fields:
             if field in overrides:
-                quantity *= overrides[field]
+                value = overrides[field]
             elif field in data.model_fields_set:
-                quantity *= _dec(getattr(data, field))
+                value = _dec(getattr(data, field))
             else:
                 return Decimal(item['default_quantity'])
+            quantity *= numbers.get(field, value)
         return quantity
 
     if source.kind == 'field':
@@ -291,8 +307,10 @@ def _room_lines(item, source, data, policy, overrides, warnings):
     return lines
 
 
-def price_scope(data, table):
-    """(lines, warnings) for a job and a table holding `items` and `policy`."""
+def price_scope(data, table, numbers=None):
+    """(lines, warnings) for a job and a table holding `items` and `policy`.
+
+    `numbers` are job numbers to price in place of the entered ones (high_numbers)."""
     policy = table['policy']
     warnings = []
     job_overrides, room_overrides = _overrides(data, warnings)
@@ -324,7 +342,7 @@ def price_scope(data, table):
             continue
         if item['categories'] and not categories.intersection(item['categories']):
             continue
-        quantity = _job_quantity(item, source, data, job_overrides)
+        quantity = _job_quantity(item, source, data, job_overrides, numbers or {})
         if quantity:
             lines.append(
                 _line(
@@ -384,8 +402,67 @@ def _sum(lines, bucket, *, taxable=False):
     )
 
 
-def totals(data, lines, policy):
-    """The low and high ends of an estimate. Every summary amount is rounded once, to cents."""
+def _entered(data, field):
+    # What the low end prices: an estimator's override wins, as it does in price_scope.
+    override = (data.quantity_overrides or {}).get(field)
+    return _dec(override.entered if override else getattr(data, field))
+
+
+def high_numbers(data, assist):
+    """What the high end prices equipment at: the most the IICRC sizing check allows for the stated
+    rooms, never below what was entered, for the owner's extra drying days."""
+    sizing = equipment_sizing(data)
+    available = sizing['status'] == 'available'
+    air_movers, dehumidifiers = _entered(data, 'air_movers'), _entered(data, 'dehumidifiers')
+    if available and sizing['air_movers']['max'] is not None:
+        air_movers = max(air_movers, sizing['air_movers']['max'])
+    if available and sizing['dehumidifiers']['recommended_units'] is not None:
+        dehumidifiers = max(dehumidifiers, sizing['dehumidifiers']['recommended_units'])
+    return dict(
+        air_movers=air_movers,
+        dehumidifiers=dehumidifiers,
+        drying_days=_entered(data, 'drying_days') + assist['extra_drying_days'],
+        sizing_available=available,
+    )
+
+
+def _room_percents(data, assist):
+    """The hidden-damage share of each room name. Stored rooms sharing a name take the larger."""
+    percents = {}
+    for room in data.rooms:
+        percent = Decimal(assist['hidden_damage_percent'][str(room.category)]) / HUNDRED
+        percents[room.name] = max(percents.get(room.name, ZERO), percent)
+    return percents
+
+
+def _uncertain_high(data, lines, items, policy, assist):
+    """The high end's amounts under the uncertainty method. Taxable labor and materials stay exact."""
+    numbers = high_numbers(data, assist)
+    high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers)
+    percents = _room_percents(data, assist)
+    largest = max(percents.values(), default=ZERO)
+    labor_material = taxed_labor_material = ZERO
+    for line in lines:
+        if line['bucket'] != 'labor_material':
+            continue
+        # A line with no area (labor hours) carries the largest percent on the job (decision D4).
+        grown = _dec(line['total']) * (1 + (percents[line['room']] if line['area'] else largest))
+        labor_material += grown
+        if line['taxable']:
+            taxed_labor_material += grown
+    return dict(
+        numbers=numbers,
+        labor_material=_money(labor_material),
+        taxed_labor_material=taxed_labor_material,
+        equipment=_sum(high_lines, 'equipment'),
+        taxed_equipment=_sum(high_lines, 'equipment', taxable=True),
+    )
+
+
+def totals(data, lines, policy, items):
+    """The low and high ends of an estimate. Every summary amount is rounded once, to cents.
+
+    `items` are the table's items, which the uncertainty method needs to price the high end."""
     unbucketed = sorted({str(line['code']) for line in lines if line['bucket'] not in BUCKETS})
     if unbucketed:
         # A priced line outside every bucket would count in the itemized list but vanish from the range.
@@ -403,15 +480,21 @@ def totals(data, lines, policy):
     if fixed + equipment + low_lm <= 0:
         raise ValueError(ZERO_TOTAL)
 
-    tier = policy['range']
-    first, beyond = (
-        Decimal(tier['first_percent']) / HUNDRED,
-        Decimal(tier['beyond_percent']) / HUNDRED,
-    )
-    top = _top_dollars(area_lines, Decimal(tier['first_sf']))
-    high_lm = _money(
-        (1 + beyond) * area_dollars + (first - beyond) * top + (1 + first) * other_dollars
-    )
+    assist = assist_of(policy)
+    uncertain = None
+    if assist['range_method'] == 'uncertainty':
+        uncertain = _uncertain_high(data, lines, items, policy, assist)
+        high_lm = uncertain['labor_material']
+    else:
+        tier = policy['range']
+        first, beyond = (
+            Decimal(tier['first_percent']) / HUNDRED,
+            Decimal(tier['beyond_percent']) / HUNDRED,
+        )
+        top = _top_dollars(area_lines, Decimal(tier['first_sf']))
+        high_lm = _money(
+            (1 + beyond) * area_dollars + (first - beyond) * top + (1 + first) * other_dollars
+        )
 
     multiplier = Decimal(policy['after_hours']['multiplier']) if data.is_after_hours else ONE
     overhead = Decimal(policy['overhead_profit_percent']) / HUNDRED
@@ -421,23 +504,27 @@ def totals(data, lines, policy):
         else ZERO
     )
     minimum = Decimal(policy['minimum_job_charge'])
-    taxed_fixed_equipment = _sum(lines, 'fixed', taxable=True) + _sum(
-        lines, 'equipment', taxable=True
-    )
+    taxed_fixed = _sum(lines, 'fixed', taxable=True)
+    taxed_equipment = _sum(lines, 'equipment', taxable=True)
     taxed_lm = _sum(lines, 'labor_material', taxable=True)
+    high_equipment = uncertain['equipment'] if uncertain else equipment
 
-    def pre_minimum(lm):
-        return fixed + equipment + lm + _money(lm * (multiplier - 1))
+    def pre_minimum(lm, equipment_dollars):
+        return fixed + equipment_dollars + lm + _money(lm * (multiplier - 1))
 
-    def end(lm):
-        subtotal = fixed + equipment + lm
+    def end(lm, equipment_dollars=equipment, taxed_equipment_dollars=taxed_equipment, share=None):
+        subtotal = fixed + equipment_dollars + lm
         adjustment = _money(lm * (multiplier - 1))
         floor = max(ZERO, minimum - (subtotal + adjustment))
         overhead_profit = _money(overhead * (subtotal + adjustment + floor))
-        # High taxes labor and materials in the same proportion as low. Overhead and profit comes
-        # before tax, so taxable items carry their own share of it; the minimum is not a taxable item.
-        share = taxed_lm * lm / low_lm if low_lm else ZERO
-        tax = _money(tax_rate * (taxed_fixed_equipment + multiplier * share) * (1 + overhead))
+        # Unless given its exact share, an end taxes labor and materials in the same proportion as
+        # low. Overhead and profit comes before tax, so taxable items carry their own share of it;
+        # the minimum is not a taxable item.
+        if share is None:
+            share = taxed_lm * lm / low_lm if low_lm else ZERO
+        tax = _money(
+            tax_rate * (taxed_fixed + taxed_equipment_dollars + multiplier * share) * (1 + overhead)
+        )
         return dict(
             subtotal=subtotal,
             after_hours=adjustment,
@@ -451,10 +538,20 @@ def totals(data, lines, policy):
     mode = policy['estimate_mode']
     high = None
     if mode == 'range':
-        # While the cushioned amount is still under the minimum the job is the minimum at both ends.
+        # While the high amount is still under the minimum the job is the minimum at both ends.
         # Flooring the high separately would let added non-taxable work shrink its taxable share and
         # lower the total with nothing to offset it.
-        high = dict(low) if pre_minimum(high_lm) < minimum else end(high_lm)
+        if pre_minimum(high_lm, high_equipment) < minimum:
+            high = dict(low)
+        elif uncertain:
+            high = end(
+                high_lm,
+                high_equipment,
+                uncertain['taxed_equipment'],
+                uncertain['taxed_labor_material'],
+            )
+        else:
+            high = end(high_lm)
     return dict(
         mode=mode,
         low=low,
@@ -464,14 +561,93 @@ def totals(data, lines, policy):
         after_hours_label=policy['after_hours']['label'],
         minimum_charge_label=MINIMUM_CHARGE_LABEL,
         explanation=explanation(policy, data),
-        range_explanation=range_explanation(policy),
+        range_explanation=range_explanation(policy, data),
+        uncertainty=(
+            dict(uncertain['numbers'], hidden_damage_percent=assist['hidden_damage_percent'])
+            if uncertain
+            else None
+        ),
     )
 
 
-def range_explanation(policy):
-    """One plain sentence naming the cushion tiers, for the documents. None when there is no range."""
+def _counted(amount, noun):
+    return f'{number(amount)} {noun}' + ('' if amount == 1 else 's')
+
+
+def _equipment_clause(data, assist):
+    """What the high end prices equipment at, in words."""
+    numbers = high_numbers(data, assist)
+    extra = assist['extra_drying_days']
+    days = _counted(numbers['drying_days'], 'drying day') + (
+        f' ({extra} more than planned)' if extra else ''
+    )
+    if numbers['sizing_available']:
+        movers = _counted(numbers['air_movers'], 'air mover')
+        dehumidifiers = _counted(numbers['dehumidifiers'], 'dehumidifier')
+        return f'up to {movers} and {dehumidifiers} for {days}'
+    return f'the equipment counts as entered for {days}'
+
+
+def _sizing_clause(data, assist):
+    """Where the counts come from. None when the check is unavailable."""
+    numbers = high_numbers(data, assist)
+    if not numbers['sizing_available']:
+        return None
+    sizing = equipment_sizing(data)
+    if (
+        numbers['air_movers'] == sizing['air_movers']['max']
+        and numbers['dehumidifiers'] == sizing['dehumidifiers']['recommended_units']
+    ):
+        return 'the most the IICRC S500 placement recommends for the stated room sizes'
+    # Above the check, or a count it could not size: the technician's number, not the placement's.
+    return (
+        'the larger of the counts entered and what the IICRC S500 placement recommends for the '
+        'stated room sizes'
+    )
+
+
+def _hidden_damage_clause(data, assist):
+    """The percents of the categories on the job, lowest category first."""
+    names = {'1': 'category 1', '2': 'category 2', '3': 'category 3 or mold'}
+    parts = [
+        f'{_percent_text(assist["hidden_damage_percent"][key])}% in {name} rooms'
+        for key, name in names.items()
+        if int(key) in {room.category for room in data.rooms}
+    ]
+    if len(parts) > 1:
+        parts = [', '.join(parts[:-1]) + f' and {parts[-1]}']
+    return f'hidden damage of {parts[0]}' if parts else None
+
+
+def _uncertainty_sentence(data, assist):
+    numbers = high_numbers(data, assist)
+    categories = {str(room.category) for room in data.rooms}
+    if (
+        numbers['air_movers'] == _entered(data, 'air_movers')
+        and numbers['dehumidifiers'] == _entered(data, 'dehumidifiers')
+        and not assist['extra_drying_days']
+        and not any(Decimal(assist['hidden_damage_percent'][key]) for key in categories)
+    ):
+        # Nothing separates the two amounts.
+        return None
+    text = _equipment_clause(data, assist)
+    sizing = _sizing_clause(data, assist)
+    if sizing:
+        text += f', {sizing}'
+    hidden = _hidden_damage_clause(data, assist)
+    if hidden:
+        text += f', and {hidden}'
+    return f'The high end allows for {text}.'
+
+
+def range_explanation(policy, data):
+    """One plain sentence naming how the high end is built, for the documents. None when there is
+    no range to explain."""
     if policy['estimate_mode'] != 'range':
         return None
+    assist = assist_of(policy)
+    if assist['range_method'] == 'uncertainty':
+        return _uncertainty_sentence(data, assist)
     tier = policy['range']
     first, beyond = Decimal(tier['first_percent']), Decimal(tier['beyond_percent'])
     if not first:
@@ -492,16 +668,28 @@ def explanation(policy, data):
     return ' '.join(_range_sentences(policy, data))
 
 
-def _range_sentences(policy, data):
+def _how_the_ends_differ(policy, data):
+    assist = assist_of(policy)
+    if assist['range_method'] == 'uncertainty':
+        return [
+            'The low amount is the itemized total at the equipment counts and drying days entered.',
+            f'The high amount prices {_equipment_clause(data, assist)} and adds the hidden-damage '
+            'allowance above to labor and materials.',
+            'Job charges and approved additional work are the same in both amounts.',
+        ]
     tier = policy['range']
     first, beyond = _percent_text(tier['first_percent']), _percent_text(tier['beyond_percent'])
-    sentences = [
+    return [
         'The low amount is the itemized total.',
         'The high amount adds an allowance to labor and materials for conditions found during the '
         f'work: {first}% on the first {tier["first_sf"]:,} square feet of area-priced work '
         f'(highest-priced areas first), {beyond}% on area beyond that, and {first}% on labor hours.',
         'Job charges, drying equipment and approved additional work are the same in both amounts.',
     ]
+
+
+def _range_sentences(policy, data):
+    sentences = _how_the_ends_differ(policy, data)
     multiplier = Decimal(policy['after_hours']['multiplier'])
     if data.is_after_hours and multiplier > 1:
         percent = _percent_text((multiplier - 1) * HUNDRED)

@@ -1311,6 +1311,19 @@ def switch_differences(policy: dict) -> list[str]:
             'The estimate is one price, the itemized total. Before, it was a low to high range.',
             late,
         ]
+    assist = assist_of(policy)
+    if assist['range_method'] == 'uncertainty':
+        extra = assist['extra_drying_days']
+        percents = ' / '.join(
+            f'{Decimal(assist["hidden_damage_percent"][key]).normalize():f}%' for key in '123'
+        )
+        days = f'{extra} extra drying day' + ('' if extra == 1 else 's')
+        return [
+            f'The high end is built from the IICRC equipment range, {days} and hidden damage of '
+            f'{percents} by category instead of a flat 50% cushion.',
+            "Labor hours carry the hidden-damage percent of the job's rooms at every job size.",
+            late,
+        ]
     return [
         f'The high end now tapers above {first_sf} square feet instead of stepping down at 1,001: '
         f'{range_rule["first_percent"]}% on the first {first_sf} square feet of area-priced work, '

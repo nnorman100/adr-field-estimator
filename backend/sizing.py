@@ -1,5 +1,6 @@
 """IICRC drying-equipment sizing check: recommended air movers and dehumidification beside the
-technician's counts. It never changes counts or prices; pricing reads only the entered counts. A
+technician's counts. It never changes a count, and the low end prices only the entered counts; a
+table on the uncertainty method prices its high end at these numbers (pricing_v2.high_numbers). A
 suggested count (suggested_counts) reaches a job only when the technician's fill or tap applies it.
 
 Sources for the arithmetic (inputs are only technician-confirmed room values; nothing is guessed):
