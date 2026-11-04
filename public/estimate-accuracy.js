@@ -32,11 +32,16 @@
   }
   const readPath = (object, path) =>
     path.split('.').reduce((at, key) => (at == null ? at : at[key]), object);
+  const suggestedValue = (row, policy) => {
+    const beyond = row.path === 'range.first_percent' ? policy.range?.beyond_percent : undefined;
+    return Number(beyond) > Number(row.value) ? beyond : row.value;
+  };
   function applySuggestion(policy, row) {
+    const value = suggestedValue(row, policy);
     const keys = row.path.split('.');
     let at = policy;
     for (const key of keys.slice(0, -1)) at = at[key] ??= {};
-    at[keys[keys.length - 1]] = row.value;
+    at[keys[keys.length - 1]] = value;
     return policy;
   }
   const shown = (kind, value) => {
@@ -45,8 +50,9 @@
     return Number(value) === 1 ? '1 day' : value + ' days';
   };
   const suggestionText = (row, policy) =>
-    `Suggested: ${shown(row.kind, row.value)} (now ${shown(row.kind, readPath(policy, row.path))})`;
-  const matches = (row, policy) => Number(readPath(policy, row.path)) === Number(row.value);
+    `Suggested: ${shown(row.kind, suggestedValue(row, policy))} (now ${shown(row.kind, readPath(policy, row.path))})`;
+  const matches = (row, policy) =>
+    Number(readPath(policy, row.path)) === Number(suggestedValue(row, policy));
 
   const allowed = () =>
     !!state.session?.workspaces_enabled &&

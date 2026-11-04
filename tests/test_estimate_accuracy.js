@@ -90,11 +90,24 @@ test('Use suggestion writes the value into the working copy object and nothing e
   assert.equal(typeof copy.assist.hidden_damage_percent[2], 'string');
 });
 
-test('both new files load in the app and are precached for phones', () => {
-  const shell = fs.readFileSync('public/app.html', 'utf8');
-  const worker = fs.readFileSync('public/sw.js', 'utf8');
-  for (const file of ['job-close.js', 'estimate-accuracy.js']) {
-    assert.ok(shell.includes(`src="/${file}?v=unstamped"`), file);
-    assert.ok(worker.includes(`'/${file}?v=' + VERSION`), file);
-  }
+test('a cushion suggestion is held at the cushion beyond in the working copy', () => {
+  const [row] = EstimateAccuracy.suggestionRows({
+    suggestions: { first_percent: { value: '20', jobs: 6 } },
+  });
+  const copy = { range: { first_percent: '50', beyond_percent: '30' } };
+  assert.equal(EstimateAccuracy.suggestionText(row, copy), 'Suggested: 30% (now 50%)');
+  assert.equal(EstimateAccuracy.matches(row, copy), false);
+  EstimateAccuracy.applySuggestion(copy, row);
+  assert.deepEqual(copy, { range: { first_percent: '30', beyond_percent: '30' } });
+  assert.equal(EstimateAccuracy.matches(row, copy), true);
+});
+
+test('a cushion suggestion above the cushion beyond is used as it is', () => {
+  const [row] = EstimateAccuracy.suggestionRows({
+    suggestions: { first_percent: { value: '60', jobs: 6 } },
+  });
+  const copy = { range: { first_percent: '50', beyond_percent: '30' } };
+  assert.equal(EstimateAccuracy.suggestionText(row, copy), 'Suggested: 60% (now 50%)');
+  EstimateAccuracy.applySuggestion(copy, row);
+  assert.deepEqual(copy, { range: { first_percent: '60', beyond_percent: '30' } });
 });

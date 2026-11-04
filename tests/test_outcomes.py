@@ -551,6 +551,59 @@ def test_the_cushion_method_suggests_the_first_percent_over_all_closed_jobs():
     )
 
 
+def cushion_book(beyond='20'):
+    book = uncertainty_book(range_method='cushion')
+    book['policy']['range']['beyond_percent'] = beyond
+    return book
+
+
+def cushion_rows(overruns):
+    return [
+        fixture_row(1, '1000.00', f'{1000 + percent * 10}.00', '1000.00') for percent in overruns
+    ]
+
+
+@pytest.mark.parametrize(
+    'overruns', [(0, 3, 6, 9, 11, 12), (0, 0, 0, 0, 0), (12, 12, 12, 12, 12), tuple(range(13))]
+)
+@pytest.mark.parametrize('beyond', ['20', '22.5', '100'])
+def test_a_cushion_suggestion_for_overruns_of_0_to_12_percent_can_always_be_published(
+    overruns, beyond
+):
+    book = cushion_book(beyond)
+    result = statistics(cushion_rows(overruns), book)
+    assert result['suggestions']['first_percent'] == dict(value=beyond, jobs=len(overruns))
+    assert (
+        f'The suggestion is {beyond}%, because this cushion cannot be less than your '
+        f'{beyond}% cushion beyond the first square feet.' in result['sentences']
+    )
+    policy = deepcopy(book['policy'])
+    policy['range']['first_percent'] = result['suggestions']['first_percent']['value']
+    assert price_table.normalize_policy(policy)['range']['first_percent'] == beyond
+
+
+def test_a_floored_cushion_still_says_what_would_have_covered_the_jobs():
+    result = statistics(cushion_rows((0, 3, 6, 9, 11, 12)), cushion_book())
+    assert (
+        'Range cushion: 15% on labor and materials would have covered 4 of 5 of your 6 closed jobs.'
+        in result['sentences']
+    )
+
+
+def test_a_cushion_suggestion_at_or_above_the_cushion_beyond_is_not_floored():
+    rows = cushion_rows((0, 3, 6, 9, 11, 12))
+    for beyond in ('10', '15'):
+        result = statistics(rows, cushion_book(beyond))
+        assert result['suggestions']['first_percent'] == dict(value='15', jobs=6)
+        assert not any('cannot be less than' in sentence for sentence in result['sentences'])
+
+
+def test_a_cushion_with_too_few_jobs_stays_null_whatever_the_cushion_beyond():
+    result = statistics(cushion_rows((0, 3, 6, 9)), cushion_book())
+    assert result['suggestions']['first_percent'] == dict(value=None, jobs=4)
+    assert not any('cannot be less than' in sentence for sentence in result['sentences'])
+
+
 def test_a_single_price_company_gets_no_range_suggestions():
     table = uncertainty_book()
     table['policy']['estimate_mode'] = 'single'

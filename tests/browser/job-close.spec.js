@@ -205,6 +205,43 @@ test('the owner sees the numbers and a suggestion only reaches the working copy'
   expect(view.working_copy.policy.assist.hidden_damage_percent['2']).toBe('20');
 });
 
+test('a cushion suggestion below the cushion beyond is held there, saves and reaches review', async ({
+  page,
+  request,
+}) => {
+  await setup(request);
+  await request.post('/__test/price-table', {
+    data: { policy: { assist: { range_method: 'cushion' } } },
+  });
+  // Overruns of 0, 3, 6, 9, 11 and 12 percent: 15 would cover 4 of 5, under the published 20.
+  const rows = Object.fromEntries(
+    ['2000.00', '2030.00', '2060.00', '2090.00', '2110.00', '2120.00'].map((final, index) => [
+      'ADR-INS-' + String(index).padStart(32, '0'),
+      closedRow(1, final),
+    ]),
+  );
+  await request.post('/__test/estimate-history', { data: { rows } });
+  await start(page, 'owner');
+  await navigate(page, 'dashboardPrices');
+  const section = page.locator('#estimateAccuracy');
+  await expect(section).toContainText('Range cushion: 15% on labor and materials');
+  await expect(section).toContainText('The suggestion is 20%');
+  const line = section.locator('[data-path="range.first_percent"]');
+  await expect(line).toContainText('Suggested: 20% (now 50%)');
+  const saved = page.waitForResponse(
+    (r) => r.url().includes('/prices/working-copy') && r.request().method() === 'PUT',
+  );
+  await line.getByRole('button', { name: 'Use suggestion' }).click();
+  expect((await saved).ok()).toBe(true);
+  await expect(line).toContainText('Suggested: 20% (now 20%)');
+  await expect(page.locator('[name="policy_range.first_percent"]')).toHaveValue('20');
+  await page.locator('#priceReason').fill('Use the suggested cushion');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText(
+    'Cushion on the first square feet (%): 50 to 20',
+  );
+});
+
 test('a rate-book company sees its numbers and the note about its own price table', async ({
   page,
   request,

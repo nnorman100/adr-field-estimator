@@ -319,8 +319,15 @@ def statistics(rows, book=None):
         sentences += [_category_sentence(int(name), hidden[name]) for name in hidden]
     else:
         cushion = _percent_suggestion(closed)
-        result['suggestions'] = dict(first_percent=cushion)
         sentences.append(_cushion_sentence(cushion))
+        beyond = policy['range']['beyond_percent']
+        if cushion['value'] is not None and Decimal(cushion['value']) < Decimal(beyond):
+            cushion['value'] = beyond
+            sentences.append(
+                f'The suggestion is {beyond}%, because this cushion cannot be less than your '
+                f'{beyond}% cushion beyond the first square feet.'
+            )
+        result['suggestions'] = dict(first_percent=cushion)
     sentences.append(_days_sentence(days))
     sentences.append(COVERAGE_NOTE if result['suggestions'] else REASONS[result['reason']])
     result['sentences'] = [sentence for sentence in sentences if sentence]

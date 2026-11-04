@@ -58,7 +58,9 @@ Nothing here changes a signed record, a document, a signing link or the model pr
 |---|---|---|---|
 | `assist.hidden_damage_percent.{c}` | uncertainty | closed, every room category `c` | overrun as a percent, up to the next 5, at most 100 |
 | `assist.extra_drying_days` | uncertainty | closed, with actual days | extra days, at most 30 |
-| `range.first_percent` | cushion | all closed | overrun as a percent, up to the next 5, at most 100 |
+| `range.first_percent` | cushion | all closed | overrun as a percent, up to the next 5, at most 100, and never below `range.beyond_percent` |
+
+A table refuses a `first_percent` below its `beyond_percent`, so the server holds the cushion suggestion at the published `beyond_percent` and the page says so. **Use suggestion** holds it at the working copy's value when an unpublished edit raised it further.
 
 The overrun is a coverage number. It counts everything that raised the invoice above the low end (hidden damage, more equipment, approved extras, more days), and the page says so. A company on a rate book gets the hit rate and day numbers, with `suggestions: null` and `reason: 'rate_book'`. A company that prints one price gets `reason: 'single_price'`, because these settings only shape a high end it does not print.
 
