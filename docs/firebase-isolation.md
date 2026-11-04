@@ -302,7 +302,15 @@ helper and complete sign-in before changing traffic or Hosting.
 
 ## Estimate assist rollout
 
-`AI_FEATURES=estimate_assist` turns on the user-facing parts of [Estimate assist](estimate-assist.md). It needs no rules, index or data change. Turning it on is a separate owner decision: pass it with `--ai-features` on the release that changes it, keeping the features already on, and record it in `RELEASES.md`. Turning it off hides the suggestions. Counts already applied stay on their jobs.
+`AI_FEATURES=estimate_assist` turns on the user-facing parts of [Estimate assist](estimate-assist.md). It needs no rules or data change. Turning it on is a separate owner decision: pass it with `--ai-features` on the release that changes it, keeping the features already on, and record it in `RELEASES.md`. Turning it off hides the suggestions and the close card. Counts already applied stay on their jobs, and recorded closes stay in the company's history.
+
+**Index step for the job-close release.** Every signature writes a row to `_estimate_history/{company_id}`, flag on or off, so deploy the `rows` field override in `firestore.indexes.json` before the backend that carries it, and verify it:
+
+```bash
+firebase deploy --only firestore:indexes --project alert-disaster-field-2026
+```
+
+The override keeps the map of rows out of Firestore's automatic single-field indexes. Without it signing still works, but each row's fields are indexed for nothing. Deny-all rules already cover the collection, so no rules deploy is needed.
 
 ## Drying watch rollout
 

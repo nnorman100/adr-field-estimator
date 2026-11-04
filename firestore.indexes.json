@@ -178,6 +178,7 @@
     { "collectionGroup": "_price_book_previews", "fieldPath": "policy", "indexes": [] },
     { "collectionGroup": "_price_book_previews", "fieldPath": "diff", "indexes": [] },
     { "collectionGroup": "_price_book_drafts", "fieldPath": "items", "indexes": [] },
-    { "collectionGroup": "_price_book_drafts", "fieldPath": "policy", "indexes": [] }
+    { "collectionGroup": "_price_book_drafts", "fieldPath": "policy", "indexes": [] },
+    { "collectionGroup": "_estimate_history", "fieldPath": "rows", "indexes": [] }
   ]
 }

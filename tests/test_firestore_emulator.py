@@ -298,6 +298,78 @@ def test_signed_records_cannot_be_altered(signing):
     assert len(stores[0].bucket.objects) == 1
 
 
+def test_signing_writes_the_history_row_atomically_and_a_concurrent_close_does_not_lose_it(
+    monkeypatch,
+):
+    from backend import ai_features
+    from backend.outcomes import JobClose
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    stores = instances(CompanyInspectionStore)
+    record = audited(stores[0])
+    db = stores[0].db
+    payload = sign_payload(record)
+
+    # A signing transaction that fails after the row is written leaves neither agreement nor row.
+    class FailsLast:
+        def check(self, tx):
+            pass
+
+        def consume(self, tx, body):
+            raise RuntimeError('Synthetic failure at the end of the signing transaction')
+
+    with pytest.raises(RuntimeError):
+        stores[0].authorize('owner', payload, claim=FailsLast())
+    assert stored(db, '_estimate_history/adr') is None
+    assert stored(db, 'authorizations/' + payload['auth_id']) is None
+
+    receipt = stores[0].authorize('owner', payload)
+    row = stored(db, '_estimate_history/adr')['rows'][ID]
+    assert row['auth_id'] == receipt['auth_id'] == payload['auth_id']
+    assert row['signed_at'] == receipt['created_at']
+    assert stored(db, 'authorizations/' + payload['auth_id'])['created_at'] == row['signed_at']
+
+    other = 'ADR-INS-' + 'e' * 32
+    existing = dict(row, auth_id='ADR-AUTH-other', signed_at='2026-01-01T00:00:00+00:00')
+    db.document('_estimate_history/adr').update({f'rows.`{other}`': existing})
+
+    def close(store, final):
+        request = JobClose(
+            final_amount=final, actual_days=3, note='', expected_signed_at=row['signed_at']
+        )
+        return store.outcomes.close('owner', ID, request)
+
+    def rewrite_other(store):
+        # A second signature's history write, racing the close on the same company document.
+        def write(tx):
+            rows = store.outcomes._rows('adr', tx)
+            store.outcomes._write(tx, 'adr', rows, other, dict(rows[other], planned_days=9))
+
+        return store._atomic(write)
+
+    outcomes(
+        concurrently(
+            [
+                lambda: close(stores[0], '100.00'),
+                lambda: rewrite_other(stores[1]),
+                lambda: close(stores[1], '200.00'),
+            ]
+        ),
+        refused=(),
+    )
+    # Contention may abort a call; the settled state then shows nothing was lost.
+    close(stores[0], '300.00')
+    rewrite_other(stores[1])
+    rows = stored(db, '_estimate_history/adr')['rows']
+    assert rows[ID]['final'] == '300.00' and rows[ID]['closed_at']
+    assert rows[other]['planned_days'] == 9
+    closes = [
+        e for e in db.collection('_admin_events').stream() if e.to_dict()['action'] == 'job_closed'
+    ]
+    assert len(closes) >= 1
+    assert all(set(e.to_dict()['details']) == {'job_id', 'landed'} for e in closes)
+
+
 def test_concurrent_voice_note_appends_keep_every_note_exactly_once():
     stores = instances()
     stores[0].create_inspection('owner', ID, data(technician_transcript='Live words.'))

@@ -224,6 +224,7 @@ function showTask(task, focus = true) {
     .forEach((panel) => (panel.hidden = panel.dataset.panel !== task));
   window.DryingLog?.render();
   window.DryingWatch?.render();
+  window.JobClose?.render();
   document.querySelectorAll('.task-nav [data-task]').forEach((tab) => {
     if (tab.dataset.task === task) tab.setAttribute('aria-current', 'step');
     else tab.removeAttribute('aria-current');
@@ -858,6 +859,7 @@ function clearDisplayedInspection() {
   $('retrySavedEvidence').hidden = true;
   window.DryingLog?.clear();
   window.DryingWatch?.clear();
+  window.JobClose?.render();
   window.InsightUI?.reset();
   renderPhotos();
   window.TagsUI?.render();
@@ -3123,6 +3125,13 @@ function openHelp() {
       continue;
     }
     if (topic.dataset.helpTopic === 'drying-watch' && !window.DryingWatch?.enabled()) {
+      topic.remove();
+      continue;
+    }
+    if (
+      ['job-close', 'estimate-accuracy'].includes(topic.dataset.helpTopic) &&
+      !window.JobClose?.enabled()
+    ) {
       topic.remove();
       continue;
     }

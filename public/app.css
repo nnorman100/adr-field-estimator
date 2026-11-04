@@ -2950,6 +2950,9 @@ footer {
 }
 
 /* Drying watch: wrap measurements and recipient addresses on the narrowest field phones. */
+.estimate-suggestion + .estimate-suggestion {
+  margin-top: 1rem;
+}
 .drying-watch-card,
 .watch-row,
 .watch-approval {
