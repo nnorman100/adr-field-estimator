@@ -81,7 +81,7 @@ Other sites and databases in `mitigation-project` are unchanged. The old backend
 
 Never use a blanket `firebase deploy`. Keep both `index.html` copies (the landing page) identical; the app shell is `public/app.html`, served at `/app`. Deploy indexes separately and verify they are READY before enabling paginated queries.
 
-Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED`, `AI_FEATURES` or `PRICE_BOOKS_ENABLED` from that revision. The script requires `--workspaces on|off` and always sets `WORKSPACES_ENABLED`, `AI_FEATURES` and `PRICE_BOOKS_ENABLED`. The defaults match the current production baseline: `AI_FEATURES=readiness` and price books off (`PRICE_BOOKS_ENABLED=false`). Pass `--ai-features` or `--price-books on|off` only to change that baseline on purpose. The script prints the baseline, always mounts the Maps key secret (`--update-secrets`, see [Address suggestions and the job map](#address-suggestions-and-the-job-map)), keeps the other existing variables (model settings, and the staff list unless `--staff-emails` sets it on purpose; it refuses, `--dry-run` included, when the flag is omitted and the service template has no `STAFF_EMAILS`), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
+Deploy the backend only with `scripts/deploy_backend.py`. Cloud Run copies environment variables from the latest service template, which can be a staged revision with no traffic, so a raw `gcloud run deploy` can silently inherit `WORKSPACES_ENABLED`, `AI_FEATURES` or `PRICE_BOOKS_ENABLED` from that revision. The script requires `--workspaces on|off` and always sets `WORKSPACES_ENABLED`, `AI_FEATURES` and `PRICE_BOOKS_ENABLED`. The defaults are the repository baseline, today `AI_FEATURES=readiness` and price books off (`PRICE_BOOKS_ENABLED=false`); see [Turning a feature on or off](#turning-a-feature-on-or-off). `--ai-features` and `--price-books on|off` set one revision only, such as a staged 0% check, and are not how a feature is turned on. The script prints the baseline, always mounts the Maps key secret (`--update-secrets`, see [Address suggestions and the job map](#address-suggestions-and-the-job-map)), keeps the other existing variables (model settings, and the staff list unless `--staff-emails` sets it on purpose; it refuses, `--dry-run` included, when the flag is omitted and the service template has no `STAFF_EMAILS`), and stages a tagged revision with `--no-traffic`. Review the command with `--dry-run`, then rerun with `--yes`.
 
 Every release is stamped with the commit it was built from. `deploy_backend.py` refuses uncommitted or untracked changes under `backend/` (`--allow-dirty` stamps `<commit>-dirty` instead), writes the commit to `backend/SOURCE_COMMIT` in the uploaded build context for the duration of the deploy, and sets the revision label `source-commit`. The image reports it as `source_commit` in `/api/health`; an image built without the script reports `unknown`. `gcloud run deploy` also copies the label onto the service, so the service-level `source-commit` follows the latest staged revision even while traffic stays on an older one or after a rollback; only the serving revision's label or `/api/health` identifies the code that is serving. Before a Hosting deploy, `python scripts/stamp_hosting.py` stamps the same kind of commit into the service-worker `VERSION`, every versioned asset URL and the Account menu's and footer's app version, which also gives each release a new worker cache. A production release also passes `--version <YYYY.MM.DD-N>` (from `python3 scripts/auto_deploy.py --next-version`) to both scripts: the backend reports it as `version` in `/api/health` and the app version shows it instead of the short commit. Both scripts refuse `--version` on a dirty tree; a build without it reports `version` `unknown` and shows its short commit. The committed shell carries the placeholder `unstamped`; `firebase.json` runs `node scripts/run_python.js scripts/stamp_hosting.py --check` as the Hosting predeploy hook (the launcher uses whichever of `python`, `python3` or `py` exists and blocks the deploy if none does), so an unstamped or inconsistently stamped shell, or one stamped with a commit other than HEAD or with Hosting changes not in that commit, is never deployed; a `-dirty` stamp declares such changes and is accepted as is. Restore the placeholder with `--reset` afterwards. Both scripts print a row to append to [RELEASES.md](../RELEASES.md), the only record of deployed state.
 
@@ -92,10 +92,10 @@ gcloud firestore indexes composite list --project=alert-disaster-field-2026
 $VERSION = python scripts/auto_deploy.py --next-version
 python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --version $VERSION --dry-run
 python scripts/deploy_backend.py --workspaces off --tag workspaces-off-YYYYMMDD --version $VERSION --yes
-# The dry run prints the feature baseline. Defaults are AI_FEATURES=readiness and PRICE_BOOKS_ENABLED=false.
+# The dry run prints the feature baseline. Defaults are the repository baseline, today AI_FEATURES=readiness and PRICE_BOOKS_ENABLED=false.
 # Without --staff-emails the revision inherits the service template's STAFF_EMAILS; both commands refuse when
 # that template has none. Then add --staff-emails <comma-separated staff emails> to both.
-# Pass --ai-features and --price-books only when this release is the one that changes them.
+# A feature is turned on by a reviewed pull request that changes the baseline, not by flags on this command.
 # Append the printed row to RELEASES.md. Before promotion, the tagged URL printed by the deploy must answer
 # {"status":"healthy","schema_version":3,"version":"<the release version>","source_commit":"<the stamped commit>"}.
 curl.exe -s <tagged-revision-url>/api/health
@@ -120,7 +120,7 @@ The backend rejects a different project ID or evidence bucket. Production never 
 
 `.github/workflows/deploy.yml` releases a master commit after its CI run succeeds on a push to master.
 It runs `scripts/auto_deploy.py`, which computes the next UTC date-style version (`YYYY.MM.DD-N`, starting at `1` each day) and uses the manual path: `deploy_backend.py --workspaces on
---ai-features readiness --price-books off --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
+--ai-features <repository baseline> --price-books <repository baseline> --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
 the staged revision's environment, secret bindings, service account and limits must equal the serving
 revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3, the release `version` and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
@@ -139,6 +139,9 @@ It stops with a message, and the owner releases that commit by hand, when:
 - A Firestore TTL policy is missing (`scripts/ensure_firestore_ttls.py`, read-only).
 - The serving revision has no non-empty, valid `STAFF_EMAILS`. The check runs before anything is staged;
   set the variable on the service by hand, then rerun.
+- The repository baseline would turn off a feature the serving revision has on. The check runs before
+  anything is staged and names the setting; see
+  [Turning a feature on or off](#turning-a-feature-on-or-off).
 
 A commit that is already serving, or older than what is serving, is skipped without error, so a manual
 release made in parallel is never overwritten. Each run's job summary is the release record; see
@@ -172,6 +175,16 @@ allows 1000 tags per service, so clear old ones occasionally with `gcloud run se
 
 Set `AUTO_DEPLOY_ENABLED` to anything but `true` to pause automatic deploys; manual releases are
 unaffected.
+
+### Turning a feature on or off
+
+The production baseline is two repository constants in `scripts/deploy_backend.py`: `DEFAULT_PRICE_BOOKS` sets `PRICE_BOOKS_ENABLED` and `DEFAULT_AI_FEATURES` sets `AI_FEATURES`. Today they are off and `readiness`. Every automatic release stages with them and a hand `deploy_backend.py` run defaults to them.
+
+- **Turning a feature on is one reviewed pull request.** Rated High, it changes the constant (for `AI_FEATURES`, add the name and keep the ones already on), the tests that pin today's values (`BASELINE` and the staged values in `tests/test_auto_deploy.py`, the default baseline in `tests/test_deploy_backend.py`) and `docs/STATUS.md`. Do any rules, index or data step the feature needs first. Merging it with the owner's go is the release: the automatic deploy stages the new baseline, and every later merge stages the same one, so no later merge can undo it. A commit with a rules or index change still stops for a hand release, which uses the same constants.
+- **Turning a feature off is a reviewed pull request plus one confirmation.** The pull request changes the constant back. The automatic deploy then refuses that commit, as below, because the refusal cannot tell a deliberate change from a mistake. Release it by hand with `python3 scripts/auto_deploy.py --commit <commit> --confirm-baseline`, then `--publish <commit>` and append the rows to [RELEASES.md](../RELEASES.md). Later merges deploy automatically again.
+- **`--ai-features` and `--price-books` are not how a feature is turned on.** They set one revision only, such as a staged 0% check. If one is promoted, the next automatic release refuses until the constant matches or the owner confirms.
+
+**The refusal.** Before anything is staged, including on a check-only run, `scripts/auto_deploy.py` compares the serving revision with the repository baseline the way the server reads them: price books are on only for the value `true` in any case, `AI_FEATURES` is a set of names, and an unset flag is off. If the baseline would turn off anything now serving, the run fails and names the setting (`PRICE_BOOKS_ENABLED: serving 'true', repository baseline 'false'`). `--confirm-baseline` is accepted only on a hand run or a rollback dispatch; the automatic run never passes it. A baseline that adds to what is serving is not blocked, and is recorded as a `Baseline change` line in the job summary.
 
 ### Firestore TTL policies
 
@@ -212,6 +225,8 @@ To roll back to a previous `YYYY.MM.DD-N` release version in one step:
 - **Single operator command**: `git fetch --tags`, then `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>`. Use this while automatic deploys are paused, and append rows to [RELEASES.md](../RELEASES.md) as for any manual release.
 
 The rollback resolves the version tag and checks the Firestore `_migrations` ledger (#184) for any applied data migrations newer than the target version. When it finds one, or cannot read the ledger, it emits a `::warning::` banner and job-summary warning and stops before staging, because rolling back code does not undo Firestore data changes; `--confirm-past-migration` (workflow input `confirm_past_migration` set to `yes`) goes ahead anyway. A change to `firestore.rules` or `firestore.indexes.json` between the target and what is serving warns and stops the same way, with the same confirmation: a rollback does not roll them back, so they stay at the newer hand-released version, and the next automatic release stops for a hand release. It then redeploys that tag's backend and Hosting through the same staged checks and `verify_hosting.js` verification. Afterwards, pause automatic deploys (`AUTO_DEPLOY_ENABLED`) or revert the bad change before the next merge, otherwise the next release brings it back.
+
+A rollback restores code, not the baseline. It stages the target's code with the baseline of the checkout running it, which on the **Deploy** workflow is the commit it runs from, normally `master`. When that baseline would turn off a feature now serving it stops before staging, and `--confirm-baseline` (workflow input `confirm_baseline` set to `yes`) goes ahead; both refusals are reported together when a migration or rules warning also applies. The target's own deploy script runs the stage, so a target that does not know a name in `AI_FEATURES` stops before staging with `unknown AI feature` (`estimate_assist` is unknown before `2026.11.04-2`); use the traffic restore below for one of those. The automatic rollback after a failed release is separate: it moves traffic back to the revision that was serving, flags included, and stages nothing, so this check never stops it.
 
 The previous dedicated backend revisions also remain available for manual traffic restoration. Restore traffic only with an explicit dedicated project/region and the matching Firebase Hosting release; do not pair the old backend with the new schema-3 frontend. No stored data is deleted on rollback. A revision from before address suggestions rejects a draft that holds `coordinates` (its contract forbids unknown fields), so fix forward rather than roll back once technicians have chosen suggestions. The historical shared project is not a repair rollback target.
 
@@ -302,7 +317,7 @@ helper and complete sign-in before changing traffic or Hosting.
 
 ## Estimate assist rollout
 
-`AI_FEATURES=estimate_assist` turns on the user-facing parts of [Estimate assist](estimate-assist.md). It needs no rules or data change. Turning it on is a separate owner decision: pass it with `--ai-features` on the release that changes it, keeping the features already on, and record it in `RELEASES.md`. Turning it off hides the suggestions and the close card. Counts already applied stay on their jobs, and recorded closes stay in the company's history.
+`AI_FEATURES=estimate_assist` turns on the user-facing parts of [Estimate assist](estimate-assist.md). It needs no rules or data change. Turning it on is a separate owner decision, made in one reviewed pull request that adds it to `DEFAULT_AI_FEATURES` and keeps the features already on; see [Turning a feature on or off](#turning-a-feature-on-or-off). Turning it off hides the suggestions and the close card. Counts already applied stay on their jobs, and recorded closes stay in the company's history.
 
 **Index step for the job-close release.** Every signature writes a row to `_estimate_history/{company_id}`, flag on or off, so deploy the `rows` field override in `firestore.indexes.json` before the backend that carries it, and verify it:
 

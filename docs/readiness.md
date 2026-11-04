@@ -1,7 +1,7 @@
 # F1 readiness (off by default)
 
-Set `AI_FEATURES=readiness` on a reviewed candidate to enable F1. The comma-separated
-server flag defaults to empty; `/api/session.ai_features` advertises it. Release
+`AI_FEATURES=readiness` enables F1, and the repository baseline (`DEFAULT_AI_FEATURES`) sets it
+on every release. The comma-separated server flag defaults to empty; `/api/session.ai_features` advertises it. Release
 with Phase 3a only after the staged and physical-device checks below. No deployment
 or model call is part of this change's local verification.
 
