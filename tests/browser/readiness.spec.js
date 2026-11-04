@@ -255,3 +255,209 @@ for (const category of [1, 2, 3]) {
     ).toBe(false);
   });
 }
+
+test.describe('estimate warnings in the dialog', () => {
+  const BELOW = 'Fewer than the IICRC minimum of 3 for the wet floor areas.';
+  const ABOVE = 'More than the IICRC floor-based maximum of 4.';
+  const HEADING = 'Check before you finish';
+  const NOTE = 'Warnings update once the draft saves.';
+  const dialogOf = (page) => page.getByRole('dialog', { name: 'Ready to review?' });
+  const features = (request, ai_features) =>
+    request.post('/__test/workspaces', { data: { enabled: true, ai_features } });
+  async function sized(page, airMovers) {
+    await scope(page);
+    await page.locator('#rooms .room-more summary').first().click();
+    await page.locator('[data-room-key="floor_sf"]').first().fill('140');
+    await page.locator('[data-room-key="ceiling_height_ft"]').first().fill('8');
+    await page.locator('[data-room-key="water_class"]').first().selectOption('2');
+    await page.locator('details.more-equipment summary').click();
+    await page.locator('#dehumidifierPpd').fill('70');
+    await page.locator('#dehumidifiers').fill('1');
+    await page.locator('#airMovers').fill(String(airMovers));
+    await page.locator('#scopeConfirmed').check();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  }
+
+  for (const width of [320, 390])
+    test(`a sizing warning shows, Fix opens the count and it clears once saved at ${width}`, async ({
+      page,
+      request,
+    }) => {
+      await features(request, ['readiness', 'estimate_assist']);
+      await page.setViewportSize({ width, height: 844 });
+      await open(page, 'estimator');
+      await sized(page, 2);
+      await page.locator('#finishAudit').click();
+      const dialog = dialogOf(page);
+      await expect(dialog).toBeVisible();
+      const section = page.locator('#readinessWarnings');
+      await expect(section.locator('h3')).toHaveText(HEADING);
+      await expect(section).toContainText(BELOW);
+      await expect(section).not.toContainText(NOTE);
+      expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await dialog.getByRole('button', { name: 'Fix: ' + BELOW, exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect(page.locator('#airMovers')).toBeFocused();
+      await expect(page.locator('#airMovers')).toBeInViewport();
+      await page.locator('#airMovers').fill('3');
+      await page.locator('#scopeConfirmed').check();
+      await expect(page.locator('#saveStatus')).toHaveText('Saved');
+      expect(await page.evaluate(() => state.record.warnings)).toEqual([]);
+      // Nothing new since the last Finish: straight to the documents, with no warning left.
+      await page.locator('#finishAudit').click();
+      await expect(page.locator('#documents')).toBeVisible();
+      await expect(page.locator('#auditWarnings')).not.toContainText('IICRC');
+    });
+
+  test('the review screen repeats a warning, off the printed page, and signing stays open', async ({
+    page,
+    request,
+  }) => {
+    await features(request, ['readiness', 'estimate_assist']);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, 'estimator');
+    await sized(page, 9);
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('#readinessWarnings')).toContainText(ABOVE);
+    await page.locator('#readinessContinue').click();
+    await expect(page.locator('#documents')).toBeVisible();
+    await expect(page.locator('#auditWarnings')).toContainText(ABOVE);
+    expect(await page.evaluate(() => state.documents.signable)).toBe(true);
+    await expect(page.locator('#authorizeJob')).toBeEnabled();
+    const printed = await page.locator('[id^="doc-"]').allTextContents();
+    expect(printed.length).toBeGreaterThan(0);
+    expect(printed.join(' ')).not.toContain(ABOVE);
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('#auditWarnings')).toBeHidden();
+    await page.emulateMedia({ media: 'screen' });
+    // Already listed: the dialog does not come back for the same warning.
+    await checkScope(page);
+    await page.locator('#scopeConfirmed').check();
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('#documents')).toBeVisible();
+    await expect(dialogOf(page)).toBeHidden();
+  });
+
+  test('an unsaved change says warnings update, and a new one opens the dialog after the save', async ({
+    page,
+    request,
+  }) => {
+    await features(request, ['readiness', 'estimate_assist']);
+    await open(page, 'estimator');
+    await sized(page, 3);
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    await page.route(/\/api\/inspections\/[^/]+$/, async (route) => {
+      if (route.request().method() === 'PUT') await held;
+      await route.continue();
+    });
+    await page.locator('#airMovers').fill('9');
+    await page.locator('#scopeConfirmed').check();
+    await page.locator('#finishAudit').click();
+    const dialog = dialogOf(page),
+      section = page.locator('#readinessWarnings');
+    // The first Finish lists the job's gaps. The warning for the unsaved count is not known yet.
+    await expect(dialog).toBeVisible();
+    await expect(section.locator('h3')).toHaveText(HEADING);
+    await expect(section).toContainText(NOTE);
+    await expect(section).not.toContainText(ABOVE);
+    await page.locator('#readinessBack').click();
+    release();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#finishAudit').click();
+    await expect(dialog).toBeVisible();
+    await expect(section).toContainText(ABOVE);
+    await expect(section).not.toContainText(NOTE);
+    await page.locator('#readinessBack').click();
+    // An unsaved edit does not forget a listed warning, so the next save does not ask again.
+    const kept = await page.evaluate(async () => {
+      const ack = state.ack;
+      state.ack = 'unsaved';
+      const accepted = await confirmReadiness();
+      state.ack = ack;
+      return { accepted, keys: state.draft.readinessFinish };
+    });
+    expect(kept.accepted).toBe(true);
+    expect(kept.keys).toContain(JSON.stringify(['warning', 'air_movers_above', '']));
+  });
+
+  test('with readiness off the dialog opens for a warning alone and not otherwise', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await features(request, ['estimate_assist']);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, 'estimator');
+    await expect(page.locator('#readinessCount')).toBeHidden();
+    await sized(page, 2);
+    await context.setOffline(true);
+    await page.locator('#finishAudit').click();
+    const dialog = dialogOf(page);
+    await expect(dialog).toBeVisible();
+    await expect(page.locator('#readinessWarnings')).toContainText(BELOW);
+    await expect(page.locator('#readinessGaps')).toBeEmpty();
+    await expect(page.locator('#readinessOffline')).toBeHidden();
+    await page.locator('#readinessBack').click();
+    await context.setOffline(false);
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('#documents')).toBeVisible();
+    await checkScope(page);
+    await page.locator('#airMovers').fill('3');
+    await page.locator('#scopeConfirmed').check();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#finishAudit').click();
+    await expect(page.locator('#documents')).toBeVisible();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('offline shows the last saved warnings with the note once the draft changes', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await features(request, ['readiness', 'estimate_assist']);
+    await open(page, 'estimator');
+    await sized(page, 2);
+    await context.setOffline(true);
+    await page.locator('#airMovers').fill('3');
+    await page.locator('#finishAudit').click();
+    const section = page.locator('#readinessWarnings');
+    await expect(section).toContainText(BELOW);
+    await expect(section).toContainText(NOTE);
+    await page.locator('#readinessBack').click();
+    await context.setOffline(false);
+  });
+
+  test('the flag off lists no warnings, and office staff get no dialog', async ({
+    page,
+    request,
+  }) => {
+    await open(page, 'estimator');
+    await sized(page, 2);
+    await page.locator('#finishAudit').click();
+    await expect(dialogOf(page)).toBeVisible();
+    await expect(page.locator('#readinessWarnings')).toBeEmpty();
+    expect(await page.evaluate(() => 'warnings' in state.record)).toBe(false);
+    await page.locator('#readinessBack').click();
+
+    await features(request, ['readiness', 'estimate_assist']);
+    await page.reload();
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('office'),
+    );
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await expect(page.locator('#finishAudit')).toBeDisabled();
+    await page.locator('#jobMenu > summary').click();
+    await page.locator('#helpButton').click();
+    await expect(page.locator('[data-help-feature="estimate_assist"]').first()).toContainText(
+      HEADING,
+    );
+  });
+});

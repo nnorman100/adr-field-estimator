@@ -128,6 +128,16 @@ def _labor_material_low(body, data, pin, version):
         return Decimal(0)
 
 
+def room_area(room, wet_basis):
+    """A room's area on its table's basis: the wet floor, or the demolition area."""
+    if not wet_basis:
+        return Decimal(str(room.get('unfinished_sf') or 0)) + Decimal(
+            str(room.get('finished_sf') or 0)
+        )
+    wet = room.get('wet_floor_sf')
+    return Decimal(str((room.get('floor_sf') or 0) if wet is None else wet))
+
+
 def history_row_at_signing(job, body, data, pin):
     """One signed job's row, from the proposal it was signed on. Takes no price from the phone."""
     documents = body.get('documents') or {}
@@ -143,22 +153,13 @@ def history_row_at_signing(job, body, data, pin):
     wet_basis = (
         version == TABLE_VERSION and ((pin or {}).get('policy') or {}).get('area_basis')
     ) == 'wet_floor'
-
-    def area(room):
-        if not wet_basis:
-            return Decimal(str(room.get('unfinished_sf') or 0)) + Decimal(
-                str(room.get('finished_sf') or 0)
-            )
-        wet = room.get('wet_floor_sf')
-        return Decimal(str((room.get('floor_sf') or 0) if wet is None else wet))
-
     categories = {room.get('category', 1) for room in rooms}
     return dict(
         auth_id=body.get('auth_id') or job.get('auth_id'),
         signed_at=job.get('signed_at') or body.get('created_at'),
         calculation_version=version,
         estimate_mode='single' if single else 'range',
-        sf=_money(sum((area(room) for room in rooms), Decimal(0))),
+        sf=_money(sum((room_area(room, wet_basis) for room in rooms), Decimal(0))),
         category=max(categories, default=1),
         single_category=len(categories) == 1,
         low=_money(body['proposed_cost'] if single else body['proposed_cost_low']),
