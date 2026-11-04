@@ -159,17 +159,14 @@
       year: 'numeric',
     }) +
     '.';
-  function roomArea(field, room, policy, item) {
+  function roomArea(field, room, policy) {
     const wet = room.wet_floor_sf ?? room.floor_sf ?? 0;
     if (field === 'wet_floor_sf') return wet;
     if (field === 'floor_sf') return room.floor_sf ?? 0;
-    if (field === 'basis') {
-      if (policy?.area_basis === 'wet_floor') return wet;
-      const demolition = (room.unfinished_sf || 0) + (room.finished_sf || 0);
-      if (policy?.area_basis !== 'demolition_with_waste') return demolition;
-      const waste = room.waste_percent > 0 ? room.waste_percent : Number(item.waste_percent) || 0;
-      return demolition * (1 + waste / 100);
-    }
+    if (field === 'basis')
+      return policy?.area_basis === 'wet_floor'
+        ? wet
+        : (room.unfinished_sf || 0) + (room.finished_sf || 0);
     return room[field] || 0;
   }
   // "From rooms" total for one room-sourced item: matching rooms only, as the server prices them.
@@ -183,7 +180,7 @@
     let total = 0;
     for (const room of rooms || []) {
       if (!coversRoom(item, room)) continue;
-      total += Number(roomArea(source.field, room, policy, item)) || 0;
+      total += Number(roomArea(source.field, room, policy)) || 0;
     }
     return Math.round(total * 100) / 100;
   }

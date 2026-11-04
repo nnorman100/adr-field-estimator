@@ -293,9 +293,6 @@ def _room_lines(item, source, data, policy, overrides, warnings):
         waste = (
             _dec(room.waste_percent) if room.waste_percent > 0 else Decimal(item['waste_percent'])
         )
-        if source.field == 'basis' and policy['area_basis'] == 'demolition_with_waste':
-            # The waste is now in the area, so the line must not charge it a second time.
-            quantity, waste = quantity * (1 + waste / HUNDRED), ZERO
         lines.append(
             _line(
                 item,
@@ -378,6 +375,23 @@ def price_scope(data, table, numbers=None):
                 )
             )
     return lines, warnings
+
+
+def _cushion_lines(lines, policy):
+    """(dollars, square feet) of each area line, as the flat cushion counts them.
+
+    Dollars never change. The waste basis only fills the first square feet sooner; every other
+    basis counts each line's own square feet."""
+    waste_counts = policy['area_basis'] == 'demolition_with_waste'
+    return [
+        (
+            _dec(line['total']),
+            _dec(line['area']) * (1 + _dec(line['waste_percent']) / HUNDRED)
+            if waste_counts
+            else _dec(line['area']),
+        )
+        for line in lines
+    ]
 
 
 def _top_dollars(area_lines, first_sf):
@@ -473,10 +487,8 @@ def totals(data, lines, policy, items):
 
     fixed, equipment = _sum(lines, 'fixed'), _sum(lines, 'equipment')
     labor_material = [line for line in lines if line['bucket'] == 'labor_material']
-    area_lines = [
-        (_dec(line['total']), _dec(line['area'])) for line in labor_material if line['area']
-    ]
-    area_dollars = sum((total for total, _ in area_lines), ZERO)
+    area_priced = [line for line in labor_material if line['area']]
+    area_dollars = sum((_dec(line['total']) for line in area_priced), ZERO)
     other_dollars = sum((_dec(line['total']) for line in labor_material if not line['area']), ZERO)
     low_lm = area_dollars + other_dollars
     # Checked before the minimum, so a minimum never turns an empty job into a signable one.
@@ -494,7 +506,7 @@ def totals(data, lines, policy, items):
             Decimal(tier['first_percent']) / HUNDRED,
             Decimal(tier['beyond_percent']) / HUNDRED,
         )
-        top = _top_dollars(area_lines, Decimal(tier['first_sf']))
+        top = _top_dollars(_cushion_lines(area_priced, policy), Decimal(tier['first_sf']))
         high_lm = _money(
             (1 + beyond) * area_dollars + (first - beyond) * top + (1 + first) * other_dollars
         )

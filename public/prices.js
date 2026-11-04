@@ -595,17 +595,17 @@
     [
       'demolition',
       'Raw demolition area',
-      'The square feet of material being removed in each room, added up, before any waste is added.',
+      'The square feet of material being removed in each room, added up, before any waste is added. Items set to Rooms: job area price from it. The flat cushion counts the square feet on each line priced by area, including items such as antimicrobial. It does not change how a high end built from the IICRC equipment range works.',
     ],
     [
       'demolition_with_waste',
       'Demolition area with waste',
-      "The same square feet, plus each room's waste percent. A 100 sq ft room with 10% waste counts as 110 sq ft.",
+      "The same square feet, plus each room's waste percent, or the item's if the room has none. A 100 sq ft room with 10% waste counts as 110 sq ft. This fills the flat cushion's first square feet sooner and does not change any item's price. It does not change how a high end built from the IICRC equipment range works.",
     ],
     [
       'wet_floor',
       'Wet floor area',
-      'The square feet of floor that got wet in each room, whether or not any of it is removed.',
+      "The square feet of floor that got wet in each room, whether or not any of it is removed. A blank wet floor area uses the room's floor area. This only applies to items set to Rooms: job area. It does not change the flat cushion or how a high end built from the IICRC equipment range works.",
     ],
   ];
   const CABINETRY_MULTIPLIER_MEANING =

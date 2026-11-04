@@ -7,6 +7,8 @@ overhead and profit is applied before sales tax, so taxable items carry their sh
 
 import copy
 from decimal import Decimal as D
+import hashlib
+import json
 import random
 
 import pytest
@@ -2059,40 +2061,97 @@ def _job_area_table(area_basis, price='4', waste='5', **policy):
     return table([item], area_basis=area_basis, **policy)
 
 
+def _starter_job_table(area_basis):
+    """The starter list on a flat cushion, priced where this job reaches it."""
+    prices = {
+        'demo_cat2_floor': '3',
+        'demo_cat2_wall': '4',
+        'antimicrobial': '0.50',
+    }
+    chosen = price_table.starter_table()
+    for row in chosen['items']:
+        row['unit_price'] = prices.get(row['item_id'], '')
+        row['enabled'] = row['item_id'] in prices
+    chosen['policy']['area_basis'] = area_basis
+    chosen['policy']['assist']['range_method'] = 'cushion'
+    return price_table.normalize_table(chosen, publish=False)
+
+
 @pytest.mark.parametrize(
-    'area_basis,quantities,wastes,low,high',
+    'area_basis,quantities,low,high',
     [
         # 100 + 900 sq ft fits the first 1,000, so all of it carries 50%.
-        ('demolition', [100.0, 900.0], [10.0, 5.0], '4220.00', '6330.00'),
-        # The same dollars, but 110 + 945 sq ft spills 55 sq ft past the first 1,000.
-        (WASTE_BASIS, [110.0, 945.0], [0.0, 0.0], '4220.00', '6264.00'),
-        ('wet_floor', [120.0, 800.0], [10.0, 5.0], '3888.00', '5832.00'),
+        ('demolition', [100.0, 900.0], '4220.00', '6330.00'),
+        # The same lines and dollars, but 110 + 945 sq ft spills 55 sq ft past the first 1,000.
+        (WASTE_BASIS, [100.0, 900.0], '4220.00', '6264.00'),
+        # A job area item prices from the wet floor; the cushion counts those 920 sq ft.
+        ('wet_floor', [120.0, 800.0], '3888.00', '5832.00'),
     ],
 )
-def test_the_three_area_bases_price_the_same_job(area_basis, quantities, wastes, low, high):
+def test_the_three_area_bases_on_a_job_area_item(area_basis, quantities, low, high):
     lines, estimate, _ = run(job(TWO_ROOMS), _job_area_table(area_basis))
     assert [line['quantity'] for line in lines] == quantities
     assert [line['area'] for line in lines] == quantities
-    assert [line['waste_percent'] for line in lines] == wastes
+    assert [line['waste_percent'] for line in lines] == [10.0, 5.0]
     assert estimate['low']['total'] == D(low)
     assert estimate['high']['total'] == D(high)
 
 
-def test_the_waste_basis_never_charges_waste_twice():
-    # 100 sq ft with 10% waste counts as 110 sq ft at the price, not 110 sq ft plus 10% again.
+@pytest.mark.parametrize(
+    'area_basis,high',
+    [
+        # The dearest 1,000 of 1,920 line sq ft: 60 + 900 + 40, which is $3,996.
+        ('demolition', '6553.20'),
+        # Waste makes those lines 66 + 900 + 44, so only 34 of the 44 fit, which is $3,966.
+        (WASTE_BASIS, '6544.20'),
+        # Wet floor keeps today's cushion: each line's own square feet, the same as raw.
+        ('wet_floor', '6553.20'),
+    ],
+)
+def test_the_three_area_bases_on_a_starter_list_job(area_basis, high):
+    data = job(
+        [
+            room('Hall', finished_sf=60, unfinished_sf=40, wet_floor_sf=120, waste_percent=10),
+            room('Den', finished_sf=900, wet_floor_sf=800),
+        ]
+    )
+    lines, estimate, _ = run(data, _starter_job_table(area_basis))
+    assert [(line['room'], line['item_id'], line['quantity'], line['total']) for line in lines] == [
+        ('Hall', 'demo_cat2_floor', 40.0, 132.0),
+        ('Hall', 'demo_cat2_wall', 60.0, 264.0),
+        ('Den', 'demo_cat2_wall', 900.0, 3600.0),
+        ('Hall', 'antimicrobial', 120.0, 66.0),
+        ('Den', 'antimicrobial', 800.0, 400.0),
+    ]
+    assert estimate['low']['total'] == D('4462.00')
+    assert estimate['high']['total'] == D(high)
+
+
+def test_the_waste_basis_charges_waste_once():
+    # 100 sq ft with 10% waste at $10 is $1,100, on any item and either demolition choice.
     data = job([room('Hall', finished_sf=100, waste_percent=10)])
-    lines, _, _ = run(data, _job_area_table(WASTE_BASIS, price='10', waste='0'))
-    assert lines[0]['quantity'] == 110.0
-    assert lines[0]['total'] == 1100.0
+    for source in ('room:basis', 'room:demolition:finished'):
+        for area_basis in ('demolition', WASTE_BASIS):
+            item = _item('area', 'demolition', 'Area', 'sf', source, '10')
+            lines, estimate, _ = run(data, table([item], area_basis=area_basis))
+            assert lines[0]['quantity'] == 100.0
+            assert lines[0]['waste_percent'] == 10.0
+            assert lines[0]['total'] == 1100.0
+            assert estimate['low']['total'] == D('1100.00')
 
 
 def test_the_waste_basis_uses_the_item_waste_when_the_room_has_none():
+    # The cushion's first 100 sq ft: 105 counted sq ft leaves 5 of them at the 20% beyond.
+    first = {'first_sf': 100, 'first_percent': '50', 'beyond_percent': '20'}
     data = job([room('Hall', finished_sf=100)])
-    lines, _, _ = run(data, _job_area_table(WASTE_BASIS, waste='5'))
-    assert lines[0]['quantity'] == 105.0
-    # Neither the room nor the item has waste: the area stays as measured.
-    lines, _, _ = run(data, _job_area_table(WASTE_BASIS, waste='0'))
-    assert lines[0]['quantity'] == 100.0
+    _, estimate, _ = run(data, _job_area_table(WASTE_BASIS, waste='5', range=first))
+    assert estimate['low']['total'] == D('420.00')
+    assert estimate['high']['total'] == D('624.00')
+    # Neither the room nor the item has waste: the same as raw.
+    for area_basis in ('demolition', WASTE_BASIS):
+        _, estimate, _ = run(data, _job_area_table(area_basis, waste='0', range=first))
+        assert estimate['low']['total'] == D('400.00')
+        assert estimate['high']['total'] == D('600.00')
 
 
 def test_a_room_with_no_demolition_area_prices_nothing_on_the_waste_basis():
@@ -2104,41 +2163,115 @@ def test_a_room_with_no_demolition_area_prices_nothing_on_the_waste_basis():
     assert warnings == [dict(code='missing_area', item_id='area', room='Hall')]
 
 
-def test_the_waste_basis_adds_waste_to_an_entered_quantity():
+def test_the_waste_basis_counts_waste_on_an_entered_quantity():
+    first = {'first_sf': 200, 'first_percent': '50', 'beyond_percent': '20'}
     data = job(
         [room('Hall', finished_sf=100, waste_percent=10)],
         quantity_overrides={
             'Hall:finished_sf': {'measured': '100', 'entered': '200', 'reason': 'Measured again'}
         },
     )
-    lines, _, _ = run(data, _job_area_table(WASTE_BASIS))
-    assert lines[0]['quantity'] == 220.0
+    lines, estimate, _ = run(data, _job_area_table(WASTE_BASIS, range=first))
+    assert lines[0]['quantity'] == 200.0
+    assert estimate['low']['total'] == D('880.00')
+    # 220 counted sq ft, 200 of them at 50%: 1.2 x 880 + 0.3 x 800.
+    assert estimate['high']['total'] == D('1296.00')
 
 
-def test_the_waste_basis_changes_nothing_on_a_range_built_from_uncertainty():
+def test_a_range_built_from_uncertainty_does_not_read_the_area_setting():
     assist = {
         'range_method': 'uncertainty',
         'drying_days': 3,
         'extra_drying_days': 0,
         'hidden_damage_percent': {'1': '10', '2': '20', '3': '30'},
     }
-    raw = run(job(TWO_ROOMS), _job_area_table('demolition', assist=assist))[1]
-    with_waste = run(job(TWO_ROOMS), _job_area_table(WASTE_BASIS, assist=assist))[1]
-    assert with_waste['low']['total'] == raw['low']['total'] == D('4220.00')
-    assert with_waste['high']['total'] == raw['high']['total'] == D('5064.00')
+    item = _item('demo', 'demolition', 'Removal', 'sf', 'room:demolition:finished', '4')
+    estimates = [
+        run(job(TWO_ROOMS), table([item], area_basis=area_basis, assist=assist))[1]
+        for area_basis in ('demolition', WASTE_BASIS, 'wet_floor')
+    ]
+    assert estimates[0]['low'] == estimates[1]['low'] == estimates[2]['low']
+    assert estimates[0]['high'] == estimates[1]['high'] == estimates[2]['high']
 
 
 @pytest.mark.parametrize(
     'source',
-    ['room:demolition:unfinished', 'room:demolition:finished', 'room:wet_floor', 'room:floor'],
+    [
+        'room:demolition:unfinished',
+        'room:demolition:finished',
+        'room:wet_floor',
+        'room:floor',
+        'room:basis',
+    ],
 )
-def test_the_waste_basis_only_reaches_items_priced_by_the_area_setting(source):
+def test_the_waste_basis_never_changes_a_line(source):
     data = job([room(**FULL_ROOM, waste_percent=10)])
     items = _one(source)
-    raw = pricing_v2.price_scope(data, table(items))[0]
-    chosen = pricing_v2.price_scope(data, table(items, area_basis=WASTE_BASIS))[0]
-    assert chosen == raw
-    assert chosen[0]['waste_percent'] == 10.0
+    assert pricing_v2.price_scope(
+        data, table(items, area_basis=WASTE_BASIS)
+    ) == pricing_v2.price_scope(data, table(items))
+
+
+def test_the_wet_floor_basis_does_not_change_the_flat_cushion():
+    # No item here is set to job area, so wet floor must match raw to the cent.
+    items = [
+        _item('demo', 'demolition', 'Removal', 'sf', 'room:demolition:finished', '4'),
+        _item('anti', 'treatment', 'Antimicrobial', 'sf', 'room:wet_floor', '0.50'),
+    ]
+    for wet_floor in (100, 800, 1200):
+        data = job([room('Hall', finished_sf=1500, floor_sf=2000, wet_floor_sf=wet_floor)])
+        raw = run(data, table(items))[1]
+        wet = run(data, table(items, area_basis='wet_floor'))[1]
+        assert wet['low'] == raw['low']
+        assert wet['high'] == raw['high']
+
+
+def test_the_waste_basis_stays_monotone_in_every_input_and_never_falls_below_the_low():
+    rng = random.Random(20261104)
+    tolerance = D('0.02')
+    checks = 0
+    for _ in range(600):
+        chosen, values = random_table(rng), random_job(rng)
+        chosen['policy']['area_basis'] = WASTE_BASIS
+        low, high = ends(values, chosen)
+        assert high >= low
+        for changed in bumps(values):
+            new_low, new_high = ends(changed, chosen)
+            assert new_low >= low - tolerance, changed
+            assert new_high >= high - tolerance, changed
+            checks += 1
+    assert checks > 10000
+
+
+def test_the_waste_basis_never_raises_the_high_above_raw():
+    rng = random.Random(20261105)
+    for _ in range(600):
+        chosen, values = random_table(rng), random_job(rng)
+        chosen['policy']['area_basis'] = 'demolition'
+        low, high = ends(values, chosen)
+        chosen['policy']['area_basis'] = WASTE_BASIS
+        waste_low, waste_high = ends(values, chosen)
+        assert waste_low == low
+        assert low <= waste_high <= high
+
+
+def _pricing_digest():
+    """Every table hash, line and total over a seeded scan, on the two bases that existed before."""
+    rng = random.Random(20261104)
+    results = []
+    for _ in range(400):
+        chosen, values = random_table(rng), random_job(rng)
+        data = InspectionData.model_validate(values)
+        lines, warnings = pricing_v2.price_scope(data, chosen)
+        estimate = pricing_v2.totals(data, lines, chosen['policy'], chosen['items'])
+        results.append([price_table.content_hash(chosen), lines, warnings, estimate])
+    encoded = json.dumps(results, sort_keys=True, default=str).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def test_existing_tables_price_byte_for_byte_as_they_did():
+    # Recorded by running this scan on the backend at aed7a61, before the third choice existed.
+    assert _pricing_digest() == ('f47ba3af354bc59f08388299e06476ea65b77ede25bbf89ad08377966cb61017')
 
 
 def test_tables_that_never_chose_the_waste_basis_keep_their_content_hash():

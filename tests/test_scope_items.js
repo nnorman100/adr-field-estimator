@@ -218,22 +218,18 @@ test('room-sourced items total the matching rooms the way the server prices them
   assert.equal(q('room:basis', [], { area_basis: 'wet_floor' }), 120);
 });
 
-test('the waste area basis totals what the server prices', () => {
+test('the waste area basis leaves every quantity as measured, as the server prices them', () => {
   const rooms = [
     { category: 1, unfinished_sf: 40, finished_sf: 60, floor_sf: 150, waste_percent: 10 },
     { category: 2, finished_sf: 900, floor_sf: 1000, waste_percent: 0 },
-    { category: 2, finished_sf: 0, floor_sf: 500, waste_percent: 25 },
   ];
-  const q = (source, waste, area_basis) =>
-    ScopeItems.roomQuantity(item('x', 'demolition', source, { waste_percent: waste }), rooms, {
+  const q = (source, area_basis) =>
+    ScopeItems.roomQuantity(item('x', 'demolition', source, { waste_percent: '5' }), rooms, {
       area_basis,
     });
-  // A room's own percent wins; the second room has none, so the item's 5% applies to it.
-  assert.equal(q('room:basis', '5', 'demolition_with_waste'), 1055);
-  assert.equal(q('room:basis', '0', 'demolition_with_waste'), 1010);
-  assert.equal(q('room:basis', '5', 'demolition'), 1000);
-  // Only an item priced by the area setting moves.
-  assert.equal(q('room:demolition:finished', '5', 'demolition_with_waste'), 960);
+  assert.equal(q('room:basis', 'demolition_with_waste'), 1000);
+  assert.equal(q('room:basis', 'demolition'), 1000);
+  assert.equal(q('room:demolition:finished', 'demolition_with_waste'), 960);
 });
 
 test('a room needs a wet floor input only when an enabled item prices its category from it', () => {
