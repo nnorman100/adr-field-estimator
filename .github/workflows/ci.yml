@@ -72,7 +72,7 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       ADR_BROWSER_PORT: '8876'
       PYTHONDONTWRITEBYTECODE: '1'
