@@ -8,7 +8,8 @@ name: Deploy
 # "Automatic deploys".
 #
 # workflow_dispatch with version blank runs the same refusal checks with nothing staged or deployed,
-# to prove the setup. With version set, it rolls production back to that version.
+# to prove the setup. With version set, it rolls production back to that version. An automatic run
+# never confirms a baseline that turns off a serving feature; only a rollback dispatch or a hand run can.
 on:
   workflow_run:
     workflows: [CI]
@@ -22,6 +23,12 @@ on:
         type: string
       confirm_past_migration:
         description: 'Choose yes to roll back past a data migration or a rules or index change'
+        required: false
+        default: 'no'
+        type: choice
+        options: ['no', 'yes']
+      confirm_baseline:
+        description: 'Choose yes to roll back with a repository baseline that turns off a feature now serving'
         required: false
         default: 'no'
         type: choice
@@ -59,7 +66,7 @@ jobs:
       RUN_ID: ${{ github.run_id }}
       DEPLOY_ARGS: ${{ github.event_name == 'workflow_dispatch' && '--check-only' || '' }}
       ROLLBACK_VERSION: ${{ inputs.version || '' }}
-      CONFIRM_ARGS: ${{ inputs.confirm_past_migration == 'yes' && '--confirm-past-migration' || '' }}
+      CONFIRM_ARGS: ${{ format('{0} {1}', inputs.confirm_past_migration == 'yes' && '--confirm-past-migration' || '', inputs.confirm_baseline == 'yes' && '--confirm-baseline' || '') }}
     steps:
       # Deploy the commit CI tested, not whatever master has moved to since.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

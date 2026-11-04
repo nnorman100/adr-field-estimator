@@ -3,6 +3,7 @@
 Everything outside the process is replaced by FakeRunner; no test touches Google Cloud, GitHub or git.
 """
 
+import importlib
 import json
 import re
 import shlex
@@ -14,6 +15,7 @@ import pytest
 import yaml
 
 from scripts import auto_deploy as auto
+from scripts import deploy_backend
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
@@ -489,11 +491,167 @@ def test_health_is_retried_for_a_cold_start():
     assert runner.sleeps == [10, 10]
 
 
-def test_baseline_flag_changes_are_recorded_not_blocked(summary):
+def test_a_baseline_that_is_not_less_permissive_is_recorded_not_blocked(summary, todays_baseline):
+    # Unset is off on the server, so the repository baseline only adds to what is serving.
     runner = FakeRunner()
     runner.revisions['rev-old'] = revision(OLD, {'AI_FEATURES': None, 'PRICE_BOOKS_ENABLED': None})
     assert release(runner) == 0
     assert "AI_FEATURES '(unset)' -> 'readiness'" in summary.text()
+    assert "PRICE_BOOKS_ENABLED '(unset)' -> 'false'" in summary.text()
+
+
+def confirmations(expression):
+    """The flag each dispatch input turns on in a workflow expression."""
+    return dict(re.findall(r"inputs\.(\w+) == 'yes' && '(--[\w-]+)'", expression))
+
+
+def serving_with(runner, commit=OLD, **env):
+    runner.revisions['rev-old'] = revision(commit, env)
+    return runner
+
+
+def stage_values(runner):
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    return stage[stage.index('--ai-features') + 1], stage[stage.index('--price-books') + 1]
+
+
+@pytest.fixture
+def todays_baseline(monkeypatch):
+    """These tests are about the comparison, so they survive a later change of the constants."""
+    monkeypatch.setattr(auto, 'AI_FEATURES', 'readiness')
+    monkeypatch.setattr(auto, 'PRICE_BOOKS', 'off')
+    monkeypatch.setitem(BASELINE, 'AI_FEATURES', 'readiness')
+    monkeypatch.setitem(BASELINE, 'PRICE_BOOKS_ENABLED', 'false')
+
+
+def test_price_books_on_serving_refuses_a_baseline_that_would_turn_them_off(
+    summary, capsys, todays_baseline
+):
+    runner = serving_with(FakeRunner(), PRICE_BOOKS_ENABLED='true')
+    assert release(runner) == 1
+    assert 'stage' not in runner.keys() and 'traffic' not in runner.keys()
+    assert 'hosting-deploy' not in runner.keys()
+    error = capsys.readouterr().err
+    assert '::error::' in error and 'PRICE_BOOKS_ENABLED' in error
+    text = summary.text()
+    assert "serving 'true', repository baseline 'false'" in text
+    assert 'Nothing was staged' in text
+    assert 'DEFAULT_PRICE_BOOKS' in text and '--confirm-baseline' in text
+
+
+def test_a_merge_cannot_undo_price_books_once_the_repository_baseline_is_on(
+    summary, monkeypatch, todays_baseline
+):
+    # The turn-on: the constant changes in a reviewed PR, so this and every later merge stages it.
+    monkeypatch.setattr(auto, 'PRICE_BOOKS', 'on')
+    runner = FakeRunner(staged_env={'PRICE_BOOKS_ENABLED': 'true'})
+    assert release(runner) == 0
+    assert stage_values(runner)[1] == 'on'
+    assert "PRICE_BOOKS_ENABLED 'false' -> 'true'" in summary.text()
+
+    later = serving_with(
+        FakeRunner(staged_env={'PRICE_BOOKS_ENABLED': 'true'}), PRICE_BOOKS_ENABLED='true'
+    )
+    assert release(later) == 0
+    assert stage_values(later)[1] == 'on'
+
+
+def test_dropping_a_serving_ai_feature_is_refused_and_names_it(summary, todays_baseline):
+    runner = serving_with(FakeRunner(), AI_FEATURES='drying_watch,readiness')
+    assert release(runner) == 1
+    assert 'stage' not in runner.keys()
+    text = summary.text()
+    assert "AI_FEATURES: serving 'drying_watch,readiness', repository baseline 'readiness'" in text
+    assert 'turn off drying_watch' in text and 'DEFAULT_AI_FEATURES' in text
+
+
+def test_ai_features_are_compared_as_the_server_reads_them(summary, monkeypatch, todays_baseline):
+    # Order, case, blanks and repeats do not change what the server enables.
+    monkeypatch.setattr(auto, 'AI_FEATURES', 'drying_watch,readiness')
+    runner = serving_with(
+        FakeRunner(staged_env={'AI_FEATURES': 'drying_watch,readiness'}),
+        AI_FEATURES=' Readiness, ,DRYING_WATCH,readiness',
+    )
+    assert release(runner) == 0
+
+
+def test_price_books_are_compared_as_the_server_reads_them(summary, todays_baseline):
+    # The server enables price books only for the word true, in any case.
+    for value in ('TRUE', 'True'):
+        assert release(serving_with(FakeRunner(), PRICE_BOOKS_ENABLED=value)) == 1
+    for value in ('false', '1', 'yes', '', None):
+        assert release(serving_with(FakeRunner(), PRICE_BOOKS_ENABLED=value)) == 0
+
+
+def test_every_setting_that_would_drop_is_named_in_one_refusal(summary, todays_baseline):
+    runner = serving_with(
+        FakeRunner(), PRICE_BOOKS_ENABLED='true', AI_FEATURES='job_summary,readiness'
+    )
+    assert release(runner) == 1
+    assert 'PRICE_BOOKS_ENABLED' in summary.text() and 'turn off job_summary' in summary.text()
+
+
+def test_check_only_also_refuses_a_less_permissive_baseline(summary, todays_baseline):
+    runner = serving_with(FakeRunner(), PRICE_BOOKS_ENABLED='true')
+    assert release(runner, '--check-only') == 1
+    assert 'stage' not in runner.keys()
+    assert 'refused or failed' in summary.text()
+
+
+def test_a_commit_already_serving_is_still_skipped_not_refused(summary, todays_baseline):
+    runner = serving_with(FakeRunner(serving_commit=NEW), NEW, PRICE_BOOKS_ENABLED='true')
+    assert release(runner) == 0
+    assert 'skipped' in summary.text()
+
+
+def test_a_confirmed_hand_run_lowers_the_baseline_and_says_so(summary, capsys, todays_baseline):
+    runner = serving_with(FakeRunner(), PRICE_BOOKS_ENABLED='true')
+    assert release(runner, '--confirm-baseline') == 0
+    assert stage_values(runner)[1] == 'off'
+    assert 'traffic' in runner.keys()
+    text = summary.text()
+    assert 'Lowered on purpose with --confirm-baseline' in text
+    assert "PRICE_BOOKS_ENABLED 'true' -> 'false'" in text
+    assert '::warning::' in capsys.readouterr().err
+
+
+def test_automatic_rollback_after_a_confirmed_release_restores_the_serving_revision(
+    summary, todays_baseline
+):
+    # Traffic returns to the revision that was serving, flag and all; nothing is staged again.
+    runner = serving_with(FakeRunner(fail={'verify'}), PRICE_BOOKS_ENABLED='true')
+    assert release(runner, '--confirm-baseline') == 1
+    assert runner.keys().count('stage') == 1
+    rollback = [argv for key, argv in runner.calls if key == 'traffic'][-1]
+    assert '--to-revisions=rev-old=100' in rollback
+    assert any(
+        entry['revisionName'] == 'rev-old' and entry['percent'] == 100 for entry in runner.traffic
+    )
+    assert 'completed' in summary.text()
+
+
+def test_the_automatic_workflow_can_never_confirm_a_lower_baseline():
+    step = next(step for step in deploy_job()['steps'] if step.get('name') == 'Release')
+    variables = {token for token in shlex.split(step['run'], comments=True) if '$' in token}
+    assert variables == {'$COMMIT', '$RUN_ID', '$DEPLOY_ARGS'}
+    assert confirmations(deploy_job()['env']['DEPLOY_ARGS']) == {}
+
+
+def test_one_constant_sets_the_baseline_for_both_deploy_scripts(monkeypatch):
+    for name, value in (('DEFAULT_PRICE_BOOKS', 'on'), ('DEFAULT_AI_FEATURES', 'job_summary')):
+        monkeypatch.setattr(deploy_backend, name, value)
+    try:
+        importlib.reload(auto)
+        assert auto.PRICE_BOOKS == 'on' and auto.AI_FEATURES == 'job_summary'
+    finally:
+        monkeypatch.undo()
+        importlib.reload(auto)
+    assert auto.PRICE_BOOKS == deploy_backend.DEFAULT_PRICE_BOOKS
+
+
+@pytest.mark.parametrize('argv', (['--publish', NEW], ['--next-version']))
+def test_confirm_baseline_is_refused_where_nothing_is_staged(argv):
+    assert auto.main([*argv, '--confirm-baseline'], runner=FakeRunner()) == 2
 
 
 def test_failed_verification_rolls_traffic_and_hosting_back_and_fails(summary):
@@ -909,7 +1067,9 @@ def test_rollback_from_a_detached_checkout_returns_to_that_commit(summary):
 
 def test_workflow_offers_a_rollback_with_an_explicit_migration_confirmation():
     inputs = yaml.safe_load(WORKFLOW)[True]['workflow_dispatch']['inputs']
-    assert set(inputs) == {'version', 'confirm_past_migration'}
+    assert set(inputs) == {'version', 'confirm_past_migration', 'confirm_baseline'}
+    assert inputs['confirm_baseline']['default'] == 'no'
+    assert inputs['confirm_baseline']['options'] == ['no', 'yes']
     assert inputs['version']['required'] is False
     assert inputs['confirm_past_migration']['default'] == 'no'
     assert inputs['confirm_past_migration']['options'] == ['no', 'yes']
@@ -928,6 +1088,50 @@ def test_workflow_rollback_step_stops_at_a_migration_unless_confirmed(summary):
     assert auto.main(confirmed, runner=runner) == 0
     stage = next(argv for key, argv in runner.calls if key == 'stage')
     assert stage[stage.index('--tag') + 1].endswith('0166919')
+
+
+def test_rollback_with_a_less_permissive_baseline_stops_before_staging(summary, todays_baseline):
+    runner = serving_with(rollback_runner(), NEW, PRICE_BOOKS_ENABLED='true')
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 1
+    assert 'stage' not in runner.keys() and 'traffic' not in runner.keys()
+    assert runner.head == NEW
+    text = summary.text()
+    assert 'PRICE_BOOKS_ENABLED' in text and 'Nothing was staged' in text
+    assert 'confirm_baseline=yes' in text
+
+
+def test_rollback_names_a_migration_and_a_lower_baseline_in_one_refusal(summary, todays_baseline):
+    runner = serving_with(
+        rollback_runner(migrations=[ledger_doc('price-books-v1', NEW)]),
+        NEW,
+        PRICE_BOOKS_ENABLED='true',
+    )
+    assert auto.main(['--rollback', '2026.10.30-1'], runner=runner) == 1
+    text = summary.text()
+    assert '--confirm-past-migration' in text and '--confirm-baseline' in text
+
+
+def test_workflow_rollback_step_restores_an_older_revision_when_the_baseline_is_confirmed(
+    summary, todays_baseline
+):
+    env = {'ROLLBACK_VERSION': '2026.10.30-1', 'RUN_ID': '41140166919'}
+    plain = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': ''})
+    runner = serving_with(rollback_runner(), NEW, PRICE_BOOKS_ENABLED='true')
+    assert auto.main(plain, runner=runner) == 1
+    assert 'stage' not in runner.keys()
+
+    confirmed = step_argv('Roll back to version', {**env, 'CONFIRM_ARGS': '--confirm-baseline'})
+    runner = serving_with(rollback_runner(), NEW, PRICE_BOOKS_ENABLED='true')
+    assert auto.main(confirmed, runner=runner) == 0
+    assert stage_values(runner) == ('readiness', 'off')
+    assert 'Rolled production back to version 2026.10.30-1' in summary.text()
+
+
+def test_workflow_passes_each_rollback_confirmation_from_its_own_input():
+    assert confirmations(deploy_job()['env']['CONFIRM_ARGS']) == {
+        'confirm_past_migration': '--confirm-past-migration',
+        'confirm_baseline': '--confirm-baseline',
+    }
 
 
 def test_workflow_publish_step_publishes_the_commit_that_was_released(summary):

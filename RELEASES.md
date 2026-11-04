@@ -47,7 +47,8 @@ the revision that serves traffic instead.
     pull requests in plain words.
 - **One-step rollback to a version**: `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` or the
   **Deploy** workflow's `version` input. See [Rollback](docs/firebase-isolation.md#rollback), including
-  when it stops for a data migration or a rules or index change.
+  when it stops for a data migration, a rules or index change, or a baseline that would turn off a
+  feature now serving.
 
 ## Recording a release
 
@@ -58,9 +59,12 @@ number for the checked-out commit.
 1. `python scripts/deploy_backend.py --workspaces on|off --tag <tag> --version "$VERSION" ... --yes` stamps
    the image and its `source-commit` label. Every deploy sets `WORKSPACES_ENABLED`, `AI_FEATURES` and
    `PRICE_BOOKS_ENABLED` from this command, not from the latest Cloud Run template. The defaults are
-   the current production baseline: `AI_FEATURES=readiness` and `PRICE_BOOKS_ENABLED=false`. Pass
-   `--ai-features` (or `none`) and `--price-books on|off` only to change that baseline on purpose.
-   The command prints the baseline, then a row for the staged revision. Fill in the revision suffix
+   the repository baseline (`DEFAULT_AI_FEATURES` and `DEFAULT_PRICE_BOOKS` in
+   `scripts/deploy_backend.py`), today `AI_FEATURES=readiness` and `PRICE_BOOKS_ENABLED=false`.
+   Turning a feature on is one reviewed pull request that changes the baseline, not a flag here; see
+   [Turning a feature on or off](docs/firebase-isolation.md#turning-a-feature-on-or-off).
+   `--ai-features` (or `none`) and `--price-books on|off` set one revision only, such as a staged 0%
+   check. The command prints the baseline, then a row for the staged revision. Fill in the revision suffix
    and append it.
 2. After `gcloud run services update-traffic ... --to-tags=<tag>=100`, append the same revision with
    `100% (promoted)`.

@@ -3,8 +3,11 @@
 Cloud Run copies environment variables from the service's latest template, which can be a staged
 revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES and
 PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting those staged values.
-The defaults are the current production baseline: AI_FEATURES=readiness and price books off. Pass
---ai-features or --price-books only to change that baseline on purpose. STAFF_EMAILS is the legacy
+The defaults are the production baseline, DEFAULT_AI_FEATURES and DEFAULT_PRICE_BOOKS below, which
+scripts/auto_deploy.py also stages every release with. Turning a feature on is one reviewed pull
+request that changes one of them, so no later merge can undo it. --ai-features and --price-books
+set one revision only, such as a staged 0% check; the next release goes back to the baseline, or
+stops, so they are not how a feature is turned on. STAFF_EMAILS is the legacy
 staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
 --staff-emails to set it; without it the revision inherits the service template's value, and the
 script refuses (even for --dry-run) when that template has none. The same command mounts the
@@ -39,7 +42,10 @@ STAMP = ROOT / 'backend' / 'SOURCE_COMMIT'
 KNOWN_AI_FEATURES = frozenset(
     {'readiness', 'drying_watch', 'priced_extras', 'job_summary', 'ai_usage', 'estimate_assist'}
 )
+# The production feature baseline: the one place to change it, in a reviewed pull request
+# (docs/firebase-isolation.md, "Turning a feature on or off").
 DEFAULT_AI_FEATURES = 'readiness'
+DEFAULT_PRICE_BOOKS = 'off'
 _ON_OFF = {'on': 'true', 'off': 'false'}
 
 
@@ -101,7 +107,12 @@ def baseline_line(assignments):
 
 
 def command(
-    workspaces, tag, commit, ai_features=DEFAULT_AI_FEATURES, price_books='off', staff_emails=None
+    workspaces,
+    tag,
+    commit,
+    ai_features=DEFAULT_AI_FEATURES,
+    price_books=DEFAULT_PRICE_BOOKS,
+    staff_emails=None,
 ):
     assignments = env_assignments(workspaces, ai_features, price_books)
     if staff_emails:
@@ -188,8 +199,8 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
     parser.add_argument(
         '--price-books',
         choices=('on', 'off'),
-        default='off',
-        help='PRICE_BOOKS_ENABLED for this revision (default: off)',
+        default=DEFAULT_PRICE_BOOKS,
+        help=f'PRICE_BOOKS_ENABLED for this revision (default: {DEFAULT_PRICE_BOOKS})',
     )
     parser.add_argument(
         '--staff-emails',

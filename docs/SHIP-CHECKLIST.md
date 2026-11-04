@@ -10,7 +10,7 @@ The owner approves every production release. Follow the recipe at the top of `RE
 - [ ] Firestore TTL policies verified ACTIVE (`scripts/ensure_firestore_ttls.py`, see `docs/firebase-isolation.md`)
 - [ ] Rollback pair recorded: current serving backend revision and Hosting version
 - [ ] Rollback note covers data compatibility (new fields mean old revisions lose features; prefer fixing forward)
-- [ ] Feature flags decided: `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `WORKSPACES_ENABLED` set on purpose by `scripts/deploy_backend.py`
+- [ ] Feature flags decided: `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `WORKSPACES_ENABLED` set on purpose by `scripts/deploy_backend.py`, with the first two from the repository baseline (`docs/firebase-isolation.md#turning-a-feature-on-or-off`)
 - [ ] No secrets, keys or personal data in the diff
 
 ## Release
@@ -24,7 +24,7 @@ The owner approves every production release. Follow the recipe at the top of `RE
 - [ ] For a manual release, append the rows to `RELEASES.md`; reset the stamp (`stamp_hosting.py --reset`); both `index.html` copies identical
 
 ## If a check fails
-Run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (or restore traffic to the recorded rollback revision and the recorded Hosting version), note any `_migrations` data migration or rules and indexes warning (the rollback stops there unless rerun with `--confirm-past-migration`), record the failed attempt and the rollback, and do not retry blindly. (This is what happened with release 5 on Oct 26.)
+Run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (or restore traffic to the recorded rollback revision and the recorded Hosting version), note any `_migrations` data migration or rules and indexes warning (the rollback stops there unless rerun with `--confirm-past-migration`) or baseline refusal (`--confirm-baseline`), record the failed attempt and the rollback, and do not retry blindly. (This is what happened with release 5 on Oct 26.)
 
 ## After (owner)
 - [ ] Phone check of each new screen on a real phone (record separately from automated results)

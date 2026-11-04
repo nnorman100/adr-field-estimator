@@ -155,6 +155,22 @@ def test_missing_or_invalid_choice_runs_nothing(argv):
         deploy.main(argv, run=lambda *args, **kwargs: pytest.fail('gcloud ran'), git=fake_git())
 
 
+def test_the_repository_baseline_sets_the_defaults_a_hand_deploy_uses(capsys, monkeypatch):
+    never = lambda *args, **kwargs: pytest.fail('gcloud ran')
+    monkeypatch.setattr(deploy, 'DEFAULT_PRICE_BOOKS', 'on')
+    monkeypatch.setattr(deploy, 'DEFAULT_AI_FEATURES', 'drying_watch,readiness')
+    assert (
+        deploy.main(
+            ['--workspaces', 'on', '--tag', 'stage-1', '--dry-run'], run=never, git=fake_git()
+        )
+        == 0
+    )
+    assert (
+        'Feature baseline: WORKSPACES_ENABLED=true AI_FEATURES=drying_watch,readiness '
+        'PRICE_BOOKS_ENABLED=true'
+    ) in capsys.readouterr().out
+
+
 def test_dry_run_and_unconfirmed_deploy_run_nothing(capsys, stamp_path):
     never = lambda *args, **kwargs: pytest.fail('gcloud ran')
     assert (

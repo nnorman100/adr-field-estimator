@@ -12,7 +12,9 @@ It refuses, with a message, anything the owner must release by hand: a merge tha
 firestore.rules or firestore.indexes.json since the serving commit, a serving revision whose commit is
 unknown or not an ancestor of the candidate, a staged revision whose environment, secrets or limits
 differ from the serving one beyond the three baseline flags, a serving revision with no STAFF_EMAILS,
-or a Firestore TTL policy that is missing.
+a Firestore TTL policy that is missing, or a repository baseline less permissive than the serving
+revision. That last one stops before staging unless --confirm-baseline is given on a hand run or a
+rollback dispatch; the automatic run never gives it, so no merge can turn a serving feature off.
 A candidate that is already serving, or older than what is serving, is skipped without error so
 overlapping runs and manual releases never move production backwards.
 
@@ -22,7 +24,8 @@ commit to protected master; manual releases still append RELEASES.md rows.
 --publish creates the git tag and GitHub Release for the version the live backend reports. It runs as its
 own step, because only it holds a GitHub write token, and a hand release runs it too. --rollback
 redeploys an earlier version and stops before staging when a data migration is newer than that version,
-or Firestore rules or indexes changed since it, unless --confirm-past-migration is given.
+or Firestore rules or indexes changed since it, unless --confirm-past-migration is given. It stages the
+target's code with the baseline of the checkout running it.
 --next-version prints the number a hand release should use.
 """
 
@@ -43,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.deploy_backend import (
     DEFAULT_AI_FEATURES,
+    DEFAULT_PRICE_BOOKS,
     PROJECT,
     env_assignments,
     staff_emails_value,
@@ -52,10 +56,11 @@ from scripts.release_stamp import valid_version
 SERVICE = 'alert-disaster-field-estimator'
 REGION = 'us-west2'
 HOSTING_TARGET = 'hosting:alert-disaster'
-# The production baseline passed to deploy_backend.py (docs/firebase-isolation.md, RELEASES.md).
+# The production baseline passed to deploy_backend.py, which owns the constants a turn-on PR changes
+# (docs/firebase-isolation.md, "Turning a feature on or off").
 WORKSPACES = 'on'
 AI_FEATURES = DEFAULT_AI_FEATURES
-PRICE_BOOKS = 'off'
+PRICE_BOOKS = DEFAULT_PRICE_BOOKS
 # The firebase-tools version CI already uses.
 FIREBASE_TOOLS = 'firebase-tools@15.31.0'
 # A merge touching these is released by hand: the workflow never deploys rules or indexes.
@@ -292,6 +297,66 @@ def baseline_notes(serving, staged):
         for key in BASELINE_KEYS
         if serving['env'].get(key) != staged['env'].get(key)
     ]
+
+
+def enabled_ai_features(value):
+    """The names the server enables from an AI_FEATURES value (backend/ai_features.py)."""
+    return frozenset(filter(None, (name.strip().lower() for name in value.split(','))))
+
+
+def baseline_reductions(serving):
+    """(setting, constant, line) for each serving feature the repository baseline would turn off.
+
+    Values are read the way the server reads them, so an unset flag counts as off.
+    """
+    env = serving['env']
+    want = env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS)
+    found = []
+    # backend/price_books.py: price_books_enabled.
+    if env.get('PRICE_BOOKS_ENABLED', '').lower() == 'true' and PRICE_BOOKS != 'on':
+        found.append(
+            (
+                'PRICE_BOOKS_ENABLED',
+                'DEFAULT_PRICE_BOOKS',
+                f'PRICE_BOOKS_ENABLED: serving {env["PRICE_BOOKS_ENABLED"]!r}, repository baseline '
+                f'{want["PRICE_BOOKS_ENABLED"]!r}; this release would turn it off.',
+            )
+        )
+    dropped = enabled_ai_features(env.get('AI_FEATURES', '')) - enabled_ai_features(AI_FEATURES)
+    if dropped:
+        found.append(
+            (
+                'AI_FEATURES',
+                'DEFAULT_AI_FEATURES',
+                f'AI_FEATURES: serving {env["AI_FEATURES"]!r}, repository baseline {AI_FEATURES!r}; '
+                f'this release would turn off {", ".join(sorted(dropped))}.',
+            )
+        )
+    return found
+
+
+def baseline_refusal(reductions, confirm_how):
+    settings = ', '.join(setting for setting, _, _ in reductions)
+    constants = ' and '.join(constant for _, constant, _ in reductions)
+    return '\n'.join(
+        [
+            f'Refusing a baseline less permissive than the serving revision: {settings}. '
+            'Nothing was staged.',
+            *(line for _, _, line in reductions),
+            f'To keep it on, change {constants} in scripts/deploy_backend.py in a reviewed pull '
+            f'request. To turn it off on purpose, {confirm_how}',
+        ]
+    )
+
+
+def note_lowered(record, reductions):
+    if reductions:
+        warn(
+            record,
+            'Baseline warning',
+            'Lowered on purpose with --confirm-baseline: '
+            + ' '.join(line for _, _, line in reductions),
+        )
 
 
 def check_candidate(runner, commit, serving_commit):
@@ -787,7 +852,7 @@ def _deploy_backend_and_hosting(
         runner.run([sys.executable, 'scripts/stamp_hosting.py', '--reset'], check=False)
 
 
-def release(runner, record, commit, tag, check_only=False):
+def release(runner, record, commit, tag, check_only=False, confirm_baseline=False):
     service = service_state(runner)
     previous = serving_revision(service)
     serving = revision_state(runner, previous)
@@ -799,6 +864,16 @@ def release(runner, record, commit, tag, check_only=False):
     check_ttls(runner)
     serving_summary = spec_summary(serving)
     staff_emails = serving_staff_emails(serving_summary)
+    reductions = baseline_reductions(serving_summary)
+    if reductions and not confirm_baseline:
+        raise Refused(
+            baseline_refusal(
+                reductions,
+                f'release this commit by hand: scripts/auto_deploy.py --commit {commit} '
+                '--confirm-baseline.',
+            )
+        )
+    note_lowered(record, reductions)
     version = next_version(runner, commit)
     record.set('Release version', f'`{version}`')
     record.note(
@@ -813,7 +888,15 @@ def release(runner, record, commit, tag, check_only=False):
     )
 
 
-def rollback_to_version(runner, record, version, tag=None, run_id='', confirm_past_migration=False):
+def rollback_to_version(
+    runner,
+    record,
+    version,
+    tag=None,
+    run_id='',
+    confirm_past_migration=False,
+    confirm_baseline=False,
+):
     target_commit = resolve_rollback_version(runner, version)
     tag = check_tag(tag) if tag else default_tag(target_commit, run_id)
     service = service_state(runner)
@@ -836,11 +919,22 @@ def rollback_to_version(runner, record, version, tag=None, run_id='', confirm_pa
     staff_emails = serving_staff_emails(serving_summary)
     rules_warning = check_rollback_rules(record, names, target_commit, version)
     migration_warning = check_rollback_migrations(runner, record, target_commit, version)
+    reductions = baseline_reductions(serving_summary)
+    refusals = []
+    if reductions and not confirm_baseline:
+        refusals.append(
+            baseline_refusal(
+                reductions, 'rerun with --confirm-baseline (workflow input confirm_baseline=yes).'
+            )
+        )
     if (rules_warning or migration_warning) and not confirm_past_migration:
-        raise Refused(
+        refusals.append(
             f'Rollback to {version} stopped; nothing was staged. To roll back anyway, rerun with '
             '--confirm-past-migration (workflow input confirm_past_migration=yes).'
         )
+    if refusals:
+        raise Refused('\n'.join(refusals))
+    note_lowered(record, reductions)
     record.note(
         f'Rollback target {version} ({target_commit[:12]}) verified; TTL policies in place.'
     )
@@ -897,9 +991,20 @@ def main(argv=None, runner=None):
         action='store_true',
         help='let --rollback continue past a data migration or a rules or index change',
     )
+    parser.add_argument(
+        '--confirm-baseline',
+        action='store_true',
+        help=(
+            'with --commit or --rollback: stage the repository baseline even though it turns off '
+            'a feature the serving revision has on'
+        ),
+    )
     args = parser.parse_args(argv)
     if args.check_only and not args.commit:
         print('--check-only works only with --commit.', file=sys.stderr)
+        return 2
+    if args.confirm_baseline and not (args.commit or args.rollback):
+        print('--confirm-baseline works only with --commit or --rollback.', file=sys.stderr)
         return 2
     commit = args.commit or args.publish
     if commit and not COMMIT.fullmatch(commit):
@@ -941,13 +1046,14 @@ def main(argv=None, runner=None):
                 tag=tag,
                 run_id=args.run_id,
                 confirm_past_migration=args.confirm_past_migration,
+                confirm_baseline=args.confirm_baseline,
             )
             outcome = f'rolled back to {args.rollback}'
         elif args.publish:
             publish_live_version(runner, record, args.publish)
             outcome = 'published'
         else:
-            release(runner, record, args.commit, tag, args.check_only)
+            release(runner, record, args.commit, tag, args.check_only, args.confirm_baseline)
             outcome = 'checked, nothing deployed' if args.check_only else 'released'
         return 0
     except Skipped as notice:
