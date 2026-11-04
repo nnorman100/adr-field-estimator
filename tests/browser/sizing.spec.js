@@ -138,3 +138,129 @@ test('a mold-only room has no drying check and clearing an input makes it unavai
   );
   await expect(page.locator('#sizingNote')).toHaveText('· no water rooms to size');
 });
+
+test.describe('Use suggested counts', () => {
+  const uid = 'test-owner-ws-estimator';
+  test.afterEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: false } });
+  });
+  async function onTable(page, request, features = ['estimate_assist']) {
+    await request.post('/__test/workspaces', {
+      data: { enabled: true, price_books: true, ai_features: features },
+    });
+    await request.post('/__test/price-table', { data: {} });
+    await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid);
+    await page.goto('/app');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await checkScope(page);
+    await page.locator('#address').fill('Synthetic sizing property');
+    await page.locator('#yearBuilt').fill('1998');
+    await room(page, 'finished_sf').fill('40');
+    await page.locator('#rooms .room-more summary').first().click();
+    await room(page, 'floor_sf').fill('140');
+    await room(page, 'ceiling_height_ft').fill('8');
+    await room(page, 'water_class').selectOption('2');
+    await page.locator('#dehumidifierPpd').fill('70');
+    await page.locator('#airMovers').fill('1');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  }
+  const useButton = (page) => page.locator('#sizingUseSuggested');
+
+  test('it appears only when fresh and changing something, applies, and records the counts', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await onTable(page, request);
+    await expect(useButton(page)).toBeVisible();
+    await page
+      .locator('#sizingCheck')
+      .screenshot({ path: test.info().outputPath('suggested.png') });
+    // An unsaved edit: the check no longer describes the draft.
+    await page.locator('#airMovers').fill('2');
+    await expect(useButton(page)).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await expect(useButton(page)).toBeVisible();
+    // Offline: the check is the server's.
+    await context.setOffline(true);
+    await expect(useButton(page)).toBeHidden();
+    await context.setOffline(false);
+    await expect(useButton(page)).toBeVisible();
+
+    await useButton(page).click();
+    await expect(page.locator('#message')).toHaveText(
+      'Air movers set to 3 (IICRC minimum); dehumidifiers set to 1.',
+    );
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await expect(page.locator('#dehumidifiers')).toHaveValue('1');
+    await expect(page.locator('#scopeConfirmed')).not.toBeChecked();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    // Nothing left to change.
+    await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Within range');
+    await expect(useButton(page)).toBeHidden();
+    const saved = await page.evaluate(() => state.record.data);
+    expect(saved.air_movers).toBe(3);
+    expect(saved.quantity_overrides.air_movers).toEqual({ measured: '3', entered: '3' });
+    expect(saved.quantity_overrides.dehumidifiers).toEqual({ measured: '1', entered: '1' });
+    // A later change needs the same short reason as a walkthrough value.
+    await page.locator('#airMovers').fill('2');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeVisible();
+  });
+
+  test('its counts carry the Undo badge, and a count explained with a reason gets no suggestion', async ({
+    page,
+    request,
+  }) => {
+    await onTable(page, request);
+    await useButton(page).click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    const badge = page.locator('#airMovers').locator('..').locator('.walkthrough-edit');
+    await expect(badge).toContainText('From sizing check · Undo');
+    await expect(badge).toHaveAttribute(
+      'title',
+      'IICRC S500 minimum for 140 sq ft of wet floor across 1 room; the maximum is 4.',
+    );
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+
+    await badge.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect(page.locator('#airMovers')).toHaveValue('1');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const undone = await page.evaluate(() => state.record.data);
+    expect(undone.air_movers).toBe(1);
+    expect(undone.quantity_overrides.air_movers).toBeUndefined();
+    // Undo touches only its own count, and the suggestion is on offer again.
+    expect(undone.dehumidifiers).toBe(1);
+    await expect(page.locator('#dehumidifiers').locator('..')).toContainText('From sizing check');
+    await expect(useButton(page)).toBeVisible();
+
+    await useButton(page).click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('2');
+    await page.locator('[data-override-reason="air_movers"]').fill('Only one wall is wet');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');
+    await expect(useButton(page)).toBeHidden();
+  });
+
+  test('it is absent with the flag off', async ({ page, request }) => {
+    await onTable(page, request, []);
+    await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');
+    await expect(useButton(page)).toBeHidden();
+  });
+
+  test('it is absent on a rate-book job, which keeps its form', async ({ page }) => {
+    await ready(page);
+    await page.locator('#rooms .room-more summary').first().click();
+    await room(page, 'floor_sf').fill('140');
+    await room(page, 'ceiling_height_ft').fill('8');
+    await room(page, 'water_class').selectOption('2');
+    await page.locator('#airMovers').fill('1');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('details.more-equipment summary').click();
+    await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');
+    await expect(useButton(page)).toBeHidden();
+  });
+});

@@ -251,3 +251,118 @@ test('a repeated fill keeps unchanged field Undos but no room removal after a ma
   await expect(page.locator('#rooms .room')).toHaveCount(2);
   await expect(kitchen(page, 'waste_percent')).toHaveValue('10');
 });
+
+test.describe('suggested counts on a company price list', () => {
+  const uid = 'test-owner-ws-estimator';
+  const NOTES = 'Kitchen, category 2, 80 SF drywall.';
+  test.afterEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: false } });
+  });
+  async function open(page, request, features = ['estimate_assist']) {
+    await request.post('/__test/workspaces', {
+      data: { enabled: true, price_books: true, ai_features: features },
+    });
+    await request.post('/__test/price-table', { data: {} });
+    await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid);
+    await page.goto('/app');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await checkScope(page);
+    await page.locator('#address').fill('Synthetic scope autofill property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill(NOTES);
+    await room(page, 'name').fill('Kitchen');
+    await page.locator('#rooms .room-more summary').first().click();
+    await room(page, 'floor_sf').fill('140');
+    await room(page, 'ceiling_height_ft').fill('8');
+    await room(page, 'water_class').selectOption('2');
+    await page.locator('#dehumidifierPpd').fill('70');
+    await page.locator('#airMovers').fill('1');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  }
+  async function fillScope(page) {
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
+  }
+
+  test('the fill raises a count to the S500 minimum, asks a reason to lower it, and Undo restores it', async ({
+    page,
+    request,
+  }) => {
+    await open(page, request);
+    await fillScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await expect(page.locator('#dehumidifiers')).toHaveValue('1');
+    const list = page.locator('#scopeSuggestionList');
+    await expect(list).toContainText('From the IICRC sizing check');
+    await expect(list).toContainText(
+      'IICRC S500 minimum for 140 sq ft of wet floor across 1 room; the maximum is 4.',
+    );
+    await expect(list).toContainText(
+      '23 pints/day recommended for the stated room volumes and classes; 1 unit at 70 pints/day each.',
+    );
+    const movers = page.locator('#airMovers').locator('..');
+    await expect(movers).toContainText('From sizing check · Undo');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const saved = await page.evaluate(() => state.record.data.quantity_overrides);
+    expect(saved.air_movers).toEqual({ measured: '3', entered: '3' });
+    expect(saved.dehumidifiers).toEqual({ measured: '1', entered: '1' });
+
+    // Lowering the count opens the reason box, and the server keeps the reason.
+    const reason = page.locator('[data-override-reason="air_movers"]');
+    await expect(reason).toBeHidden();
+    await page.locator('#airMovers').fill('2');
+    await expect(reason).toBeVisible();
+    await reason.fill('Only one wall is wet');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect(await page.evaluate(() => state.record.data.quantity_overrides.air_movers)).toEqual({
+      measured: '3',
+      entered: '2',
+      reason: 'Only one wall is wet',
+    });
+    // Reading the walkthrough again leaves the explained count.
+    const read = page.waitForResponse((r) => r.url().endsWith('/scope-suggestions'));
+    await page.locator('#fillScopeProperty').click();
+    await read;
+    await expect(page.locator('#fillScopeProperty')).toHaveText('Fill scope from walkthrough');
+    await expect(page.locator('#airMovers')).toHaveValue('2');
+  });
+
+  test('Undo restores the earlier count and asks for no reason', async ({ page, request }) => {
+    await open(page, request);
+    await fillScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page
+      .locator('#airMovers')
+      .locator('..')
+      .getByRole('button', { name: 'Undo', exact: true })
+      .click();
+    await expect(page.locator('#airMovers')).toHaveValue('1');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const saved = await page.evaluate(() => state.record.data);
+    expect(saved.air_movers).toBe(1);
+    expect(saved.quantity_overrides.air_movers).toBeUndefined();
+  });
+
+  test('a spoken count stays even below the minimum', async ({ page, request }) => {
+    await open(page, request);
+    await page.locator('#technicianNotes').fill(words);
+    // 350 sq ft of wet floor: the IICRC minimum is 6 air movers, and the technician said 3.
+    await room(page, 'floor_sf').fill('350');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await fillScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await expect(page.locator('#airMovers').locator('..')).toContainText('From walkthrough');
+    await expect(page.locator('#scopeSuggestionList')).not.toContainText('IICRC S500 minimum');
+  });
+
+  test('with the flag off the fill leaves the counts alone', async ({ page, request }) => {
+    await open(page, request, []);
+    await fillScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('1');
+    await expect(page.locator('#dehumidifiers')).toHaveValue('0');
+    await expect(page.locator('#scopeSuggestionList')).not.toContainText('IICRC sizing check');
+  });
+});

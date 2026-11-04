@@ -102,7 +102,13 @@ try:
     from .price_book_api import register_price_book_routes
     from .price_book_store import Expired
     from .price_books import price_books_enabled, price_display, saved_basis
-    from .scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
+    from .scope import (
+        ScopeSuggestions,
+        fill_counts,
+        validate_suggestions,
+        scope_prompt,
+        scope_response_schema,
+    )
     from .inspection_store import (
         InspectionStore,
         Conflict,
@@ -172,7 +178,13 @@ except ImportError:
     from price_book_api import register_price_book_routes
     from price_book_store import Expired
     from price_books import price_books_enabled, price_display, saved_basis
-    from scope import ScopeSuggestions, validate_suggestions, scope_prompt, scope_response_schema
+    from scope import (
+        ScopeSuggestions,
+        fill_counts,
+        validate_suggestions,
+        scope_prompt,
+        scope_response_schema,
+    )
     from inspection_store import (
         InspectionStore,
         Conflict,
@@ -994,6 +1006,23 @@ async def readiness_pricing(store, uid, record):
     return {'prices_set': True, 'area_basis': policy.get('area_basis', 'demolition')}
 
 
+async def estimate_assist_table(store, uid, record):
+    """The company table this draft prices on when suggested counts are on, else None.
+
+    The draft's own version decides, not the company's: a draft begun on the rate book stays on it
+    after its company switches, and its form takes no suggestions.
+    """
+    if not (ai_features.enabled('estimate_assist') and WORKSPACES_ENABLED):
+        return None
+    if not (price_books_enabled() and getattr(store, 'workspaces', None)):
+        return None
+    try:
+        view = await run_in_threadpool(store.workspaces.prices.job_view, uid, record)
+    except Exception:
+        return None
+    return view.get('table') if view.get('calculation_version') == V2_CALCULATION_VERSION else None
+
+
 @app.get('/api/session')
 async def session_info(staff=Depends(current_staff)):
     result = dict(
@@ -1386,10 +1415,14 @@ async def suggest_scope(
             409,
             'The inspection changed while reading the walkthrough. Retry from the current draft.',
         )
+    proposed = result.changes
     result = validate_suggestions(data, result, claim)
+    table = await estimate_assist_table(store, staff['uid'], latest)
+    suggested = fill_counts(data, proposed, result.changes, table) if table else []
     return dict(
         inspection_id=inspection_id,
         revision=req.expected_revision,
+        suggested=suggested,
         **result.model_dump(mode='json'),
     )
 

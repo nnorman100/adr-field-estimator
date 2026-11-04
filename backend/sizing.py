@@ -1,5 +1,6 @@
 """IICRC drying-equipment sizing check: recommended air movers and dehumidification beside the
-technician's counts. It never changes counts or prices; pricing reads only the entered counts.
+technician's counts. It never changes counts or prices; pricing reads only the entered counts. A
+suggested count (suggested_counts) reaches a job only when the technician's fill or tap applies it.
 
 Sources for the arithmetic (inputs are only technician-confirmed room values; nothing is guessed):
 
@@ -173,9 +174,22 @@ def equipment_sizing(data):
     units, dehu_flag, dehu_reason = dehumidifier_check(
         data.dehumidifiers, demand, data.dehumidifier_ppd
     )
+    basis = {}
+    if low is not None:
+        wet = sum(Decimal(str(room['wet_floor_sf'])) for room in water)
+        basis['air_movers'] = (
+            f'IICRC S500 minimum for {number(wet)} sq ft of wet floor across '
+            f'{count(len(water), "room")}; the maximum is {high}.'
+        )
+    if units is not None:
+        basis['dehumidifiers'] = (
+            f'{up(demand)} pints/day recommended for the stated room volumes and classes; '
+            f'{count(units, "unit")} at {data.dehumidifier_ppd} pints/day each.'
+        )
     return dict(
         status='available',
         rooms=rooms,
+        basis=basis,
         air_movers=dict(entered=data.air_movers, min=low, max=high, flag=flag, reason=reason),
         dehumidifiers=dict(
             entered=data.dehumidifiers,
@@ -186,6 +200,24 @@ def equipment_sizing(data):
             reason=dehu_reason,
         ),
     )
+
+
+def suggested_counts(sizing, data):
+    """Counts below the check's numbers, raised to them. Never lowers one and never guesses."""
+    if sizing['status'] != 'available':
+        return []
+    suggested = []
+    movers, dehus = sizing['air_movers'], sizing['dehumidifiers']
+    if movers['min'] is not None and data.air_movers < movers['min']:
+        suggested.append(
+            dict(field='air_movers', value=movers['min'], basis=sizing['basis']['air_movers'])
+        )
+    units = dehus['recommended_units']
+    if units is not None and data.dehumidifiers < units:
+        suggested.append(
+            dict(field='dehumidifiers', value=units, basis=sizing['basis']['dehumidifiers'])
+        )
+    return suggested
 
 
 def letter_paragraph(sizing):

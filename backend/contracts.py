@@ -637,6 +637,15 @@ class SalesTaxPolicy(StrictModel):
     percent: str = Field(default='0', min_length=1, max_length=10)
 
 
+class AssistPolicy(StrictModel):
+    drying_days: int = 3
+    range_method: Literal['cushion', 'uncertainty'] = 'cushion'
+    extra_drying_days: int = 0
+    hidden_damage_percent: dict[Literal['1', '2', '3'], str] = Field(
+        default_factory=lambda: {'1': '0', '2': '0', '3': '0'}
+    )
+
+
 class PricingPolicy(StrictModel):
     estimate_mode: Literal['range', 'single'] = 'range'
     area_basis: Literal['demolition', 'wet_floor'] = 'demolition'
@@ -650,6 +659,9 @@ class PricingPolicy(StrictModel):
     overhead_profit_percent: str = Field(default='0', min_length=1, max_length=10)
     sales_tax: SalesTaxPolicy = Field(default_factory=SalesTaxPolicy)
     show_line_breakdown: bool = False
+    # Absent on every table published before it, and left out of a dump so a saved document's bytes
+    # and its proposal hash stay as they were signed.
+    assist: AssistPolicy | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode='after')
     def check_policy_values(self):
@@ -665,6 +677,7 @@ class PricingPolicy(StrictModel):
         self.minimum_job_charge = normalized['minimum_job_charge']
         self.overhead_profit_percent = normalized['overhead_profit_percent']
         self.sales_tax = SalesTaxPolicy(**normalized['sales_tax'])
+        self.assist = AssistPolicy(**normalized['assist']) if 'assist' in normalized else None
         return self
 
 

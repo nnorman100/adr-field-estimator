@@ -173,6 +173,8 @@
   // A new draft starts at the table's default quantities, never the sheet's.
   function applyDefaults(data, table) {
     if (!isV2Table(table)) return data;
+    // A table published without the assist map reads as the 3 days every new job started at.
+    data.drying_days = table.policy.assist?.drying_days ?? 3;
     const seen = new Set();
     for (const item of orderedItems(table)) {
       const source = parseSource(item.quantity_source),
@@ -217,13 +219,42 @@
       .sort();
   }
   // Job-field quantities (not day counts) whose item the current table no longer lists.
-  function unlistedFields(data, table) {
-    if (!isV2Table(table)) return [];
+  function listedFields(table) {
     const listed = new Set();
     for (const item of orderedItems(table)) {
       const source = parseSource(item.quantity_source);
       listed.add(source.field).add(source.count);
     }
+    return listed;
+  }
+  // Counts the sizing check would raise, from the numbers and basis on the server's record: the
+  // rule of suggested_counts in backend/sizing.py, with no sizing arithmetic here. A count the table
+  // does not list has no input on the form to correct it, and a count explained with a reason keeps
+  // that reason, as in the fill, so both are left alone.
+  function suggestedCounts(sizing, table, data) {
+    if (sizing?.status !== 'available' || !isV2Table(table)) return [];
+    const listed = listedFields(table),
+      movers = sizing.air_movers,
+      dehumidifiers = sizing.dehumidifiers,
+      rows = [];
+    if (movers.min != null && movers.entered < movers.min)
+      rows.push({ field: 'air_movers', value: movers.min, basis: sizing.basis?.air_movers });
+    if (
+      dehumidifiers.recommended_units != null &&
+      dehumidifiers.entered < dehumidifiers.recommended_units
+    )
+      rows.push({
+        field: 'dehumidifiers',
+        value: dehumidifiers.recommended_units,
+        basis: sizing.basis?.dehumidifiers,
+      });
+    return rows.filter(
+      (row) => listed.has(row.field) && !data?.quantity_overrides?.[row.field]?.reason,
+    );
+  }
+  function unlistedFields(data, table) {
+    if (!isV2Table(table)) return [];
+    const listed = listedFields(table);
     return Object.keys(FIELD_INPUTS)
       .filter(
         (field) =>
@@ -937,6 +968,7 @@
     syncOverrides,
     noteMeasured,
     undoMeasured,
+    suggestedCounts,
     renameRoom,
     watch,
     fitSizing,

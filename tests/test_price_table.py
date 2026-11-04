@@ -6,7 +6,16 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from backend import claims, main as bm, price_books, price_table, pricing, prompts, scope
+from backend import (
+    claims,
+    main as bm,
+    price_book_store,
+    price_books,
+    price_table,
+    pricing,
+    prompts,
+    scope,
+)
 from backend.adr_price_book import adr_rates
 from backend.contracts import (
     InspectionData,
@@ -915,3 +924,216 @@ def test_saved_payload_is_the_one_place_that_omits_empty_v2_fields():
     assert bm.inspection_payload(unset) == bm.inspection_payload(explicit_null)
     assert 'scope_items' not in bm.inspection_payload(explicit_null)
     assert 'quantity_overrides' not in bm.inspection_payload(explicit_null)
+
+
+OLD_SHAPE_HASH = 'fe95802f3bb8971a6f32942099d58fe0ecad42c5acc88457f70fcb239f5fe9d2'
+
+
+def _table_published_before_assist():
+    # A table as PR 8 finds it: the policy has no assist map, and its hash is already stored.
+    table = _priced_starter()
+    table['policy'] = copy.deepcopy(price_table.DEFAULT_POLICY)
+    return table
+
+
+def _with_assist(**values):
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['assist'] = {**copy.deepcopy(price_table.DEFAULT_ASSIST), **values}
+    return policy
+
+
+def test_a_table_without_assist_hashes_exactly_as_before():
+    table = _table_published_before_assist()
+    assert 'assist' not in price_table.normalize_policy(table['policy'])
+    assert 'assist' not in price_table.normalize_policy({**table['policy'], 'assist': None})
+    # The hash the code printed before the assist map existed. Every published table and pin
+    # carries a hash like it, and _valid_v2_doc recomputes it on each read.
+    assert price_table.content_hash(table) == OLD_SHAPE_HASH
+    pin = {
+        'calculation_version': price_table.CALCULATION_VERSION,
+        **copy.deepcopy(table),
+        'content_sha256': OLD_SHAPE_HASH,
+    }
+    valid, normalized = price_book_store._valid_v2_doc(pin)
+    assert valid
+    assert 'assist' not in normalized['policy']
+
+
+@pytest.mark.parametrize(
+    'values, message',
+    [
+        ({'drying_days': 0}, 'Settings: assist.drying_days must be an integer from 1 to 60.'),
+        ({'drying_days': 61}, 'Settings: assist.drying_days must be an integer from 1 to 60.'),
+        ({'drying_days': 2.5}, 'Settings: assist.drying_days must be an integer from 1 to 60.'),
+        ({'drying_days': '3'}, 'Settings: assist.drying_days must be an integer from 1 to 60.'),
+        ({'drying_days': True}, 'Settings: assist.drying_days must be an integer from 1 to 60.'),
+        (
+            {'extra_drying_days': -1},
+            'Settings: assist.extra_drying_days must be an integer from 0 to 30.',
+        ),
+        (
+            {'extra_drying_days': 31},
+            'Settings: assist.extra_drying_days must be an integer from 0 to 30.',
+        ),
+        (
+            {'range_method': 'flat'},
+            'Settings: assist.range_method must be "cushion" or "uncertainty".',
+        ),
+        (
+            {'hidden_damage_percent': {'1': '101', '2': '0', '3': '0'}},
+            'Settings: assist.hidden_damage_percent.1 must be between 0 and 100.',
+        ),
+        (
+            {'hidden_damage_percent': {'1': '0', '2': '1.234', '3': '0'}},
+            'Settings: assist.hidden_damage_percent.2 must have at most 2 decimal places.',
+        ),
+        (
+            {'hidden_damage_percent': {'1': '0', '2': '0'}},
+            'Settings: assist.hidden_damage_percent must contain keys 1, 2 and 3.',
+        ),
+    ],
+)
+def test_assist_bounds_and_messages(values, message):
+    with pytest.raises(ValueError) as error:
+        price_table.normalize_policy(_with_assist(**values))
+    assert str(error.value) == message
+
+
+def test_assist_must_be_a_map_and_its_values_read_back_canonical():
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['assist'] = 'on'
+    with pytest.raises(ValueError, match='Settings: assist must be an object.'):
+        price_table.normalize_policy(policy)
+    kept = price_table.normalize_policy(
+        _with_assist(
+            drying_days=60,
+            range_method='uncertainty',
+            extra_drying_days=30,
+            hidden_damage_percent={'1': '0.50', '2': '15.00', '3': 100},
+        )
+    )
+    assert kept['assist'] == {
+        'drying_days': 60,
+        'range_method': 'uncertainty',
+        'extra_drying_days': 30,
+        'hidden_damage_percent': {'1': '0.5', '2': '15', '3': '100'},
+    }
+    # Normalizing a stored map again changes nothing, so its hash holds.
+    assert price_table.normalize_policy(kept) == kept
+
+
+def test_assist_of_reads_absent_as_the_cushion_defaults_and_starter_as_uncertainty():
+    absent = {
+        'drying_days': 3,
+        'range_method': 'cushion',
+        'extra_drying_days': 0,
+        'hidden_damage_percent': {'1': '0', '2': '0', '3': '0'},
+    }
+    assert price_table.assist_of(price_table.DEFAULT_POLICY) == absent
+    assert price_table.assist_of({'assist': None}) == absent
+    # A reader cannot change the shared defaults through what it was handed.
+    price_table.assist_of({})['hidden_damage_percent']['1'] = '99'
+    assert price_table.assist_of({}) == absent
+    assert 'assist' not in price_table.DEFAULT_POLICY
+    starter = price_table.starter_table()['policy']
+    assert starter['assist'] == {
+        'drying_days': 3,
+        'range_method': 'uncertainty',
+        'extra_drying_days': 1,
+        'hidden_damage_percent': {'1': '10', '2': '15', '3': '25'},
+    }
+    assert price_table.assist_of(starter) == starter['assist']
+    assert price_table.normalize_policy(starter) == starter
+
+
+def test_from_v1_rates_keeps_the_cushion_so_the_switch_matches_the_rate_book():
+    policy = price_table.from_v1_rates(adr_rates())['policy']
+    assert policy['assist'] == price_table.DEFAULT_ASSIST
+    assert policy['range'] == {'first_sf': 1000, 'first_percent': '50', 'beyond_percent': '20'}
+
+
+def test_adding_assist_at_absent_values_is_no_change_and_a_method_change_is_large():
+    before = _table_published_before_assist()
+    same = copy.deepcopy(before)
+    same['policy']['assist'] = copy.deepcopy(price_table.DEFAULT_ASSIST)
+    assert price_table.diff_tables(before, same) == ({'items': [], 'policy': []}, [])
+    assert price_table.diff_tables(same, before) == ({'items': [], 'policy': []}, [])
+
+    for label, values, old, new in (
+        ('assist.drying_days', {'drying_days': 5}, 3, 5),
+        ('assist.range_method', {'range_method': 'uncertainty'}, 'cushion', 'uncertainty'),
+        ('assist.extra_drying_days', {'extra_drying_days': 2}, 0, 2),
+        (
+            'assist.hidden_damage_percent.1',
+            {'hidden_damage_percent': {'1': '10', '2': '0', '3': '0'}},
+            '0',
+            '10',
+        ),
+        (
+            'assist.hidden_damage_percent.2',
+            {'hidden_damage_percent': {'1': '0', '2': '10', '3': '0'}},
+            '0',
+            '10',
+        ),
+        (
+            'assist.hidden_damage_percent.3',
+            {'hidden_damage_percent': {'1': '0', '2': '0', '3': '10'}},
+            '0',
+            '10',
+        ),
+    ):
+        after = copy.deepcopy(before)
+        after['policy'] = _with_assist(**values)
+        diff, warnings = price_table.diff_tables(before, after)
+        assert diff['policy'] == [{'field': label, 'before': old, 'after': new}]
+        assert warnings == ['large_change']
+
+
+def test_a_first_table_reads_the_starter_settings_as_no_change():
+    starter = _priced_starter()
+    diff, warnings = price_table.diff_tables(None, starter)
+    assert not [row for row in diff['policy'] if row['field'].startswith('assist.')]
+    assert 'large_change' not in warnings
+    # An owner who moves a starter setting before the first publish sees it in the review.
+    changed = copy.deepcopy(starter)
+    changed['policy']['assist']['extra_drying_days'] = 2
+    diff, warnings = price_table.diff_tables(None, changed)
+    assert [row for row in diff['policy'] if row['field'].startswith('assist.')] == [
+        {'field': 'assist.extra_drying_days', 'before': 1, 'after': 2}
+    ]
+    assert 'large_change' in warnings
+
+
+def test_price_basis_accepts_a_policy_with_and_without_assist():
+    old = PricingPolicy(**price_table.DEFAULT_POLICY)
+    assert old.assist is None
+    # A saved document's dump gains no key, so its bytes and its proposal hash stay as signed.
+    assert 'assist' not in old.model_dump()
+    assert 'assist' not in old.model_dump(mode='json')
+    assert old.model_dump() == price_table.normalize_policy(price_table.DEFAULT_POLICY)
+    starter = price_table.starter_table()['policy']
+    dumped = PricingPolicy(**starter).model_dump()
+    assert dumped == starter
+    bad = _with_assist(drying_days=61)
+    with pytest.raises(ValidationError):
+        PricingPolicy(**bad)
+    with pytest.raises(ValidationError):
+        PricingPolicy(**{**price_table.DEFAULT_POLICY, 'assist': {'unknown': 1}})
+
+
+def test_a_new_v2_job_starts_at_the_tables_drying_days():
+    table = {**_priced_starter(), 'version_id': 'v1'}
+    table['policy']['assist']['drying_days'] = 5
+    item = next(i for i in table['items'] if i['quantity_source'] == 'typed_count_days')
+    item['default_quantity'] = '2'
+    seeded = price_table.seed_quantities(InspectionData().model_dump(mode='json'), table)
+    assert seeded['drying_days'] == 5
+    # A typed count-days item starts at the same days as the job.
+    assert seeded['scope_items'][item['item_id']]['days'] == 5
+    # An office-created job holds no measured value, so changing the days needs no reason.
+    assert 'quantity_overrides' not in seeded or not seeded['quantity_overrides']
+    old = {**_table_published_before_assist(), 'version_id': 'v0'}
+    assert (
+        price_table.seed_quantities(InspectionData().model_dump(mode='json'), old)['drying_days']
+        == 3
+    )

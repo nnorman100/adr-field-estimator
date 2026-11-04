@@ -423,3 +423,7 @@ def test_version_flag_stamps_commit_and_version_into_build_context(capsys, stamp
             run=run,
             git=fake_git(),
         )
+
+
+def test_estimate_assist_is_a_known_ai_feature():
+    assert deploy.ai_features_value('readiness,estimate_assist') == 'readiness,estimate_assist'

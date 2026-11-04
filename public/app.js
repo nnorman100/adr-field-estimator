@@ -1470,8 +1470,18 @@ async function fillScopeFromWalkthrough() {
             ': no supporting technician statement was returned.',
         );
     }
+    // Counts the server raised from the sizing check. They carry a basis instead of a quote and
+    // reach only a job on a company table, where a later change needs a reason. A spoken count wins.
+    const spoken = new Set(changes.filter((c) => c.room == null).map((c) => c.field)),
+      sized = (window.ScopeItems?.active() ? result.suggested || [] : []).filter(
+        (row) =>
+          ['air_movers', 'dehumidifiers'].includes(row.field) &&
+          Number.isInteger(row.value) &&
+          row.value > draft.data[row.field] &&
+          !spoken.has(row.field),
+      );
     const before = structuredClone(draft.data),
-      filled = applyScopeChanges(before, changes),
+      filled = applyScopeChanges(before, [...changes, ...sized]),
       entries = [];
     for (const group of groups.values()) {
       if (!changes.includes(group[0])) continue;
@@ -1498,6 +1508,17 @@ async function fillScopeFromWalkthrough() {
         });
       }
     }
+    for (const row of sized)
+      entries.push({
+        target: filled,
+        field: row.field,
+        before: before[row.field],
+        after: row.value,
+        removesRoom: false,
+        snapshot: stable(filled),
+        quotes: [],
+        basis: row.basis,
+      });
     const effective =
         stable({ ...filled, scope_confirmed: before.scope_confirmed }) !== stable(before),
       previous = state.scopeEdits;
@@ -1580,6 +1601,15 @@ async function fillScopeFromWalkthrough() {
               String(change.value),
           ),
           node('blockquote', change.source_quote),
+        );
+        return row;
+      }),
+      ...(sized.length ? [node('h4', 'From the IICRC sizing check')] : []),
+      ...sized.map((change) => {
+        const row = node('div', undefined, 'scope-suggestion');
+        row.append(
+          node('p', scopeJobLabels[change.field] + ': ' + String(change.value)),
+          node('p', change.basis, 'hint'),
         );
         return row;
       }),
@@ -1688,9 +1718,12 @@ function renderWalkthroughEdits() {
         await persist();
         say('Walkthrough value undone. Review and confirm scope again.');
       });
-    badge.title = entry.quotes.join('\n');
+    badge.title = entry.basis || entry.quotes.join('\n');
     undo.title = entry.removesRoom ? 'Remove this walkthrough room' : 'Restore previous value';
-    badge.append(node('span', 'From walkthrough · '), undo);
+    badge.append(
+      node('span', (entry.basis ? 'From sizing check' : 'From walkthrough') + ' · '),
+      undo,
+    );
     (control.type === 'radio' ? control.closest('fieldset') : control.closest('label')).append(
       badge,
     );
@@ -2083,6 +2116,61 @@ function sizingFields(room, i) {
 }
 const sizingFlags = { below: 'Below', within: 'Within range', above: 'Above' };
 // Shows the server's check for the saved data only; while edits are unsaved it says it will update.
+// What Use suggested counts would apply. The check must describe the saved draft, because it is
+// the server's; the phone holds no sizing arithmetic.
+function sizingSuggestions() {
+  if (
+    !navigator.onLine ||
+    !state.session?.ai_features?.includes('estimate_assist') ||
+    !window.ScopeItems?.active() ||
+    !canEditDraft('scope')
+  )
+    return [];
+  return ScopeItems.suggestedCounts(
+    state.record?.equipment_sizing,
+    ScopeItems.table(),
+    state.draft?.data,
+  );
+}
+function useSuggestedCounts() {
+  const rows = sizingSuggestions(),
+    draft = state.draft;
+  if (!rows.length || state.conflict || stable(draft.data) !== state.ack) return;
+  const inputs = { air_movers: 'airMovers', dehumidifiers: 'dehumidifiers' },
+    before = structuredClone(draft.data);
+  for (const row of rows) {
+    $(inputs[row.field]).value = row.value;
+    draft.data[row.field] = row.value;
+  }
+  const entries = rows.map((row) => ({
+      target: draft.data,
+      field: row.field,
+      before: before[row.field],
+      after: row.value,
+      removesRoom: false,
+      snapshot: stable(draft.data),
+      quotes: [],
+      basis: row.basis,
+    })),
+    previous = state.scopeEdits;
+  state.scopeEdits = {
+    draft,
+    data: draft.data,
+    entries: [
+      ...(previous?.draft === draft && previous.data === draft.data ? previous.entries : []),
+      ...entries,
+    ],
+  };
+  ScopeItems.noteMeasured(entries, draft.data);
+  changed();
+  const told = rows.map((row) =>
+    row.field === 'air_movers'
+      ? 'Air movers set to ' + row.value + ' (IICRC minimum)'
+      : 'dehumidifiers set to ' + row.value,
+  );
+  told[0] = told[0][0].toUpperCase() + told[0].slice(1);
+  say(told.join('; ') + '.');
+}
 function renderSizing() {
   const draft = state.draft,
     panel = $('sizingCheck'),
@@ -2093,6 +2181,7 @@ function renderSizing() {
     note.textContent = check ? '· ' + roomSizingNote(check) : '';
   });
   panel.hidden = !draft || !!state.signed || !!confirmedAuthorization;
+  $('sizingUseSuggested').hidden = !fresh || !sizingSuggestions().length;
   const note = $('sizingNote');
   note.textContent = panel.hidden
     ? ''
@@ -3006,6 +3095,8 @@ function openHelp() {
     ? 'How to use the field estimator. Topics for your role come first.'
     : 'How to use the field estimator. Sign in to see the topics for your role first.';
   helpTopics ??= [...document.querySelectorAll('#helpDialog [data-help-roles]')];
+  for (const line of document.querySelectorAll('#helpDialog [data-help-feature]'))
+    line.hidden = !state.session?.ai_features?.includes(line.dataset.helpFeature);
   for (const topic of helpTopics) {
     if (topic.dataset.helpTopic === 'extras') {
       topic.hidden = !extrasEnabled() || !roles.some((r) => ['owner', 'estimator'].includes(r));
@@ -5699,6 +5790,7 @@ async function initialize() {
     say('Scope confirmed. Tap Finish & review to generate documents.', 'success');
   });
   click('dismissScopeSuggestions', clearScopePreview);
+  click('sizingUseSuggested', useSuggestedCounts);
   click('startWalk', startWalk);
   click('stopWalk', () => stopWalk());
   click('muteMic', mute);

@@ -37,7 +37,7 @@ MAPS_SECRET = 'MAPS_API_KEY=dryscope-maps-api-key:latest'
 STAMP = ROOT / 'backend' / 'SOURCE_COMMIT'
 # Names the server actually reads. An unknown name would deploy as a silent no-op.
 KNOWN_AI_FEATURES = frozenset(
-    {'readiness', 'drying_watch', 'priced_extras', 'job_summary', 'ai_usage'}
+    {'readiness', 'drying_watch', 'priced_extras', 'job_summary', 'ai_usage', 'estimate_assist'}
 )
 DEFAULT_AI_FEATURES = 'readiness'
 _ON_OFF = {'on': 'true', 'off': 'false'}

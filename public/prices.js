@@ -609,7 +609,22 @@
     'sales_tax.enabled': 'Sales tax',
     'sales_tax.percent': 'Sales tax (%)',
     show_line_breakdown: 'Print itemized lines on the proposal',
+    'assist.drying_days': 'Drying days a new job starts at',
+    'assist.range_method': 'How the high end is built',
+    'assist.extra_drying_days': 'Extra drying days on the high end',
+    'assist.hidden_damage_percent.1': 'Hidden damage in category 1 rooms (%)',
+    'assist.hidden_damage_percent.2': 'Hidden damage in category 2 rooms (%)',
+    'assist.hidden_damage_percent.3': 'Hidden damage in category 3 or mold rooms (%)',
   };
+  // What a table published without the assist map reads as (DEFAULT_ASSIST in price_table.py).
+  const ABSENT_ASSIST = {
+    drying_days: 3,
+    range_method: 'cushion',
+    extra_drying_days: 0,
+    hidden_damage_percent: { 1: '0', 2: '0', 3: '0' },
+  };
+  const WHOLE_NUMBER_POLICY = ['range.first_sf', 'assist.drying_days'];
+  const withAssist = (policy) => ({ assist: clone(ABSENT_ASSIST), ...policy });
   const WARNING_WORDS = {
     large_change:
       'A price or setting changed by a lot (50% or more for a price). Check it before publishing.',
@@ -740,7 +755,8 @@
     const items = [...((table && table.items) || [])].sort((a, b) =>
       String(a.item_id).localeCompare(String(b.item_id)),
     );
-    return JSON.stringify(sortKeys({ items, policy: (table && table.policy) || {} }));
+    // A table without the assist map matches one holding its absent values.
+    return JSON.stringify(sortKeys({ items, policy: withAssist((table && table.policy) || {}) }));
   }
   function problemKind(problem) {
     return /enter a unit price/.test(problem.message || '') ? 'blank' : 'other';
@@ -1039,7 +1055,7 @@
           setPath(
             ed.policy,
             path,
-            path === 'range.first_sf' && /^\d+$/.test(text) ? Number(text) : text,
+            WHOLE_NUMBER_POLICY.includes(path) && /^\d+$/.test(text) ? Number(text) : text,
           );
           edited();
         },
@@ -1099,6 +1115,12 @@
       ),
     );
     card.append(rangeBox);
+    const assist = node('div', undefined, 'price-subgroup');
+    assist.append(
+      node('h3', 'Estimate assist'),
+      policyField('assist.drying_days', POLICY_LABELS['assist.drying_days'], '1 to 60.'),
+    );
+    card.append(assist);
     const afterHours = node('div', undefined, 'price-subgroup');
     afterHours.append(
       node('h3', 'After hours'),
@@ -1669,7 +1691,7 @@
       manage,
       support,
       items: clone(source.items),
-      policy: clone(source.policy),
+      policy: withAssist(clone(source.policy)),
       workingCopy: manage ? view.working_copy : null,
       workingVersion: view.working_copy ? view.working_copy.working_version : 0,
       publishedIds: new Set(view.starter ? [] : (view.items || []).map((item) => item.item_id)),
