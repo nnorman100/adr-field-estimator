@@ -648,7 +648,7 @@ class AssistPolicy(StrictModel):
 
 class PricingPolicy(StrictModel):
     estimate_mode: Literal['range', 'single'] = 'range'
-    area_basis: Literal['demolition', 'wet_floor'] = 'demolition'
+    area_basis: Literal['demolition', 'demolition_with_waste', 'wet_floor'] = 'demolition'
     range: RangePolicy = Field(default_factory=RangePolicy)
     after_hours: AfterHoursPolicy = Field(default_factory=AfterHoursPolicy)
     category_multipliers: dict[Literal['1', '2', '3'], str] = Field(

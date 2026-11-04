@@ -293,6 +293,9 @@ def _room_lines(item, source, data, policy, overrides, warnings):
         waste = (
             _dec(room.waste_percent) if room.waste_percent > 0 else Decimal(item['waste_percent'])
         )
+        if source.field == 'basis' and policy['area_basis'] == 'demolition_with_waste':
+            # The waste is now in the area, so the line must not charge it a second time.
+            quantity, waste = quantity * (1 + waste / HUNDRED), ZERO
         lines.append(
             _line(
                 item,

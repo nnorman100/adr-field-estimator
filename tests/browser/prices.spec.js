@@ -907,6 +907,139 @@ test('each settings choice names what it sets', async ({ page, request }) => {
     await expect(page.getByRole('group', { name: group }).getByLabel(choice)).toBeVisible();
 });
 
+const AREA_BASIS_MEANINGS = [
+  [
+    'Raw demolition area',
+    'The square feet of material being removed in each room, added up, before any waste is added.',
+  ],
+  [
+    'Demolition area with waste',
+    "The same square feet, plus each room's waste percent. A 100 sq ft room with 10% waste counts as 110 sq ft.",
+  ],
+  [
+    'Wet floor area',
+    'The square feet of floor that got wet in each room, whether or not any of it is removed.',
+  ],
+];
+const CABINETRY_MEANINGS = [
+  [
+    'Custom cabinetry',
+    'How much to multiply the demolition price in a Category 3 room when the technician ticks custom cabinetry. 1.0 adds nothing. 2.0 doubles it: 100 sq ft at $10 goes from $1,000 to $2,000.',
+  ],
+  [
+    'Cabinetry applies to',
+    "Finished-surface demolition only raises just the finished area in that room. All category 3 room lines raises every line priced from that room's square feet: finished and unfinished demolition, and wet floor and floor items such as antimicrobial and HEPA vacuuming. Items not priced from the room, such as equipment and labor hours, never change.",
+  ],
+];
+const SETTING_MEANINGS = [...AREA_BASIS_MEANINGS, ...CABINETRY_MEANINGS];
+const explain = (page, subject) => page.getByRole('button', { name: 'Explain ' + subject });
+// What the icon sits above: the choice's own label, or the whole setting for cabinetry.
+const explainedSetting = (page, subject) =>
+  AREA_BASIS_MEANINGS.some(([name]) => name === subject)
+    ? page.getByRole('group', { name: 'Area basis' }).getByText(subject, { exact: true })
+    : subject === 'Custom cabinetry'
+      ? page.locator('label.price-field', { hasText: subject })
+      : page.getByRole('group', { name: subject });
+
+async function expectQuestionIcons(page, activate) {
+  await expect(page.locator('#priceEditor .price-help')).toHaveCount(SETTING_MEANINGS.length);
+  for (const [subject, meaning] of SETTING_MEANINGS) {
+    const icon = explain(page, subject),
+      text = page.locator('#' + (await icon.getAttribute('aria-controls')));
+    await expect(text).toBeHidden();
+    await expect(icon).toHaveAttribute('aria-expanded', 'false');
+    await icon.scrollIntoViewIfNeeded();
+    const own = await icon.boundingBox(),
+      setting = await explainedSetting(page, subject).boundingBox();
+    expect(own.width).toBeGreaterThanOrEqual(48);
+    expect(own.height).toBeGreaterThanOrEqual(48);
+    expect(own.y + own.height).toBeLessThanOrEqual(setting.y + 1);
+    await activate(icon);
+    await expect(text).toBeVisible();
+    await expect(text).toHaveText(meaning);
+    await expect(icon).toHaveAttribute('aria-expanded', 'true');
+    await activate(icon);
+    await expect(text).toBeHidden();
+    await expect(icon).toHaveAttribute('aria-expanded', 'false');
+  }
+}
+
+for (const [width, height] of [
+  [390, 844],
+  [1280, 800],
+]) {
+  test.describe(`the settings question icons at ${width} px`, () => {
+    test.use({ viewport: { width, height }, hasTouch: true });
+    test('explain each setting by touch and keyboard and only those settings have one', async ({
+      page,
+      request,
+    }) => {
+      await startUnset(page, request);
+      await expectQuestionIcons(page, (icon) => icon.tap());
+      await expectQuestionIcons(page, async (icon) => {
+        await icon.focus();
+        await page.keyboard.press('Enter');
+      });
+      await expectQuestionIcons(page, async (icon) => {
+        await icon.focus();
+        await page.keyboard.press('Space');
+      });
+      // With every definition open the page still fits the screen.
+      for (const [subject] of SETTING_MEANINGS) await explain(page, subject).click();
+      const sideways = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(sideways).toBeLessThanOrEqual(0);
+    });
+  });
+}
+
+test('the three area choices save, reach the review and keep demolition as the default', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  const group = page.getByRole('group', { name: 'Area basis' });
+  await expect(group.getByRole('radio')).toHaveCount(3);
+  await expect(group.getByLabel('Raw demolition area')).toBeChecked();
+  await priceEverything(page);
+  await publishTable(page);
+  // Reading a definition is not an edit.
+  await explain(page, 'Demolition area with waste').click();
+  await expect(group.getByLabel('Raw demolition area')).toBeChecked();
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+
+  await group.getByLabel('Demolition area with waste').check();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await page.reload();
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await navigate(page, 'dashboardPrices');
+  await expect(
+    page.getByRole('group', { name: 'Area basis' }).getByLabel('Demolition area with waste'),
+  ).toBeChecked();
+  await page.locator('#priceReason').fill('Count waste in the area');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  await expect(page.locator('#priceReview')).toContainText(
+    'Area basis: raw demolition area to demolition area with waste',
+  );
+  await page.getByRole('button', { name: 'Publish prices' }).click();
+  await expect(page.locator('#dashboardContent')).toContainText('Prices v2');
+});
+
+test('a reader cannot change the area choice and can still read what it means', async ({
+  page,
+  request,
+}) => {
+  await startUnset(page, request);
+  await priceEverything(page);
+  await publishTable(page);
+  await start(page, 'estimator');
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('#dashboardContent')).toContainText('Read only');
+  await expect(page.getByLabel('Demolition area with waste')).toBeDisabled();
+  await expectQuestionIcons(page, (icon) => icon.click());
+});
+
 test.describe('leaving the page during a slow review', () => {
   test.use({ serviceWorkers: 'block' });
   test('puts no review or Publish button on the next page', async ({ page, request }) => {

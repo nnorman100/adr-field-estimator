@@ -2041,3 +2041,180 @@ def test_the_editors_sample_jobs_price_the_high_end_from_the_table():
     expected = priced_on(data, uncertain(items))['high']['total']
     assert built['small']['high'] == f'${expected:,.2f}'
     assert built['small']['high'] != cushion['small']['high']
+
+
+WASTE_BASIS = 'demolition_with_waste'
+TWO_ROOMS = [
+    room(
+        'Hall', finished_sf=60, unfinished_sf=40, floor_sf=150, wet_floor_sf=120, waste_percent=10
+    ),
+    room('Den', finished_sf=900, floor_sf=1000, wet_floor_sf=800),
+]
+
+
+def _job_area_table(area_basis, price='4', waste='5', **policy):
+    item = _item(
+        'area', 'demolition', 'Area removal', 'sf', 'room:basis', price, waste_percent=waste
+    )
+    return table([item], area_basis=area_basis, **policy)
+
+
+@pytest.mark.parametrize(
+    'area_basis,quantities,wastes,low,high',
+    [
+        # 100 + 900 sq ft fits the first 1,000, so all of it carries 50%.
+        ('demolition', [100.0, 900.0], [10.0, 5.0], '4220.00', '6330.00'),
+        # The same dollars, but 110 + 945 sq ft spills 55 sq ft past the first 1,000.
+        (WASTE_BASIS, [110.0, 945.0], [0.0, 0.0], '4220.00', '6264.00'),
+        ('wet_floor', [120.0, 800.0], [10.0, 5.0], '3888.00', '5832.00'),
+    ],
+)
+def test_the_three_area_bases_price_the_same_job(area_basis, quantities, wastes, low, high):
+    lines, estimate, _ = run(job(TWO_ROOMS), _job_area_table(area_basis))
+    assert [line['quantity'] for line in lines] == quantities
+    assert [line['area'] for line in lines] == quantities
+    assert [line['waste_percent'] for line in lines] == wastes
+    assert estimate['low']['total'] == D(low)
+    assert estimate['high']['total'] == D(high)
+
+
+def test_the_waste_basis_never_charges_waste_twice():
+    # 100 sq ft with 10% waste counts as 110 sq ft at the price, not 110 sq ft plus 10% again.
+    data = job([room('Hall', finished_sf=100, waste_percent=10)])
+    lines, _, _ = run(data, _job_area_table(WASTE_BASIS, price='10', waste='0'))
+    assert lines[0]['quantity'] == 110.0
+    assert lines[0]['total'] == 1100.0
+
+
+def test_the_waste_basis_uses_the_item_waste_when_the_room_has_none():
+    data = job([room('Hall', finished_sf=100)])
+    lines, _, _ = run(data, _job_area_table(WASTE_BASIS, waste='5'))
+    assert lines[0]['quantity'] == 105.0
+    # Neither the room nor the item has waste: the area stays as measured.
+    lines, _, _ = run(data, _job_area_table(WASTE_BASIS, waste='0'))
+    assert lines[0]['quantity'] == 100.0
+
+
+def test_a_room_with_no_demolition_area_prices_nothing_on_the_waste_basis():
+    # It has a floor and a waste percent, and the demolition bases read neither on their own.
+    data = job([room('Hall', floor_sf=100, wet_floor_sf=100, waste_percent=10)])
+    chosen = _job_area_table(WASTE_BASIS)
+    lines, warnings = pricing_v2.price_scope(data, chosen)
+    assert lines == []
+    assert warnings == [dict(code='missing_area', item_id='area', room='Hall')]
+
+
+def test_the_waste_basis_adds_waste_to_an_entered_quantity():
+    data = job(
+        [room('Hall', finished_sf=100, waste_percent=10)],
+        quantity_overrides={
+            'Hall:finished_sf': {'measured': '100', 'entered': '200', 'reason': 'Measured again'}
+        },
+    )
+    lines, _, _ = run(data, _job_area_table(WASTE_BASIS))
+    assert lines[0]['quantity'] == 220.0
+
+
+def test_the_waste_basis_changes_nothing_on_a_range_built_from_uncertainty():
+    assist = {
+        'range_method': 'uncertainty',
+        'drying_days': 3,
+        'extra_drying_days': 0,
+        'hidden_damage_percent': {'1': '10', '2': '20', '3': '30'},
+    }
+    raw = run(job(TWO_ROOMS), _job_area_table('demolition', assist=assist))[1]
+    with_waste = run(job(TWO_ROOMS), _job_area_table(WASTE_BASIS, assist=assist))[1]
+    assert with_waste['low']['total'] == raw['low']['total'] == D('4220.00')
+    assert with_waste['high']['total'] == raw['high']['total'] == D('5064.00')
+
+
+@pytest.mark.parametrize(
+    'source',
+    ['room:demolition:unfinished', 'room:demolition:finished', 'room:wet_floor', 'room:floor'],
+)
+def test_the_waste_basis_only_reaches_items_priced_by_the_area_setting(source):
+    data = job([room(**FULL_ROOM, waste_percent=10)])
+    items = _one(source)
+    raw = pricing_v2.price_scope(data, table(items))[0]
+    chosen = pricing_v2.price_scope(data, table(items, area_basis=WASTE_BASIS))[0]
+    assert chosen == raw
+    assert chosen[0]['waste_percent'] == 10.0
+
+
+def test_tables_that_never_chose_the_waste_basis_keep_their_content_hash():
+    # Hashes from before the third choice existed. A change here would move every stored pin.
+    assert price_table.content_hash(table()) == (
+        '004cfd4e0be1ebb1280a4dd4377a5b66b4936a2afd04ec8a158645934869811f'
+    )
+    assert price_table.content_hash(table(area_basis='wet_floor')) == (
+        '19243b891f80211af721661dd4c5686912515d3452f540501360da89ba3bc6a7'
+    )
+    without_the_key = copy.deepcopy(POLICY)
+    without_the_key.pop('area_basis', None)
+    assert price_table.content_hash(
+        {'items': copy.deepcopy(ITEMS), 'policy': without_the_key}
+    ) == price_table.content_hash(table())
+    assert price_table.content_hash(table(area_basis=WASTE_BASIS)) != price_table.content_hash(
+        table()
+    )
+
+
+CABINETRY_ROOM = dict(
+    category=3,
+    unfinished_sf=100,
+    finished_sf=100,
+    floor_sf=100,
+    wet_floor_sf=100,
+    custom_cabinetry=True,
+)
+ROOM_SOURCES = [
+    'room:demolition:unfinished',
+    'room:demolition:finished',
+    'room:wet_floor',
+    'room:floor',
+    'room:basis',
+]
+
+
+def _cabinetry_prices(scope):
+    items = [
+        _item(f'item{index}', 'treatment', source, 'sf', source, '10')
+        for index, source in enumerate(ROOM_SOURCES)
+    ] + [_item('calls', 'job_charges', 'Calls', 'each', 'field:emergency_calls', '10')]
+    chosen = table(items, cabinetry={'multiplier': '2', 'scope': scope})
+    lines, _ = pricing_v2.price_scope(job([room(**CABINETRY_ROOM)]), chosen)
+    return {line['item_id']: line['unit_price'] for line in lines}
+
+
+def test_what_the_cabinetry_definitions_say_each_scope_reaches():
+    # Finished-surface demolition only: just the finished lines.
+    assert _cabinetry_prices('finished_only') == {
+        'item0': 10.0,
+        'item1': 20.0,
+        'item2': 10.0,
+        'item3': 10.0,
+        'item4': 10.0,
+        'calls': 10.0,
+    }
+    # All category 3 room lines: every line priced from the room's square feet, never a job line.
+    assert _cabinetry_prices('all_cat3') == {
+        'item0': 20.0,
+        'item1': 20.0,
+        'item2': 20.0,
+        'item3': 20.0,
+        'item4': 20.0,
+        'calls': 10.0,
+    }
+
+
+def test_the_cabinetry_definitions_worked_example():
+    def total(multiplier):
+        chosen = table(
+            [_item('demo', 'demolition', 'Removal', 'sf', 'room:demolition:finished', '10')],
+            cabinetry={'multiplier': multiplier, 'scope': 'finished_only'},
+        )
+        data = job([room(category=3, finished_sf=100, custom_cabinetry=True)])
+        return pricing_v2.price_scope(data, chosen)[0][0]['total']
+
+    assert total('1.0') == 1000.0
+    assert total('2.0') == 2000.0
