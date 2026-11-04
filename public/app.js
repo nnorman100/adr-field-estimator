@@ -2874,6 +2874,7 @@ async function openNew(data = null, photos = []) {
   state.photoUrls.clear();
   state.draft = {
     inspection_id: 'ADR-INS-' + newId(),
+    started_at: window.ScopeItems?.startedAt(),
     data: { ...structuredClone(data), coordinates: data.coordinates ?? null },
     photos: structuredClone(photos),
   };
@@ -6164,6 +6165,7 @@ async function applyUser(user) {
     } else {
       session = local[0]?.session;
       if (!session) throw Error('Sign in online before using private offline draft recovery.');
+      state.offlineSession = session;
     }
     if (session.uid !== state.user?.uid || session.project !== 'alert-disaster-field-2026')
       throw Error('Incorrect session configuration.');
