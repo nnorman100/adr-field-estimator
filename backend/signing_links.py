@@ -246,13 +246,23 @@ LINK_BASIS_KEYS = (
 )
 
 
+# Notes the company sees in the app; they are never part of a document anyone else receives.
+ESTIMATOR_ONLY = (
+    'ai_summary',
+    'ai_suggestions',
+    'unpriced_work',
+    'company_setup_missing',
+    'quantity_notes',
+)
+
+
 def without_quantity_notes(documents):
     return {k: v for k, v in documents.items() if k != 'quantity_notes'}
 
 
 def link_documents(documents):
-    """Saved documents as anyone outside the company receives them: no owner notes or pricing policy."""
-    kept = without_quantity_notes(documents)
+    """Saved documents as anyone outside the company receives them: no estimator notes or pricing policy."""
+    kept = {k: v for k, v in documents.items() if k not in ESTIMATOR_ONLY}
     if kept.get('price_basis'):
         kept['price_basis'] = {k: v for k, v in kept['price_basis'].items() if k in LINK_BASIS_KEYS}
     return kept

@@ -149,7 +149,7 @@
     body.append(node('h3', 'Proposed scope'));
     paragraphs(body, p.recommendations || []);
     paragraphs(body, p.disclaimers || []);
-    // AI notes are for the estimator only: the signing page has no #auditNotes and never shows them.
+    // AI notes are for the estimator only: link answers omit them and the signing page has no #auditNotes.
     const notes = $('auditNotesBody');
     if (notes) {
       notes.replaceChildren();

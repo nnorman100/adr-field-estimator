@@ -1,5 +1,6 @@
 """Priced scope and document construction, independent of model-supplied prices."""
 
+import logging
 import re
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -7,11 +8,13 @@ from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 try:
+    from .cloud_log import event
     from .extras import wording
     from .contracts import InspectionData, AIResult, AuditDocuments
     from .price_books import CALCULATION_VERSION, known_calculation_version
     from .sizing import equipment_sizing, letter_paragraph
 except ImportError:
+    from cloud_log import event
     from extras import wording
     from contracts import InspectionData, AIResult, AuditDocuments
     from price_books import CALCULATION_VERSION, known_calculation_version
@@ -76,6 +79,21 @@ JSON_TERM = re.compile(
     re.IGNORECASE,
 )
 FIELD_NAME = re.compile(r'\b[a-z]+(?:_[a-z]+)+\b')
+# Prices come only from the server. A note sentence is dropped if it has a currency sign or word, or
+# a money word and any number anywhere in it, so "Total 3 rooms" goes too: a dropped sentence is
+# safer than a price. "Estimated" and "rate" are not money words; "The cost is high" has no number.
+MONEY = re.compile(r'[$€£]|\b(?:usd|dollars?|bucks?|cents?)\b', re.IGNORECASE)
+MONEY_WORD = re.compile(
+    r'\b(?:pric(?:e|es|ed|ing)|cost(?:s|ed|ing)?|fees?|charg(?:e|es|ed|ing)|budget(?:s|ed|ing)?'
+    r'|(?:sub)?total(?:s|ed|ing|led|ling)?|quot(?:e|es|ed|ing))\b',
+    re.IGNORECASE,
+)
+NUMBER = re.compile(
+    r'\d|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve'
+    r'|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty'
+    r'|hundred|thousand|million|billion)\b',
+    re.IGNORECASE,
+)
 
 
 def amount(value):
@@ -395,8 +413,12 @@ def technician_statement(data: InspectionData):
     return '\n'.join(kept)
 
 
+def states_price(text):
+    return bool(MONEY.search(text) or (MONEY_WORD.search(text) and NUMBER.search(text)))
+
+
 def plain(text):
-    """Model text in customer words: no data-format or field names from the audit prompt."""
+    """Model text in plain words: no data-format or field names from the audit prompt."""
     text = JSON_TERM.sub(
         lambda m: (
             'The saved inspection'
@@ -409,9 +431,20 @@ def plain(text):
     return FIELD_NAME.sub(lambda m: m.group().replace('_', ' '), text)
 
 
-def customer_text(summary):
-    """The AI summary in plain words."""
-    lines = (' '.join(plain(text) for text in sentences(line)) for line in summary.splitlines())
+def ai_note(text):
+    """A model-written note in plain words, without any sentence that states a price."""
+    lines = []
+    for line in text.splitlines():
+        written = [plain(sentence) for sentence in sentences(line)]
+        kept = [sentence for sentence in written if not states_price(sentence)]
+        if len(kept) < len(written):
+            event(
+                'Audit note sentence dropped',
+                logging.WARNING,
+                operation='audit',
+                outcome='price_text',
+            )
+        lines.append(' '.join(kept))
     return '\n'.join(line for line in lines if line)
 
 
@@ -661,9 +694,11 @@ def make_documents(
             }
             for p in photos
         ],
-        ai_summary=customer_text(ai.summary),
+        ai_summary=ai_note(ai.summary),
         ai_suggestions=[
-            plain(text) for text in ai.suggestions + (ai.testing_advice if before else [])
+            note
+            for note in map(ai_note, ai.suggestions + (ai.testing_advice if before else []))
+            if note
         ],
         unpriced_work=[plain(text) for text in unpriced],
         pending_extras=pending,
