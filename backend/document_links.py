@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 
 try:
     from .inspection_store import reserve_slot
-    from .signing_links import TOKEN, iso, link_documents, link_id as digest_of
+    from .signing_links import ESTIMATOR_ONLY, TOKEN, iso, link_documents, link_id as digest_of
     from .workspaces import AccessDenied
 except ImportError:
     from inspection_store import reserve_slot
-    from signing_links import TOKEN, iso, link_documents, link_id as digest_of
+    from signing_links import ESTIMATOR_ONLY, TOKEN, iso, link_documents, link_id as digest_of
     from workspaces import AccessDenied
 
 # The owner can change how long a link works; the roadmap's default is 30 days.
@@ -33,15 +33,6 @@ SETS = {
     'adjuster': ('claim', 'defense'),
 }
 UNAVAILABLE = 'This document link is not available. Ask your restoration company for a new link.'
-# Notes the company sees in the app; they are never part of a delivered document.
-ESTIMATOR_ONLY = (
-    'ai_summary',
-    'ai_suggestions',
-    'unpriced_work',
-    'company_setup_missing',
-    'quantity_notes',
-)
-
 
 # What the itemized claim prints from the estimate: the lines that add up to the claim total.
 CLAIM_ESTIMATE_KEYS = (
@@ -187,7 +178,7 @@ def _resolve(store, key, count=False):
 
 def delivered_documents(documents, tabs):
     """The saved documents reduced to one set: other documents are emptied, never summarized."""
-    kept = {k: v for k, v in link_documents(documents).items() if k not in ESTIMATOR_ONLY}
+    kept = link_documents(documents)
     if 'proposal' not in tabs:
         proposal = documents.get('adr_estimate') or {}
         # The claim and letter still name the customer and property; the priced proposal stays out.

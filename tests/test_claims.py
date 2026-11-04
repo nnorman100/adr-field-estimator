@@ -1,4 +1,5 @@
 from decimal import Decimal
+import logging
 import pytest
 from pydantic import ValidationError
 from backend.claims import (
@@ -14,6 +15,8 @@ from backend.claims import (
 )
 from tests.adr_pricing import make_documents, price_scope
 from backend.contracts import InspectionData, AIResult
+from backend import claims
+from backend.claims import plain, states_price
 from backend.prompts import audit_prompt
 from tests.fakes import ADR_PROFILE
 
@@ -1336,6 +1339,143 @@ def test_extra_wording_replaces_the_description_on_v2_extra_lines(monkeypatch):
     docs = v2_documents(monkeypatch, lines=lines, data=data)
     sentence = 'Additional work, not in Test Co price sheet: Move and reset toilet, 2.5 h at $50.00/h, approved by Test Owner on 2026-10-25.'
     assert docs['xactimate_scope'][-1]['description'] == sentence
+
+
+CLEAN_AI = AIResult(
+    summary='Office has drywall removal.\nHallway is inspected only.',
+    suggestions=['Confirm the laminate area.', 'Document drying progress.'],
+    unpriced_work=[],
+    testing_advice=['Lead and asbestos testing may be required before demolition.'],
+)
+PRICED_AI = AIResult(
+    summary='Office has drywall removal. Estimated cost $500.\n'
+    'Hallway is inspected only. Budget $750 for paint.',
+    suggestions=[
+        'Confirm the laminate area. Repairs should run about five hundred dollars.',
+        'Total 1,200 for the room.',
+        'Document drying progress.',
+    ],
+    unpriced_work=[],
+    testing_advice=[
+        'Lead and asbestos testing may be required before demolition. Testing runs $300.'
+    ],
+)
+
+
+def test_a_model_written_price_never_reaches_the_documents(monkeypatch):
+    logged = []
+    monkeypatch.setattr(claims, 'event', lambda *args, **fields: logged.append((args, fields)))
+    docs = make_documents(acme(year_built=1960), [], PRICED_AI)
+    # The audit still succeeds: only the offending sentences go, and only from the model's notes.
+    assert docs == make_documents(acme(year_built=1960), [], CLEAN_AI)
+    assert docs['ai_summary'] == 'Office has drywall removal.\nHallway is inspected only.'
+    assert docs['ai_suggestions'] == [
+        'Confirm the laminate area.',
+        'Document drying progress.',
+        'Lead and asbestos testing may be required before demolition.',
+    ]
+    for figure in ['$500', '$750', '$300', '1,200', 'five hundred']:
+        assert figure not in str(docs)
+    # A code only: the dropped words never reach the log.
+    assert logged and all(
+        args == ('Audit note sentence dropped', logging.WARNING) for args, _ in logged
+    )
+    assert all(fields == dict(operation='audit', outcome='price_text') for _, fields in logged)
+
+
+def test_a_note_made_only_of_prices_leaves_no_blank_entry():
+    ai = AIResult(summary='Estimated cost $500.', suggestions=['Budget $750.'], unpriced_work=[])
+    docs = make_documents(acme(), [], ai)
+    assert docs['ai_summary'] == '' and docs['ai_suggestions'] == []
+
+
+def test_a_price_word_in_an_unpriced_work_flag_still_blocks_signing():
+    # Dropping a flag would unlock signing, so the check covers only the advisory notes.
+    ai = AIResult(
+        summary='Reviewed', suggestions=[], unpriced_work=['Cabinet removal has no price.']
+    )
+    docs = make_documents(acme(), [], ai)
+    assert docs['unpriced_work'] == ['Cabinet removal has no price.'] and not docs['signable']
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        '$500',
+        '$ 500 for the room.',
+        'Estimated cost $500.',
+        'Budget $750.',
+        'About 500 dollars.',
+        'USD 500.',
+        'Fee 500 plus tax.',
+        'Price range 500 to 700.',
+        'Budget band is 1200.',
+        'Total 3 rooms.',
+        'The cost is five hundred.',
+        'Total 1,200 sq ft of drywall is affected.',
+        'Total 2.5 hours of labor.',
+        'Total: 1,200.',
+        'The total comes to two hundred and fifty.',
+        'Costs roughly 5k.',
+        'Priced at 500-700.',
+        'Charged 40 for the visit.',
+        'The job totaled 900.',
+        'Quoting 300 for paint.',
+        'The priced_scope has 2 lines.',
+    ],
+)
+def test_states_price_drops_currency_and_a_money_word_with_any_number(text):
+    assert states_price(plain(text))
+
+
+QUANTITY_NOTES = [
+    'Estimated 120 sq ft of drywall is affected.',
+    'Estimated drying time is 3 days.',
+    'Moisture rate is 18 percent in room 2.',
+]
+
+
+@pytest.mark.parametrize(
+    'text',
+    QUANTITY_NOTES
+    + [
+        'Office has drywall removal.',
+        'Confirm 120 sq ft of drywall.',
+        'The estimate is five hundred.',
+        'Estimate 40 hours of drying.',
+        'A 12k BTU air mover is planned.',
+        'The cost is high.',
+        'Pricing depends on the carrier.',
+        'The tenant asked about the cost.',
+        'The priced scope does not cover the toilet reset.',
+        'Check that the estimate covers the cabinets.',
+        'The scope review lists 2 unpriced items.',
+        'Room 2 needs a meter photo at 18 percent.',
+    ],
+)
+def test_states_price_keeps_quantities_and_money_words_without_a_number(text):
+    assert not states_price(plain(text))
+
+
+def test_ordinary_quantities_stay_in_the_notes(monkeypatch):
+    logged = []
+    monkeypatch.setattr(claims, 'event', lambda *args, **fields: logged.append((args, fields)))
+    ai = AIResult(
+        summary=' '.join(QUANTITY_NOTES),
+        suggestions=QUANTITY_NOTES,
+        unpriced_work=[],
+    )
+    docs = make_documents(acme(), [], ai)
+    assert docs['ai_summary'] == ' '.join(QUANTITY_NOTES)
+    assert docs['ai_suggestions'] == QUANTITY_NOTES
+    assert logged == []
+
+
+def test_the_prompt_sent_to_the_model_keeps_the_notes_away_from_homeowners_and_prices():
+    prompt = audit_prompt(acme().model_dump(mode='json'), [], [])
+    assert 'shown to the homeowner' not in prompt
+    assert 'never to the homeowner or adjuster' in prompt
+    assert 'Never state a dollar amount' in prompt
 
 
 def test_v2_documents_print_the_uncertainty_sentence_and_no_new_field():
