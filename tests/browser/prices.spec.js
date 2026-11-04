@@ -317,6 +317,8 @@ test('owner builds a table from the starter, keeps a working copy across a reloa
   await page.locator('input[name=price_service_call]').fill('150');
   await page.locator('input[name=policy_after_hours\\.label]').fill('Night and weekend work');
   await page.locator('input[name=policy_minimum_job_charge]').fill('350');
+  // The starter builds its high end from the job, which hides the cushion until it is chosen.
+  await page.locator('input[name=range_method][value=cushion]').check();
   await page.locator('input[name=policy_range\\.first_sf]').fill('1200');
   await page.locator('input[name=policy_overhead_profit_percent]').fill('10');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
@@ -1281,5 +1283,97 @@ test('a table published before the setting shows the old value and no unpublishe
   await expect(page.locator('#priceUnpublished')).toBeVisible();
   await days.fill('3');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceUnpublished')).toBeHidden();
+});
+
+test('the owner chooses how the high end is built, and the sample and review follow', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', {
+    data: { policy: { assist: { range_method: 'cushion' } } },
+  });
+  await start(page, 'owner');
+  await navigate(page, 'dashboardPrices');
+  const cushion = page.locator('input[name="policy_range.first_percent"]');
+  const extra = page.locator('input[name="policy_assist.extra_drying_days"]');
+  const percent = (category) =>
+    page.locator(`input[name="policy_assist.hidden_damage_percent.${category}"]`);
+  const method = (value) => page.locator(`input[name=range_method][value=${value}]`);
+  const samples = page.locator('#priceSamples');
+  await expect(method('cushion')).toBeChecked();
+  await expect(cushion).toBeVisible();
+  await expect(extra).toBeHidden();
+  await expect(percent(1)).toBeHidden();
+  await expect(samples).toContainText('Clean-water kitchen leak prices at');
+  const before = await samples.innerText();
+
+  await method('uncertainty').check();
+  await expect(cushion).toBeHidden();
+  await expect(extra).toBeVisible();
+  for (const category of [1, 2, 3]) await expect(percent(category)).toBeVisible();
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(samples).not.toHaveText(before);
+
+  await extra.fill('31');
+  await expect(page.locator('#priceSaveStatus')).toContainText(
+    'Settings: assist.extra_drying_days must be an integer from 0 to 30.',
+  );
+  await extra.fill('2');
+  await percent(2).fill('20');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  const stored = await samples.innerText();
+  await percent(2).fill('60');
+  await expect(samples).not.toHaveText(stored);
+
+  await page.locator('#priceReason').fill('Build the high end from the job');
+  await page.getByRole('button', { name: 'Review changes' }).click();
+  const review = page.locator('#priceReview');
+  await expect(review).toContainText(
+    'How the high end is built: a flat cushion to the IICRC equipment range and hidden damage',
+  );
+  await expect(review).toContainText('Extra drying days on the high end: 1 to 2');
+  await expect(review).toContainText('Hidden damage in category 2 rooms (%): 15 to 60');
+  await expect(review).toContainText('A price or setting changed by a lot');
+});
+
+test('one price hides the high-end settings, and a change of mode brings them back', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', { data: {} });
+  await start(page, 'owner');
+  await navigate(page, 'dashboardPrices');
+  const method = page.locator('input[name=range_method]');
+  const extra = page.locator('input[name="policy_assist.extra_drying_days"]');
+  const days = page.locator('input[name="policy_assist.drying_days"]');
+  const cushion = page.locator('input[name="policy_range.first_percent"]');
+  // A new company's table starts on the method with its starter settings.
+  await expect(page.locator('input[name=range_method][value=uncertainty]')).toBeChecked();
+  await expect(extra).toHaveValue('1');
+  await expect(cushion).toBeHidden();
+
+  await page.locator('input[name=estimate_mode][value=single]').check();
+  await expect(days).toBeVisible();
+  await expect(method.first()).toBeHidden();
+  await expect(extra).toBeHidden();
+  await expect(cushion).toBeHidden();
+
+  await page.locator('input[name=estimate_mode][value=range]').check();
+  await expect(method.first()).toBeVisible();
+  await expect(extra).toBeVisible();
+  await expect(cushion).toBeHidden();
+});
+
+test('a table published before the settings shows the cushion and no unpublished changes', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/price-table', { data: { policy: { assist: null } } });
+  await start(page, 'owner');
+  await navigate(page, 'dashboardPrices');
+  await expect(page.locator('input[name=range_method][value=cushion]')).toBeChecked();
+  await expect(page.locator('input[name="policy_range.first_percent"]')).toBeVisible();
+  await expect(page.locator('input[name="policy_assist.extra_drying_days"]')).toHaveValue('0');
   await expect(page.locator('#priceUnpublished')).toBeHidden();
 });

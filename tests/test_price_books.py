@@ -1545,7 +1545,7 @@ def _engine_total(table, key, end):
     data = InspectionData.model_validate(sample['data'])
     normal = price_table.normalize_table(table, publish=False)
     lines, _ = pricing_v2.price_scope(data, normal)
-    return pricing_v2.totals(data, lines, normal['policy'])[end]['total']
+    return pricing_v2.totals(data, lines, normal['policy'], normal['items'])[end]['total']
 
 
 def test_calculate_prices_each_sample_from_the_table_it_was_sent(api, enabled):

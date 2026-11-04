@@ -680,3 +680,34 @@ def test_a_large_job_shows_the_taper_and_the_labor_difference():
     )
     assert abs(Decimal(str(mapped.high)) - expected) <= Decimal('0.01')
     assert Decimal(str(mapped.high)) > Decimal(str(high))
+
+
+def test_switch_differences_describe_the_uncertainty_method():
+    table = price_table.from_v1_rates(rates())
+    policy = table['policy']
+    policy['assist'] = dict(
+        drying_days=3,
+        range_method='uncertainty',
+        extra_drying_days=1,
+        hidden_damage_percent={'1': '10', '2': '15', '3': '25'},
+    )
+    differences = price_table.switch_differences(policy)
+    assert differences[:2] == [
+        'The high end is built from the IICRC equipment range, 1 extra drying day and hidden '
+        'damage of 10% / 15% / 25% by category instead of a flat 50% cushion.',
+        "Labor hours carry the hidden-damage percent of the job's rooms at every job size.",
+    ]
+    # The after-hours sentence does not depend on the method.
+    cushion = price_table.from_v1_rates(rates())['policy']
+    assert differences[2] == price_table.switch_differences(cushion)[2]
+    assert 'tapers above' in price_table.switch_differences(cushion)[0]
+
+    policy['assist']['extra_drying_days'] = 2
+    policy['assist']['hidden_damage_percent'] = {'1': '0', '2': '12.50', '3': '25'}
+    assert price_table.switch_differences(policy)[0].startswith(
+        'The high end is built from the IICRC equipment range, 2 extra drying days and hidden '
+        'damage of 0% / 12.5% / 25% by category'
+    )
+    # One price has no high end to describe.
+    policy['estimate_mode'] = 'single'
+    assert price_table.switch_differences(policy)[0].startswith('The estimate is one price')
