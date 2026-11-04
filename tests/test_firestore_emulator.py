@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 # The demo- prefix keeps the client offline: no credentials, no real project.
 PROJECT = 'demo-adr-emulator'
 
-from google.api_core.exceptions import Aborted
+from google.api_core.exceptions import Aborted, ServiceUnavailable
 from google.auth.credentials import AnonymousCredentials
 from google.cloud import firestore
 import backend.inspection_store as inspection_store
@@ -368,6 +368,99 @@ def test_signing_writes_the_history_row_atomically_and_a_concurrent_close_does_n
     ]
     assert len(closes) >= 1
     assert all(set(e.to_dict()['details']) == {'job_id', 'landed'} for e in closes)
+
+
+def close_on_emulator(store, signed_at, final='100.00'):
+    from backend.outcomes import JobClose
+
+    request = JobClose(final_amount=final, actual_days=3, note='', expected_signed_at=signed_at)
+    return store.outcomes.close('owner', ID, request)
+
+
+def test_a_history_failure_commits_the_signature_and_close_rebuilds_the_row(monkeypatch):
+    from backend import ai_features, outcomes as history
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    store = instances(CompanyInspectionStore)[0]
+    record = audited(store)
+    db = store.db
+    payload = sign_payload(record)
+
+    def broken(*args):
+        raise ValueError(history.NO_AMOUNTS)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(history, 'history_row_at_signing', broken)
+        receipt = store.authorize('owner', payload)
+    assert stored(db, 'authorizations/' + payload['auth_id'])['created_at'] == receipt['created_at']
+    assert stored(db, 'inspections/' + ID)['status'] == 'signed'
+    assert stored(db, '_workspace_jobs/' + ID)['signed_at'] == receipt['created_at']
+    assert stored(db, '_estimate_history/adr') is None
+
+    assert close_on_emulator(store, receipt['created_at'])['closed'] is True
+    row = stored(db, '_estimate_history/adr')['rows'][ID]
+    assert row['auth_id'] == payload['auth_id'] and row['final'] == '100.00'
+
+
+def test_a_failed_history_read_inside_the_transaction_still_commits_the_signature(monkeypatch):
+    store = instances(CompanyInspectionStore)[0]
+    record = audited(store)
+    db = store.db
+    payload = sign_payload(record)
+    real = store.outcomes._rows
+
+    def read_then_fail(company_id, tx=None):
+        real(company_id, tx)
+        raise ServiceUnavailable('Synthetic read failure')
+
+    monkeypatch.setattr(store.outcomes, '_rows', read_then_fail)
+    receipt = store.authorize('owner', payload)
+    assert stored(db, 'authorizations/' + payload['auth_id'])['created_at'] == receipt['created_at']
+    assert stored(db, 'inspections/' + ID)['status'] == 'signed'
+    assert stored(db, '_estimate_history/adr') is None
+
+
+@pytest.mark.parametrize('rows', ['not a map', ['not a map'], {'ADR-INS-other': 'not a row'}])
+def test_a_corrupt_history_document_commits_the_signature_and_the_close(monkeypatch, rows):
+    from backend import ai_features
+
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    store = instances(CompanyInspectionStore)[0]
+    record = audited(store)
+    db = store.db
+    payload = sign_payload(record)
+    db.document('_estimate_history/adr').set(dict(company_id='adr', rows=rows))
+    receipt = store.authorize('owner', payload)
+    assert stored(db, 'authorizations/' + payload['auth_id'])['created_at'] == receipt['created_at']
+    assert stored(db, '_estimate_history/adr')['rows'][ID]['auth_id'] == payload['auth_id']
+
+    db.document('_estimate_history/adr').set(dict(company_id='adr', rows=rows))
+    assert close_on_emulator(store, receipt['created_at'])['closed'] is True
+    assert stored(db, '_estimate_history/adr')['rows'][ID]['final'] == '100.00'
+
+
+def test_contention_at_commit_still_retries_the_signing_transaction(monkeypatch):
+    from google.cloud.firestore_v1.transaction import Transaction
+
+    store = instances(CompanyInspectionStore)[0]
+    record = audited(store)
+    db = store.db
+    payload = sign_payload(record)
+    real, attempts = Transaction._commit, []
+
+    def aborts_once(self):
+        attempts.append(1)
+        if len(attempts) == 1:
+            # A real abort ends the attempt on the server, so its locks are gone before the retry.
+            self._rollback()
+            raise Aborted('Synthetic commit contention')
+        return real(self)
+
+    monkeypatch.setattr(Transaction, '_commit', aborts_once)
+    receipt = store.authorize('owner', payload)
+    assert len(attempts) == 2
+    assert stored(db, 'authorizations/' + payload['auth_id'])['created_at'] == receipt['created_at']
+    assert stored(db, '_estimate_history/adr')['rows'][ID]['auth_id'] == payload['auth_id']
 
 
 def test_concurrent_voice_note_appends_keep_every_note_exactly_once():
