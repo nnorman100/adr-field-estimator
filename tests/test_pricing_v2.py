@@ -184,7 +184,7 @@ def room(name='Room', category=2, **changes):
 def run(data, chosen=None):
     chosen = chosen or table()
     lines, warnings = pricing_v2.price_scope(data, chosen)
-    return lines, pricing_v2.totals(data, lines, chosen['policy']), warnings
+    return lines, pricing_v2.totals(data, lines, chosen['policy'], chosen['items']), warnings
 
 
 EXAMPLE_A = dict(rooms=[room('Living room', finished_sf=500)], air_movers=3, dehumidifiers=1)
@@ -1206,19 +1206,19 @@ def test_zero_total_and_unbucketed_guards():
     assert lines == []
     message = r'^The priced scope totals \$0\.00\. Enter at least one quantity or room measurement before auditing\.$'
     with pytest.raises(ValueError, match=message):
-        pricing_v2.totals(nothing, lines, table()['policy'])
+        pricing_v2.totals(nothing, lines, table()['policy'], table()['items'])
     with pytest.raises(ValueError, match=message):
         pricing.price_and_range(nothing, {'calculation_version': 'dryscope-v2', **table()})
 
     # A minimum job charge must not turn an empty job into a signable one.
     minimum = table(minimum_job_charge='500')
     with pytest.raises(ValueError, match=message):
-        pricing_v2.totals(nothing, [], minimum['policy'])
+        pricing_v2.totals(nothing, [], minimum['policy'], minimum['items'])
 
     lines, _ = pricing_v2.price_scope(job(), table())
     lines.append(dict(lines[0], code='NEW-CODE', bucket='mystery'))
     with pytest.raises(RuntimeError, match='NEW-CODE'):
-        pricing_v2.totals(job(), lines, table()['policy'])
+        pricing_v2.totals(job(), lines, table()['policy'], table()['items'])
 
     # A group outside the closed bucket table fails at line creation too.
     corrupt = table()
@@ -1431,14 +1431,14 @@ def test_explanation_text_comes_from_the_policy():
 )
 def test_range_explanation_names_the_cushion_tiers(first, beyond, expected):
     chosen = table(range={'first_sf': 1000, 'first_percent': first, 'beyond_percent': beyond})
-    assert pricing_v2.range_explanation(chosen['policy']) == expected
+    assert pricing_v2.range_explanation(chosen['policy'], job(**EXAMPLE_A)) == expected
     _, result, _ = run(job(**EXAMPLE_A), chosen)
     assert result['range_explanation'] == expected
 
 
 def test_single_mode_has_no_range_explanation():
     chosen = table(estimate_mode='single')
-    assert pricing_v2.range_explanation(chosen['policy']) is None
+    assert pricing_v2.range_explanation(chosen['policy'], job(**EXAMPLE_A)) is None
     assert run(job(**EXAMPLE_A), chosen)[1]['range_explanation'] is None
 
 
@@ -1858,14 +1858,6 @@ def test_monotone_in_every_input_price_and_assist_setting():
     assert checks > 20000
 
 
-def test_uncertainty_needs_the_tables_items():
-    data = job(**SIZED_JOB)
-    chosen = uncertain()
-    lines, _ = pricing_v2.price_scope(data, chosen)
-    with pytest.raises(RuntimeError, match='items'):
-        pricing_v2.totals(data, lines, chosen['policy'])
-
-
 def test_single_mode_prices_the_low_and_hides_the_uncertainty_fields():
     chosen = uncertain(estimate_mode='single')
     result = priced_on(job(**SIZED_JOB), chosen)
@@ -1934,10 +1926,10 @@ def test_the_sentence_says_the_s500_most_only_when_the_counts_are_the_checks():
         text = _sentence(values)
         assert 'the most the IICRC' not in text
         assert 'the larger of the counts entered and what the IICRC S500 placement' in text
-    # A count of zero is not named.
+    # With the check available a count of zero is still named.
     assert _sentence({**SIZED_JOB, 'dehumidifiers': 0, 'dehumidifier_ppd': None}).startswith(
-        'The high end allows for up to 4 air movers for 4 drying days (1 more than planned), the '
-        'larger of'
+        'The high end allows for up to 4 air movers and 0 dehumidifiers for 4 drying days (1 more '
+        'than planned), the larger of'
     )
     zero = uncertain(assist=dict(extra_drying_days=0))
     assert _sentence(
@@ -1949,7 +1941,16 @@ def test_the_sentence_says_the_s500_most_only_when_the_counts_are_the_checks():
             'dehumidifier_ppd': None,
         },
         zero,
-    ).startswith('The high end allows for the equipment counts as entered for 3 drying days, ')
+    ).startswith(
+        'The high end allows for up to 0 air movers and 0 dehumidifiers for 3 drying days, the '
+        'larger of the counts entered and what the IICRC S500 placement recommends for the stated '
+        'room sizes, and hidden damage'
+    )
+    # Only an unavailable check drops the counts and the S500 clause, zero counts or not.
+    assert _sentence(without_sizing(air_movers=0, dehumidifiers=0), zero) == (
+        'The high end allows for the equipment counts as entered for 3 drying days, and hidden '
+        'damage of 15% in category 2 rooms.'
+    )
 
 
 def test_the_sentence_is_omitted_when_the_two_amounts_are_equal():

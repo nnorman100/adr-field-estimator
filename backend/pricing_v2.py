@@ -437,8 +437,6 @@ def _room_percents(data, assist):
 
 def _uncertain_high(data, lines, items, policy, assist):
     """The high end's amounts under the uncertainty method. Taxable labor and materials stay exact."""
-    if items is None:
-        raise RuntimeError('The uncertainty method prices the high end from the table items.')
     numbers = high_numbers(data, assist)
     high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers)
     percents = _room_percents(data, assist)
@@ -461,7 +459,7 @@ def _uncertain_high(data, lines, items, policy, assist):
     )
 
 
-def totals(data, lines, policy, items=None):
+def totals(data, lines, policy, items):
     """The low and high ends of an estimate. Every summary amount is rounded once, to cents.
 
     `items` are the table's items, which the uncertainty method needs to price the high end."""
@@ -583,23 +581,17 @@ def _equipment_clause(data, assist):
     days = _counted(numbers['drying_days'], 'drying day') + (
         f' ({extra} more than planned)' if extra else ''
     )
-    counts = [
-        _counted(amount, noun)
-        for amount, noun in (
-            (numbers['air_movers'], 'air mover'),
-            (numbers['dehumidifiers'], 'dehumidifier'),
-        )
-        if amount
-    ]
-    if numbers['sizing_available'] and counts:
-        return f'up to {" and ".join(counts)} for {days}'
+    if numbers['sizing_available']:
+        movers = _counted(numbers['air_movers'], 'air mover')
+        dehumidifiers = _counted(numbers['dehumidifiers'], 'dehumidifier')
+        return f'up to {movers} and {dehumidifiers} for {days}'
     return f'the equipment counts as entered for {days}'
 
 
 def _sizing_clause(data, assist):
-    """Where the counts come from. None when the check gave them nothing to say."""
+    """Where the counts come from. None when the check is unavailable."""
     numbers = high_numbers(data, assist)
-    if not numbers['sizing_available'] or not (numbers['air_movers'] or numbers['dehumidifiers']):
+    if not numbers['sizing_available']:
         return None
     sizing = equipment_sizing(data)
     if (
@@ -648,9 +640,9 @@ def _uncertainty_sentence(data, assist):
     return f'The high end allows for {text}.'
 
 
-def range_explanation(policy, data=None):
+def range_explanation(policy, data):
     """One plain sentence naming how the high end is built, for the documents. None when there is
-    no range to explain. Only the uncertainty method reads the job."""
+    no range to explain."""
     if policy['estimate_mode'] != 'range':
         return None
     assist = assist_of(policy)

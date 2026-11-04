@@ -77,7 +77,7 @@ drying days   = entered + assist.extra_drying_days
 
 "Entered" is the number the low end prices, so an estimator's override counts.
 
-**Equipment.** The same enabled items make the same lines at those numbers, wherever a `count_days:` source reads them. `E_high` and `T_E_high` are the equipment-bucket totals of those lines. A count entered as 0 can make a line that appears only at the high end. A job number left unset keeps its item's default quantity at both ends. Every other bucket keeps its low lines, whatever its source reads.
+**Equipment.** The same enabled items make the same lines at those numbers, wherever a `field:` or `count_days:` source reads them. `E_high` and `T_E_high` are the equipment-bucket totals of those lines. A count entered as 0 can make a line that appears only at the high end. A job number left unset keeps its item's default quantity at both ends. Every other bucket keeps its low lines, whatever its source reads.
 
 **Labor and materials.** With `p_c = assist.hidden_damage_percent[c] / 100` for a room of category `c`, and `p_top` the largest `p_c` among the job's rooms:
 
@@ -96,10 +96,10 @@ T_L_high = Σ taxable area lines total × (1 + p_c)  +  T_L_other × (1 + p_top)
 
 | Case | Wording |
 | --- | --- |
-| The check is unavailable, or there are no counts | "the equipment counts as entered for 4 drying days" with no S500 clause |
+| The check is unavailable | "the equipment counts as entered for 4 drying days" with no S500 clause |
 | No extra days | the parenthesis is dropped |
 | A count above the check's number, or one it could not size | "the larger of the counts entered and what the IICRC S500 placement recommends for the stated room sizes" |
-| A count of zero | not named |
+| A count of zero, with the check available | named, as in "up to 4 air movers and 0 dehumidifiers for 4 drying days" |
 | No equipment difference, no extra days and every named percent 0 | no sentence, because the two amounts are equal |
 
 ## Switching from a rate book to a table
