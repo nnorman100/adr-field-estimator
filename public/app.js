@@ -801,6 +801,7 @@ function clearDisplayedInspection() {
   $('additionalWork').hidden = $('priceUnpriced').hidden = true;
   $('readinessDialog').close();
   $('readinessGaps').replaceChildren();
+  $('readinessWarnings').replaceChildren();
   $('removeRoomDescription').textContent = '';
   clearValidationFeedback();
   clearSigningError('documentsConfirmedError');
@@ -1579,7 +1580,7 @@ async function fillScopeFromWalkthrough() {
       }
     if (state.draft !== draft || state.user?.uid !== uid) return;
     $('scopeQuestions').replaceChildren(...questions.map((question) => node('li', question)));
-    const missing = readinessEnabled()
+    const missing = readinessGapsEnabled()
       ? missingItems(
           filled,
           draft.photos,
@@ -3372,8 +3373,22 @@ async function copySigned() {
   await restoreDraft(draft.inspection_id);
   say('Copied to a new draft. Photos and signatures stay with the signed job.', 'success');
 }
-function readinessEnabled() {
+function readinessGapsEnabled() {
   return !!state.session?.ai_features?.includes('readiness') && canEditDraft('scope');
+}
+function warningsEnabled() {
+  return !!state.session?.ai_features?.includes('estimate_assist') && canEditDraft('scope');
+}
+// The Finish dialog runs for readiness gaps, estimate warnings or both.
+function readinessEnabled() {
+  return readinessGapsEnabled() || warningsEnabled();
+}
+// The server's warnings for the saved draft. While edits are unsaved they describe older numbers,
+// so online the dialog waits for the save and offline it shows the last saved ones with a note.
+function savedWarnings() {
+  const fresh = !state.conflict && stable(state.draft.data) === state.ack;
+  const list = warningsEnabled() && (fresh || !navigator.onLine) ? state.record?.warnings : null;
+  return { fresh, list: list || [] };
 }
 function currentReadiness() {
   const readings = navigator.onLine ? (window.DryingLog?.readinessReadings() ?? null) : null;
@@ -3388,7 +3403,7 @@ function currentReadiness() {
 function renderReadiness() {
   const line = $('readinessCount');
   if (!line) return;
-  line.hidden = !readinessEnabled();
+  line.hidden = !readinessGapsEnabled();
   if (line.hidden) return;
   const count = currentReadiness().gaps.length;
   line.textContent = count ? 'Still missing: ' + count + ' item(s)' : 'No readiness gaps listed';
@@ -3431,24 +3446,58 @@ function fixReadiness(gap) {
     equipment: 'airMovers',
     dehumidifier_ppd: 'dehumidifierPpd',
     scope_confirmed: 'scopeConfirmed',
+    air_movers_below: 'airMovers',
+    air_movers_above: 'airMovers',
+    dehumidifiers_below: 'dehumidifiers',
+    dehumidifiers_above: 'dehumidifiers',
+    unpriced_quantity: 'v2Unlisted',
+    unpriced_extras: 'additionalWork',
+    far_from_typical: 'rooms',
   };
-  const field = gap.code === 'demolition' ? 'finished_sf' : gap.code;
-  const target =
+  const roomFields = { demolition: 'finished_sf', unpriced_room: 'category' };
+  const field = roomFields[gap.code] || gap.code;
+  let target =
     index >= 0
       ? document.querySelector('[data-room-index="' + index + '"][data-room-key="' + field + '"]')
       : $(ids[gap.code]);
-  for (let parent = target?.parentElement; parent; parent = parent.parentElement)
+  // A panel this job does not show falls back to the price list the quantity belongs to.
+  if (target?.hidden) target = $('v2Scope');
+  for (let parent = target; parent; parent = parent.parentElement)
     if (parent.tagName === 'DETAILS') parent.open = true;
   target?.scrollIntoView({ block: 'center' });
   target?.focus();
 }
+function readinessRow(item, label, text) {
+  const row = node('div', undefined, 'readiness-gap'),
+    fix = node('button', 'Fix');
+  fix.type = 'button';
+  fix.setAttribute('aria-label', 'Fix: ' + label);
+  fix.addEventListener('click', () => fixReadiness(item));
+  row.append(node('span', text), fix);
+  return row;
+}
+function renderReadinessWarnings(list, fresh) {
+  const box = $('readinessWarnings');
+  box.replaceChildren();
+  if (!warningsEnabled() || (fresh && !list.length)) return;
+  const section = node('section');
+  section.append(node('h3', 'Check before you finish'));
+  if (!fresh) section.append(node('p', 'Warnings update once the draft saves.', 'hint'));
+  for (const warning of list) section.append(readinessRow(warning, warning.text, warning.text));
+  box.append(section);
+}
 function confirmReadiness() {
   if (!readinessEnabled()) return Promise.resolve(true);
-  const gaps = currentReadiness().gaps;
-  const keys = gaps.map((g) => stable([g.room, g.code]));
+  const gapsOn = readinessGapsEnabled(),
+    gaps = gapsOn ? currentReadiness().gaps : [],
+    { fresh, list: warnings } = savedWarnings();
+  const warningKey = (w) => stable(['warning', w.code, w.room]);
+  const keys = [...gaps.map((g) => stable([g.room, g.code])), ...warnings.map(warningKey)];
   // Local UI acknowledgement only, outside inspection.data and the server save queue.
   const previous = state.draft.readinessFinish || [];
-  state.draft.readinessFinish = keys;
+  // Warnings not listed because the draft is unsaved stay acknowledged for the Finish after the save.
+  const waiting = fresh ? [] : previous.filter((key) => key.startsWith('["warning",'));
+  state.draft.readinessFinish = [...new Set([...keys, ...waiting])];
   void persist().catch((e) => say(e.message, 'error'));
   if (!keys.some((k) => !previous.includes(k))) return Promise.resolve(true);
   const dialog = $('readinessDialog'),
@@ -3458,27 +3507,21 @@ function confirmReadiness() {
     const group = node('section');
     group.append(node('h3', room || 'Whole job'));
     for (const gap of gaps.filter((g) => g.room === room)) {
-      const row = node('div', undefined, 'readiness-gap'),
-        fix = node('button', 'Fix');
-      fix.type = 'button';
-      fix.setAttribute('aria-label', 'Fix: ' + gap.text + (room ? ' · ' + room : ''));
-      fix.addEventListener('click', () => fixReadiness(gap));
-      row.append(
-        node(
-          'span',
-          !navigator.onLine && gap.code === 'readings_unknown'
-            ? 'Readings unknown offline'
-            : gap.text,
-        ),
-        fix,
+      const row = readinessRow(
+        gap,
+        gap.text + (room ? ' · ' + room : ''),
+        !navigator.onLine && gap.code === 'readings_unknown'
+          ? 'Readings unknown offline'
+          : gap.text,
       );
       if (gap.code === 'readings_unknown') row.classList.add('hint');
       group.append(row);
     }
     list.append(group);
   }
-  $('readinessLive').hidden = !state.liveReady;
-  $('readinessOffline').hidden = navigator.onLine;
+  renderReadinessWarnings(warnings, fresh);
+  $('readinessLive').hidden = !gapsOn || !state.liveReady;
+  $('readinessOffline').hidden = !gapsOn || navigator.onLine;
   return new Promise((resolve) => {
     let accepted = false;
     $('readinessContinue').onclick = () => {
@@ -3489,6 +3532,20 @@ function confirmReadiness() {
     dialog.addEventListener('close', () => resolve(accepted), { once: true });
     dialog.showModal();
   });
+}
+async function saveBeforeWarnings() {
+  if (!warningsEnabled() || !navigator.onLine) return;
+  ui.auditing = true;
+  renderControls();
+  try {
+    await syncDraft();
+  } catch (e) {
+    invalidate();
+    throw e;
+  } finally {
+    ui.auditing = false;
+    renderControls();
+  }
 }
 async function finishAudit() {
   if (!state.draft || state.signed || confirmedAuthorization)
@@ -3518,6 +3575,9 @@ async function finishAudit() {
     );
     return;
   }
+  const draft = state.draft;
+  await saveBeforeWarnings();
+  if (state.draft !== draft || state.signed || confirmedAuthorization) return;
   if (!(await confirmReadiness())) return;
   if (!navigator.onLine)
     throw Error('Connect to generate documents. Your draft is saved on this device.');
@@ -3875,6 +3935,7 @@ function renderDocuments() {
     selectDocument('proposal');
   }
   ADRDocuments.render(docs, state.draft.photos, photoUrl);
+  appendRecordWarnings();
   renderRoomChips();
   $('signingArea').hidden = !!state.signed || !!confirmedAuthorization;
   $('authorizeJob').disabled = !!confirmedAuthorization || !docs.signable || !navigator.onLine;
@@ -3883,6 +3944,16 @@ function renderDocuments() {
   else if (ui.task === 'review') restoreHomeownerLink().catch(() => {});
   resizeSignature();
   window.WorkspaceUI?.documentBranding();
+}
+// Advisory, beside the audit's own warnings. The notice box never prints, so these stay off paper.
+function appendRecordWarnings() {
+  if (state.signed || confirmedAuthorization) return;
+  if (!state.session?.ai_features?.includes('estimate_assist')) return;
+  const box = $('auditWarnings'),
+    texts = (state.record?.warnings || []).map((warning) => warning.text);
+  if (!texts.length) return;
+  box.textContent = [box.textContent, ...texts].filter(Boolean).join(' · ');
+  box.hidden = false;
 }
 function resizeSignature() {
   const canvas = $('signCanvas'),

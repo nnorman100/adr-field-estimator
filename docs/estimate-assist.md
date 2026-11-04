@@ -94,4 +94,31 @@ The overrun is a coverage number. It counts everything that raised the invoice a
 
 ## 4. Guard rails while estimating
 
-Not built yet.
+Advisory warnings on an unsigned draft. `backend/estimate_warnings.py` works them out on every read, like `equipment_sizing`, when `AI_FEATURES=estimate_assist` is on. They are never stored and never reach a document, a signing link or a model. They never change `signable`, the proposal hash or a signing rule, and they name no amount.
+
+| Code | When | Needs |
+|---|---|---|
+| `air_movers_below`, `air_movers_above` | The IICRC sizing check flags the count. The text is the check's own reason. | The check to be available |
+| `dehumidifiers_below`, `dehumidifiers_above` | The same, for dehumidifiers | The check to be available |
+| `unpriced_room` | A room with area whose category no enabled, priced, room-measured item covers | A company table |
+| `unpriced_quantity` | A job number above 0 with no enabled item on the table, or a saved quantity for an item the table no longer lists. A saved item at 0 is left out, because nothing was entered. | A company table |
+| `unpriced_extras` | Additional work hours entered on the table's additional work item | A company table |
+| `far_from_typical` | The low end is below half or above double the median low end of at least 5 signed jobs with the same highest category and an area within two-thirds to one and a half times this job's. Both ends of that area window count, and two jobs with no area compare with each other. | Saved prices and the company's own signed jobs |
+
+**Who gets what.** A job on a rate book gets the sizing and typical-job warnings. Its form prices every field, so the `unpriced_*` warnings do not apply. A job compares its low end only once it has saved prices: a company-table draft from its first save, a rate-book draft from its first audit. A job that prices nothing yet has no low end, and keeps its other warnings.
+
+**Roles.** They come with the draft read, under `jobs_read` and job access, so owners, office staff and the estimator on the job read them. Only people with `scope` see the dialog. Read-only superadmin support and signed records carry none. A failed read of the saved prices or the history leaves the list empty and never fails the draft read.
+
+**On the phone.** **Ready to review?** gains **Check before you finish**, each warning with **Fix**. The dialog opens for a new gap or a new warning. A warning that was already listed stays acknowledged, like a gap. With `readiness` off the same dialog opens for warnings alone. Online, **Finish & review** saves the draft first, so the dialog lists the warnings for an edit made a moment earlier. If that save fails, the error shows and neither the dialog nor the audit runs. If the draft still has unsaved changes (offline, or a save that needs a recovery choice), the section says **Warnings update once the draft saves.** instead of listing older numbers. Offline it also shows the last saved warnings, because the phone keeps the saved record. The review screen repeats the texts in the same box as **Unpriced work**. That box never prints.
+
+**What Fix opens.**
+
+| Warning | Fix goes to |
+|---|---|
+| Sizing | The air mover or dehumidifier input |
+| `unpriced_room` | The room's category |
+| `unpriced_quantity` | **Not in the current price list** |
+| `unpriced_extras` | **Additional work**, or the item list when that panel is off |
+| `far_from_typical` | The rooms |
+
+**The thresholds are fixed constants** (decision D8), and the comparison uses at most the 300 rows of section 3's history.

@@ -1,0 +1,468 @@
+[
+  {
+    "name": "air movers below the minimum",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 2,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "expected_codes": [
+      "air_movers_below"
+    ],
+    "expected_text": "Fewer than the IICRC minimum of 3 for the wet floor areas."
+  },
+  {
+    "name": "air movers above the maximum",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 6,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "expected_codes": [
+      "air_movers_above"
+    ],
+    "expected_text": "More than the IICRC floor-based maximum of 4."
+  },
+  {
+    "name": "dehumidifiers below the recommended units",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 10,
+      "scope_confirmed": true
+    },
+    "expected_codes": [
+      "dehumidifiers_below"
+    ],
+    "expected_text": "1 × 10 = 10 pints/day is less than the 23 pints/day recommended."
+  },
+  {
+    "name": "dehumidifiers above the recommended units",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 2,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "expected_codes": [
+      "dehumidifiers_above"
+    ],
+    "expected_text": "1 at 70 pints/day each cover the 23 pints/day recommended; 2 are entered."
+  },
+  {
+    "name": "a category 3 room nothing on the table prices",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Crawl hall",
+          "loss": "mold",
+          "category": 3,
+          "finished_sf": 120
+        }
+      ],
+      "air_movers": 0,
+      "dehumidifiers": 0,
+      "dehumidifier_ppd": null,
+      "scope_confirmed": true
+    },
+    "table": {
+      "items": {
+        "demo_cat3_floor": {
+          "enabled": false
+        },
+        "demo_cat3_wall": {
+          "enabled": false
+        },
+        "antimicrobial": {
+          "enabled": false
+        },
+        "hepa_vacuum": {
+          "enabled": false
+        },
+        "surface_cleaning": {
+          "enabled": false
+        }
+      }
+    },
+    "expected_codes": [
+      "unpriced_room"
+    ],
+    "expected_room": "Crawl hall",
+    "expected_text": "Crawl hall: 120 sq ft of category 3 work prices nothing on your company's price list."
+  },
+  {
+    "name": "a job field the table has no item for",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true,
+      "air_scrubbers": 2
+    },
+    "table": {
+      "items": {
+        "air_scrubber": {
+          "enabled": false
+        }
+      }
+    },
+    "expected_codes": [
+      "unpriced_quantity"
+    ],
+    "expected_text": "2 air scrubbers entered, but your price list has no item for it."
+  },
+  {
+    "name": "a scope item the table no longer lists",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true,
+      "scope_items": {
+        "old_ozone_unit": {
+          "quantity": 4
+        }
+      }
+    },
+    "expected_codes": [
+      "unpriced_quantity"
+    ],
+    "expected_text": "4 old ozone unit entered, but your price list has no item for it."
+  },
+  {
+    "name": "additional work hours waiting for approval",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true,
+      "scope_items": {
+        "additional_work": {
+          "quantity": 3
+        }
+      }
+    },
+    "table": {
+      "extras": true
+    },
+    "expected_codes": [
+      "unpriced_extras"
+    ],
+    "expected_text": "Additional work hours are only priced once the owner approves them."
+  },
+  {
+    "name": "a typical job",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "low": "1000.00",
+    "history": [
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      }
+    ],
+    "expected_codes": []
+  },
+  {
+    "name": "a job at 0.4 times its comparable signed jobs",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "low": "400.00",
+    "history": [
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      }
+    ],
+    "expected_codes": [
+      "far_from_typical"
+    ],
+    "expected_text": "This estimate's low end is about 0.4× your company's typical category 2 job of this size (6 signed jobs). Check the quantities before you finish."
+  },
+  {
+    "name": "a job at 2.5 times its comparable signed jobs",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "low": "2500.00",
+    "history": [
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      }
+    ],
+    "expected_codes": [
+      "far_from_typical"
+    ],
+    "expected_text": "This estimate's low end is about 2.5× your company's typical category 2 job of this size (6 signed jobs). Check the quantities before you finish."
+  },
+  {
+    "name": "fewer than five comparable signed jobs",
+    "data": {
+      "address": "Synthetic property",
+      "year_built": 2000,
+      "rooms": [
+        {
+          "name": "Kitchen",
+          "loss": "water",
+          "category": 2,
+          "finished_sf": 100,
+          "floor_sf": 140,
+          "ceiling_height_ft": 8,
+          "water_class": 2
+        }
+      ],
+      "air_movers": 3,
+      "dehumidifiers": 1,
+      "dehumidifier_ppd": 70,
+      "scope_confirmed": true
+    },
+    "low": "400.00",
+    "history": [
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      },
+      {
+        "category": 2,
+        "sf": "100.00",
+        "low": "1000.00"
+      }
+    ],
+    "expected_codes": []
+  }
+]

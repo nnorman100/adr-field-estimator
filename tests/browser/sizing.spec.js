@@ -144,11 +144,11 @@ test.describe('Use suggested counts', () => {
   test.afterEach(async ({ request }) => {
     await request.post('/__test/workspaces', { data: { enabled: false } });
   });
-  async function onTable(page, request, features = ['estimate_assist']) {
+  async function onTable(page, request, features = ['estimate_assist'], table = {}) {
     await request.post('/__test/workspaces', {
       data: { enabled: true, price_books: true, ai_features: features },
     });
-    await request.post('/__test/price-table', { data: {} });
+    await request.post('/__test/price-table', { data: table });
     await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid);
     await page.goto('/app');
     await expect(page.locator('#workspaceDashboard')).toBeVisible();
@@ -243,6 +243,75 @@ test.describe('Use suggested counts', () => {
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
     await expect(row(page, 'Air movers').locator('.sizing-flag')).toHaveText('Below');
     await expect(useButton(page)).toBeHidden();
+  });
+
+  test('a company table warns about rooms and quantities it cannot price and a far-off low end', async ({
+    page,
+    request,
+  }) => {
+    await onTable(page, request, ['estimate_assist'], {
+      items: {
+        demo_cat1_floor: { enabled: false },
+        demo_cat1_wall: { enabled: false },
+        antimicrobial: { enabled: false },
+      },
+    });
+    await request.post('/__test/estimate-history', {
+      data: {
+        rows: Object.fromEntries(
+          [0, 1, 2, 3, 4, 5].map((n) => [
+            'ADR-INS-' + String(n).padStart(32, '0'),
+            { category: 1, sf: '40.00', low: '9000.00' },
+          ]),
+        ),
+      },
+    });
+    await page.evaluate(() => {
+      state.draft.data.scope_items = {
+        ...state.draft.data.scope_items,
+        old_ozone_unit: { quantity: '2', count: 0, days: 0 },
+      };
+      changed();
+      ScopeItems.render();
+    });
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#scopeConfirmed').check();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#finishAudit').click();
+    const dialog = page.getByRole('dialog', { name: 'Ready to review?' }),
+      section = page.locator('#readinessWarnings');
+    await expect(dialog).toBeVisible();
+    await expect(section).toContainText('Fewer than the IICRC minimum of 3');
+    const ROOM = "Room 1: 40 sq ft of category 1 work prices nothing on your company's price list.";
+    await expect(section).toContainText(ROOM);
+    const QUANTITY = '2 old ozone unit entered, but your price list has no item for it.';
+    await expect(section).toContainText(QUANTITY);
+    await expect(section).toContainText(/about [0-9.]+× your company's typical category 1 job/);
+    await expect(section).not.toContainText('$');
+    expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await dialog.screenshot({ path: test.info().outputPath('warnings.png') });
+
+    const fix = (name) => dialog.getByRole('button', { name: new RegExp('^Fix: ' + name) });
+    await fix('Fewer than').click();
+    await expect(page.locator('#airMovers')).toBeFocused();
+    await expect(page.locator('#airMovers')).toBeInViewport();
+    // Listed once, so reopen the dialog for the next target by forgetting the acknowledgement.
+    const again = async () => {
+      await page.evaluate(() => (state.draft.readinessFinish = []));
+      await page.locator('#finishAudit').click();
+      await expect(dialog).toBeVisible();
+    };
+    await again();
+    await fix('Room 1: 40').click();
+    await expect(room(page, 'category')).toBeFocused();
+    await again();
+    await fix('2 old ozone').click();
+    await expect(page.locator('#v2Unlisted')).toHaveAttribute('open', '');
+    await expect(page.locator('#v2Unlisted')).toBeInViewport();
+    await again();
+    await fix('This estimate').click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#rooms')).toBeInViewport();
   });
 
   test('it is absent with the flag off', async ({ page, request }) => {

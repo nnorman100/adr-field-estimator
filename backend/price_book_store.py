@@ -1514,6 +1514,14 @@ class PriceBookStore:
             return False
         return _is_unset(self.effective(self.ws.read('_companies', job['company_id'])))
 
+    def pin_for(self, uid, record):
+        """The job's saved prices for a draft read, or None before it has any."""
+        job, _ = self.ws.job_access(uid, record, 'read')
+        pin = self._pin(record['inspection_id'])
+        if pin:
+            self.basis_for(pin, job['company_id'])
+        return pin
+
     def job_view(self, uid, record):
         self._require()
         job, actor = self.ws.job_access(uid, record, 'read')

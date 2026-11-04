@@ -70,7 +70,7 @@ try:
         ReadingUpload,
         QrTagRequest,
     )
-    from . import places, signing_links, ai_features
+    from . import places, signing_links, ai_features, estimate_warnings
     from .delivery import Deliveries
     from . import document_links
     from . import tags as qr_tags
@@ -146,6 +146,7 @@ except ImportError:
     )
     import places
     import ai_features
+    import estimate_warnings
     import signing_links
     from delivery import Deliveries
     import document_links
@@ -646,7 +647,7 @@ def reusable_audit(record, revision, identity, customer, claim=None, price_basis
     )
 
 
-def public_record(record, *, readiness_state=None, quantity_notes=False):
+def public_record(record, *, readiness_state=None, warnings=None, quantity_notes=False):
     result = {k: v for k, v in record.items() if k not in ('owner_uid', 'payload_sha256')}
     if not quantity_notes:
         if result.get('documents'):
@@ -666,6 +667,8 @@ def public_record(record, *, readiness_state=None, quantity_notes=False):
         result['equipment_sizing'] = equipment_sizing(data)
         if ai_features.enabled('readiness') and readiness_state is not None:
             result['readiness'] = readiness_state
+        if warnings is not None:
+            result['warnings'] = warnings
     return result
 
 
@@ -691,6 +694,40 @@ async def saved_readiness(store, uid, record):
     return readiness(record['data'], record.get('photos', []), claim, log['readings'], pricing)
 
 
+async def saved_warnings(store, uid, record):
+    """Advisory warnings for a draft the caller has already checked access to. They are never worth
+    a failed read, so an error leaves none; the access recheck after the sidecar reads still stands.
+    """
+    found = []
+    has_company = WORKSPACES_ENABLED and getattr(store, 'workspaces', None)
+    try:
+        data = InspectionData.model_validate(record['data'])
+        pin = await stored(store.workspaces.prices.pin_for, uid, record) if has_company else None
+        history = None
+        if pin:
+            rows = await stored(store.outcomes._rows, pin['company_id'])
+            history = list(rows.values())
+        priced = None
+        if pin:
+            try:
+                priced = price_and_range(data, pin)
+            except ValueError:
+                # Nothing priced yet, so there is no low end to compare. The rest still applies.
+                pass
+        v2 = pin if pin and pin.get('calculation_version') == V2_CALCULATION_VERSION else None
+        found = estimate_warnings.warnings(data, equipment_sizing(data), v2, priced, history)
+    except Exception as error:
+        event(
+            'Draft warnings skipped',
+            logging.INFO,
+            operation='saved_warnings',
+            outcome=type(error).__name__,
+        )
+    if has_company:
+        await stored(store._access, uid, record)
+    return found
+
+
 async def reads_quantity_notes(store, uid, record):
     documents = record.get('documents') or (record.get('audit') or {}).get('documents') or {}
     if 'quantity_notes' not in documents:
@@ -705,17 +742,16 @@ async def reads_quantity_notes(store, uid, record):
 
 
 async def draft_record(store, uid, record):
-    state = None
-    if (
-        ai_features.enabled('readiness')
-        and 'data' in record
-        and 'auth_id' not in record
-        and record.get('status') != 'signed'
-    ):
-        state = await saved_readiness(store, uid, record)
+    state = warnings = None
+    if 'data' in record and 'auth_id' not in record and record.get('status') != 'signed':
+        if ai_features.enabled('readiness'):
+            state = await saved_readiness(store, uid, record)
+        if ai_features.enabled('estimate_assist'):
+            warnings = await saved_warnings(store, uid, record)
     return public_record(
         record,
         readiness_state=state,
+        warnings=warnings,
         quantity_notes=await reads_quantity_notes(store, uid, record),
     )
 

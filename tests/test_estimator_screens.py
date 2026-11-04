@@ -799,3 +799,139 @@ def test_a_new_v2_draft_starts_at_the_tables_drying_days(api, enabled):  # noqa:
     assert made.status_code == 200, made.text
     assert made.json()['data']['drying_days'] == 5
     assert not made.json()['data'].get('quantity_overrides')
+
+
+def warning_codes(record):
+    return [warning['code'] for warning in record['warnings']]
+
+
+def test_draft_reads_carry_warnings_only_with_the_flag_and_only_unsigned(
+    api,
+    enabled,  # noqa: F811
+    monkeypatch,
+):
+    client, current, store = api
+    on_table(client, current, sized_job(air_movers=9, dehumidifiers=1))
+    url = '/api/inspections/' + ID
+    assert 'warnings' not in client.get(url).json()
+    # Equipment sizing is not behind the flag, and the flag brings the warnings beside it.
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    opened = client.get(url).json()
+    assert opened['equipment_sizing']['status'] == 'available'
+    assert warning_codes(opened) == ['air_movers_above']
+    assert opened['warnings'][0]['room'] == ''
+    # Every role that reads the draft reads them; another company still gets nothing.
+    for uid in ('owner', 'office'):
+        current['uid'] = uid
+        assert warning_codes(client.get(url).json()) == ['air_movers_above'], uid
+    current['uid'] = 'other-owner'
+    assert client.get(url).status_code == 404
+    # Read-only support keeps equipment_sizing and gets no warnings.
+    current['uid'] = 'admin'
+    support = client.get('/api/admin/companies/adr/jobs/' + ID)
+    assert support.status_code == 200, support.text
+    assert 'equipment_sizing' in support.json()['inspection']
+    assert 'warnings' not in support.json()['inspection']
+    # A failed sidecar read degrades to none and never fails the read.
+    current['uid'] = 'estimator'
+
+    def fail(*args, **kwargs):
+        raise RuntimeError('Synthetic history failure')
+
+    with monkeypatch.context() as broken:
+        broken.setattr(store.outcomes, '_rows', fail)
+        failed = client.get(url)
+    assert failed.status_code == 200, failed.text
+    assert failed.json()['warnings'] == []
+    # A signed record carries none.
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    assert warning_codes(audited.json()) == ['air_movers_above']
+    signed = client.post('/api/authorize', json=sign_payload(audited.json()))
+    assert signed.status_code == 200, signed.text
+    assert 'warnings' not in signed.json()
+    assert 'warnings' not in client.get(url).json()
+
+
+def test_warnings_follow_the_saved_draft(api, enabled, monkeypatch):  # noqa: F811
+    client, current, store = api
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    on_table(client, current, sized_job(air_movers=2, dehumidifiers=1))
+    url = '/api/inspections/' + ID
+    assert warning_codes(client.get(url).json()) == ['air_movers_below']
+    saved = client.put(
+        url,
+        json={'data': sized_job(air_movers=3, dehumidifiers=1), 'expected_revision': 1},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['warnings'] == []
+
+
+def test_a_lost_access_during_warnings_still_fails_the_read(api, monkeypatch):
+    client, current, store = api
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    current['uid'] = 'estimator'
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': data()})
+    assert made.status_code == 200, made.text
+    record = store.get_inspection('estimator', ID)
+
+    def denied(*args, **kwargs):
+        raise LookupError('Inspection not found.')
+
+    monkeypatch.setattr(store, '_access', denied)
+    with pytest.raises(bm.HTTPException) as caught:
+        anyio.run(bm.saved_warnings, store, 'estimator', record)
+    assert caught.value.status_code == 404
+
+
+def test_warnings_need_a_pin_for_the_typical_comparison(api, enabled, monkeypatch):  # noqa: F811
+    client, current, store = api
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    current['uid'] = 'owner'
+    publish(client, rates(emergency_call='150.00'))
+    current['uid'] = 'estimator'
+    job = sized_job(air_movers=2, dehumidifiers=1, scope_confirmed=True)
+    made = client.post('/api/inspections', json={'inspection_id': ID, 'data': job})
+    assert made.status_code == 200, made.text
+    assert '_job_pricing/' + ID not in store.db.records
+    # Comparable signed jobs that cost far more: the job is far from typical once it has a low end.
+    store.db.records['_estimate_history/adr'] = dict(
+        company_id='adr',
+        rows={
+            'ADR-INS-' + str(n) * 32: dict(category=2, sf='100.00', low='900000.00')
+            for n in range(6)
+        },
+    )
+    assert warning_codes(client.get('/api/inspections/' + ID).json()) == ['air_movers_below']
+    audited = client.post('/api/audit', json={'inspection_id': ID, 'expected_revision': 1})
+    assert audited.status_code == 200, audited.text
+    assert '_job_pricing/' + ID in store.db.records
+    assert warning_codes(audited.json()) == ['air_movers_below', 'far_from_typical']
+    assert '0.0×' in audited.json()['warnings'][1]['text']
+    assert 'Signed jobs' not in audited.json()['warnings'][1]['text']
+
+
+def test_a_bad_pin_leaves_no_warnings_instead_of_pricing_from_it(api, enabled, monkeypatch):  # noqa: F811
+    client, current, store = api
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    on_table(client, current, sized_job(air_movers=2, dehumidifiers=1))
+    url = '/api/inspections/' + ID
+    assert warning_codes(client.get(url).json()) == ['air_movers_below']
+    store.db.records['_job_pricing/' + ID]['content_sha256'] = '0' * 64
+    opened = client.get(url)
+    assert opened.status_code == 200, opened.text
+    assert opened.json()['warnings'] == []
+
+
+def test_a_company_only_compares_with_its_own_signed_jobs(api, enabled, monkeypatch):  # noqa: F811
+    client, current, store = api
+    monkeypatch.setattr(ai_features, 'AI_FEATURES', {'estimate_assist'})
+    on_table(client, current, sized_job(air_movers=3, dehumidifiers=1))
+    store.db.records['_estimate_history/other'] = dict(
+        company_id='other',
+        rows={
+            'ADR-INS-' + str(n) * 32: dict(category=2, sf='100.00', low='900000.00')
+            for n in range(6)
+        },
+    )
+    assert client.get('/api/inspections/' + ID).json()['warnings'] == []

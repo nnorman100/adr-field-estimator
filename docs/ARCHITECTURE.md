@@ -32,6 +32,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Delivery (email) | `backend/delivery.py`, `workspaces.py` |
 | Price books (off by default) | `price_book_*.py`, `price_books.py`, `price_table.py` (v2 tables), `pricing.py` (calculation dispatch), `pricing_v2.py` (v2 calculation), `public/scope-items.js` (v2 Check Scope item list) |
 | Job close, estimate accuracy | `backend/outcomes.py`, `public/job-close.js`, `public/estimate-accuracy.js`, `docs/estimate-assist.md` |
+| Warnings while estimating | `backend/estimate_warnings.py`, `public/app.js` (the readiness dialog), `docs/estimate-assist.md` |
 | Readiness, insights, AI usage | `readiness.py`, `insights.py`, `ai_usage.py` |
 | Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
 | Release scripts | `scripts/deploy_backend.py`, `stamp_hosting.py`, `verify_*`, `auto_deploy.py` (automatic deploys) |
