@@ -9,6 +9,7 @@ import re
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from typing import Any
 
+from google.api_core.exceptions import Aborted
 from pydantic import Field
 
 try:
@@ -100,19 +101,19 @@ def _actual_days(value):
 def _labor_material_low(body, data, pin, version):
     """The low end's labor-and-material lines. A failure here never stops a signature: the job
     still counts in the hit rate, and without this number it stays out of the overrun."""
-    if version != TABLE_VERSION:
-        items = (body.get('documents') or {}).get('xactimate_scope') or []
-        return sum(
-            (
-                Decimal(str(item['total']))
-                for item in items
-                if item.get('code') in LABOR_MATERIAL_CODES
-            ),
-            Decimal(0),
-        )
-    if not pin:
-        return Decimal(0)
     try:
+        if version != TABLE_VERSION:
+            items = (body.get('documents') or {}).get('xactimate_scope') or []
+            return sum(
+                (
+                    Decimal(str(item['total']))
+                    for item in items
+                    if item.get('code') in LABOR_MATERIAL_CODES
+                ),
+                Decimal(0),
+            )
+        if not pin:
+            return Decimal(0)
         lines = price_and_range(InspectionData.model_validate(data), pin).lines
         return sum(
             (Decimal(str(line['total'])) for line in lines if line['bucket'] == 'labor_material'),
@@ -138,34 +139,68 @@ def room_area(room, wet_basis):
     return Decimal(str((room.get('floor_sf') or 0) if wet is None else wet))
 
 
+def _signed_amount(value):
+    """An amount the agreement was signed on. Without one there is nothing to compare a final with."""
+    try:
+        amount = Decimal(str(value))
+        if amount.is_finite():
+            return _money(amount)
+    except ArithmeticError:
+        pass
+    raise ValueError(NO_AMOUNTS)
+
+
+def _row_details(body, data, pin):
+    """What the statistics compare by. A record they cannot read leaves a row that counts in the
+    hit rate and stays out of the overrun, the categories, the days and the typical-job check."""
+    try:
+        documents = body.get('documents') or {}
+        version = (
+            (pin or {}).get('calculation_version')
+            or (saved_basis({'documents': documents}) or {}).get('calculation_version')
+            or RATE_BOOK_VERSION
+        )
+        rooms = data.get('rooms') or []
+        wet_basis = (
+            version == TABLE_VERSION and ((pin or {}).get('policy') or {}).get('area_basis')
+        ) == 'wet_floor'
+        categories = {room.get('category', 1) for room in rooms}
+        return dict(
+            calculation_version=version,
+            sf=_money(sum((room_area(room, wet_basis) for room in rooms), Decimal(0))),
+            category=max(categories, default=1),
+            single_category=len(categories) == 1,
+            labor_material_low=_money(_labor_material_low(body, data, pin, version)),
+            planned_days=data.get('drying_days'),
+        )
+    except Exception as error:
+        event(
+            'Estimate history could not read a signed job',
+            logging.WARNING,
+            operation='estimate_history',
+            outcome=type(error).__name__,
+        )
+        return dict(
+            calculation_version=None,
+            sf='0.00',
+            category=None,
+            single_category=False,
+            labor_material_low='0.00',
+            planned_days=None,
+        )
+
+
 def history_row_at_signing(job, body, data, pin):
     """One signed job's row, from the proposal it was signed on. Takes no price from the phone."""
-    documents = body.get('documents') or {}
-    version = (
-        (pin or {}).get('calculation_version')
-        or (saved_basis({'documents': documents}) or {}).get('calculation_version')
-        or RATE_BOOK_VERSION
-    )
-    if body.get('proposed_cost') is None:
-        raise ValueError(NO_AMOUNTS)
+    high = _signed_amount(body.get('proposed_cost'))
     single = body.get('proposed_cost_low') is None
-    rooms = data.get('rooms') or []
-    wet_basis = (
-        version == TABLE_VERSION and ((pin or {}).get('policy') or {}).get('area_basis')
-    ) == 'wet_floor'
-    categories = {room.get('category', 1) for room in rooms}
     return dict(
         auth_id=body.get('auth_id') or job.get('auth_id'),
         signed_at=job.get('signed_at') or body.get('created_at'),
-        calculation_version=version,
         estimate_mode='single' if single else 'range',
-        sf=_money(sum((room_area(room, wet_basis) for room in rooms), Decimal(0))),
-        category=max(categories, default=1),
-        single_category=len(categories) == 1,
-        low=_money(body['proposed_cost'] if single else body['proposed_cost_low']),
-        high=None if single else _money(body['proposed_cost']),
-        labor_material_low=_money(_labor_material_low(body, data, pin, version)),
-        planned_days=data.get('drying_days'),
+        low=high if single else _signed_amount(body['proposed_cost_low']),
+        high=None if single else high,
+        **_row_details(body, data, pin),
     )
 
 
@@ -180,6 +215,17 @@ def landed(final, row):
 
 def _landed_text(row):
     return LANDED_TEXT[row['estimate_mode']][row['landed']]
+
+
+def _stored_row(rows, job_id):
+    """This job's row, when close and the outcome card can read it. Close rebuilds any other."""
+    row = rows.get(job_id)
+    try:
+        landed(row['low'], row)
+        texts = LANDED_TEXT[row['estimate_mode']]
+        return row if not row.get('closed_at') or row['landed'] in texts else None
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        return None
 
 
 def p80(values):
@@ -343,22 +389,45 @@ class Outcomes:
         return self.ws.ref(HISTORY, company_id)
 
     def _rows(self, company_id, tx=None):
-        return (self.ws.read(HISTORY, company_id, tx) or {}).get('rows') or {}
+        """The company's rows. A value that is not a row is dropped, here and at the next write."""
+        saved = (self.ws.read(HISTORY, company_id, tx) or {}).get('rows') or {}
+        is_map = isinstance(saved, dict)
+        rows = {key: row for key, row in saved.items() if isinstance(row, dict)} if is_map else {}
+        if not is_map or len(rows) != len(saved):
+            event(
+                'Estimate history skipped unreadable rows',
+                logging.WARNING,
+                operation='estimate_history',
+                outcome='unreadable_rows',
+            )
+        return rows
 
     def _write(self, tx, company_id, rows, job_id, row):
         """The job being written always stays; past the limit the oldest other row goes."""
         rows = {**rows, job_id: row}
         while len(rows) > ROW_LIMIT:
             others = [key for key in rows if key != job_id]
-            del rows[min(others, key=lambda key: rows[key].get('signed_at') or '')]
+            del rows[min(others, key=lambda key: str(rows[key].get('signed_at') or ''))]
         tx.set(self.ref(company_id), dict(company_id=company_id, updated_at=now(), rows=rows))
 
     def record_signing(self, job, body, tx):
-        """Inside the signing transaction, before its first write: this reads."""
-        pin = self.ws.prices._pin(job['job_id'], tx)
-        rows = self._rows(job['company_id'], tx)
-        row = history_row_at_signing(job, body, body.get('inspection') or {}, pin)
-        self._write(tx, job['company_id'], rows, job['job_id'], row)
+        """Inside the signing transaction, before its first write: this reads. A failure here never
+        stops a signature, and closing the job rebuilds the row. Contention stays the transaction's.
+        """
+        try:
+            pin = self.ws.prices._pin(job['job_id'], tx)
+            rows = self._rows(job['company_id'], tx)
+            row = history_row_at_signing(job, body, body.get('inspection') or {}, pin)
+            self._write(tx, job['company_id'], rows, job['job_id'], row)
+        except Aborted:
+            raise
+        except Exception as error:
+            event(
+                'Estimate history row not written at signing',
+                logging.WARNING,
+                operation='estimate_history',
+                outcome=type(error).__name__,
+            )
 
     def close(self, uid, job_id, req):
         def commit(tx):
@@ -373,7 +442,7 @@ class Outcomes:
             days = _actual_days(req.actual_days)
             company_id = job['company_id']
             rows = self._rows(company_id, tx)
-            row = rows.get(job_id) or self._row_from_agreement(job, tx)
+            row = _stored_row(rows, job_id) or self._row_from_agreement(job, tx)
             row = dict(
                 row,
                 closed_at=now(),
@@ -397,7 +466,8 @@ class Outcomes:
         return self.view(uid, job_id)
 
     def _row_from_agreement(self, job, tx):
-        """A job signed before this feature, or trimmed since, gets its row when it closes."""
+        """A job signed before this feature, trimmed since, or whose row could not be written or
+        read gets its row when it closes."""
         agreement = self.ws.read('authorizations', job['auth_id'], tx)
         if not agreement:
             raise LookupError('Signed agreement not found.')
@@ -408,7 +478,7 @@ class Outcomes:
         job, actor = self.ws.job_access(uid, {'inspection_id': job_id}, 'read')
         if not job.get('auth_exists'):
             raise LookupError('This job is not signed.')
-        row = self._rows(job['company_id']).get(job_id) or {}
+        row = _stored_row(self._rows(job['company_id']), job_id) or {}
         closed = bool(row.get('closed_at'))
         if 'coordination' not in actor['capabilities']:
             return dict(closed=closed, closed_at=row.get('closed_at'), can_close=False)
