@@ -1228,7 +1228,7 @@
       policyField(
         'overhead_profit_percent',
         'Overhead and profit (%)',
-        '0 turns it off. Added before sales tax.',
+        '0 turns it off. Up to 100. Added before sales tax.',
       ),
       taxLabel,
       policyField('sales_tax.percent', 'Sales tax (%)', 'Up to 15.'),

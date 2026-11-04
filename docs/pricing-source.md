@@ -41,7 +41,7 @@ At or below `N` square feet this is `(1 + X) × L`, and above `N` the factor fal
 | Subtotal | `F + E + LM` |
 | After-hours adjustment, with the owner's label | `round_cents(LM × (m − 1))` |
 | Minimum job charge | `minimum_job_charge − (subtotal + adjustment)`, when that is above zero |
-| Overhead and profit, `p` | `round_cents(p × (subtotal + adjustment + minimum))` |
+| Overhead and profit, `p` (0 to 100 percent, two decimals) | `round_cents(p × (subtotal + adjustment + minimum))` |
 | Sales tax, `t` | `round_cents(t × (T_F + T_E + m × T_L × LM / L) × (1 + p))` |
 | Total | the sum of the lines above |
 

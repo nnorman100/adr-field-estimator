@@ -988,7 +988,7 @@ def normalize_policy(raw) -> dict:
         where=where,
         field='overhead_profit_percent',
         low=Decimal('0'),
-        high=Decimal('30'),
+        high=Decimal('100'),
         max_decimals=2,
     )
 
