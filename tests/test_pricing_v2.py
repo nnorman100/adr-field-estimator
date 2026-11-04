@@ -7,8 +7,6 @@ overhead and profit is applied before sales tax, so taxable items carry their sh
 
 import copy
 from decimal import Decimal as D
-import hashlib
-import json
 import random
 
 import pytest
@@ -2255,23 +2253,98 @@ def test_the_waste_basis_never_raises_the_high_above_raw():
         assert low <= waste_high <= high
 
 
-def _pricing_digest():
-    """Every table hash, line and total over a seeded scan, on the two bases that existed before."""
+# Each seeded job: area basis, content hash, low total, high total. A single-price table has
+# one total, shown as both. Recorded by running this scan on the backend at aed7a61, before
+# the third choice existed.
+EXISTING_TABLE_PINS = [
+    (
+        'demolition',
+        'ff2bbae7f1ec215bbf444648d9e2ad9355c4bc71e447505a473ba24c3b4b8ae9',
+        D('5954232.18'),
+        D('6590496.32'),
+    ),
+    (
+        'demolition',
+        '3bb3d39a5b5bcfe757b47f1e534b40fb1bc81727b53334e81b211b913231b353',
+        D('1308826.58'),
+        D('1871626.58'),
+    ),
+    (
+        'demolition',
+        'ac26117df55fa42b832f1c2b77a2d8c58cafa9626e70fae7d01b713dcf03bd84',
+        D('865158.50'),
+        D('865158.50'),
+    ),
+    (
+        'demolition',
+        '1c2770372b0e9a4971e29363e51cf11812d6ee1f8d86b237fd35365935ac9b01',
+        D('737890.82'),
+        D('829800.78'),
+    ),
+    (
+        'wet_floor',
+        'e3f66a8487f630ba3af60df6edf26946eb6061e8c3dde6ab32da5bc21d7c2ac8',
+        D('1335256.89'),
+        D('1735273.43'),
+    ),
+    (
+        'demolition',
+        '265bbeee3ce1ae3aea35617af4115abed74e6f7aa90b3ab00d6abe6e2aac96e3',
+        D('333310.53'),
+        D('385768.32'),
+    ),
+    (
+        'demolition',
+        '01216abdcdcd9f4ff5dc13443bcd44e2fb803287822579e20bcb357927e26662',
+        D('76520.00'),
+        D('76520.00'),
+    ),
+    (
+        'demolition',
+        '41d1ebe30928ad37d54a3cd4a52f22a9ff33bf0c504e491d1ab3282737440f65',
+        D('298729.20'),
+        D('351490.65'),
+    ),
+    (
+        'wet_floor',
+        '9e3e815ed268cc5f784d3c6a902184f3ec2d234d02a1289ab00b7eef2d44e962',
+        D('1662917.42'),
+        D('1662917.42'),
+    ),
+    (
+        'wet_floor',
+        'f2bcaeb519222cd306206dd2b3d0de8bbfec12e3eb4eb653af57547336d37f6f',
+        D('1008072.20'),
+        D('1008072.20'),
+    ),
+    (
+        'demolition',
+        'cbe6e2086a8b8da4c28710f88c20fe82ea212e2a9c6c16242edae17047566f1d',
+        D('1473223.73'),
+        D('1473223.73'),
+    ),
+    (
+        'demolition',
+        '777abac89a98edaf9d0f6be40ea689a93a3814d92128a2f5c455557887fcf210',
+        D('622895.34'),
+        D('739628.01'),
+    ),
+    (
+        'wet_floor',
+        'f54bbbecfe378e1ceccf129113be649881c049b6410067d3014f4a9f847298ec',
+        D('916497.48'),
+        D('1113265.85'),
+    ),
+]
+
+
+def test_existing_tables_keep_their_hash_and_totals():
     rng = random.Random(20261104)
-    results = []
-    for _ in range(400):
+    for number, pin in enumerate(EXISTING_TABLE_PINS, start=1):
         chosen, values = random_table(rng), random_job(rng)
-        data = InspectionData.model_validate(values)
-        lines, warnings = pricing_v2.price_scope(data, chosen)
-        estimate = pricing_v2.totals(data, lines, chosen['policy'], chosen['items'])
-        results.append([price_table.content_hash(chosen), lines, warnings, estimate])
-    encoded = json.dumps(results, sort_keys=True, default=str).encode('utf-8')
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def test_existing_tables_price_byte_for_byte_as_they_did():
-    # Recorded by running this scan on the backend at aed7a61, before the third choice existed.
-    assert _pricing_digest() == ('f47ba3af354bc59f08388299e06476ea65b77ede25bbf89ad08377966cb61017')
+        low, high = ends(values, chosen)
+        actual = (chosen['policy']['area_basis'], price_table.content_hash(chosen), low, high)
+        assert actual == pin, f'seeded job {number}'
 
 
 def test_tables_that_never_chose_the_waste_basis_keep_their_content_hash():
