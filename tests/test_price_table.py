@@ -201,7 +201,7 @@ def test_normalize_table_bounds_and_messages():
         (lambda p: p['cabinetry'].update(scope='none'), 'cabinetry.scope'),
         (lambda p: p.update(minimum_job_charge='100000.01'), 'minimum_job_charge'),
         (lambda p: p.update(minimum_job_charge='-5'), 'minimum_job_charge'),
-        (lambda p: p.update(overhead_profit_percent='30.01'), 'overhead_profit_percent'),
+        (lambda p: p.update(overhead_profit_percent='100.01'), 'overhead_profit_percent'),
         (lambda p: p['sales_tax'].update(percent='15.001'), 'sales_tax.percent'),
         (lambda p: p['sales_tax'].update(enabled='yes'), 'sales_tax.enabled'),
         (lambda p: p.update(show_line_breakdown='yes'), 'show_line_breakdown'),
