@@ -463,20 +463,20 @@ async function originalsAction(mode, fn) {
       reject(tx.error || Error('Photo originals could not be saved.'));
   });
 }
-// Deletes this draft's originals that match drop(row), one transaction.
-function dropOriginals(key, drop) {
+// An original whose copy never reached the server goes with its draft. One whose copy did stays
+// until the server confirms the original itself, even after the draft is signed and cleared.
+// Only the rows of photos keep(id) does not claim are read, so the other originals' bytes are not.
+function dropUnsentOriginals(key, keep = () => false) {
   return originalsAction('readwrite', (originals) => {
-    originals.openCursor(photoRange(key)).onsuccess = (e) => {
-      const cursor = e.target.result;
-      if (!cursor) return;
-      if (drop(cursor.value)) cursor.delete();
-      cursor.continue();
+    originals.getAllKeys(photoRange(key)).onsuccess = (e) => {
+      for (const k of e.target.result)
+        if (!keep(k[1]))
+          originals.get(k).onsuccess = (row) => {
+            if (!row.target.result?.ready) originals.delete(k);
+          };
     };
   });
 }
-// An original whose copy never reached the server goes with its draft. One whose copy did stays
-// until the server confirms the original itself, even after the draft is signed and cleared.
-const dropUnsentOriginals = (key) => dropOriginals(key, (row) => !row.ready);
 async function deleteDraft(key, keepUnresolved = false) {
   // A missing originals database must not keep a draft from being removed.
   await dropUnsentOriginals(key).catch(() => {});
@@ -611,9 +611,8 @@ async function persist() {
   // now, not from the snapshot above, so an original kept for a photo added since then stays.
   const id = state.draft?.inspection_id;
   if (id === draft.inspection_id)
-    await dropOriginals(
-      key,
-      (row) => !row.ready && !state.draft.photos.some((photo) => photo.id === row.id),
+    await dropUnsentOriginals(key, (photoId) =>
+      state.draft.photos.some((photo) => photo.id === photoId),
     ).catch(() => {});
 }
 function schedulePersist() {
@@ -1120,11 +1119,13 @@ async function doSync() {
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
-        if (photo.uploaded) continue;
-        absorb(await writeRoom(photo, upload));
+        if (!photo.uploaded) absorb(await writeRoom(photo, upload));
       }
+      await markOriginalsReady(
+        draftKey(id),
+        state.record.photos.filter((p) => p.id === photo.id),
+      );
     }
-    await markOriginalsReady(draftKey(id), state.record);
     for (const photo of state.draft.photos.filter(
       (p) => p.uploaded && p.pending_room !== undefined,
     )) {
@@ -1263,7 +1264,7 @@ async function drainQueue() {
         row.ack = stable(row.draft.data);
       }
       if (record.status === 'signed') {
-        await markOriginalsReady(row.key, record);
+        await markOriginalsReady(row.key, record.photos);
         await deleteDraft(row.key, true);
         continue;
       }
@@ -1322,6 +1323,7 @@ async function drainQueue() {
         if (!saved.shot) delete photo.shot;
         row.record = record;
         await saveRow(row);
+        await markOriginalsReady(row.key, [saved]);
         if (photo.ocr_status === 'pending') {
           try {
             record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
@@ -1335,7 +1337,6 @@ async function drainQueue() {
           );
         }
       }
-      await markOriginalsReady(row.key, record);
       for (const photo of record.photos)
         if (!row.draft.photos.some((p) => p.id === photo.id))
           row.draft.photos.push({ ...photo, uploaded: true });
@@ -2900,28 +2901,28 @@ function originalsPrefix() {
   return state.user && state.session ? draftKey('') : null;
 }
 const originalRange = (prefix) => IDBKeyRange.bound([prefix], [prefix + '￿']);
-// The server now holds these photos' copies, so their originals may follow.
-async function markOriginalsReady(key, record) {
-  const sent = new Map(record.photos.filter((p) => p.original).map((p) => [p.id, p.original]));
-  if (!sent.size) return;
+// The server now holds these photos' copies, so their originals may follow. Only these photos'
+// rows are read.
+async function markOriginalsReady(key, photos) {
+  const sent = photos.filter((p) => p.original);
+  if (!sent.length) return;
   await originalsAction('readwrite', (originals) => {
-    originals.openCursor(photoRange(key)).onsuccess = (e) => {
-      const cursor = e.target.result;
-      if (!cursor) return;
-      const row = cursor.value;
-      if (!row.ready && sent.get(row.id)?.sha256 === row.sha256)
-        cursor.update({ ...row, ready: true });
-      cursor.continue();
-    };
+    for (const photo of sent)
+      originals.get([key, photo.id]).onsuccess = (e) => {
+        const row = e.target.result;
+        if (row && !row.ready && photo.original.sha256 === row.sha256)
+          originals.put({ ...row, ready: true });
+      };
   });
 }
-let originalsRun = null;
+let originalsRun = null,
+  originalsRetry;
 // Where the browser says the phone is on Wi-Fi (Chromium on Android), originals upload on their
 // own; elsewhere, iPhone included, only after the technician taps Upload originals now. They go
 // one at a time while the app is open, and each is deleted here only once the server confirms it.
 function uploadOriginals(manual = false) {
   if (!originalsRun && (manual || ADRCore.onWifi(navigator.connection))) {
-    originalsRun = sendOriginals()
+    originalsRun = sendOriginals(manual)
       .catch(() => {})
       .finally(() => {
         originalsRun = null;
@@ -2931,7 +2932,7 @@ function uploadOriginals(manual = false) {
   } else refreshOriginals();
   return originalsRun || Promise.resolve();
 }
-async function sendOriginals() {
+async function sendOriginals(manual) {
   const prefix = originalsPrefix();
   const tried = new Set();
   while (
@@ -2943,12 +2944,14 @@ async function sendOriginals() {
     // One row's bytes in memory at a time: the first ready original not yet tried in this run.
     let row = null;
     await originalsAction('readonly', (originals) => {
-      originals.openCursor(originalRange(prefix)).onsuccess = (e) => {
+      originals.openKeyCursor(originalRange(prefix)).onsuccess = (e) => {
         const cursor = e.target.result;
         if (!cursor) return;
-        const r = cursor.value;
-        if (r.ready && !tried.has(r.draft_key + '/' + r.id)) row = r;
-        else cursor.continue();
+        if (tried.has(cursor.primaryKey.join('/'))) return cursor.continue();
+        originals.get(cursor.primaryKey).onsuccess = (got) => {
+          if (got.target.result?.ready) row = got.target.result;
+          else cursor.continue();
+        };
       };
     });
     if (!row) return;
@@ -2960,11 +2963,16 @@ async function sendOriginals() {
         { method: 'POST', headers: { 'Content-Type': row.content_type }, body: row.bytes },
       );
     } catch (e) {
-      // No signal, a timeout or the request limit stops this run. Any other refusal concerns
-      // this original alone, so the others still go. It is kept for a later try (a server error,
-      // a role, assignment or archive change, a job or route not found) unless the server will
-      // always refuse it (it does not promise this original, or the file is not it); that frees
-      // the space and its 2,560 px copy remains the evidence.
+      // No signal, a timeout or the request limit stops this run; after the limit it starts
+      // again once the server allows. Any other refusal concerns this original alone, so the
+      // others still go. It is kept for a later try (a server error, a role, assignment or
+      // archive change, a job or route not found) unless the server will always refuse it (it
+      // does not promise this original, or the file is not it); that frees the space and its
+      // 2,560 px copy remains the evidence.
+      if (e.status === 429) {
+        clearTimeout(originalsRetry);
+        originalsRetry = setTimeout(() => uploadOriginals(manual), (e.retryAfter || 60) * 1000);
+      }
       if (!e.status || e.status === 429) return;
       if (![400, 409, 413].includes(e.status)) continue;
     }

@@ -297,17 +297,17 @@ async def _upload(request: Request):
     files = [part for part in parts if part['name'] == 'file']
     if len(files) != 1 or not files[0]['body']:
         raise HTTPException(400, 'Upload a CSV or XLSX file.')
-    acknowledgements = [part['text'] for part in parts if part['name'] == 'acknowledgements']
+    acknowledgements = [_text(part) for part in parts if part['name'] == 'acknowledgements']
     if len(acknowledgements) == 1 and ',' in acknowledgements[0]:
         acknowledgements = [part.strip() for part in acknowledgements[0].split(',') if part.strip()]
-    reasons = [part['text'] for part in parts if part['name'] == 'change_reason']
+    reasons = [_text(part) for part in parts if part['name'] == 'change_reason']
     return {
         'raw': files[0]['body'],
         'content_type': files[0]['content_type'],
         'change_reason': reasons[0] if reasons else '',
         'acknowledgements': acknowledgements,
         'confirm_zero_prices': any(
-            part['name'] == 'confirm_zero_prices' and part['text'] == 'yes' for part in parts
+            part['name'] == 'confirm_zero_prices' and _text(part) == 'yes' for part in parts
         ),
     }
 
@@ -349,11 +349,14 @@ def _multipart_parts(content_type, body, error='Upload a CSV or XLSX file.'):
                     'name': field,
                     'content_type': headers.get('content-type', '').split(';', 1)[0].strip(),
                     'body': content,
-                    'text': content.decode('utf-8', 'replace').strip(),
                 }
             )
         cursor = end + 2 + len(marker)
     raise HTTPException(400, 'The upload has too many parts.')
+
+
+def _text(part):
+    return part['body'].decode('utf-8', 'replace').strip()
 
 
 def _disposition_param(header, name):

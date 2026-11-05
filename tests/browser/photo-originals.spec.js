@@ -290,6 +290,13 @@ async function countOriginalReads(page) {
         return value.get.call(this);
       },
     });
+    const get = IDBObjectStore.prototype.get;
+    IDBObjectStore.prototype.get = function () {
+      const request = get.apply(this, arguments);
+      if (this.name === 'originals')
+        request.addEventListener('success', () => request.result && window.originalReads++);
+      return request;
+    };
     const getAll = IDBObjectStore.prototype.getAll;
     IDBObjectStore.prototype.getAll = function () {
       const request = getAll.apply(this, arguments);
@@ -422,4 +429,112 @@ test('a queued job signed on another device keeps the originals the server alrea
     )
     .toBe(false);
   expect(await kept(page)).toEqual([expect.objectContaining({ id: queued.photo, ready: true })]);
+});
+
+test('saving a draft reads none of its originals', async ({ page, context }) => {
+  await countOriginalReads(page);
+  await open(page);
+  await context.setOffline(true);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await addJpeg(page, name, 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(3);
+  await page.evaluate(() => persist());
+  await originalReads(page);
+  await page.evaluate(() => {
+    state.draft.data.technician_notes = 'Wet drywall in the hall';
+    return persist();
+  });
+  expect(await originalReads(page)).toBe(0);
+  expect(await kept(page)).toHaveLength(3);
+});
+
+test('refused originals are not read again while the rest of the run goes', async ({ page }) => {
+  await countOriginalReads(page);
+  await open(page);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await addJpeg(page, name, 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(3);
+  await settled(page);
+  let refusals = 2;
+  await page.route('**/photos/*/original', (route) =>
+    refusals-- > 0
+      ? route.fulfill({ status: 410, contentType: 'application/json', body: '{"detail":"No."}' })
+      : route.continue(),
+  );
+  await originalReads(page);
+  const confirmed = page.waitForResponse(originalOk);
+  await page.locator('#uploadOriginals').click();
+  await confirmed;
+  await settled(page);
+  expect(await originalReads(page)).toBe(3);
+  expect(await kept(page)).toHaveLength(2);
+});
+
+test('after the request limit, originals start again once the server allows', async ({ page }) => {
+  await open(page);
+  await addJpeg(page, 'limited.jpg');
+  await settled(page);
+  await page.route(
+    '**/photos/*/original',
+    (route) =>
+      route.fulfill({
+        status: 429,
+        headers: { 'Retry-After': '1' },
+        contentType: 'application/json',
+        body: '{"detail":"Too many requests."}',
+      }),
+    { times: 1 },
+  );
+  const limited = page.waitForResponse((r) => isOriginal(r.request()) && r.status() === 429);
+  await page.locator('#uploadOriginals').click();
+  await limited;
+  // No second tap: the run starts again after the server's Retry-After.
+  await page.waitForResponse(originalOk, { timeout: 10000 });
+  await settled(page);
+  expect(await kept(page)).toEqual([]);
+});
+
+// Lets the first photo copy through and fails every later one, as when the signal drops midway.
+async function failAfterFirstCopy(page) {
+  let copies = 0;
+  await page.route('**/api/inspections/*/photos', (route) =>
+    route.request().method() === 'POST' && copies++ > 0 ? route.abort('failed') : route.continue(),
+  );
+}
+
+test('an open job marks each original ready as soon as its copy is saved', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await context.setOffline(true);
+  await addJpeg(page, 'first.jpg');
+  await addJpeg(page, 'second.jpg');
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(2);
+  const [first, second] = await page.evaluate(() => state.draft.photos.map((p) => p.id));
+  await failAfterFirstCopy(page);
+  await context.setOffline(false);
+  await expect
+    .poll(async () => Object.fromEntries((await kept(page)).map((row) => [row.id, row.ready])), {
+      timeout: 15000,
+    })
+    .toEqual({ [first]: true, [second]: false });
+});
+
+test('a queued job marks each original ready as soon as its copy is saved', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await context.setOffline(true);
+  await addJpeg(page, 'first.jpg');
+  await addJpeg(page, 'second.jpg');
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(2);
+  const [first, second] = await page.evaluate(() => state.draft.photos.map((p) => p.id));
+  await newJob(page);
+  await failAfterFirstCopy(page);
+  await context.setOffline(false);
+  await expect
+    .poll(async () => Object.fromEntries((await kept(page)).map((row) => [row.id, row.ready])), {
+      timeout: 15000,
+    })
+    .toEqual({ [first]: true, [second]: false });
 });
