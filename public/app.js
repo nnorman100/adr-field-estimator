@@ -2934,20 +2934,23 @@ function uploadOriginals(manual = false) {
 }
 async function sendOriginals(manual) {
   const prefix = originalsPrefix();
-  const tried = new Set();
+  const skip = new Set();
   while (
     prefix &&
     originalsPrefix() === prefix &&
     navigator.onLine &&
     (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('photos'))
   ) {
-    // One row's bytes in memory at a time: the first ready original not yet tried in this run.
+    // One row's bytes in memory at a time, and each row read at most once a run: the first ready
+    // original not yet tried. One that becomes ready during the run goes in the next run.
     let row = null;
     await originalsAction('readonly', (originals) => {
       originals.openKeyCursor(originalRange(prefix)).onsuccess = (e) => {
         const cursor = e.target.result;
         if (!cursor) return;
-        if (tried.has(cursor.primaryKey.join('/'))) return cursor.continue();
+        const key = cursor.primaryKey.join('/');
+        if (skip.has(key)) return cursor.continue();
+        skip.add(key);
         originals.get(cursor.primaryKey).onsuccess = (got) => {
           if (got.target.result?.ready) row = got.target.result;
           else cursor.continue();
@@ -2955,7 +2958,6 @@ async function sendOriginals(manual) {
       };
     });
     if (!row) return;
-    tried.add(row.draft_key + '/' + row.id);
     const inspectionId = row.draft_key.slice(prefix.length);
     try {
       await api(
@@ -5742,6 +5744,7 @@ function connectivity() {
   renderSaveStatus();
   renderNotes();
   renderPhotos();
+  renderOriginals();
   window.DryingLog?.render();
   window.DryingWatch?.render();
   if (offline) {
@@ -6219,7 +6222,8 @@ async function initialize() {
     await persist();
     await loadPhotoUrls('/api/inspections/' + record.inspection_id + '/photos/');
   });
-  const forkPhotos = (photos) =>
+  // A copy promises its full-size original only when that original moves with it (held).
+  const forkPhotos = (photos, held = new Set()) =>
     photos.map((p) => ({
       ...p,
       id: newId(),
@@ -6229,6 +6233,7 @@ async function initialize() {
       ocr_status: 'pending',
       ocr: null,
       file: undefined,
+      original: held.has(p.id) ? p.original : undefined,
     }));
   click('forkLocal', async () => {
     await syncChain.catch(() => {});
@@ -6243,14 +6248,40 @@ async function initialize() {
     }
     await openNew(data, photos);
   });
-  // The archived job can't serve its photos, so the new draft takes those this phone holds; the
-  // rest stay with the archived job's record.
+  // The archived job can't serve its photos, so the new draft takes those this phone holds, with
+  // their full-size originals; the rest stay with the archived job's record.
   click('forkArchived', async () => {
     if (!state.archived) return;
     const key = draftKey(state.draft.inspection_id),
+      epoch = authEpoch,
       kept = state.draft.photos.filter((p) => p.data_url),
       left = state.draft.photos.length - kept.length;
-    await openNew(structuredClone(state.draft.data), forkPhotos(kept));
+    const held = new Set(
+      (
+        await originalsAction('readonly', (originals) =>
+          originals.getAllKeys(photoRange(key)),
+        ).catch(() => [])
+      ).map((k) => k[1]),
+    );
+    const photos = forkPhotos(kept, held);
+    await openNew(structuredClone(state.draft.data), photos);
+    if (epoch !== authEpoch) return;
+    const target = draftKey(state.draft.inspection_id),
+      moves = kept
+        .map((p, i) => [p.id, photos[i].id])
+        .filter(([from, to]) => held.has(from) && state.draft.photos.some((p) => p.id === to));
+    if (moves.length)
+      await originalsAction('readwrite', (originals) => {
+        for (const [from, to] of moves)
+          originals.get([key, from]).onsuccess = (e) => {
+            const row = e.target.result;
+            if (!row) return;
+            originals.put({ ...row, draft_key: target, id: to, ready: false });
+            originals.delete([key, from]);
+          };
+      });
+    await markOriginalsReady(target, state.record?.photos || []);
+    uploadOriginals();
     await deleteDraft(key, true);
     say(
       left

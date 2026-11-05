@@ -538,3 +538,113 @@ test('a queued job marks each original ready as soon as its copy is saved', asyn
     })
     .toEqual({ [first]: true, [second]: false });
 });
+
+test('an originals run reads each not-ready original once, however many it sends', async ({
+  page,
+  context,
+}) => {
+  await countOriginalReads(page);
+  await open(page);
+  await context.setOffline(true);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await addJpeg(page, name, 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(3);
+  // The copies cannot reach the server, so their originals stay not ready, except the last in
+  // key order: the run reads past the other two to reach it.
+  await page.route('**/api/inspections/*/photos', (route) => route.abort('failed'));
+  await page.evaluate(async () => {
+    const [last] = (await originalsAction('readonly', (o) => o.getAll())).sort((a, b) =>
+      a.id < b.id ? 1 : -1,
+    );
+    await originalsAction('readwrite', (o) => o.put({ ...last, ready: true }));
+  });
+  await context.setOffline(false);
+  await expect(page.locator('#uploadOriginals')).toBeEnabled();
+  await originalReads(page);
+  // The server has no copy of it yet, so it refuses the original and the run looks again.
+  const refused = page.waitForResponse((r) => isOriginal(r.request()) && r.status() === 404);
+  await page.locator('#uploadOriginals').click();
+  await refused;
+  await settled(page);
+  expect(await originalReads(page)).toBe(3);
+  expect(await kept(page)).toHaveLength(3);
+});
+
+test('a separate inspection made from a conflict promises none of the originals', async ({
+  page,
+}) => {
+  await open(page);
+  await addJpeg(page, 'conflict.jpg');
+  await settled(page);
+  const source = await page.evaluate(() => ({
+    job: state.draft.inspection_id,
+    photo: state.draft.photos[0].id,
+  }));
+  await page.evaluate(() => {
+    state.conflict = true;
+    document.getElementById('conflictActions').hidden = false;
+  });
+  await page.locator('#forkLocal').click({ force: true });
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(source.job);
+  await expect.poll(() => page.evaluate(() => state.draft.photos[0].uploaded)).toBe(true);
+  await settled(page);
+  const forked = await page.evaluate(() => state.record.photos[0]);
+  expect(forked.original).toBeUndefined();
+  expect((await sent(page)).at(-1).metadata.original).toBeUndefined();
+  // The original stays with, and still goes to, the job that promised it.
+  expect(await kept(page)).toEqual([expect.objectContaining({ id: source.photo, ready: true })]);
+});
+
+test.describe('an archived job saved as a new draft', () => {
+  const JOB = 'ADR-INS-' + 'c'.repeat(32);
+  const owner = { Authorization: 'Bearer test-owner-ws-owner', 'X-ADR-Workspace-Protocol': '1' };
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test.beforeEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: true } });
+  });
+  test.afterEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: false } });
+  });
+
+  test('takes the originals this phone holds with it', async ({ page, context, request }) => {
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      'test-owner-ws-estimator',
+    );
+    await page.goto('/app');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.locator('#dashboardJobs').click();
+    await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await context.setOffline(true);
+    await addJpeg(page, 'archived.jpg');
+    await expect(page.locator('#photoGallery .photo')).toHaveCount(1);
+    expect(await kept(page)).toEqual([expect.objectContaining({ ready: false })]);
+    const job = await (
+      await request.get('/api/jobs/' + JOB + '/coordination', { headers: owner })
+    ).json();
+    expect(
+      (
+        await request.post('/api/jobs/' + JOB + '/archive', {
+          headers: owner,
+          data: { expected_version: job.version },
+        })
+      ).status(),
+    ).toBe(200);
+    await context.setOffline(false);
+    await page.evaluate(() => syncDraft().catch(() => {}));
+    await expect(page.locator('#archivedActions')).toBeVisible();
+    await page.locator('#forkArchived').click();
+    await expect(page.locator('#archivedActions')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const forked = await page.evaluate(() => ({
+      job: state.draft.inspection_id,
+      photo: state.record.photos[0],
+    }));
+    expect(forked.job).not.toBe(JOB);
+    expect(forked.photo.original).toEqual(expect.objectContaining({ content_type: 'image/jpeg' }));
+    // Kept under the new job and photo, and ready to follow the copy that job now holds.
+    await expect
+      .poll(() => kept(page))
+      .toEqual([expect.objectContaining({ id: forked.photo.id, ready: true })]);
+  });
+});
