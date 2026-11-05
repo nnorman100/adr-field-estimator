@@ -1263,6 +1263,7 @@ async function drainQueue() {
         row.ack = stable(row.draft.data);
       }
       if (record.status === 'signed') {
+        await markOriginalsReady(row.key, record);
         await deleteDraft(row.key, true);
         continue;
       }
@@ -1321,7 +1322,6 @@ async function drainQueue() {
         if (!saved.shot) delete photo.shot;
         row.record = record;
         await saveRow(row);
-        await markOriginalsReady(row.key, record);
         if (photo.ocr_status === 'pending') {
           try {
             record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
@@ -1335,6 +1335,7 @@ async function drainQueue() {
           );
         }
       }
+      await markOriginalsReady(row.key, record);
       for (const photo of record.photos)
         if (!row.draft.photos.some((p) => p.id === photo.id))
           row.draft.photos.push({ ...photo, uploaded: true });
@@ -2939,10 +2940,17 @@ async function sendOriginals() {
     navigator.onLine &&
     (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('photos'))
   ) {
-    const rows = await originalsAction('readonly', (originals) =>
-      originals.getAll(originalRange(prefix)),
-    );
-    const row = rows.find((r) => r.ready && !tried.has(r.draft_key + '/' + r.id));
+    // One row's bytes in memory at a time: the first ready original not yet tried in this run.
+    let row = null;
+    await originalsAction('readonly', (originals) => {
+      originals.openCursor(originalRange(prefix)).onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) return;
+        const r = cursor.value;
+        if (r.ready && !tried.has(r.draft_key + '/' + r.id)) row = r;
+        else cursor.continue();
+      };
+    });
     if (!row) return;
     tried.add(row.draft_key + '/' + row.id);
     const inspectionId = row.draft_key.slice(prefix.length);
@@ -2952,10 +2960,13 @@ async function sendOriginals() {
         { method: 'POST', headers: { 'Content-Type': row.content_type }, body: row.bytes },
       );
     } catch (e) {
-      // Kept for a later try: no signal, a timeout, a server error or limit, a role or archive
-      // change. Only a refusal the server will always give (it does not promise this original,
-      // or the file is not it) frees the space; its 2,560 px copy remains the evidence.
-      if (![400, 404, 409, 413].includes(e.status)) return;
+      // No signal, a timeout or the request limit stops this run. Any other refusal concerns
+      // this original alone, so the others still go. It is kept for a later try (a server error,
+      // a role, assignment or archive change, a job or route not found) unless the server will
+      // always refuse it (it does not promise this original, or the file is not it); that frees
+      // the space and its 2,560 px copy remains the evidence.
+      if (!e.status || e.status === 429) return;
+      if (![400, 409, 413].includes(e.status)) continue;
     }
     await originalsAction('readwrite', (originals) => originals.delete([row.draft_key, row.id]));
     await refreshOriginals();

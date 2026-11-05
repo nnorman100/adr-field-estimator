@@ -65,15 +65,19 @@ const settled = (page) =>
     await Promise.all([...state.ocr.values()]);
     await originalsRun;
   });
+// The test's own look at the stored originals is left out of any read count the page keeps.
 const kept = (page) =>
-  page.evaluate(async () =>
-    (await originalsAction('readonly', (originals) => originals.getAll())).map((row) => ({
+  page.evaluate(async () => {
+    const reads = window.originalReads;
+    const rows = await originalsAction('readonly', (originals) => originals.getAll());
+    window.originalReads = reads;
+    return rows.map((row) => ({
       id: row.id,
       ready: row.ready,
       size: row.bytes.byteLength,
       type: row.content_type,
-    })),
-  );
+    }));
+  });
 
 test('a large photo uploads as a 2,560 px binary copy and its original waits on the phone', async ({
   page,
@@ -272,4 +276,150 @@ test('sign-out names the originals kept only on this phone before it removes the
   ]);
   await expect(page.locator('#googleSignIn')).toBeVisible();
   expect(await kept(page)).toEqual([]);
+});
+
+// Counts the stored originals (each carrying its full bytes) the page reads from IndexedDB.
+async function countOriginalReads(page) {
+  await page.addInitScript(() => {
+    window.originalReads = 0;
+    const value = Object.getOwnPropertyDescriptor(IDBCursorWithValue.prototype, 'value');
+    Object.defineProperty(IDBCursorWithValue.prototype, 'value', {
+      ...value,
+      get() {
+        if (this.source?.name === 'originals') window.originalReads++;
+        return value.get.call(this);
+      },
+    });
+    const getAll = IDBObjectStore.prototype.getAll;
+    IDBObjectStore.prototype.getAll = function () {
+      const request = getAll.apply(this, arguments);
+      if (this.name === 'originals')
+        request.addEventListener('success', () => (window.originalReads += request.result.length));
+      return request;
+    };
+  });
+}
+const originalReads = (page) =>
+  page.evaluate(() => {
+    const reads = window.originalReads;
+    window.originalReads = 0;
+    return reads;
+  });
+async function newJob(page) {
+  await page.locator('#jobMenu > summary').click();
+  await page.locator('#newInspection').click();
+  await expect(page.locator('#address')).toHaveValue('');
+}
+
+test('a refused original does not hold back the others; only a refusal for good frees it', async ({
+  page,
+}) => {
+  await open(page);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg']) await addJpeg(page, name, 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(4);
+  await settled(page);
+  expect(await kept(page)).toHaveLength(4);
+  // The first is on an archived job, the second on a job no longer assigned (or a server without
+  // the route), the third is not the original the server expects; the fourth goes through.
+  const refusals = [410, 404, 409];
+  const refused = {};
+  await page.route('**/photos/*/original', (route) => {
+    const status = refusals.shift();
+    if (!status) return route.continue();
+    refused[status] = route.request().url().split('/').at(-2);
+    return route.fulfill({ status, contentType: 'application/json', body: '{"detail":"No."}' });
+  });
+  const confirmed = page.waitForResponse(originalOk);
+  await page.locator('#uploadOriginals').click();
+  await confirmed;
+  await settled(page);
+  // The archived and not-found ones stay for a later try; the mismatched one is freed.
+  expect((await kept(page)).map((row) => row.id).sort()).toEqual(
+    [refused[410], refused[404]].sort(),
+  );
+  await expect(page.locator('#originalsCount')).toHaveText(
+    '2 full-size originals waiting on this phone.',
+  );
+  await page.locator('#uploadOriginals').click();
+  await settled(page);
+  expect(await kept(page)).toEqual([]);
+});
+
+test('an originals run reads each waiting original once, not every one per upload', async ({
+  page,
+}) => {
+  await countOriginalReads(page);
+  await open(page);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await addJpeg(page, name, 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(3);
+  await settled(page);
+  expect(await kept(page)).toHaveLength(3);
+  await originalReads(page);
+  await page.locator('#uploadOriginals').click();
+  await expect(page.locator('#originals')).toBeHidden();
+  await settled(page);
+  expect(await originalReads(page)).toBe(3);
+  expect(await kept(page)).toEqual([]);
+});
+
+test('a queued job reads its originals once when its photos reach the server', async ({
+  page,
+  context,
+}) => {
+  await countOriginalReads(page);
+  await open(page);
+  await context.setOffline(true);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await addJpeg(page, name, 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(3);
+  await newJob(page);
+  expect((await kept(page)).map((row) => row.ready)).toEqual([false, false, false]);
+  await originalReads(page);
+  await context.setOffline(false);
+  await expect
+    .poll(async () => (await kept(page)).map((row) => row.ready), { timeout: 15000 })
+    .toEqual([true, true, true]);
+  expect(await originalReads(page)).toBe(3);
+});
+
+test('a queued job signed on another device keeps the originals the server already expects', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await context.setOffline(true);
+  await addJpeg(page, 'signed.jpg');
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(1);
+  const queued = await page.evaluate(async () => {
+    const [row] = await originalsAction('readonly', (originals) => originals.getAll());
+    return { id: state.draft.inspection_id, photo: row.id, sha256: row.sha256 };
+  });
+  await newJob(page);
+  expect(await kept(page)).toEqual([expect.objectContaining({ ready: false })]);
+  // Its copy reached the server before the connection dropped, and the job was then signed.
+  await page.route('**/api/inspections/' + queued.id, (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        inspection_id: queued.id,
+        status: 'signed',
+        revision: 2,
+        data: {},
+        photos: [
+          { id: queued.photo, original: { sha256: queued.sha256, content_type: 'image/jpeg' } },
+        ],
+      }),
+    }),
+  );
+  await context.setOffline(false);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          async (id) => (await localDrafts()).some((row) => row.draft.inspection_id === id),
+          queued.id,
+        ),
+      { timeout: 15000 },
+    )
+    .toBe(false);
+  expect(await kept(page)).toEqual([expect.objectContaining({ id: queued.photo, ready: true })]);
 });
