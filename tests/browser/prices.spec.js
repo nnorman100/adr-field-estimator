@@ -327,6 +327,8 @@ test('owner builds a table from the starter, keeps a working copy across a reloa
   // The starter builds its high end from the job, which hides the cushion until it is chosen.
   await page.locator('input[name=range_method][value=cushion]').check();
   await page.locator('input[name=policy_range\\.first_sf]').fill('1200');
+  // The sample is requested once the edits pause, so the reload waits for that answer too.
+  const lastSample = page.waitForResponse((sent) => isSample(sent.request()));
   await page.locator('input[name=policy_overhead_profit_percent]').fill('10');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
   await expect(page.locator('#priceUnpublished')).toBeVisible();
@@ -338,6 +340,7 @@ test('owner builds a table from the starter, keeps a working copy across a reloa
   await expect(page.locator('#message')).toContainText('unit price');
   await expect(page.locator('#priceReview')).toHaveCount(0);
 
+  await lastSample;
   await expect.poll(() => sampling).toBe(0);
   await page.reload();
   await expect(page.locator('#workspaceDashboard')).toBeVisible();
