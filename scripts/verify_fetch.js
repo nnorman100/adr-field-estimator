@@ -27,4 +27,20 @@ async function assertEventuallyEqual(read, expected, message, options = {}) {
   }
   assert.equal(await read(retries), expected, message);
 }
-module.exports = { assertEventuallyEqual, fetchFresh, newRunToken };
+// Poll until the new release is being served, so a Hosting propagation lag is not read as a failed release.
+// ready(attempt) resolves true once the live site serves the new build; a throwing read counts as not yet.
+// Waits grow from 2 s to 15 s and stop once timeoutMs has been spent; then the check fails with message.
+// Every assertion in verify_hosting.js still runs afterwards, unchanged.
+async function waitForRelease(ready, options = {}) {
+  const { timeoutMs = 240000, message = 'The new release is not served', wait = sleep } = options;
+  let waited = 0;
+  for (let attempt = 0; ; attempt += 1) {
+    if (await ready(attempt).catch(() => false)) return;
+    if (waited >= timeoutMs) break;
+    const delay = Math.min(2000 * 1.5 ** attempt, 15000, timeoutMs - waited);
+    await wait(delay);
+    waited += delay;
+  }
+  assert.fail(message + ' (waited ' + Math.round(waited / 1000) + ' s)');
+}
+module.exports = { assertEventuallyEqual, fetchFresh, newRunToken, waitForRelease };
