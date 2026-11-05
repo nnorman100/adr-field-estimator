@@ -74,7 +74,7 @@ def test_workspaces_off_is_explicit_and_receives_no_traffic():
         '--project=alert-disaster-field-2026',
         '--billing-project=alert-disaster-field-2026',
         '--service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com',
-        '--min-instances=1',
+        '--min=1',
         '--max-instances=2',
         '--concurrency=20',
         '--timeout=3600',
@@ -82,6 +82,8 @@ def test_workspaces_off_is_explicit_and_receives_no_traffic():
         '--update-labels=source-commit=' + HEAD,
     ):
         assert flag in argv
+    # The minimum is service-wide; a per-revision one would keep an instance for every tagged revision.
+    assert not any(a.startswith('--min-instances') for a in argv)
     assert 'WORKSPACES_ENABLED=true' in env_flag(deploy.command('on', 'workspaces-on-1', HEAD))
 
 
