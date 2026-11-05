@@ -38,6 +38,9 @@ PROJECT = 'alert-disaster-field-2026'
 # read, mounted as an environment variable. Without it the app keeps a plain address box.
 MAPS_SECRET = 'MAPS_API_KEY=dryscope-maps-api-key:latest'
 STAMP = ROOT / 'backend' / 'SOURCE_COMMIT'
+# One instance is kept running so a deploy or a scale-up from zero never makes a technician wait
+# through a Python cold start. scripts/auto_deploy.py checks the staged revision for this value.
+MIN_INSTANCES = 1
 # Names the server actually reads. An unknown name would deploy as a silent no-op.
 KNOWN_AI_FEATURES = frozenset(
     {'readiness', 'drying_watch', 'priced_extras', 'job_summary', 'ai_usage', 'estimate_assist'}
@@ -128,6 +131,7 @@ def command(
         '--billing-project=' + PROJECT,
         f'--service-account=adr-runtime@{PROJECT}.iam.gserviceaccount.com',
         f'--build-service-account=projects/{PROJECT}/serviceAccounts/adr-builder@{PROJECT}.iam.gserviceaccount.com',
+        f'--min-instances={MIN_INSTANCES}',
         '--max-instances=2',
         '--concurrency=20',
         '--cpu=1',

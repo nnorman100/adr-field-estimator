@@ -30,7 +30,7 @@ BASELINE = {
 }
 
 
-def revision(commit, env=None, **overrides):
+def revision(commit, env=None, min_scale='1', **overrides):
     env = {
         **BASELINE,
         'INVITATION_TRANSPORT': 'smtp',
@@ -51,7 +51,11 @@ def revision(commit, env=None, **overrides):
         'containers': [{'env': items, 'resources': {'limits': {'cpu': '1', 'memory': '1Gi'}}}],
         **overrides,
     }
-    return {'metadata': {'labels': {'source-commit': commit}}, 'spec': spec}
+    metadata = {'labels': {'source-commit': commit}}
+    if min_scale is not None:
+        # Cloud Run reports the minimum instance count as a revision annotation.
+        metadata['annotations'] = {'autoscaling.knative.dev/minScale': min_scale}
+    return {'metadata': metadata, 'spec': spec}
 
 
 class FakeRunner:
@@ -707,6 +711,24 @@ def test_spec_differences_flag_changed_limits():
     serving = auto.spec_summary(revision(OLD))
     staged = auto.spec_summary(revision(NEW, timeoutSeconds=300))
     assert any(item.startswith('timeoutSeconds') for item in auto.spec_differences(serving, staged))
+
+
+def test_spec_differences_flag_a_staged_revision_without_the_minimum():
+    serving = auto.spec_summary(revision(OLD))
+    for staged_scale in (None, '0', '2'):
+        staged = auto.spec_summary(revision(NEW, min_scale=staged_scale))
+        found = auto.spec_differences(serving, staged)
+        assert any(item.startswith('minInstances') for item in found), staged_scale
+
+
+def test_first_warm_release_is_not_a_difference_but_is_noted():
+    # The serving revision predates the minimum; staging the warm one must not stop the release.
+    serving = auto.spec_summary(revision(OLD, min_scale=None))
+    staged = auto.spec_summary(revision(NEW))
+    assert serving['minInstances'] == 0 and staged['minInstances'] == 1
+    assert auto.spec_differences(serving, staged) == []
+    assert any('minInstances' in line for line in auto.baseline_notes(serving, staged))
+    assert not any('minInstances' in line for line in auto.baseline_notes(staged, staged))
 
 
 def test_matching_specs_have_no_differences():

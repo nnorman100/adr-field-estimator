@@ -11,7 +11,7 @@ previous version) and fails the run.
 It refuses, with a message, anything the owner must release by hand: a merge that changed
 firestore.rules or firestore.indexes.json since the serving commit, a serving revision whose commit is
 unknown or not an ancestor of the candidate, a staged revision whose environment, secrets or limits
-differ from the serving one beyond the three baseline flags, a serving revision with no STAFF_EMAILS,
+differ from the serving one beyond the three baseline flags or lack the one-instance minimum, a serving revision with no STAFF_EMAILS,
 a Firestore TTL policy that is missing, or a repository baseline less permissive than the serving
 revision. That last one stops before staging unless --confirm-baseline is given on a hand run or a
 rollback dispatch; the automatic run never gives it, so no merge can turn a serving feature off.
@@ -47,6 +47,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.deploy_backend import (
     DEFAULT_AI_FEATURES,
     DEFAULT_PRICE_BOOKS,
+    MIN_INSTANCES,
     PROJECT,
     env_assignments,
     staff_emails_value,
@@ -244,12 +245,16 @@ def spec_summary(revision):
         env[item['name']] = (
             f'secret:{secret.get("name")}:{secret.get("key")}' if secret else item.get('value', '')
         )
+    # Cloud Run reports the minimum instance count as a revision annotation; unset means zero.
+    annotations = revision.get('metadata', {}).get('annotations') or {}
+    min_scale = str(annotations.get('autoscaling.knative.dev/minScale', '0'))
     return {
         'env': env,
         'serviceAccount': spec.get('serviceAccountName'),
         'concurrency': spec.get('containerConcurrency'),
         'timeoutSeconds': spec.get('timeoutSeconds'),
         'limits': (containers[0].get('resources') or {}).get('limits') or {},
+        'minInstances': int(min_scale) if min_scale.isdigit() else 0,
     }
 
 
@@ -287,16 +292,25 @@ def spec_differences(serving, staged):
     for key in ('serviceAccount', 'concurrency', 'timeoutSeconds', 'limits'):
         if serving[key] != staged[key]:
             found.append(f'{key}: serving {serving[key]!r}, staged {staged[key]!r}')
+    # Like the baseline flags, the minimum is the repository's setting, so the staged revision is
+    # held to it rather than to the serving revision, which may predate it.
+    if staged['minInstances'] != MIN_INSTANCES:
+        found.append(
+            f'minInstances on the staged revision is {staged["minInstances"]!r}, not {MIN_INSTANCES!r}'
+        )
     return found
 
 
 def baseline_notes(serving, staged):
-    """Baseline flags that this release changes from the serving revision, for the record."""
-    return [
+    """Baseline settings that this release changes from the serving revision, for the record."""
+    notes = [
         f'{key} {serving["env"].get(key, "(unset)")!r} -> {staged["env"].get(key, "(unset)")!r}'
         for key in BASELINE_KEYS
         if serving['env'].get(key) != staged['env'].get(key)
     ]
+    if serving['minInstances'] != staged['minInstances']:
+        notes.append(f'minInstances {serving["minInstances"]!r} -> {staged["minInstances"]!r}')
+    return notes
 
 
 def enabled_ai_features(value):

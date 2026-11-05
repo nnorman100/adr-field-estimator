@@ -122,7 +122,8 @@ The backend rejects a different project ID or evidence bucket. Production never 
 It runs `scripts/auto_deploy.py`, which computes the next UTC date-style version (`YYYY.MM.DD-N`, starting at `1` each day) and uses the manual path: `deploy_backend.py --workspaces on
 --ai-features <repository baseline> --price-books <repository baseline> --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
 the staged revision's environment, secret bindings, service account and limits must equal the serving
-revision's apart from the three baseline flags; the tagged URL must report healthy, schema 3, the release `version` and the
+revision's apart from the three baseline flags, and it must keep one minimum instance
+(`MIN_INSTANCES` in `deploy_backend.py`, set as `--min-instances=1`) so a deploy or scale-up never pays a Python cold start. The minimum is held to the repository value, not to the serving revision, so the first release that adds it is recorded as a baseline change instead of stopping. One always-on instance costs about $7 to $10 a month; the tagged URL must report healthy, schema 3, the release `version` and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
 only then does traffic move. Next it stamps the shell with `--version <YYYY.MM.DD-N>`, deploys only `hosting:alert-disaster`, runs
 `verify_hosting.js` and resets the stamp. Only after verification succeeds, a separate workflow step (the only one holding a GitHub write token) creates the immutable git tag for the version the live backend reports and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after

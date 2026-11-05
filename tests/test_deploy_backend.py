@@ -74,6 +74,7 @@ def test_workspaces_off_is_explicit_and_receives_no_traffic():
         '--project=alert-disaster-field-2026',
         '--billing-project=alert-disaster-field-2026',
         '--service-account=adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com',
+        '--min-instances=1',
         '--max-instances=2',
         '--concurrency=20',
         '--timeout=3600',
