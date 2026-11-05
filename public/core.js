@@ -392,6 +392,26 @@
       .filter((photo) => photo.data_url)
       .map((photo) => ({ id: photo.id, data_url: photo.data_url })),
   });
+  // Photos upload first as a copy no longer than this on its longest edge; a larger original stays
+  // on the phone until it can go up on Wi-Fi.
+  const PHOTO_COPY_EDGE = 2560;
+  const photoCopySize = (width, height, edge = PHOTO_COPY_EDGE) => {
+    const scale = Math.min(1, edge / Math.max(width, height));
+    return {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+      scaled: scale < 1,
+    };
+  };
+  // The bytes of a stored data: URL, for a binary upload of a photo saved before this change.
+  const dataUrlBlob = (dataUrl) => {
+    const [head, body] = dataUrl.split(',');
+    const bytes = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+    return new Blob([bytes], { type: head.slice(5).split(';')[0] });
+  };
+  // Only Chromium on Android reports the connection type; Safari on iPhone reports nothing, so
+  // originals wait for the technician to say the phone is on Wi-Fi.
+  const onWifi = (connection) => connection?.type === 'wifi' || connection?.type === 'ethernet';
   // Gaps the technician can still fill on site, checked against the form with any proposed scope
   // values applied. The model's clarification questions are listed beside these.
   // Keep in parity with backend/readiness.py. These gaps are advisory, never signing rules.
@@ -919,6 +939,10 @@
     authDomainFor,
     canonicalUrl,
     splitPhotos,
+    PHOTO_COPY_EDGE,
+    photoCopySize,
+    dataUrlBlob,
+    onWifi,
     missingItems,
     readiness,
     auditBlockMessage,

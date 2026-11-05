@@ -13,14 +13,30 @@ from pydantic import ValidationError
 from google.cloud import firestore
 
 try:
-    from .job_store import JobStore, decode_image, fit_jpeg, IMAGE_WORKER, MODEL_PIXELS
+    from .job_store import (
+        IMAGE_TYPES,
+        IMAGE_WORKER,
+        MODEL_PIXELS,
+        JobStore,
+        check_image,
+        decode_image,
+        fit_jpeg,
+    )
     from .cloud_log import event
     from .scope import default_photo_rename
     from .extras import validate_edits
     from .contracts import InspectionData
     from .psychrometrics import psychrometrics
 except ImportError:
-    from job_store import JobStore, decode_image, fit_jpeg, IMAGE_WORKER, MODEL_PIXELS
+    from job_store import (
+        IMAGE_TYPES,
+        IMAGE_WORKER,
+        MODEL_PIXELS,
+        JobStore,
+        check_image,
+        decode_image,
+        fit_jpeg,
+    )
     from cloud_log import event
     from scope import default_photo_rename
     from extras import validate_edits
@@ -304,11 +320,23 @@ class InspectionStore(JobStore):
     def add_photo(self, uid, inspection_id, upload):
         record = self.get_inspection(uid, inspection_id)
         self._access(uid, record, 'photos')
-        raw, mime, extension = decode_image(upload['data_url'])
+        if 'raw' in upload:
+            # A binary upload: the declared part type must be a photo type and match the bytes.
+            kind = IMAGE_TYPES.get(upload['content_type'])
+            if not kind:
+                raise ValueError('Use JPEG, PNG or WebP; convert unsupported camera formats first.')
+            raw, mime, extension = check_image(upload['raw'], kind)
+        else:
+            raw, mime, extension = decode_image(upload['data_url'])
         digest = hashlib.sha256(raw).hexdigest()
         location = upload.get('location')
         if location is not None:
             location = {k: v for k, v in location.items() if v is not None}
+        # The original a phone kept back when it uploaded this smaller copy. Absent when the upload
+        # is the original itself, so older clients and older photos keep their saved shape.
+        original = upload.get('original')
+        if original is not None and original['sha256'] == digest:
+            original = None
         existing = next((p for p in record['photos'] if p['id'] == upload['photo_id']), None)
         if existing:
             if (
@@ -316,6 +344,7 @@ class InspectionStore(JobStore):
                 or existing['room'] != upload['room']
                 or existing['captured_at'] != upload['captured_at']
                 or existing.get('location') != location
+                or existing.get('original') != original
             ):
                 raise Conflict('This photo ID already represents different evidence.')
             self._access(uid, record, 'photos')
@@ -362,6 +391,8 @@ class InspectionStore(JobStore):
         # Older clients send none; the key stays absent so the photo reads as having no stamp.
         if location is not None:
             photo['location'] = location
+        if original is not None:
+            photo['original'] = original
         checked_metadata({**record, 'photos': record['photos'] + [photo]})
         blob = self.bucket.blob(path)
         blob.upload_from_string(raw, content_type=mime, if_generation_match=0)
@@ -388,6 +419,35 @@ class InspectionStore(JobStore):
                 blob, self._ref(inspection_id), *([model_blob] if model_blob else [])
             )
             raise
+
+    def add_original(self, uid, inspection_id, photo_id, raw, kind):
+        """Stores the full-size original of an uploaded photo. Its hash must equal the one the
+        photo's first upload recorded, so only the original the phone took can arrive. It goes
+        beside the copy at a path named by that hash; nothing in the job record changes, so its
+        revision, audit, documents and a signed agreement stay as they are. A retry that finds the
+        object already stored is a success: the path names the same bytes."""
+        record = self.get_inspection(uid, inspection_id)
+        self._access(uid, record, 'photos')
+        photo = next((p for p in record['photos'] if p['id'] == photo_id), None)
+        if photo is None:
+            raise LookupError('Photo not found.')
+        pending = photo.get('original')
+        if not pending:
+            raise Conflict('This photo has no full-size original to receive.')
+        raw, mime, extension = check_image(raw, kind)
+        digest = hashlib.sha256(raw).hexdigest()
+        if mime != pending['content_type'] or digest != pending['sha256']:
+            raise Conflict('This file is not the original of this photo.')
+        folder = photo['file']['path'].rpartition('/')[0]
+        blob = self.bucket.blob(f'{folder}/original-{digest}.{extension}')
+        from google.api_core.exceptions import PreconditionFailed
+
+        try:
+            blob.upload_from_string(raw, content_type=mime, if_generation_match=0)
+            outcome = 'stored'
+        except PreconditionFailed:
+            outcome = 'already_stored'
+        event('Photo original received', operation='photo_original', outcome=outcome)
 
     def move_photo(self, uid, inspection_id, revision, photo_id, room):
         """Relabels one uploaded photo with another room of the draft. The evidence itself is

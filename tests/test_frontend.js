@@ -443,6 +443,30 @@ console.log(
   );
 }
 {
+  // The upload copy is at most 2,560 px on its longest edge; a smaller photo is its own copy.
+  assert.equal(core.PHOTO_COPY_EDGE, 2560);
+  assert.deepEqual(core.photoCopySize(4032, 3024), { width: 2560, height: 1920, scaled: true });
+  assert.deepEqual(core.photoCopySize(3024, 4032), { width: 1920, height: 2560, scaled: true });
+  assert.deepEqual(core.photoCopySize(8000, 10), { width: 2560, height: 3, scaled: true });
+  assert.deepEqual(core.photoCopySize(2560, 1440), { width: 2560, height: 1440, scaled: false });
+  assert.deepEqual(core.photoCopySize(640, 480), { width: 640, height: 480, scaled: false });
+  // A saved data: URL becomes the same bytes and type for a binary upload.
+  const blob = core.dataUrlBlob(
+    'data:image/jpeg;base64,' + Buffer.from([255, 216, 255, 0]).toString('base64'),
+  );
+  assert.equal(blob.type, 'image/jpeg');
+  // Only a reported Wi-Fi or wired connection counts; Safari reports nothing at all.
+  assert.equal(core.onWifi({ type: 'wifi' }), true);
+  assert.equal(core.onWifi({ type: 'ethernet' }), true);
+  assert.equal(core.onWifi({ type: 'cellular' }), false);
+  assert.equal(core.onWifi({ effectiveType: '4g' }), false);
+  assert.equal(core.onWifi(undefined), false);
+  blob.arrayBuffer().then((buffer) => {
+    assert.deepEqual([...new Uint8Array(buffer)], [255, 216, 255, 0]);
+    console.log('PASS: photo copy size, data URL bytes and Wi-Fi detection');
+  });
+}
+{
   // Offline notes list what a technician can still fill on site before leaving.
   const data = core.emptyData();
   assert.deepEqual(core.missingItems(data), [

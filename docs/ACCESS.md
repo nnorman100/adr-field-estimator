@@ -20,7 +20,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `assignment` | Assign estimators to jobs | yes | no | yes |
 | `scope` | Edit rooms, measurements, scope; accept suggested equipment counts | yes | yes | no |
 | `places` | Address suggestions and job map | yes | yes | no |
-| `photos` | Add photos | yes | yes | no |
+| `photos` | Add photos, and send a photo's full-size original later (also on a signed job) | yes | yes | no |
 | `ocr` | Meter-photo recognition | yes | yes | no |
 | `audit` | Finish & review (generate documents) | yes | yes | no |
 | `sign` | Capture signature / send signing link | yes | yes | no |

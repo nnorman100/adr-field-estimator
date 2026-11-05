@@ -14,6 +14,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 | QR tags, drying log, claim details, sizing, shot list | yes | yes | no | |
 | Jobs list tabs and search | yes | yes | no | #130 |
 | GPS stamp on photos | yes | yes | no | |
+| Photos upload as a 2,560 px binary copy; originals follow on Wi-Fi | yes | no | no | Originals upload by themselves where the browser reports Wi-Fi (Chromium on Android) and after the "Upload originals now (use Wi-Fi)" tap elsewhere, iPhone included. Not yet released or phone-checked |
 | Address autocomplete and map | yes | yes | no | Maps key set; $25 budget alert |
 | Copy signed job to draft | yes | yes | no | |
 | Document delivery (homeowner, adjuster, crew lead, resend) | yes | yes | no | Gmail SMTP; limit near 500/day |
