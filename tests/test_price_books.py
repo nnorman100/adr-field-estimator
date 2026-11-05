@@ -2244,3 +2244,43 @@ def test_import_with_a_zero_price_needs_the_confirmation(api, enabled):
     )
     assert confirmed.status_code == 200, confirmed.text
     assert 'zero_price' in confirmed.json()['warnings']
+
+
+def test_the_waste_basis_is_published_and_kept_by_an_import(api, enabled):
+    client, current, store = api
+    current['uid'] = 'owner'
+    table = _v2_table('30.00')
+    table['policy']['area_basis'] = 'demolition_with_waste'
+    head = _publish_v2(client, table)
+    assert client.get('/api/companies/adr/prices').json()['policy']['area_basis'] == (
+        'demolition_with_waste'
+    )
+
+    # The file holds items only, so an import reprices them under the published settings.
+    uploaded = _upload(client, _v2_csv(base=head['version_id'], generation=head['generation']))
+    assert uploaded.status_code == 200, uploaded.text
+    preview = store.db.records['_price_book_previews/' + uploaded.json()['preview_id']]
+    assert preview['policy']['area_basis'] == 'demolition_with_waste'
+
+
+def test_the_review_reports_a_change_to_the_waste_basis(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    table = _v2_table('30.00')
+    _publish_v2(client, table)
+    table['policy']['area_basis'] = 'demolition_with_waste'
+    preview = client.post(
+        '/api/companies/adr/prices/preview',
+        json={
+            'items': table['items'],
+            'policy': table['policy'],
+            'acknowledgements': [],
+            'change_reason': 'Count waste in the area',
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert {
+        'field': 'area_basis',
+        'before': 'demolition',
+        'after': 'demolition_with_waste',
+    } in preview.json()['diff']['policy']

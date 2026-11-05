@@ -218,6 +218,20 @@ test('room-sourced items total the matching rooms the way the server prices them
   assert.equal(q('room:basis', [], { area_basis: 'wet_floor' }), 120);
 });
 
+test('the waste area basis leaves every quantity as measured, as the server prices them', () => {
+  const rooms = [
+    { category: 1, unfinished_sf: 40, finished_sf: 60, floor_sf: 150, waste_percent: 10 },
+    { category: 2, finished_sf: 900, floor_sf: 1000, waste_percent: 0 },
+  ];
+  const q = (source, area_basis) =>
+    ScopeItems.roomQuantity(item('x', 'demolition', source, { waste_percent: '5' }), rooms, {
+      area_basis,
+    });
+  assert.equal(q('room:basis', 'demolition_with_waste'), 1000);
+  assert.equal(q('room:basis', 'demolition'), 1000);
+  assert.equal(q('room:demolition:finished', 'demolition_with_waste'), 960);
+});
+
 test('a room needs a wet floor input only when an enabled item prices its category from it', () => {
   const wet = (extra) => item('antimicrobial', 'treatment', 'room:wet_floor', extra);
   const mold = { category: 3 },
@@ -580,6 +594,7 @@ test('device readiness mirrors the server price gaps', () => {
   assert.deepEqual(codes(null), [], 'a v1 company has no price gaps');
   assert.deepEqual(codes({ prices_set: true, area_basis: 'demolition' }), []);
   assert.deepEqual(codes({ prices_set: true, area_basis: 'wet_floor' }), ['area_basis:Hall']);
+  assert.deepEqual(codes({ prices_set: true, area_basis: 'demolition_with_waste' }), []);
   assert.deepEqual(codes({ prices_set: false }), ['prices']);
 });
 

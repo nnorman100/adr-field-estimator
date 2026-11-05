@@ -889,8 +889,10 @@ def normalize_policy(raw) -> dict:
         raise ValueError(f'{where}: estimate_mode must be "range" or "single".')
 
     area_basis = raw.get('area_basis', 'demolition')
-    if area_basis not in ('demolition', 'wet_floor'):
-        raise ValueError(f'{where}: area_basis must be "demolition" or "wet_floor".')
+    if area_basis not in ('demolition', 'demolition_with_waste', 'wet_floor'):
+        raise ValueError(
+            f'{where}: area_basis must be "demolition", "demolition_with_waste" or "wet_floor".'
+        )
 
     range_raw = raw.get('range')
     if not isinstance(range_raw, dict):

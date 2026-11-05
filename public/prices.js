@@ -591,6 +591,27 @@
     allow_zero: 'zero price allowed',
     xactimate_code: 'Xactimate code',
   };
+  const AREA_BASES = [
+    [
+      'demolition',
+      'Raw demolition area',
+      'The square feet of material being removed in each room, added up, before any waste is added. Items set to Rooms: job area price from it. The flat cushion counts the square feet on each line priced by area, including items such as antimicrobial. It does not change how a high end built from the IICRC equipment range works.',
+    ],
+    [
+      'demolition_with_waste',
+      'Demolition area with waste',
+      "The same square feet, plus each room's waste percent, or the item's if the room has none. A 100 sq ft room with 10% waste counts as 110 sq ft. This fills the flat cushion's first square feet sooner and does not change any item's price. It does not change how a high end built from the IICRC equipment range works.",
+    ],
+    [
+      'wet_floor',
+      'Wet floor area',
+      "The square feet of floor that got wet in each room, whether or not any of it is removed. A blank wet floor area uses the room's floor area. This only applies to items set to Rooms: job area. It does not change the flat cushion or how a high end built from the IICRC equipment range works.",
+    ],
+  ];
+  const CABINETRY_MULTIPLIER_MEANING =
+    'How much to multiply the demolition price in a Category 3 room when the technician ticks custom cabinetry. 1.0 adds nothing. 2.0 doubles it: 100 sq ft at $10 goes from $1,000 to $2,000.';
+  const CABINETRY_SCOPE_MEANING =
+    "Finished-surface demolition only raises just the finished area in that room. All category 3 room lines raises every line priced from that room's square feet: finished and unfinished demolition, and wet floor and floor items such as antimicrobial and HEPA vacuuming. Items not priced from the room, such as equipment and labor hours, never change.";
   const POLICY_LABELS = {
     estimate_mode: 'Estimate style',
     area_basis: 'Area basis',
@@ -1033,21 +1054,62 @@
   function radios(name, legend, value, options, onChange) {
     const group = node('fieldset', undefined, 'price-radios');
     group.append(node('legend', legend));
-    for (const [key, label] of options) {
-      const radio = node('input');
-      radio.type = 'radio';
-      radio.name = name;
-      radio.value = key;
-      radio.checked = key === value;
-      if (!ed.manage) {
-        radio.disabled = true;
-        radio.dataset.locked = 'true';
-      }
-      radio.addEventListener('change', () => radio.checked && onChange(key));
-      const wrap = node('label', undefined, 'price-radio');
-      wrap.append(radio, node('span', label));
-      group.append(wrap);
+    for (const [key, label] of options)
+      group.append(radioOption(name, key, label, value, onChange));
+    return group;
+  }
+  function radioOption(name, key, label, value, onChange) {
+    const radio = node('input');
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = key;
+    radio.checked = key === value;
+    if (!ed.manage) {
+      radio.disabled = true;
+      radio.dataset.locked = 'true';
     }
+    radio.addEventListener('change', () => radio.checked && onChange(key));
+    const wrap = node('label', undefined, 'price-radio');
+    wrap.append(radio, node('span', label));
+    return wrap;
+  }
+  // A question icon above a setting. It shows and hides what the setting means, for readers too.
+  let explainedCount = 0;
+  function explained(subject, meaning, setting) {
+    const wrap = node('div', undefined, 'price-explained'),
+      icon = node('button', undefined, 'help-button price-help'),
+      mark = node('span', '?'),
+      text = node('p', meaning, 'price-meaning');
+    text.id = 'priceMeaning' + ++explainedCount;
+    text.hidden = true;
+    icon.type = 'button';
+    mark.setAttribute('aria-hidden', 'true');
+    // Spoken as its name, but not a label: the choice's own label must stay the only one that names it.
+    icon.append(mark, node('span', 'Explain ' + subject, 'price-help-name'));
+    icon.setAttribute('aria-controls', text.id);
+    icon.setAttribute('aria-expanded', 'false');
+    icon.addEventListener('click', () => {
+      text.hidden = !text.hidden;
+      icon.setAttribute('aria-expanded', String(!text.hidden));
+    });
+    wrap.append(icon, setting, text);
+    return wrap;
+  }
+  function areaBasisChoices() {
+    const group = node('fieldset', undefined, 'price-radios'),
+      choices = node('div', undefined, 'price-area-choices');
+    group.append(node('legend', POLICY_LABELS.area_basis), choices);
+    for (const [key, label, meaning] of AREA_BASES)
+      choices.append(
+        explained(
+          label,
+          meaning,
+          radioOption('area_basis', key, label, ed.policy.area_basis, (value) => {
+            ed.policy.area_basis = value;
+            edited();
+          }),
+        ),
+      );
     return group;
   }
   function policyField(path, label, hint, options = {}) {
@@ -1101,19 +1163,7 @@
           edited();
         },
       ),
-      radios(
-        'area_basis',
-        POLICY_LABELS.area_basis,
-        ed.policy.area_basis,
-        [
-          ['demolition', 'Demolition area'],
-          ['wet_floor', 'Wet floor area'],
-        ],
-        (value) => {
-          ed.policy.area_basis = value;
-          edited();
-        },
-      ),
+      areaBasisChoices(),
     );
     rangeBox.append(
       node('h3', 'Range cushion'),
@@ -1190,19 +1240,27 @@
       policyField('category_multipliers.1', 'Category 1 rooms', '1.000 to 3.000'),
       policyField('category_multipliers.2', 'Category 2 rooms', '1.000 to 3.000'),
       policyField('category_multipliers.3', 'Category 3 or mold rooms', '1.000 to 3.000'),
-      policyField('cabinetry.multiplier', 'Custom cabinetry', 'Applies to category 3 rooms.'),
-      radios(
-        'cabinetry_scope',
+      explained(
+        'Custom cabinetry',
+        CABINETRY_MULTIPLIER_MEANING,
+        policyField('cabinetry.multiplier', 'Custom cabinetry', 'Applies to category 3 rooms.'),
+      ),
+      explained(
         POLICY_LABELS['cabinetry.scope'],
-        ed.policy.cabinetry.scope,
-        [
-          ['finished_only', 'Finished-surface demolition only'],
-          ['all_cat3', 'All category 3 room lines'],
-        ],
-        (value) => {
-          ed.policy.cabinetry.scope = value;
-          edited();
-        },
+        CABINETRY_SCOPE_MEANING,
+        radios(
+          'cabinetry_scope',
+          POLICY_LABELS['cabinetry.scope'],
+          ed.policy.cabinetry.scope,
+          [
+            ['finished_only', 'Finished-surface demolition only'],
+            ['all_cat3', 'All category 3 room lines'],
+          ],
+          (value) => {
+            ed.policy.cabinetry.scope = value;
+            edited();
+          },
+        ),
       ),
     );
     const totals = node('div', undefined, 'price-subgroup'),
@@ -1571,7 +1629,8 @@
   function policyValue(field, value) {
     if (typeof value === 'boolean') return value ? 'on' : 'off';
     if (field === 'estimate_mode') return value === 'single' ? 'one price' : 'low to high range';
-    if (field === 'area_basis') return value === 'wet_floor' ? 'wet floor area' : 'demolition area';
+    if (field === 'area_basis')
+      return AREA_BASES.find(([key]) => key === value)?.[1].toLowerCase() ?? 'raw demolition area';
     if (field === 'assist.range_method')
       return value === 'uncertainty'
         ? 'the IICRC equipment range and hidden damage'

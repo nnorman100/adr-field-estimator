@@ -1137,3 +1137,16 @@ def test_a_new_v2_job_starts_at_the_tables_drying_days():
         price_table.seed_quantities(InspectionData().model_dump(mode='json'), old)['drying_days']
         == 3
     )
+
+
+def test_the_waste_basis_is_accepted_and_the_default_stays_demolition():
+    policy = copy.deepcopy(price_table.starter_table()['policy'])
+    assert policy['area_basis'] == 'demolition'
+    assert PricingPolicy(**{'area_basis': 'demolition_with_waste'}).area_basis == (
+        'demolition_with_waste'
+    )
+    policy['area_basis'] = 'demolition_with_waste'
+    assert price_table.normalize_policy(policy)['area_basis'] == 'demolition_with_waste'
+    policy['area_basis'] = 'demolition with waste'
+    with pytest.raises(ValueError, match='demolition_with_waste'):
+        price_table.normalize_policy(policy)

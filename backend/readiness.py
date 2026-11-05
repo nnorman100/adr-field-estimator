@@ -2,7 +2,8 @@
 
 The device mirror is ADRCore.readiness / missingItems; shared fixtures pin parity.
 `pricing` is None for companies on the v1 rate book (no price gaps), {'prices_set': False} for a
-company with no published prices, and {'prices_set': True, 'area_basis': 'demolition' | 'wet_floor'}
+company with no published prices, and
+{'prices_set': True, 'area_basis': 'demolition' | 'demolition_with_waste' | 'wet_floor'}
 for a v2 price table. A wet floor area of 0 is deliberate; only a room with neither area is a gap.
 A setup reading is the first affected air or material reading in the drying log:
 there is no separate equipment setup timestamp or visit type in today's schema.
