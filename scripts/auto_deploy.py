@@ -11,7 +11,8 @@ previous version) and fails the run.
 It refuses, with a message, anything the owner must release by hand: a merge that changed
 firestore.rules or firestore.indexes.json since the serving commit, a serving revision whose commit is
 unknown or not an ancestor of the candidate, a staged revision whose environment, secrets or limits
-differ from the serving one beyond the three baseline flags, a serving revision with no STAFF_EMAILS,
+differ from the serving one beyond the three baseline flags, a service without the one-instance minimum,
+a serving revision with no STAFF_EMAILS,
 a Firestore TTL policy that is missing, or a repository baseline less permissive than the serving
 revision. That last one stops before staging unless --confirm-baseline is given on a hand run or a
 rollback dispatch; the automatic run never gives it, so no merge can turn a serving feature off.
@@ -47,6 +48,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.deploy_backend import (
     DEFAULT_AI_FEATURES,
     DEFAULT_PRICE_BOOKS,
+    MIN_INSTANCES,
     PROJECT,
     env_assignments,
     staff_emails_value,
@@ -55,6 +57,8 @@ from scripts.release_stamp import valid_version
 
 SERVICE = 'alert-disaster-field-estimator'
 REGION = 'us-west2'
+# The service-level minimum instance count, as a service annotation (not the revision's minScale).
+SERVICE_MIN_SCALE = 'run.googleapis.com/minScale'
 HOSTING_TARGET = 'hosting:alert-disaster'
 # The production baseline passed to deploy_backend.py, which owns the constants a turn-on PR changes
 # (docs/firebase-isolation.md, "Turning a feature on or off").
@@ -232,8 +236,15 @@ def revision_commit(revision):
     return label
 
 
-def spec_summary(revision):
-    """Everything a release must preserve: environment, secret bindings, identity and limits."""
+def service_min_instances(service):
+    """The service-level minimum instance count; unset or unreadable counts as zero."""
+    value = str((service.get('metadata', {}).get('annotations') or {}).get(SERVICE_MIN_SCALE, '0'))
+    return int(value) if value.isdigit() else 0
+
+
+def spec_summary(revision, service):
+    """Everything a release must preserve: environment, secret bindings, identity, limits and the
+    service-level minimum."""
     spec = revision.get('spec', {})
     containers = spec.get('containers') or []
     if len(containers) != 1:
@@ -250,6 +261,7 @@ def spec_summary(revision):
         'concurrency': spec.get('containerConcurrency'),
         'timeoutSeconds': spec.get('timeoutSeconds'),
         'limits': (containers[0].get('resources') or {}).get('limits') or {},
+        'minInstances': service_min_instances(service),
     }
 
 
@@ -287,16 +299,25 @@ def spec_differences(serving, staged):
     for key in ('serviceAccount', 'concurrency', 'timeoutSeconds', 'limits'):
         if serving[key] != staged[key]:
             found.append(f'{key}: serving {serving[key]!r}, staged {staged[key]!r}')
+    # Like the baseline flags, the minimum is the repository's setting, so the service after staging
+    # is held to it rather than to the service before, which may predate it.
+    if staged['minInstances'] != MIN_INSTANCES:
+        found.append(
+            f'minInstances on the service is {staged["minInstances"]!r}, not {MIN_INSTANCES!r}'
+        )
     return found
 
 
 def baseline_notes(serving, staged):
-    """Baseline flags that this release changes from the serving revision, for the record."""
-    return [
+    """Baseline settings that this release changes from the serving revision, for the record."""
+    notes = [
         f'{key} {serving["env"].get(key, "(unset)")!r} -> {staged["env"].get(key, "(unset)")!r}'
         for key in BASELINE_KEYS
         if serving['env'].get(key) != staged['env'].get(key)
     ]
+    if serving['minInstances'] != staged['minInstances']:
+        notes.append(f'minInstances {serving["minInstances"]!r} -> {staged["minInstances"]!r}')
+    return notes
 
 
 def enabled_ai_features(value):
@@ -799,11 +820,12 @@ def _deploy_backend_and_hosting(
         ],
         capture=False,
     )
-    url, staged_name = tagged_url(service_state(runner), tag)
+    staged_service = service_state(runner)
+    url, staged_name = tagged_url(staged_service, tag)
     record.set('Backend revision (tag)', f'`{staged_name}` (tag `{tag}`)')
     if staged_name == previous:
         raise Refused('Staging produced no new revision.')
-    staged = spec_summary(revision_state(runner, staged_name))
+    staged = spec_summary(revision_state(runner, staged_name), staged_service)
     differences = spec_differences(serving_summary, staged)
     if differences:
         raise Refused(
@@ -862,7 +884,7 @@ def release(runner, record, commit, tag, check_only=False, confirm_baseline=Fals
     names = check_candidate(runner, commit, serving_commit)
     check_hand_released(names)
     check_ttls(runner)
-    serving_summary = spec_summary(serving)
+    serving_summary = spec_summary(serving, service)
     staff_emails = serving_staff_emails(serving_summary)
     reductions = baseline_reductions(serving_summary)
     if reductions and not confirm_baseline:
@@ -915,7 +937,7 @@ def rollback_to_version(
         )
     names = git(runner, 'diff', '--name-only', f'{target_commit}..{serving_commit}').stdout.split()
     check_ttls(runner)
-    serving_summary = spec_summary(serving)
+    serving_summary = spec_summary(serving, service)
     staff_emails = serving_staff_emails(serving_summary)
     rules_warning = check_rollback_rules(record, names, target_commit, version)
     migration_warning = check_rollback_migrations(runner, record, target_commit, version)

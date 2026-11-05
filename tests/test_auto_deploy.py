@@ -54,6 +54,11 @@ def revision(commit, env=None, **overrides):
     return {'metadata': {'labels': {'source-commit': commit}}, 'spec': spec}
 
 
+def service_with_min(value):
+    """A service as gcloud describes it; the service-level minimum is a service annotation."""
+    return {'metadata': {'annotations': {} if value is None else {auto.SERVICE_MIN_SCALE: value}}}
+
+
 class FakeRunner:
     gcloud = 'gcloud'
 
@@ -75,8 +80,12 @@ class FakeRunner:
         health_version=None,
         ledger=None,
         branch='master',
+        serving_min='1',
+        staged_min='1',
     ):
         self.calls = []
+        self.service_min = serving_min
+        self.staged_min = staged_min
         self.sleeps = []
         self.changed = list(changed)
         self.ancestors = set(ancestors)
@@ -155,6 +164,7 @@ class FakeRunner:
                 if name == 'stage':
                     tag = argv[argv.index('--tag') + 1]
                     self.staged_version = argv[argv.index('--version') + 1]
+                    self.service_min = self.staged_min
                     self.traffic.append(
                         {'revisionName': 'rev-new', 'percent': 0, 'tag': tag, 'url': URL}
                     )
@@ -241,7 +251,10 @@ class FakeRunner:
         raise AssertionError(argv)
 
     def service(self):
-        return {'status': {'url': SERVICE_URL, 'traffic': self.traffic}}
+        return {
+            **service_with_min(self.service_min),
+            'status': {'url': SERVICE_URL, 'traffic': self.traffic},
+        }
 
     def update_traffic(self, argv):
         flag = next(item for item in argv if item.startswith(('--to-tags=', '--to-revisions=')))
@@ -696,22 +709,60 @@ def test_commit_must_be_a_full_hash():
 
 
 def test_spec_differences_flag_a_dropped_secret_binding():
-    serving = auto.spec_summary(revision(OLD))
+    serving = auto.spec_summary(revision(OLD), service_with_min('1'))
     staged_revision = revision(NEW)
     staged_revision['spec']['containers'][0]['env'].pop()
-    found = auto.spec_differences(serving, auto.spec_summary(staged_revision))
+    found = auto.spec_differences(
+        serving, auto.spec_summary(staged_revision, service_with_min('1'))
+    )
     assert any(item.startswith('MAPS_API_KEY') for item in found)
 
 
 def test_spec_differences_flag_changed_limits():
-    serving = auto.spec_summary(revision(OLD))
-    staged = auto.spec_summary(revision(NEW, timeoutSeconds=300))
+    serving = auto.spec_summary(revision(OLD), service_with_min('1'))
+    staged = auto.spec_summary(revision(NEW, timeoutSeconds=300), service_with_min('1'))
     assert any(item.startswith('timeoutSeconds') for item in auto.spec_differences(serving, staged))
 
 
+@pytest.mark.parametrize('staged_min', [None, '0', '2', 'default'])
+def test_a_service_without_the_one_instance_minimum_after_staging_promotes_nothing(
+    summary, staged_min
+):
+    runner = FakeRunner(staged_min=staged_min)
+    assert release(runner) == 1
+    assert 'stage' in runner.keys()
+    assert 'traffic' not in runner.keys()
+    assert 'stamp' not in runner.keys() and 'hosting-deploy' not in runner.keys()
+    assert 'minInstances on the service is' in summary.text()
+
+
+def test_the_minimum_is_read_from_the_service_not_the_revision(summary):
+    runner = FakeRunner(staged_min=None)
+    runner.revisions['rev-new']['metadata']['annotations'] = {
+        'autoscaling.knative.dev/minScale': '1'
+    }
+    assert release(runner) == 1
+    assert 'traffic' not in runner.keys()
+
+
+def test_first_warm_release_is_not_refused_but_is_recorded(summary):
+    # The service predates the minimum; the release that sets it must not stop.
+    runner = FakeRunner(serving_min=None)
+    assert release(runner) == 0
+    assert 'traffic' in runner.keys()
+    assert 'Baseline change: minInstances 0 -> 1' in summary.text()
+
+
+def test_a_release_that_keeps_the_minimum_records_no_minimum_change(summary):
+    assert release(FakeRunner()) == 0
+    assert 'minInstances' not in summary.text()
+
+
 def test_matching_specs_have_no_differences():
-    spec = auto.spec_summary(revision(OLD))
-    assert auto.spec_differences(spec, auto.spec_summary(revision(NEW))) == []
+    spec = auto.spec_summary(revision(OLD), service_with_min('1'))
+    assert (
+        auto.spec_differences(spec, auto.spec_summary(revision(NEW), service_with_min('1'))) == []
+    )
 
 
 # --- The workflow and setup script -------------------------------------------------------------
