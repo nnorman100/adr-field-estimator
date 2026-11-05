@@ -2916,17 +2916,26 @@ async function markOriginalsReady(key, photos) {
   });
 }
 let originalsRun = null,
+  originalsAgain = null,
   originalsRetry;
 // Where the browser says the phone is on Wi-Fi (Chromium on Android), originals upload on their
 // own; elsewhere, iPhone included, only after the technician taps Upload originals now. They go
 // one at a time while the app is open, and each is deleted here only once the server confirms it.
+// A call during a run (say, a sync that has just marked more originals ready) asks for one more
+// run once it ends, since each run reads a row only once.
 function uploadOriginals(manual = false) {
-  if (!originalsRun && (manual || ADRCore.onWifi(navigator.connection))) {
+  if (originalsRun) {
+    if (manual || ADRCore.onWifi(navigator.connection))
+      originalsAgain = { manual: manual || !!originalsAgain?.manual };
+    refreshOriginals();
+  } else if (manual || ADRCore.onWifi(navigator.connection)) {
     originalsRun = sendOriginals(manual)
       .catch(() => {})
       .finally(() => {
-        originalsRun = null;
-        refreshOriginals();
+        const again = originalsAgain;
+        originalsRun = originalsAgain = null;
+        if (again) uploadOriginals(again.manual);
+        else refreshOriginals();
       });
     renderOriginals();
   } else refreshOriginals();
@@ -2942,7 +2951,8 @@ async function sendOriginals(manual) {
     (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('photos'))
   ) {
     // One row's bytes in memory at a time, and each row read at most once a run: the first ready
-    // original not yet tried. One that becomes ready during the run goes in the next run.
+    // original not yet tried. One that becomes ready during the run goes in the follow-up run
+    // that uploadOriginals starts.
     let row = null;
     await originalsAction('readonly', (originals) => {
       originals.openKeyCursor(originalRange(prefix)).onsuccess = (e) => {
@@ -6264,12 +6274,22 @@ async function initialize() {
       ).map((k) => k[1]),
     );
     const photos = forkPhotos(kept, held);
-    await openNew(structuredClone(state.draft.data), photos);
+    // The new draft opens before its first sync, so the originals move with it even when that
+    // sync fails: its copies promise them, and the archived draft may be discarded later.
+    let failure = null;
+    await openNew(structuredClone(state.draft.data), photos).catch((e) => {
+      failure = e;
+    });
     if (epoch !== authEpoch) return;
     const target = draftKey(state.draft.inspection_id),
-      moves = kept
-        .map((p, i) => [p.id, photos[i].id])
-        .filter(([from, to]) => held.has(from) && state.draft.photos.some((p) => p.id === to));
+      moves =
+        target === key
+          ? []
+          : kept
+              .map((p, i) => [p.id, photos[i].id])
+              .filter(
+                ([from, to]) => held.has(from) && state.draft.photos.some((p) => p.id === to),
+              );
     if (moves.length)
       await originalsAction('readwrite', (originals) => {
         for (const [from, to] of moves)
@@ -6280,6 +6300,7 @@ async function initialize() {
             originals.delete([key, from]);
           };
       });
+    if (failure) throw failure;
     await markOriginalsReady(target, state.record?.photos || []);
     uploadOriginals();
     await deleteDraft(key, true);

@@ -569,6 +569,53 @@ test('an originals run reads each not-ready original once, however many it sends
   expect(await kept(page)).toHaveLength(3);
 });
 
+test('an original that becomes ready during a run is sent without another tap', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const connection = new EventTarget();
+    connection.type = 'cellular';
+    Object.defineProperty(navigator, 'connection', { value: connection, configurable: true });
+  });
+  await open(page);
+  await addJpeg(page, 'one.jpg', 3000, 2000);
+  await settled(page);
+  await addJpeg(page, 'two.jpg', 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(2);
+  await settled(page);
+  // The first in key order is still waiting for its copy when the run passes it.
+  const [early, late] = (await kept(page)).map((row) => row.id).sort();
+  await page.evaluate(async (id) => {
+    const key = draftKey(state.draft.inspection_id);
+    const row = await originalsAction('readonly', (o) => o.get([key, id]));
+    await originalsAction('readwrite', (o) => o.put({ ...row, ready: false }));
+  }, early);
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/photos/' + late + '/original', async (route) => {
+    await held;
+    await route.continue();
+  });
+  const sending = page.waitForRequest(isOriginal);
+  await page.evaluate(() => {
+    navigator.connection.type = 'wifi';
+    navigator.connection.dispatchEvent(new Event('change'));
+  });
+  await sending;
+  // Its copy is saved meanwhile, as a sync does, which asks for originals again.
+  await page.evaluate(async (id) => {
+    const key = draftKey(state.draft.inspection_id);
+    const row = await originalsAction('readonly', (o) => o.get([key, id]));
+    await originalsAction('readwrite', (o) => o.put({ ...row, ready: true }));
+    uploadOriginals();
+  }, early);
+  release();
+  await expect.poll(() => kept(page), { timeout: 15000 }).toEqual([]);
+  await expect(page.locator('#originals')).toBeHidden();
+  // Each original went up once, after the copies; no tap was needed.
+  expect((await sent(page)).filter((u) => u.kind === 'bytes')).toHaveLength(2);
+});
+
 test('a separate inspection made from a conflict promises none of the originals', async ({
   page,
 }) => {
@@ -605,7 +652,9 @@ test.describe('an archived job saved as a new draft', () => {
     await request.post('/__test/workspaces', { data: { enabled: false } });
   });
 
-  test('takes the originals this phone holds with it', async ({ page, context, request }) => {
+  // An estimator's photo taken offline on a job the owner then archives; the phone holds its
+  // original, which never followed a copy to the server.
+  async function archivedWithOriginal(page, context, request) {
     await page.addInitScript(
       (value) => sessionStorage.setItem('synthetic-uid', value),
       'test-owner-ws-estimator',
@@ -633,6 +682,10 @@ test.describe('an archived job saved as a new draft', () => {
     await context.setOffline(false);
     await page.evaluate(() => syncDraft().catch(() => {}));
     await expect(page.locator('#archivedActions')).toBeVisible();
+  }
+
+  test('takes the originals this phone holds with it', async ({ page, context, request }) => {
+    await archivedWithOriginal(page, context, request);
     await page.locator('#forkArchived').click();
     await expect(page.locator('#archivedActions')).toBeHidden();
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
@@ -646,5 +699,41 @@ test.describe('an archived job saved as a new draft', () => {
     await expect
       .poll(() => kept(page))
       .toEqual([expect.objectContaining({ id: forked.photo.id, ready: true })]);
+  });
+
+  test('takes them with it even when the first sync of the new job fails', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await archivedWithOriginal(page, context, request);
+    const archived = await page.evaluate(() => draftKey(state.draft.inspection_id));
+    await page.route(
+      '**/api/inspections/*/photos',
+      (route) => (route.request().method() === 'POST' ? route.abort('failed') : route.continue()),
+      { times: 1 },
+    );
+    const failed = page.waitForEvent('requestfailed', (r) => /\/photos$/.test(r.url()));
+    await page.locator('#forkArchived').click();
+    await failed;
+    await expect
+      .poll(() => page.evaluate(() => draftKey(state.draft.inspection_id)))
+      .not.toBe(archived);
+    // The new job's copy promises the original, so the original sits under that job and photo.
+    const forked = await page.evaluate(() => ({
+      key: draftKey(state.draft.inspection_id),
+      photo: state.draft.photos[0],
+    }));
+    expect(forked.photo.original).toEqual(expect.objectContaining({ content_type: 'image/jpeg' }));
+    await expect
+      .poll(() =>
+        page.evaluate(async () =>
+          (await originalsAction('readonly', (o) => o.getAll())).map((row) => [
+            row.draft_key,
+            row.id,
+          ]),
+        ),
+      )
+      .toEqual([[forked.key, forked.photo.id]]);
   });
 });
