@@ -1,5 +1,5 @@
 const { chromium } = require('playwright'),
-  { assertEventuallyEqual, fetchFresh, newRunToken } = require('./verify_fetch'),
+  { assertEventuallyEqual, fetchFresh, newRunToken, waitForRelease } = require('./verify_fetch'),
   fs = require('node:fs'),
   nodePath = require('node:path'),
   assert = require('node:assert/strict');
@@ -19,12 +19,30 @@ const versioned = (html) =>
   }));
 const localShell = fs.readFileSync('public/app.html', 'utf8'),
   localLanding = fs.readFileSync('public/index.html', 'utf8'),
-  localSigning = fs.readFileSync('public/sign.html', 'utf8');
+  localSigning = fs.readFileSync('public/sign.html', 'utf8'),
+  localSw = fs.readFileSync('public/sw.js', 'utf8');
 (async () => {
   const base = 'https://alert-disaster-field-2026.web.app';
   // Every fetch asks caches not to answer from storage; versioned assets also get this run's own query.
   const token = newRunToken(),
     fetch = (url, options) => fetchFresh(url, { token, ...options });
+  // Right after promotion Hosting can still serve the previous release. Wait (bounded) until the live
+  // service worker and app shell carry this commit's stamp; the checks below then run as before.
+  const localMarker = (localSw.match(/^const VERSION='([^']*)';/m) || [])[1];
+  await waitForRelease(
+    async (attempt) => {
+      const stamp = (text) => (text.match(/^const VERSION='([^']*)';/m) || [])[1];
+      const live = await fetch(base + '/sw.js', { bust: true, token: token + '-wait-' + attempt });
+      const app = await fetch(base + '/app', { bust: true, token: token + '-wait-' + attempt });
+      const shellStamps = versioned(await app.text()).map((asset) => asset.stamp);
+      return (
+        stamp(await live.text()) === localMarker &&
+        shellStamps.length > 0 &&
+        shellStamps.every((value) => value === localMarker)
+      );
+    },
+    { message: 'Hosting is still serving the previous release, not ' + localMarker },
+  );
   // The site root is the public landing page; the app shell answers at /app.
   const landing = await fetch(base + '/');
   assert(landing.ok);

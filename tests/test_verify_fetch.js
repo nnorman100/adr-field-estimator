@@ -82,3 +82,53 @@ test('every retry reads a URL no earlier attempt used', async () => {
   assert.equal(urls.length, 13);
   assert.equal(new Set(urls).size, 13);
 });
+
+const { waitForRelease } = require('../scripts/verify_fetch');
+
+test('the new release appearing after several tries passes, with growing short waits', async () => {
+  let reads = 0;
+  const waits = [];
+  await waitForRelease(async (attempt) => (reads++, attempt >= 3), {
+    wait: async (ms) => waits.push(ms),
+  });
+  assert.equal(reads, 4);
+  assert.equal(waits.length, 3);
+  assert.deepEqual(
+    waits,
+    [...waits].sort((a, b) => a - b),
+  );
+  assert(waits.every((ms) => ms > 0 && ms <= 15000));
+});
+
+test('an immediate new release does not wait', async () => {
+  await waitForRelease(async () => true, { wait: async () => assert.fail('should not wait') });
+});
+
+test('a release that never appears fails after the bounded wait', async () => {
+  let reads = 0,
+    waited = 0;
+  await assert.rejects(
+    waitForRelease(async () => (reads++, false), {
+      timeoutMs: 240000,
+      message: 'Hosting still serves the previous release',
+      wait: async (ms) => (waited += ms),
+    }),
+    (error) =>
+      error.code === 'ERR_ASSERTION' &&
+      error.message.startsWith('Hosting still serves the previous release'),
+  );
+  assert(waited >= 240000 && waited < 240000 + 15000);
+  assert(reads > 10);
+});
+
+test('a read that throws while Hosting propagates counts as not yet there', async () => {
+  let reads = 0;
+  await waitForRelease(
+    async () => {
+      if (reads++ < 2) throw new Error('fetch failed');
+      return true;
+    },
+    { wait: async () => {} },
+  );
+  assert.equal(reads, 3);
+});
