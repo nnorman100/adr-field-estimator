@@ -122,13 +122,9 @@ The backend rejects a different project ID or evidence bucket. Production never 
 It runs `scripts/auto_deploy.py`, which computes the next UTC date-style version (`YYYY.MM.DD-N`, starting at `1` each day) and uses the manual path: `deploy_backend.py --workspaces on
 --ai-features <repository baseline> --price-books <repository baseline> --staff-emails <serving value> --version <YYYY.MM.DD-N>` stages a tagged 0% revision (the tag is `a<7-character commit prefix>-<run id digits>`, trimmed so tag plus service name stays within Cloud Run's 46 characters);
 the staged revision's environment, secret bindings, service account and limits must equal the serving
-revision's apart from the three baseline flags, and the service must keep one minimum instance
+revision's apart from the three baseline flags; the service must also keep one minimum instance
 (`MIN_INSTANCES` in `deploy_backend.py`, set as the service-level `--min=1`, not the per-revision
-`--min-instances`) so scaling up from zero after an idle spell or a deploy never pays a Python cold start; a second concurrent
-instance (up to `--max-instances=2`) still starts cold. The service-level minimum follows the traffic split, so tagged revisions at 0%
-keep no warm instance of their own and the service keeps exactly one. It takes effect when staging runs, warming the serving revision
-until promotion. The minimum is held to the repository value, not to the service before staging, so the first release that adds it is
-recorded as a baseline change instead of stopping. One always-on instance costs about $7 to $10 a month; the tagged URL must report healthy, schema 3, the release `version` and the
+`--min-instances`), checked on the service after staging; the tagged URL must report healthy, schema 3, the release `version` and the
 stamped commit and answer the signed-out requests listed in `REFUSED_GET` and `REFUSED_POST` with 401;
 only then does traffic move. Next it stamps the shell with `--version <YYYY.MM.DD-N>`, deploys only `hosting:alert-disaster`, runs
 `verify_hosting.js` and resets the stamp. Only after verification succeeds, a separate workflow step (the only one holding a GitHub write token) creates the immutable git tag for the version the live backend reports and a GitHub Release whose notes list the merged pull requests in plain words. A failure before promotion promotes nothing and creates no tag. A failure after
@@ -154,6 +150,8 @@ release made in parallel is never overwritten. Each run's job summary is the rel
 [RELEASES.md](../RELEASES.md). Stale tags accumulate on old revisions at 0% traffic; Cloud Run
 allows 1000 tags per service, so clear old ones occasionally with `gcloud run services update-traffic
 --remove-tags`.
+
+**Warm instance.** One minimum instance removes the Python cold start (about 5 to 8 seconds) when scaling up from zero after an idle spell or a deploy; a second concurrent instance (up to `--max-instances=2`) still starts cold. The service-level minimum follows the traffic split, so tagged revisions at 0% keep no warm instance of their own and the service keeps exactly one; a per-revision minimum would bill one more instance for every tagged revision. It takes effect when staging runs, warming the serving revision until promotion. The minimum is held to the repository value, not to the service before staging, so the first release that adds it is recorded as a baseline change instead of stopping. One always-on instance costs about $7 to $10 a month.
 
 **Owner setup, once.** Nothing below is done by the repository or its agents.
 
