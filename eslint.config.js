@@ -14,6 +14,7 @@ module.exports = [
       'test-results/**',
       'playwright-report/**',
       'review-artifacts/**',
+      'web/**', // the TypeScript app has its own ESLint config and CI job
     ],
   },
   js.configs.recommended,
