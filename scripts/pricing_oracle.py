@@ -15,6 +15,7 @@ import argparse
 import base64
 import hashlib
 import json
+import locale
 import platform
 import subprocess
 import sys
@@ -52,6 +53,15 @@ FORMAT_VERSION = 1
 # The audit's date line is the only clock the documents read; it is frozen for every case.
 FROZEN_DATE = '11-06-2026'
 PRICED_AT = '2026-11-01T17:00:00Z'
+# Every case runs under the C locale. The code reads none: dates print as %m-%d-%Y digits and
+# numbers through Python format specs, Decimal str() and json.dumps, which ignore the locale.
+LOCALE = 'C'
+FROZEN = {
+    'proposal_date': FROZEN_DATE,
+    'proposal_date_zone': 'America/Los_Angeles',
+    'priced_at': PRICED_AT,
+    'locale': LOCALE,
+}
 # Containers deeper than this print on one line, so a case file stays reviewable and short.
 INLINE_DEPTH = 4
 MAX_LINES = 1000
@@ -70,9 +80,14 @@ class _VersionReader:
 
 
 @contextmanager
-def frozen_clock():
-    with mock.patch.object(claims, 'proposal_date', lambda: FROZEN_DATE):
-        yield
+def frozen():
+    saved = locale.setlocale(locale.LC_ALL)
+    locale.setlocale(locale.LC_ALL, LOCALE)
+    try:
+        with mock.patch.object(claims, 'proposal_date', lambda: FROZEN_DATE):
+            yield
+    finally:
+        locale.setlocale(locale.LC_ALL, saved)
 
 
 def plain(value):
@@ -98,22 +113,20 @@ def _rejected(stage, error):
 
 
 def _pin_and_basis(case, normalized_table):
-    """The job pin and the price basis the audit reads, from the code that makes them."""
-    calculation = case['calculation']
+    """The job pin and the price basis the audit reads, from the code that makes them. A case
+    without `calculation` is a stored price version without the field."""
+    calculation = case.get('calculation')
     if normalized_table is not None:
-        source = dict(
-            normalized_table,
-            calculation_version=calculation,
-            content_sha256=price_table.content_hash(normalized_table),
-        )
+        source = dict(normalized_table, content_sha256=price_table.content_hash(normalized_table))
     else:
         source = dict(
             rates=case['rates'],
-            calculation_version=calculation,
             content_sha256=price_books.content_hash(case['rates'], calculation)
             if price_books.known_calculation_version(calculation)
             else '0' * 64,
         )
+    if 'calculation' in case:
+        source['calculation_version'] = calculation
     source.update(version_id=case['version_id'], sequence=case['sequence'])
     pin = _pin_body(case['inspection_id'], case['company_id'], source, 'first_price')
     pin['priced_at'] = PRICED_AT
@@ -186,7 +199,7 @@ def _signing(case, proposal_hash):
 
 def evaluate(case):
     """Everything the current code produces for one stored case input, in pipeline order."""
-    with frozen_clock():
+    with frozen():
         return plain(_evaluate(case))
 
 
@@ -200,11 +213,13 @@ def _evaluate(case):
     try:
         distinct_rooms(data)
         check_quantity_overrides(data)
+        data = InspectionData.model_validate(out['normalized_inspection'])
+        check_quantity_overrides(data)
     except ValueError as error:
         return dict(out, **_rejected('save_checks', error))
 
     table = None
-    if case['calculation'] == V2:
+    if case.get('calculation') == V2:
         try:
             table = price_table.normalize_table(
                 case['table'], publish=True, acknowledgements=case.get('acknowledgements', [])
@@ -238,7 +253,7 @@ def _evaluate(case):
     except (ValueError, RuntimeError) as error:
         return dict(out, **_rejected('pricing', error))
     out['pricing'] = {
-        'calculation_version': case['calculation'] if pin is not None else V1,
+        'calculation_version': pin['calculation_version'] if pin is not None else V1,
         'lines': lines,
         'itemized_total': itemized,
         'buckets': _v2_buckets(lines) if table is not None else _v1_buckets(data, lines),
@@ -358,7 +373,7 @@ def manifest(files):
                 'id': body['id'],
                 'file': f'cases/{name}',
                 'sha256': hashlib.sha256(files[name]).hexdigest(),
-                'calculation_version': body['input']['calculation'],
+                'calculation_version': body['input'].get('calculation'),
                 'tags': body['tags'],
             }
         )
@@ -377,11 +392,7 @@ def manifest(files):
             'packages': {name: metadata.version(name) for name in ('pydantic', 'pydantic-core')},
             'decimal_context': {'prec': context.prec, 'rounding': context.rounding},
         },
-        'frozen': {
-            'proposal_date': FROZEN_DATE,
-            'proposal_date_zone': 'America/Los_Angeles',
-            'priced_at': PRICED_AT,
-        },
+        'frozen': FROZEN,
         'calculation_versions': sorted(priced),
         'case_count': len(cases),
         'corpus_sha256': corpus_sha256(files),

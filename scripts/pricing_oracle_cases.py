@@ -244,6 +244,29 @@ def _v1_cent_cases():
     ]
 
 
+# Room names whose override keys sort differently by code point (Python) and by UTF-16 unit:
+# U+00E9 < U+FF21 < U+1F600, but the surrogate pair of U+1F600 sorts before U+FF21 in UTF-16.
+SERIALIZER_ROOMS = ('Room \u00e9', 'Room \uff21', 'Room \U0001f600')
+
+
+def serializer_job(**values):
+    """Non-ASCII and non-BMP object keys, and floats Python writes with an exponent."""
+    rooms = [
+        room(SERIALIZER_ROOMS[0], 1, finished_sf=40),
+        room(SERIALIZER_ROOMS[1], 2, finished_sf=1e-05, unfinished_sf=12),
+        room(SERIALIZER_ROOMS[2], 3, unfinished_sf=1e-07, waste_percent=2.5e-06),
+    ]
+    overrides = {
+        f'{name}:{field}': dict(measured=entered, entered=entered)
+        for name, field, entered in (
+            (SERIALIZER_ROOMS[2], 'unfinished_sf', '0.00'),
+            (SERIALIZER_ROOMS[1], 'finished_sf', '0.00'),
+            (SERIALIZER_ROOMS[0], 'finished_sf', '40.00'),
+        )
+    }
+    return job(rooms, labor_hours=1e-05, quantity_overrides=overrides, **values)
+
+
 def _v1_threshold_cases():
     """The estimating sheet's 1,001 sq ft step: below, at and above, split across two rooms."""
     cases = []
@@ -530,6 +553,13 @@ def _v1_document_cases():
             photos=[photo('u1', 'Baño principal', '19.5% WME')],
         ),
         case(
+            'v1-serializer-keys-and-exponents',
+            'Override keys sort by code point across BMP and non-BMP names; tiny floats keep '
+            'their exponent form in the canonical bytes',
+            ['unicode', 'unicode_keys', 'exponent_format', 'float_format', 'overrides'],
+            serializer_job(),
+        ),
+        case(
             'v1-sizing-and-history',
             'Sizing inputs print the IICRC check; signed-job history adds a far-from-typical note',
             ['warnings', 'sizing'],
@@ -616,7 +646,35 @@ def _v1_rejection_cases():
             job(rooms),
             calculation='adr-residential-v0',
         ),
+        *(
+            case(
+                f'v1-reject-version-{label}',
+                f'A pin whose calculation version is {note} is refused',
+                ['rejection', 'unknown_version', 'malformed_version'],
+                job(rooms),
+                calculation=value,
+            )
+            for label, note, value in (
+                ('null', 'null', None),
+                ('number', 'a number', 1),
+                ('list', 'a list holding a known version', [V1]),
+                ('wrong-case', 'a known v2 version in capitals', V2.upper()),
+            )
+        ),
+        _without_calculation(
+            case(
+                'v1-reject-version-missing',
+                'A stored price version without a calculation version cannot be pinned',
+                ['rejection', 'unknown_version', 'malformed_version', 'null_omitted'],
+                job(rooms),
+            )
+        ),
     ]
+
+
+def _without_calculation(entry):
+    del entry['input']['calculation']
+    return entry
 
 
 def _seeded_rates(rng):

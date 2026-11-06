@@ -18,7 +18,8 @@ The existing `tests/golden/v1-documents.json` is separate and unchanged.
 ### Input
 
 `calculation` names the price model (`adr-residential-v1` rate book or `dryscope-v2` owner table;
-any other value is an unknown version). `data` is the raw inspection JSON as a client sends it, so
+any other value, including `null`, a number, a list or a wrong-case name, is an unknown version,
+and a case without the key is a stored price version that lacks the field). `data` is the raw inspection JSON as a client sends it, so
 an absent field stays absent, an integer stays an integer and `-0.0` stays `-0.0`. `rates` (v1) or
 `table` (v2, before normalization, with optional `acknowledgements`) is the company's price book.
 `photos`, `ai` (the saved model result), `identity`, `customer_name`, `claim`, `history` (signed-job
@@ -28,7 +29,9 @@ rollback path, which prices from rates without a job pin.
 
 ### Expected, in pipeline order
 
-1. `normalized_inspection`: the stored inspection record (`inspection_payload`).
+1. `normalized_inspection`: the stored inspection record (`inspection_payload`). Everything after
+   it prices that record reloaded (`InspectionData.model_validate`), as the audit does, so a
+   default the save writes (for example `drying_days`) is priced.
 2. `pin` and `price_basis`: the job pin built by `_pin_body` and the basis `basis_for` returns;
    for v2 the pin carries the normalized table and its `content_sha256`.
 3. `pricing`: `lines` (every price line the engine returns), `itemized_total`, `buckets`
@@ -45,12 +48,19 @@ rollback path, which prices from rates without a job pin.
    and the SHA-256 each signing route stores as `payload_sha256`.
 
 A rejected input stops at the stage that refused it: `rejected.stage` is `inspection` (pydantic
-validation; `errors` lists each location and error type), `save_checks`, `table`, `pin`,
+validation; `errors` lists each location and error type), `save_checks` (the save's room-name
+and override checks, and the audit's override check on the reloaded record), `table`, `pin`,
 `pricing` or `documents`, with the error type and message. Stages before it are still recorded.
 
 Engine `Decimal` values are written as their exact Python `str()` text, keeping trailing zeros and
-exponents; floats and integers are JSON numbers as Python wrote them. The proposal date is frozen
-at `11-06-2026` and the pin's `priced_at` at `2026-11-01T17:00:00Z`; nothing else reads a clock.
+exponents; floats and integers are JSON numbers as Python wrote them (`1e-05`, not `0.00001`).
+The canonical bytes sort object keys by Unicode code point and escape non-ASCII as `\uXXXX`,
+non-BMP characters as surrogate pairs; the `*-serializer-keys-and-exponents` cases pin keys that
+sort differently by UTF-16 unit. The proposal date is frozen at `11-06-2026`
+(America/Los_Angeles) and the pin's `priced_at` at `2026-11-01T17:00:00Z`; nothing else reads a
+clock. Every case runs under the `C` locale; the code reads no locale (dates print as
+`%m-%d-%Y` digits, numbers through format specs, `Decimal` `str()` and `json.dumps`). The
+manifest's `frozen` block records all of these.
 
 Files are ASCII JSON with sorted keys; containers four levels down print on one line so each file
 stays under 1,000 lines. A reader parses them; the layout is not part of the contract. The

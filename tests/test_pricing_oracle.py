@@ -52,9 +52,12 @@ REQUIRED_TAGS = {
     'ocr',
     'uncertainty',
     'unicode',
+    'unicode_keys',
+    'exponent_format',
     'null_omitted',
     'negative_zero',
     'unknown_version',
+    'malformed_version',
     'rejection',
     'seeded',
 }
@@ -94,7 +97,7 @@ def test_manifest_lists_every_case_file_with_its_hash():
     assert listed == on_disk
     assert MANIFEST['case_count'] == len(STORED)
     assert MANIFEST['corpus_sha256'] == oracle.corpus_sha256(STORED)
-    assert MANIFEST['frozen']['proposal_date'] == oracle.FROZEN_DATE
+    assert MANIFEST['frozen'] == oracle.FROZEN
     assert MANIFEST['calculation_versions'] == sorted({oracle.V1, oracle.V2})
 
 

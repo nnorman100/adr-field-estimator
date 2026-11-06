@@ -18,6 +18,7 @@ from scripts.pricing_oracle_cases import (
     job,
     photo,
     room,
+    serializer_job,
 )
 
 PRICES = {
@@ -515,6 +516,13 @@ def _scope_cases():
             ['unicode'],
             job([room('Salón 😀', 1, finished_sf=70), room('Küche', 3, unfinished_sf=20)]),
             table({'demo_cat1_wall': {'customer_description': 'Retirar paneles – pared ✓'}}),
+        ),
+        v2(
+            'v2-serializer-keys-and-exponents',
+            'Override keys sort by code point across BMP and non-BMP names; tiny floats keep '
+            'their exponent form in the canonical bytes',
+            ['unicode', 'unicode_keys', 'exponent_format', 'float_format', 'overrides'],
+            serializer_job(),
         ),
         v2(
             'v2-max-quantities',
