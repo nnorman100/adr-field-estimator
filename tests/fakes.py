@@ -1,4 +1,5 @@
 from copy import deepcopy
+import operator
 from threading import RLock
 import io, base64
 from PIL import Image, ImageDraw
@@ -51,6 +52,9 @@ class Ref:
         self.db.records[self.key] = deepcopy(value)
 
 
+RANGES = {'<': operator.lt, '<=': operator.le, '>': operator.gt, '>=': operator.ge}
+
+
 class Collection:
     def __init__(self, db, name):
         self.db = db
@@ -79,19 +83,20 @@ class Collection:
         self.cursor = snapshot.to_dict()
         return self
 
+    @staticmethod
+    def matches(f, v):
+        if f.op_string == 'array_contains':
+            return f.value in v.get(f.field_path, [])
+        if f.op_string in RANGES:
+            # Like Firestore, a range filter skips documents without the field.
+            return f.field_path in v and RANGES[f.op_string](v[f.field_path], f.value)
+        return v.get(f.field_path) == f.value
+
     def stream(self, transaction=None):
         rows = [
             v
             for k, v in self.db.records.items()
-            if k.startswith(self.name + '/')
-            and all(
-                (
-                    f.value in v.get(f.field_path, [])
-                    if f.op_string == 'array_contains'
-                    else v.get(f.field_path) == f.value
-                )
-                for f in self.filters
-            )
+            if k.startswith(self.name + '/') and all(self.matches(f, v) for f in self.filters)
         ]
         if self.order:
             rows.sort(

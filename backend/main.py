@@ -100,6 +100,7 @@ try:
     from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from .workspaces import AccessDenied, JobArchived, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
+    from .retention import retention_enabled
     from .price_book_api import _multipart_parts, register_price_book_routes
     from .price_book_store import Expired
     from .price_books import price_books_enabled, price_display, saved_basis
@@ -178,6 +179,7 @@ except ImportError:
     from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from workspaces import AccessDenied, JobArchived, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
+    from retention import retention_enabled
     from price_book_api import _multipart_parts, register_price_book_routes
     from price_book_store import Expired
     from price_books import price_books_enabled, price_display, saved_basis
@@ -1078,6 +1080,7 @@ async def session_info(staff=Depends(current_staff)):
         workspace_protocol_version=1,
         ai_features=sorted(ai_features.AI_FEATURES),
         price_books_enabled=bool(WORKSPACES_ENABLED and price_books_enabled()),
+        retention_enabled=bool(WORKSPACES_ENABLED and retention_enabled()),
     )
     if WORKSPACES_ENABLED:
         actor = await stored(get_job_store().workspaces.principal, staff['uid'])

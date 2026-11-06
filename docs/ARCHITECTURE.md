@@ -39,7 +39,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 
 ## Data model (high level)
 - Signed agreements and evidence are **immutable**. Mutable coordination (assignment, claim details, delivery, readings) lives in **sidecars** beside the job.
-- Private collections: `_companies`, `_memberships`, `_platform_admins`, `_invitations`, `_invite_keys`, `_admin_events` (also the support audit log), `_company_limits`, `_workspace_jobs`, `_workspace_authorizations`, plus others listed in `docs/company-workspaces.md`.
+- Private collections: `_companies`, `_memberships`, `_platform_admins`, `_invitations`, `_invite_keys`, `_admin_events` (also the support audit log), `_company_retention`, `_retention_state`, `_company_limits`, `_workspace_jobs`, `_workspace_authorizations`, plus others listed in `docs/company-workspaces.md`.
 - Drafts autosave to a per-user IndexedDB queue and sync when online; conflicts return 409 and keep local work.
 
 ## Environments

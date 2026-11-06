@@ -324,6 +324,7 @@ window.WorkspaceUI = (() => {
     $('dashboardAdmin').hidden = !state.session.superadmin;
     branding();
     window.InsightUI?.account();
+    window.Retention?.ready();
     policy();
   }
   async function refresh() {
@@ -1230,6 +1231,7 @@ window.WorkspaceUI = (() => {
       say('Company details saved. Regenerate unsigned documents before signing.', 'success');
     });
     $('dashboardContent').append(form);
+    await window.Retention?.section($('dashboardContent'), cid);
   }
   async function companies() {
     const epoch = show('Companies', 'Manage isolated company workspaces and their owners.');

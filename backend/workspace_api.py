@@ -31,6 +31,7 @@ try:
     from .insights import Insights, JobSummary, validate_summary as validate_insight, sentences
     from .ai_usage import company_usage
     from .outcomes import JobClose
+    from .retention import Retention, RetentionUpdate, retention_enabled
     from .prompts import JOB_SUMMARY_INSTRUCTIONS
 except ImportError:
     from workspaces import (
@@ -58,6 +59,7 @@ except ImportError:
     from insights import Insights, JobSummary, validate_summary as validate_insight, sentences
     from ai_usage import company_usage
     from outcomes import JobClose
+    from retention import Retention, RetentionUpdate, retention_enabled
     from prompts import JOB_SUMMARY_INSTRUCTIONS
 
 
@@ -316,6 +318,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             project='alert-disaster-field-2026',
             workspaces_enabled=True,
             price_books_enabled=bool(price_books_enabled()),
+            retention_enabled=retention_enabled(),
             **await stored(workspace(store).prices.session_view, actor),
             # The shared sender is near Gmail's daily limit; only owners are told.
             email_notice=actor['role'] == 'owner' and await stored(workspace(store).email_notice),
@@ -441,6 +444,27 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
         return await stored(
             workspace(store).update_member, claims['uid'], company_id, member_uid, req
         )
+
+    def retention(store):
+        if not getattr(store, 'workspaces', None):
+            raise HTTPException(404, 'Record retention needs company workspaces.')
+        return Retention(store.workspaces, store.bucket)
+
+    @app.get('/api/companies/{company_id}/retention')
+    async def retention_view(company_id: str, claims=live_identity, store=Depends(get_store)):
+        return await stored(retention(store).view, claims['uid'], company_id)
+
+    @app.put('/api/companies/{company_id}/retention')
+    async def retention_update(
+        company_id: str, req: RetentionUpdate, claims=live_identity, store=Depends(get_store)
+    ):
+        await stored(store.quota, claims['uid'], 'team', 20)
+        return await stored(retention(store).update, claims['uid'], company_id, req)
+
+    @app.post('/api/companies/{company_id}/retention/run')
+    async def retention_run(company_id: str, claims=Depends(identity), store=Depends(get_store)):
+        """Any active member's app asks once per session; the sweep runs at most daily."""
+        return await stored(retention(store).tick, claims['uid'], company_id)
 
     @app.get('/api/companies/{company_id}/invitations')
     async def invitations(company_id: str, claims=live_identity, store=Depends(get_store)):

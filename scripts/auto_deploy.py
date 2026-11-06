@@ -48,6 +48,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.deploy_backend import (
     DEFAULT_AI_FEATURES,
     DEFAULT_PRICE_BOOKS,
+    DEFAULT_RETENTION,
     MIN_INSTANCES,
     PROJECT,
     env_assignments,
@@ -65,12 +66,13 @@ HOSTING_TARGET = 'hosting:alert-disaster'
 WORKSPACES = 'on'
 AI_FEATURES = DEFAULT_AI_FEATURES
 PRICE_BOOKS = DEFAULT_PRICE_BOOKS
+RETENTION = DEFAULT_RETENTION
 # The firebase-tools version CI already uses.
 FIREBASE_TOOLS = 'firebase-tools@15.31.0'
 # A merge touching these is released by hand: the workflow never deploys rules or indexes.
 HAND_RELEASED = ('firestore.rules', 'firestore.indexes.json')
 # deploy_backend.py sets these on every revision; any other difference from the serving revision is a bug.
-BASELINE_KEYS = tuple(env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS))
+BASELINE_KEYS = tuple(env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS, RETENTION))
 COMMIT = re.compile(r'[0-9a-f]{40}')
 # Cloud Run rejects a traffic tag when tag + service name exceed this many characters.
 TAG_LIMIT = 46
@@ -282,7 +284,7 @@ def serving_staff_emails(summary):
 def spec_differences(serving, staged):
     """Differences beyond the baseline flags, plus any baseline flag the stage did not set as asked."""
     found = []
-    want = env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS)
+    want = env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS, RETENTION)
     for key, value in want.items():
         if staged['env'].get(key) != value:
             found.append(
@@ -331,7 +333,7 @@ def baseline_reductions(serving):
     Values are read the way the server reads them, so an unset flag counts as off.
     """
     env = serving['env']
-    want = env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS)
+    want = env_assignments(WORKSPACES, AI_FEATURES, PRICE_BOOKS, RETENTION)
     found = []
     # backend/price_books.py: price_books_enabled.
     if env.get('PRICE_BOOKS_ENABLED', '').lower() == 'true' and PRICE_BOOKS != 'on':
@@ -341,6 +343,16 @@ def baseline_reductions(serving):
                 'DEFAULT_PRICE_BOOKS',
                 f'PRICE_BOOKS_ENABLED: serving {env["PRICE_BOOKS_ENABLED"]!r}, repository baseline '
                 f'{want["PRICE_BOOKS_ENABLED"]!r}; this release would turn it off.',
+            )
+        )
+    # backend/retention.py: retention_enabled.
+    if env.get('RETENTION_ENABLED', '').lower() == 'true' and RETENTION != 'on':
+        found.append(
+            (
+                'RETENTION_ENABLED',
+                'DEFAULT_RETENTION',
+                f'RETENTION_ENABLED: serving {env["RETENTION_ENABLED"]!r}, repository baseline '
+                f'{want["RETENTION_ENABLED"]!r}; this release would turn it off.',
             )
         )
     dropped = enabled_ai_features(env.get('AI_FEATURES', '')) - enabled_ai_features(AI_FEATURES)
@@ -810,6 +822,8 @@ def _deploy_backend_and_hosting(
             AI_FEATURES,
             '--price-books',
             PRICE_BOOKS,
+            '--retention',
+            RETENTION,
             '--staff-emails',
             staff_emails,
             '--version',

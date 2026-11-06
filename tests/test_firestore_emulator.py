@@ -1490,3 +1490,84 @@ def test_switch_from_a_rate_book_and_reprice_transactions():
         assert stored(db, 'inspections/' + ID)['audit'] is None
     finally:
         price_books.set_enabled(None)
+
+
+def test_two_instances_run_one_retention_sweep_that_deletes_each_record_once(monkeypatch):
+    """Record retention in real transactions: the daily lease admits one sweep, the activity-log
+    range query and invitation paging run on Firestore, and each record is deleted once."""
+    import hashlib
+    from datetime import datetime, timezone
+
+    import backend.retention as retention
+    from backend.workspaces import ArchiveRequest
+
+    monkeypatch.setattr(retention, '_forced', True)
+    stores = instances(CompanyInspectionStore)
+    db = stores[0].db
+    seed_company(db)
+    now = time.time()
+    old = datetime.fromtimestamp(now - 200 * 86400, timezone.utc).isoformat()
+    recent = datetime.fromtimestamp(now - 10 * 86400, timezone.utc).isoformat()
+    for index in range(3):
+        identifier = f'{index:032x}'
+        email = f'invitee{index}@example.invalid'
+        db.document('_invitations/' + identifier).set(
+            dict(
+                invitation_id=identifier,
+                company_id='adr',
+                email=email,
+                role='estimator',
+                status='accepted' if index else 'pending',
+                # The pending one has not expired; the others expired 200 days ago.
+                expires_at=now + 86400 if not index else now - 200 * 86400,
+                created_at=old,
+            )
+        )
+        key = hashlib.sha256(('adr:' + email).encode()).hexdigest()
+        db.document('_invite_keys/' + key).set({'invitation_id': identifier})
+    for identifier, created in (('a' * 32, old), ('b' * 32, recent)):
+        db.document('_admin_events/' + identifier).set(
+            dict(
+                event_id=identifier, company_id='adr', action='company_profile', created_at=created
+            )
+        )
+    db.document('_admin_events/' + 'c' * 32).set(
+        dict(event_id='c' * 32, company_id='other', action='company_profile', created_at=old)
+    )
+    store = stores[0]
+    store.create_inspection('owner', ID, data())
+    record = store.add_photo(
+        'owner',
+        ID,
+        dict(
+            photo_id='d' * 32,
+            expected_revision=1,
+            room='Bathroom',
+            captured_at='2026-10-01T10:00:00Z',
+            data_url=png(),
+        ),
+    )
+    path = record['photos'][0]['file']['path']
+    job = stored(db, '_workspace_jobs/' + ID)
+    store.workspaces.archive_job('owner', ID, ArchiveRequest(expected_version=job['version']))
+    db.document('_workspace_jobs/' + ID).update({'archived_at': old})
+
+    keepers = [retention.Retention(s.workspaces, s.bucket) for s in stores]
+    results = concurrently([lambda k=k: k.tick('owner', 'adr', now) for k in keepers])
+    ran = [r for r in outcomes(results, refused=()) if r['ran']]
+    assert len(ran) <= 1
+    if not ran:  # both lost the lease transaction to emulator contention; run again in sequence
+        ran = [keepers[0].tick('owner', 'adr', now)]
+    assert ran[0]['deleted'] == dict(
+        invitations=2, admin_events=1, job_monitoring=0, evidence_photos=1
+    )
+    left = {s.id for s in db.collection('_invitations').stream()}
+    assert left == {f'{0:032x}'}
+    assert len(list(db.collection('_invite_keys').stream())) == 1
+    events = {s.id: s.to_dict() for s in db.collection('_admin_events').stream()}
+    assert 'a' * 32 not in events and {'b' * 32, 'c' * 32} <= set(events)
+    runs = [e for e in events.values() if e['action'] == 'retention_run']
+    assert len(runs) == 1 and runs[0]['actor_uid'] == 'system:retention'
+    assert path not in store.bucket.objects
+    assert stored(db, 'inspections/' + ID)['photos'] == []
+    assert keepers[1].tick('owner', 'adr', now + 60) == {'ran': False}

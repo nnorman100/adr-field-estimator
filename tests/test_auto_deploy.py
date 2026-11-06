@@ -27,6 +27,7 @@ BASELINE = {
     'WORKSPACES_ENABLED': 'true',
     'AI_FEATURES': 'readiness',
     'PRICE_BOOKS_ENABLED': 'false',
+    'RETENTION_ENABLED': 'false',
 }
 
 
@@ -567,6 +568,34 @@ def test_a_merge_cannot_undo_price_books_once_the_repository_baseline_is_on(
     )
     assert release(later) == 0
     assert stage_values(later)[1] == 'on'
+
+
+def test_retention_on_serving_refuses_a_baseline_that_would_turn_it_off(
+    summary, capsys, monkeypatch, todays_baseline
+):
+    monkeypatch.setattr(auto, 'RETENTION', 'off')
+    runner = serving_with(FakeRunner(), RETENTION_ENABLED='true')
+    assert release(runner) == 1
+    assert 'stage' not in runner.keys() and 'traffic' not in runner.keys()
+    assert 'RETENTION_ENABLED' in capsys.readouterr().err
+    text = summary.text()
+    assert "RETENTION_ENABLED: serving 'true', repository baseline 'false'" in text
+    assert 'DEFAULT_RETENTION' in text and 'Nothing was staged' in text
+
+
+def test_retention_is_staged_from_the_repository_baseline(summary, monkeypatch, todays_baseline):
+    runner = FakeRunner()
+    assert release(runner) == 0
+    stage = next(argv for key, argv in runner.calls if key == 'stage')
+    assert stage[stage.index('--retention') + 1] == auto.RETENTION == 'off'
+    # The turn-on is the constant, changed in a reviewed pull request; every later merge keeps it.
+    monkeypatch.setattr(auto, 'RETENTION', 'on')
+    later = serving_with(
+        FakeRunner(staged_env={'RETENTION_ENABLED': 'true'}), RETENTION_ENABLED='true'
+    )
+    assert release(later) == 0
+    stage = next(argv for key, argv in later.calls if key == 'stage')
+    assert stage[stage.index('--retention') + 1] == 'on'
 
 
 def test_dropping_a_serving_ai_feature_is_refused_and_names_it(summary, todays_baseline):
