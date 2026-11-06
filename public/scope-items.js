@@ -144,6 +144,16 @@
   const money = (value) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value));
   function unitPriceText(item) {
+    if (item.price_brackets?.length) {
+      let previous = 0;
+      return item.price_brackets
+        .map((band) => {
+          const span = band.up_to_sf == null ? 'over ' + previous : previous + '–' + band.up_to_sf;
+          previous = band.up_to_sf;
+          return span + ' sq ft: ' + money(band.unit_price) + '/sq ft';
+        })
+        .join('; ');
+    }
     if (item.unit_price === '' || item.unit_price == null) return 'Price not set';
     const price = money(item.unit_price);
     return item.unit === 'each'

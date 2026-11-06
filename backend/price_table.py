@@ -22,6 +22,7 @@ SCHEMA_VERSION = 2
 CURRENCY = 'USD'
 TEMPLATE_VERSION = 'dryscope-prices-v2'
 MAX_ITEMS = 150
+MAX_BRACKETS = 20
 CENT = Decimal('0.01')
 MILLI = Decimal('0.001')
 DEFAULT_AFTER_HOURS_LABEL = 'After-hours adjustment'
@@ -167,6 +168,64 @@ STARTER_ASSIST = {
 def assist_of(policy: dict) -> dict:
     """The stored assist map, or what a table without one reads as. Never writes to the policy."""
     return copy.deepcopy(policy.get('assist') or DEFAULT_ASSIST)
+
+
+def bracket_mode_of(policy: dict) -> str:
+    return policy.get('bracket_mode', 'tiered')
+
+
+def cushion_brackets_of(policy: dict) -> list[dict]:
+    """Read old two-step cushions without changing their stored representation or hash."""
+    tier = policy['range']
+    return copy.deepcopy(
+        tier.get('brackets')
+        or [
+            {'up_to_sf': tier['first_sf'], 'percent': tier['first_percent']},
+            {'up_to_sf': None, 'percent': tier['beyond_percent']},
+        ]
+    )
+
+
+def normalize_brackets(raw, *, where: str, value_field: str) -> list[dict]:
+    """Cumulative upper limits imply contiguous bands (0, first], (first, next], ... ."""
+    if not isinstance(raw, list) or not (1 <= len(raw) <= MAX_BRACKETS):
+        raise ValueError(
+            f'{where}: enter 1 to {MAX_BRACKETS} brackets, ending with an unlimited band.'
+        )
+    previous = 0
+    result = []
+    for index, band in enumerate(raw):
+        if not isinstance(band, dict) or set(band) != {'up_to_sf', value_field}:
+            raise ValueError(f'{where}: each bracket needs up_to_sf and {value_field}.')
+        limit = band['up_to_sf']
+        if index == len(raw) - 1:
+            if limit is not None:
+                raise ValueError(f'{where}: the last bracket must have up_to_sf null (unlimited).')
+        elif (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not (previous < limit <= 100000)
+        ):
+            raise ValueError(
+                f'{where}: square-foot limits must be ascending whole numbers from 1 to 100000.'
+            )
+        else:
+            previous = limit
+        result.append(
+            {
+                'up_to_sf': limit,
+                value_field: _decimal_str(
+                    band[value_field],
+                    where=where,
+                    field=value_field,
+                    low=Decimal(0),
+                    high=Decimal(100 if value_field == 'percent' else 100000),
+                    max_decimals=2,
+                    fixed_decimals=2 if value_field == 'unit_price' else None,
+                ),
+            }
+        )
+    return result
 
 
 def _default_code(item_id: str) -> str:
@@ -729,11 +788,28 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
         if not isinstance(taxable, bool):
             raise ValueError(f'{where}: taxable must be a boolean.')
 
+        brackets = None
+        if 'price_brackets' in raw:
+            if unit != 'sf' or src.kind not in ('room', 'typed'):
+                raise ValueError(
+                    f'{where}: price brackets require a square-foot room or typed item.'
+                )
+            brackets = normalize_brackets(
+                raw['price_brackets'], where=where, value_field='unit_price'
+            )
+            if any(Decimal(band['unit_price']) == 0 for band in brackets):
+                if not allow_zero:
+                    raise ValueError(f'{where}: zero bracket prices require allow_zero.')
+                if publish and enabled and item_id not in acked and code not in acked:
+                    raise ValueError(
+                        f'{where}: confirm that a zero bracket price for {name} is intentional.'
+                    )
+
         price_raw = raw.get('unit_price', '')
         if price_raw is None:
             price_raw = ''
         if isinstance(price_raw, str) and price_raw.strip() == '':
-            if publish and enabled:
+            if publish and enabled and brackets is None:
                 raise ValueError(
                     f'{where}: enter a unit price or disable the item before publishing.'
                 )
@@ -833,12 +909,16 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
                 'sort_order': order_raw,
             }
         )
+        if brackets is not None:
+            normalized[-1]['price_brackets'] = brackets
 
     enabled_extras = [it for it in normalized if it['group'] == 'extras' and it['enabled']]
     if len(enabled_extras) > 1:
         raise ValueError('Settings: at most one enabled item in group "extras" is allowed.')
 
-    if publish and not any(it['enabled'] and it['unit_price'] != '' for it in normalized):
+    if publish and not any(
+        it['enabled'] and (it['unit_price'] != '' or it.get('price_brackets')) for it in normalized
+    ):
         raise ValueError('Settings: at least one enabled item with a price is required to publish.')
 
     return normalized
@@ -897,6 +977,8 @@ def normalize_policy(raw) -> dict:
     range_raw = raw.get('range')
     if not isinstance(range_raw, dict):
         raise ValueError(f'{where}: range must be an object.')
+    if 'brackets' in range_raw:
+        range_raw = {**DEFAULT_POLICY['range'], **range_raw}
     first_sf = range_raw.get('first_sf')
     if isinstance(first_sf, bool) or not isinstance(first_sf, int) or not (1 <= first_sf <= 100000):
         raise ValueError(f'{where}: range.first_sf must be an integer from 1 to 100000.')
@@ -916,7 +998,7 @@ def normalize_policy(raw) -> dict:
         high=Decimal('100'),
         max_decimals=2,
     )
-    if Decimal(beyond_percent) > Decimal(first_percent):
+    if 'brackets' not in range_raw and Decimal(beyond_percent) > Decimal(first_percent):
         raise ValueError(
             f'{where}: The cushion beyond the first square feet cannot exceed the cushion on them.'
         )
@@ -1041,6 +1123,14 @@ def normalize_policy(raw) -> dict:
     # Absent stays absent: an added key would change the hash of every stored table and pin.
     if raw.get('assist') is not None:
         normalized['assist'] = _normalize_assist(raw['assist'])
+    if 'bracket_mode' in raw:
+        if raw['bracket_mode'] not in ('tiered', 'whole-job'):
+            raise ValueError('Settings: bracket_mode must be "tiered" or "whole-job".')
+        normalized['bracket_mode'] = raw['bracket_mode']
+    if 'brackets' in range_raw:
+        normalized['range']['brackets'] = normalize_brackets(
+            range_raw['brackets'], where='Settings: cushion', value_field='percent'
+        )
     return normalized
 
 
@@ -1082,7 +1172,7 @@ def publish_problems(table: dict, acknowledgements=(), *, extras_locked=False) -
         if not item.get('enabled', True):
             continue
         price = item.get('unit_price', '')
-        if price == '':
+        if price == '' and not item.get('price_brackets'):
             problems.append(
                 {
                     'item_id': item_id,
@@ -1091,7 +1181,10 @@ def publish_problems(table: dict, acknowledgements=(), *, extras_locked=False) -
             )
             continue
         priced_enabled += 1
-        if Decimal(price) == 0:
+        zero_price = any(
+            Decimal(band['unit_price']) == 0 for band in item.get('price_brackets', [])
+        )
+        if zero_price or (price != '' and Decimal(price) == 0):
             if not item.get('allow_zero'):
                 problems.append(
                     {
@@ -1177,6 +1270,8 @@ def public_table(table: dict, *, manage: bool) -> dict:
         if not manage and not item['enabled']:
             continue
         items.append({k: copy.deepcopy(item[k]) for k in keys})
+        if 'price_brackets' in item:
+            items[-1]['price_brackets'] = copy.deepcopy(item['price_brackets'])
     return {
         'items': items,
         'policy': copy.deepcopy(normalized['policy']),
@@ -1326,6 +1421,20 @@ def switch_differences(policy: dict) -> list[str]:
             "Labor hours carry the hidden-damage percent of the job's rooms at every job size.",
             late,
         ]
+    if 'brackets' in range_rule or bracket_mode_of(policy) == 'whole-job':
+        if bracket_mode_of(policy) == 'whole-job':
+            return [
+                'The high end uses one whole-job cushion selected by the combined square feet '
+                'of area-priced work. A larger job may cost less when it crosses a bracket boundary.',
+                'Labor hours carry the same selected cushion as the area-priced work.',
+                late,
+            ]
+        return [
+            "The high end uses the owner's tiered cushion brackets, highest-priced square feet first, "
+            'with each percentage applied only to its band of area-priced work.',
+            f'Labor hours carry {cushion_brackets_of(policy)[0]["percent"]}% on the high end at every job size.',
+            late,
+        ]
     return [
         f'The high end now tapers above {first_sf} square feet instead of stepping down at 1,001: '
         f'{range_rule["first_percent"]}% on the first {first_sf} square feet of area-priced work, '
@@ -1337,6 +1446,8 @@ def switch_differences(policy: dict) -> list[str]:
 
 
 _POLICY_DIFF_PATHS = (
+    ('bracket_mode', ('bracket_mode',)),
+    ('range.brackets', ('range', 'brackets')),
     ('estimate_mode', ('estimate_mode',)),
     ('area_basis', ('area_basis',)),
     ('range.first_sf', ('range', 'first_sf')),
@@ -1386,7 +1497,9 @@ _LARGE_CHANGE_POLICY_FIELDS = {
 def _nested_get(mapping: dict, path: tuple[str, ...]):
     cur = mapping
     for part in path:
-        cur = cur[part]
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
     return cur
 
 
@@ -1428,20 +1541,15 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
     warning_set: set[str] = set()
 
     for item_id, after_it in after_items.items():
-        if (
-            after_it['enabled']
-            and after_it['unit_price'] != ''
-            and Decimal(after_it['unit_price']) == 0
-        ):
+        zero_price = (after_it['unit_price'] != '' and Decimal(after_it['unit_price']) == 0) or any(
+            Decimal(band['unit_price']) == 0 for band in after_it.get('price_brackets', [])
+        )
+        if after_it['enabled'] and zero_price:
             warning_set.add('zero_price')
         before_it = before_items.get(item_id)
         if before_it is None:
             row_warnings: list[str] = []
-            if (
-                after_it['enabled']
-                and after_it['unit_price'] != ''
-                and Decimal(after_it['unit_price']) == 0
-            ):
+            if after_it['enabled'] and zero_price:
                 row_warnings.append('zero_price')
             item_diffs.append(
                 {
@@ -1457,6 +1565,10 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
                     'enabled': after_it['enabled'],
                 }
             )
+            if after_it.get('price_brackets'):
+                item_diffs[-1]['fields'] = [
+                    {'field': 'price_brackets', 'before': None, 'after': after_it['price_brackets']}
+                ]
             continue
 
         if before_it == after_it:
@@ -1492,11 +1604,7 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
 
         if before_it['taxable'] != after_it['taxable']:
             warning_set.add('tax_change')
-        if (
-            after_it['enabled']
-            and after_it['unit_price'] != ''
-            and Decimal(after_it['unit_price']) == 0
-        ):
+        if after_it['enabled'] and zero_price:
             row_warnings.append('zero_price')
 
         item_diffs.append(
@@ -1511,9 +1619,10 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
                 'percent': percent,
                 'warnings': row_warnings,
                 'fields': [
-                    {'field': key, 'before': before_it[key], 'after': after_it[key]}
-                    for key in _DIFF_ITEM_FIELDS
-                    if before_it[key] != after_it[key]
+                    {'field': key, 'before': before_it.get(key), 'after': after_it.get(key)}
+                    # Required legacy fields plus optional schedules (absent on old tables).
+                    for key in (*_DIFF_ITEM_FIELDS, 'price_brackets')
+                    if before_it.get(key) != after_it.get(key)
                 ],
             }
         )

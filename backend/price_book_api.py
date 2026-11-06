@@ -12,13 +12,13 @@ try:
     from .contracts import StrictModel
     from .price_books import price_books_enabled
     from .price_book_import import export_csv, export_xlsx, parse_upload
-    from .price_table import starter_table
+    from .price_table import starter_table, bracket_mode_of, cushion_brackets_of
 except ImportError:
     from cloud_log import event
     from contracts import StrictModel
     from price_books import price_books_enabled
     from price_book_import import export_csv, export_xlsx, parse_upload
-    from price_table import starter_table
+    from price_table import starter_table, bracket_mode_of, cushion_brackets_of
 
 
 XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -369,7 +369,7 @@ def _disposition_param(header, name):
 
 def _import_preview(book, uid, company_id, upload):
     company, base_version, generation, exported = book.export_rows(uid, company_id)
-    is_v2 = isinstance(exported, list)
+    is_v2 = isinstance(exported, list) or 'items' in exported
     try:
         parsed = parse_upload(
             upload['raw'],
@@ -383,11 +383,29 @@ def _import_preview(book, uid, company_id, upload):
         event('Price import rejected', logging.INFO, operation='price_book', outcome='rejected')
         raise
     event('Price import parsed', logging.INFO, operation='price_book', outcome='parsed')
-    if isinstance(parsed, list):
+    if isinstance(parsed, list) or 'items' in parsed:
         head = book._head(company_id)
         published = book._version(head.get('latest_version_id')) if head else None
         policy = (published or {}).get('policy') or starter_table()['policy']
-        zero_rows = [item['item_id'] for item in parsed if item['unit_price'] == '0.00']
+        if isinstance(parsed, dict):
+            policy = dict(policy, range=dict(policy['range']))
+            settings = parsed['bracket_policy']
+            if settings:
+                # Export includes effective defaults. An unchanged round trip must not add
+                # optional keys to an existing table and manufacture a new price version.
+                if 'bracket_mode' in policy or settings['bracket_mode'] != bracket_mode_of(policy):
+                    policy['bracket_mode'] = settings['bracket_mode']
+                if 'brackets' in policy['range'] or settings['brackets'] != cushion_brackets_of(
+                    policy
+                ):
+                    policy['range']['brackets'] = settings['brackets']
+            parsed = parsed['items']
+        zero_rows = [
+            item['item_id']
+            for item in parsed
+            if item['unit_price'] == '0.00'
+            or any(band['unit_price'] == '0.00' for band in item.get('price_brackets', []))
+        ]
         return book.preview(
             uid,
             company_id,
