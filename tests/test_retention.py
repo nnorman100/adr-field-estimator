@@ -2,6 +2,7 @@
 
 import hashlib
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 
 import pytest
@@ -240,7 +241,12 @@ def test_drying_watch_history_goes_only_after_the_job_has_been_closed_for_the_pe
     monitored_job(store, other_company, 'other', 400)
     assert keeper(store).tick('owner', 'adr', NOW)['deleted']['job_monitoring'] == 1
     left = {k.split('/')[1] for k in store.db.records if k.startswith('_job_monitoring/')}
-    assert left == {closed_recently, never_closed, other_company}
+    assert left == {closed_long_ago, closed_recently, never_closed, other_company}
+    marker = store.db.records['_job_monitoring/' + closed_long_ago]
+    assert set(marker) == MARKER_KEYS and marker['closed']['action'] == 'close'
+    for kept in (never_closed, other_company):
+        assert set(store.db.records['_job_monitoring/' + kept]) == {'job_id', 'company_id'}
+    assert 'history_deleted_at' not in store.db.records['_job_monitoring/' + closed_recently]
     # The job, its history row and its signed agreement are not this class.
     assert '_workspace_jobs/' + closed_long_ago in store.db.records
     assert closed_long_ago in store.db.records['_estimate_history/adr']['rows']
@@ -521,6 +527,18 @@ def test_a_sweep_that_fails_midway_still_reports_what_it_deleted(store, on, monk
     assert store.db.records['_retention_state/adr']['last_deleted']['invitations'] == 1
 
 
+MARKER_KEYS = {'job_id', 'company_id', 'job_closed_at', 'history_deleted_at', 'closed'}
+
+
+def stays_the_marker(store, watch):
+    marker = deepcopy(store.db.records['_job_monitoring/' + ID])
+    assert set(marker) == MARKER_KEYS
+    assert watch.view('office', ID)['status'] == 'closed'
+    store.workspaces._run(lambda tx: watch.sync(ID, tx))
+    assert store.db.records['_job_monitoring/' + ID] == marker
+    return marker
+
+
 def close_job(store, uid='office'):
     job = store.db.records['_workspace_jobs/' + ID]
     store.outcomes.close(
@@ -547,7 +565,7 @@ def test_a_closed_drying_watch_stays_closed_once_its_history_is_deleted(watched,
     later = time.time() + 91 * DAY
     assert keeper(store).tick('owner', 'adr', later)['deleted']['job_monitoring'] == 1
     marker = store.db.records['_job_monitoring/' + ID]
-    assert set(marker) == {'job_id', 'company_id', 'job_closed_at', 'history_deleted_at', 'closed'}
+    assert set(marker) == MARKER_KEYS
     assert set(marker['closed']) == {'action', 'at'} and marker['closed']['action'] == 'close'
     assert 'Synthetic private close reason' not in str(marker)
     shown = watch.view('office', ID)
@@ -566,9 +584,10 @@ def test_a_closed_drying_watch_stays_closed_once_its_history_is_deleted(watched,
                 approved=True,
             ),
         )
-    # What the view recomputes from the marker and the agreement is not history.
+    # Opening the watch and a reading update or reassignment store only the marker again.
+    marker = stays_the_marker(store, watch)
+    assert 'address' not in marker and 'accessible_estimator_uids' not in marker
     assert keeper(store).tick('owner', 'adr', later + DAY + 1)['deleted']['job_monitoring'] == 0
-    assert watch.view('office', ID)['status'] == 'closed'
 
 
 def test_the_close_time_kept_on_the_drying_watch_outlives_a_trimmed_history_row(watched, on):
@@ -580,7 +599,10 @@ def test_the_close_time_kept_on_the_drying_watch_outlives_a_trimmed_history_row(
     soon = time.time() + 89 * DAY
     assert keeper(store).tick('owner', 'adr', soon)['deleted']['job_monitoring'] == 0
     assert keeper(store).tick('owner', 'adr', soon + 2 * DAY)['deleted']['job_monitoring'] == 1
-    assert '_job_monitoring/' + ID not in store.db.records
+    # A watch never closed by hand ends at the job's close, and the close time stays with it.
+    marker = stays_the_marker(store, watch)
+    assert marker['job_closed_at'] and marker['closed']['action'] == 'close'
+    assert keeper(store).tick('owner', 'adr', soon + 4 * DAY)['deleted']['job_monitoring'] == 0
 
 
 def test_a_sidecar_from_before_close_times_were_stored_counts_from_its_last_write(store, on):
@@ -593,3 +615,13 @@ def test_a_sidecar_from_before_close_times_were_stored_counts_from_its_last_writ
     del store.db.records['_estimate_history/adr']['rows'][job_id]
     assert keeper(store).tick('owner', 'adr', NOW + 79 * DAY)['deleted']['job_monitoring'] == 0
     assert keeper(store).tick('owner', 'adr', NOW + 81 * DAY)['deleted']['job_monitoring'] == 1
+
+
+def test_a_sidecar_from_before_close_times_whose_history_row_was_trimmed_still_expires(store, on):
+    job_id = 'ADR-INS-' + '6' * 32
+    monitored_job(store, job_id, 'adr', 200)
+    del store.db.records['_estimate_history/adr']['rows'][job_id]
+    store.db.records['_job_monitoring/' + job_id]['updated_at'] = iso(89)
+    assert keeper(store).tick('owner', 'adr', NOW)['deleted']['job_monitoring'] == 0
+    assert keeper(store).tick('owner', 'adr', NOW + 2 * DAY)['deleted']['job_monitoring'] == 1
+    assert set(store.db.records['_job_monitoring/' + job_id]) == MARKER_KEYS

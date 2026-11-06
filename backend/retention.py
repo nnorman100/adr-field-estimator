@@ -13,8 +13,8 @@ that is still in progress: each class below names the one moment its clock start
   earlier sweeps; the current setting itself stays on its own record.
 - job_monitoring: the drying-watch sidecar of a signed job, from the job's close, which the close
   stores on the sidecar. An unclosed job's sidecar has no clock; readings and the signed agreement
-  are not part of this class. A closed watch keeps only that it was closed, how and when, so it
-  never reopens.
+  are not part of this class. The sidecar keeps only that the watch ended, how and when, so it
+  never reopens and is never rebuilt.
 - evidence_photos: the photos of an archived unsigned draft, from its archiving. A signed job cannot
   be archived, so every photo a signed agreement holds stays.
 
@@ -38,12 +38,14 @@ try:
     from .cloud_log import event
     from .contracts import StrictModel
     from .inspection_store import Conflict, now
+    from .monitoring_store import MARKER
     from .outcomes import HISTORY
     from .workspaces import AccessDenied
 except ImportError:
     from cloud_log import event
     from contracts import StrictModel
     from inspection_store import Conflict, now
+    from monitoring_store import MARKER
     from outcomes import HISTORY
     from workspaces import AccessDenied
 
@@ -103,8 +105,8 @@ TEMPLATES = {
     ),
     'job_monitoring': (
         'Drying-watch history (status, reminders and extensions) is deleted {days} after a signed '
-        'job is closed. Jobs that are not closed keep it. Drying readings and the signed agreement '
-        'are kept.'
+        'job is closed, and the watch then shows as closed. Jobs that are not closed keep it. '
+        'Drying readings and the signed agreement are kept.'
     ),
     'evidence_photos': (
         'Photos on an archived draft are deleted {days} after it was archived; restoring it later '
@@ -401,34 +403,35 @@ class Retention:
 
     @staticmethod
     def _job_closed_at(record, rows):
-        """The close time stored on the sidecar; a sidecar from before close times were stored
-        counts from its history row's close or its own last write, whichever is later."""
+        """The close time stored on the sidecar. A sidecar from before close times were stored
+        counts from its own last write or its history row's close, whichever is later; one whose
+        history row says the job is open has no clock."""
         stored = _epoch(record.get('job_closed_at'))
         if stored is not None:
             return stored
         row = rows.get(record.get('job_id'))
-        closed = _epoch(row.get('closed_at')) if isinstance(row, dict) else None
-        if closed is None:
+        if isinstance(row, dict) and not row.get('closed_at'):
             return None
-        return max(closed, _epoch(record.get('updated_at')) or closed)
-
-    @staticmethod
-    def _history_left(record):
-        if not record.get('history_deleted_at'):
-            return True
-        return any(record.get(key) for key in ('extensions', 'reminders', 'summary'))
+        stamps = [_epoch(record.get('updated_at'))]
+        if isinstance(row, dict):
+            stamps.append(_epoch(row['closed_at']))
+        stamps = [stamp for stamp in stamps if stamp is not None]
+        return max(stamps) if stamps else None
 
     @staticmethod
     def _marker(record, company_id, closed_at):
-        """What a closed watch keeps once its history goes: that it was closed, how and when."""
-        closed = record['closed']
-        return dict(
+        """All a watch keeps once its history goes: that it ended, how and when."""
+        closed = record.get('closed') if isinstance(record.get('closed'), dict) else {}
+        marker = dict(
             job_id=record['job_id'],
             company_id=company_id,
             job_closed_at=_iso(closed_at),
             history_deleted_at=now(),
-            closed=dict(action=closed.get('action'), at=closed.get('at')),
+            closed=dict(
+                action=closed.get('action') or 'close', at=closed.get('at') or _iso(closed_at)
+            ),
         )
+        return {key: marker[key] for key in MARKER}
 
     def _job_monitoring(self, company_id, moment, deleted):
         cutoff = self._cutoff(company_id, 'job_monitoring', moment)
@@ -443,7 +446,7 @@ class Retention:
             if closed_at is None:
                 continue
             unstamped = _epoch(record.get('job_closed_at')) is None
-            if unstamped or (closed_at <= cutoff and self._history_left(record)):
+            if unstamped or (closed_at <= cutoff and not record.get('history_deleted_at')):
                 due.append(record['job_id'])
         for job_id in due[:BATCH]:
 
@@ -463,14 +466,11 @@ class Retention:
                 closed_at = self._job_closed_at(record, rows)
                 if closed_at is None:
                     return False
-                if closed_at > fresh or not self._history_left(record):
+                if closed_at > fresh or record.get('history_deleted_at'):
                     if _epoch(record.get('job_closed_at')) is None:
                         tx.update(ref, {'job_closed_at': _iso(closed_at)})
                     return False
-                if isinstance(record.get('closed'), dict):
-                    tx.set(ref, self._marker(record, company_id, closed_at))
-                else:
-                    tx.delete(ref)
+                tx.set(ref, self._marker(record, company_id, closed_at))
                 return True
 
             deleted['job_monitoring'] += bool(self.ws._run(expire))
