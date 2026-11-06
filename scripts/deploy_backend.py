@@ -1,14 +1,14 @@
 """Stage a dedicated backend revision with an explicit feature baseline and no traffic.
 
 Cloud Run copies environment variables from the service's latest template, which can be a staged
-revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES and
-PRICE_BOOKS_ENABLED on every deploy prevents a release from silently inheriting those staged values.
-The defaults are the production baseline, DEFAULT_AI_FEATURES and DEFAULT_PRICE_BOOKS below, which
-scripts/auto_deploy.py also stages every release with. Turning a feature on is one reviewed pull
-request that changes one of them, so no later merge can undo it. --ai-features and --price-books
-set one revision only, such as a staged 0% check; the next release goes back to the baseline, or
-stops, so they are not how a feature is turned on. STAFF_EMAILS is the legacy
-staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
+revision that never received traffic. Setting WORKSPACES_ENABLED, AI_FEATURES, PRICE_BOOKS_ENABLED
+and RETENTION_ENABLED on every deploy prevents a release from silently inheriting those staged
+values. The defaults are the production baseline, DEFAULT_AI_FEATURES, DEFAULT_PRICE_BOOKS and
+DEFAULT_RETENTION below, which scripts/auto_deploy.py also stages every release with. Turning a
+feature on is one reviewed pull request that changes one of them, so no later merge can undo it.
+--ai-features, --price-books and --retention set one revision only, such as a staged 0% check;
+the next release goes back to the baseline, or stops, so they are not how a feature is turned on.
+STAFF_EMAILS is the legacy staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
 --staff-emails to set it; without it the revision inherits the service template's value, and the
 script refuses (even for --dry-run) when that template has none. The same command mounts the
 Maps key secret by name, so a release never depends on a binding made by hand in the console.
@@ -51,6 +51,8 @@ KNOWN_AI_FEATURES = frozenset(
 # (docs/firebase-isolation.md, "Turning a feature on or off").
 DEFAULT_AI_FEATURES = 'readiness'
 DEFAULT_PRICE_BOOKS = 'off'
+# The daily record-retention sweep (backend/retention.py). Off deletes nothing.
+DEFAULT_RETENTION = 'off'
 _ON_OFF = {'on': 'true', 'off': 'false'}
 
 
@@ -74,11 +76,12 @@ def ai_features_value(value):
     return ','.join(names)
 
 
-def env_assignments(workspaces, ai_features, price_books):
+def env_assignments(workspaces, ai_features, price_books, retention=DEFAULT_RETENTION):
     return {
         'WORKSPACES_ENABLED': _ON_OFF[workspaces],
         'AI_FEATURES': ai_features,
         'PRICE_BOOKS_ENABLED': _ON_OFF[price_books],
+        'RETENTION_ENABLED': _ON_OFF[retention],
     }
 
 
@@ -118,8 +121,9 @@ def command(
     ai_features=DEFAULT_AI_FEATURES,
     price_books=DEFAULT_PRICE_BOOKS,
     staff_emails=None,
+    retention=DEFAULT_RETENTION,
 ):
-    assignments = env_assignments(workspaces, ai_features, price_books)
+    assignments = env_assignments(workspaces, ai_features, price_books, retention)
     if staff_emails:
         assignments['STAFF_EMAILS'] = staff_emails
     return [
@@ -209,6 +213,12 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
         help=f'PRICE_BOOKS_ENABLED for this revision (default: {DEFAULT_PRICE_BOOKS})',
     )
     parser.add_argument(
+        '--retention',
+        choices=('on', 'off'),
+        default=DEFAULT_RETENTION,
+        help=f'RETENTION_ENABLED for this revision (default: {DEFAULT_RETENTION})',
+    )
+    parser.add_argument(
         '--staff-emails',
         type=staff_emails_value,
         default=None,
@@ -262,9 +272,17 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
             file=sys.stderr,
         )
         return 2
-    assignments = env_assignments(args.workspaces, args.ai_features, args.price_books)
+    assignments = env_assignments(
+        args.workspaces, args.ai_features, args.price_books, args.retention
+    )
     argv = command(
-        args.workspaces, args.tag, commit, args.ai_features, args.price_books, args.staff_emails
+        args.workspaces,
+        args.tag,
+        commit,
+        args.ai_features,
+        args.price_books,
+        args.staff_emails,
+        args.retention,
     )
     print(baseline_line(assignments))
     if args.staff_emails:
@@ -290,7 +308,8 @@ def main(argv=None, run=subprocess.run, git=subprocess.run, describe=None):
         notes = (
             f'workspaces {args.workspaces}; '
             f'AI_FEATURES={args.ai_features or "(none)"}; '
-            f'price books {args.price_books}'
+            f'price books {args.price_books}; '
+            f'retention {args.retention}'
         )
         if args.version:
             notes += f'; version {args.version}'

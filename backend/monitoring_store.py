@@ -62,12 +62,22 @@ class ReminderRequest(StrictModel):
     approved: StrictBool
 
 
+# What a watch keeps once record retention has deleted its history.
+MARKER = ('job_id', 'company_id', 'job_closed_at', 'history_deleted_at', 'closed')
+
+
 class Monitoring:
     def __init__(self, workspaces):
         self.w = workspaces
 
     def ref(self, job_id):
         return self.w.ref('_job_monitoring', job_id)
+
+    def save(self, tx, job_id, record):
+        if record.get('history_deleted_at'):
+            tx.set(self.ref(job_id), {key: record[key] for key in MARKER if key in record})
+        else:
+            tx.set(self.ref(job_id), dict(record, updated_at=now()))
 
     def access(self, uid, job_id, action='read', tx=None):
         job, actor = self.w.job_access(uid, {'inspection_id': job_id}, action, tx)
@@ -119,7 +129,7 @@ class Monitoring:
             record = self.compute(job, tx, log)
         except LookupError:
             return  # A historical agreement without its source cannot gain a plan.
-        tx.set(self.ref(job_id), dict(record, updated_at=now()))
+        self.save(tx, job_id, record)
 
     def view(self, uid, job_id, support_company=None):
         def read(tx):
@@ -138,7 +148,7 @@ class Monitoring:
             )
             recipient = self.recipient(company, job, assignee, 'estimator', required=False)
             if not support_company:
-                tx.set(self.ref(job_id), dict(record, updated_at=now()))
+                self.save(tx, job_id, record)
             result = dict(
                 record,
                 reminders_enabled=company['profile'].get('drying_reminders') is True,
@@ -240,7 +250,7 @@ class Monitoring:
             record['summary'] = dict(
                 selection=selected.model_dump(), text=text, facts_hash=expected, generated_at=now()
             )
-            tx.set(self.ref(job_id), dict(record, updated_at=now()))
+            self.save(tx, job_id, record)
             return record
 
         return self.w._run(save)
@@ -287,7 +297,7 @@ class Monitoring:
                 )
                 record.pop('summary', None)
                 record['facts_hash'] = facts_hash(record)
-            tx.set(self.ref(job_id), dict(record, updated_at=now()))
+            self.save(tx, job_id, record)
             return record
 
         return self.w._run(update)
@@ -386,7 +396,7 @@ class Monitoring:
                     'Please record the next monitoring reading in DryScope.',
                 ],
             )
-            tx.set(self.ref(job_id), dict(record, updated_at=now()))
+            self.save(tx, job_id, record)
             return record, entry['attempt'], message
 
         return self.w._run(reserve)
@@ -411,13 +421,17 @@ class Monitoring:
             status, reason, retryable = 'failed', FAILED, True
 
         def finish(tx):
-            current = self.w.read('_job_monitoring', job_id, tx)
-            entry = next(r for r in current['reminders'] if r['reminder_id'] == req.reminder_id)
-            if entry['attempt'] != attempt:
+            current = self.w.read('_job_monitoring', job_id, tx) or {}
+            entry = next(
+                (r for r in current.get('reminders') or [] if r['reminder_id'] == req.reminder_id),
+                None,
+            )
+            if entry is not None and entry['attempt'] != attempt:
                 return None
             counter = self.w.email_count(tx) if status == 'sent' else None
-            entry.update(status=status, reason=reason, retryable=retryable)
-            tx.set(self.ref(job_id), dict(current, updated_at=now()))
+            if entry is not None:
+                entry.update(status=status, reason=reason, retryable=retryable)
+                self.save(tx, job_id, current)
             if counter:
                 tx.set(self.w.ref('_email_counts', 'daily'), counter)
             return counter
