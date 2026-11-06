@@ -1,5 +1,6 @@
 """Synthetic tests for transcript-derived, review-only form suggestions."""
 
+from tests.fakes import genai_models
 import json
 from types import SimpleNamespace
 import pytest
@@ -38,9 +39,7 @@ def provider(monkeypatch, changes, callback=None, questions=None):
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
 
 
@@ -54,9 +53,7 @@ def captured_configs(monkeypatch, reply):
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
     return configs
 
@@ -180,9 +177,7 @@ def test_signed_draft_and_provider_outage_cannot_apply_changes(context, monkeypa
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(unavailable))),
     )
     assert suggest(client).status_code == 502
     assert bm.public_record(store.get_inspection('owner', ID)) == record
@@ -626,9 +621,7 @@ def test_whole_floor_wet_correction_replaces_a_smaller_wet_floor_override(contex
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
     response = suggest(client)
     assert response.status_code == 200, response.text

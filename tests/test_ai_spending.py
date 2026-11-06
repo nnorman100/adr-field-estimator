@@ -1,5 +1,6 @@
 """Company spending behavior through transactional storage and the real generation helper."""
 
+from tests.fakes import genai_models
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -17,10 +18,11 @@ from backend.ai_spending import (
     HELD_RETRY_SECONDS,
     LIVE_MARGIN,
     REST_RESERVE,
-    REST_OUTPUT_LIMIT,
+    REST_OUTPUT_LIMITS,
     RETRY_SECONDS,
     ReservedCall,
     rest_cost,
+    rest_allowance,
 )
 from backend.live_spending import LiveSpending
 from tests.fakes import FakeCompanyStore, png
@@ -103,7 +105,7 @@ def test_refusal_distinguishes_held_allowance_from_settled_exhaustion(store):
     with pytest.raises(HTTPException) as error:
         ledger.reserve('ocr', 1)
     assert error.value.headers['Retry-After'] == str(RETRY_SECONDS)
-    assert 'until next month' in error.value.detail
+    assert 'resets next month' in error.value.detail
 
 
 def test_live_refusal_wording_follows_settled_spending(store):
@@ -121,14 +123,14 @@ def test_live_refusal_wording_follows_settled_spending(store):
     ledger.settle(other)
     with pytest.raises(HTTPException) as error:
         live.check()
-    assert 'until next month' in error.value.detail
+    assert 'resets next month' in error.value.detail
     live.finish()
 
 
 def test_unknown_outcome_charged_and_proven_unused_call_released(store):
     ledger = CompanySpending(store, 'adr')
-    held = ReservedCall.start(store, 'owner', True, bm.AUDIT_MODEL, 'audit')
-    assert ledger.summary()['reserved_microusd'] == REST_RESERVE
+    held = ReservedCall.start(store, 'owner', True, bm.AUDIT_MODEL, 'audit', 100)
+    assert ledger.summary()['reserved_microusd'] == rest_allowance(bm.AUDIT_MODEL, 100, 'audit')
     held.release_unused()
     held.release_unused()
     assert ledger.summary()['reserved_microusd'] == 0
@@ -139,9 +141,7 @@ def test_unknown_outcome_charged_and_proven_unused_call_released(store):
 
 
 def provider(monkeypatch, callback):
-    monkeypatch.setattr(
-        bm, 'get_ai_client', lambda: NS(aio=NS(models=NS(generate_content=callback)))
-    )
+    monkeypatch.setattr(bm, 'get_ai_client', lambda: NS(aio=NS(models=genai_models(callback))))
 
 
 def test_real_helper_reserves_before_dispatch_and_settles_thinking_tokens(store, monkeypatch):
@@ -149,8 +149,8 @@ def test_real_helper_reserves_before_dispatch_and_settles_thinking_tokens(store,
     ledger = CompanySpending(store, 'adr')
 
     async def respond(**kwargs):
-        assert ledger.summary()['reserved_microusd'] == REST_RESERVE
-        assert kwargs['config'].max_output_tokens == REST_OUTPUT_LIMIT
+        assert ledger.summary()['reserved_microusd'] == rest_allowance(bm.AUDIT_MODEL, 100, 'audit')
+        assert kwargs['config'].max_output_tokens == REST_OUTPUT_LIMITS['audit']
         return NS(
             text=json.dumps(dict(summary='Saved observations.', suggestions=[], unpriced_work=[])),
             usage_metadata=NS(
@@ -167,7 +167,7 @@ def test_real_helper_reserves_before_dispatch_and_settles_thinking_tokens(store,
     assert result.summary == 'Saved observations.'
     assert ledger.summary()['spent_microusd'] == 495
     assert ledger.summary()['reserved_microusd'] == 0
-    assert store.db.records['_company_ai_budgets/adr']['monthly_cap_microusd'] == DEFAULT_CAP
+    assert '_company_ai_budgets/adr' not in store.db.records
 
 
 @pytest.mark.parametrize('failure', ['timeout', 'invalid', 'cancelled'])
@@ -195,7 +195,9 @@ def test_uncertain_or_invalid_provider_outcome_never_refunds_unreported_work(
                 spending=(store, 'owner'),
             )
         )
-    assert CompanySpending(store, 'adr').summary()['spent_microusd'] == REST_RESERVE
+    assert CompanySpending(store, 'adr').summary()['spent_microusd'] == rest_allowance(
+        bm.AUDIT_MODEL, 100, 'audit'
+    )
 
 
 def test_custom_cap_and_unknown_model_fail_before_provider_dispatch(store, monkeypatch):
@@ -304,6 +306,8 @@ def test_live_margin_shared_with_rest_and_resumed_calls(store):
     ledger.settle(rest, 0)
     first = LiveSpending.start(store, 'owner', True, bm.LIVE_MODEL)
     second = LiveSpending.start(store, 'estimator', True, bm.LIVE_MODEL)
+    first.opened()
+    second.opened()
     assert ledger.summary()['reserved_microusd'] == 2 * LIVE_MARGIN
     first.observe(NS(total_token_count=100))
     first.observe(NS(total_token_count=200))
@@ -317,9 +321,11 @@ def test_live_margin_shared_with_rest_and_resumed_calls(store):
     resumed.finish()
 
 
-def test_live_estimate_crossing_cap_is_recorded_before_session_is_ended(store):
+def test_live_estimate_crossing_cap_is_recorded_before_session_is_ended(store, monkeypatch):
+    monkeypatch.setattr(LiveSpending, 'now', staticmethod(lambda: 0))
     ledger = CompanySpending(store, 'adr')
     live = LiveSpending.start(store, 'owner', True, bm.LIVE_MODEL)
+    live.opened()
     with pytest.raises(HTTPException) as error:
         live.observe(NS(total_token_count=4_000_000))
     assert error.value.status_code == 429
@@ -331,12 +337,13 @@ def test_live_estimate_crossing_cap_is_recorded_before_session_is_ended(store):
     assert ledger.summary()['reserved_microusd'] == 0
 
 
-def test_live_missing_reports_and_crash_are_never_zero_cost(store):
+def test_live_crash_retains_margin_but_an_undispatched_connection_releases_it(store):
     live = LiveSpending.start(store, 'owner', True, bm.LIVE_MODEL)
     restarted = CompanySpending(FakeCompanyStore(db=store.db, bucket=store.bucket), 'adr')
     assert restarted.summary()['reserved_microusd'] == LIVE_MARGIN
     live.finish()
-    assert restarted.summary()['spent_microusd'] >= LIVE_MARGIN
+    assert restarted.summary()['spent_microusd'] == 0
+    assert restarted.summary()['reserved_microusd'] == 0
 
 
 @pytest.mark.parametrize('initial_cap', [0, 3_000_000])
@@ -347,6 +354,7 @@ def test_live_relay_refuses_before_connect_or_closes_on_reported_limit(
     import time
 
     client, actor, store = api
+    monkeypatch.setattr(LiveSpending, 'now', staticmethod(lambda: 0))
     store.create_inspection('owner', ID, data())
     before = deepcopy(store.db.records['inspections/' + ID])
     cap(store, initial_cap)
@@ -512,8 +520,12 @@ def test_real_sdk_does_not_retry_billable_requests_inside_one_reservation(store,
     ledger = CompanySpending(store, 'adr')
 
     async def respond(request):
-        requests.append(request.url.path)
-        assert ledger.summary()['reserved_microusd'] == REST_RESERVE
+        requests.append((request.url.path, json.loads(request.content)))
+        if request.url.path.endswith(':countTokens'):
+            assert ledger.summary()['reserved_microusd'] == 0
+            return httpx.Response(200, json={'totalTokens': 100})
+        assert ledger.summary()['reserved_microusd'] == rest_allowance(bm.OCR_MODEL, 100, 'ocr')
+        assert requests[0][1]['generationConfig'] == requests[-1][1]['generationConfig']
         return httpx.Response(
             503,
             json={
@@ -555,8 +567,10 @@ def test_real_sdk_does_not_retry_billable_requests_inside_one_reservation(store,
             await bm.get_ai_client().aio.aclose()
 
     asyncio.run(invoke())
-    assert len(requests) == 1
-    assert ledger.summary()['spent_microusd'] == REST_RESERVE
+    assert len(requests) == 2
+    assert requests[0][0].endswith(':countTokens')
+    assert requests[1][0].endswith(':generateContent')
+    assert ledger.summary()['spent_microusd'] == 0
 
 
 def test_budget_refusal_is_not_reported_as_a_provider_outage(store, monkeypatch, capsys):

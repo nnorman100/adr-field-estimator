@@ -1,5 +1,6 @@
 """A stalled audit attempt is cancelled and retried once, always inside the REST deadline."""
 
+from tests.fakes import genai_models
 import asyncio
 import json
 import threading
@@ -44,9 +45,7 @@ def provider(monkeypatch, delays):
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
     return calls
 
@@ -165,9 +164,7 @@ def test_provider_errors_are_not_retried(context, budget, monkeypatch):
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=rejected))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(rejected))),
     )
     response, _ = post_audit(client, record)
     assert response.status_code == 502 and len(calls) == 1

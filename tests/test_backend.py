@@ -1,3 +1,4 @@
+from tests.fakes import genai_models
 import asyncio, json, time
 from threading import Timer
 from types import SimpleNamespace
@@ -70,9 +71,7 @@ def context(monkeypatch):
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(generate))),
     )
     yield TestClient(bm.app, headers={'Authorization': 'Bearer synthetic'}), store
     bm.app.dependency_overrides.clear()
@@ -299,9 +298,7 @@ def test_model_output_missing_and_provider_error_never_produces_documents(contex
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=malformed))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(malformed))),
     )
     response = client.post(
         '/api/audit', json={'inspection_id': ID, 'expected_revision': record['revision']}
@@ -323,9 +320,7 @@ def test_audit_request_uses_low_thinking_so_the_55_second_deadline_holds(context
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(generate))),
     )
     audit(client, inspect(client))
     assert bm.AUDIT_THINKING_LEVEL == bm.types.ThinkingLevel.LOW
@@ -346,9 +341,7 @@ def test_zero_work_audit_is_rejected_before_the_model_runs(context, monkeypatch)
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(generate))),
     )
     empty = data(
         emergency_calls=0, monitoring_hours=0, haul_loads=0, air_scrubbers=0, hepa_filters=0
@@ -379,9 +372,7 @@ def test_non_meter_and_failed_ocr_remain_unverified(context, monkeypatch):
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(unavailable))),
     )
     result = client.post('/api/inspections/' + ID + '/photos/' + 'c' * 32 + '/ocr', json={})
     assert (
@@ -416,9 +407,7 @@ def test_failed_ocr_retry_keeps_verified_reading_revision_and_audit(context, mon
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=unavailable))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(unavailable))),
     )
     assert (
         client.post('/api/inspections/' + ID + '/photos/' + 'b' * 32 + '/ocr', json={}).status_code
@@ -849,6 +838,7 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
     from backend.scope import ScopeSuggestions, scope_response_schema
 
     requests = []
+    counts = []
     replies = {
         'changes': {'changes': [], 'questions': ['Which wall?']},
         'meter_detected': {
@@ -863,6 +853,9 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
 
     def respond(request):
         body = json.loads(request.content)
+        if request.url.path.endswith(':countTokens'):
+            counts.append(body)
+            return httpx.Response(200, json={'totalTokens': 100})
         requests.append((request.url.path, request.headers.get('authorization'), body))
         value = next(
             v
@@ -938,6 +931,8 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
             and body['generationConfig']['responseMimeType'] == 'application/json'
         )
     generation = [body['generationConfig'] for _, _, body in requests]
+    assert len(counts) == 3
+    assert [body['generationConfig'] for body in counts] == generation
     assert 'thinkingConfig' not in generation[1]
     # google-genai 2.8.0 and 2.29.0 both send the snake_case field; Vertex's proto-JSON parser
     # accepts it (LOW calls reported no thought tokens on 2026-10-13).

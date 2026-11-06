@@ -1,5 +1,6 @@
 """Synthetic tests for offline voice notes: transcribed into the walkthrough, audio never stored."""
 
+from tests.fakes import genai_models
 import base64
 import json
 from types import SimpleNamespace
@@ -44,9 +45,7 @@ def transcriber(monkeypatch, text='Bedroom 2 category 1, 120 square feet of dryw
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
     return calls
 

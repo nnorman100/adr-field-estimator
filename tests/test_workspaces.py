@@ -126,7 +126,17 @@ def api(store, monkeypatch):
     async def generate(schema, *args, **kwargs):
         return AIResult(summary='Confirmed scope.', suggestions=[], unpriced_work=[])
 
+    async def count_tokens(**kwargs):
+        return SimpleNamespace(total_tokens=100)
+
     monkeypatch.setattr(bm, 'generate', generate)
+    monkeypatch.setattr(
+        bm,
+        'get_ai_client',
+        lambda: SimpleNamespace(
+            aio=SimpleNamespace(models=SimpleNamespace(count_tokens=count_tokens))
+        ),
+    )
     with TestClient(
         bm.app, headers={'X-ADR-Workspace-Protocol': '1', 'Authorization': 'Bearer synthetic'}
     ) as client:

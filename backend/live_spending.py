@@ -56,13 +56,20 @@ def live_cost(usage):
 
 
 class LiveSpending:
+    @staticmethod
+    def now():
+        return time.monotonic()
+
     def __init__(self, ledger, reservation, month):
         self.ledger = ledger
         self.reservation = reservation
-        self.started = time.monotonic()
+        self.started = self.now()
         self.month = month
         self.cost = 0
         self.reported = False
+        self.connected = False
+        self.last_report = None
+        self.ended = None
         self.finished = False
         self.lock = threading.RLock()
 
@@ -76,14 +83,25 @@ class LiveSpending:
         month = datetime.fromtimestamp(time.time(), timezone.utc).strftime('%Y-%m')
         return cls(ledger, ledger.reserve('live', LIVE_MARGIN, live=True), month)
 
+    def opened(self):
+        """Call only after the provider context manager successfully opens the connection."""
+        with self.lock:
+            self.connected = True
+            self.started = self.last_report = self.now()
+
+    def closed(self):
+        with self.lock:
+            if self.ended is None:
+                self.ended = self.now()
+
     def estimate(self):
         # Each usage report includes that turn's context;
         # sum reports rather than treating context length as a session cumulative total.
         # A time floor ($0.10/min) also advances if provider usage is absent or delayed.
-        return max(
-            self.cost,
-            math.ceil((time.monotonic() - self.started) * 100_000 / 60),
-        )
+        if not self.connected:
+            return 0
+        end = self.now() if self.ended is None else self.ended
+        return self.cost + math.ceil(max(0, end - self.last_report) * 100_000 / 60)
 
     def observe(self, usage):
         with self.lock:
@@ -91,6 +109,7 @@ class LiveSpending:
             if cost is not None:
                 self.cost += cost
                 self.reported = True
+                self.last_report = self.now()
             self.check()
 
     def check(self):
@@ -108,7 +127,7 @@ class LiveSpending:
         with self.lock:
             if self.finished:
                 return
-            # An absent usage report is ambiguous, including connect/cancellation failures.
-            cost = self.estimate() if self.reported else max(LIVE_MARGIN, self.estimate())
-            self.ledger.settle(self.reservation, cost)
+            # The $2 margin is admission capacity, not a minimum charge. Never-opened
+            # connections are undispatched; reports replace the floor through their arrival.
+            self.ledger.settle(self.reservation, self.estimate())
             self.finished = True

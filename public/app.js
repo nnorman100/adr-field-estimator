@@ -4847,7 +4847,9 @@ async function connectLive() {
       state.liveUsage = msg.total_tokens;
     } else if (msg.type === 'error') {
       say(msg.message, 'error');
-      if (window.WorkspaceUI?.enabled() && [401, 403, 404].includes(msg.status)) {
+      if (msg.status === 429) {
+        stopWalk({ preserveResume: true, drain: false });
+      } else if (window.WorkspaceUI?.enabled() && [401, 403, 404].includes(msg.status)) {
         state.resumeAvailable = false;
         stopWalk({ drain: false });
         queueMicrotask(() => WorkspaceUI.refresh().catch((e) => say(e.message, 'error')));

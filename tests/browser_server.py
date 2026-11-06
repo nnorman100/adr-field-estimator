@@ -24,7 +24,7 @@ from backend.adr_price_book import adr_rates
 from backend.price_book_store import PriceBookStore
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
-from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
+from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore, genai_models
 import backend.workspaces as wm
 import backend.document_links as document_links
 from backend.contracts import InspectionData
@@ -229,9 +229,7 @@ async def generate(**kwargs):
     return response
 
 
-bm.get_ai_client = lambda: SimpleNamespace(
-    aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
-)
+bm.get_ai_client = lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(generate)))
 
 
 # Address suggestions: the real routes and caps run; only the network call to Google is replaced.

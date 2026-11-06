@@ -16,6 +16,9 @@ RETRY_SECONDS = 3600
 HELD_RETRY_SECONDS = 60
 REST_INPUT_LIMIT = 1_048_576
 REST_OUTPUT_LIMIT = 65_536
+REST_OUTPUT_LIMITS = dict(
+    audit=16_384, scope=4096, ocr=1024, transcribe=8192, job_summary=2048, drying_watch=2048
+)
 # Standard non-global list prices, without promotional credits, checked 2026-11-06.
 # https://cloud.google.com/model-garden/pricing
 REST_INPUT_RATE = 165  # hundredths of one micro-USD per token
@@ -24,7 +27,8 @@ REST_RESERVE = (
     REST_INPUT_LIMIT * REST_INPUT_RATE + REST_OUTPUT_LIMIT * REST_OUTPUT_RATE + 99
 ) // 100
 CAP_MESSAGE = (
-    "Your company has reached this month's AI spending limit. AI is unavailable until next month (UTC). "
+    "This AI request does not fit your company's remaining monthly AI spending limit. "
+    'The allowance resets next month (UTC). '
     'Your field work, drafts and agreements are saved; you can keep working without AI.'
 )
 HELD_MESSAGE = (
@@ -44,10 +48,19 @@ def limited(exhausted):
     return SpendingError(429, HELD_MESSAGE, headers={'Retry-After': str(HELD_RETRY_SECONDS)})
 
 
-def rest_allowance(model):
+def rest_output_limit(model, operation):
     if model != 'gemini-3.8-flash':
         raise SpendingError(503, 'AI spending rates for this model have not been verified.')
-    return REST_RESERVE
+    if operation not in REST_OUTPUT_LIMITS:
+        raise SpendingError(503, 'AI output limits for this operation have not been verified.')
+    return REST_OUTPUT_LIMITS[operation]
+
+
+def rest_allowance(model, input_tokens, operation):
+    output = rest_output_limit(model, operation)
+    if type(input_tokens) is not int or not 0 <= input_tokens <= REST_INPUT_LIMIT:
+        raise SpendingError(503, 'AI could not be prepared. Retry; your saved work is unchanged.')
+    return (input_tokens * REST_INPUT_RATE + output * REST_OUTPUT_RATE + 99) // 100
 
 
 def rest_cost(response):
@@ -103,7 +116,7 @@ class CompanySpending:
         reservation = self.ref('_company_ai_reservations', identifier)
 
         def acquire(tx):
-            settings_ref, settings = self.settings(tx)
+            _settings_ref, settings = self.settings(tx)
             month_ref, month = self.monthly(tx)
             cap = settings['monthly_cap_microusd']
 
@@ -121,12 +134,18 @@ class CompanySpending:
                 live=live,
             )
             month['reserved_microusd'] += amount
-            tx.set(settings_ref, settings)
             tx.set(month_ref, month)
             tx.create(reservation, hold)
             return identifier
 
         return self.store._atomic(acquire)
+
+    def check_available(self, amount):
+        """Avoid token-count calls for an already refused request; reserve still checks atomically."""
+        row = self.summary()
+        cap = row['monthly_cap_microusd']
+        if row['spent_microusd'] + row['reserved_microusd'] + amount > cap:
+            raise limited(row['spent_microusd'] + amount > cap)
 
     def settle(self, identifier, cost=None):
         """Idempotent settlement. None means unknown, so charge the full hold."""
@@ -211,8 +230,8 @@ class ReservedCall:
         self.dispatched = False
 
     @classmethod
-    def start(cls, store, uid, workspaces, model, operation):
-        allowance = rest_allowance(model)
+    def start(cls, store, uid, workspaces, model, operation, input_tokens):
+        allowance = rest_allowance(model, input_tokens, operation)
         ledger = CompanySpending.actor(store, uid, workspaces)
         return cls(ledger, ledger.reserve(operation, allowance))
 

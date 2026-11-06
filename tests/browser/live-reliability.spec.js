@@ -97,6 +97,23 @@ async function cleanup(page) {
     Promise.all(window.syntheticContexts.map((context) => context.close())),
   );
 }
+test('a Live 429 displays Retry-After and ends automatic reconnects', async ({ page }) => {
+  await setup(page);
+  await page.clock.install();
+  const message = 'Company AI allowance is held. Retry in 3600 seconds.';
+  await page.evaluate((message) => {
+    const socket = window.liveSockets[0];
+    socket.emit({ type: 'error', status: 429, retry_after: 3600, message });
+    socket.close();
+  }, message);
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await page.clock.runFor(16000);
+  expect(await page.evaluate(() => window.liveSockets.length)).toBe(1);
+  expect(
+    await page.evaluate(() => window.liveTracks.every((track) => track.readyState === 'ended')),
+  ).toBe(true);
+  await cleanup(page);
+});
 test('protocol 2 preserves fragments, deduplicates delivery and flushes before form review', async ({
   page,
 }) => {

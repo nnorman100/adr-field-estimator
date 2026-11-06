@@ -42,7 +42,7 @@ from starlette.requests import ClientDisconnect
 import firebase_admin
 from firebase_admin import app_check, auth as firebase_auth
 from google import genai
-from google.genai import types
+from google.genai import types, errors as genai_errors, _transformers as genai_transformers
 from websockets.exceptions import ConnectionClosed
 
 try:
@@ -50,7 +50,9 @@ try:
         ReservedCall,
         SpendingError,
         rest_cost,
-        REST_OUTPUT_LIMIT,
+        rest_output_limit,
+        rest_allowance,
+        CompanySpending,
     )
     from .live_spending import LiveSpending
     from .contracts import (
@@ -133,7 +135,9 @@ except ImportError:
         ReservedCall,
         SpendingError,
         rest_cost,
-        REST_OUTPUT_LIMIT,
+        rest_output_limit,
+        rest_allowance,
+        CompanySpending,
     )
     from live_spending import LiveSpending
     from contracts import (
@@ -792,6 +796,65 @@ def parse_json_from_llm(text):
     return json.loads(text)
 
 
+def generation_config(schema, model, operation, wire_schema=None, thinking_level=None):
+    return types.GenerateContentConfig(
+        response_mime_type='application/json',
+        response_schema=wire_schema or schema,
+        thinking_config=(
+            types.ThinkingConfig(thinking_level=thinking_level) if thinking_level else None
+        ),
+        max_output_tokens=rest_output_limit(model, operation),
+    )
+
+
+async def reserve_generation(contents, model, operation, config, spending, timeout=15):
+    store, uid = spending
+    ledger = await stored(CompanySpending.actor, store, uid, WORKSPACES_ENABLED)
+    await stored(ledger.check_available, rest_allowance(model, 0, operation))
+    try:
+        client = get_ai_client()
+        options = config.model_dump(exclude_none=True)
+        # CountTokens' GenerationConfig cannot accept Pydantic model classes.
+        # Use the pinned SDK's own generation serializer so both requests count
+        # the identical schema, including nested definitions/property ordering.
+        options['response_schema'] = genai_transformers.t_schema(
+            getattr(client, '_api_client', None),
+            options['response_schema'],
+        )
+        counted = await asyncio.wait_for(
+            client.aio.models.count_tokens(
+                model=model,
+                contents=contents,
+                config=types.CountTokensConfig(
+                    generation_config=types.GenerationConfig(**options),
+                ),
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, 'AI preparation timed out. Retry; your saved work is unchanged.')
+    except Exception as error:
+        event(
+            'Vertex token count failed',
+            logging.ERROR,
+            operation=operation,
+            model=model,
+            outcome=type(error).__name__,
+        )
+        raise HTTPException(502, 'AI could not be prepared. Retry; your saved work is unchanged.')
+    held = await stored(
+        ReservedCall.start,
+        store,
+        uid,
+        WORKSPACES_ENABLED,
+        model,
+        operation,
+        getattr(counted, 'total_tokens', None),
+    )
+    held.client, held.config = client, config
+    return held
+
+
 async def generate(
     schema,
     contents,
@@ -813,28 +876,25 @@ async def generate(
     reservation = None
     cost = None
     try:
-        config = types.GenerateContentConfig(
-            response_mime_type='application/json',
-            response_schema=wire_schema or schema,
-            thinking_config=(
-                types.ThinkingConfig(thinking_level=thinking_level) if thinking_level else None
-            ),
-            max_output_tokens=REST_OUTPUT_LIMIT,
-        )
         if isinstance(spending, ReservedCall):
             held = spending
         else:
-            store, uid = spending
-            held = await stored(
-                ReservedCall.start, store, uid, WORKSPACES_ENABLED, model, operation
+            config = generation_config(schema, model, operation, wire_schema, thinking_level)
+            held = await reserve_generation(
+                contents,
+                model,
+                operation,
+                config,
+                spending,
+                timeout=min(timeout, 15),
             )
         ledger, reservation = held.ledger, held.identifier
         held.dispatched = True
         response = await asyncio.wait_for(
-            get_ai_client().aio.models.generate_content(
+            held.client.aio.models.generate_content(
                 model=model,
                 contents=contents,
-                config=config,
+                config=held.config,
             ),
             timeout=timeout,
         )
@@ -867,6 +927,17 @@ async def generate(
         raise HTTPException(
             504, 'AI generation timed out. Retry; no document or reading was verified.'
         )
+    except genai_errors.APIError as error:
+        # An HTTP error reply proves generation failed. A transport failure or a
+        # missing response is different and retains its complete reservation.
+        if type(error.code) is int and 400 <= error.code < 600:
+            cost = 0
+        outcome = type(error).__name__
+        error_fields = dict(provider_status=error.status, provider_code=error.code)
+        raise HTTPException(
+            502,
+            'AI returned an unavailable or invalid result. Retry; no document or reading was verified.',
+        )
     except Exception as error:
         # Provider messages can echo the prompt; record only the class and status.
         outcome = type(error).__name__
@@ -883,7 +954,18 @@ async def generate(
             # Cancellation or a lost provider response is not proof of zero billing.
             # If settlement fails, the durable reservation continues to count in full.
             with anyio.CancelScope(shield=True):
-                await stored(ledger.settle, reservation, cost)
+                try:
+                    await stored(ledger.settle, reservation, cost)
+                except Exception as error:
+                    event(
+                        'AI spending settlement failed',
+                        logging.ERROR,
+                        operation=operation,
+                        model=model,
+                        outcome=type(error).__name__,
+                        reservation_id=reservation,
+                        company_id=ledger.company_id,
+                    )
         event(
             'Company AI request refused' if outcome == 'budget_refused' else 'Vertex AI call',
             logging.INFO if outcome in ('ok', 'budget_refused') else logging.ERROR,
@@ -1706,8 +1788,25 @@ async def transcribe_voice_note(
                 req.note_id,
             ),
         )
-    held = await stored(
-        ReservedCall.start, store, staff['uid'], WORKSPACES_ENABLED, AUDIT_MODEL, 'transcribe'
+    try:
+        raw = voice_note_audio(req)
+    except HTTPException as error:
+        if error.status_code == 400:
+            _saved, moved = await stored(
+                store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
+            )
+            await revoke_moved_link(store, staff['uid'], inspection_id, moved)
+            await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
+        raise
+    contents = [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS]
+    held = await reserve_generation(
+        contents,
+        AUDIT_MODEL,
+        'transcribe',
+        generation_config(
+            TranscriptionResult, AUDIT_MODEL, 'transcribe', thinking_level=SCOPE_THINKING_LEVEL
+        ),
+        (store, staff['uid']),
     )
     try:
         saved, moved = await stored(
@@ -1718,12 +1817,6 @@ async def transcribe_voice_note(
         async def fail():
             await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
 
-        try:
-            raw = voice_note_audio(req)
-        except HTTPException as error:
-            if error.status_code == 400:
-                await fail()
-            raise
         transcript = saved['data'].get('technician_transcript', '')
         longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
         if len(transcript) + 1 + len(longest) > TRANSCRIPT_LIMIT:
@@ -1736,7 +1829,7 @@ async def transcribe_voice_note(
         try:
             result = await generate(
                 TranscriptionResult,
-                [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS],
+                contents,
                 AUDIT_MODEL,
                 'transcribe',
                 inspection_id,
@@ -2488,6 +2581,9 @@ async def live_walkthrough(socket: WebSocket):
             http_options=types.HttpOptions(timeout=95000),
         )
         async with AsyncExitStack() as stack:
+            # Registered before the provider context so this runs just after its
+            # close, excluding later database/client cleanup from connected time.
+            stack.callback(live_spending.closed)
             config = live_config(
                 live_prompt(
                     record['data'],
@@ -2505,8 +2601,8 @@ async def live_walkthrough(socket: WebSocket):
                 session = await stack.enter_async_context(
                     client.aio.live.connect(model=LIVE_MODEL, config=config)
                 )
-            except Exception:
-                if not handle:
+            except Exception as error:
+                if not handle or (isinstance(error, genai_errors.APIError) and error.code == 429):
                     raise
                 await stored(
                     store.live_resume,
@@ -2537,6 +2633,7 @@ async def live_walkthrough(socket: WebSocket):
                         ),
                     )
                 )
+            live_spending.opened()
             connection = uuid4().hex
             sequence = 0
             pending = False
@@ -2710,17 +2807,6 @@ async def live_walkthrough(socket: WebSocket):
                                 bool(getattr(update, 'resumable', False)),
                             )
                         usage = getattr(response, 'usage_metadata', None)
-                        if usage:
-                            await stored(live_spending.observe, usage)
-                        if usage:
-                            total_tokens = getattr(usage, 'total_token_count', None) or total_tokens
-                        if usage and protocol == 2:
-                            await socket.send_json(
-                                {
-                                    'type': 'usage',
-                                    'total_tokens': getattr(usage, 'total_token_count', None),
-                                }
-                            )
                         away = getattr(response, 'go_away', None)
                         content = getattr(response, 'server_content', None)
                         if content:
@@ -2783,6 +2869,14 @@ async def live_walkthrough(socket: WebSocket):
                                 shots['expected'] = 0.0
                             if shots['wanted'] and not replying():
                                 shot_wake.set()
+                        # Deliver this message's audio before any spending transaction.
+                        if usage:
+                            await stored(live_spending.observe, usage)
+                            total_tokens = getattr(usage, 'total_token_count', None) or total_tokens
+                            if protocol == 2:
+                                await socket.send_json(
+                                    {'type': 'usage', 'total_tokens': total_tokens}
+                                )
                         if away:
                             outcome = 'rollover'
                             if protocol == 2:
@@ -2844,6 +2938,8 @@ async def live_walkthrough(socket: WebSocket):
             retain = False
         outcome = type(error).__name__
         status = getattr(error, 'status_code', None)
+        if isinstance(error, genai_errors.APIError) and error.code == 429:
+            status = 429
         # Vertex's close code, an SDK error code, or 1006 for a code-less provider timeout.
         # Client auth and input rejections stay without a provider code and do not page.
         provider_code = live_provider_code(error)
@@ -2853,8 +2949,20 @@ async def live_walkthrough(socket: WebSocket):
             if isinstance(error, HTTPException)
             else 'Live coaching disconnected. Your draft is preserved; reconnect to continue.',
         }
-        if protocol == 2 and isinstance(error, HTTPException):
-            error_message['status'] = error.status_code
+        if protocol == 2 and status is not None:
+            error_message['status'] = status
+            if status == 429:
+                headers = (
+                    error.headers
+                    if isinstance(error, HTTPException)
+                    else getattr(getattr(error, 'response', None), 'headers', None)
+                )
+                try:
+                    seconds = max(1, int((headers or {}).get('Retry-After', 60)))
+                except (TypeError, ValueError):
+                    seconds = 60
+                error_message['retry_after'] = seconds
+                error_message['message'] += f' Retry in {seconds} seconds.'
     finally:
 
         async def cleanup():
