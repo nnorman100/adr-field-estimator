@@ -3,6 +3,8 @@
 > **DRAFT FOR OWNER REVIEW.** This describes what DryScope does today, written from the code and
 > tests at the time of writing. It invents no feature. The owner approves it before it becomes the
 > baseline for the rebuild. Items marked **[open]** are gaps found while writing it, not features.
+> Section 6, "Target (accepted, not built yet)", is kept apart: it lists owner-accepted decisions
+> the rebuild must deliver, each citing its source, and none of it describes today's app.
 > Feature state (built, on, phone-checked) is in [STATUS.md](STATUS.md); who may do what is in
 > [ACCESS.md](ACCESS.md); data is in [DATA.md](DATA.md); AI is in [AI.md](AI.md).
 
@@ -159,3 +161,77 @@ Company workbook upload; AI-suggested prices; crew calendar and reminders; per-v
 dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed
 agreement; recipient texting; anonymized cross-company price comparison; a support role and an
 owner-visible access log.
+
+## 6. Target (accepted, not built yet)
+
+Nothing in this section is built. Each item is an owner-accepted decision the rebuild must
+deliver (rebuild plan, `dry-standard-replan` report, stage S1 "inventory every existing screen/role
+and accepted neutral workflow"; delivery in S5). Its acceptance checks are labelled **not built**
+and must not be read as current behaviour. Anything not decided is marked **[open]**.
+
+### 6.1 Company-neutral pricing additions and change orders
+
+Source: the ADR-neutral plan (`dry-adr-neutral-plan` report), questions Q1–Q13, accepted as
+supplied (rebuild plan, supersession ledger). Prices stay server Decimal math; a model never
+supplies a price.
+
+| Item | Decision (question) | Roles |
+|---|---|---|
+| New-company setup | A fresh table by default, with an optional "Start from my current prices" the owner reviews; never an automatic import (Q1). No inherited markup or cushion: multipliers 1 and no extra allowance unless the owner chooses one; stored old defaults are kept (Q6). Area basis and cabinetry scope are chosen in owner settings with plain examples (Q7). | owner |
+| Named positive adjustments | Owner-defined named rules with a customer label, a multiplier, eligible items or groups and a required reason, published in the versioned price table; the existing category, cabinetry and after-hours settings stay (Q2). | define and approve: owner; propose on a job: estimator |
+| Custom multipliers on a job | One selected custom multiplier per eligible base line, positive surcharges only; no stacking and no discounts in the first release; the standard factors stay visible beside it (Q3). | apply: owner approves; propose: estimator |
+| Project additions | Hourly (today's Additional work, unchanged), quantity/unit, and flat-fee one-off additions, each owner-approved and kept out of the reusable catalog (Q4). | propose: estimator; approve: owner |
+| Change orders after signing | An incremental, separately signed change order for positive added work only, linked to the original agreement; the original is never edited or repriced (Q5). | approve added money: owner; sign: the customer; who may create it: **[open]** |
+| Old drafts and records | Pinned drafts are not moved automatically; the owner reprices an unsigned draft only on explicit review; signed records never change (Q8). | owner |
+
+Target acceptance checks (**not built**):
+
+- A company with no published table still cannot price an estimate; a new company's table has
+  multipliers of 1 and no allowance it did not choose.
+- An estimator can propose an adjustment or addition but cannot approve it; only the owner's
+  approval reaches a total, and the approval binds the job revision and price hash.
+- Two custom adjustments matching one line are refused until the owner picks one; a multiplier
+  below 1 is refused.
+- Editing any approved addition's quantity, unit, price, scope, tax treatment or description
+  clears its approval and the audit.
+- A unit or flat-fee addition never changes the company's reusable table, and an old hourly
+  approval keeps its saved rate.
+- Creating a change order on a signed job leaves the original agreement, proposal hash and evidence
+  paths byte-for-byte unchanged; the change order has its own revision, audit, proposal hash and
+  single-use signature, and prices only the added work.
+- Two concurrent change orders on the same signed job cannot both build on a stale parent.
+- Change orders are not counted as separate completed jobs in estimate accuracy.
+
+Still **[open]**: the calculation version name, chosen with the price-bracket work (#228); whether
+custom adjustments apply to bracket-derived lines (the plan recommends yes, only through explicit
+eligible-item selection); whether a minimum or trip charge applies again on a change order (the
+plan recommends off unless selected); where the parent/child link is stored; and credits,
+reductions and whole-agreement replacement, which are outside the first workflow.
+
+### 6.2 Field and office ownership
+
+Source: the Technology Standard Stack (field/office ownership) and the rebuild plan's ownership
+table and gate R8; the office-created-job rule below is the owner's decision recorded in this
+review on Nov 6, 2026.
+
+| Data | Owner of writes | Others |
+|---|---|---|
+| Field work: observations, rooms, measurements, findings, transcript, field photos | the job's field owner (the estimator who starts the draft) | other authorized staff view only |
+| Customer details and assignment | office (and the company owner) | the field owner views the customer |
+| Prices and approvals | the company owner | separate from field ownership |
+
+An office-created job starts with no field owner. The first authorized estimator to capture field
+work on it becomes its field owner; office keeps customer details and assignment.
+
+Target acceptance checks (**not built**):
+
+- On an office-created empty job, the first authorized estimator's first capture makes them field
+  owner, and a second estimator's later field write is refused.
+- An office user can change customer details and assignment on that job, and cannot write field
+  data.
+- A field owner cannot change assignment or office-owned customer details.
+- Becoming field owner grants no price approval.
+
+Still **[open]**: an explicit field-owner transfer (the plan's alternative, preserving pending work
+and an audit), and how today's rule that a company owner or assignee can edit scope maps onto
+field ownership.
