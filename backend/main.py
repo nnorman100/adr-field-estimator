@@ -858,6 +858,10 @@ async def generate(
                 result = checked
         outcome = 'ok'
         return result
+    except SpendingError as error:
+        outcome = 'budget_refused'
+        error_fields = dict(status=error.status_code)
+        raise
     except HTTPException:
         raise
     except (asyncio.TimeoutError, TimeoutError):
@@ -883,8 +887,8 @@ async def generate(
             with anyio.CancelScope(shield=True):
                 await stored(ledger.settle, reservation, cost)
         event(
-            'Vertex AI call',
-            logging.INFO if outcome == 'ok' else logging.ERROR,
+            'Company AI request refused' if outcome == 'budget_refused' else 'Vertex AI call',
+            logging.INFO if outcome in ('ok', 'budget_refused') else logging.ERROR,
             model=model,
             operation=operation,
             elapsed_ms=round((time.monotonic() - started) * 1000),

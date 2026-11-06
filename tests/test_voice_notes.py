@@ -34,7 +34,12 @@ def transcriber(monkeypatch, text='Bedroom 2 category 1, 120 square feet of dryw
         calls.append(kwargs)
         if fail:
             raise RuntimeError('provider down')
-        return SimpleNamespace(text=json.dumps(dict(text=text)))
+        return SimpleNamespace(
+            text=json.dumps(dict(text=text)),
+            # Match successful provider usage so this adapter exercises the
+            # unchanged user quota independently of uncertain company holds.
+            usage_metadata=SimpleNamespace(prompt_token_count=100, total_token_count=200),
+        )
 
     monkeypatch.setattr(
         bm,

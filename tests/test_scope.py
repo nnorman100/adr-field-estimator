@@ -28,7 +28,12 @@ def provider(monkeypatch, changes, callback=None, questions=None):
         assert 'assistant_transcript' not in str(kwargs['contents'])
         if callback:
             callback()
-        return SimpleNamespace(text=json.dumps(dict(changes=changes, questions=questions or [])))
+        return SimpleNamespace(
+            text=json.dumps(dict(changes=changes, questions=questions or [])),
+            # Successful provider replies include usage; missing usage is an
+            # uncertain billed outcome, covered separately by the spending tests.
+            usage_metadata=SimpleNamespace(prompt_token_count=100, total_token_count=200),
+        )
 
     monkeypatch.setattr(
         bm,

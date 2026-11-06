@@ -511,3 +511,27 @@ def test_real_sdk_does_not_retry_billable_requests_inside_one_reservation(store,
     asyncio.run(invoke())
     assert len(requests) == 1
     assert ledger.summary()['spent_microusd'] == REST_RESERVE
+
+
+def test_budget_refusal_is_not_reported_as_a_provider_outage(store, monkeypatch, capsys):
+    monkeypatch.setattr(bm, 'WORKSPACES_ENABLED', True)
+    cap(store, 0)
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            GENERATE(
+                bm.AIResult,
+                ['observations'],
+                bm.AUDIT_MODEL,
+                'audit',
+                ID,
+                spending=(store, 'owner'),
+            )
+        )
+    assert error.value.status_code == 429
+    rows = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith('{')
+    ]
+    assert not any(row['message'] == 'Vertex AI call' for row in rows)
+    refusal = next(row for row in rows if row['message'] == 'Company AI request refused')
+    assert refusal['severity'] == 'INFO'
+    assert refusal['status'] == 429
