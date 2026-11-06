@@ -41,6 +41,7 @@ readings alone never prove material dryness. Mark dry and Close monitoring
 record the named person's reason; Mark dry is shown as a staff decision rather
 than an automatic dry-standard attestation. Removing or replacing a reading
 recomputes automatic status. An explicit staff closure remains closed.
+A closed job's watch history can expire under the company's retention setting; the watch then stays closed from a small marker ([Record retention](company-workspaces.md#record-retention)).
 
 **Extend plan** adds a coordination note only. The signed days, equipment,
 prices, revision, proposal hash, photos and agreement never change. Extra

@@ -34,7 +34,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Job close, estimate accuracy | `backend/outcomes.py`, `public/job-close.js`, `public/estimate-accuracy.js`, `docs/estimate-assist.md` |
 | Warnings while estimating | `backend/estimate_warnings.py`, `public/app.js` (the readiness dialog), `docs/estimate-assist.md` |
 | Readiness, insights, AI usage | `readiness.py`, `insights.py`, `ai_usage.py` |
-| Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
+| Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `RETENTION_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
 | Release scripts | `scripts/deploy_backend.py`, `stamp_hosting.py`, `verify_*`, `auto_deploy.py` (automatic deploys) |
 
 ## Data model (high level)
