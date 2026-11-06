@@ -464,22 +464,29 @@ async function originalsAction(mode, fn) {
   });
 }
 // An original whose copy never reached the server goes with its draft. One whose copy did stays
-// until the server confirms the original itself, even after the draft is signed and cleared.
+// until the server confirms the original itself, even after the draft is signed and cleared; a
+// server record's photos (confirmed) show copies the phone never heard were saved.
 // Only the rows of photos keep(id) does not claim are read, so the other originals' bytes are not.
-function dropUnsentOriginals(key, keep = () => false) {
+function dropUnsentOriginals(key, keep = () => false, confirmed = []) {
+  const promised = new Map(
+    confirmed.filter((p) => p.original).map((p) => [p.id, p.original.sha256]),
+  );
   return originalsAction('readwrite', (originals) => {
     originals.getAllKeys(photoRange(key)).onsuccess = (e) => {
       for (const k of e.target.result)
         if (!keep(k[1]))
-          originals.get(k).onsuccess = (row) => {
-            if (!row.target.result?.ready) originals.delete(k);
+          originals.get(k).onsuccess = (got) => {
+            const row = got.target.result;
+            if (!row || row.ready) return;
+            if (promised.get(row.id) === row.sha256) originals.put({ ...row, ready: true });
+            else originals.delete(k);
           };
     };
   });
 }
-async function deleteDraft(key, keepUnresolved = false) {
+async function deleteDraft(key, keepUnresolved = false, confirmed = []) {
   // A missing originals database must not keep a draft from being removed.
-  await dropUnsentOriginals(key).catch(() => {});
+  await dropUnsentOriginals(key, undefined, confirmed).catch(() => {});
   const wipe = () =>
     dbAction('readwrite', (drafts, photos, noteRows, audio) => {
       photos.delete(photoRange(key));
@@ -508,6 +515,7 @@ async function closeArchivedJob(id) {
   clearTimeout(saveTimer);
   clearTimeout(persistTimer);
   await syncChain.catch(() => {});
+  const confirmed = (state.draft?.inspection_id === id && state.record?.photos) || [];
   if (state.draft?.inspection_id === id) {
     state.draft = null;
     state.record = null;
@@ -518,7 +526,7 @@ async function closeArchivedJob(id) {
     invalidate();
     clearDisplayedInspection();
   }
-  await deleteDraft(draftKey(id));
+  await deleteDraft(draftKey(id), false, confirmed);
 }
 // An archived job keeps a phone's copy only while it holds work the server never received:
 // edits, photos, room or shot changes, or a voice note still waiting to upload.
@@ -1254,7 +1262,7 @@ async function drainQueue() {
           if (await archivedWorkPending(row)) {
             row.archived = true;
             await saveRow(row);
-          } else await deleteDraft(row.key, true);
+          } else await deleteDraft(row.key, true, row.record?.photos);
           continue;
         }
         if (e.status !== 404) throw e;
@@ -1265,8 +1273,7 @@ async function drainQueue() {
         row.ack = stable(row.draft.data);
       }
       if (record.status === 'signed') {
-        await markOriginalsReady(row.key, record.photos);
-        await deleteDraft(row.key, true);
+        await deleteDraft(row.key, true, record.photos);
         continue;
       }
       if (stable(row.draft.data) !== row.ack) {
@@ -2924,8 +2931,9 @@ let originalsRun = null,
 // own; elsewhere, iPhone included, only after the technician taps Upload originals now. They go
 // one at a time while the app is open, and each is deleted here only once the server confirms it.
 // A call during a run (say, a sync that has just marked more originals ready) asks for one more
-// run once it ends, since each run reads a row only once.
-function uploadOriginals(manual = false) {
+// run once it ends, since each run reads a row only once; that run leaves out the originals the
+// server has just refused.
+function uploadOriginals(manual = false, refused = new Set()) {
   if (originalsRun) {
     manual ||= originalsManual;
     if (manual || ADRCore.onWifi(navigator.connection))
@@ -2933,22 +2941,22 @@ function uploadOriginals(manual = false) {
     refreshOriginals();
   } else if (manual || ADRCore.onWifi(navigator.connection)) {
     originalsManual = manual;
-    originalsRun = sendOriginals(manual)
+    originalsRun = sendOriginals(manual, refused)
       .catch(() => {})
       .finally(() => {
         const again = originalsAgain;
         originalsRun = originalsAgain = null;
         originalsManual = false;
-        if (again) uploadOriginals(again.manual);
+        if (again) uploadOriginals(again.manual, refused);
         else refreshOriginals();
       });
     renderOriginals();
   } else refreshOriginals();
   return originalsRun || Promise.resolve();
 }
-async function sendOriginals(manual) {
+async function sendOriginals(manual, refused) {
   const prefix = originalsPrefix();
-  const skip = new Set();
+  const skip = new Set(refused);
   while (
     prefix &&
     originalsPrefix() === prefix &&
@@ -2992,7 +3000,10 @@ async function sendOriginals(manual) {
         originalsRetry = setTimeout(() => uploadOriginals(manual), (e.retryAfter || 60) * 1000);
       }
       if (!e.status || e.status === 429) return;
-      if (![400, 409, 413].includes(e.status)) continue;
+      if (![400, 409, 413].includes(e.status)) {
+        refused.add(row.draft_key + '/' + row.id);
+        continue;
+      }
     }
     await originalsAction('readwrite', (originals) => originals.delete([row.draft_key, row.id]));
     await refreshOriginals();
@@ -3204,7 +3215,7 @@ async function restoreDraft(id) {
     } catch (e) {
       if (e.status === 410) {
         if (!local || !(await archivedWorkPending(local))) {
-          if (local) await deleteDraft(local.key, true);
+          if (local) await deleteDraft(local.key, true, local.record?.photos);
           throw Error('The owner archived this job, so it can no longer be opened.');
         }
         archived = true;
@@ -3525,7 +3536,7 @@ async function restoreSigned(id) {
   await persist();
   const record = await jsonApi('/api/authorizations/' + encodeURIComponent(id));
   if (state.user?.uid !== uid) return;
-  if (record.inspection_id) await deleteDraft(draftKey(record.inspection_id), true);
+  if (record.inspection_id) await deleteDraft(draftKey(record.inspection_id), true, record.photos);
   if (state.user?.uid !== uid) return;
   state.signed = record;
   state.record = null;
@@ -6230,6 +6241,7 @@ async function initialize() {
     state.record = record;
     state.ack = stable(record.data);
     state.conflict = false;
+    await markOriginalsReady(draftKey(record.inspection_id), record.photos).catch(() => {});
     seedRoomLoss(record, state.draft.data);
     $('conflictActions').hidden = true;
     invalidate();
@@ -6279,7 +6291,8 @@ async function initialize() {
         ).catch(() => [])
       ).map((k) => k[1]),
     );
-    const photos = forkPhotos(kept, held);
+    const photos = forkPhotos(kept, held),
+      confirmed = state.record?.photos;
     // The new draft opens before its first sync, so the originals move with it even when that
     // sync fails: its copies promise them, and the archived draft may be discarded later.
     let failure = null;
@@ -6309,7 +6322,7 @@ async function initialize() {
     await markOriginalsReady(target, state.record?.photos || []);
     if (failure) throw failure;
     uploadOriginals();
-    await deleteDraft(key, true);
+    await deleteDraft(key, true, confirmed);
     say(
       left
         ? 'Saved as a new draft. ' +

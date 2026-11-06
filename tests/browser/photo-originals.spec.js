@@ -727,6 +727,53 @@ test('an original whose copy reached the server unseen is ready once the job reo
   await expect.poll(() => kept(page)).toEqual([expect.objectContaining({ ready: true })]);
 });
 
+// The copy of a photo taken offline reaches the server, but its answer never reaches the phone,
+// and the phone's own tries fail.
+async function copySavedUnseen(page, context) {
+  await context.setOffline(true);
+  await addJpeg(page, 'unseen.jpg', 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(1);
+  let blocked = true;
+  await page.route('**/api/inspections/*/photos', (route) =>
+    blocked && route.request().method() === 'POST' ? route.abort('failed') : route.continue(),
+  );
+  const failed = page.waitForEvent('requestfailed', (r) => /\/photos$/.test(r.url()));
+  await context.setOffline(false);
+  await failed;
+  await page.evaluate(() => syncChain.catch(() => {}));
+  blocked = false;
+  await page.evaluate(async () => {
+    const photo = state.draft.photos[0];
+    await jsonApi(
+      '/api/inspections/' + state.draft.inspection_id + '/photos',
+      'POST',
+      photoForm(photo, state.record.revision, photo.data_url),
+    );
+  });
+  blocked = true;
+  expect(await kept(page)).toEqual([expect.objectContaining({ ready: false })]);
+}
+
+test('restoring the saved version after a lost upload answer keeps the original and sends it', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await copySavedUnseen(page, context);
+  await page.evaluate(() => {
+    state.conflict = true;
+    document.getElementById('conflictActions').hidden = false;
+  });
+  await page.locator('#restoreRemote').click({ force: true });
+  await expect.poll(() => page.evaluate(() => state.conflict)).toBe(false);
+  await expect.poll(() => kept(page)).toEqual([expect.objectContaining({ ready: true })]);
+  const confirmed = page.waitForResponse(originalOk);
+  await page.locator('#uploadOriginals').click();
+  await confirmed;
+  await settled(page);
+  expect(await kept(page)).toEqual([]);
+});
+
 test('a separate inspection made from a conflict promises none of the originals', async ({
   page,
 }) => {
@@ -870,5 +917,90 @@ test.describe('an archived job saved as a new draft', () => {
     await expect
       .poll(async () => Object.fromEntries((await kept(page)).map((row) => [row.id, row.ready])))
       .toEqual({ [first]: true, [second]: false });
+  });
+});
+
+test.describe('a job signed on another device', () => {
+  const JOB = 'ADR-INS-' + 'c'.repeat(32);
+  const AUTH = 'ADR-AUTH-unseencopy1';
+  const estimator = {
+    Authorization: 'Bearer test-owner-ws-estimator',
+    'X-ADR-Workspace-Protocol': '1',
+  };
+  test.use({ viewport: { width: 1280, height: 900 } });
+  test.beforeEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: true } });
+  });
+  test.afterEach(async ({ request }) => {
+    await request.post('/__test/workspaces', { data: { enabled: false } });
+  });
+
+  test('keeps an original whose copy reached the server unseen when opened here', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await page.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      'test-owner-ws-estimator',
+    );
+    await page.goto('/app');
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.locator('#dashboardJobs').click();
+    await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await copySavedUnseen(page, context);
+    const signature = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 120;
+      canvas.height = 60;
+      const context = canvas.getContext('2d');
+      context.lineWidth = 3;
+      context.moveTo(10, 35);
+      context.lineTo(40, 12);
+      context.lineTo(105, 15);
+      context.stroke();
+      return canvas.toDataURL('image/png');
+    });
+    // The other device runs recognition, confirms the scope, audits and signs the job.
+    await context.setOffline(true);
+    const before = await (
+      await request.get('/api/inspections/' + JOB, { headers: estimator })
+    ).json();
+    expect(before.photos).toHaveLength(1);
+    const ocr = await request.post(
+      '/api/inspections/' + JOB + '/photos/' + before.photos[0].id + '/ocr',
+      { headers: estimator, data: {} },
+    );
+    expect(ocr.status()).toBe(200);
+    const saved = await ocr.json();
+    const confirmed = await (
+      await request.put('/api/inspections/' + JOB, {
+        headers: estimator,
+        data: { expected_revision: saved.revision, data: { ...saved.data, scope_confirmed: true } },
+      })
+    ).json();
+    const audit = await (
+      await request.post('/api/audit', {
+        headers: estimator,
+        data: { inspection_id: JOB, expected_revision: confirmed.revision },
+      })
+    ).json();
+    const signed = await request.post('/api/authorize', {
+      headers: estimator,
+      data: {
+        inspection_id: JOB,
+        expected_revision: audit.revision,
+        auth_id: AUTH,
+        proposal_hash: audit.audit.proposal_hash,
+        signature_png: signature,
+        documents_confirmed: true,
+      },
+    });
+    expect(signed.status()).toBe(200);
+    await context.setOffline(false);
+    // Opening the agreement clears this phone's draft; the original the job expects stays.
+    await page.evaluate((id) => restoreSigned(id), AUTH);
+    expect(await kept(page)).toEqual([expect.objectContaining({ ready: true })]);
   });
 });
