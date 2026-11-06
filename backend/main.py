@@ -870,6 +870,7 @@ async def generate(
     spending,
 ):
     started = time.monotonic()
+    deadline = started + timeout
     outcome = 'cancelled'
     error_fields = {}
     ledger = None
@@ -889,6 +890,10 @@ async def generate(
                 timeout=min(timeout, 15),
             )
         ledger, reservation = held.ledger, held.identifier
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            cost = 0
+            raise asyncio.TimeoutError
         held.dispatched = True
         response = await asyncio.wait_for(
             held.client.aio.models.generate_content(
@@ -896,7 +901,7 @@ async def generate(
                 contents=contents,
                 config=held.config,
             ),
-            timeout=timeout,
+            timeout=remaining,
         )
         cost = rest_cost(response)
         result = schema.model_validate(parse_json_from_llm(response.text))
@@ -1773,6 +1778,7 @@ async def transcribe_voice_note(
     store=Depends(get_job_store),
 ):
     """Transcribes an offline voice note into the walkthrough transcript; the audio is not kept."""
+    started = time.monotonic()
     record = await _voice_note_ready(store, staff['uid'], inspection_id)
     marker = voice_note_marker(req.note_id)
     if marker in record['data'].get('technician_transcript', ''):
@@ -1834,7 +1840,7 @@ async def transcribe_voice_note(
                 'transcribe',
                 inspection_id,
                 thinking_level=SCOPE_THINKING_LEVEL,
-                timeout=REST_DEADLINE_SECONDS - 5,
+                timeout=started + REST_DEADLINE_SECONDS - 5 - time.monotonic(),
                 spending=held,
             )
         except HTTPException as error:

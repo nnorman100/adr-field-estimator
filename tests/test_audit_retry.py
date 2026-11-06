@@ -131,6 +131,29 @@ def test_two_stalled_attempts_fail_before_the_deadline(context, budget, monkeypa
     assert len(messages(capsys, 'Vertex AI retry')) == 1
 
 
+def test_token_counting_time_is_part_of_each_attempt(context, budget, monkeypatch, capsys):
+    client, store = context
+    record = inspect(client)
+    calls = provider(monkeypatch, [30, 30])
+    models = bm.get_ai_client().aio.models
+
+    async def slow_count(**kwargs):
+        await asyncio.sleep(0.6)
+        return SimpleNamespace(total_tokens=100)
+
+    models.count_tokens = slow_count
+    monkeypatch.setattr(
+        bm, 'get_ai_client', lambda: SimpleNamespace(aio=SimpleNamespace(models=models))
+    )
+    saves = counted_saves(monkeypatch, store)
+    response, elapsed = post_audit(client, record)
+    # Both attempts, preparation included, end at the save reserve, before the REST deadline.
+    assert response.status_code == 504
+    assert response.json()['detail'].startswith('AI generation timed out.')
+    assert elapsed < bm.REST_DEADLINE_SECONDS - bm.AUDIT_SAVE_RESERVE_SECONDS / 2
+    assert [c['outcome'] for c in calls] == ['cancelled', 'cancelled'] and saves == []
+
+
 def test_no_retry_when_too_little_of_the_deadline_remains(budget, monkeypatch, capsys):
     # As if an OCR wait used most of the deadline: 1.7 s remain, too little for a 0.8 s retry
     # after a 1 s attempt, so the only attempt gets all of it.

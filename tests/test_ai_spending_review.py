@@ -126,6 +126,42 @@ def test_uncertain_transport_outcomes_still_charge_the_exact_hold(store, monkeyp
     assert usage['reserved_microusd'] == 0
 
 
+def test_hold_without_time_left_is_released_without_dispatch(store, monkeypatch):
+    calls = []
+
+    async def respond(**kwargs):
+        calls.append(kwargs)
+        return NS(text='{}')
+
+    fake_provider(monkeypatch, respond)
+    held = asyncio.run(
+        bm.reserve_generation(
+            ['observations'],
+            bm.AUDIT_MODEL,
+            'transcribe',
+            bm.generation_config(bm.TranscriptionResult, bm.AUDIT_MODEL, 'transcribe'),
+            (store, 'owner'),
+        )
+    )
+    assert CompanySpending(store, 'adr').summary()['reserved_microusd'] > 0
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            GENERATE(
+                bm.TranscriptionResult,
+                ['observations'],
+                bm.AUDIT_MODEL,
+                'transcribe',
+                ID,
+                timeout=0,
+                spending=held,
+            )
+        )
+    assert error.value.status_code == 504 and calls == []
+    held.release_unused()
+    usage = CompanySpending(store, 'adr').summary()
+    assert usage['spent_microusd'] == usage['reserved_microusd'] == 0
+
+
 def test_settlement_failure_returns_paid_result_and_preserves_hold(store, monkeypatch, capsys):
     async def respond(**kwargs):
         return NS(
