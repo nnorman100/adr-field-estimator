@@ -27,11 +27,21 @@ def decode_image(data_url, *, signature=False):
     match = re.fullmatch(r'data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/=\r\n]+)', data_url or '')
     if not match or (signature and match[1] != 'png'):
         raise ValueError('Use a PNG signature and PNG, JPEG or WebP photos.')
-    raw = base64.b64decode(match[2], validate=True)
+    return check_image(base64.b64decode(match[2], validate=True), match[1], signature=signature)
+
+
+IMAGE_TYPES = {'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp'}
+
+
+def check_image(raw, kind, *, signature=False):
+    """The size, type and decode checks for image bytes, whether they arrived as base64 or as a
+    binary upload. kind is the declared type: 'png', 'jpeg' or 'webp'."""
+    if kind not in IMAGE_TYPES.values() or (signature and kind != 'png'):
+        raise ValueError('Use a PNG signature and PNG, JPEG or WebP photos.')
     if not raw or len(raw) > (2 if signature else 8) * 1024 * 1024:
         raise ValueError('Signature limit is 2 MB; photo limit is 8 MB.')
     signatures = {'png': b'\x89PNG\r\n\x1a\n', 'jpeg': b'\xff\xd8\xff', 'webp': b'RIFF'}
-    if not raw.startswith(signatures[match[1]]) or (match[1] == 'webp' and raw[8:12] != b'WEBP'):
+    if not raw.startswith(signatures[kind]) or (kind == 'webp' and raw[8:12] != b'WEBP'):
         raise ValueError('The uploaded image does not match its file type.')
     try:
         with warnings.catch_warnings():
@@ -42,7 +52,7 @@ def decode_image(data_url, *, signature=False):
                 image.verify()
     except Exception as error:
         raise ValueError('The image is damaged or cannot be decoded.') from error
-    return raw, f'image/{match[1]}', match[1]
+    return raw, f'image/{kind}', kind
 
 
 MODEL_PIXELS = 1600

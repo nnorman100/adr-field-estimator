@@ -428,7 +428,65 @@ function noteStillOpen(note) {
     (note.status === 'done' && !note.reviewed)
   );
 }
-async function deleteDraft(key, keepUnresolved = false) {
+// Full-size photo originals waiting for Wi-Fi live in their own database, apart from drafts: an
+// original outlasts its draft (signed and cleared) until the server confirms it, and the drafts
+// database needs no upgrade for them. Rows are keyed [draft key, photo ID].
+let originalsDbPromise;
+function originalsDb() {
+  originalsDbPromise ??= new Promise((resolve, reject) => {
+    const request = indexedDB.open('adr-private-originals', 1);
+    request.onupgradeneeded = () =>
+      request.result.createObjectStore('originals', { keyPath: ['draft_key', 'id'] });
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        originalsDbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      originalsDbPromise = null;
+      reject(Error('This browser cannot keep photo originals.'));
+    };
+  });
+  return originalsDbPromise;
+}
+// A full phone aborts a write rather than failing a request, so both end the promise.
+async function originalsAction(mode, fn) {
+  const db = await originalsDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('originals', mode);
+    const request = fn(tx.objectStore('originals'));
+    tx.oncomplete = () => resolve(request?.result);
+    tx.onerror = tx.onabort = () =>
+      reject(tx.error || Error('Photo originals could not be saved.'));
+  });
+}
+// An original whose copy never reached the server goes with its draft. One whose copy did stays
+// until the server confirms the original itself, even after the draft is signed and cleared; a
+// server record's photos (confirmed) show copies the phone never heard were saved.
+// Only the rows of photos keep(id) does not claim are read, so the other originals' bytes are not.
+function dropUnsentOriginals(key, keep = () => false, confirmed = []) {
+  const promised = new Map(
+    confirmed.filter((p) => p.original).map((p) => [p.id, p.original.sha256]),
+  );
+  return originalsAction('readwrite', (originals) => {
+    originals.getAllKeys(photoRange(key)).onsuccess = (e) => {
+      for (const k of e.target.result)
+        if (!keep(k[1]))
+          originals.get(k).onsuccess = (got) => {
+            const row = got.target.result;
+            if (!row || row.ready) return;
+            if (promised.get(row.id) === row.sha256) originals.put({ ...row, ready: true });
+            else originals.delete(k);
+          };
+    };
+  });
+}
+async function deleteDraft(key, keepUnresolved = false, confirmed = []) {
+  // A missing originals database must not keep a draft from being removed.
+  await dropUnsentOriginals(key, undefined, confirmed).catch(() => {});
   const wipe = () =>
     dbAction('readwrite', (drafts, photos, noteRows, audio) => {
       photos.delete(photoRange(key));
@@ -457,6 +515,7 @@ async function closeArchivedJob(id) {
   clearTimeout(saveTimer);
   clearTimeout(persistTimer);
   await syncChain.catch(() => {});
+  const confirmed = (state.draft?.inspection_id === id && state.record?.photos) || [];
   if (state.draft?.inspection_id === id) {
     state.draft = null;
     state.record = null;
@@ -467,7 +526,7 @@ async function closeArchivedJob(id) {
     invalidate();
     clearDisplayedInspection();
   }
-  await deleteDraft(draftKey(id));
+  await deleteDraft(draftKey(id), false, confirmed);
 }
 // An archived job keeps a phone's copy only while it holds work the server never received:
 // edits, photos, room or shot changes, or a voice note still waiting to upload.
@@ -556,6 +615,13 @@ async function persist() {
     };
     return drafts.put(row);
   });
+  // A photo removed before its copy uploaded takes its kept original with it. The photos are read
+  // now, not from the snapshot above, so an original kept for a photo added since then stays.
+  const id = state.draft?.inspection_id;
+  if (id === draft.inspection_id)
+    await dropUnsentOriginals(key, (photoId) =>
+      state.draft.photos.some((photo) => photo.id === photoId),
+    ).catch(() => {});
 }
 function schedulePersist() {
   clearTimeout(persistTimer);
@@ -568,6 +634,7 @@ async function clearLocal() {
     audio.clear();
     return drafts.clear();
   });
+  await originalsAction('readwrite', (originals) => originals.clear()).catch(() => {});
 }
 // Unmodified Firebase JS SDK modular builds except for a same-origin import path (public/vendor/README.md).
 // The SDK version is part of the path, so an upgrade cannot mix cached files from two releases.
@@ -683,9 +750,12 @@ async function jsonApi(path, method = 'GET', body) {
   const result = await (
     await api(path, {
       method,
+      // A photo goes as multipart binary; the browser sets that content type and its boundary.
       ...(body === undefined
         ? {}
-        : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+        : typeof FormData === 'function' && body instanceof FormData
+          ? { body }
+          : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
   ).json();
   const route = path.split('?')[0],
@@ -733,8 +803,12 @@ function absorb(record) {
   if (!record.audit) state.draft.homeowner_link_pending = false;
 
   window.InsightUI?.job(insightChanged);
+  // However the phone learns the server holds a copy (its upload, or a record read after a lost
+  // response), that photo's original may follow it.
+  const confirmed = [];
   for (const remote of record.photos) {
     const photo = state.draft.photos.find((p) => p.id === remote.id);
+    if (!photo?.uploaded) confirmed.push(remote);
     if (!photo) {
       state.draft.photos.push({ ...remote, uploaded: true });
       continue;
@@ -755,6 +829,7 @@ function absorb(record) {
       else delete photo.shot;
     }
   }
+  markOriginalsReady(draftKey(record.inspection_id), confirmed).catch(() => {});
   renderPhotos();
   renderSaveStatus();
   notifyLiveShots();
@@ -903,6 +978,8 @@ function photoUnsynced(photo) {
 
 // Concise status for the one-line phone header; the title keeps the revision or authorization ID.
 function renderSaveStatus() {
+  // The originals count belongs to the signed-in user and company; recount when they change.
+  if (originalsPrefix() !== (state.originalsPrefix ?? null)) refreshOriginals();
   // The sizing check follows the save state: it describes only data the server has saved.
   renderSizing();
   $('jobTitle').textContent = state.draft?.data.address || 'New inspection';
@@ -1043,23 +1120,19 @@ async function doSync() {
       }
     }
     for (const photo of state.draft.photos.filter((p) => !p.uploaded && !locatingPhotos.has(p))) {
-      const payload = {
-        photo_id: photo.id,
-        expected_revision: state.record.revision,
-        room: photo.room,
-        captured_at: photo.captured_at,
-        ...(photo.location && { location: photo.location }),
-        data_url: photo.data_url,
-      };
-      const upload = () => jsonApi('/api/inspections/' + id + '/photos', 'POST', payload);
+      const room = photo.room;
+      const upload = () =>
+        jsonApi(
+          '/api/inspections/' + id + '/photos',
+          'POST',
+          photoForm({ ...photo, room }, state.record.revision, photo.data_url),
+        );
       try {
         absorb(await writeRoom(photo, upload));
       } catch (e) {
         if (e.status !== 409) throw e;
         await reconcile();
-        if (photo.uploaded) continue;
-        payload.expected_revision = state.record.revision;
-        absorb(await writeRoom(photo, upload));
+        if (!photo.uploaded) absorb(await writeRoom(photo, upload));
       }
     }
     for (const photo of state.draft.photos.filter(
@@ -1106,6 +1179,7 @@ async function doSync() {
     for (const photo of state.draft.photos.filter((p) => p.uploaded && p.ocr_status === 'pending'))
       startOCR(photo);
     await loadPhotoUrls('/api/inspections/' + id + '/photos/');
+    uploadOriginals();
   } catch (e) {
     if (e.status !== 410) throw e;
     await openDraftArchived(id);
@@ -1188,7 +1262,7 @@ async function drainQueue() {
           if (await archivedWorkPending(row)) {
             row.archived = true;
             await saveRow(row);
-          } else await deleteDraft(row.key, true);
+          } else await deleteDraft(row.key, true, row.record?.photos);
           continue;
         }
         if (e.status !== 404) throw e;
@@ -1199,7 +1273,7 @@ async function drainQueue() {
         row.ack = stable(row.draft.data);
       }
       if (record.status === 'signed') {
-        await deleteDraft(row.key, true);
+        await deleteDraft(row.key, true, record.photos);
         continue;
       }
       if (stable(row.draft.data) !== row.ack) {
@@ -1227,14 +1301,11 @@ async function drainQueue() {
       for (const photo of row.draft.photos) {
         if (!record.photos.some((p) => p.id === photo.id)) {
           bytes ??= await photoBytes(row.key);
-          record = await request(path + '/photos', 'POST', {
-            photo_id: photo.id,
-            expected_revision: record.revision,
-            room: photo.room,
-            captured_at: photo.captured_at,
-            ...(photo.location && { location: photo.location }),
-            data_url: bytes.get(photo.id),
-          });
+          record = await request(
+            path + '/photos',
+            'POST',
+            photoForm(photo, record.revision, bytes.get(photo.id)),
+          );
         }
         if (
           photo.pending_room !== undefined &&
@@ -1260,6 +1331,7 @@ async function drainQueue() {
         if (!saved.shot) delete photo.shot;
         row.record = record;
         await saveRow(row);
+        await markOriginalsReady(row.key, [saved]);
         if (photo.ocr_status === 'pending') {
           try {
             record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
@@ -1347,7 +1419,7 @@ async function drainQueue() {
     if (drainAgain) {
       drainAgain = false;
       drainQueue();
-    }
+    } else uploadOriginals();
   }
 }
 function startOCR(photo) {
@@ -2769,6 +2841,198 @@ function renderPhotos() {
     ? verified.room + ' · ' + verified.ocr.meter_type + ': ' + verified.ocr.value
     : 'No reading verified.';
 }
+// The copy that uploads first: at most 2,560 px on its longest edge, JPEG at quality 0.85, drawn
+// upright. A photo already that small uploads as it is and has no separate original.
+async function photoCopy(blob) {
+  const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  try {
+    if (bitmap.width * bitmap.height > 60000000) throw Error('Photo exceeds 60 megapixels.');
+    const size = ADRCore.photoCopySize(bitmap.width, bitmap.height);
+    if (!size.scaled) return { copy: blob, original: null, size };
+    const canvas = document.createElement('canvas');
+    canvas.width = size.width;
+    canvas.height = size.height;
+    const context = canvas.getContext('2d');
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, size.width, size.height);
+    const copy = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    // Release the canvas memory now; iPhone Safari caps the total held by canvases.
+    canvas.width = canvas.height = 0;
+    // A phone that cannot make the copy uploads the original as before.
+    if (!copy)
+      return { copy: blob, original: null, size: { width: bitmap.width, height: bitmap.height } };
+    const bytes = await blob.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const sha256 = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join(
+      '',
+    );
+    return { copy, original: { sha256, bytes }, size };
+  } finally {
+    bitmap.close();
+  }
+}
+// The bytes are stored as an ArrayBuffer: WebKit cannot store a Blob in a private session.
+async function keepOriginal(key, id, bytes, content_type, sha256) {
+  await originalsAction('readwrite', (originals) =>
+    originals.put({
+      draft_key: key,
+      id,
+      bytes,
+      content_type,
+      sha256,
+      // Set once the server holds the copy; only then may the original follow it.
+      ready: false,
+    }),
+  );
+  refreshOriginals();
+}
+// One photo upload: its details as JSON and the image as binary, never base64. dataUrl is the
+// copy saved on this phone (or, for a photo taken before copies existed, its original).
+function photoForm(photo, revision, dataUrl) {
+  const form = new FormData();
+  form.append(
+    'metadata',
+    JSON.stringify({
+      photo_id: photo.id,
+      expected_revision: revision,
+      room: photo.room,
+      captured_at: photo.captured_at,
+      ...(photo.location && { location: photo.location }),
+      ...(photo.original && { original: photo.original }),
+    }),
+  );
+  form.append('file', ADRCore.dataUrlBlob(dataUrl), 'photo');
+  return form;
+}
+// Originals are kept per signed-in user and company, under the same key prefix as their drafts.
+function originalsPrefix() {
+  return state.user && state.session ? draftKey('') : null;
+}
+const originalRange = (prefix) => IDBKeyRange.bound([prefix], [prefix + '￿']);
+// The server now holds these photos' copies, so their originals may follow. Only these photos'
+// rows are read.
+async function markOriginalsReady(key, photos) {
+  const sent = photos.filter((p) => p.original);
+  if (!sent.length) return;
+  await originalsAction('readwrite', (originals) => {
+    for (const photo of sent)
+      originals.get([key, photo.id]).onsuccess = (e) => {
+        const row = e.target.result;
+        if (row && !row.ready && photo.original.sha256 === row.sha256)
+          originals.put({ ...row, ready: true });
+      };
+  });
+}
+let originalsRun = null,
+  originalsManual = false,
+  originalsAgain = null,
+  originalsRetry;
+// Where the browser says the phone is on Wi-Fi (Chromium on Android), originals upload on their
+// own; elsewhere, iPhone included, only after the technician taps Upload originals now. They go
+// one at a time while the app is open, and each is deleted here only once the server confirms it.
+// A call during a run (say, a sync that has just marked more originals ready) asks for one more
+// run once it ends, since each run reads a row only once; that run leaves out the originals the
+// server has just refused.
+function uploadOriginals(manual = false, refused = new Set()) {
+  if (originalsRun) {
+    manual ||= originalsManual;
+    if (manual || ADRCore.onWifi(navigator.connection))
+      originalsAgain = { manual: manual || !!originalsAgain?.manual };
+    refreshOriginals();
+  } else if (manual || ADRCore.onWifi(navigator.connection)) {
+    originalsManual = manual;
+    originalsRun = sendOriginals(manual, refused)
+      .catch(() => {})
+      .finally(() => {
+        const again = originalsAgain;
+        originalsRun = originalsAgain = null;
+        originalsManual = false;
+        if (again) uploadOriginals(again.manual, refused);
+        else refreshOriginals();
+      });
+    renderOriginals();
+  } else refreshOriginals();
+  return originalsRun || Promise.resolve();
+}
+async function sendOriginals(manual, refused) {
+  const prefix = originalsPrefix();
+  const skip = new Set(refused);
+  while (
+    prefix &&
+    originalsPrefix() === prefix &&
+    navigator.onLine &&
+    (manual || ADRCore.onWifi(navigator.connection)) &&
+    (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('photos'))
+  ) {
+    // One row's bytes in memory at a time, and each row read at most once a run: the first ready
+    // original not yet tried. One that becomes ready during the run goes in the follow-up run
+    // that uploadOriginals starts.
+    let row = null;
+    await originalsAction('readonly', (originals) => {
+      originals.openKeyCursor(originalRange(prefix)).onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) return;
+        const key = cursor.primaryKey.join('/');
+        if (skip.has(key)) return cursor.continue();
+        skip.add(key);
+        originals.get(cursor.primaryKey).onsuccess = (got) => {
+          if (got.target.result?.ready) row = got.target.result;
+          else cursor.continue();
+        };
+      };
+    });
+    if (!row) return;
+    const inspectionId = row.draft_key.slice(prefix.length);
+    try {
+      await api(
+        '/api/inspections/' + encodeURIComponent(inspectionId) + '/photos/' + row.id + '/original',
+        { method: 'POST', headers: { 'Content-Type': row.content_type }, body: row.bytes },
+      );
+    } catch (e) {
+      // No signal, a timeout or the request limit stops this run; after the limit it starts
+      // again once the server allows. Any other refusal concerns this original alone, so the
+      // others still go. It is kept for a later try (a server error, a role, assignment or
+      // archive change, a job or route not found) unless the server will always refuse it (it
+      // does not promise this original, or the file is not it); that frees the space and its
+      // 2,560 px copy remains the evidence.
+      if (e.status === 429) {
+        clearTimeout(originalsRetry);
+        originalsRetry = setTimeout(() => uploadOriginals(manual), (e.retryAfter || 60) * 1000);
+      }
+      if (!e.status || e.status === 429) return;
+      if (![400, 409, 413].includes(e.status)) {
+        refused.add(row.draft_key + '/' + row.id);
+        continue;
+      }
+    }
+    await originalsAction('readwrite', (originals) => originals.delete([row.draft_key, row.id]));
+    await refreshOriginals();
+  }
+}
+async function refreshOriginals() {
+  const prefix = originalsPrefix();
+  const count = prefix
+    ? await originalsAction('readonly', (originals) =>
+        originals.count(originalRange(prefix)),
+      ).catch(() => 0)
+    : 0;
+  if (originalsPrefix() !== prefix) return;
+  state.originalsPrefix = prefix;
+  state.originalsWaiting = count;
+  renderOriginals();
+}
+// Shown beside the save status: the originals this phone still holds for the signed-in user.
+function renderOriginals() {
+  const count = state.originalsWaiting || 0;
+  $('originals').hidden = !count;
+  $('originalsCount').textContent =
+    (count === 1 ? '1 full-size original' : count + ' full-size originals') +
+    (originalsRun ? ' uploading.' : ' waiting on this phone.');
+  $('uploadOriginals').disabled =
+    !!originalsRun ||
+    !navigator.onLine ||
+    (!!window.WorkspaceUI?.enabled() && !WorkspaceUI.can('photos'));
+}
 const locatingPhotos = new WeakSet();
 function addPhoto(blob) {
   const draft = state.draft;
@@ -2785,26 +3049,24 @@ function addPhoto(blob) {
     // Asked now, beside the capture time; the browser prompts the first time and works with no signal.
     const captured_at = new Date().toISOString();
     const located = ADRCore.readLocation(navigator.geolocation);
-    const bitmap = await createImageBitmap(blob);
-    const width = bitmap.width,
-      height = bitmap.height;
-    bitmap.close();
-    if (width * height > 60000000) throw Error('Photo exceeds 60 megapixels.');
+    const { copy, original, size } = await photoCopy(blob);
     const data_url = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
       reader.onerror = () => reject(Error('Photo could not be read.'));
-      reader.readAsDataURL(blob);
+      reader.readAsDataURL(copy);
     });
     const photo = {
       id: newId(),
       room,
       captured_at,
       data_url,
-      width,
-      height,
+      width: size.width,
+      height: size.height,
       ocr_status: 'pending',
       uploaded: false,
+      // The full-size original this copy stands for; the server holds it to this hash.
+      ...(original && { original: { sha256: original.sha256, content_type: blob.type } }),
     };
     if (state.draft !== draft) throw Error('The inspection changed before capture completed.');
     if (draft.photos.length >= 60) throw Error('An inspection can contain at most 60 photos.');
@@ -2813,6 +3075,24 @@ function addPhoto(blob) {
     state.shotPickerPhoto = photo.id;
     changed();
     renderPhotos();
+    if (original) {
+      try {
+        await keepOriginal(
+          draftKey(draft.inspection_id),
+          photo.id,
+          original.bytes,
+          blob.type,
+          original.sha256,
+        );
+      } catch {
+        // The copy alone is the photo's evidence; nothing promises an original that is not here.
+        delete photo.original;
+        say(
+          'This phone could not keep the full-size original of that photo (its storage may be full). The 2,560 px copy is saved and uploads as usual.',
+          'error',
+        );
+      }
+    }
     try {
       await persist();
     } finally {
@@ -2935,7 +3215,7 @@ async function restoreDraft(id) {
     } catch (e) {
       if (e.status === 410) {
         if (!local || !(await archivedWorkPending(local))) {
-          if (local) await deleteDraft(local.key, true);
+          if (local) await deleteDraft(local.key, true, local.record?.photos);
           throw Error('The owner archived this job, so it can no longer be opened.');
         }
         archived = true;
@@ -3256,7 +3536,7 @@ async function restoreSigned(id) {
   await persist();
   const record = await jsonApi('/api/authorizations/' + encodeURIComponent(id));
   if (state.user?.uid !== uid) return;
-  if (record.inspection_id) await deleteDraft(draftKey(record.inspection_id), true);
+  if (record.inspection_id) await deleteDraft(draftKey(record.inspection_id), true, record.photos);
   if (state.user?.uid !== uid) return;
   state.signed = record;
   state.record = null;
@@ -5491,6 +5771,7 @@ function connectivity() {
   renderSaveStatus();
   renderNotes();
   renderPhotos();
+  renderOriginals();
   window.DryingLog?.render();
   window.DryingWatch?.render();
   if (offline) {
@@ -5759,6 +6040,20 @@ async function initialize() {
       $('unsyncedActions').hidden = false;
       return;
     }
+    // Their 2,560 px copies are saved; signing out removes the originals, like other local work.
+    const originals = await originalsAction('readonly', (stored) => stored.count());
+    if (originals) {
+      state.queuePaused = paused;
+      $('unsyncedCount').textContent =
+        (originals === 1
+          ? '1 full-size photo original is kept only on this phone. Its 2,560 px copy is saved.'
+          : originals +
+            ' full-size photo originals are kept only on this phone. Their 2,560 px copies are saved.') +
+        ' Upload originals on Wi-Fi first, or sign out to remove ' +
+        (originals === 1 ? 'it.' : 'them.');
+      $('unsyncedActions').hidden = false;
+      return;
+    }
     await discardAndSignOut();
   };
   click('signOutButton', signOut);
@@ -5886,6 +6181,9 @@ async function initialize() {
   click('addTypedNote', addTypedNote);
   click('takePhoto', captureStill);
   click('uploadPhoto', () => $('photoFileInput').click());
+  click('uploadOriginals', () => uploadOriginals(true));
+  // Chromium on Android says when the phone joins Wi-Fi; Safari has no such event.
+  navigator.connection?.addEventListener?.('change', () => uploadOriginals());
   click('skipShotTag', () => {
     state.shotPickerPhoto = null;
     renderShotPicker();
@@ -5943,6 +6241,7 @@ async function initialize() {
     state.record = record;
     state.ack = stable(record.data);
     state.conflict = false;
+    await markOriginalsReady(draftKey(record.inspection_id), record.photos).catch(() => {});
     seedRoomLoss(record, state.draft.data);
     $('conflictActions').hidden = true;
     invalidate();
@@ -5951,7 +6250,8 @@ async function initialize() {
     await persist();
     await loadPhotoUrls('/api/inspections/' + record.inspection_id + '/photos/');
   });
-  const forkPhotos = (photos) =>
+  // A copy promises its full-size original only when that original moves with it (held).
+  const forkPhotos = (photos, held = new Set()) =>
     photos.map((p) => ({
       ...p,
       id: newId(),
@@ -5961,6 +6261,7 @@ async function initialize() {
       ocr_status: 'pending',
       ocr: null,
       file: undefined,
+      original: held.has(p.id) ? p.original : undefined,
     }));
   click('forkLocal', async () => {
     await syncChain.catch(() => {});
@@ -5975,15 +6276,53 @@ async function initialize() {
     }
     await openNew(data, photos);
   });
-  // The archived job can't serve its photos, so the new draft takes those this phone holds; the
-  // rest stay with the archived job's record.
+  // The archived job can't serve its photos, so the new draft takes those this phone holds, with
+  // their full-size originals; the rest stay with the archived job's record.
   click('forkArchived', async () => {
     if (!state.archived) return;
     const key = draftKey(state.draft.inspection_id),
+      epoch = authEpoch,
       kept = state.draft.photos.filter((p) => p.data_url),
       left = state.draft.photos.length - kept.length;
-    await openNew(structuredClone(state.draft.data), forkPhotos(kept));
-    await deleteDraft(key, true);
+    const held = new Set(
+      (
+        await originalsAction('readonly', (originals) =>
+          originals.getAllKeys(photoRange(key)),
+        ).catch(() => [])
+      ).map((k) => k[1]),
+    );
+    const photos = forkPhotos(kept, held),
+      confirmed = state.record?.photos;
+    // The new draft opens before its first sync, so the originals move with it even when that
+    // sync fails: its copies promise them, and the archived draft may be discarded later.
+    let failure = null;
+    await openNew(structuredClone(state.draft.data), photos).catch((e) => {
+      failure = e;
+    });
+    if (epoch !== authEpoch) return;
+    const target = draftKey(state.draft.inspection_id),
+      moves =
+        target === key
+          ? []
+          : kept
+              .map((p, i) => [p.id, photos[i].id])
+              .filter(
+                ([from, to]) => held.has(from) && state.draft.photos.some((p) => p.id === to),
+              );
+    if (moves.length)
+      await originalsAction('readwrite', (originals) => {
+        for (const [from, to] of moves)
+          originals.get([key, from]).onsuccess = (e) => {
+            const row = e.target.result;
+            if (!row) return;
+            originals.put({ ...row, draft_key: target, id: to, ready: false });
+            originals.delete([key, from]);
+          };
+      });
+    await markOriginalsReady(target, state.record?.photos || []);
+    if (failure) throw failure;
+    uploadOriginals();
+    await deleteDraft(key, true, confirmed);
     say(
       left
         ? 'Saved as a new draft. ' +

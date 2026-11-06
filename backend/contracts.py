@@ -408,13 +408,30 @@ class PhotoLocation(StrictModel):
         return self
 
 
-class PhotoUpload(RevisionRequest):
+class PhotoOriginal(StrictModel):
+    """The full-size original a phone kept when it uploaded a smaller copy. Its hash is fixed at
+    the first upload, so the original that arrives later can only be the one the phone took."""
+
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    content_type: Literal['image/jpeg', 'image/png', 'image/webp']
+
+
+class PhotoMetadata(RevisionRequest):
+    """The fields sent beside a binary photo upload (multipart part 'metadata')."""
+
     photo_id: str = Field(pattern=r'^[a-f0-9]{32}$')
     room: str = Field(min_length=1, max_length=100)
     captured_at: datetime
-    data_url: str = Field(min_length=1, max_length=12000000)
     # Absent from older clients and photos saved before location stamps: "No location recorded".
     location: PhotoLocation | None = None
+    # Absent when the upload is the original itself (older clients, or a photo already small).
+    original: PhotoOriginal | None = None
+
+
+class PhotoUpload(PhotoMetadata):
+    """The base64 JSON upload older app versions still send."""
+
+    data_url: str = Field(min_length=1, max_length=12000000)
 
 
 class PhotoRoomUpdate(RevisionRequest):

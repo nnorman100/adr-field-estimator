@@ -55,6 +55,7 @@ try:
         ClaimDetails,
         InspectionData,
         check_quantity_overrides,
+        PhotoMetadata,
         PhotoUpload,
         PhotoRoomUpdate,
         PhotoShotUpdate,
@@ -99,7 +100,7 @@ try:
     from .delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from .workspaces import AccessDenied, JobArchived, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from .workspace_api import failure_for, register_workspace_routes
-    from .price_book_api import register_price_book_routes
+    from .price_book_api import _multipart_parts, register_price_book_routes
     from .price_book_store import Expired
     from .price_books import price_books_enabled, price_display, saved_basis
     from .scope import (
@@ -116,7 +117,7 @@ try:
         TRANSCRIPT_LIMIT,
         voice_notes_clear,
     )
-    from .job_store import BUCKET, decode_image, fit_jpeg, IMAGE_WORKER
+    from .job_store import BUCKET, IMAGE_TYPES, decode_image, fit_jpeg, IMAGE_WORKER
     from .cloud_log import event
     from .migration_ledger import list_applied
 except ImportError:
@@ -129,6 +130,7 @@ except ImportError:
         ClaimDetails,
         InspectionData,
         check_quantity_overrides,
+        PhotoMetadata,
         PhotoUpload,
         PhotoRoomUpdate,
         PhotoShotUpdate,
@@ -176,7 +178,7 @@ except ImportError:
     from delivery import DOCUMENT_ORIGINS, deliver_signed_adjuster, deliver_homeowner
     from workspaces import AccessDenied, JobArchived, PASSWORD_CHANGE, PASSWORD_CHANGE_REQUIRED
     from workspace_api import failure_for, register_workspace_routes
-    from price_book_api import register_price_book_routes
+    from price_book_api import _multipart_parts, register_price_book_routes
     from price_book_store import Expired
     from price_books import price_books_enabled, price_display, saved_basis
     from scope import (
@@ -193,7 +195,7 @@ except ImportError:
         TRANSCRIPT_LIMIT,
         voice_notes_clear,
     )
-    from job_store import BUCKET, decode_image, fit_jpeg, IMAGE_WORKER
+    from job_store import BUCKET, IMAGE_TYPES, decode_image, fit_jpeg, IMAGE_WORKER
     from cloud_log import event
     from migration_ledger import list_applied
 
@@ -437,8 +439,11 @@ async def current_staff(
 
 MB = 1024 * 1024
 # Sized to the contracts: an 8 MB photo or 10 MB voice note as base64, a 3 MB signature PNG, a 1.4 MB company logo.
+# Current phones send photos as binary (well under the base64 size); older app versions still send base64.
 BODY_LIMITS = [
     ('POST', re.compile(r'/api/inspections/[^/]+/photos'), 13 * MB),
+    # A full-size original as the raw body: the 8 MB photo limit itself.
+    ('POST', re.compile(r'/api/inspections/[^/]+/photos/[^/]+/original'), 8 * MB),
     ('POST', re.compile(r'/api/inspections/[^/]+/voice-notes'), 14 * MB),
     ('POST', re.compile(r'/api/authorize'), int(3.5 * MB)),
     ('POST', re.compile(r'/api/sign'), int(3.5 * MB)),
@@ -1268,13 +1273,66 @@ async def update_inspection(
     )
 
 
+PHOTO_FORM_ERROR = 'Send the photo with its details and one image file.'
+
+
+def photo_fields(model, raw):
+    try:
+        return model.model_validate_json(raw).model_dump(mode='json')
+    except ValidationError as error:
+        # The same 422 shape a JSON body parameter gives.
+        raise RequestValidationError(
+            [{**e, 'loc': ('body', *e['loc'])} for e in error.errors(include_url=False)]
+        )
+
+
+async def photo_upload_body(request):
+    """The phone's binary upload: a multipart 'metadata' JSON part and one 'file' part. Older app
+    versions, and photos they queued offline, still send base64 JSON with a data_url."""
+    content_type = request.headers.get('content-type', '')
+    if 'multipart/form-data' not in content_type.lower():
+        return photo_fields(PhotoUpload, await request.body())
+    parts = _multipart_parts(content_type, await request.body(), PHOTO_FORM_ERROR)
+    metadata = [part for part in parts if part['name'] == 'metadata']
+    files = [part for part in parts if part['name'] == 'file']
+    if len(metadata) != 1 or len(files) != 1:
+        raise HTTPException(400, PHOTO_FORM_ERROR)
+    upload = photo_fields(PhotoMetadata, metadata[0]['body'])
+    upload.update(raw=files[0]['body'], content_type=files[0]['content_type'])
+    return upload
+
+
 @app.post('/api/inspections/{inspection_id}/photos')
 async def upload_photo(
-    inspection_id: str, req: PhotoUpload, staff=Depends(current_staff), store=Depends(get_job_store)
+    inspection_id: str,
+    request: Request,
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
 ):
+    upload = await photo_upload_body(request)
     await stored(store.quota, staff['uid'], 'draft', 60)
-    record = await stored(store.add_photo, staff['uid'], inspection_id, req.model_dump(mode='json'))
+    record = await stored(store.add_photo, staff['uid'], inspection_id, upload)
     return await draft_record(store, staff['uid'], record)
+
+
+# The full-size original a phone kept back when it uploaded a smaller copy, sent later (on Wi-Fi)
+# as the raw image body. It is checked against the hash the first upload recorded and stored
+# beside the copy; the job record, its revision, documents and any signed agreement do not change.
+@app.post('/api/inspections/{inspection_id}/photos/{photo_id}/original')
+async def upload_photo_original(
+    inspection_id: str,
+    request: Request,
+    photo_id: str = Path(max_length=32, pattern=r'^[a-f0-9]{32}$'),
+    staff=Depends(current_staff),
+    store=Depends(get_job_store),
+):
+    kind = IMAGE_TYPES.get(request.headers.get('content-type', '').split(';')[0].strip().lower())
+    if not kind:
+        raise HTTPException(400, 'Use JPEG, PNG or WebP; convert unsupported camera formats first.')
+    raw = await request.body()
+    await stored(store.quota, staff['uid'], 'draft', 60)
+    await stored(store.add_original, staff['uid'], inspection_id, photo_id, raw, kind)
+    return {'photo_id': photo_id, 'original': 'stored'}
 
 
 @app.put('/api/inspections/{inspection_id}/photos/{photo_id}/room')

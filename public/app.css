@@ -338,6 +338,21 @@ body:not(.company-brand) .masthead {
   overflow-wrap: anywhere;
   line-height: 1.4;
 }
+/* Full-size photo originals still on this phone, and the tap that sends them on Wi-Fi. */
+.jobbar p.originals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.35rem;
+}
+.jobbar p.originals[hidden] {
+  display: none;
+}
+.originals button {
+  min-height: 44px;
+  padding: 0.4rem 0.75rem;
+}
 .eyebrow {
   font-size: 0.75rem;
   font-weight: 900;
@@ -2734,6 +2749,10 @@ footer {
   }
   .compact-job .job-heading h1 {
     font-size: 1rem;
+  }
+  .compact-job .job-heading p.originals {
+    white-space: normal;
+    overflow: visible;
   }
   .compact-job .job-heading p {
     color: #ffffffcc;

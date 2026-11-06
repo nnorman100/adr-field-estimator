@@ -134,6 +134,7 @@ window.WorkspaceUI = (() => {
       ['addTypedNote', 'scope'],
       ['takePhoto', 'photos'],
       ['uploadPhoto', 'photos'],
+      ['uploadOriginals', 'photos'],
       ['finishAudit', 'audit'],
       ['saveDraft', 'scope'],
       ['fillScope', 'scope'],

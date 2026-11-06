@@ -297,45 +297,45 @@ async def _upload(request: Request):
     files = [part for part in parts if part['name'] == 'file']
     if len(files) != 1 or not files[0]['body']:
         raise HTTPException(400, 'Upload a CSV or XLSX file.')
-    acknowledgements = [part['text'] for part in parts if part['name'] == 'acknowledgements']
+    acknowledgements = [_text(part) for part in parts if part['name'] == 'acknowledgements']
     if len(acknowledgements) == 1 and ',' in acknowledgements[0]:
         acknowledgements = [part.strip() for part in acknowledgements[0].split(',') if part.strip()]
-    reasons = [part['text'] for part in parts if part['name'] == 'change_reason']
+    reasons = [_text(part) for part in parts if part['name'] == 'change_reason']
     return {
         'raw': files[0]['body'],
         'content_type': files[0]['content_type'],
         'change_reason': reasons[0] if reasons else '',
         'acknowledgements': acknowledgements,
         'confirm_zero_prices': any(
-            part['name'] == 'confirm_zero_prices' and part['text'] == 'yes' for part in parts
+            part['name'] == 'confirm_zero_prices' and _text(part) == 'yes' for part in parts
         ),
     }
 
 
-def _multipart_parts(content_type, body):
+def _multipart_parts(content_type, body, error='Upload a CSV or XLSX file.'):
     match = re.search(r'boundary="?([^";]+)"?', content_type, re.IGNORECASE)
     if match is None:
-        raise HTTPException(400, 'Upload a CSV or XLSX file.')
+        raise HTTPException(400, error)
     boundary = match.group(1).encode('ascii', 'strict')
     if not boundary or len(boundary) > 200:
-        raise HTTPException(400, 'Upload a CSV or XLSX file.')
+        raise HTTPException(400, error)
     marker = b'--' + boundary
     if not body.startswith(marker):
-        raise HTTPException(400, 'Upload a CSV or XLSX file.')
+        raise HTTPException(400, error)
     parts = []
     cursor = len(marker)
     while len(parts) <= 8:
         if body[cursor : cursor + 2] == b'--':
             return parts
         if body[cursor : cursor + 2] != b'\r\n':
-            raise HTTPException(400, 'Upload a CSV or XLSX file.')
+            raise HTTPException(400, error)
         cursor += 2
         end = body.find(b'\r\n' + marker, cursor)
         if end < 0:
-            raise HTTPException(400, 'Upload a CSV or XLSX file.')
+            raise HTTPException(400, error)
         header_blob, separator, content = body[cursor:end].partition(b'\r\n\r\n')
         if not separator:
-            raise HTTPException(400, 'Upload a CSV or XLSX file.')
+            raise HTTPException(400, error)
         headers = {}
         for line in header_blob.split(b'\r\n'):
             name, found, value = line.partition(b':')
@@ -349,11 +349,14 @@ def _multipart_parts(content_type, body):
                     'name': field,
                     'content_type': headers.get('content-type', '').split(';', 1)[0].strip(),
                     'body': content,
-                    'text': content.decode('utf-8', 'replace').strip(),
                 }
             )
         cursor = end + 2 + len(marker)
     raise HTTPException(400, 'The upload has too many parts.')
+
+
+def _text(part):
+    return part['body'].decode('utf-8', 'replace').strip()
 
 
 def _disposition_param(header, name):
