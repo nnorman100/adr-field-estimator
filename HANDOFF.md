@@ -61,8 +61,10 @@ Owner actions (from `docs/STATUS.md`, recheck there):
    reconnect, interruption, Finish cleanup, sub-second latency. All still open.
 2. ADR company profile and logo (Phase 0 item 2).
 3. Invitation check to a Google and an Outlook address (Phase 0 item 3).
-4. Before a second company subscribes: a separate test project (D-006) and Resend email with a
-   company sending domain (D-007).
+4. Before a second company subscribes: isolated test resources (databases, identities and release
+   targets) inside `alert-disaster-field-2026`, and Resend email with a company sending domain
+   (D-007). D-006's separate test project is superseded by the rebuild plan, which keeps test
+   resources in the existing project.
 5. Decide which flag-off features to switch on, one reviewed pull request at a time, each with a
    phone check.
 6. Photo originals (#223) are built but not released or phone-checked.

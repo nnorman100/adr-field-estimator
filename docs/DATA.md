@@ -25,7 +25,7 @@ are in [SECURITY.md](SECURITY.md).
 | `inspections/{id}` (draft job) | property address, coordinates, technician notes, technician and assistant transcripts, photo metadata with the phone's location stamp, owner uid | company members with job access (an estimator only on jobs they created or are assigned); superadmin read-only and audited |
 | `authorizations/{id}` (signed agreement, immutable) | the draft's content, the documents with customer name and claim details (carrier, claim, policy, adjuster name, email and phone, deductible), signature reference, and for a homeowner-link signing the signer's name, role, **IP address and user agent** | same as above; the homeowner holding the signing link or a document link sees the signed documents |
 | `drying_logs/{id}` | readings, and `recorded_by` (the technician's email) | members with job access; superadmin read-only |
-| `_workspace_jobs/{id}` (coordination sidecar) | customer name, phone, email, office notes, address, claim details, assignment | owner and office; an estimator sees name, phone and address, and email only with `coordination`; superadmin read-only and audited |
+| `_workspace_jobs/{id}` (coordination sidecar) | customer name, phone, email, office notes, address, claim details, assignment | owner and office; an estimator with job access records and sees customer name, phone, email and address, but not office notes, claim details or assignment; superadmin read-only and audited |
 | `_job_deliveries`, `_job_monitoring` | delivery status per recipient role (no address); drying-watch address copy, reminder records with a hash of the recipient | members with the matching capability |
 | `_job_insights` | AI job summary prose from verified facts | members with job access |
 | `_estimate_history/{company}` | per signed job: dates, range, final invoiced amount, drying days, closing uid | owner and office |
@@ -59,7 +59,13 @@ disabled.
 - Firebase sign-in session (IndexedDB, falling back to localStorage).
 - The service worker caches static files only; it skips `/api/*`, `sign.html` and `/documents`.
 - Sign-out clears the drafts, photos, notes and originals, or asks to discard unsynced work.
-  Nothing else removes them. The homeowner signing page stores nothing on the device.
+- A draft's local copy, photos and resolved voice notes are also removed when the job is signed
+  and the signed agreement opens on the phone, when sync finds the job signed, and when the owner
+  archives it with no unsynced work. Voice notes still waiting to be resolved stay until resolved,
+  and originals the server has promised stay queued for Wi-Fi; other queued originals are dropped.
+- A queued original is removed once the server confirms its upload, or when the server will
+  always refuse it.
+- The homeowner signing page stores nothing on the device.
 
 ### Email and other processors
 
@@ -121,7 +127,7 @@ app does not enable them (`docs/firebase-isolation.md`).
 and user agent) and their photo and signature objects; draft jobs including archived ones, their
 photos and transcripts; drying logs; customer and coordination sidecars, delivery and monitoring
 records; memberships and invitations; company profiles; the audit log; Firebase Auth users; and
-phone data until sign-out or the owner archives the draft. Archiving is a soft status change that
+phone data until sign-out, signing, archiving or a confirmed original upload, as listed under "The phone". Archiving is a soft status change that
 hides a job without deleting it. The only deletes in the backend are leases, price-book working
 copies, a drying reading, owner-login reservations and the orphan of a failed upload.
 

@@ -54,13 +54,13 @@ Every screen below is at `/app` unless noted. "Data" is what the screen captures
 | Screen | Roles | Data | Acceptance checks |
 |---|---|---|---|
 | Check scope | edit: owner, estimator; office sees read-only | C: address (suggestions), year built, rooms and demolition, equipment counts, standard job charges, technician notes, scope-confirmed box, mold toggles; item list (flag) | edits autosave; offline edits stay on the phone and show "Saved on phone - sync pending"; a company without published prices sees the "prices not set" banner and cannot get an estimate |
-| Customer, Job coordination, Claim and loss details | customer: owner, estimator; coordination: owner, office; claim: `scope` or `coordination` | C: customer name, phone, email, office notes, assigned estimator, claim number, policy, date of loss, adjuster | an estimator cannot assign; an estimator sees the customer without the email; a signed job's customer cannot be edited |
+| Customer, Job coordination, Claim and loss details | customer: owner, estimator; coordination: owner, office; claim: `scope` or `coordination` | C: customer name, phone, email, office notes, assigned estimator, claim number, policy, date of loss, adjuster | an estimator cannot assign; an estimator records and sees the customer's name, phone, email and address, but not office notes, assignment or access lists; a signed job's customer cannot be edited |
 | Walk and photo | owner, estimator | C: live video and audio (16 kHz audio, a 640 px frame every 2 s), photos with room and shot tag, offline voice notes, meter-photo reading, "Fill scope from walkthrough", QR tags | an office user has no Live or photo controls; a photo added offline uploads on reconnect; a photo is never uploaded twice |
 | Drying log | read: job readers; add and remove: owner, estimator | C: air, material and thermal readings with room and time | an office user can read but not add |
 | Ready to review? | owner, estimator (flag `readiness`) | S: gaps; C: Continue anyway | the gaps never block Finish |
 | Review before signing | generate: owner, estimator; read: all job readers | S: customer estimate range and itemized total, four documents (Proposal, Itemized claim, Scope defense letter, Photo audit log), AI review notes for staff only; C: documents-confirmed box | the audit is refused until scope is confirmed and pending voice notes are resolved; any edit after the audit invalidates it; prices and mandatory wording come from the server |
 | Sign on the phone | owner, estimator | C: signature, "Email me a copy" | signing binds to the saved revision and proposal hash; success shows only after a server receipt; a signed job cannot be edited |
-| Send to the homeowner | owner, estimator | C: create, copy, share, revoke a signing link | the link works once, expires after 7 days and stops working after any edit |
+| Send to the homeowner | owner, estimator | C: create, copy, share, revoke a signing link | the link signs once, expires unsigned after 7 days and stops working after any edit; after signing it shows the signed documents and receipt read-only for 30 days |
 | Document delivery | resend: owner, office | S: status per recipient role; C: Resend | an estimator cannot resend |
 | Additional work (flag `priced_extras`) | quote: owner, estimator; approve: owner | C: description, hours; S: server quote | only the owner approves |
 | Job summary (flag `job_summary`) | job readers | S: summary text | with the flag off the card is absent |
@@ -81,7 +81,7 @@ Every screen below is at `/app` unless noted. "Data" is what the screen captures
 
 | Screen | Data | Acceptance checks |
 |---|---|---|
-| Review and sign your estimate, `/sign` | S: four documents, photos; C: signer name, role, two consent boxes, "Email me a copy", signature | a used, expired, revoked or voided link shows the same unavailable message; the same request sent twice returns the same receipt |
+| Review and sign your estimate, `/sign` | S: four documents, photos; C: signer name, role, two consent boxes, "Email me a copy", signature | a used link shows the signed documents and receipt read-only for 30 days after signing, then the unavailable message; an expired or revoked link shows the same unavailable message, and a voided link says the estimate changed; the same request sent twice returns the same receipt |
 | Your signed estimate documents, `/documents` | S: homeowner set (proposal and photos) or adjuster set (claim, defense letter, scope JSON) | read-only; unavailable after 30 days or revocation; the page is not cached offline |
 
 ## 3. Behaviour that holds on every screen
