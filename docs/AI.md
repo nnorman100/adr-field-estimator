@@ -3,6 +3,7 @@
 Every AI feature in DryScope: model, limits, evaluation, switch and Model Armor status. This file
 is the index; it links to the detailed docs instead of copying them:
 
+- Every model call path, prompt hash, limit and the Model Armor modality contract, checked by a test: [ai-inventory.md](ai-inventory.md)
 - Estimate assist (counts, range, warnings, job close): [estimate-assist.md](estimate-assist.md)
 - Live walkthrough build review (historical, October 7, 2026): [gemini-live-build-review.md](gemini-live-build-review.md)
 - Pricing and mandatory wording (server math, never a model): [pricing-source.md](pricing-source.md)
@@ -93,7 +94,8 @@ for those two prompts.
 **Not in use.** Neither the code, the docs, the scripts nor CI refer to Model Armor, and no
 Vertex safety setting or data-loss-prevention screen is configured. The standard puts Model Armor
 on every AI call and, for live voice, screens the text transcript and replies, not the audio
-stream (to be confirmed against Model Armor's supported inputs). Stand-ins that exist today are
+stream (to be confirmed against Model Armor's supported inputs). The target coverage by modality, with raw audio and video pending the owner's decision R2, is in
+[ai-inventory.md](ai-inventory.md#ai-modality-coverage-contract). Stand-ins that exist today are
 application-level only: prompts label input as untrusted, output is schema-validated, the server
 writes prices and prose, inputs are size-limited and rate-limited, and sensitive fields are kept
 out of prompts.
