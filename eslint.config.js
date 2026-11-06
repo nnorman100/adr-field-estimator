@@ -1,6 +1,7 @@
 'use strict';
 const js = require('@eslint/js');
 const globals = require('globals');
+const { fileLengthConfig } = require('./scripts/file_length_eslint');
 
 // Lint only: formatting belongs to Prettier. The frontend has no build step, so the
 // browser files are plain scripts that share globals (for example ADRCore) rather than modules.
@@ -55,4 +56,6 @@ module.exports = [
       'preserve-caught-error': 'off',
     },
   },
+  // Single-file limit of 1,000 lines; files already over it (scripts/file_length_allowlist.json) warn.
+  ...fileLengthConfig(),
 ];
