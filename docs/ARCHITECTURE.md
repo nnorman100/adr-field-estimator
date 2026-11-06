@@ -43,7 +43,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 - Drafts autosave to a per-user IndexedDB queue and sync when online; conflicts return 409 and keep local work.
 
 ## Environments
-There is **one** production project and no separate dev project documented. Releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed. See `docs/RUNBOOK.md`. [Decision needed: a separate dev project — see `docs/DECISIONS.md` D-006.]
+There is **one** production project and no separate dev project documented. Releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed. See `docs/RUNBOOK.md`. Test resources (databases, identities and release targets) are to be isolated inside `alert-disaster-field-2026`; D-006's separate test project is superseded (`docs/DECISIONS.md`).
 
 ## Testing layers
 Python (`tests/`), JS (`npm test`), Playwright browser suite with fake cloud adapters, Firestore emulator job, and real-service checks recorded separately. Device behavior (iPhone camera, mic, Bluetooth, latency) stays open until observed on a device.
