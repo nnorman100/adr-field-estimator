@@ -795,8 +795,12 @@ function absorb(record) {
   if (!record.audit) state.draft.homeowner_link_pending = false;
 
   window.InsightUI?.job(insightChanged);
+  // However the phone learns the server holds a copy (its upload, or a record read after a lost
+  // response), that photo's original may follow it.
+  const confirmed = [];
   for (const remote of record.photos) {
     const photo = state.draft.photos.find((p) => p.id === remote.id);
+    if (!photo?.uploaded) confirmed.push(remote);
     if (!photo) {
       state.draft.photos.push({ ...remote, uploaded: true });
       continue;
@@ -817,6 +821,7 @@ function absorb(record) {
       else delete photo.shot;
     }
   }
+  markOriginalsReady(draftKey(record.inspection_id), confirmed).catch(() => {});
   renderPhotos();
   renderSaveStatus();
   notifyLiveShots();
@@ -1121,10 +1126,6 @@ async function doSync() {
         await reconcile();
         if (!photo.uploaded) absorb(await writeRoom(photo, upload));
       }
-      await markOriginalsReady(
-        draftKey(id),
-        state.record.photos.filter((p) => p.id === photo.id),
-      );
     }
     for (const photo of state.draft.photos.filter(
       (p) => p.uploaded && p.pending_room !== undefined,
@@ -2916,6 +2917,7 @@ async function markOriginalsReady(key, photos) {
   });
 }
 let originalsRun = null,
+  originalsManual = false,
   originalsAgain = null,
   originalsRetry;
 // Where the browser says the phone is on Wi-Fi (Chromium on Android), originals upload on their
@@ -2925,15 +2927,18 @@ let originalsRun = null,
 // run once it ends, since each run reads a row only once.
 function uploadOriginals(manual = false) {
   if (originalsRun) {
+    manual ||= originalsManual;
     if (manual || ADRCore.onWifi(navigator.connection))
       originalsAgain = { manual: manual || !!originalsAgain?.manual };
     refreshOriginals();
   } else if (manual || ADRCore.onWifi(navigator.connection)) {
+    originalsManual = manual;
     originalsRun = sendOriginals(manual)
       .catch(() => {})
       .finally(() => {
         const again = originalsAgain;
         originalsRun = originalsAgain = null;
+        originalsManual = false;
         if (again) uploadOriginals(again.manual);
         else refreshOriginals();
       });
@@ -2948,6 +2953,7 @@ async function sendOriginals(manual) {
     prefix &&
     originalsPrefix() === prefix &&
     navigator.onLine &&
+    (manual || ADRCore.onWifi(navigator.connection)) &&
     (!window.WorkspaceUI?.enabled() || WorkspaceUI.can('photos'))
   ) {
     // One row's bytes in memory at a time, and each row read at most once a run: the first ready
@@ -6300,8 +6306,8 @@ async function initialize() {
             originals.delete([key, from]);
           };
       });
-    if (failure) throw failure;
     await markOriginalsReady(target, state.record?.photos || []);
+    if (failure) throw failure;
     uploadOriginals();
     await deleteDraft(key, true);
     say(

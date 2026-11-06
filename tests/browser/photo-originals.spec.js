@@ -616,6 +616,117 @@ test('an original that becomes ready during a run is sent without another tap', 
   expect((await sent(page)).filter((u) => u.kind === 'bytes')).toHaveLength(2);
 });
 
+test('during a tapped run, an original that becomes ready is sent without a Wi-Fi report', async ({
+  page,
+}) => {
+  await open(page);
+  await addJpeg(page, 'one.jpg', 3000, 2000);
+  await settled(page);
+  await addJpeg(page, 'two.jpg', 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(2);
+  await settled(page);
+  const [early, late] = (await kept(page)).map((row) => row.id).sort();
+  await page.evaluate(async (id) => {
+    const key = draftKey(state.draft.inspection_id);
+    const row = await originalsAction('readonly', (o) => o.get([key, id]));
+    await originalsAction('readwrite', (o) => o.put({ ...row, ready: false }));
+  }, early);
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/photos/' + late + '/original', async (route) => {
+    await held;
+    await route.continue();
+  });
+  const sending = page.waitForRequest(isOriginal);
+  await page.locator('#uploadOriginals').click();
+  await sending;
+  // A sync saves its copy meanwhile and asks for originals, as it does after every sync.
+  await page.evaluate(async (id) => {
+    const key = draftKey(state.draft.inspection_id);
+    const row = await originalsAction('readonly', (o) => o.get([key, id]));
+    await originalsAction('readwrite', (o) => o.put({ ...row, ready: true }));
+    uploadOriginals();
+  }, early);
+  release();
+  await expect.poll(() => kept(page), { timeout: 15000 }).toEqual([]);
+  expect((await sent(page)).filter((u) => u.kind === 'bytes')).toHaveLength(2);
+});
+
+test('an automatic run stops before the next original once the phone leaves Wi-Fi', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const connection = new EventTarget();
+    connection.type = 'cellular';
+    Object.defineProperty(navigator, 'connection', { value: connection, configurable: true });
+  });
+  await open(page);
+  await addJpeg(page, 'one.jpg', 3000, 2000);
+  await settled(page);
+  await addJpeg(page, 'two.jpg', 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(2);
+  await settled(page);
+  expect(await kept(page)).toHaveLength(2);
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/photos/*/original', async (route) => {
+    await held;
+    await route.continue();
+  });
+  const sending = page.waitForRequest(isOriginal);
+  await page.evaluate(() => {
+    navigator.connection.type = 'wifi';
+    navigator.connection.dispatchEvent(new Event('change'));
+  });
+  await sending;
+  await page.evaluate(() => {
+    navigator.connection.type = 'cellular';
+    navigator.connection.dispatchEvent(new Event('change'));
+  });
+  release();
+  await settled(page);
+  // The one already on its way finishes; the other waits for Wi-Fi.
+  expect((await sent(page)).filter((u) => u.kind === 'bytes')).toHaveLength(1);
+  expect(await kept(page)).toEqual([expect.objectContaining({ ready: true })]);
+  await expect(page.locator('#originalsCount')).toHaveText(
+    '1 full-size original waiting on this phone.',
+  );
+});
+
+test('an original whose copy reached the server unseen is ready once the job reopens', async ({
+  page,
+  context,
+}) => {
+  await open(page);
+  await context.setOffline(true);
+  await addJpeg(page, 'lost.jpg', 3000, 2000);
+  await expect(page.locator('#photoGallery .photo')).toHaveCount(1);
+  let blocked = true;
+  await page.route('**/api/inspections/*/photos', (route) =>
+    blocked && route.request().method() === 'POST' ? route.abort('failed') : route.continue(),
+  );
+  const failed = page.waitForEvent('requestfailed', (r) => /\/photos$/.test(r.url()));
+  await context.setOffline(false);
+  await failed;
+  await page.evaluate(() => syncChain.catch(() => {}));
+  // The server saves the copy, but its answer never reaches the phone.
+  blocked = false;
+  await page.evaluate(async () => {
+    const photo = state.draft.photos[0];
+    await jsonApi(
+      '/api/inspections/' + state.draft.inspection_id + '/photos',
+      'POST',
+      photoForm(photo, state.record.revision, photo.data_url),
+    );
+  });
+  blocked = true;
+  expect(await kept(page)).toEqual([expect.objectContaining({ ready: false })]);
+  await page.evaluate(() => restoreDraft(state.draft.inspection_id));
+  expect(await page.evaluate(() => state.draft.photos[0].uploaded)).toBe(true);
+  // Signing later clears the draft, which would drop an original that is not ready.
+  await expect.poll(() => kept(page)).toEqual([expect.objectContaining({ ready: true })]);
+});
+
 test('a separate inspection made from a conflict promises none of the originals', async ({
   page,
 }) => {
@@ -654,7 +765,7 @@ test.describe('an archived job saved as a new draft', () => {
 
   // An estimator's photo taken offline on a job the owner then archives; the phone holds its
   // original, which never followed a copy to the server.
-  async function archivedWithOriginal(page, context, request) {
+  async function archivedWithOriginal(page, context, request, names = ['archived.jpg']) {
     await page.addInitScript(
       (value) => sessionStorage.setItem('synthetic-uid', value),
       'test-owner-ws-estimator',
@@ -665,9 +776,9 @@ test.describe('an archived job saved as a new draft', () => {
     await page.getByRole('button', { name: /Assigned bathroom/ }).click();
     await expect(page.locator('#saveStatus')).toHaveText('Saved');
     await context.setOffline(true);
-    await addJpeg(page, 'archived.jpg');
-    await expect(page.locator('#photoGallery .photo')).toHaveCount(1);
-    expect(await kept(page)).toEqual([expect.objectContaining({ ready: false })]);
+    for (const name of names) await addJpeg(page, name);
+    await expect(page.locator('#photoGallery .photo')).toHaveCount(names.length);
+    expect(await kept(page)).toEqual(names.map(() => expect.objectContaining({ ready: false })));
     const job = await (
       await request.get('/api/jobs/' + JOB + '/coordination', { headers: owner })
     ).json();
@@ -735,5 +846,29 @@ test.describe('an archived job saved as a new draft', () => {
         ),
       )
       .toEqual([[forked.key, forked.photo.id]]);
+  });
+
+  test('keeps ready the originals whose copies the new job saved before its sync failed', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await archivedWithOriginal(page, context, request, ['first.jpg', 'second.jpg']);
+    const archived = await page.evaluate(() => draftKey(state.draft.inspection_id));
+    await failAfterFirstCopy(page);
+    const failed = page.waitForEvent('requestfailed', (r) => /\/photos$/.test(r.url()));
+    await page.locator('#forkArchived').click();
+    await failed;
+    await expect
+      .poll(() => page.evaluate(() => draftKey(state.draft.inspection_id)))
+      .not.toBe(archived);
+    const [first, second] = await page.evaluate(() => state.draft.photos.map((p) => p.id));
+    await expect
+      .poll(() => page.evaluate(() => state.record?.photos.map((p) => p.id)))
+      .toEqual([first]);
+    // The new job holds the first copy, so its original stays ready and a later clean-up keeps it.
+    await expect
+      .poll(async () => Object.fromEntries((await kept(page)).map((row) => [row.id, row.ready])))
+      .toEqual({ [first]: true, [second]: false });
   });
 });
