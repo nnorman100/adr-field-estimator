@@ -8,14 +8,18 @@ only as tests/fixtures/pricing-oracle/README.md describes, never by a new implem
 import base64
 import hashlib
 import json
+import time
 from decimal import ROUND_HALF_EVEN
 
 import pytest
 
-from backend import pricing_v2
+from backend import pricing_v2, signing_links
+from backend.contracts import AuthorizeRequest, HomeownerSignature
 from scripts import pricing_oracle as oracle
 from scripts.pricing_oracle_cases import corpus
+from tests.fakes import FakeStore
 
+OWNER = 'oracle-owner'
 STORED = oracle.stored_files()
 MANIFEST = json.loads(oracle.MANIFEST.read_text(encoding='ascii'))
 # Rebuild-plan boundaries that apply to the code today; each must stay in the corpus.
@@ -115,6 +119,86 @@ def test_canonical_bytes_hash_to_the_recorded_proposal_hash():
             raw = base64.b64decode(proposal['canonical_bytes_base64'])
             assert len(raw) == proposal['byte_length']
             assert hashlib.sha256(raw).hexdigest() == proposal['sha256'], name
+
+
+def _audited(stored_input, expected):
+    """A fake store holding the case's inspection, audited by the production save_audit."""
+    store = FakeStore()
+    store._ref(stored_input['inspection_id']).create(
+        dict(
+            inspection_id=stored_input['inspection_id'],
+            owner_uid=OWNER,
+            revision=stored_input['revision'],
+            status='draft',
+            data=expected['normalized_inspection'],
+            photos=stored_input['photos'],
+            audit=None,
+        )
+    )
+    record = store.save_audit(
+        OWNER, stored_input['inspection_id'], stored_input['revision'], expected['documents']
+    )
+    return store, record
+
+
+def _agreement(store, auth_id, digest):
+    store.db.collection('authorizations').document(auth_id).create(
+        dict(auth_id=auth_id, owner_uid=OWNER, payload_sha256=digest)
+    )
+
+
+def test_production_save_audit_and_signing_reproduce_the_pinned_hashes(monkeypatch):
+    """save_audit, the onsite authorize and the homeowner link sign hash what the oracle pinned:
+    each route re-hashes its own payload and only accepts the stored agreement on a match."""
+    monkeypatch.setattr(signing_links, 'link_id', lambda token: token)
+    signed = 0
+    for name in sorted(STORED):
+        body = _case(name)
+        stored_input, expected = body['input'], body['expected']
+        if 'proposal' not in expected:
+            continue
+        store, record = _audited(stored_input, expected)
+        assert record['audit']['proposal_hash'] == expected['proposal']['sha256'], name
+        if not expected['signing']:
+            continue
+        signing, pinned = stored_input['signing'], expected['signing']
+        onsite = AuthorizeRequest.model_validate(
+            dict(
+                inspection_id=stored_input['inspection_id'],
+                expected_revision=stored_input['revision'],
+                auth_id=signing['auth_id'],
+                proposal_hash=record['audit']['proposal_hash'],
+                signature_png=signing['signature_png'],
+                documents_confirmed=True,
+                email_copy=signing.get('email_copy'),
+            )
+        ).model_dump(mode='json')
+        onsite.pop('email_copy', None)
+        _agreement(store, signing['auth_id'], pinned['onsite_sha256'])
+        assert store.authorize(OWNER, onsite)['payload_sha256'] == pinned['onsite_sha256'], name
+
+        link_auth = pinned['link_payload']['auth_id']
+        _agreement(store, link_auth, pinned['link_sha256'])
+        store.db.records[store._ref(stored_input['inspection_id']).key]['authorization_id'] = (
+            link_auth
+        )
+        store.db.collection('_signing_links').document(signing['link_key']).create(
+            dict(
+                inspection_id=stored_input['inspection_id'],
+                revision=stored_input['revision'],
+                proposal_hash=record['audit']['proposal_hash'],
+                owner_uid=OWNER,
+                status='used',
+                auth_id=link_auth,
+                signed_at=time.time(),
+                sign_attempts=0,
+            )
+        )
+        request = HomeownerSignature.model_validate(signing['link']).model_dump(mode='json')
+        saved = signing_links.sign(store, signing['link_key'], request, {})
+        assert saved['payload_sha256'] == pinned['link_sha256'], name
+        signed += 1
+    assert signed
 
 
 def test_corpus_builder_matches_the_stored_inputs():
