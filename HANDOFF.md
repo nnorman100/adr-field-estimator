@@ -78,8 +78,11 @@ and are **not** described in this repository's docs until they merge.
 
 ## Rules that decide what you may do
 
-- Agents do not merge, deploy, promote, change IAM, secrets or Firebase Auth settings; only the
-  owner does (D-009, `CLAUDE.md`).
+- Pull requests merge automatically once every check passes and the review is done; high-risk
+  work needs two independent reviews. Deploys run to test first, then live. Still owner-only:
+  anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets,
+  Firebase Auth settings); turning on deletion or new pricing; and production steps the owner
+  runs. This supersedes D-009 (`docs/DECISIONS.md`).
 - Never run a blanket `firebase deploy`; only `firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026`
   after the backend is deployed.
 - Never weaken a test, eval fixture, threshold or workflow; the Test guard blocks it.

@@ -12,7 +12,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
-  - Agents do not merge PRs; Nate approves every merge (D-009 in `docs/DECISIONS.md`, Oct 28). Every production deploy needs Nate's go.
+  - Pull requests merge automatically after every check and the review (two independent reviews for high-risk work); deploys run test then live. D-009 in `docs/DECISIONS.md` is superseded (Nov 6); deleting data, irreversible or security/permission changes, turning on deletion or new pricing, and production steps Nate runs stay owner-only.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
