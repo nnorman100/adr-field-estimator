@@ -1,0 +1,19 @@
+# Repo-level no-mistakes settings. Schema: no-mistakes "Repo Config Reference".
+# The review agent (codex) and the fixer are global-only (review_agents in the
+# global config), so they are not set here.
+
+# Automatic commits must leave these for a person: workflow files, the
+# instruction files, and the test guard script and its config. A match parks the
+# step at an approval gate even under unattended runs. Trusted-only: honored from
+# the default-branch copy of this file.
+protected_paths:
+  - ".github/workflows/**"
+  - ".github/test-guard.json"
+  - "CLAUDE.md"
+  - "AGENTS.md"
+  - "scripts/test-guard.mjs"
+
+# Review findings get up to two automatic fix rounds (the built-in default is 0,
+# which parks every finding for a person). Matches the global setting.
+auto_fix:
+  review: 2

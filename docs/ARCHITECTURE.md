@@ -43,7 +43,31 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 - Drafts autosave to a per-user IndexedDB queue and sync when online; conflicts return 409 and keep local work.
 
 ## Environments
-There is **one** production project and no separate dev project documented. Releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed. See `docs/RUNBOOK.md`. [Decision needed: a separate dev project — see `docs/DECISIONS.md` D-006.]
+There is **one** production project and no separate dev project documented. Releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed. See `docs/RUNBOOK.md`. Test resources (databases, identities and release targets) are to be isolated inside `alert-disaster-field-2026`; D-006's separate test project is superseded (`docs/DECISIONS.md`).
+
+## Destination (accepted, not built yet)
+Source: the rebuild plan (`dry-standard-replan` report, sections 3, 7 and 8) under the Technology
+Standard Stack. Everything stays in `alert-disaster-field-2026`; test and live get separate
+resources there. Every row is a **Gap** today; the stage is the one that closes it. Service and
+database names are proposals.
+
+| Area | Today | Destination | Status | Closes in |
+|---|---|---|---|---|
+| Frontend | static JavaScript in `public/`, no build | TypeScript Next.js with React, Tailwind and shadcn/ui, on Cloud Run (`dryscope-api`) | Gap | S2 shell, S5 workflows, S6 offline |
+| Business backend | Python on Cloud Run | Next.js TypeScript server routes with Zod at every boundary | Gap | S2 skeleton, S5 |
+| Live relay | Python WebSocket route in the main service | separate Node Cloud Run relay (`dryscope-live`) using the Google Gen AI TypeScript SDK | Gap | S7 |
+| Region | service, `(default)` Firestore and evidence in `us-west2`; Live in `us-central1` | active app and data in `us-central1`; `(default)` stays in `us-west2` as the legacy source | Gap | S2 provisioning, S8 cutover |
+| Official data | Firestore `(default)` | Cloud SQL Postgres with row-level security; drafts in a named central Firestore field database; submission is one-way Firestore to Postgres | Gap | S3 schema, S5 submit and sign, S8 cutover |
+| Schema changes | none; one-off scripts | numbered Drizzle migrations, additive, run before traffic | Gap | S2 |
+| Identity | Firebase Auth plus private memberships | Identity Platform with a tenant per company and TOTP for privileged users | Gap | S3, S8 identity mapping |
+| Pricing and documents | Python Decimal (`claims.py`, `pricing_v2.py`) | TypeScript calculator with zero byte or hash differences, proved by an A/B harness | Gap | S4 |
+| Infrastructure and release | scripts and `.github/workflows/deploy.yml` | Terraform (separate data and app roots) through Actions OIDC, test then live; App Lifecycle Manager after launch | Gap | S2, S11 |
+| Tests | pytest, `node:test`, Playwright | new tests in Vitest (the required-docs test is the first); old suites convert by area without weakening | Gap | S1 onward |
+
+Still **[open]** (owner gates in the rebuild plan, section 10): the Google Cloud organization (R1),
+the Live and voice-note screening exception (R2), image screening location and Preview status
+(R3), Cloud SQL tier and recovery targets (R4), per-company AI ceilings (R5), classification and
+retention of existing data (R6), and identity enrollment and recovery timing (R7).
 
 ## Testing layers
 Python (`tests/`), JS (`npm test`), Playwright browser suite with fake cloud adapters, Firestore emulator job, and real-service checks recorded separately. Device behavior (iPhone camera, mic, Bluetooth, latency) stays open until observed on a device.

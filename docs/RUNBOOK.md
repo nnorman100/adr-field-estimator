@@ -16,7 +16,10 @@
 Check the live version (`YYYY.MM.DD-N`) in the app footer or **Account** menu (`App version YYYY.MM.DD-N`), or query `/api/health` (reports `version` and `source_commit`) and `node scripts/verify_hosting.js`. Read the newest rows of `RELEASES.md`, the GitHub Releases page, and the newest Deploy run in the Actions history (automatic deploys are recorded there, not in `RELEASES.md`). Do not trust memory or this file for "what is live."
 
 ## Release
-Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. Operator-run, with the owner's go. Full commands: `docs/firebase-isolation.md`. Once the owner has set it up, `.github/workflows/deploy.yml` also releases master commits after CI, assigns the next `YYYY.MM.DD-N` version tag and GitHub Release after verification succeeds, and rolls back on failure (`docs/firebase-isolation.md#automatic-deploys`); it stops and leaves the commit for a manual release when rules or indexes changed, or when the repository baseline would turn off a feature now serving.
+Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. A hand release is a production step the owner runs (`HANDOFF.md`, "Rules that decide what you may do"). Full commands: `docs/firebase-isolation.md`. Once the owner has set it up, `.github/workflows/deploy.yml` also releases master commits after CI, assigns the next `YYYY.MM.DD-N` version tag and GitHub Release after verification succeeds, and rolls back on failure (`docs/firebase-isolation.md#automatic-deploys`); it stops and leaves the commit for a manual release when rules or indexes changed, or when the repository baseline would turn off a feature now serving.
+
+## Pipeline gate settings
+`.no-mistakes.yaml` sets the repo-level no-mistakes gate rules: protected paths (workflow files, `CLAUDE.md`, `AGENTS.md`, `scripts/test-guard.mjs` and `.github/test-guard.json`, which automatic fixes must leave for a person) and two review auto-fix rounds. The reviewer agent is a global-only setting. Protected paths take effect once this file is on `master`.
 
 ## Switch a company to its own price table
 The company's owner does this in the app, with `PRICE_BOOKS_ENABLED` on. It cannot be undone.

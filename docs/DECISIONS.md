@@ -27,6 +27,8 @@ Status: accepted.
 ### D-006: Add a separate test project before a second company subscribes (Oct 28, 2026)
 Status: accepted (owner). Until then, releases keep staging at 0% traffic in production. Adding the test project is a prerequisite for onboarding the second company.
 
+Superseded (Nov 6, 2026, owner, per the rebuild plan): test resources, databases, identities and release targets are isolated inside `alert-disaster-field-2026` instead of a separate project. Isolated test resources remain a prerequisite for onboarding the second company.
+
 ### D-007: Switch email to Resend before a second company subscribes (Oct 28, 2026)
 Status: accepted (owner). Gmail stays for ADR until then. Background: production uses Gmail SMTP (`INVITATION_TRANSPORT=smtp`) from a personal account, capped near 500/day. The code already supports the Resend email service (`INVITATION_TRANSPORT=resend`, the default, with `RESEND_API_KEY` and `INVITATION_FROM`; see `mail_settings` in `backend/workspaces.py`). What remains is the owner's decision, a sending domain, the secret, and a release. Note the name clash: the in-app **Resend** button re-sends documents and is unrelated to the Resend service.
 
@@ -35,6 +37,8 @@ Status: accepted (owner). Options considered: stay standalone; fold into the pla
 
 ### D-009: Agents ask before merging any PR (Oct 28, 2026)
 Status: accepted (owner). Overrides the roadmap's earlier rule that agents may merge Low/Medium risk PRs with green CI. Enforced by the `gh pr merge` approval rule in `.claude/settings.json`.
+
+Superseded (Nov 6, 2026, owner, per the rebuild plan's settled "test-to-live deployment and ordinary automatic reviewed merges"): pull requests merge automatically once every check passes and the review is done, with two independent reviews for high-risk work; deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs.
 
 ### D-010: No default prices; ADR's rates are ADR's alone (Nov 2, 2026)
 Status: accepted (owner). ADR's estimating sheet is proprietary to ADR, so it is not a product default. A company without published prices is blocked from pricing with a clear message. ADR's rates are kept as ADR's data and used only for company `adr`, and no rate ships in browser code. Later steps of the owner-pricing plan add owner-defined tables; formulas and `CALCULATION_VERSION` are unchanged here.

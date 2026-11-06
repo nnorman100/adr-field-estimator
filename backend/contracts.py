@@ -10,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     model_validator,
+    model_serializer,
 )
 
 try:
@@ -551,6 +552,24 @@ class PhotoLog(StrictModel):
     location: PhotoLocation | None = None
 
 
+class AreaBracket(StrictModel):
+    up_to_sf: int | None = Field(ge=1, le=100000)
+
+    @model_serializer(mode='wrap')
+    def keep_unlimited_boundary(self, handler):
+        # Documents exclude optional None fields. This None is an explicit unlimited band,
+        # required to round-trip the same bracket schedule when a saved audit is read again.
+        return {**handler(self), 'up_to_sf': self.up_to_sf}
+
+
+class PriceBracket(AreaBracket):
+    unit_price: str
+
+
+class CushionBracket(AreaBracket):
+    percent: str
+
+
 class LineItem(StrictModel):
     code: str
     description: str
@@ -561,6 +580,10 @@ class LineItem(StrictModel):
     total: float
     # Added with company price tables; documents audited before them omit it.
     xactimate_code: str | None = None
+    price_bracket: PriceBracket | None = Field(default=None, exclude_if=lambda value: value is None)
+    bracket_mode: Literal['tiered', 'whole-job'] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class Proposal(StrictModel):
@@ -637,6 +660,9 @@ class RangePolicy(StrictModel):
     first_sf: int = Field(default=1000, ge=1, le=100000)
     first_percent: str = Field(default='50', min_length=1, max_length=10)
     beyond_percent: str = Field(default='20', min_length=1, max_length=10)
+    brackets: list[CushionBracket] | None = Field(
+        default=None, max_length=20, exclude_if=lambda value: value is None
+    )
 
 
 class AfterHoursPolicy(StrictModel):
@@ -679,6 +705,9 @@ class PricingPolicy(StrictModel):
     # Absent on every table published before it, and left out of a dump so a saved document's bytes
     # and its proposal hash stay as they were signed.
     assist: AssistPolicy | None = Field(default=None, exclude_if=lambda value: value is None)
+    bracket_mode: Literal['tiered', 'whole-job'] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode='after')
     def check_policy_values(self):
@@ -716,6 +745,9 @@ class PriceBasis(StrictModel):
     rates: dict[str, str] | None = None
     policy: PricingPolicy | None = None
     item_count: int | None = Field(default=None, ge=0, le=150)
+    price_brackets: dict[str, list[PriceBracket]] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode='after')
     def check_version_fields(self):

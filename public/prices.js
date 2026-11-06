@@ -578,6 +578,7 @@
     'after_hours',
   ];
   const ITEM_FIELD_LABELS = {
+    price_brackets: 'square-foot price brackets',
     name: 'name',
     customer_description: 'description on documents',
     code: 'claim code',
@@ -613,6 +614,8 @@
   const CABINETRY_SCOPE_MEANING =
     "Finished-surface demolition only raises just the finished area in that room. All category 3 room lines raises every line priced from that room's square feet: finished and unfinished demolition, and wet floor and floor items such as antimicrobial and HEPA vacuuming. Items not priced from the room, such as equipment and labor hours, never change.";
   const POLICY_LABELS = {
+    bracket_mode: 'Square-foot bracket mode',
+    'range.brackets': 'Cushion brackets',
     estimate_mode: 'Estimate style',
     area_basis: 'Area basis',
     'range.first_sf': 'Cushion: first square feet',
@@ -854,6 +857,9 @@
       const mine = ed.problems.find((p) => p.item_id === row.dataset.priceItem),
         hint = row.querySelector('.price-problem');
       if (hint) hint.textContent = mine && problemKind(mine) !== 'blank' ? mine.message : '';
+      const item = ed.items.find((item) => item.item_id === row.dataset.priceItem);
+      const zero = row.querySelector('.price-zero');
+      if (zero && item) zero.hidden = !(item.allow_zero && hasZeroPrice(item));
     }
   }
   function edited() {
@@ -861,6 +867,7 @@
     mine.edits += 1;
     editStatus('Saving…', 'saving');
     paintBanner();
+    paintProblems();
     $('priceReview')?.remove();
     clearTimeout(mine.saveTimer);
     mine.saveTimer = setTimeout(() => saveCopy(mine).catch(saveLost), 700);
@@ -965,10 +972,12 @@
       });
       if (ed !== mine || turn !== mine.sampleTurn) return;
       mine.samples = result.samples || [];
+      mine.boundarySamples = result.boundary_samples || [];
       mine.problems = result.problems || mine.problems;
     } catch {
       if (ed !== mine || turn !== mine.sampleTurn) return;
       mine.samples = [];
+      mine.boundarySamples = [];
     }
     keepPlace(() => {
       paintSamples();
@@ -990,18 +999,154 @@
     const target = $('priceSamples');
     if (!target || !ed) return;
     target.replaceChildren();
-    if (!ed.samples.length) {
+    if (!ed.samples.length && !ed.boundarySamples?.length) {
       target.hidden = true;
       return;
     }
     target.hidden = false;
     const medium = ed.samples.find((s) => s.key === 'medium') || ed.samples[0];
-    target.append(node('p', sampleSentence(medium)), node('p', medium.notice));
+    if (medium) target.append(node('p', sampleSentence(medium)), node('p', medium.notice));
     const all = node('details', undefined, 'price-samples');
     all.append(node('summary', 'Show all samples'));
     for (const sample of ed.samples)
       all.append(node('p', sampleSentence(sample) + ' ' + (sample.description || '')));
     target.append(all);
+    if (ed.boundarySamples?.length) {
+      const boundaries = node('div', undefined, 'price-boundaries');
+      boundaries.append(node('h3', 'At each square-foot boundary'));
+      for (const boundary of ed.boundarySamples) {
+        boundaries.append(
+          node('p', boundary.label + ' · ' + boundary.boundary_sf + ' sq ft · ' + boundary.mode),
+        );
+        for (const sample of boundary.samples)
+          boundaries.append(
+            node(
+              'p',
+              sample.sf + ' sq ft: ' + sample.low + (sample.high ? ' to ' + sample.high : ''),
+            ),
+          );
+        if (boundary.price_drop)
+          boundaries.append(
+            node(
+              'strong',
+              'Price drop at this boundary. A larger job can cost less in whole-job mode.',
+            ),
+          );
+        boundaries.append(node('small', boundary.notice));
+      }
+      target.append(boundaries);
+    }
+  }
+
+  function bracketText(bands, field) {
+    if (!bands?.length) return 'flat price / legacy cushion';
+    let previous = 0;
+    return bands
+      .map((band) => {
+        const limit = band.up_to_sf;
+        const span = limit == null ? 'over ' + previous : previous + '–' + limit;
+        previous = limit;
+        return (
+          span +
+          ' sq ft: ' +
+          (field === 'percent' ? band[field] + '%' : '$' + band[field] + '/sq ft')
+        );
+      })
+      .join('; ');
+  }
+
+  function bracketEditor(holder, key, field, title, initial) {
+    const box = node('div', undefined, 'price-subgroup');
+    const paint = () => {
+      box.replaceChildren(node('h3', title));
+      const bands = holder[key];
+      if (!bands) {
+        if (ed.manage)
+          box.append(
+            button('Add ' + title.toLowerCase(), () => {
+              holder[key] = clone(initial());
+              edited();
+              paint();
+            }),
+          );
+        return;
+      }
+      box.append(
+        node(
+          'p',
+          'Each upper limit starts where the previous band ends. The last band has no limit. Up to 20 bands.',
+        ),
+      );
+      if (field === 'unit_price')
+        box.append(node('p', 'These prices replace the flat price for this item.'));
+      bands.forEach((band, index) => {
+        const row = node('div', undefined, 'price-bracket');
+        row.append(node('span', 'Band ' + (index + 1)));
+        if (index === bands.length - 1) row.append(node('p', 'Remaining square feet (unlimited)'));
+        else
+          row.append(
+            labeled(
+              'Through sq ft',
+              textInput(
+                band.up_to_sf,
+                (value) => {
+                  band.up_to_sf = /^\d+$/.test(value.trim()) ? Number(value) : value;
+                  edited();
+                },
+                { decimal: true, name: key + '_limit_' + index },
+              ),
+            ),
+          );
+        row.append(
+          labeled(
+            field === 'percent' ? 'Cushion (%)' : 'Price per sq ft',
+            textInput(
+              band[field],
+              (value) => {
+                band[field] = value.trim();
+                edited();
+              },
+              { decimal: true, name: key + '_value_' + index },
+            ),
+          ),
+        );
+        if (ed.manage && bands.length > 1)
+          row.append(
+            button('Remove band ' + (index + 1), () => {
+              bands.splice(index, 1);
+              bands[bands.length - 1].up_to_sf = null;
+              edited();
+              paint();
+            }),
+          );
+        box.append(row);
+      });
+      if (ed.manage) {
+        box.append(
+          button('Add band', () => {
+            if (bands.length >= 20) return;
+            const last = bands[bands.length - 1];
+            bands.splice(bands.length - 1, 0, {
+              ...last,
+              up_to_sf: Number(bands.at(-2)?.up_to_sf || 0) + 500,
+            });
+            edited();
+            paint();
+          }),
+        );
+        box.append(
+          button(field === 'percent' ? 'Use two-step cushion' : 'Use flat price', () => {
+            delete holder[key];
+            edited();
+            paint();
+          }),
+        );
+      }
+      window.WorkspaceUI?.policy();
+    };
+    box.refreshBrackets = paint;
+    paint();
+    return box;
   }
 
   function labeled(text, input, hint) {
@@ -1164,6 +1309,27 @@
         },
       ),
       areaBasisChoices(),
+      radios(
+        'bracket_mode',
+        'Square-foot bracket mode (prices and cushion)',
+        ed.policy.bracket_mode || 'tiered',
+        [
+          ['tiered', 'Tiered: each band prices only its square feet (default)'],
+          ['whole-job', 'Whole-job: one band prices all square feet; prices may drop'],
+        ],
+        (value) => {
+          ed.policy.bracket_mode = value;
+          edited();
+        },
+      ),
+      node(
+        'p',
+        'With the default two-step cushion, whole-job mode brings back the 1,001 sq ft step even if you have not added any brackets.',
+      ),
+      node(
+        'p',
+        'Price brackets count square feet before waste. Tiered prices fill each item’s bands across its matching rooms, highest adjusted-cost rooms first. Whole-job picks every item’s band and the cushion band from one job total: each room counts once at the largest area figure its priced square-foot items use, with finished plus unfinished demolition counted as one figure; square feet typed without a room add once. Tiered cushion brackets count the combined area-priced labor and materials. Boundary samples below show isolated work.',
+      ),
     );
     rangeBox.append(
       node('h3', 'Range cushion'),
@@ -1178,6 +1344,18 @@
         'Cushion beyond them (%)',
         'Cannot be more than the first.',
       ),
+    );
+    const legacyCushion = node('details');
+    legacyCushion.append(node('summary', 'Two-step cushion settings'));
+    // Retain the old controls and values for tables that have not opted into custom bands.
+    while (rangeBox.children.length > 1) legacyCushion.append(rangeBox.children[1]);
+    legacyCushion.open = !ed.policy.range.brackets;
+    rangeBox.append(
+      legacyCushion,
+      bracketEditor(ed.policy.range, 'brackets', 'percent', 'Cushion brackets', () => [
+        { up_to_sf: ed.policy.range.first_sf, percent: ed.policy.range.first_percent },
+        { up_to_sf: null, percent: ed.policy.range.beyond_percent },
+      ]),
     );
     card.append(rangeBox);
     const assist = node('div', undefined, 'price-subgroup');
@@ -1301,6 +1479,18 @@
     return card;
   }
 
+  function hasZeroPrice(item) {
+    return (
+      (item.unit_price !== '' && Number(item.unit_price) === 0) ||
+      item.price_brackets?.some((band) => band.unit_price !== '' && Number(band.unit_price) === 0)
+    );
+  }
+  function areaBracketItem(item) {
+    return (
+      item.unit === 'sf' &&
+      (item.quantity_source === 'typed' || item.quantity_source.startsWith('room:'))
+    );
+  }
   function itemRow(item) {
     const row = node('div', undefined, 'price-row price-item');
     row.dataset.priceItem = item.item_id;
@@ -1330,7 +1520,7 @@
       ),
       priceLabel = labeled('Price per ' + unitLabel(item.unit), price),
       on = node('label', undefined, 'price-check'),
-      zero = node('label', undefined, 'price-check'),
+      zero = node('label', undefined, 'price-check price-zero'),
       ack = checkInput(ed.acks.has(item.item_id), (checked) => {
         if (checked) ed.acks.add(item.item_id);
         else ed.acks.delete(item.item_id);
@@ -1347,11 +1537,17 @@
     );
     row.classList.toggle('price-off', ed.manage && !item.enabled);
     zero.append(ack, node('span', 'I confirm this zero price is intentional.'));
-    zero.hidden = !(item.allow_zero && Number(item.unit_price) === 0 && item.unit_price !== '');
+    zero.hidden = !(item.allow_zero && hasZeroPrice(item));
     row.append(name, priceLabel, zero);
     if (ed.manage) row.append(on);
     row.append(node('small', sourceLabel(item.quantity_source), 'price-source'));
     row.append(node('p', undefined, 'price-problem'));
+    const brackets = bracketEditor(item, 'price_brackets', 'unit_price', 'Price brackets', () => [
+      { up_to_sf: 500, unit_price: item.unit_price },
+      { up_to_sf: null, unit_price: item.unit_price },
+    ]);
+    brackets.hidden = !areaBracketItem(item);
+    row.append(brackets);
     const more = node('details', undefined, 'price-more'),
       unitSelect = selectInput(item.unit, Object.entries(UNIT_LABELS), (value) => {
         setUnit(value);
@@ -1359,6 +1555,11 @@
       }),
       setUnit = (value) => {
         item.unit = fittedUnit(item.group, item.quantity_source, value);
+        brackets.hidden = !areaBracketItem(item);
+        if (!areaBracketItem(item) && item.price_brackets) {
+          delete item.price_brackets;
+          brackets.refreshBrackets();
+        }
         unitSelect.value = item.unit;
         lockUnit(unitSelect, item.group, item.quantity_source);
         priceLabel.firstChild.textContent = 'Price per ' + unitLabel(item.unit);
@@ -1588,6 +1789,9 @@
         unitLabel(row.unit) +
         ')' +
         (row.after ? ' at $' + row.after : '') +
+        (row.fields?.length
+          ? ': ' + row.fields.map((change) => itemChange(change, row.percent)).join(', ')
+          : '') +
         (row.enabled ? '' : ', switched off')
       );
     if (row.change === 'removed') return 'Removed ' + row.name;
@@ -1618,6 +1822,7 @@
     );
   }
   function itemFieldValue(field, value) {
+    if (field === 'price_brackets') return bracketText(value, 'unit_price');
     if (typeof value === 'boolean') return value ? 'yes' : 'no';
     if (field === 'unit') return unitLabel(value);
     if (field === 'group') return groupLabel(value);
@@ -1627,6 +1832,8 @@
     return value === '' ? 'none' : String(value);
   }
   function policyValue(field, value) {
+    if (field === 'range.brackets') return bracketText(value, 'percent');
+    if (field === 'bracket_mode') return value || 'tiered';
     if (typeof value === 'boolean') return value ? 'on' : 'off';
     if (field === 'estimate_mode') return value === 'single' ? 'one price' : 'low to high range';
     if (field === 'area_basis')
@@ -1808,6 +2015,7 @@
       publishedIds: new Set(view.starter ? [] : (view.items || []).map((item) => item.item_id)),
       problems: [],
       samples: [],
+      boundarySamples: [],
       sampleTurn: 0,
       acks: new Set(),
       open: new Set(['job_charges', 'demolition']),
