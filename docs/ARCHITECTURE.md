@@ -34,12 +34,12 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Job close, estimate accuracy | `backend/outcomes.py`, `public/job-close.js`, `public/estimate-accuracy.js`, `docs/estimate-assist.md` |
 | Warnings while estimating | `backend/estimate_warnings.py`, `public/app.js` (the readiness dialog), `docs/estimate-assist.md` |
 | Readiness, insights, AI usage | `readiness.py`, `insights.py`, `ai_usage.py` |
-| Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
+| Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `RETENTION_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
 | Release scripts | `scripts/deploy_backend.py`, `stamp_hosting.py`, `verify_*`, `auto_deploy.py` (automatic deploys) |
 
 ## Data model (high level)
 - Signed agreements and evidence are **immutable**. Mutable coordination (assignment, claim details, delivery, readings) lives in **sidecars** beside the job.
-- Private collections: `_companies`, `_memberships`, `_platform_admins`, `_invitations`, `_invite_keys`, `_admin_events` (also the support audit log), `_company_limits`, `_workspace_jobs`, `_workspace_authorizations`, plus others listed in `docs/company-workspaces.md`.
+- Private collections: `_companies`, `_memberships`, `_platform_admins`, `_invitations`, `_invite_keys`, `_admin_events` (also the support audit log), `_company_retention`, `_retention_state`, `_company_limits`, `_workspace_jobs`, `_workspace_authorizations`, plus others listed in `docs/company-workspaces.md`.
 - Drafts autosave to a per-user IndexedDB queue and sync when online; conflicts return 409 and keep local work.
 
 ## Environments

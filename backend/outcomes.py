@@ -429,6 +429,11 @@ class Outcomes:
             )
             row['landed'] = landed(final, row)
             self._write(tx, company_id, rows, job_id, row)
+            tx.set(
+                self.ws.ref('_job_monitoring', job_id),
+                dict(job_id=job_id, company_id=company_id, job_closed_at=row['closed_at']),
+                merge=True,
+            )
             self.ws.event(
                 tx,
                 uid,

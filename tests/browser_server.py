@@ -19,7 +19,7 @@ import uvicorn
 from fastapi import Request, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 import backend.main as bm
-from backend import places, ai_features, monitoring_store, price_books, signing_links
+from backend import places, ai_features, monitoring_store, price_books, retention, signing_links
 from backend.adr_price_book import adr_rates
 from backend.price_book_store import PriceBookStore
 
@@ -375,6 +375,8 @@ async def workspaces_fixture(request: Request):
     price_fixture['unset'] = bool(body.get('prices_unset'))
     # Absent means off, so other specs keep the settings rate field and ADR's starting prices.
     price_books.set_enabled(bool(body.get('price_books')) if body.get('enabled') else False)
+    # The record-retention sweep, off unless a spec asks for it.
+    retention._forced = bool(body.get('retention')) if body.get('enabled') else False
     if not body.get('enabled'):
         store = legacy_store
         bm.WORKSPACES_ENABLED = False

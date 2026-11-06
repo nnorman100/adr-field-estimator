@@ -21,6 +21,7 @@ const ASSETS = [
   '/insights.js?v=' + VERSION,
   '/job-close.js?v=' + VERSION,
   '/estimate-accuracy.js?v=' + VERSION,
+  '/retention.js?v=' + VERSION,
   '/psychrometrics.js?v=' + VERSION,
   '/drying.js?v=' + VERSION,
   '/tags.js?v=' + VERSION,

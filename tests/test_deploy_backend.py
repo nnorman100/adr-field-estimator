@@ -63,7 +63,7 @@ def test_workspaces_off_is_explicit_and_receives_no_traffic():
     argv = deploy.command('off', 'workspaces-off-1', HEAD)
     assert env_flag(argv) == (
         '--update-env-vars=^|^WORKSPACES_ENABLED=false'
-        '|AI_FEATURES=readiness|PRICE_BOOKS_ENABLED=false'
+        '|AI_FEATURES=readiness|PRICE_BOOKS_ENABLED=false|RETENTION_ENABLED=false'
     )
     assert '--no-traffic' in argv and '--tag=workspaces-off-1' in argv
     # The Maps key is mounted from its Secret Manager secret, never passed as a value.
@@ -97,7 +97,7 @@ def test_feature_baseline_changes_only_when_asked():
     )
     assert env_flag(overridden) == (
         '--update-env-vars=^|^WORKSPACES_ENABLED=true'
-        '|AI_FEATURES=drying_watch,readiness|PRICE_BOOKS_ENABLED=true'
+        '|AI_FEATURES=drying_watch,readiness|PRICE_BOOKS_ENABLED=true|RETENTION_ENABLED=false'
     )
     cleared = deploy.command('on', 'features-off-1', HEAD, ai_features='', price_books='off')
     assert '|AI_FEATURES=|PRICE_BOOKS_ENABLED=false' in env_flag(cleared)
@@ -290,6 +290,7 @@ def test_staff_emails_are_set_only_when_asked_for():
         'WORKSPACES_ENABLED': 'true',
         'AI_FEATURES': 'readiness',
         'PRICE_BOOKS_ENABLED': 'false',
+        'RETENTION_ENABLED': 'false',
         'STAFF_EMAILS': 'a@example.com,b@example.com',
     }
 
@@ -446,3 +447,23 @@ def test_version_flag_stamps_commit_and_version_into_build_context(capsys, stamp
 
 def test_estimate_assist_is_a_known_ai_feature():
     assert deploy.ai_features_value('readiness,estimate_assist') == 'readiness,estimate_assist'
+
+
+def test_retention_is_off_in_the_baseline_and_on_only_when_asked(capsys, monkeypatch):
+    """The record-retention sweep deletes customer data, so the reviewed baseline keeps it off."""
+    assert deploy.DEFAULT_RETENTION == 'off'
+    assert parse_env_flag(env_flag(deploy.command('on', 'tag-1', HEAD)))['RETENTION_ENABLED'] == (
+        'false'
+    )
+    assert 'RETENTION_ENABLED=true' in env_flag(deploy.command('on', 'tag-1', HEAD, retention='on'))
+    never = lambda *args, **kwargs: pytest.fail('gcloud ran')
+    argv = ['--workspaces', 'on', '--tag', 'stage-1', '--dry-run']
+    assert deploy.main(argv, run=never, git=fake_git()) == 0
+    assert 'PRICE_BOOKS_ENABLED=false RETENTION_ENABLED=false' in capsys.readouterr().out
+    assert deploy.main([*argv, '--retention', 'on'], run=never, git=fake_git()) == 0
+    assert '|RETENTION_ENABLED=true' in capsys.readouterr().out
+    monkeypatch.setattr(deploy, 'DEFAULT_RETENTION', 'on')
+    assert deploy.main(argv, run=never, git=fake_git()) == 0
+    assert 'RETENTION_ENABLED=true' in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        deploy.main([*argv, '--retention', 'maybe'], run=never, git=fake_git())
