@@ -193,7 +193,7 @@ audited support access and read-only boundaries.
 
 ## Company AI spending
 
-The shared $50 per-company UTC-day allowance applies independently of feature
+The shared $10 per-company UTC-month allowance applies independently of feature
 switches, with hard REST reservations and the owner's chosen soft Live threshold.
 Owners see spending and reserved calls on their dashboard. The private company
 settings, ledger, crash behavior and Live limitation are described in

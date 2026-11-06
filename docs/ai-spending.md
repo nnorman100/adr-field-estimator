@@ -1,20 +1,20 @@
 # Company AI spending
 
-Each company starts with a **$50 daily AI allowance**, shared across its members and
-AI features. It is stored in the private `_company_ai_budgets/{company_id}` document
-as `daily_cap_microusd` (50,000,000). The server initializes a missing document when
+Each company starts with a **$10 monthly AI allowance before launch**, shared across
+its members and AI features. It is stored in the private `_company_ai_budgets/{company_id}` document
+as `monthly_cap_microusd` (10,000,000). The server initializes a missing document when
 the company first reserves AI work. Reading spending has no write side effects.
 Until the first reservation, a company without a settings document sees the
-platform default. An existing value wins over
-the platform default. There is no owner control to change it yet. No migration or
-cloud configuration change is needed for the default.
+platform default. An existing value wins over the platform default. The private
+per-company override can be raised at launch; no owner editing control is exposed.
+No migration or cloud configuration change is needed for the default.
 
-The owner's dashboard shows **AI spending today**, even while the separate optional
+The owner's dashboard shows **AI spending this month**, even while the separate optional
 AI request-count feature is off. Refresh loads
 the `ai_spending` field of `GET /api/session`, returned only to the current
 company's active owner; superadmin status alone grants no spending access. The response is
 private and not cached. Offline, the card offers no spending claim. Spending uses
-UTC calendar days, independently of the existing per-user rolling quota windows.
+UTC calendar months, independently of the existing per-user rolling quota windows.
 
 The card separates estimated settled spending from reserved active or unconfirmed
 work. Both count against the allowance. These conservative estimates are a safety
@@ -25,14 +25,15 @@ quotas remain. The ledger never supplies job prices or changes an agreement.
 
 Every provider generation for audit, scope extraction, OCR, offline voice-note
 transcription, job summaries and drying summaries acquires a reservation before
-dispatch. Audit retries reserve separately. Readiness, equipment recommendations,
+dispatch. Audit retries reserve separately; implicit SDK HTTP retries are disabled
+so a provider retry cannot multiply one reservation. Readiness, equipment recommendations,
 estimate warnings, manual edits and price calculations that run without a model
 make no paid generation and use no AI spending allowance. Cached and facts-only
 summary reads also make no generation.
 
-`backend/ai_spending.py` transacts on one company/day document in `_company_ai_days`
+`backend/ai_spending.py` transacts on one company/month document in `_company_ai_months`
 and a separate random-ID document in `_company_ai_reservations`. Acquiring the
-hold reads settings and the day's spent and reserved totals, refuses a total above
+hold reads settings and the month's spent and reserved totals, refuses a total above
 the cap, and writes the increased total and reservation atomically. Concurrent
 workers and members share this invariant. Money is integer micro-USD, rounded up.
 
@@ -49,11 +50,11 @@ Settlement is idempotent. A cancelled request, timeout, lost response, missing
 usage metadata or worker crash cannot prove that the provider did no paid work.
 Such work consumes its full reservation, either as settled spending or as a durable
 unconfirmed hold. Holds have **no expiry that refunds capacity**. They stay charged
-to their original UTC day; a late settlement cannot refund the next day's allowance.
+to their original UTC month; a late settlement cannot refund the next month's allowance.
 No TTL policy or automatic billing reconciliation is added.
 
 At the cap the server returns 429 with a plain explanation that AI is unavailable
-until tomorrow UTC and field work can continue. It does not change the draft,
+until next month UTC and field work can continue. It does not change the draft,
 photos, voice-note ledger or agreement because of that refusal. Offline notes may
 still be recorded and synced as pending field work. Ordinary manual work, document
 reads and signing a previously prepared eligible agreement do not consult spending.
@@ -78,8 +79,8 @@ usage is absent or delayed. The hold grows with that estimate. Each usage report
 and the existing heartbeat check the shared company total and end the session at
 the cap; estimates above the cap are recorded, not clamped away. Shutdown settles
 reported estimates, or at least the $2 hold when no usage arrived. Crashes leave
-their durable hold in place. A UTC-day change ends the connection so a reconnect
-must reserve on the new day.
+their durable hold in place. A UTC-month change ends the connection so a reconnect
+must reserve on the new month.
 
 **Live can overshoot by about an in-flight session while usage arrives.** This is
 an approximate exposure, not a mathematical maximum: delayed reports and several
@@ -96,7 +97,7 @@ Sources verified November 6, 2026:
 ## Verification and release
 
 Synthetic tests exercise concurrent reservations/settlements, two companies,
-restart/crash holds, midnight and late settlement, thinking-token cost, unknown
+restart/crash holds, month rollover and late settlement, thinking-token cost, unknown
 models, cap refusals through real API handlers, owner access and the dashboard.
 Mock/transactional-fake tests do not establish real-service billing accuracy.
 Production Firestore/Vertex checks and physical iPhone camera, microphone,

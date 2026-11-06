@@ -56,11 +56,11 @@ def live_cost(usage):
 
 
 class LiveSpending:
-    def __init__(self, ledger, reservation):
+    def __init__(self, ledger, reservation, month):
         self.ledger = ledger
         self.reservation = reservation
         self.started = time.monotonic()
-        self.day = datetime.fromtimestamp(time.time(), timezone.utc).date()
+        self.month = month
         self.cost = 0
         self.reported = False
         self.finished = False
@@ -71,7 +71,10 @@ class LiveSpending:
         if model != 'gemini-3.8-live':
             raise SpendingError(503, 'AI spending rates for this model have not been verified.')
         ledger = CompanySpending.actor(store, uid, workspaces)
-        return cls(ledger, ledger.reserve('live', LIVE_MARGIN, live=True))
+        # Capture before reservation so a month change while the transaction returns
+        # cannot make an old-month hold appear to cover a new-month connection.
+        month = datetime.fromtimestamp(time.time(), timezone.utc).strftime('%Y-%m')
+        return cls(ledger, ledger.reserve('live', LIVE_MARGIN, live=True), month)
 
     def estimate(self):
         # Each usage report includes that turn's context;
@@ -94,9 +97,9 @@ class LiveSpending:
         with self.lock:
             if self.finished:
                 return
-            if datetime.fromtimestamp(time.time(), timezone.utc).date() != self.day:
-                # Reconnect creates a reservation on the new day, including resumed sessions.
-                raise SpendingError(409, 'A new UTC day has started. Reconnect the walkthrough.')
+            if datetime.fromtimestamp(time.time(), timezone.utc).strftime('%Y-%m') != self.month:
+                # Reconnect creates a reservation on the new month, including resumed sessions.
+                raise SpendingError(409, 'A new UTC month has started. Reconnect the walkthrough.')
             if self.ledger.live_usage(self.reservation, self.estimate()):
                 raise limited()
 

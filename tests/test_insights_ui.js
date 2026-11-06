@@ -296,19 +296,19 @@ test('owner spending loads without the optional AI counts feature', async () => 
   assert.equal(h.requests[0].path, '/api/session');
   h.requests[0].resolve({
     ai_spending: {
-      day: '2026-11-06',
-      spent_microusd: 12000000,
+      month: '2026-11',
+      spent_microusd: 2000000,
       reserved_microusd: 2000000,
-      daily_cap_microusd: 50000000,
+      monthly_cap_microusd: 10000000,
       live_margin_microusd: 2000000,
     },
   });
   await h.flush();
   const card = h.target.children[0];
-  assert.ok(card.children.some((c) => c.text === '$14.00 of $50.00 · 2026-11-06 (UTC)'));
+  assert.ok(card.children.some((c) => c.text === '$4.00 of $10.00 · 2026-11 (UTC)'));
   const progress = card.children.find((c) => c.tag === 'progress');
-  assert.equal(progress.max, 50000000);
-  assert.equal(progress.value, 14000000);
+  assert.equal(progress.max, 10000000);
+  assert.equal(progress.value, 4000000);
   assert.ok(card.children.some((c) => c.text?.includes('soft limit')));
 });
 
@@ -322,7 +322,7 @@ test('spending is owner-only and does not reuse another company response', async
   h.context.state.session.company_id = 'adr';
   h.ui.spending(h.target);
   h.context.state.session.uid = 'another-owner';
-  h.requests[0].resolve({ spent_microusd: 12000000 });
+  h.requests[0].resolve({ spent_microusd: 2000000 });
   await h.flush();
   assert.equal(h.target.children[0].children[1].text, 'Loading spending…');
 });

@@ -270,11 +270,11 @@ window.InsightUI = (() => {
   function spending(target) {
     if (state.session.role !== 'owner') return;
     const requested = identity(),
-      card = node('section', undefined, 'dashboard-card ai-usage');
+      card = node('section', undefined, 'dashboard-card ai-spending');
     target.append(card);
     const money = (micro) => '$' + (micro / 1000000).toFixed(2);
     async function load() {
-      card.replaceChildren(node('h2', 'AI spending today'));
+      card.replaceChildren(node('h2', 'AI spending this month'));
       if (navigator.onLine) {
         card.append(node('p', 'Loading spending…'));
         try {
@@ -284,19 +284,19 @@ window.InsightUI = (() => {
           if (!result) throw new Error('Spending unavailable');
           const used = result.spent_microusd + result.reserved_microusd,
             bar = node('progress');
-          bar.max = Math.max(1, result.daily_cap_microusd);
+          bar.max = Math.max(1, result.monthly_cap_microusd);
           bar.value = used;
           bar.setAttribute('aria-label', 'Company AI spending including reserved calls');
           card.replaceChildren(
-            node('h2', 'AI spending today'),
+            node('h2', 'AI spending this month'),
             node(
               'p',
-              `${money(used)} of ${money(result.daily_cap_microusd)} · ${result.day} (UTC)`,
+              `${money(used)} of ${money(result.monthly_cap_microusd)} · ${result.month} (UTC)`,
             ),
             bar,
             node(
               'p',
-              `${money(result.spent_microusd)} estimated spending; ${money(result.reserved_microusd)} reserved for active or unconfirmed calls. Resets at midnight UTC.`,
+              `${money(result.spent_microusd)} estimated spending; ${money(result.reserved_microusd)} reserved for active or unconfirmed calls. Resets at the start of the next UTC month.`,
             ),
             node(
               'p',
@@ -305,12 +305,15 @@ window.InsightUI = (() => {
           );
         } catch {
           if (requested !== identity() || !card.isConnected) return;
-          card.replaceChildren(node('h2', 'AI spending today'), node('p', 'Spending unavailable.'));
+          card.replaceChildren(
+            node('h2', 'AI spending this month'),
+            node('p', 'Spending unavailable.'),
+          );
         }
       }
       const offline = node(
         'p',
-        'Offline · connect to load today’s spending.',
+        'Offline · connect to load this month’s spending.',
         'usage-offline notice',
       );
       offline.hidden = navigator.onLine;
@@ -323,7 +326,7 @@ window.InsightUI = (() => {
   function connectivity() {
     check();
     account();
-    for (const control of document.querySelectorAll('.ai-usage button'))
+    for (const control of document.querySelectorAll('.ai-usage button, .ai-spending button'))
       control.disabled = !navigator.onLine;
     for (const notice of document.querySelectorAll('.usage-offline'))
       notice.hidden = navigator.onLine;

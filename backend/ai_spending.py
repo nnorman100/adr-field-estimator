@@ -1,4 +1,4 @@
-"""Private company/day AI ledger. Money is integer micro-USD, never job pricing.
+"""Private company/month AI ledger. Money is integer micro-USD, never job pricing.
 
 Uncertain calls retain their entire reservation. No TTL or elapsed lease can prove
 that a provider did not bill a call, so abandoned reservations are never refunded.
@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-DEFAULT_CAP = 50_000_000
+DEFAULT_CAP = 10_000_000
 LIVE_MARGIN = 2_000_000
 REST_INPUT_LIMIT = 1_048_576
 REST_OUTPUT_LIMIT = 65_536
@@ -22,7 +22,7 @@ REST_RESERVE = (
     REST_INPUT_LIMIT * REST_INPUT_RATE + REST_OUTPUT_LIMIT * REST_OUTPUT_RATE + 99
 ) // 100
 CAP_MESSAGE = (
-    "Your company has reached today's AI spending limit. AI is unavailable until tomorrow (UTC). "
+    "Your company has reached this month's AI spending limit. AI is unavailable until next month (UTC). "
     'Your field work, drafts and agreements are saved; you can keep working without AI.'
 )
 
@@ -69,18 +69,20 @@ class CompanySpending:
         snapshot = ref.get(transaction=tx)
         return snapshot.to_dict() if snapshot.exists else None
 
-    def daily(self, tx, day=None):
-        day = day or datetime.fromtimestamp(time.time(), timezone.utc).strftime('%Y-%m-%d')
-        ref = self.ref('_company_ai_days', self.company_id + '_' + day)
+    def monthly(self, tx, month=None):
+        month = month or datetime.fromtimestamp(time.time(), timezone.utc).strftime('%Y-%m')
+        ref = self.ref('_company_ai_months', self.company_id + '_' + month)
         row = self.read(ref, tx) or dict(
-            company_id=self.company_id, day=day, spent_microusd=0, reserved_microusd=0
+            company_id=self.company_id, month=month, spent_microusd=0, reserved_microusd=0
         )
         return ref, row
 
     def settings(self, tx):
         ref = self.ref('_company_ai_budgets', self.company_id)
-        row = self.read(ref, tx) or dict(company_id=self.company_id, daily_cap_microusd=DEFAULT_CAP)
-        cap = row.get('daily_cap_microusd')
+        row = self.read(ref, tx) or dict(
+            company_id=self.company_id, monthly_cap_microusd=DEFAULT_CAP
+        )
+        cap = row.get('monthly_cap_microusd')
         if type(cap) is not int or cap < 0:
             raise SpendingError(503, 'The company AI spending limit is unavailable.')
         return ref, row
@@ -93,22 +95,22 @@ class CompanySpending:
 
         def acquire(tx):
             settings_ref, settings = self.settings(tx)
-            day_ref, day = self.daily(tx)
-            total = day['spent_microusd'] + day['reserved_microusd']
-            cap = settings['daily_cap_microusd']
+            month_ref, month = self.monthly(tx)
+            total = month['spent_microusd'] + month['reserved_microusd']
+            cap = settings['monthly_cap_microusd']
             if total + amount > cap or (live and total >= cap - LIVE_MARGIN):
                 raise limited()
             hold = dict(
                 company_id=self.company_id,
-                day=day['day'],
+                month=month['month'],
                 operation=operation,
                 amount_microusd=amount,
                 state='reserved',
                 live=live,
             )
-            day['reserved_microusd'] += amount
+            month['reserved_microusd'] += amount
             tx.set(settings_ref, settings)
-            tx.set(day_ref, day)
+            tx.set(month_ref, month)
             tx.create(reservation, hold)
             return identifier
 
@@ -124,7 +126,7 @@ class CompanySpending:
                 raise LookupError('AI reservation not found.')
             if hold['state'] != 'reserved':
                 return
-            day_ref, day = self.daily(tx, hold['day'])
+            month_ref, month = self.monthly(tx, hold['month'])
             charge = hold['amount_microusd'] if cost is None else cost
             if type(charge) is not int or charge < 0:
                 raise ValueError('Invalid AI cost.')
@@ -132,10 +134,10 @@ class CompanySpending:
             # unexpected provider metadata leaves the entire reservation in place.
             if not hold['live'] and charge > hold['amount_microusd']:
                 raise ValueError('AI usage exceeded its verified reservation bound.')
-            day['reserved_microusd'] -= hold['amount_microusd']
-            day['spent_microusd'] += charge
+            month['reserved_microusd'] -= hold['amount_microusd']
+            month['spent_microusd'] += charge
             hold.update(state='settled', cost_microusd=charge)
-            tx.set(day_ref, day)
+            tx.set(month_ref, month)
             tx.set(ref, hold)
 
         self.store._atomic(finish)
@@ -151,14 +153,15 @@ class CompanySpending:
             if hold['state'] != 'reserved':
                 raise ValueError('AI reservation already settled.')
             settings_ref, settings = self.settings(tx)
-            day_ref, day = self.daily(tx, hold['day'])
+            month_ref, month = self.monthly(tx, hold['month'])
             amount = max(hold['amount_microusd'], estimate)
-            day['reserved_microusd'] += amount - hold['amount_microusd']
+            month['reserved_microusd'] += amount - hold['amount_microusd']
             hold['amount_microusd'] = amount
-            tx.set(day_ref, day)
+            tx.set(month_ref, month)
             tx.set(ref, hold)
             return (
-                day['spent_microusd'] + day['reserved_microusd'] >= settings['daily_cap_microusd']
+                month['spent_microusd'] + month['reserved_microusd']
+                >= settings['monthly_cap_microusd']
             )
 
         return self.store._atomic(update)
@@ -166,10 +169,10 @@ class CompanySpending:
     def summary(self):
         def view(tx):
             settings_ref, settings = self.settings(tx)
-            day_ref, day = self.daily(tx)
+            month_ref, month = self.monthly(tx)
             return dict(
-                **day,
-                daily_cap_microusd=settings['daily_cap_microusd'],
+                **month,
+                monthly_cap_microusd=settings['monthly_cap_microusd'],
                 live_margin_microusd=LIVE_MARGIN,
             )
 

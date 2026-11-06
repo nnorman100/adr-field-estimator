@@ -5,6 +5,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from types import SimpleNamespace as NS
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -29,7 +30,7 @@ GENERATE = bm.generate
 
 def cap(store, amount=DEFAULT_CAP, company='adr'):
     store.db.records['_company_ai_budgets/' + company] = dict(
-        company_id=company, daily_cap_microusd=amount
+        company_id=company, monthly_cap_microusd=amount
     )
 
 
@@ -45,7 +46,7 @@ def test_parallel_members_and_features_share_one_hard_cap(store):
     with ThreadPoolExecutor(max_workers=32) as pool:
         ids = list(pool.map(reserve, range(100)))
     ledger = CompanySpending(store, 'adr')
-    assert len(set(filter(None, ids))) == 50
+    assert len(set(filter(None, ids))) == DEFAULT_CAP // 1_000_000
     assert ledger.summary()['reserved_microusd'] == DEFAULT_CAP
     # Repeated settlements racing on multiple instances must refund exactly once.
     identifier = next(filter(None, ids))
@@ -54,17 +55,17 @@ def test_parallel_members_and_features_share_one_hard_cap(store):
             pool.map(lambda _: CompanySpending(store, 'adr').settle(identifier, 250_000), range(30))
         )
     assert ledger.summary()['spent_microusd'] == 250_000
-    assert ledger.summary()['reserved_microusd'] == 49_000_000
+    assert ledger.summary()['reserved_microusd'] == DEFAULT_CAP - 1_000_000
     assert ledger.reserve('ocr', 750_000)
     with pytest.raises(HTTPException):
         ledger.reserve('audit', 1)
     assert CompanySpending(store, 'other').reserve('audit', DEFAULT_CAP)
 
 
-def test_crash_holds_survive_new_instances_and_midnight(store, monkeypatch):
+def test_crash_holds_survive_new_instances_and_month_rollover(store, monkeypatch):
     import backend.ai_spending as spending
 
-    clock = [1_800_000_000]
+    clock = [datetime(2026, 11, 1, tzinfo=timezone.utc).timestamp()]
     monkeypatch.setattr(spending.time, 'time', lambda: clock[0])
     ledger = CompanySpending(store, 'adr')
     identifier = ledger.reserve('audit', DEFAULT_CAP)
@@ -74,9 +75,12 @@ def test_crash_holds_survive_new_instances_and_midnight(store, monkeypatch):
     with pytest.raises(HTTPException):
         other_worker.reserve('scope', 1)
     clock[0] += 86400
+    with pytest.raises(HTTPException):
+        other_worker.reserve('ocr', 1)
+    clock[0] = datetime(2026, 12, 1, tzinfo=timezone.utc).timestamp()
     assert other_worker.summary()['reserved_microusd'] == 0
     next_id = other_worker.reserve('ocr', 1_000_000)
-    # A late completion settles against its original day; it cannot refund today's calls.
+    # A late completion settles against its original month; it cannot refund this month's calls.
     other_worker.settle(identifier, 5_000)
     assert other_worker.summary()['reserved_microusd'] == 1_000_000
     other_worker.settle(next_id, 100)
@@ -125,7 +129,7 @@ def test_real_helper_reserves_before_dispatch_and_settles_thinking_tokens(store,
     assert result.summary == 'Saved observations.'
     assert ledger.summary()['spent_microusd'] == 495
     assert ledger.summary()['reserved_microusd'] == 0
-    assert store.db.records['_company_ai_budgets/adr']['daily_cap_microusd'] == DEFAULT_CAP
+    assert store.db.records['_company_ai_budgets/adr']['monthly_cap_microusd'] == DEFAULT_CAP
 
 
 @pytest.mark.parametrize('failure', ['timeout', 'invalid', 'cancelled'])
@@ -240,7 +244,7 @@ def test_owner_spending_available_without_count_feature_and_is_private(api, uid,
     response = client.get('/api/session')
     assert response.status_code == 200
     if company:
-        assert response.json()['ai_spending']['daily_cap_microusd'] == DEFAULT_CAP
+        assert response.json()['ai_spending']['monthly_cap_microusd'] == DEFAULT_CAP
         assert response.json()['ai_spending']['company_id'] == company
         assert response.headers['cache-control'] == 'private, no-store'
         assert not any(k.startswith('_company_ai_budgets/') for k in store.db.records)
@@ -427,3 +431,83 @@ def test_live_modality_cost_includes_rebilled_context_and_text_transcriptions():
     assert live_cost(NS(prompt_token_count=300, total_token_count=400)) == 2100
     assert live_cost(NS(total_token_count=400)) == 6600
     assert live_cost(NS()) is None
+
+
+def test_live_month_change_during_reservation_return_ends_old_month_connection(store, monkeypatch):
+    import backend.live_spending as live_spending
+
+    clock = [datetime(2026, 11, 30, 23, 59, 59, tzinfo=timezone.utc).timestamp()]
+    monkeypatch.setattr(live_spending.time, 'time', lambda: clock[0])
+    reserve = CompanySpending.reserve
+
+    def crosses_month(self, *args, **kwargs):
+        result = reserve(self, *args, **kwargs)
+        clock[0] += 2
+        return result
+
+    monkeypatch.setattr(CompanySpending, 'reserve', crosses_month)
+    live = LiveSpending.start(store, 'owner', True, bm.LIVE_MODEL)
+    with pytest.raises(HTTPException) as error:
+        live.check()
+    assert error.value.status_code == 409
+    assert 'UTC month' in error.value.detail
+    live.finish()
+    assert CompanySpending(store, 'adr').summary()['reserved_microusd'] == 0
+    assert CompanySpending(store, 'adr').summary()['spent_microusd'] == 0
+
+
+def test_real_sdk_does_not_retry_billable_requests_inside_one_reservation(store, monkeypatch):
+    import httpx
+    from google.oauth2.credentials import Credentials
+
+    monkeypatch.setattr(bm, 'WORKSPACES_ENABLED', True)
+    monkeypatch.setattr(bm, 'genai_client', None)
+    requests = []
+    ledger = CompanySpending(store, 'adr')
+
+    async def respond(request):
+        requests.append(request.url.path)
+        assert ledger.summary()['reserved_microusd'] == REST_RESERVE
+        return httpx.Response(
+            503,
+            json={
+                'error': {
+                    'code': 503,
+                    'message': 'Synthetic transient error',
+                    'status': 'UNAVAILABLE',
+                }
+            },
+        )
+
+    real_client = bm.genai.Client
+
+    def client(**kwargs):
+        options = kwargs.pop('http_options').model_copy(
+            update={
+                'httpx_async_client': httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+            }
+        )
+        return real_client(
+            credentials=Credentials(token='synthetic-token'), http_options=options, **kwargs
+        )
+
+    monkeypatch.setattr(bm.genai, 'Client', client)
+
+    async def invoke():
+        try:
+            with pytest.raises(HTTPException) as error:
+                await GENERATE(
+                    bm.OcrResult,
+                    ['Synthetic photo'],
+                    bm.OCR_MODEL,
+                    'ocr',
+                    ID,
+                    spending=(store, 'owner'),
+                )
+            assert error.value.status_code == 502
+        finally:
+            await bm.get_ai_client().aio.aclose()
+
+    asyncio.run(invoke())
+    assert len(requests) == 1
+    assert ledger.summary()['spent_microusd'] == REST_RESERVE

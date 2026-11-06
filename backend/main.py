@@ -353,7 +353,11 @@ def get_ai_client():
             enterprise=True,
             project=PROJECT_ID,
             location=LOCATION,
-            http_options=types.HttpOptions(timeout=95000),
+            # Each billable attempt needs its own company hold. Audit retries are
+            # explicit below; SDK retries must not multiply one reserved attempt.
+            http_options=types.HttpOptions(
+                timeout=95000, retry_options=types.HttpRetryOptions(attempts=1)
+            ),
         )
     return genai_client
 
