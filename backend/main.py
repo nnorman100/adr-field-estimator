@@ -807,7 +807,7 @@ def generation_config(schema, model, operation, wire_schema=None, thinking_level
     )
 
 
-async def reserve_generation(contents, model, operation, config, spending, timeout=15):
+async def reserve_generation(contents, model, operation, config, spending, deadline):
     store, uid = spending
     ledger = await stored(CompanySpending.actor, store, uid, WORKSPACES_ENABLED)
     await stored(ledger.check_available, rest_allowance(model, 0, operation))
@@ -829,7 +829,7 @@ async def reserve_generation(contents, model, operation, config, spending, timeo
                     generation_config=types.GenerationConfig(**options),
                 ),
             ),
-            timeout=timeout,
+            timeout=min(15, deadline - time.monotonic()),
         )
     except asyncio.TimeoutError:
         raise HTTPException(504, 'AI preparation timed out. Retry; your saved work is unchanged.')
@@ -887,7 +887,7 @@ async def generate(
                 operation,
                 config,
                 spending,
-                timeout=min(timeout, 15),
+                deadline,
             )
         ledger, reservation = held.ledger, held.identifier
         remaining = deadline - time.monotonic()
@@ -960,7 +960,15 @@ async def generate(
             # If settlement fails, the durable reservation continues to count in full.
             with anyio.CancelScope(shield=True):
                 try:
-                    await stored(ledger.settle, reservation, cost)
+                    if outcome == 'ok':
+                        with anyio.move_on_after(deadline - time.monotonic()) as bound:
+                            await anyio.to_thread.run_sync(
+                                ledger.settle, reservation, cost, abandon_on_cancel=True
+                            )
+                        if bound.cancelled_caught:
+                            raise TimeoutError
+                    else:
+                        await stored(ledger.settle, reservation, cost)
                 except Exception as error:
                     event(
                         'AI spending settlement failed',
@@ -1805,6 +1813,7 @@ async def transcribe_voice_note(
             await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
         raise
     contents = [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS]
+    deadline = started + REST_DEADLINE_SECONDS - 5
     held = await reserve_generation(
         contents,
         AUDIT_MODEL,
@@ -1813,6 +1822,7 @@ async def transcribe_voice_note(
             TranscriptionResult, AUDIT_MODEL, 'transcribe', thinking_level=SCOPE_THINKING_LEVEL
         ),
         (store, staff['uid']),
+        deadline,
     )
     try:
         saved, moved = await stored(
@@ -1840,7 +1850,7 @@ async def transcribe_voice_note(
                 'transcribe',
                 inspection_id,
                 thinking_level=SCOPE_THINKING_LEVEL,
-                timeout=started + REST_DEADLINE_SECONDS - 5 - time.monotonic(),
+                timeout=deadline - time.monotonic(),
                 spending=held,
             )
         except HTTPException as error:

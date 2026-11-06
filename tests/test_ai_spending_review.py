@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import threading
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 
@@ -141,6 +143,7 @@ def test_hold_without_time_left_is_released_without_dispatch(store, monkeypatch)
             'transcribe',
             bm.generation_config(bm.TranscriptionResult, bm.AUDIT_MODEL, 'transcribe'),
             (store, 'owner'),
+            time.monotonic() + 15,
         )
     )
     assert CompanySpending(store, 'adr').summary()['reserved_microusd'] > 0
@@ -186,6 +189,79 @@ def test_settlement_failure_returns_paid_result_and_preserves_hold(store, monkey
     assert 'Private provider text' not in logs
     assert 'AI spending settlement failed' in logs
     assert 'Vertex AI call' in logs
+
+
+def paid_reply():
+    async def respond(**kwargs):
+        return NS(
+            text=json.dumps(dict(summary='Scope confirmed.', suggestions=[], unpriced_work=[])),
+            usage_metadata=NS(prompt_token_count=100, total_token_count=200),
+        )
+
+    return respond
+
+
+def timed(store, timeout):
+    started = time.monotonic()
+    try:
+        return asyncio.run(
+            GENERATE(
+                bm.AIResult,
+                ['observations'],
+                bm.AUDIT_MODEL,
+                'audit',
+                ID,
+                timeout=timeout,
+                spending=(store, 'owner'),
+            )
+        ), time.monotonic() - started
+    except HTTPException as error:
+        return error, time.monotonic() - started
+
+
+def test_slow_settlement_returns_paid_result_by_the_deadline(store, monkeypatch, capsys):
+    fake_provider(monkeypatch, paid_reply())
+    settle, done = CompanySpending.settle, threading.Event()
+
+    def slow(self, *args):
+        time.sleep(1.5)
+        settle(self, *args)
+        done.set()
+
+    monkeypatch.setattr(CompanySpending, 'settle', slow)
+    result, elapsed = timed(store, 0.5)
+    assert result.summary == 'Scope confirmed.' and elapsed < 1.0
+    assert CompanySpending(store, 'adr').summary()['reserved_microusd'] > 0
+    assert 'AI spending settlement failed' in capsys.readouterr().out
+    assert done.wait(5)
+
+
+def test_slow_prechecks_shorten_token_counting(store, monkeypatch):
+    calls = []
+
+    async def respond(**kwargs):
+        calls.append(kwargs)
+
+    async def count_tokens(**kwargs):
+        await asyncio.sleep(3)
+
+    fake_provider(monkeypatch, respond)
+    monkeypatch.setattr(
+        bm,
+        'get_ai_client',
+        lambda: NS(aio=NS(models=NS(generate_content=respond, count_tokens=count_tokens))),
+    )
+    check = CompanySpending.check_available
+
+    def slow(self, *args):
+        time.sleep(0.6)
+        return check(self, *args)
+
+    monkeypatch.setattr(CompanySpending, 'check_available', slow)
+    error, elapsed = timed(store, 1.0)
+    assert error.status_code == 504 and elapsed < 1.4 and calls == []
+    usage = CompanySpending(store, 'adr').summary()
+    assert usage['spent_microusd'] == usage['reserved_microusd'] == 0
 
 
 def test_missing_company_override_follows_platform_default(store, monkeypatch):
