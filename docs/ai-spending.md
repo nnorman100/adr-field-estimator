@@ -66,7 +66,11 @@ Settlement is idempotent. A provider `APIError` carrying an HTTP error status
 (400–599, including 429, 500 and 503) settles zero. A successful result survives a
 failed settlement transaction: the server logs only the operation/model and error
 class and returns the result, while the full durable hold continues to count.
-A cancelled request, timeout, transport error, lost response, missing
+Ledger checks, the reservation and settlement wait only until the request's AI
+deadline (the 55-second REST deadline less its 5-second save reserve, an audit
+attempt's share or a summary's 25 seconds); unfinished ledger work completes in the
+background, and a reservation that arrives after its request gave up is released
+unused. A cancelled request, timeout, transport error, lost response, missing
 usage metadata or worker crash cannot prove that the provider did no paid work.
 Such work consumes its full reservation, either as settled spending or as a durable
 unconfirmed hold. Holds have **no expiry that refunds capacity**. They stay charged

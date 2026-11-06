@@ -201,11 +201,11 @@ def paid_reply():
     return respond
 
 
-def timed(store, timeout):
-    started = time.monotonic()
-    try:
-        return asyncio.run(
-            GENERATE(
+def timed(store, timeout, cancel_after=None):
+    async def run():
+        started = time.monotonic()
+        try:
+            call = GENERATE(
                 bm.AIResult,
                 ['observations'],
                 bm.AUDIT_MODEL,
@@ -214,9 +214,11 @@ def timed(store, timeout):
                 timeout=timeout,
                 spending=(store, 'owner'),
             )
-        ), time.monotonic() - started
-    except HTTPException as error:
-        return error, time.monotonic() - started
+            return await asyncio.wait_for(call, cancel_after), time.monotonic() - started
+        except (HTTPException, TimeoutError) as error:
+            return error, time.monotonic() - started
+
+    return asyncio.run(run())
 
 
 def test_slow_settlement_returns_paid_result_by_the_deadline(store, monkeypatch, capsys):
@@ -234,6 +236,30 @@ def test_slow_settlement_returns_paid_result_by_the_deadline(store, monkeypatch,
     assert CompanySpending(store, 'adr').summary()['reserved_microusd'] > 0
     assert 'AI spending settlement failed' in capsys.readouterr().out
     assert done.wait(5)
+
+
+def test_cancelled_call_answers_without_waiting_for_slow_settlement(store, monkeypatch):
+    reservations = []
+
+    async def stalled(**kwargs):
+        reservations.append(CompanySpending(store, 'adr').summary()['reserved_microusd'])
+        await asyncio.sleep(30)
+
+    fake_provider(monkeypatch, stalled)
+    settle, done = CompanySpending.settle, threading.Event()
+
+    def slow(self, *args):
+        time.sleep(1.5)
+        settle(self, *args)
+        done.set()
+
+    monkeypatch.setattr(CompanySpending, 'settle', slow)
+    error, elapsed = timed(store, 0.5, cancel_after=0.3)
+    assert isinstance(error, TimeoutError) and elapsed < 1.0
+    assert done.wait(5)
+    usage = CompanySpending(store, 'adr').summary()
+    assert usage['spent_microusd'] == reservations[0] > 0
+    assert usage['reserved_microusd'] == 0
 
 
 def test_slow_prechecks_shorten_token_counting(store, monkeypatch):

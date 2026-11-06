@@ -11,7 +11,9 @@ from fastapi import HTTPException
 import backend.claims as claims
 import backend.main as bm
 from tests.fakes import FakeStore
-from tests.test_backend import context, inspect, ID
+from backend.ai_spending import CompanySpending
+from tests.test_backend import context, inspect, photo, ID
+from tests import test_scope, test_voice_notes
 from tests.test_logging import entries
 
 REPLY = {'summary': 'Scope confirmed.', 'suggestions': [], 'unpriced_work': []}
@@ -256,3 +258,79 @@ def test_audit_logs_how_many_photos_it_sent(context, budget, monkeypatch, capsys
     assert response.status_code == 200, response.text
     [logged] = messages(capsys, 'Audit photos prepared')
     assert logged['photo_count'] == 0 and logged['inspection_id'] == ID
+
+
+@pytest.fixture
+def slow_ledger(monkeypatch):
+    # The production 55-second REST deadline less its 5-second save reserve, scaled to 0.4 s.
+    monkeypatch.setattr(bm, 'REST_DEADLINE_SECONDS', 5.4)
+    settle, gate, done = CompanySpending.settle, threading.Event(), threading.Event()
+
+    def slow(self, *args):
+        gate.wait(6)
+        settle(self, *args)
+        done.set()
+
+    monkeypatch.setattr(CompanySpending, 'settle', slow)
+    yield gate
+    gate.set()
+    assert done.wait(5)
+
+
+def timed_post(client, path, body):
+    started = time.monotonic()
+    response = client.post(path, json=body)
+    return response, time.monotonic() - started
+
+
+@pytest.mark.parametrize('stall', [False, True])
+def test_ocr_keeps_its_rest_budget_when_settlement_is_slow(
+    context, slow_ledger, monkeypatch, stall
+):
+    client, store = context
+    photo(client, inspect(client))
+    if stall:
+
+        async def stalled(**kwargs):
+            await asyncio.sleep(30)
+
+        monkeypatch.setattr(
+            bm,
+            'get_ai_client',
+            lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(stalled))),
+        )
+    response, elapsed = timed_post(client, f'/api/inspections/{ID}/photos/{"b" * 32}/ocr', {})
+    assert elapsed < 1.5
+    status = store.get_inspection('owner', ID)['photos'][0]['ocr_status']
+    if stall:
+        assert response.status_code == 504
+        assert response.json()['detail'].startswith('AI generation timed out.')
+        assert status == 'failed'
+    else:
+        assert response.status_code == 200, response.text
+        assert status == 'no_meter'
+
+
+def test_scope_keeps_its_rest_budget_when_settlement_is_slow(context, slow_ledger, monkeypatch):
+    client, _ = context
+    record = test_scope.prepared(client)
+    test_scope.captured_configs(monkeypatch, dict(changes=[], questions=[]))
+    response, elapsed = timed_post(
+        client,
+        f'/api/inspections/{ID}/scope-suggestions',
+        dict(inspection_id=ID, expected_revision=record['revision']),
+    )
+    assert response.status_code == 200, response.text
+    assert elapsed < 1.5
+
+
+def test_unused_transcription_hold_release_keeps_the_rest_budget(context, slow_ledger, monkeypatch):
+    client, store = context
+    test_voice_notes.prepared(client, technician_transcript='x' * 79990)
+    calls = test_voice_notes.transcriber(monkeypatch)
+    response, elapsed = timed_post(
+        client, f'/api/inspections/{ID}/voice-notes', test_voice_notes.note()
+    )
+    assert response.status_code == 400
+    assert 'Transcript storage is full' in response.json()['detail']
+    assert elapsed < 1.5 and calls == []

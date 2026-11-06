@@ -637,6 +637,36 @@ async def stored(method, *args, failure=None):
         raise HTTPException(503, failure or STORED_FAILURE)
 
 
+LEDGER_JOBS = set()
+
+
+def background(work):
+    job = asyncio.ensure_future(work)
+    LEDGER_JOBS.add(job)
+
+    def finished(job):
+        LEDGER_JOBS.discard(job)
+        if not job.cancelled():
+            job.exception()
+
+    job.add_done_callback(finished)
+    return job
+
+
+async def within(deadline, method, *args, undo=None):
+    """A ledger call answered only until the deadline. Unfinished work still completes in the
+    background, so a hold stays durable; undo then reverses a result nobody received."""
+    job = background(stored(method, *args))
+    done, _ = await asyncio.wait({job}, timeout=max(0, deadline - time.monotonic()))
+    if done:
+        return job.result()
+    if undo:
+        job.add_done_callback(
+            lambda job: job.cancelled() or job.exception() or background(stored(undo, job.result()))
+        )
+    raise TimeoutError
+
+
 NO_CLAIM = ClaimDetails().model_dump()
 
 
@@ -809,8 +839,28 @@ def generation_config(schema, model, operation, wire_schema=None, thinking_level
 
 async def reserve_generation(contents, model, operation, config, spending, deadline):
     store, uid = spending
-    ledger = await stored(CompanySpending.actor, store, uid, WORKSPACES_ENABLED)
-    await stored(ledger.check_available, rest_allowance(model, 0, operation))
+    try:
+        ledger = await within(deadline, CompanySpending.actor, store, uid, WORKSPACES_ENABLED)
+        await within(deadline, ledger.check_available, rest_allowance(model, 0, operation))
+        client, counted = await count_input(contents, model, operation, config, deadline)
+        held = await within(
+            deadline,
+            ReservedCall.start,
+            store,
+            uid,
+            WORKSPACES_ENABLED,
+            model,
+            operation,
+            getattr(counted, 'total_tokens', None),
+            undo=ReservedCall.release_unused,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, 'AI preparation timed out. Retry; your saved work is unchanged.')
+    held.client, held.config = client, config
+    return held
+
+
+async def count_input(contents, model, operation, config, deadline):
     try:
         client = get_ai_client()
         options = config.model_dump(exclude_none=True)
@@ -832,7 +882,7 @@ async def reserve_generation(contents, model, operation, config, spending, deadl
             timeout=min(15, deadline - time.monotonic()),
         )
     except asyncio.TimeoutError:
-        raise HTTPException(504, 'AI preparation timed out. Retry; your saved work is unchanged.')
+        raise
     except Exception as error:
         event(
             'Vertex token count failed',
@@ -842,17 +892,7 @@ async def reserve_generation(contents, model, operation, config, spending, deadl
             outcome=type(error).__name__,
         )
         raise HTTPException(502, 'AI could not be prepared. Retry; your saved work is unchanged.')
-    held = await stored(
-        ReservedCall.start,
-        store,
-        uid,
-        WORKSPACES_ENABLED,
-        model,
-        operation,
-        getattr(counted, 'total_tokens', None),
-    )
-    held.client, held.config = client, config
-    return held
+    return client, counted
 
 
 async def generate(
@@ -960,15 +1000,7 @@ async def generate(
             # If settlement fails, the durable reservation continues to count in full.
             with anyio.CancelScope(shield=True):
                 try:
-                    if outcome == 'ok':
-                        with anyio.move_on_after(deadline - time.monotonic()) as bound:
-                            await anyio.to_thread.run_sync(
-                                ledger.settle, reservation, cost, abandon_on_cancel=True
-                            )
-                        if bound.cancelled_caught:
-                            raise TimeoutError
-                    else:
-                        await stored(ledger.settle, reservation, cost)
+                    await within(deadline, ledger.settle, reservation, cost)
                 except Exception as error:
                     event(
                         'AI spending settlement failed',
@@ -1578,6 +1610,7 @@ async def photo_evidence(
 async def ocr_photo(
     inspection_id: str, photo_id: str, staff=Depends(current_staff), store=Depends(get_job_store)
 ):
+    started = time.monotonic()
     await stored(store.quota, staff['uid'], 'ocr', 20)
     record = await stored(store.get_inspection, staff['uid'], inspection_id)
     await stored(store._access, staff['uid'], record, 'ocr')
@@ -1589,6 +1622,7 @@ async def ocr_photo(
             OCR_MODEL,
             'ocr',
             inspection_id,
+            timeout=started + REST_DEADLINE_SECONDS - 5 - time.monotonic(),
             spending=(store, staff['uid']),
         )
     except HTTPException as error:
@@ -1615,6 +1649,7 @@ async def suggest_scope(
     staff=Depends(current_staff),
     store=Depends(get_job_store),
 ):
+    started = time.monotonic()
     if req.inspection_id != inspection_id:
         raise HTTPException(400, 'Inspection references must match.')
     record = await stored(store.get_inspection, staff['uid'], inspection_id)
@@ -1648,6 +1683,7 @@ async def suggest_scope(
         invalid_detail=(
             'Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.'
         ),
+        timeout=started + REST_DEADLINE_SECONDS - 5 - time.monotonic(),
         spending=(store, staff['uid']),
     )
     latest = await stored(store.get_inspection, staff['uid'], inspection_id)
@@ -1870,8 +1906,20 @@ async def transcribe_voice_note(
             ),
         )
     finally:
-        with anyio.CancelScope(shield=True):
-            await stored(held.release_unused)
+        if not held.dispatched:
+            with anyio.CancelScope(shield=True):
+                try:
+                    await within(deadline, held.release_unused)
+                except Exception as error:
+                    event(
+                        'AI spending settlement failed',
+                        logging.ERROR,
+                        operation='transcribe',
+                        model=AUDIT_MODEL,
+                        outcome=type(error).__name__,
+                        reservation_id=held.identifier,
+                        company_id=held.ledger.company_id,
+                    )
 
 
 @app.post('/api/audit')
