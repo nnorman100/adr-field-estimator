@@ -760,3 +760,87 @@ def test_boundary_preview_prices_a_disabled_bracket_item_the_same_at_both_ends()
         for sample in boundary['samples']:
             low = D(sample['low'].strip('$').replace(',', ''))
             assert D(sample['high'].strip('$').replace(',', '')) >= low > 0
+
+
+@pytest.mark.parametrize('flat_price', ['', '12'])
+def test_blank_bracket_prices_save_as_drafts_but_block_publication(flat_price):
+    book = table()
+    book['items'][0]['unit_price'] = flat_price
+    book['items'][0]['price_brackets'][0]['unit_price'] = '  '
+    draft = price_table.normalize_table(book, publish=False)
+    assert draft['items'][0]['price_brackets'][0]['unit_price'] == ''
+    problems = price_table.publish_problems(draft)
+    assert any(p['item_id'] == 'area_work' and 'bracket' in p['message'] for p in problems)
+    with pytest.raises(ValueError):
+        price_table.normalize_table(draft, publish=True)
+    changes, warnings = price_table.diff_tables(table(), draft)
+    assert changes['items'] and 'zero_price' not in warnings
+    lines, warnings = pricing_v2.price_scope(scope(100), draft)
+    assert lines == []
+    assert dict(code='blank_price_item', item_id='area_work') in warnings
+
+
+def test_blank_bracket_working_copy_survives_reload_and_calculation(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    book = table()
+    book['items'][0]['unit_price'] = ''
+    for band in book['items'][0]['price_brackets']:
+        band['unit_price'] = ''
+    saved = client.put('/api/companies/adr/prices/working-copy', json=book)
+    assert saved.status_code == 200, saved.text
+    assert any(p['item_id'] == 'area_work' for p in saved.json()['problems'])
+    reloaded = client.get('/api/companies/adr/prices').json()['working_copy']
+    assert reloaded['items'][0]['price_brackets'] == book['items'][0]['price_brackets']
+    samples = client.post('/api/companies/adr/prices/calculate', json=book)
+    assert samples.status_code == 200, samples.text
+    assert samples.json()['problems']
+    assert all(row['label'] != 'Area work' for row in samples.json()['boundary_samples'])
+    for band in book['items'][0]['price_brackets']:
+        band['unit_price'] = '10'
+    completed = client.put('/api/companies/adr/prices/working-copy', json=book)
+    assert completed.status_code == 200, completed.text
+    assert completed.json()['problems'] == []
+    _publish_v2(client, book, 'Finish draft bracket prices')
+
+
+def test_item_boundary_preview_exposes_drops_without_minimum_or_overhead():
+    from backend.price_book_store import _boundary_samples
+
+    book = table('whole-job')
+    book['policy'].update(minimum_job_charge='10000', overhead_profit_percent='50')
+    original = copy.deepcopy(book)
+    samples = _boundary_samples(book)
+    item_boundary = next(row for row in samples if row['label'] == 'Area work')
+    amounts = {row['sf']: row['low'] for row in item_boundary['samples']}
+    assert item_boundary['price_drop']
+    assert amounts[500] == '$5,000.00'
+    assert amounts[501] == '$2,505.00'
+    assert book == original
+    assert ends(book, 500)[0] == D('15000')
+    assert ends(book, 501)[0] == D('15000')
+
+
+def test_disabled_blank_price_brackets_can_publish_and_restore(api, enabled):
+    client, current, _ = api
+    current['uid'] = 'owner'
+    book = table(price_bands=False)
+    disabled = copy.deepcopy(book['items'][0])
+    disabled.update(
+        item_id='later_work', code='LATER', unit_price='', allow_zero=True, enabled=False
+    )
+    disabled['price_brackets'] = [
+        dict(up_to_sf=500, unit_price=''),
+        dict(up_to_sf=None, unit_price=''),
+    ]
+    book['items'].append(disabled)
+    assert price_table.publish_problems(book) == []
+    published = _publish_v2(client, book)
+    read = client.get('/api/companies/adr/prices')
+    assert read.status_code == 200, read.text
+    assert read.json()['version_id'] == published['version_id']
+    restored = client.post(
+        f'/api/companies/adr/prices/versions/{published["version_id"]}/restore',
+        json={'change_reason': 'Keep disabled bracket draft'},
+    )
+    assert restored.status_code == 200, restored.text

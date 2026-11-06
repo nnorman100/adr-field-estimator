@@ -414,7 +414,9 @@ def price_scope(data, table, numbers=None, growth=None):
             extras_taxable = item['taxable']
             if _has_unpriced_quantity(item, data):
                 warnings.append(dict(code='unpriced_extras_quantity', item_id=item['item_id']))
-        if item['unit_price'] == '' and not item.get('price_brackets'):
+        if (item['unit_price'] == '' and not item.get('price_brackets')) or any(
+            band['unit_price'] == '' for band in item.get('price_brackets', [])
+        ):
             warnings.append(dict(code='blank_price_item', item_id=item['item_id']))
             continue
         # The extras item only supplies the rate an owner approves work at (extras.rate_for).

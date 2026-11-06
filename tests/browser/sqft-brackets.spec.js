@@ -136,3 +136,30 @@ test('changing away from an area item clears brackets and returning shows an emp
   await expect(item.locator('[name=price_brackets_value_0]')).toHaveValue('25.00');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
 });
+
+test('an owner can save and reload blank price brackets before entering prices', async ({
+  page,
+}) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await start(page);
+  const item = page.locator('[data-price-item=demo_cat1_wall]');
+  await item.locator('[name=price_demo_cat1_wall]').fill('');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await item.getByRole('button', { name: 'Add price brackets', exact: true }).click();
+  await expect(item.locator('[name=price_brackets_value_0]')).toHaveValue('');
+  await expect(item.locator('[name=price_brackets_value_1]')).toHaveValue('');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceProblems')).toContainText('1 item needs a price');
+  await start(page);
+  await expect(item.locator('[name=price_brackets_value_0]')).toHaveValue('');
+  await expect(item.locator('[name=price_brackets_value_1]')).toHaveValue('');
+  await item.locator('[name=price_brackets_value_0]').fill('10');
+  await item.locator('[name=price_brackets_value_1]').fill('5');
+  await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  await expect(page.locator('#priceProblems')).toBeHidden();
+  await expect(page.locator('#priceSettings')).toContainText(
+    'With the default two-step cushion, whole-job mode brings back the 1,001 sq ft step even if you have not added any brackets.',
+  );
+  expect(errors).toEqual([]);
+});

@@ -186,7 +186,7 @@ def cushion_brackets_of(policy: dict) -> list[dict]:
     )
 
 
-def normalize_brackets(raw, *, where: str, value_field: str) -> list[dict]:
+def normalize_brackets(raw, *, where: str, value_field: str, allow_blank=False) -> list[dict]:
     """Cumulative upper limits imply contiguous bands (0, first], (first, next], ... ."""
     if not isinstance(raw, list) or not (1 <= len(raw) <= MAX_BRACKETS):
         raise ValueError(
@@ -211,20 +211,20 @@ def normalize_brackets(raw, *, where: str, value_field: str) -> list[dict]:
             )
         else:
             previous = limit
-        result.append(
-            {
-                'up_to_sf': limit,
-                value_field: _decimal_str(
-                    band[value_field],
-                    where=where,
-                    field=value_field,
-                    low=Decimal(0),
-                    high=Decimal(100 if value_field == 'percent' else 100000),
-                    max_decimals=2,
-                    fixed_decimals=2 if value_field == 'unit_price' else None,
-                ),
-            }
-        )
+        value = band[value_field]
+        if allow_blank and isinstance(value, str) and not value.strip():
+            value = ''
+        else:
+            value = _decimal_str(
+                value,
+                where=where,
+                field=value_field,
+                low=Decimal(0),
+                high=Decimal(100 if value_field == 'percent' else 100000),
+                max_decimals=2,
+                fixed_decimals=2 if value_field == 'unit_price' else None,
+            )
+        result.append({'up_to_sf': limit, value_field: value})
     return result
 
 
@@ -795,9 +795,14 @@ def normalize_items(items, *, publish: bool, acknowledgements=()) -> list[dict]:
                     f'{where}: price brackets require a square-foot room or typed item.'
                 )
             brackets = normalize_brackets(
-                raw['price_brackets'], where=where, value_field='unit_price'
+                raw['price_brackets'],
+                where=where,
+                value_field='unit_price',
+                allow_blank=not publish or not enabled,
             )
-            if any(Decimal(band['unit_price']) == 0 for band in brackets):
+            if any(
+                band['unit_price'] != '' and Decimal(band['unit_price']) == 0 for band in brackets
+            ):
                 if not allow_zero:
                     raise ValueError(f'{where}: zero bracket prices require allow_zero.')
                 if publish and enabled and item_id not in acked and code not in acked:
@@ -1172,6 +1177,14 @@ def publish_problems(table: dict, acknowledgements=(), *, extras_locked=False) -
         if not item.get('enabled', True):
             continue
         price = item.get('unit_price', '')
+        if any(band['unit_price'] == '' for band in item.get('price_brackets', [])):
+            problems.append(
+                {
+                    'item_id': item_id,
+                    'message': f'Row {code}: enter a unit price for each price bracket before publishing.',
+                }
+            )
+            continue
         if price == '' and not item.get('price_brackets'):
             problems.append(
                 {
@@ -1182,7 +1195,8 @@ def publish_problems(table: dict, acknowledgements=(), *, extras_locked=False) -
             continue
         priced_enabled += 1
         zero_price = any(
-            Decimal(band['unit_price']) == 0 for band in item.get('price_brackets', [])
+            band['unit_price'] != '' and Decimal(band['unit_price']) == 0
+            for band in item.get('price_brackets', [])
         )
         if zero_price or (price != '' and Decimal(price) == 0):
             if not item.get('allow_zero'):
@@ -1543,7 +1557,8 @@ def diff_tables(before: dict | None, after: dict) -> tuple[dict, list[str]]:
 
     for item_id, after_it in after_items.items():
         zero_price = (after_it['unit_price'] != '' and Decimal(after_it['unit_price']) == 0) or any(
-            Decimal(band['unit_price']) == 0 for band in after_it.get('price_brackets', [])
+            band['unit_price'] != '' and Decimal(band['unit_price']) == 0
+            for band in after_it.get('price_brackets', [])
         )
         if after_it['enabled'] and zero_price:
             warning_set.add('zero_price')

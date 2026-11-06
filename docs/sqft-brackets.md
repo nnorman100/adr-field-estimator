@@ -14,7 +14,7 @@ not a separate region price. Room category
 and cabinetry multipliers and waste still apply. Price brackets are available only
 on `sf` items with a room or typed quantity source. Without brackets, the item
 keeps its flat unit price. With brackets, the bracket rates replace that price;
-the flat price may be blank. Every bracket must have a price, and zero requires
+the flat price may be blank. Every enabled bracket must have a price before publishing, and zero requires
 the existing allow-zero setting and an owner's explicit confirmation at publish.
 
 Both kinds of bracket have cumulative upper limits. For example:
@@ -34,6 +34,11 @@ overlaps impossible. Limits must be ascending whole numbers from 1 to 100,000,
 with 1 to 20 bands. Prices are nonnegative decimals up to $100,000 with at most
 two decimal places. Cushion bands use the same limits and a `percent` from 0 to
 100 with at most two decimal places.
+
+Price bands may have blank prices in a saved working copy. Fill every price band
+or disable the item before publishing; incomplete items are unpriced in sample calculations and their
+boundary previews appear once their prices are complete. A blank flat price stays
+blank when the owner first adds price brackets.
 
 | Quantity | Tiered at the example rates | Whole-job at the example rates |
 | --- | --- | --- |
@@ -100,7 +105,8 @@ cushion bands, as it ignores the legacy cushion; its calculation is unchanged.
 The live preview shows isolated sample work one square foot below, at, and one
 square foot above **every** boundary, plus 0.01 sq ft below and above to reveal
 small drops that whole-foot samples would miss. Price previews use that item's rates and
-the company policy. Cushion previews state a synthetic $1/sq ft scope to show
+the company policy, with minimum job charge and overhead/profit excluded so they
+cannot hide a bracket drop. Cushion previews also exclude those settings and state a synthetic $1/sq ft scope to show
 the percentage effect separately. Other items and saved jobs are excluded and
 this is stated beside the samples; on a job, whole-job mode picks the band from the
 job's total square feet, every square-foot line before waste. A whole-job drop in either estimate end is

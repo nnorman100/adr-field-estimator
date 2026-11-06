@@ -1324,6 +1324,10 @@
       ),
       node(
         'p',
+        'With the default two-step cushion, whole-job mode brings back the 1,001 sq ft step even if you have not added any brackets.',
+      ),
+      node(
+        'p',
         'Price brackets count square feet before waste. Tiered prices fill each item’s bands across its matching rooms, highest adjusted-cost rooms first. Whole-job picks every item’s band and the cushion band from the job’s total square feet: every square-foot line, flat-priced items included, before waste. Tiered cushion brackets count the combined area-priced labor and materials. Boundary samples below show isolated work.',
       ),
     );
@@ -1539,8 +1543,8 @@
     row.append(node('small', sourceLabel(item.quantity_source), 'price-source'));
     row.append(node('p', undefined, 'price-problem'));
     const brackets = bracketEditor(item, 'price_brackets', 'unit_price', 'Price brackets', () => [
-      { up_to_sf: 500, unit_price: item.unit_price || '0' },
-      { up_to_sf: null, unit_price: item.unit_price || '0' },
+      { up_to_sf: 500, unit_price: item.unit_price },
+      { up_to_sf: null, unit_price: item.unit_price },
     ]);
     brackets.hidden = !areaBracketItem(item);
     row.append(brackets);

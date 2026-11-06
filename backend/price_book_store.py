@@ -278,10 +278,14 @@ def _rate_book_samples(rates, calculation_version):
 def _boundary_samples(table):
     """Boundary demonstrations price isolated work, never a saved job or an owner's defaults."""
     groups = []
+    item_policy = copy.deepcopy(table['policy'])
+    item_policy.update(minimum_job_charge='0', overhead_profit_percent='0')
     for item in table['items']:
-        if not item.get('price_brackets'):
+        if not item.get('price_brackets') or any(
+            band['unit_price'] == '' for band in item['price_brackets']
+        ):
             continue
-        groups.append((item['name'], item['price_brackets'], item, table['policy']))
+        groups.append((item['name'], item['price_brackets'], item, item_policy))
     if price_table.assist_of(table['policy'])['range_method'] == 'cushion':
         bands = price_table.cushion_brackets_of(table['policy'])
         # A stated $1/sq ft scope isolates the allowance from the owner's item rates.
@@ -398,6 +402,7 @@ def _boundary_samples(table):
                         {key: sample[key] for key in ('sf', 'low', 'high')} for sample in samples
                     ],
                     'notice': 'Isolated sample work only; other items and saved jobs are excluded. '
+                    'Minimum job charge and overhead/profit are excluded. '
                     "On a job, whole-job mode picks the band from the job's total square feet, every "
                     'square-foot line before waste.',
                 }
@@ -1902,7 +1907,8 @@ class PriceBookStore:
                 and (
                     it.get('unit_price') in ('0', '0.0', '0.00')
                     or any(
-                        Decimal(band['unit_price']) == 0 for band in it.get('price_brackets', [])
+                        band['unit_price'] != '' and Decimal(band['unit_price']) == 0
+                        for band in it.get('price_brackets', [])
                     )
                 )
             ]
