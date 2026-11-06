@@ -744,3 +744,19 @@ def test_largest_bracket_csv_export_reimports_and_oversized_csv_is_still_refused
     flat = export_csv('company', 'v1', 1, table(price_bands=False)['items'])
     with pytest.raises(SizeLimit):
         parse_upload(flat + b'\n' * CSV_LIMIT, 'text/csv', 'company', 'v1', 1, 'dryscope-v2')
+
+
+def test_boundary_preview_prices_a_disabled_bracket_item_the_same_at_both_ends():
+    from backend.price_book_store import _boundary_samples
+
+    book = table()
+    book['items'][0]['enabled'] = False
+    _uncertainty(book)
+    book['policy']['assist']['hidden_damage_percent'] = {'1': '10', '2': '10', '3': '10'}
+    boundaries = _boundary_samples(book)
+    at_500 = next(s for s in boundaries[0]['samples'] if s['sf'] == 500)
+    assert (at_500['low'], at_500['high']) == ('$5,000.00', '$5,500.00')
+    for boundary in boundaries:
+        for sample in boundary['samples']:
+            low = D(sample['low'].strip('$').replace(',', ''))
+            assert D(sample['high'].strip('$').replace(',', '')) >= low > 0

@@ -308,6 +308,7 @@ def _boundary_samples(table):
         groups.append(('Cushion ($1 per sq ft sample work)', bands, item, policy))
     results = []
     for label, bands, item, policy in groups:
+        item = dict(item, enabled=True)
         for band in bands[:-1]:
             boundary = band['up_to_sf']
             samples = []
@@ -356,9 +357,7 @@ def _boundary_samples(table):
                         scope_items={item['item_id']: {'quantity': str(min(sf, 100000))}},
                     )
                 )
-                lines, _ = pricing_v2.price_scope(
-                    data, {'items': [dict(item, enabled=True)], 'policy': policy}
-                )
+                lines, _ = pricing_v2.price_scope(data, {'items': [item], 'policy': policy})
                 try:
                     totals = pricing_v2.totals(data, lines, policy, [item])
                     low = totals['low']['total']
