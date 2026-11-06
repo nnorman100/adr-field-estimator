@@ -16,7 +16,7 @@ Customer names, addresses, claim details and photos; signed agreements and evide
 8. **AI:** capped per user per day and per company per UTC month ([Company AI spending](ai-spending.md)). A model never supplies a price or removes required wording: on each new audit the server drops any sentence stating a price (a currency sign or word, or a money word such as cost or total with any number) from the AI summary, suggestions and testing advice; records already saved or signed stay as they are. Those notes stay with company staff; signing and document links omit them. Provider failure produces a retry error, never a signable fallback.
 9. **Logs:** allowlisted fields only. Never prompts, transcripts, emails, tokens, addresses, coordinates or paths.
 10. **Secrets:** Secret Manager only. Never in git, wiki or Notion. Do not commit service-account keys.
-11. **Dependencies:** hash-locked; CI runs `pip-audit` and `npm audit`. Ask before adding a dependency.
+11. **Dependencies and code scanning:** hash-locked; CI runs `pip-audit` and `npm audit`. Ask before adding a dependency. CodeQL scans Python and JavaScript on each push and pull request to `master` and weekly; results appear under Security > Code scanning once code scanning is enabled in the repository settings.
 12. **Isolation of the project:** never touch peer sites, shared databases or other Firebase projects. Deploy only target-scoped.
 13. **Photos and GPS:** location is evidence; never edited, never logged.
 
