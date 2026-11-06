@@ -9,12 +9,16 @@ and changes no ADR rates or v1 rate books.
 A price bracket belongs to one item. In tiered mode its quantity is that item's
 combined square feet across matching rooms, or its typed square-foot quantity,
 **before waste**. In whole-job mode the job's total square footage picks the band:
-each room that any priced square-foot item (flat or bracketed) covers adds its
-affected area once, plus each square-foot quantity typed without a room, before
-waste. A room's affected area is the policy's area basis: unfinished plus finished
-square feet, or the wet floor area (the floor area when blank) under `wet_floor`.
-Several items on one 500 sq ft room count 500 sq ft; a room with 400 sq ft finished
-and 400 sq ft unfinished counts 800 sq ft however its items split it; separate
+each room counts once at the largest area figure its priced square-foot items
+(flat or bracketed) use, plus each square-foot quantity typed without a room, before
+waste. Finished plus unfinished demolition counts as one figure, even when only
+one demolition item reads that room. Floor and wet-floor items use their own area
+figures; a blank wet floor uses the floor area. A `room:basis` item reads the
+policy's area basis. Area figures that no enabled, priced square-foot item reads
+do not contribute: a room priced only by a floor item at 600 sq ft counts 600,
+even if a larger demolition area was entered.
+Several items on one 500 sq ft room count 500 sq ft; demolition on a room with 400 sq ft finished
+and 400 sq ft unfinished contributes an 800 sq ft figure however its items split it; separate
 rooms count separately even when they share a name. It is
 not a separate region price. Room category
 and cabinetry multipliers and waste still apply. Price brackets are available only

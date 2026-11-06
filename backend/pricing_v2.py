@@ -322,12 +322,16 @@ def _unpriced(item):
 
 
 def _job_sf(data, items, policy):
-    """The job's total square feet, before waste: each room a priced square-foot item covers adds
-    its affected area once (room:basis under the policy's area_basis), plus each square-foot
-    quantity typed without a room."""
+    """Count each room once at the largest area figure its priced square-foot items use.
+
+    Finished plus unfinished demolition is one figure. Typed footage without a room adds once;
+    all figures are before waste.
+    """
     job_overrides, room_overrides = _overrides(data, [])
     categories = {room.category for room in data.rooms}
-    rooms, typed = set(), ZERO
+    rooms, typed = {}, ZERO
+    demolition_source = parse_source('room:basis')
+    demolition_policy = dict(policy, area_basis='demolition')
     for item in items:
         if (
             not item['enabled']
@@ -341,16 +345,15 @@ def _job_sf(data, items, policy):
             if not item['categories'] or categories.intersection(item['categories']):
                 typed += _job_quantity(item, source, data, job_overrides, {})
             continue
-        rooms.update(
-            index
-            for index, room in enumerate(data.rooms)
-            if not item['categories'] or room.category in item['categories']
-        )
-    basis = parse_source('room:basis')
-    return sum(
-        (_room_quantity(data.rooms[index], basis, policy, room_overrides) for index in rooms),
-        typed,
-    )
+        for index, room in enumerate(data.rooms):
+            if item['categories'] and room.category not in item['categories']:
+                continue
+            if source.field in ('finished_sf', 'unfinished_sf'):
+                area = _room_quantity(room, demolition_source, demolition_policy, room_overrides)
+            else:
+                area = _room_quantity(room, source, policy, room_overrides)
+            rooms[index] = max(rooms.get(index, ZERO), area)
+    return sum(rooms.values(), typed)
 
 
 def _exact(line):
@@ -895,8 +898,9 @@ def _bracket_cushion_sentence(policy):
     if bracket_mode_of(policy) == 'whole-job':
         return (
             'The high end applies one whole-job cushion to labor and materials, selected by the '
-            "job's total square feet before waste, each room counted once plus square feet typed "
-            'without a room: ' + '; '.join(parts) + '.'
+            "job's total square feet before waste: each room once at the largest area figure its "
+            'priced square-foot items use (finished plus unfinished demolition is one figure), '
+            'plus square feet typed without a room: ' + '; '.join(parts) + '.'
         )
     return (
         'The high end adds a tiered cushion to area-priced labor and materials, highest-priced '
