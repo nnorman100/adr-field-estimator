@@ -49,7 +49,6 @@ try:
     from .ai_spending import (
         ReservedCall,
         SpendingError,
-        owner_spending,
         rest_cost,
         REST_OUTPUT_LIMIT,
     )
@@ -133,7 +132,6 @@ except ImportError:
     from ai_spending import (
         ReservedCall,
         SpendingError,
-        owner_spending,
         rest_cost,
         REST_OUTPUT_LIMIT,
     )
@@ -805,7 +803,8 @@ async def generate(
     timeout=100,
     check=None,
     invalid_detail=None,
-    spending=None,
+    *,
+    spending,
 ):
     started = time.monotonic()
     outcome = 'cancelled'
@@ -820,18 +819,17 @@ async def generate(
             thinking_config=(
                 types.ThinkingConfig(thinking_level=thinking_level) if thinking_level else None
             ),
-            max_output_tokens=REST_OUTPUT_LIMIT if spending else None,
+            max_output_tokens=REST_OUTPUT_LIMIT,
         )
-        if spending:
-            if isinstance(spending, ReservedCall):
-                held = spending
-            else:
-                store, uid = spending
-                held = await stored(
-                    ReservedCall.start, store, uid, WORKSPACES_ENABLED, model, operation
-                )
-            ledger, reservation = held.ledger, held.identifier
-            held.dispatched = True
+        if isinstance(spending, ReservedCall):
+            held = spending
+        else:
+            store, uid = spending
+            held = await stored(
+                ReservedCall.start, store, uid, WORKSPACES_ENABLED, model, operation
+            )
+        ledger, reservation = held.ledger, held.identifier
+        held.dispatched = True
         response = await asyncio.wait_for(
             get_ai_client().aio.models.generate_content(
                 model=model,
@@ -912,7 +910,7 @@ def rest_deadline(operation):
     return bounded
 
 
-async def generate_audit(contents, inspection_id, started, spending=None):
+async def generate_audit(contents, inspection_id, started, spending):
     # `started` is when the request's REST deadline began, so no attempt can outlast it. A timed-out
     # attempt is cancelled with its HTTP request and discarded; nothing is saved until one succeeds.
     end = started + REST_DEADLINE_SECONDS - AUDIT_SAVE_RESERVE_SECONDS
@@ -1138,14 +1136,6 @@ async def session_info(staff=Depends(current_staff)):
             get_job_store().workspaces.email_notice
         )
         result.update(await stored(get_job_store().workspaces.prices.session_view, actor))
-        if actor['role'] == 'owner':
-            try:
-                result['ai_spending'] = await stored(
-                    owner_spending, get_job_store(), staff['uid'], actor['company_id']
-                )
-            except HTTPException:
-                # Usage display must not block field work or account access during an outage.
-                result['ai_spending'] = None
     else:
         result.update(prices_set=True, price_display=price_display(adr_rates()))
     if ai_features.enabled('ai_usage'):

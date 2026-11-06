@@ -9,23 +9,25 @@ platform default. An existing value wins over the platform default. The private
 per-company override can be raised at launch; no owner editing control is exposed.
 No migration or cloud configuration change is needed for the default.
 
-The owner's dashboard shows **AI spending this month**, even while the separate optional
-AI request-count feature is off. Refresh loads
-the `ai_spending` field of `GET /api/session`, returned only to the current
-company's active owner; superadmin status alone grants no spending access. The response is
-private and not cached. Offline, the card offers no spending claim. Spending uses
-UTC calendar months, independently of the existing per-user rolling quota windows.
+The owner's dashboard shows one read-only line, **AI used this month: $X of $10.00**,
+even while the separate optional AI request-count feature is off. Only the owner page
+loads it, from `GET /api/companies/{company_id}/ai-spending`, which answers only the
+current company's active owner; superadmin status alone grants no spending access.
+`/api/session` carries no spending data. The response is private and not cached.
+Offline, or when the read fails, the line makes no spending claim and has no refresh
+control. Spending uses UTC calendar months, independently of the existing per-user
+rolling quota windows.
 
-The card separates estimated settled spending from reserved active or unconfirmed
-work. Both count against the allowance. These conservative estimates are a safety
-control, not an invoice or customer job prices. All existing per-user and per-minute
+The amount shown is estimated settled spending plus reservations for active or
+unconfirmed work; both count against the allowance. These conservative estimates are
+a safety control, not an invoice or customer job prices. All existing per-user and per-minute
 quotas remain. The ledger never supplies job prices or changes an agreement.
 
 ## REST: hard reservations
 
 Every provider generation for audit, scope extraction, OCR, offline voice-note
 transcription, job summaries and drying summaries acquires a reservation before
-dispatch. Audit retries reserve separately; implicit SDK HTTP retries are disabled
+dispatch; the generation helper has no unmetered mode. Audit retries reserve separately; implicit SDK HTTP retries are disabled
 so a provider retry cannot multiply one reservation. Readiness, equipment recommendations,
 estimate warnings, manual edits and price calculations that run without a model
 make no paid generation and use no AI spending allowance. Cached and facts-only
@@ -54,7 +56,9 @@ to their original UTC month; a late settlement cannot refund the next month's al
 No TTL policy or automatic billing reconciliation is added.
 
 At the cap the server returns 429 with a plain explanation that AI is unavailable
-until next month UTC and field work can continue. It does not change the draft,
+until next month UTC and field work can continue, and `Retry-After: 3600`. Queued
+voice notes and photo readings stay pending and retry at most hourly; a refused photo
+reading does not stop the phone from syncing other queued drafts' manual work. It does not change the draft,
 photos, voice-note ledger or agreement because of that refusal. Offline notes may
 still be recorded and synced as pending field work. Ordinary manual work, document
 reads and signing a previously prepared eligible agreement do not consult spending.
@@ -85,8 +89,7 @@ must reserve on the new month.
 **Live can overshoot by about an in-flight session while usage arrives.** This is
 an approximate exposure, not a mathematical maximum: delayed reports and several
 simultaneous sessions can add unreported work. The reserve reduces that exposure;
-it does not make automatic speech turns a hard dollar bound. The owner card states
-this limitation. Exhaustion closes coaching without deleting the saved draft or
+it does not make automatic speech turns a hard dollar bound. Exhaustion closes coaching without deleting the saved draft or
 evidence. User quotas, access/revocation rechecks, audio acknowledgements, microphone
 format, Finish cleanup and resumption behavior remain in place.
 
@@ -98,7 +101,8 @@ Sources verified November 6, 2026:
 
 Synthetic tests exercise concurrent reservations/settlements, two companies,
 restart/crash holds, month rollover and late settlement, thinking-token cost, unknown
-models, cap refusals through real API handlers, owner access and the dashboard.
+models, cap refusals through real API handlers, owner access, the dashboard line and a
+refused queued photo reading that leaves later queued drafts syncing.
 Mock/transactional-fake tests do not establish real-service billing accuracy.
 Production Firestore/Vertex checks and physical iPhone camera, microphone,
 Bluetooth, interruption, reconnect, Finish cleanup and conversational latency

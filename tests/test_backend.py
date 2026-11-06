@@ -894,6 +894,8 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
     monkeypatch.setattr(bm, 'genai_client', None)
     monkeypatch.setattr(bm.genai, 'Client', client)
 
+    spending = (FakeStore(), 'tech')
+
     async def run():
         return [
             await bm.generate(
@@ -903,8 +905,11 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
                 'audit',
                 ID,
                 thinking_level=bm.AUDIT_THINKING_LEVEL,
+                spending=spending,
             ),
-            await bm.generate(bm.OcrResult, ['Synthetic photo'], bm.OCR_MODEL, 'ocr', ID),
+            await bm.generate(
+                bm.OcrResult, ['Synthetic photo'], bm.OCR_MODEL, 'ocr', ID, spending=spending
+            ),
             await bm.generate(
                 ScopeSuggestions,
                 ['Synthetic scope'],
@@ -913,6 +918,7 @@ def test_real_sdk_serializes_response_schemas_for_vertex(monkeypatch):
                 ID,
                 wire_schema=scope_response_schema(),
                 thinking_level=bm.SCOPE_THINKING_LEVEL,
+                spending=spending,
             ),
         ]
 
@@ -1123,6 +1129,7 @@ def test_signing_evidence_and_administration_routes_always_check_revocation_live
         ('GET', '/api/jobs/{job_id}/insight'),
         ('GET', '/api/admin/companies/{company_id}/jobs/{job_id}/insight'),
         ('GET', '/api/companies/{company_id}/ai-usage'),
+        ('GET', '/api/companies/{company_id}/ai-spending'),
         ('GET', '/api/admin/companies/{company_id}/ai-usage'),
         ('GET', '/api/companies/{company_id}/drying-watch'),
         ('GET', '/api/jobs/drying-watch'),

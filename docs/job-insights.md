@@ -42,7 +42,7 @@ there is no pricing table, history, scheduler or additional counter write. A rea
 unavailable without blocking the session. Maps, manual monitoring actions and reminder emails are
 excluded because they are not model operations.
 
-Those optional counts are separate from the always-available owner spending card
+Those optional counts are separate from the always-available owner spending line
 and shared company allowance in [Company AI spending](ai-spending.md). The spending
 ledger reserves money before paid calls; cached and facts-only reads need no hold.
 

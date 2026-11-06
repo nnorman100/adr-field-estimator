@@ -17,6 +17,7 @@ from backend.ai_spending import (
     LIVE_MARGIN,
     REST_RESERVE,
     REST_OUTPUT_LIMIT,
+    RETRY_SECONDS,
     ReservedCall,
     rest_cost,
 )
@@ -223,6 +224,7 @@ def test_cap_refuses_paid_routes_without_changing_draft(api, monkeypatch, operat
         response = client.get(f'/api/jobs/{ID}/insight')
     assert response.status_code == 429, response.text
     assert 'spending limit' in response.json()['detail']
+    assert response.headers['retry-after'] == str(RETRY_SECONDS)
     assert store.db.records['inspections/' + ID] == before
     assert client.get(f'/api/inspections/{ID}').status_code == 200
     assert client.get(f'/api/jobs/{ID}/insight?facts_only=true').status_code == 200
@@ -241,16 +243,20 @@ def test_cap_refuses_paid_routes_without_changing_draft(api, monkeypatch, operat
 def test_owner_spending_available_without_count_feature_and_is_private(api, uid, company):
     client, actor, store = api
     actor['uid'] = uid
-    response = client.get('/api/session')
-    assert response.status_code == 200
-    if company:
-        assert response.json()['ai_spending']['monthly_cap_microusd'] == DEFAULT_CAP
-        assert response.json()['ai_spending']['company_id'] == company
-        assert response.headers['cache-control'] == 'private, no-store'
-        assert not any(k.startswith('_company_ai_budgets/') for k in store.db.records)
-    else:
-        assert 'ai_spending' not in response.json()
-        assert not any(k.startswith('_company_ai_budgets/') for k in store.db.records)
+    session = client.get('/api/session')
+    assert session.status_code == 200
+    assert 'ai_spending' not in session.json()
+    for target in ('adr', 'other'):
+        response = client.get(f'/api/companies/{target}/ai-spending')
+        if target == company:
+            assert response.status_code == 200
+            assert response.json()['monthly_cap_microusd'] == DEFAULT_CAP
+            assert response.json()['company_id'] == company
+            assert response.headers['cache-control'] == 'private, no-store'
+        else:
+            assert response.status_code == 403
+            assert 'monthly_cap_microusd' not in response.text
+    assert not any(k.startswith('_company_ai_budgets/') for k in store.db.records)
 
 
 def test_live_margin_shared_with_rest_and_resumed_calls(store):
@@ -405,8 +411,11 @@ def test_spending_read_failure_does_not_block_session_or_disclose_another_compan
     monkeypatch.setattr(CompanySpending, 'summary', unavailable)
     response = client.get('/api/session')
     assert response.status_code == 200
-    assert response.json()['ai_spending'] is None
+    assert 'ai_spending' not in response.json()
     assert response.json()['company_id'] == 'adr'
+    refused = client.get('/api/companies/adr/ai-spending')
+    assert refused.status_code == 503
+    assert 'Synthetic' not in refused.text
 
 
 def test_live_modality_cost_includes_rebilled_context_and_text_transcriptions():

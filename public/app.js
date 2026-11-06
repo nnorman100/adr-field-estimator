@@ -1239,7 +1239,8 @@ async function drainQueue() {
     });
   };
   let conflicts = 0,
-    retry = 0;
+    retry = 0,
+    ocrRetry = 0;
   try {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
@@ -1332,12 +1333,12 @@ async function drainQueue() {
         row.record = record;
         await saveRow(row);
         await markOriginalsReady(row.key, [saved]);
-        if (photo.ocr_status === 'pending') {
+        if (photo.ocr_status === 'pending' && !ocrRetry) {
           try {
             record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
           } catch (e) {
-            if (e.status === 429) throw e;
-            record = await request(path);
+            if (e.status === 429) ocrRetry = Math.max(1, e.retryAfter) * 1000;
+            else record = await request(path);
           }
           Object.assign(
             photo,
@@ -1387,6 +1388,7 @@ async function drainQueue() {
       );
       if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
     }
+    if (ocrRetry) retry = retry ? Math.min(retry, ocrRetry) : ocrRetry;
     if (retry) {
       clearTimeout(state.queueRetry);
       state.queueRetry = setTimeout(() => drainQueue(), retry);
@@ -1438,8 +1440,9 @@ function startOCR(photo) {
       if (state.draft?.inspection_id === inspectionId) {
         if (e.status === 429) {
           say(
-            'Recognition limit reached. Retry the pending photo after ' +
-              e.retryAfter +
+            e.message +
+              ' The photo remains pending; retry recognition after ' +
+              Math.max(1, e.retryAfter) +
               ' seconds.',
             'error',
           );

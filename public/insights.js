@@ -270,63 +270,29 @@ window.InsightUI = (() => {
   function spending(target) {
     if (state.session.role !== 'owner') return;
     const requested = identity(),
-      card = node('section', undefined, 'dashboard-card ai-spending');
+      card = node('section', undefined, 'dashboard-card ai-spending'),
+      show = (text) => card.replaceChildren(node('p', 'AI used this month: ' + text));
     target.append(card);
+    if (!navigator.onLine) return show('connect to load.');
+    show('loading…');
     const money = (micro) => '$' + (micro / 1000000).toFixed(2);
-    async function load() {
-      card.replaceChildren(node('h2', 'AI spending this month'));
-      if (navigator.onLine) {
-        card.append(node('p', 'Loading spending…'));
-        try {
-          const session = await jsonApi('/api/session'),
-            result = session.ai_spending;
-          if (requested !== identity() || !card.isConnected) return;
-          if (!result) throw new Error('Spending unavailable');
-          const used = result.spent_microusd + result.reserved_microusd,
-            bar = node('progress');
-          bar.max = Math.max(1, result.monthly_cap_microusd);
-          bar.value = used;
-          bar.setAttribute('aria-label', 'Company AI spending including reserved calls');
-          card.replaceChildren(
-            node('h2', 'AI spending this month'),
-            node(
-              'p',
-              `${money(used)} of ${money(result.monthly_cap_microusd)} · ${result.month} (UTC)`,
-            ),
-            bar,
-            node(
-              'p',
-              `${money(result.spent_microusd)} estimated spending; ${money(result.reserved_microusd)} reserved for active or unconfirmed calls. Resets at the start of the next UTC month.`,
-            ),
-            node(
-              'p',
-              `Live keeps a ${money(result.live_margin_microusd)} reserve. Live has a soft limit and may exceed the cap by about one session while usage arrives. Drafts and agreements stay available.`,
-            ),
-          );
-        } catch {
-          if (requested !== identity() || !card.isConnected) return;
-          card.replaceChildren(
-            node('h2', 'AI spending this month'),
-            node('p', 'Spending unavailable.'),
-          );
-        }
-      }
-      const offline = node(
-        'p',
-        'Offline · connect to load this month’s spending.',
-        'usage-offline',
-      );
-      offline.hidden = navigator.onLine;
-      const refresh = button('Refresh spending', load);
-      refresh.disabled = !navigator.onLine;
-      card.append(offline, refresh);
-    }
-    load();
+    jsonApi(`/api/companies/${state.session.company_id}/ai-spending`).then(
+      (result) => {
+        if (requested !== identity() || !card.isConnected) return;
+        show(
+          `${money(result.spent_microusd + result.reserved_microusd)} of ${money(result.monthly_cap_microusd)}`,
+        );
+      },
+      () => {
+        if (requested !== identity() || !card.isConnected) return;
+        show('unavailable.');
+      },
+    );
   }
   function connectivity() {
     check();
     account();
-    for (const control of document.querySelectorAll('.ai-usage button, .ai-spending button'))
+    for (const control of document.querySelectorAll('.ai-usage button'))
       control.disabled = !navigator.onLine;
     for (const notice of document.querySelectorAll('.usage-offline'))
       notice.hidden = navigator.onLine;

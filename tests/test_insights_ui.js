@@ -293,23 +293,21 @@ test('owner spending loads without the optional AI counts feature', async () => 
   h.context.state.session.company_id = 'adr';
   h.context.state.session.ai_features = [];
   h.ui.spending(h.target);
-  assert.equal(h.requests[0].path, '/api/session');
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].path, '/api/companies/adr/ai-spending');
   h.requests[0].resolve({
-    ai_spending: {
-      month: '2026-11',
-      spent_microusd: 2000000,
-      reserved_microusd: 2000000,
-      monthly_cap_microusd: 10000000,
-      live_margin_microusd: 2000000,
-    },
+    month: '2026-11',
+    spent_microusd: 2000000,
+    reserved_microusd: 2000000,
+    monthly_cap_microusd: 10000000,
+    live_margin_microusd: 2000000,
   });
   await h.flush();
   const card = h.target.children[0];
-  assert.ok(card.children.some((c) => c.text === '$4.00 of $10.00 · 2026-11 (UTC)'));
-  const progress = card.children.find((c) => c.tag === 'progress');
-  assert.equal(progress.max, 10000000);
-  assert.equal(progress.value, 4000000);
-  assert.ok(card.children.some((c) => c.text?.includes('soft limit')));
+  assert.deepEqual(
+    card.children.map((c) => [c.tag, c.text]),
+    [['p', 'AI used this month: $4.00 of $10.00']],
+  );
 });
 
 test('spending is owner-only and does not reuse another company response', async () => {
@@ -322,18 +320,34 @@ test('spending is owner-only and does not reuse another company response', async
   h.context.state.session.company_id = 'adr';
   h.ui.spending(h.target);
   h.context.state.session.uid = 'another-owner';
-  h.requests[0].resolve({ spent_microusd: 2000000 });
+  h.requests[0].resolve({ spent_microusd: 2000000, reserved_microusd: 0, monthly_cap_microusd: 1 });
   await h.flush();
-  assert.equal(h.target.children[0].children[1].text, 'Loading spending…');
+  assert.equal(h.target.children[0].children[0].text, 'AI used this month: loading…');
 });
 
-test('offline spending makes no request and offers a disabled refresh', async () => {
+test('spending failure shows unavailable without a refresh control', async () => {
+  const h = harness();
+  h.context.state.session.role = 'owner';
+  h.context.state.session.company_id = 'adr';
+  h.ui.spending(h.target);
+  h.requests[0].reject(Object.assign(Error('Synthetic outage'), { status: 503 }));
+  await h.flush();
+  const card = h.target.children[0];
+  assert.deepEqual(
+    card.children.map((c) => [c.tag, c.text]),
+    [['p', 'AI used this month: unavailable.']],
+  );
+});
+
+test('offline spending makes no request and offers no controls', async () => {
   const h = harness();
   h.context.state.session.role = 'owner';
   h.context.navigator.onLine = false;
   h.ui.spending(h.target);
   assert.equal(h.requests.length, 0);
   const card = h.target.children[0];
-  assert.ok(card.children.some((c) => c.text?.includes('Offline')));
-  assert.equal(card.children.find((c) => c.tag === 'button').disabled, true);
+  assert.deepEqual(
+    card.children.map((c) => [c.tag, c.text]),
+    [['p', 'AI used this month: connect to load.']],
+  );
 });

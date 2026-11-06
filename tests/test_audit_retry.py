@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 import backend.claims as claims
 import backend.main as bm
+from tests.fakes import FakeStore
 from tests.test_backend import context, inspect, ID
 from tests.test_logging import entries
 
@@ -137,15 +138,16 @@ def test_no_retry_when_too_little_of_the_deadline_remains(budget, monkeypatch, c
     def spent():
         return time.monotonic() - (bm.REST_DEADLINE_SECONDS - bm.AUDIT_SAVE_RESERVE_SECONDS - 1.7)
 
+    spending = (FakeStore(), 'tech')
     calls = provider(monkeypatch, [1.25])
-    result = asyncio.run(bm.generate_audit(['Synthetic audit'], ID, spent()))
+    result = asyncio.run(bm.generate_audit(['Synthetic audit'], ID, spent(), spending))
     assert result.summary == 'Scope confirmed.' and [c['outcome'] for c in calls] == ['finished']
 
     calls = provider(monkeypatch, [30])
     capsys.readouterr()
     started = time.monotonic()
     with pytest.raises(HTTPException) as error:
-        asyncio.run(bm.generate_audit(['Synthetic audit'], ID, spent()))
+        asyncio.run(bm.generate_audit(['Synthetic audit'], ID, spent(), spending))
     assert error.value.status_code == 504 and time.monotonic() - started < 2.5
     assert [c['outcome'] for c in calls] == ['cancelled']
     assert not messages(capsys, 'Vertex AI retry')

@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 DEFAULT_CAP = 10_000_000
 LIVE_MARGIN = 2_000_000
+RETRY_SECONDS = 3600
 REST_INPUT_LIMIT = 1_048_576
 REST_OUTPUT_LIMIT = 65_536
 # Standard non-global list prices, without promotional credits, checked 2026-11-06.
@@ -32,7 +33,7 @@ class SpendingError(HTTPException):
 
 
 def limited():
-    return SpendingError(429, CAP_MESSAGE)
+    return SpendingError(429, CAP_MESSAGE, headers={'Retry-After': str(RETRY_SECONDS)})
 
 
 def rest_allowance(model):

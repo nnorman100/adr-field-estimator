@@ -40,7 +40,7 @@ Office can read only active estimators' uid/email from the team, for assignment.
 
 ## Checks by role (no capability key)
 These routes test the owner role directly, so a new role would not gain them from a key:
-- Approve additional work (`/extras/{id}/approve`), read company AI usage, restore a price version, preview a reprice, read price version detail and history events, list pending signing links of a member, clear invitations, and all member and invitation changes.
+- Approve additional work (`/extras/{id}/approve`), read company AI usage, read this month's company AI spending (`GET /api/companies/{id}/ai-spending`; other companies, estimators, office and superadmin support are refused), restore a price version, preview a reprice, read price version detail and history events, list pending signing links of a member, clear invitations, and all member and invitation changes.
 - Company drying-watch list: owner or office only (estimators use "My drying jobs").
 - `POST /api/companies/{id}/prices/import-preview` is checked with `prices_read`, so any role that can read prices can run an import preview; saving or publishing still needs `prices_manage`. This looks like a gap and is recorded here, not changed.
 - `POST /api/qr-tags` needs a signed-in member but no capability and no job.
