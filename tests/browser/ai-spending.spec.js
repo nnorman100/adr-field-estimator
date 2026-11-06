@@ -32,6 +32,7 @@ test('monthly spending uses real settlement with synthetic provider usage and no
   await expect(card).toContainText('$0.00 of $10.00');
   await expect(card).toContainText('next UTC month');
   await expect(card).toContainText('soft limit');
+  await expect(card.locator('.notice')).toHaveCount(0);
   expect(await card.locator('progress').evaluate((bar) => bar.value)).toBe(990);
   await expect(page.locator('.ai-usage')).toHaveCount(0);
 });

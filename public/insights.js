@@ -314,7 +314,7 @@ window.InsightUI = (() => {
       const offline = node(
         'p',
         'Offline · connect to load this month’s spending.',
-        'usage-offline notice',
+        'usage-offline',
       );
       offline.hidden = navigator.onLine;
       const refresh = button('Refresh spending', load);
