@@ -16,6 +16,14 @@ inventory behind it.
 - A prompt, model or limit change is therefore a visible two-file change. To update after an intended change run
   `python3 scripts/ai_inventory_facts.py --table`, paste the rows, and say in the pull request why the behaviour should change.
   The port must leave every hash unchanged: a port that "improves" a prompt fails this test on purpose.
+- **Two checks, one exception to "new tests use Vitest".** The prompt-text hashes and the source-level settings need no
+  backend packages, so they stay in Vitest (`tests/test_ai_inventory.js`, run by the Node CI job). What each path actually
+  sends (model, client, config, parts, response schema with its full SHA-256, quota charges, and the prompt text as emitted)
+  can only be observed by running the legacy Python routes, which needs pydantic, FastAPI and the Gen AI SDK. The Node job
+  installs none of them and workflow files are protected, so those assertions live in the existing Python suite
+  (`tests/test_ai_inventory.py`, run by the Python CI job). This is a recorded exception: the assertions exercise the legacy
+  backend, so they belong to its suite until that area is rewritten in TypeScript (stage S7), when they convert to Vitest
+  ("old suites convert by area").
 - Only the text each prompt owns is hashed. Data the server adds at call time (inspection JSON, photo log, claim details,
   facts packs) is not a prompt and is described in the call-path sections instead.
 - Everything below is read from the code. Deployed environment variables (`AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`,
@@ -242,6 +250,70 @@ header cells exactly as they are.
 | `quota.ocr` | `per-minute limit 20` |
 | `quota.scope` | `per-minute limit 6` |
 | `quota.transcribe` | `per-minute limit 10` |
+
+### Pinned requests
+
+These two tables are read by `tests/test_ai_inventory.py`, which drives every call path through its real route (and the Live relay through its real WebSocket) with a recording stand-in for the Gen AI client, and compares what was actually emitted: model, client, config, parts, response schema (full SHA-256 of the schema content), quota charges and the prompt text with server-added JSON data lines replaced by `<json>`.
+
+| Request id | sha256 of the normalized emitted text |
+| --- | --- |
+| `audit_1978_plus.request` | `d7bf7b5fdd2c0d27d6e87414afc37f46b1f6de377c36139f9a2342b3e4b9e576` |
+| `audit_company.request` | `1cac7780dfd0e09eecde9b2509afd664fe0c3b200098892a8c998a2b58f88a15` |
+| `audit_pre_1978.request` | `9559ab6f53d25b5a4df490f596793cd06c4126dcfc4bd4ed8f8ee0c858b3f68a` |
+| `drying_summary.request` | `53efffe99a2aa706213dc9db8422929e7f0ccc033c9dd03651f11e69e3a66a2a` |
+| `job_summary.request` | `de7ef9921761fd4ff76c62f20d0a4bfef951e85fab46235b0590321bd5b97d49` |
+| `live.greeting` | `9563a456f3ed369a745e501aab72e6f5eece5b84282744bfa060a5a8bbff8cff` |
+| `live.shot_update` | `df0a3e1c96cffba6a86bd58d00ede6244e023684b5f0f6e9d81365c6feb55924` |
+| `live.system_instruction` | `928155bb367d6adf51d863b89261ef2a807c1be8add7f98fb82d3c283cc4eea7` |
+| `ocr.request` | `b3f0d443ed6db0c83b405aaa4208d59cb11e6223084617b8bd8af65583213758` |
+| `scope.request` | `436fc930b0954b7924c21aba4e0f0c36b1f8df0269c8a4c08ac4d6a0bfbdd15b` |
+| `scope_with_claim.request` | `52da5f5227114e2712cea2e49e38ff90d1f03bbf2aed7c6b880b20a0970815af` |
+| `transcribe.request` | `b010bead4a2cf8d78c5d030179c77992309491ec6deafe3b48b62ad138d02e27` |
+
+| Observed setting | Observed value |
+| --- | --- |
+| `ai_features.parse` | `unset -> []; ' Job_Summary,,readiness ' -> ['job_summary', 'readiness']` |
+| `call.audit_1978_plus` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json AIResult; parts=text` |
+| `call.audit_company` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json AIResult; parts=text, image/jpeg; image=JPEG 120x60` |
+| `call.audit_pre_1978` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json AIResult; parts=text, image/jpeg; image=JPEG 1600x1200` |
+| `call.drying_summary` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json DryingSummary; parts=text` |
+| `call.job_summary` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json JobSummary; parts=text` |
+| `call.ocr` | `model=gemini-3.8-flash; thinking=provider default; timeout=100; response=application/json OcrResult; parts=image/jpeg, text; image=JPEG 1600x1200` |
+| `call.scope` | `model=gemini-3.8-flash; thinking=LOW; timeout=100; response=application/json wire schema; parts=text` |
+| `call.scope_with_claim` | `model=gemini-3.8-flash; thinking=LOW; timeout=100; response=application/json wire schema; parts=text` |
+| `call.transcribe` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json TranscriptionResult; parts=audio/mp4, text` |
+| `client.live` | `enterprise=True; project=alert-disaster-field-2026; location=us-central1; http_timeout_ms=95000` |
+| `client.rest` | `enterprise=True; project=alert-disaster-field-2026; location=global; http_timeout_ms=95000` |
+| `deploy.AI_FEATURES` | `default deploy sets 'readiness'; choose from ai_usage, drying_watch, estimate_assist, job_summary, priced_extras, readiness, or none` |
+| `inspection_store.TRANSCRIPT_LIMIT` | `80000` |
+| `live.connect` | `model=gemini-3.8-live; config={"context_window_compression": {"sliding_window": {"target_tokens": 32000}, "trigger_tokens": 64000}, "input_audio_transcription": {}, "output_audio_transcription": {}, "response_modalities": ["AUDIO"], "session_resumption": {}, "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Charon"}}}}` |
+| `live.greeting.turn_complete` | `True` |
+| `live.shot_update.turn_complete` | `False` |
+| `main.AUDIT_ATTEMPT_SECONDS` | `25` |
+| `main.AUDIT_PHOTO_DOWNLOADS` | `6` |
+| `main.AUDIT_RETRY_MIN_SECONDS` | `10` |
+| `main.AUDIT_SAVE_RESERVE_SECONDS` | `5` |
+| `main.LIVE_RECHECK_SECONDS` | `20` |
+| `main.LIVE_REPLY_WAIT_SECONDS` | `5` |
+| `main.REST_DEADLINE_SECONDS` | `55` |
+| `main.VOICE_NOTE_BYTES` | `10485760` |
+| `quota.audit` | `no per-minute limit, 60 a day` |
+| `quota.audit_attempt` | `3 a minute, no daily limit` |
+| `quota.drying_summary` | `6 a minute, 60 a day` |
+| `quota.job_summary` | `6 a minute, 60 a day` |
+| `quota.live` | `no per-minute limit, 40 a day` |
+| `quota.ocr` | `20 a minute, 400 a day` |
+| `quota.scope` | `6 a minute, 120 a day` |
+| `quota.transcribe` | `10 a minute, 200 a day` |
+| `schema.audit_1978_plus` | `3e393c2353600538f286f7bdce5086b13c0a9a6a04550ce7605a4b5fc0d332b3` |
+| `schema.audit_company` | `3e393c2353600538f286f7bdce5086b13c0a9a6a04550ce7605a4b5fc0d332b3` |
+| `schema.audit_pre_1978` | `3e393c2353600538f286f7bdce5086b13c0a9a6a04550ce7605a4b5fc0d332b3` |
+| `schema.drying_summary` | `452d3a84f64cd6f71bc6eca6be465b6d3b6340ea73d7625fe7d49bc508497727` |
+| `schema.job_summary` | `e9cc36472e07723935f19aa746c78dc52dca1789da0857b46c300c8b2ed7ac70` |
+| `schema.ocr` | `9f710594b5a03a7bd046fc5c872c07e7308d0bca29d5a06c147860f703cec650` |
+| `schema.scope` | `7033facf7ebfa5bde048a47305a1dfbef73e3e092c5e2c1b71858d2fa71a656e` |
+| `schema.scope_with_claim` | `7033facf7ebfa5bde048a47305a1dfbef73e3e092c5e2c1b71858d2fa71a656e` |
+| `schema.transcribe` | `a0cc4f83b9dd9a9614909a0064dba4eb61f9ffefc7bd1d8c85d0c92fc38404df` |
 
 ## AI modality coverage contract
 
