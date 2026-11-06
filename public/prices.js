@@ -1328,7 +1328,7 @@
       ),
       node(
         'p',
-        'Price brackets count square feet before waste. Tiered prices fill each item’s bands across its matching rooms, highest adjusted-cost rooms first. Whole-job picks every item’s band and the cushion band from the job’s total square feet before waste: each room once, at the largest square footage any priced item reads from it, plus square feet typed without a room. Tiered cushion brackets count the combined area-priced labor and materials. Boundary samples below show isolated work.',
+        'Price brackets count square feet before waste. Tiered prices fill each item’s bands across its matching rooms, highest adjusted-cost rooms first. Whole-job picks every item’s band and the cushion band from the job’s total square feet before waste: each room a priced item covers adds its affected area once (unfinished plus finished, or wet floor under the wet-floor basis), plus square feet typed without a room. Tiered cushion brackets count the combined area-priced labor and materials. Boundary samples below show isolated work.',
       ),
     );
     rangeBox.append(

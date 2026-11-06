@@ -322,11 +322,12 @@ def _unpriced(item):
 
 
 def _job_sf(data, items, policy):
-    """The job's total square feet, before waste: each room once, at the largest square footage a
-    priced square-foot item reads from it, plus each square-foot quantity typed without a room."""
+    """The job's total square feet, before waste: each room a priced square-foot item covers adds
+    its affected area once (room:basis under the policy's area_basis), plus each square-foot
+    quantity typed without a room."""
     job_overrides, room_overrides = _overrides(data, [])
     categories = {room.category for room in data.rooms}
-    rooms, typed = {}, ZERO
+    rooms, typed = set(), ZERO
     for item in items:
         if (
             not item['enabled']
@@ -340,12 +341,16 @@ def _job_sf(data, items, policy):
             if not item['categories'] or categories.intersection(item['categories']):
                 typed += _job_quantity(item, source, data, job_overrides, {})
             continue
-        for index, room in enumerate(data.rooms):
-            if item['categories'] and room.category not in item['categories']:
-                continue
-            quantity = _room_quantity(room, source, policy, room_overrides) or ZERO
-            rooms[index] = max(rooms.get(index, ZERO), quantity)
-    return sum(rooms.values(), typed)
+        rooms.update(
+            index
+            for index, room in enumerate(data.rooms)
+            if not item['categories'] or room.category in item['categories']
+        )
+    basis = parse_source('room:basis')
+    return sum(
+        (_room_quantity(data.rooms[index], basis, policy, room_overrides) for index in rooms),
+        typed,
+    )
 
 
 def _exact(line):

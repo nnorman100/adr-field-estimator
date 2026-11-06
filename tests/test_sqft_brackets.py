@@ -887,6 +887,30 @@ def test_whole_job_counts_one_room_once_across_several_square_foot_items():
     assert (result['low']['total'], result['high']['total']) == (D('6000'), D('9000'))
 
 
+def test_whole_job_counts_a_rooms_finished_plus_unfinished_area_once():
+    bands = [dict(up_to_sf=750, unit_price='10'), dict(up_to_sf=None, unit_price='5')]
+    book = _whole_job_cushion_book(
+        _flat(
+            'unfinished_work',
+            quantity_source='room:demolition:unfinished',
+            unit_price='',
+            price_brackets=bands,
+        )
+    )
+
+    def room(finished, unfinished):
+        return _job(dict(name='Basement', finished_sf=finished, unfinished_sf=unfinished))
+
+    split = room(400, 400)
+    assert pricing_v2._job_sf(split, book['items'], book['policy']) == D('800')
+    lines, _ = pricing_v2.price_scope(split, book)
+    assert sorted(line['unit_price'] for line in lines) == [5.0, 5.0]
+    result = estimate(book, split)
+    assert (result['low']['total'], result['high']['total']) == (D('4000'), D('4400'))
+    at_boundary = estimate(book, room(375, 375))
+    assert (at_boundary['low']['total'], at_boundary['high']['total']) == (D('7500'), D('11250'))
+
+
 def test_whole_job_keeps_same_name_rooms_separate_and_adds_typed_square_feet():
     book = _whole_job_cushion_book()
     kitchen = dict(name='Kitchen', category=1, finished_sf=400)

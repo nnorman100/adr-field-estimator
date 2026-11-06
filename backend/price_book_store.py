@@ -349,10 +349,12 @@ def _boundary_samples(table):
                             dict(
                                 name=f'Sample room {index + 1}',
                                 category=category,
-                                finished_sf=area,
-                                unfinished_sf=0
-                                if item['quantity_source'] == 'room:basis'
+                                finished_sf=0
+                                if item['quantity_source'] == 'room:demolition:unfinished'
                                 else area,
+                                unfinished_sf=area
+                                if item['quantity_source'] == 'room:demolition:unfinished'
+                                else 0,
                                 wet_floor_sf=area,
                                 floor_sf=area or None,
                             )
