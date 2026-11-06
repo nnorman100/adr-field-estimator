@@ -8,9 +8,12 @@ import pytest
 
 import backend.retention as retention
 from backend.inspection_store import Conflict
+from backend.monitoring_store import WatchAction
+from backend.outcomes import JobClose
 from backend.retention import DAY, Retention, RetentionUpdate
 from backend.workspaces import AccessDenied, ArchiveRequest
 from tests.fakes import png
+from tests.test_drying_watch import request, watched  # noqa: F401  (fixtures)
 from tests.test_workspaces import ID, OTHER, api, data, store  # noqa: F401  (fixtures)
 
 NOW = time.time()
@@ -447,3 +450,146 @@ def test_only_owners_hold_the_retention_capability(api):
     for uid, allowed in (('owner', True), ('estimator', False), ('office', False)):
         current['uid'] = uid
         assert ('retention_manage' in client.get('/api/session').json()['capabilities']) is allowed
+
+
+def failing_photo_deletes(store, monkeypatch):
+    blob_class = type(store.bucket.blob('x'))
+    real_delete = blob_class.delete
+
+    def failing(self, **kwargs):
+        raise RuntimeError('storage unavailable')
+
+    monkeypatch.setattr(blob_class, 'delete', failing)
+    return lambda: monkeypatch.setattr(blob_class, 'delete', real_delete)
+
+
+def restore_with_a_new_photo(store):
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.workspaces.restore_job('owner', ID, ArchiveRequest(expected_version=job['version']))
+    revision = store.db.records['inspections/' + ID]['revision']
+    return photo(store, 'owner', ID, 'e' * 32, revision)['photos'][0]
+
+
+def test_a_failed_photo_delete_is_retried_after_the_draft_is_restored(store, on, monkeypatch):
+    gone = archived_draft(store, ID, 91)
+    heal = failing_photo_deletes(store, monkeypatch)
+    assert keeper(store).tick('owner', 'adr', NOW)['deleted']['evidence_photos'] == 0
+    kept = restore_with_a_new_photo(store)
+    heal()
+    assert keeper(store).tick('owner', 'adr', NOW + DAY + 1)['deleted']['evidence_photos'] == 1
+    assert gone['file']['path'] not in objects(store)
+    assert kept['file']['path'] in objects(store)
+    assert store.get_inspection('owner', ID)['photos'] == [kept]
+    assert store.db.records['_workspace_jobs/' + ID]['evidence_pending_paths'] == []
+
+
+def test_photos_added_after_a_restore_wait_for_their_own_archiving_period(store, on, monkeypatch):
+    gone = archived_draft(store, ID, 91)
+    heal = failing_photo_deletes(store, monkeypatch)
+    assert keeper(store).tick('owner', 'adr', NOW)['deleted']['evidence_photos'] == 0
+    kept = restore_with_a_new_photo(store)
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.workspaces.archive_job('owner', ID, ArchiveRequest(expected_version=job['version']))
+    heal()
+    assert keeper(store).tick('owner', 'adr', NOW + DAY + 1)['deleted']['evidence_photos'] == 1
+    assert gone['file']['path'] not in objects(store)
+    assert kept['file']['path'] in objects(store)
+    assert len(store.db.records['inspections/' + ID]['photos']) == 1
+    assert keeper(store).tick('owner', 'adr', NOW + 89 * DAY)['deleted']['evidence_photos'] == 0
+    assert keeper(store).tick('owner', 'adr', NOW + 92 * DAY)['deleted']['evidence_photos'] == 1
+    assert kept['file']['path'] not in objects(store)
+
+
+def test_a_sweep_that_fails_midway_still_reports_what_it_deleted(store, on, monkeypatch):
+    invitation(store, 'a' * 32, 'adr', 91)
+    invitation(store, 'b' * 32, 'adr', 91)
+    real_run = store.workspaces._run
+    calls = []
+
+    def run(callback):
+        calls.append(callback)
+        if len(calls) == 3:  # the second invitation, after the lease and the first
+            raise RuntimeError('unavailable')
+        return real_run(callback)
+
+    monkeypatch.setattr(store.workspaces, '_run', run)
+    with pytest.raises(RuntimeError):
+        keeper(store).tick('owner', 'adr', NOW)
+    assert sum(k.startswith('_invitations/') for k in store.db.records) == 1
+    [entry] = run_events(store)
+    assert entry['details']['deleted']['invitations'] == 1
+    assert store.db.records['_retention_state/adr']['last_deleted']['invitations'] == 1
+
+
+def close_job(store, uid='office'):
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.outcomes.close(
+        uid,
+        ID,
+        JobClose(final_amount='3310.00', actual_days=4, expected_signed_at=job['signed_at']),
+    )
+
+
+def test_a_closed_drying_watch_stays_closed_once_its_history_is_deleted(watched, on):
+    client, current, store, watch = watched
+    watch.change(
+        'office',
+        ID,
+        WatchAction(
+            action='close',
+            reason='Synthetic private close reason',
+            facts_hash=watch.view('office', ID)['facts_hash'],
+            request_id='b' * 32,
+            approved=True,
+        ),
+    )
+    close_job(store)
+    later = time.time() + 91 * DAY
+    assert keeper(store).tick('owner', 'adr', later)['deleted']['job_monitoring'] == 1
+    marker = store.db.records['_job_monitoring/' + ID]
+    assert set(marker) == {'job_id', 'company_id', 'job_closed_at', 'history_deleted_at', 'closed'}
+    assert set(marker['closed']) == {'action', 'at'} and marker['closed']['action'] == 'close'
+    assert 'Synthetic private close reason' not in str(marker)
+    shown = watch.view('office', ID)
+    assert shown['status'] == 'closed' and shown['flags'] == [] and shown['next_due_at'] is None
+    with pytest.raises(Conflict):
+        watch.remind('office', ID, request(watch))
+    with pytest.raises(Conflict):
+        watch.change(
+            'office',
+            ID,
+            WatchAction(
+                action='extend',
+                reason='Synthetic extension',
+                facts_hash=shown['facts_hash'],
+                request_id='c' * 32,
+                approved=True,
+            ),
+        )
+    # What the view recomputes from the marker and the agreement is not history.
+    assert keeper(store).tick('owner', 'adr', later + DAY + 1)['deleted']['job_monitoring'] == 0
+    assert watch.view('office', ID)['status'] == 'closed'
+
+
+def test_the_close_time_kept_on_the_drying_watch_outlives_a_trimmed_history_row(watched, on):
+    client, current, store, watch = watched
+    watch.view('office', ID)
+    close_job(store)
+    assert store.db.records['_job_monitoring/' + ID]['job_closed_at']
+    del store.db.records['_estimate_history/adr']['rows'][ID]
+    soon = time.time() + 89 * DAY
+    assert keeper(store).tick('owner', 'adr', soon)['deleted']['job_monitoring'] == 0
+    assert keeper(store).tick('owner', 'adr', soon + 2 * DAY)['deleted']['job_monitoring'] == 1
+    assert '_job_monitoring/' + ID not in store.db.records
+
+
+def test_a_sidecar_from_before_close_times_were_stored_counts_from_its_last_write(store, on):
+    job_id = 'ADR-INS-' + '5' * 32
+    monitored_job(store, job_id, 'adr', 200)
+    store.db.records['_job_monitoring/' + job_id]['updated_at'] = iso(10)
+    assert keeper(store).tick('owner', 'adr', NOW)['deleted']['job_monitoring'] == 0
+    stamped = store.db.records['_job_monitoring/' + job_id]['job_closed_at']
+    assert retention._epoch(stamped) == pytest.approx(NOW - 10 * DAY)
+    del store.db.records['_estimate_history/adr']['rows'][job_id]
+    assert keeper(store).tick('owner', 'adr', NOW + 79 * DAY)['deleted']['job_monitoring'] == 0
+    assert keeper(store).tick('owner', 'adr', NOW + 81 * DAY)['deleted']['job_monitoring'] == 1

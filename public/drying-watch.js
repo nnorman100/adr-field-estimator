@@ -74,7 +74,8 @@ window.DryingWatch = (() => {
           `${a.room || 'Whole job'} · affected ${a.latest_gpp} GPP · reference ${a.reference_gpp} GPP · progress ${a.percent}%`,
         ),
       );
-    if (watch.closed) target.append(node('p', `${labels[watch.status]}: ${watch.closed.reason}`));
+    if (watch.closed?.reason)
+      target.append(node('p', `${labels[watch.status]}: ${watch.closed.reason}`));
     for (const note of watch.extensions)
       target.append(node('p', 'Plan extension note: ' + note.reason));
   }

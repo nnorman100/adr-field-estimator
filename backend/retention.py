@@ -11,8 +11,10 @@ that is still in progress: each class below names the one moment its clock start
   accepted, cancelled or never used. A pending invitation that has not expired has no clock.
 - admin_events: from the event's creation. This includes the support-access log and the records of
   earlier sweeps; the current setting itself stays on its own record.
-- job_monitoring: the drying-watch sidecar of a signed job, from the job's close. An unclosed job's
-  sidecar has no clock; readings and the signed agreement are not part of this class.
+- job_monitoring: the drying-watch sidecar of a signed job, from the job's close, which the close
+  stores on the sidecar. An unclosed job's sidecar has no clock; readings and the signed agreement
+  are not part of this class. A closed watch keeps only that it was closed, how and when, so it
+  never reopens.
 - evidence_photos: the photos of an archived unsigned draft, from its archiving. A signed job cannot
   be archived, so every photo a signed agreement holds stays.
 
@@ -303,10 +305,10 @@ class Retention:
 
     def sweep(self, company_id, moment, deleted=None):
         deleted = {name: 0 for name in CLASSES} if deleted is None else deleted
-        deleted['invitations'] = self._invitations(company_id, moment)
-        deleted['admin_events'] = self._admin_events(company_id, moment)
-        deleted['job_monitoring'] = self._job_monitoring(company_id, moment)
-        deleted['evidence_photos'] = self._evidence_photos(company_id, moment)
+        deleted['invitations'] = self._invitations(company_id, moment, deleted)
+        deleted['admin_events'] = self._admin_events(company_id, moment, deleted)
+        deleted['job_monitoring'] = self._job_monitoring(company_id, moment, deleted)
+        deleted['evidence_photos'] = self._evidence_photos(company_id, moment, deleted)
         return deleted
 
     def _cutoff(self, company_id, name, moment, tx=None):
@@ -332,7 +334,7 @@ class Retention:
             and invite['expires_at'] <= cutoff
         )
 
-    def _invitations(self, company_id, moment):
+    def _invitations(self, company_id, moment, deleted):
         cutoff = self._cutoff(company_id, 'invitations', moment)
         query = (
             self.ws.db.collection('_invitations')
@@ -344,7 +346,6 @@ class Retention:
             for s in self._pages(query)
             if self._invitation_due(s.to_dict(), company_id, cutoff)
         ][:BATCH]
-        count = 0
         for identifier in due:
 
             def delete(tx, identifier=identifier):
@@ -360,12 +361,12 @@ class Retention:
                     tx.delete(self.ws.ref('_invite_keys', key))
                 return True
 
-            count += bool(self.ws._run(delete))
-        return count
+            deleted['invitations'] += bool(self.ws._run(delete))
+        return deleted['invitations']
 
     # Admin events
 
-    def _admin_events(self, company_id, moment):
+    def _admin_events(self, company_id, moment, deleted):
         cutoff = _iso(self._cutoff(company_id, 'admin_events', moment))
         # company_id + created_at range: the composite index in firestore.indexes.json.
         query = (
@@ -375,7 +376,6 @@ class Retention:
             .limit(BATCH)
         )
         due = [s.to_dict().get('event_id') for s in query.stream()]
-        count = 0
         for identifier in filter(None, due):
 
             def delete(tx, identifier=identifier):
@@ -390,50 +390,91 @@ class Retention:
                 tx.delete(self.ws.ref('_admin_events', identifier))
                 return True
 
-            count += bool(self.ws._run(delete))
-        return count
+            deleted['admin_events'] += bool(self.ws._run(delete))
+        return deleted['admin_events']
 
     # Drying-watch history
 
-    def _closed_at(self, company_id, job_id, tx=None):
+    def _history_rows(self, company_id, tx=None):
         rows = (self.ws.read(HISTORY, company_id, tx) or {}).get('rows')
-        row = rows.get(job_id) if isinstance(rows, dict) else None
-        return _epoch(row.get('closed_at')) if isinstance(row, dict) else None
+        return rows if isinstance(rows, dict) else {}
 
-    def _job_monitoring(self, company_id, moment):
+    @staticmethod
+    def _job_closed_at(record, rows):
+        """The close time stored on the sidecar; a sidecar from before close times were stored
+        counts from its history row's close or its own last write, whichever is later."""
+        stored = _epoch(record.get('job_closed_at'))
+        if stored is not None:
+            return stored
+        row = rows.get(record.get('job_id'))
+        closed = _epoch(row.get('closed_at')) if isinstance(row, dict) else None
+        if closed is None:
+            return None
+        return max(closed, _epoch(record.get('updated_at')) or closed)
+
+    @staticmethod
+    def _history_left(record):
+        if not record.get('history_deleted_at'):
+            return True
+        return any(record.get(key) for key in ('extensions', 'reminders', 'summary'))
+
+    @staticmethod
+    def _marker(record, company_id, closed_at):
+        """What a closed watch keeps once its history goes: that it was closed, how and when."""
+        closed = record['closed']
+        return dict(
+            job_id=record['job_id'],
+            company_id=company_id,
+            job_closed_at=_iso(closed_at),
+            history_deleted_at=now(),
+            closed=dict(action=closed.get('action'), at=closed.get('at')),
+        )
+
+    def _job_monitoring(self, company_id, moment, deleted):
         cutoff = self._cutoff(company_id, 'job_monitoring', moment)
-        rows = (self.ws.read(HISTORY, company_id) or {}).get('rows')
-        rows = rows if isinstance(rows, dict) else {}
-        # A job whose history row was trimmed or never written has no close time: it is kept.
-        closed = [
-            job_id
-            for job_id, row in rows.items()
-            if isinstance(row, dict)
-            and (_epoch(row.get('closed_at')) or float('inf')) <= cutoff
-            and self.ws.read('_job_monitoring', job_id)
-        ][:BATCH]
-        count = 0
-        for job_id in closed:
+        rows = self._history_rows(company_id)
+        query = self.ws.db.collection('_job_monitoring').where(
+            filter=firestore.FieldFilter('company_id', '==', company_id)
+        )
+        due = []
+        for snapshot in self._pages(query):
+            record = snapshot.to_dict()
+            closed_at = self._job_closed_at(record, rows)
+            if closed_at is None:
+                continue
+            unstamped = _epoch(record.get('job_closed_at')) is None
+            if unstamped or (closed_at <= cutoff and self._history_left(record)):
+                due.append(record['job_id'])
+        for job_id in due[:BATCH]:
 
-            def delete(tx, job_id=job_id):
+            def expire(tx, job_id=job_id):
+                ref = self.ws.ref('_job_monitoring', job_id)
                 record = self.ws.read('_job_monitoring', job_id, tx)
                 job = self.ws.read('_workspace_jobs', job_id, tx)
-                closed_at = self._closed_at(company_id, job_id, tx)
+                rows = self._history_rows(company_id, tx)
                 fresh = self._cutoff(company_id, 'job_monitoring', moment, tx)
                 if (
                     not record
                     or not job
                     or job.get('company_id') != company_id
                     or record.get('company_id') != company_id
-                    or closed_at is None
-                    or closed_at > fresh
                 ):
                     return False
-                tx.delete(self.ws.ref('_job_monitoring', job_id))
+                closed_at = self._job_closed_at(record, rows)
+                if closed_at is None:
+                    return False
+                if closed_at > fresh or not self._history_left(record):
+                    if _epoch(record.get('job_closed_at')) is None:
+                        tx.update(ref, {'job_closed_at': _iso(closed_at)})
+                    return False
+                if isinstance(record.get('closed'), dict):
+                    tx.set(ref, self._marker(record, company_id, closed_at))
+                else:
+                    tx.delete(ref)
                 return True
 
-            count += bool(self.ws._run(delete))
-        return count
+            deleted['job_monitoring'] += bool(self.ws._run(expire))
+        return deleted['job_monitoring']
 
     # Photos of archived drafts
 
@@ -448,13 +489,11 @@ class Retention:
             or archived is None
         ):
             return False
-        if job.get('evidence_pending_paths'):
-            return True
         deleted = _epoch(job.get('evidence_deleted_at'))
         # A draft restored and archived again after its photos went has a new clock.
         return archived <= cutoff and (deleted is None or deleted < archived)
 
-    def _evidence_photos(self, company_id, moment):
+    def _evidence_photos(self, company_id, moment, deleted):
         cutoff = self._cutoff(company_id, 'evidence_photos', moment)
         # The archived-drafts list query and its index (company_id, kind, updated_at).
         query = (
@@ -468,17 +507,28 @@ class Retention:
             for s in self._pages(query)
             if self._photos_due(s.to_dict(), company_id, cutoff)
         ][:BATCH]
-        count = 0
+        # Objects of photos already removed from a draft, archived or restored since.
+        retry = (
+            self.ws.db.collection('_workspace_jobs')
+            .where(filter=firestore.FieldFilter('company_id', '==', company_id))
+            .where(filter=firestore.FieldFilter('evidence_pending', '==', True))
+            .limit(BATCH)
+        )
+        waiting = {
+            s.to_dict()['job_id']: list(s.to_dict().get('evidence_pending_paths') or [])
+            for s in retry.stream()
+        }
         for job_id in due:
             paths = self.ws._run(
                 lambda tx, job_id=job_id: self._release(tx, company_id, job_id, moment)
             )
-            if paths is None:
-                continue
-            if self._delete_objects(paths):
+            if paths is not None:
+                waiting[job_id] = paths
+        for job_id, paths in waiting.items():
+            if paths and self._delete_objects(paths):
                 self.ws._run(lambda tx, job_id=job_id, paths=paths: self._settle(tx, job_id, paths))
-                count += 1
-        return count
+                deleted['evidence_photos'] += 1
+        return deleted['evidence_photos']
 
     def _release(self, tx, company_id, job_id, moment):
         """Removes the photos from the archived draft and records their paths on the job, in one
@@ -509,10 +559,16 @@ class Retention:
                     'updated_at': now(),
                 },
             )
-        stamp = dict(evidence_pending_paths=pending)
-        if photos or not job.get('evidence_deleted_at'):
-            stamp.update(evidence_deleted_at=now(), evidence_deleted_photos=len(photos))
-        tx.set(job_ref, stamp, merge=True)
+        tx.set(
+            job_ref,
+            dict(
+                evidence_pending_paths=pending,
+                evidence_pending=bool(pending),
+                evidence_deleted_at=now(),
+                evidence_deleted_photos=len(photos),
+            ),
+            merge=True,
+        )
         return pending
 
     def _delete_objects(self, paths):
@@ -538,5 +594,7 @@ class Retention:
         job = self.ws.read('_workspace_jobs', job_id, tx) or {}
         left = [p for p in job.get('evidence_pending_paths') or [] if p not in paths]
         tx.set(
-            self.ws.ref('_workspace_jobs', job_id), dict(evidence_pending_paths=left), merge=True
+            self.ws.ref('_workspace_jobs', job_id),
+            dict(evidence_pending_paths=left, evidence_pending=bool(left)),
+            merge=True,
         )
