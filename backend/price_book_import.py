@@ -54,6 +54,7 @@ except ImportError:
     )
 
 CSV_LIMIT = 256 * 1024
+BRACKET_CSV_LIMIT = 512 * 1024
 XLSX_LIMIT = 1024 * 1024
 UNZIPPED_LIMIT = 5 * 1024 * 1024
 ENTRY_LIMIT = 100
@@ -152,7 +153,7 @@ def parse_upload(
         raise ValueError('Upload a CSV or XLSX file.')
     kind = (content_type or '').split(';', 1)[0].strip().lower()
     if kind in ('text/csv', 'application/csv', 'text/plain'):
-        if len(raw) > CSV_LIMIT:
+        if len(raw) > (BRACKET_CSV_LIMIT if _bracket_header(raw) else CSV_LIMIT):
             raise SizeLimit('The CSV file is too large.')
         fmt, table = _parse_csv(raw)
     elif (
@@ -277,6 +278,12 @@ def _detect_columns(header):
     if header == list(V1_COLUMNS):
         return 'v1', V1_COLUMNS, ROW_LIMIT
     raise ValueError('The file must use the DryScope price template columns.')
+
+
+def _bracket_header(raw):
+    first = bytes(raw[:4096]).split(b'\n', 1)[0].decode('utf-8-sig', 'replace')
+    header = next(csv.reader([first]), [])
+    return [name.strip() for name in header] == list(BRACKET_COLUMNS)
 
 
 def _parse_csv(raw):

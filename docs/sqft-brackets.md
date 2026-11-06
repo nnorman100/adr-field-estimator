@@ -117,7 +117,8 @@ documents serialize, including when optional document fields are omitted.
 CSV/XLSX exports of a bracket-aware table add three columns to the existing v2
 item template: `price_brackets`, `cushion_brackets` and `bracket_mode`. Bracket
 columns contain JSON arrays. The cushion and mode repeat identically on each
-row; mismatches are rejected. On import, these two policy settings replace the
+row; mismatches are rejected. A bracket-template CSV may be up to 512 KiB, enough for
+the largest valid table; other CSV templates keep their 256 KiB limit. On import, these two policy settings replace the
 published values after the owner's review; all other published policy settings
 are retained. The legacy 20-column template is still accepted and retains the
 published policy. Old flat-table exports stay in that format. Unchanged imports preserve

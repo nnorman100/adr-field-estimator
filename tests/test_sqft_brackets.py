@@ -636,3 +636,42 @@ def test_reader_version_diff_keeps_bracket_only_changes_and_added_bracket_items(
     flat_after['items'][0]['unit_price'] = '12.00'
     diff, _ = price_table.public_diff(flat_before, flat_after)
     assert diff == price_table.diff_tables(flat_before, flat_after)[0]
+
+
+def _large_bracket_table(count=150):
+    limits = [*range(10000, 10019), None]
+    items = [
+        dict(
+            item_id=f'area_{index:03d}',
+            code=f'AREA{index:03d}',
+            group='demolition',
+            name=f'Area work {index}',
+            unit='sf',
+            quantity_source='room:demolition:finished',
+            unit_price='',
+            sort_order=index,
+            price_brackets=[dict(up_to_sf=limit, unit_price='1000') for limit in limits],
+        )
+        for index in range(count)
+    ]
+    policy = copy.deepcopy(price_table.DEFAULT_POLICY)
+    policy['range']['brackets'] = [dict(up_to_sf=limit, percent='100') for limit in limits]
+    return price_table.normalize_table({'items': items, 'policy': policy}, publish=False)
+
+
+def test_largest_bracket_csv_export_reimports_and_oversized_csv_is_still_refused():
+    from backend.price_book_import import CSV_LIMIT, SizeLimit
+
+    book = _large_bracket_table()
+    exported = export_csv('company', 'v1', 1, book)
+    assert len(exported) > CSV_LIMIT
+    parsed = parse_upload(exported, 'text/csv', 'company', 'v1', 1, 'dryscope-v2')
+    assert parsed['items'] == book['items']
+    assert parsed['bracket_policy']['brackets'] == book['policy']['range']['brackets']
+
+    padded = exported + b'\n' * (512 * 1024 - len(exported) + 1)
+    with pytest.raises(SizeLimit):
+        parse_upload(padded, 'text/csv', 'company', 'v1', 1, 'dryscope-v2')
+    flat = export_csv('company', 'v1', 1, table(price_bands=False)['items'])
+    with pytest.raises(SizeLimit):
+        parse_upload(flat + b'\n' * CSV_LIMIT, 'text/csv', 'company', 'v1', 1, 'dryscope-v2')
