@@ -6,9 +6,9 @@ and RETENTION_ENABLED on every deploy prevents a release from silently inheritin
 values. The defaults are the production baseline, DEFAULT_AI_FEATURES, DEFAULT_PRICE_BOOKS and
 DEFAULT_RETENTION below, which scripts/auto_deploy.py also stages every release with. Turning a
 feature on is one reviewed pull request that changes one of them, so no later merge can undo it.
---ai-features, --price-books and --retention set one revision only, such as a staged 0% check; the next release goes back to the baseline, or
-stops, so they are not how a feature is turned on. STAFF_EMAILS is the legacy
-staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
+--ai-features, --price-books and --retention set one revision only, such as a staged 0% check;
+the next release goes back to the baseline, or stops, so they are not how a feature is turned on.
+STAFF_EMAILS is the legacy staff allowlist and fails closed: the backend treats an unset value as nobody being staff. Pass
 --staff-emails to set it; without it the revision inherits the service template's value, and the
 script refuses (even for --dry-run) when that template has none. The same command mounts the
 Maps key secret by name, so a release never depends on a binding made by hand in the console.
