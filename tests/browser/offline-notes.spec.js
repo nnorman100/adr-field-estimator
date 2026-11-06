@@ -455,6 +455,38 @@ test.describe('controlled voice-note uploads', () => {
     );
     expect(await savedParts(page)).toBeLessThan(before);
   });
+  test('a spending refusal pauses transcription so a new note does not resend refused audio early', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    let calls = 0;
+    await page.route('**/voice-notes', (route) => {
+      calls++;
+      return route.fulfill({
+        status: 429,
+        headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          detail: "Your company has reached this month's AI spending limit.",
+        }),
+      });
+    });
+    await page.goto('/app');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect.poll(() => calls).toBe(1);
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(2);
+    await page.evaluate(() => processNotes());
+    await page.waitForFunction(() => !notes.processing);
+    await page.evaluate(() => drainQueue());
+    expect(calls).toBe(1);
+  });
   test('a refused draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let refuse = true;

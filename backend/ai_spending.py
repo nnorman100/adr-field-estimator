@@ -13,6 +13,7 @@ from fastapi import HTTPException
 DEFAULT_CAP = 10_000_000
 LIVE_MARGIN = 2_000_000
 RETRY_SECONDS = 3600
+HELD_RETRY_SECONDS = 60
 REST_INPUT_LIMIT = 1_048_576
 REST_OUTPUT_LIMIT = 65_536
 # Standard non-global list prices, without promotional credits, checked 2026-11-06.
@@ -26,14 +27,21 @@ CAP_MESSAGE = (
     "Your company has reached this month's AI spending limit. AI is unavailable until next month (UTC). "
     'Your field work, drafts and agreements are saved; you can keep working without AI.'
 )
+HELD_MESSAGE = (
+    "Your company's remaining AI allowance this month is held by AI requests in progress or "
+    'awaiting confirmation. Retry in a minute. '
+    'Your field work, drafts and agreements are saved; you can keep working without AI.'
+)
 
 
 class SpendingError(HTTPException):
     """An expected budget refusal, safe for the API to return verbatim."""
 
 
-def limited():
-    return SpendingError(429, CAP_MESSAGE, headers={'Retry-After': str(RETRY_SECONDS)})
+def limited(exhausted):
+    if exhausted:
+        return SpendingError(429, CAP_MESSAGE, headers={'Retry-After': str(RETRY_SECONDS)})
+    return SpendingError(429, HELD_MESSAGE, headers={'Retry-After': str(HELD_RETRY_SECONDS)})
 
 
 def rest_allowance(model):
@@ -97,10 +105,13 @@ class CompanySpending:
         def acquire(tx):
             settings_ref, settings = self.settings(tx)
             month_ref, month = self.monthly(tx)
-            total = month['spent_microusd'] + month['reserved_microusd']
             cap = settings['monthly_cap_microusd']
-            if total + amount > cap or (live and total >= cap - LIVE_MARGIN):
-                raise limited()
+
+            def refused(total):
+                return total + amount > cap or (live and total >= cap - LIVE_MARGIN)
+
+            if refused(month['spent_microusd'] + month['reserved_microusd']):
+                raise limited(refused(month['spent_microusd']))
             hold = dict(
                 company_id=self.company_id,
                 month=month['month'],
@@ -144,7 +155,10 @@ class CompanySpending:
         self.store._atomic(finish)
 
     def live_usage(self, identifier, estimate):
-        """Account before reporting exhaustion; raising inside the transaction would undo it."""
+        """Account before reporting exhaustion; raising inside the transaction would undo it.
+
+        Returns None under the cap, else whether settled spending plus this session alone reach it.
+        """
         ref = self.ref('_company_ai_reservations', identifier)
 
         def update(tx):
@@ -160,10 +174,10 @@ class CompanySpending:
             hold['amount_microusd'] = amount
             tx.set(month_ref, month)
             tx.set(ref, hold)
-            return (
-                month['spent_microusd'] + month['reserved_microusd']
-                >= settings['monthly_cap_microusd']
-            )
+            cap = settings['monthly_cap_microusd']
+            if month['spent_microusd'] + month['reserved_microusd'] < cap:
+                return None
+            return month['spent_microusd'] + amount >= cap
 
         return self.store._atomic(update)
 

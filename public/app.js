@@ -1193,6 +1193,16 @@ function syncDraft() {
   syncChain = syncChain.catch(() => {}).then(doSync);
   return syncChain;
 }
+const aiPauses = new Map();
+const aiPauseKey = (kind) => [state.user?.uid, window.WorkspaceUI?.context(), kind].join('|');
+function aiWait(kind) {
+  return Math.max(0, (aiPauses.get(aiPauseKey(kind)) || 0) - Date.now());
+}
+function aiRefused(kind, e) {
+  const wait = Math.max(1, e.retryAfter) * 1000;
+  aiPauses.set(aiPauseKey(kind), Date.now() + wait);
+  return wait;
+}
 let drainingQueue = false,
   drainAgain = false;
 async function drainQueue() {
@@ -1239,8 +1249,7 @@ async function drainQueue() {
     });
   };
   let conflicts = 0,
-    retry = 0,
-    ocrRetry = 0;
+    retry = 0;
   try {
     await syncChain.catch(() => {});
     for (const row of await localDrafts()) {
@@ -1333,11 +1342,11 @@ async function drainQueue() {
         row.record = record;
         await saveRow(row);
         await markOriginalsReady(row.key, [saved]);
-        if (photo.ocr_status === 'pending' && !ocrRetry) {
+        if (photo.ocr_status === 'pending' && !aiWait('ocr')) {
           try {
             record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
           } catch (e) {
-            if (e.status === 429) ocrRetry = Math.max(1, e.retryAfter) * 1000;
+            if (e.status === 429) aiRefused('ocr', e);
             else record = await request(path);
           }
           Object.assign(
@@ -1388,7 +1397,8 @@ async function drainQueue() {
       );
       if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
     }
-    if (ocrRetry) retry = retry ? Math.min(retry, ocrRetry) : ocrRetry;
+    const ocrWait = aiWait('ocr');
+    if (ocrWait) retry = retry ? Math.min(retry, ocrWait) : ocrWait;
     if (retry) {
       clearTimeout(state.queueRetry);
       state.queueRetry = setTimeout(() => drainQueue(), retry);
@@ -1424,8 +1434,9 @@ async function drainQueue() {
     } else uploadOriginals();
   }
 }
-function startOCR(photo) {
+function startOCR(photo, manual = false) {
   if (!canEditDraft('ocr') || !navigator.onLine || !photo?.uploaded) return;
+  if (!manual && aiWait('ocr')) return;
   const inspectionId = state.draft.inspection_id;
   if (state.ocr.has(photo.id)) return;
   const promise = (async () => {
@@ -1442,7 +1453,7 @@ function startOCR(photo) {
           say(
             e.message +
               ' The photo remains pending; retry recognition after ' +
-              Math.max(1, e.retryAfter) +
+              aiRefused('ocr', e) / 1000 +
               ' seconds.',
             'error',
           );
@@ -2777,7 +2788,7 @@ function photoCard(p) {
     p.uploaded &&
     ['failed', 'pending', 'no_meter'].includes(p.ocr_status)
   ) {
-    const retry = button('Retry recognition', () => startOCR(p));
+    const retry = button('Retry recognition', () => startOCR(p, true));
     if (!navigator.onLine) {
       retry.disabled = true;
       retry.title = 'Photo recognition needs a connection.';
@@ -5484,6 +5495,8 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
   for (;;) {
     const note = (await draftNotes(key)).find((n) => n.status === 'saved' && n.parts);
     if (!note || stop()) return { added, retry: 0 };
+    const paused = aiWait('transcribe');
+    if (paused) return { added, retry: paused };
     if (sendingNotes.has(note.id)) {
       await sendingNotes.get(note.id);
       if ((await draftNotes(key)).some((n) => n.id === note.id && n.status === 'done')) added++;
@@ -5514,7 +5527,12 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
           e instanceof TypeError || e.name === 'AbortError'
             ? 'no connection to the server, retrying'
             : e.message;
-        retry = e.status === 429 ? Math.max(1, e.retryAfter) * 1000 : NOTE_RETRY_MS;
+        retry =
+          e.status === 429 && !e.draftSync
+            ? aiRefused('transcribe', e)
+            : e.status === 429
+              ? Math.max(1, e.retryAfter) * 1000
+              : NOTE_RETRY_MS;
       }
     }
     try {

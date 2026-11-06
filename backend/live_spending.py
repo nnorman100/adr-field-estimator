@@ -100,8 +100,9 @@ class LiveSpending:
             if datetime.fromtimestamp(time.time(), timezone.utc).strftime('%Y-%m') != self.month:
                 # Reconnect creates a reservation on the new month, including resumed sessions.
                 raise SpendingError(409, 'A new UTC month has started. Reconnect the walkthrough.')
-            if self.ledger.live_usage(self.reservation, self.estimate()):
-                raise limited()
+            exhausted = self.ledger.live_usage(self.reservation, self.estimate())
+            if exhausted is not None:
+                raise limited(exhausted)
 
     def finish(self):
         with self.lock:

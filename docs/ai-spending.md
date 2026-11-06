@@ -55,10 +55,15 @@ unconfirmed hold. Holds have **no expiry that refunds capacity**. They stay char
 to their original UTC month; a late settlement cannot refund the next month's allowance.
 No TTL policy or automatic billing reconciliation is added.
 
-At the cap the server returns 429 with a plain explanation that AI is unavailable
-until next month UTC and field work can continue, and `Retry-After: 3600`. Queued
-voice notes and photo readings stay pending and retry at most hourly; a refused photo
-reading does not stop the phone from syncing other queued drafts' manual work. It does not change the draft,
+A refusal is a 429 that says field work can continue. When settled spending alone
+leaves no room for the call, it explains that AI is unavailable until next month UTC,
+with `Retry-After: 3600`. When the remaining allowance is only held by other
+reservations (calls in progress or awaiting confirmation), it says so instead, with
+`Retry-After: 60`; those holds may settle at a lower actual cost, while crash holds
+stay charged. The phone pauses that user's photo readings or voice-note
+transcription in that company workspace until the `Retry-After` deadline; autosave,
+newly recorded notes and queue restarts do not resend early, and a refused reading
+does not stop other queued drafts' manual work from syncing. It does not change the draft,
 photos, voice-note ledger or agreement because of that refusal. Offline notes may
 still be recorded and synced as pending field work. Ordinary manual work, document
 reads and signing a previously prepared eligible agreement do not consult spending.

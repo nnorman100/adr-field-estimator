@@ -143,4 +143,9 @@ test('a refused queued photo recognition stays pending while later queued drafts
   const queued = await remote(first);
   expect(queued.photos.map((p) => [p.width, p.ocr_status])).toEqual([[120, 'pending']]);
   expect(recognitions).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => drainingQueue)).toBe(false);
+  const refused = recognitions;
+  await page.evaluate(() => drainQueue());
+  await page.evaluate(() => drainQueue());
+  expect(recognitions).toBe(refused);
 });

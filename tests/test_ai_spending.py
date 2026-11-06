@@ -14,6 +14,7 @@ from backend import ai_features, main as bm
 from backend.ai_spending import (
     CompanySpending,
     DEFAULT_CAP,
+    HELD_RETRY_SECONDS,
     LIVE_MARGIN,
     REST_RESERVE,
     REST_OUTPUT_LIMIT,
@@ -86,6 +87,42 @@ def test_crash_holds_survive_new_instances_and_month_rollover(store, monkeypatch
     assert other_worker.summary()['reserved_microusd'] == 1_000_000
     other_worker.settle(next_id, 100)
     assert other_worker.summary()['spent_microusd'] == 100
+
+
+def test_refusal_distinguishes_held_allowance_from_settled_exhaustion(store):
+    ledger = CompanySpending(store, 'adr')
+    busy = ledger.reserve('ocr', DEFAULT_CAP - REST_RESERVE + 1)
+    with pytest.raises(HTTPException) as error:
+        ledger.reserve('audit', REST_RESERVE)
+    assert error.value.status_code == 429
+    assert error.value.headers['Retry-After'] == str(HELD_RETRY_SECONDS)
+    assert 'next month' not in error.value.detail
+    assert 'in progress' in error.value.detail
+    ledger.settle(busy, 1_000)
+    ledger.settle(ledger.reserve('audit', DEFAULT_CAP - 1_000))
+    with pytest.raises(HTTPException) as error:
+        ledger.reserve('ocr', 1)
+    assert error.value.headers['Retry-After'] == str(RETRY_SECONDS)
+    assert 'until next month' in error.value.detail
+
+
+def test_live_refusal_wording_follows_settled_spending(store):
+    ledger = CompanySpending(store, 'adr')
+    other = ledger.reserve('audit', DEFAULT_CAP - LIVE_MARGIN)
+    with pytest.raises(HTTPException) as error:
+        LiveSpending.start(store, 'owner', True, bm.LIVE_MODEL)
+    assert 'in progress' in error.value.detail
+    ledger.settle(other, 0)
+    live = LiveSpending.start(store, 'owner', True, bm.LIVE_MODEL)
+    other = ledger.reserve('audit', DEFAULT_CAP - LIVE_MARGIN)
+    with pytest.raises(HTTPException) as error:
+        live.check()
+    assert error.value.headers['Retry-After'] == str(HELD_RETRY_SECONDS)
+    ledger.settle(other)
+    with pytest.raises(HTTPException) as error:
+        live.check()
+    assert 'until next month' in error.value.detail
+    live.finish()
 
 
 def test_unknown_outcome_charged_and_proven_unused_call_released(store):
