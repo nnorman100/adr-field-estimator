@@ -18,6 +18,9 @@ Check the live version (`YYYY.MM.DD-N`) in the app footer or **Account** menu (`
 ## Release
 Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. Operator-run, with the owner's go. Full commands: `docs/firebase-isolation.md`. Once the owner has set it up, `.github/workflows/deploy.yml` also releases master commits after CI, assigns the next `YYYY.MM.DD-N` version tag and GitHub Release after verification succeeds, and rolls back on failure (`docs/firebase-isolation.md#automatic-deploys`); it stops and leaves the commit for a manual release when rules or indexes changed, or when the repository baseline would turn off a feature now serving.
 
+## Pipeline gate settings
+`.no-mistakes.yaml` sets the repo-level no-mistakes gate rules: protected paths (workflow files, `CLAUDE.md`, `AGENTS.md`, `scripts/test-guard.mjs` and `.github/test-guard.json`, which automatic fixes must leave for a person) and two review auto-fix rounds. The reviewer agent is a global-only setting. Protected paths take effect once this file is on `master`.
+
 ## Switch a company to its own price table
 The company's owner does this in the app, with `PRICE_BOOKS_ENABLED` on. It cannot be undone.
 
