@@ -132,7 +132,7 @@ def run_events(store, company='adr'):
 def test_every_class_starts_at_90_days_and_the_effect_is_in_plain_words(store, off):
     view = keeper(store).view('owner', 'adr')
     assert view['days'] == days() and view['version'] == 0 and view['running'] is False
-    assert (view['min_days'], view['max_days'], view['default_days']) == (30, 3650, 90)
+    assert (view['min_days'], view['max_days'], view['default_days']) == (90, 3650, 90)
     assert view['effect']['invitations'].startswith(
         'Invitations, with the email address they were sent to, are deleted 90 days after they expire.'
     )
@@ -148,7 +148,7 @@ def test_only_the_company_owner_reads_or_changes_the_setting(store, uid):
     with pytest.raises(AccessDenied):
         keep.view(uid, 'adr')
     with pytest.raises(AccessDenied):
-        keep.update(uid, 'adr', RetentionUpdate(expected_version=0, days=days(invitations=30)))
+        keep.update(uid, 'adr', RetentionUpdate(expected_version=0, days=days(invitations=120)))
     assert '_company_retention/adr' not in store.db.records
 
 
@@ -157,24 +157,24 @@ def test_the_owner_extends_or_shortens_each_class_and_the_change_is_audited(stor
     saved = keep.update(
         'owner',
         'adr',
-        RetentionUpdate(expected_version=0, days=days(invitations=30, evidence_photos=365)),
+        RetentionUpdate(expected_version=0, days=days(invitations=120, evidence_photos=365)),
     )
-    assert saved['version'] == 1 and saved['days'] == days(invitations=30, evidence_photos=365)
-    assert '30 days after they expire' in saved['effect']['invitations']
+    assert saved['version'] == 1 and saved['days'] == days(invitations=120, evidence_photos=365)
+    assert '120 days after they expire' in saved['effect']['invitations']
     assert keep.view('owner', 'adr')['days'] == saved['days']
     [entry] = [
         r
         for k, r in store.db.records.items()
         if k.startswith('_admin_events/') and r['action'] == 'retention_settings'
     ]
-    assert entry['details']['days']['invitations'] == 30 and entry['details']['previous'] == days()
+    assert entry['details']['days']['invitations'] == 120 and entry['details']['previous'] == days()
     with pytest.raises(Conflict):
         keep.update('owner', 'adr', RetentionUpdate(expected_version=0, days=days()))
     # The other company keeps its own defaults.
     assert keep.settings('other')[0] == days()
 
 
-@pytest.mark.parametrize('value', [29, 3651, 0, -1])
+@pytest.mark.parametrize('value', [89, 30, 3651, 0, -1])
 def test_periods_outside_the_bounds_are_refused(value):
     with pytest.raises(ValueError):
         RetentionUpdate(expected_version=0, days=days(admin_events=value))
@@ -332,9 +332,11 @@ def test_the_owners_longer_setting_keeps_what_the_default_would_delete(store, on
         invitations=0, admin_events=0, job_monitoring=0, evidence_photos=0
     )
     keeper(store).update(
-        'owner', 'adr', RetentionUpdate(expected_version=1, days=days(invitations=30))
+        'owner', 'adr', RetentionUpdate(expected_version=1, days=days(invitations=90))
     )
-    invitation(store, 'b' * 32, 'adr', 31)
+    invitation(store, 'b' * 32, 'adr', 91)
+    # The sweep below runs a day after NOW: this one is 89 days past expiry then, so it stays.
+    invitation(store, 'c' * 32, 'adr', 88)
     assert keeper(store).tick('owner', 'adr', NOW + DAY + 1)['deleted']['invitations'] == 2
 
 

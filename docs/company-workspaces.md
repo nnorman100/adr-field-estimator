@@ -164,7 +164,7 @@ Owners and office staff record a signed job's final invoiced amount and actual d
 
 ## Record retention
 
-Each company chooses how many days four kinds of record are kept (`backend/retention.py`). The owner sets them under **Company settings → How long records are kept** (`retention_manage`, owner only; `GET`/`PUT /api/companies/{company_id}/retention`, both with the live revocation check); each class starts at 90 days and accepts 30 to 3,650. The screen shows one plain sentence per class, updated as the owner types, and asks for confirmation before saving a shorter period. The setting is `_company_retention/{company_id}` with its own `version`; each change appends a `retention_settings` entry to `_admin_events` with the old and new days.
+Each company chooses how many days four kinds of record are kept (`backend/retention.py`). The owner sets them under **Company settings → How long records are kept** (`retention_manage`, owner only; `GET`/`PUT /api/companies/{company_id}/retention`, both with the live revocation check); each class starts at 90 days, which is also the minimum (owner decision: periods may be lengthened up to 3,650 but never shortened below 90). The screen shows one plain sentence per class, updated as the owner types, and asks for confirmation before saving a shorter period. The setting is `_company_retention/{company_id}` with its own `version`; each change appends a `retention_settings` entry to `_admin_events` with the old and new days.
 
 | Class | Deleted | Clock starts | Never deleted |
 | --- | --- | --- | --- |

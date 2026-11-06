@@ -36,29 +36,37 @@ for (const width of [320, 390]) {
     await expect(invitations).toHaveValue('90');
     const effect = card.locator('#retentionEffect-invitations');
     await expect(effect).toContainText('deleted 90 days after they expire');
-    await invitations.fill('10');
-    await expect(effect).toHaveText('Enter 30 to 3650 days.');
-    await expect(invitations).toHaveAttribute('aria-invalid', 'true');
-    await invitations.fill('45');
-    await expect(effect).toContainText('deleted 45 days after they expire');
+    // 90 is the shortest period: an owner may lengthen but never go below it.
+    for (const value of ['10', '89']) {
+      await invitations.fill(value);
+      await expect(effect).toHaveText('Enter 90 to 3650 days.');
+      await expect(invitations).toHaveAttribute('aria-invalid', 'true');
+    }
+    await invitations.fill('120');
+    await expect(effect).toContainText('deleted 120 days after they expire');
+    await expect(invitations).toHaveAttribute('aria-invalid', 'false');
     await card.getByLabel('Photos on archived drafts (days)').fill('365');
+    // Lengthening asks nothing.
     let asked = '';
-    page.once('dialog', (dialog) => {
+    page.on('dialog', (dialog) => {
       asked = dialog.message();
       dialog.accept();
     });
     await card.getByRole('button', { name: 'Save record retention' }).click();
     await expect(page.locator('#message')).toHaveText('Record retention saved.');
-    expect(asked).toContain('Invitations');
-    expect(asked).not.toContain('Photos on archived drafts');
+    expect(asked).toBe('');
     await page.reload();
     await navigate(page, 'dashboardProfile');
-    await expect(page.locator('#recordRetention').getByLabel('Invitations (days)')).toHaveValue(
-      '45',
-    );
-    await expect(
-      page.locator('#recordRetention').getByLabel('Photos on archived drafts (days)'),
-    ).toHaveValue('365');
+    const saved = page.locator('#recordRetention');
+    await expect(saved.getByLabel('Invitations (days)')).toHaveValue('120');
+    await expect(saved.getByLabel('Photos on archived drafts (days)')).toHaveValue('365');
+    // Shortening back to 90 asks first and names only the shorter class.
+    await saved.getByLabel('Invitations (days)').fill('90');
+    await saved.getByRole('button', { name: 'Save record retention' }).click();
+    await expect(page.locator('#message')).toHaveText('Record retention saved.');
+    expect(asked).toContain('Invitations');
+    expect(asked).not.toContain('Photos on archived drafts');
+    await expect(saved.getByLabel('Invitations (days)')).toHaveValue('90');
     // Nothing overflows the phone width.
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -72,7 +80,11 @@ test('cancelling the shorter-period confirmation saves nothing', async ({ page, 
   await start(page, 'owner');
   await navigate(page, 'dashboardProfile');
   const card = page.locator('#recordRetention');
-  await card.getByLabel('Company activity log (days)').fill('30');
+  // A period can only be shortened after it was lengthened: save 180 first.
+  await card.getByLabel('Company activity log (days)').fill('180');
+  await card.getByRole('button', { name: 'Save record retention' }).click();
+  await expect(page.locator('#message')).toHaveText('Record retention saved.');
+  await card.getByLabel('Company activity log (days)').fill('90');
   page.once('dialog', (dialog) => dialog.dismiss());
   let saved = false;
   page.on('request', (r) => {
@@ -83,7 +95,7 @@ test('cancelling the shorter-period confirmation saves nothing', async ({ page, 
   await navigate(page, 'dashboardProfile');
   await expect(
     page.locator('#recordRetention').getByLabel('Company activity log (days)'),
-  ).toHaveValue('90');
+  ).toHaveValue('180');
   expect(saved).toBe(false);
 });
 

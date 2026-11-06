@@ -13,7 +13,7 @@ function load(extra = {}) {
 
 const VIEW = {
   version: 2,
-  min_days: 30,
+  min_days: 90,
   max_days: 3650,
   default_days: 90,
   days: { invitations: 90, admin_events: 180, job_monitoring: 90, evidence_photos: 90 },
@@ -29,41 +29,42 @@ const VIEW = {
 test('the effect sentence follows the days typed and refuses an out-of-range number', () => {
   const { Retention } = load();
   assert.equal(
-    Retention.sentence(VIEW, 'invitations', '45'),
-    'Invitations are deleted 45 days after they expire.',
+    Retention.sentence(VIEW, 'invitations', '120'),
+    'Invitations are deleted 120 days after they expire.',
   );
   assert.equal(
     Retention.sentence(VIEW, 'admin_events', '3650'),
     'The activity log keeps each entry for 3650 days.',
   );
-  for (const bad of ['29', '3651', '', '40.5', 'abc'])
-    assert.equal(Retention.sentence(VIEW, 'invitations', bad), 'Enter 30 to 3650 days.');
+  for (const bad of ['89', '30', '3651', '', '90.5', 'abc'])
+    assert.equal(Retention.sentence(VIEW, 'invitations', bad), 'Enter 90 to 3650 days.');
 });
 
 test('saving sends whole days for every class and names a class that is out of range', () => {
   const { Retention } = load();
   const values = {
-    invitations: '30',
+    invitations: '90',
     admin_events: '365',
     job_monitoring: '90',
     evidence_photos: '120',
   };
   assert.deepEqual(JSON.parse(JSON.stringify(Retention.chosen(VIEW, values))), {
-    invitations: 30,
+    invitations: 90,
     admin_events: 365,
     job_monitoring: 90,
     evidence_photos: 120,
   });
   assert.throws(
     () => Retention.chosen(VIEW, { ...values, job_monitoring: '7' }),
-    /Drying-watch history: enter 30 to 3650 days\./,
+    /Drying-watch history: enter 90 to 3650 days\./,
   );
 });
 
 test('only periods shorter than the saved ones ask for confirmation', () => {
   const { Retention } = load();
-  const days = { invitations: 30, admin_events: 365, job_monitoring: 90, evidence_photos: 90 };
-  assert.deepEqual([...Retention.shortened(VIEW, days)], ['invitations']);
+  // 90 is the floor: an owner can only shorten a period they lengthened, back down to 90.
+  const days = { invitations: 90, admin_events: 90, job_monitoring: 120, evidence_photos: 90 };
+  assert.deepEqual([...Retention.shortened(VIEW, days)], ['admin_events']);
   assert.deepEqual([...Retention.shortened(VIEW, VIEW.days)], []);
 });
 

@@ -51,7 +51,8 @@ except ImportError:
 
 CLASSES = ('invitations', 'admin_events', 'job_monitoring', 'evidence_photos')
 DEFAULT_DAYS = 90
-MIN_DAYS = 30
+# The owner may lengthen a period but never shorten it below the 90-day default (owner decision).
+MIN_DAYS = 90
 MAX_DAYS = 3650
 DAY = 86400
 SETTINGS = '_company_retention'
