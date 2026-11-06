@@ -265,7 +265,7 @@ Rules that hold whichever way R2 and R3 are decided:
 - A call that cannot be screened is not allowed by default; manual capture and pricing keep working with AI off.
 - An adverse verdict on Live stops playback and the upstream session, discards queued output and the checkpoint, and needs a
   clean restart; the affected transcript is not reused by later AI calls.
-- Durable data stays central (Firestore and the evidence bucket in `us-west2`); any AI processing exception is recorded honestly.
+- Durable data stays central: the port's active app and data are in `us-central1`; the existing `us-west2` Firestore and evidence bucket are the legacy source. Any AI processing exception is recorded honestly.
 - Image screening in the `us` multi-region and the Preview status of image screening are owner decisions (R3), separate from R2.
 
 Source: Model Armor [overview](https://docs.cloud.google.com/model-armor/overview),
