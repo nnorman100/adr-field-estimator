@@ -142,6 +142,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             current['job_id'],
             thinking_level='LOW',
             timeout=25,
+            spending=(store, claims['uid']),
         )
         try:
             validate_insight(result, current['facts'])
@@ -232,6 +233,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             inspection_id,
             thinking_level='LOW',
             timeout=25,
+            spending=(store, claims['uid']),
         )
         try:
             validate_summary(result, pack)

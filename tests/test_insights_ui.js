@@ -286,3 +286,54 @@ for (const blocked of ['offline', 'cooldown']) {
     assert.equal(h.target.children.at(-1).disabled, true);
   });
 }
+
+test('owner spending loads without the optional AI counts feature', async () => {
+  const h = harness();
+  h.context.state.session.role = 'owner';
+  h.context.state.session.company_id = 'adr';
+  h.context.state.session.ai_features = [];
+  h.ui.spending(h.target);
+  assert.equal(h.requests[0].path, '/api/session');
+  h.requests[0].resolve({
+    ai_spending: {
+      day: '2026-11-06',
+      spent_microusd: 12000000,
+      reserved_microusd: 2000000,
+      daily_cap_microusd: 50000000,
+      live_margin_microusd: 2000000,
+    },
+  });
+  await h.flush();
+  const card = h.target.children[0];
+  assert.ok(card.children.some((c) => c.text === '$14.00 of $50.00 · 2026-11-06 (UTC)'));
+  const progress = card.children.find((c) => c.tag === 'progress');
+  assert.equal(progress.max, 50000000);
+  assert.equal(progress.value, 14000000);
+  assert.ok(card.children.some((c) => c.text?.includes('soft limit')));
+});
+
+test('spending is owner-only and does not reuse another company response', async () => {
+  const h = harness();
+  h.context.state.session.role = 'office';
+  h.ui.spending(h.target);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.target.children.length, 0);
+  h.context.state.session.role = 'owner';
+  h.context.state.session.company_id = 'adr';
+  h.ui.spending(h.target);
+  h.context.state.session.uid = 'another-owner';
+  h.requests[0].resolve({ spent_microusd: 12000000 });
+  await h.flush();
+  assert.equal(h.target.children[0].children[1].text, 'Loading spending…');
+});
+
+test('offline spending makes no request and offers a disabled refresh', async () => {
+  const h = harness();
+  h.context.state.session.role = 'owner';
+  h.context.navigator.onLine = false;
+  h.ui.spending(h.target);
+  assert.equal(h.requests.length, 0);
+  const card = h.target.children[0];
+  assert.ok(card.children.some((c) => c.text?.includes('Offline')));
+  assert.equal(card.children.find((c) => c.tag === 'button').disabled, true);
+});

@@ -42,6 +42,10 @@ there is no pricing table, history, scheduler or additional counter write. A rea
 unavailable without blocking the session. Maps, manual monitoring actions and reminder emails are
 excluded because they are not model operations.
 
+Those optional counts are separate from the always-available owner spending card
+and shared company allowance in [Company AI spending](ai-spending.md). The spending
+ledger reserves money before paid calls; cached and facts-only reads need no hold.
+
 Superadmin support uses `GET /api/admin/companies/{id}/jobs/{job}/insight` and
 `GET /api/admin/companies/{id}/ai-usage`. They recheck the revoked account and support access, audit the
 read, and never generate summaries or modify a cache. Missing/expired cache shows facts only.

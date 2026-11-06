@@ -190,3 +190,11 @@ See [Priced additional work](priced-extras.md) for company rate settings, permis
 
 See [Job summaries and usage counts](job-insights.md) for feature switches, role permissions,
 audited support access and read-only boundaries.
+
+## Company AI spending
+
+The shared $50 per-company UTC-day allowance applies independently of feature
+switches, with hard REST reservations and the owner's chosen soft Live threshold.
+Owners see spending and reserved calls on their dashboard. The private company
+settings, ledger, crash behavior and Live limitation are described in
+[Company AI spending](ai-spending.md). Existing per-user quotas remain unchanged.

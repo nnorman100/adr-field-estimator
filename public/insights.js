@@ -267,6 +267,59 @@ window.InsightUI = (() => {
     }
     load();
   }
+  function spending(target) {
+    if (state.session.role !== 'owner') return;
+    const requested = identity(),
+      card = node('section', undefined, 'dashboard-card ai-usage');
+    target.append(card);
+    const money = (micro) => '$' + (micro / 1000000).toFixed(2);
+    async function load() {
+      card.replaceChildren(node('h2', 'AI spending today'));
+      if (navigator.onLine) {
+        card.append(node('p', 'Loading spending…'));
+        try {
+          const session = await jsonApi('/api/session'),
+            result = session.ai_spending;
+          if (requested !== identity() || !card.isConnected) return;
+          if (!result) throw new Error('Spending unavailable');
+          const used = result.spent_microusd + result.reserved_microusd,
+            bar = node('progress');
+          bar.max = Math.max(1, result.daily_cap_microusd);
+          bar.value = used;
+          bar.setAttribute('aria-label', 'Company AI spending including reserved calls');
+          card.replaceChildren(
+            node('h2', 'AI spending today'),
+            node(
+              'p',
+              `${money(used)} of ${money(result.daily_cap_microusd)} · ${result.day} (UTC)`,
+            ),
+            bar,
+            node(
+              'p',
+              `${money(result.spent_microusd)} estimated spending; ${money(result.reserved_microusd)} reserved for active or unconfirmed calls. Resets at midnight UTC.`,
+            ),
+            node(
+              'p',
+              `Live keeps a ${money(result.live_margin_microusd)} reserve. Live has a soft limit and may exceed the cap by about one session while usage arrives. Drafts and agreements stay available.`,
+            ),
+          );
+        } catch {
+          if (requested !== identity() || !card.isConnected) return;
+          card.replaceChildren(node('h2', 'AI spending today'), node('p', 'Spending unavailable.'));
+        }
+      }
+      const offline = node(
+        'p',
+        'Offline · connect to load today’s spending.',
+        'usage-offline notice',
+      );
+      offline.hidden = navigator.onLine;
+      const refresh = button('Refresh spending', load);
+      refresh.disabled = !navigator.onLine;
+      card.append(offline, refresh);
+    }
+    load();
+  }
   function connectivity() {
     check();
     account();
@@ -288,5 +341,5 @@ window.InsightUI = (() => {
       if ($('accountMenu').open) refreshAccount();
     }),
   );
-  return { reset, job, row, support, usage, account, enabled };
+  return { reset, job, row, support, usage, spending, account, enabled };
 })();
