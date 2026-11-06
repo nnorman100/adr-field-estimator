@@ -15,6 +15,8 @@ try:
         FIELD_SOURCES,
         GROUPS,
         assist_of,
+        bracket_mode_of,
+        cushion_brackets_of,
         parse_source,
     )
     from .sizing import equipment_sizing, number
@@ -26,6 +28,8 @@ except ImportError:
         FIELD_SOURCES,
         GROUPS,
         assist_of,
+        bracket_mode_of,
+        cushion_brackets_of,
         parse_source,
     )
     from sizing import equipment_sizing, number
@@ -281,7 +285,7 @@ def _room_lines(item, source, data, policy, overrides, warnings):
         if not quantity:
             warnings.append(dict(code='missing_area', item_id=item['item_id'], room=room.name))
             continue
-        price = Decimal(item['unit_price']) * Decimal(
+        price = (ONE if item.get('price_brackets') else Decimal(item['unit_price'])) * Decimal(
             policy['category_multipliers'][str(room.category)]
         )
         if (
@@ -307,10 +311,127 @@ def _room_lines(item, source, data, policy, overrides, warnings):
     return lines
 
 
-def price_scope(data, table, numbers=None):
+def _band_for(brackets, area):
+    return next(band for band in brackets if band['up_to_sf'] is None or area <= band['up_to_sf'])
+
+
+def _unpriced(item):
+    return (item['unit_price'] == '' and not item.get('price_brackets')) or any(
+        band['unit_price'] == '' for band in item.get('price_brackets', [])
+    )
+
+
+def _job_sf(data, items, policy):
+    """Count each room once at the largest area figure its priced square-foot items use.
+
+    Finished plus unfinished demolition is one figure. Typed footage without a room adds once;
+    all figures are before waste.
+    """
+    job_overrides, room_overrides = _overrides(data, [])
+    categories = {room.category for room in data.rooms}
+    rooms, typed = {}, ZERO
+    demolition_source = parse_source('room:basis')
+    demolition_policy = dict(policy, area_basis='demolition')
+    for item in items:
+        if (
+            not item['enabled']
+            or item['unit'] != 'sf'
+            or item['group'] == EXTRAS_GROUP
+            or _unpriced(item)
+        ):
+            continue
+        source = parse_source(item['quantity_source'])
+        if source.kind != 'room':
+            if not item['categories'] or categories.intersection(item['categories']):
+                typed += _job_quantity(item, source, data, job_overrides, {})
+            continue
+        for index, room in enumerate(data.rooms):
+            if item['categories'] and room.category not in item['categories']:
+                continue
+            if source.field in ('finished_sf', 'unfinished_sf'):
+                area = _room_quantity(room, demolition_source, demolition_policy, room_overrides)
+            else:
+                area = _room_quantity(room, source, policy, room_overrides)
+            rooms[index] = max(rooms.get(index, ZERO), area)
+    return sum(rooms.values(), typed)
+
+
+def _exact(line):
+    """A line's unrounded amount. Bracket lines carry rounding shares; the high end reads this."""
+    return (
+        _dec(line['quantity'])
+        * _dec(line['unit_price'])
+        * (1 + _dec(line['waste_percent']) / HUNDRED)
+    )
+
+
+def _bracket_lines(item, lines, policy, job_sf, growth=None):
+    """Price an item's combined job quantity, highest adjusted cost first, then split by band.
+
+    The input prices are category/cabinetry multipliers. Whole-job mode selects the band from
+    job_sf, the job's total square feet (_job_sf). `growth` is each line's high-end share; the
+    uncertainty high end fills bands by grown cost so its own total cannot drop as work is added.
+    Cumulative rounding keeps a change in how bands split across rooms from losing cents from the
+    item's total.
+    """
+    brackets = item['price_brackets']
+    whole = bracket_mode_of(policy) == 'whole-job'
+    selected = _band_for(brackets, job_sf) if whole else None
+    used = exact = rounded = ZERO
+    result = []
+    for line in sorted(
+        lines,
+        key=lambda row: (
+            _dec(row['unit_price'])
+            * (1 + _dec(row['waste_percent']) / HUNDRED)
+            * (1 + (growth(row) if growth else ZERO))
+        ),
+        reverse=True,
+    ):
+        remaining = _dec(line['quantity'])
+        while remaining:
+            band = selected or next(
+                b for b in brackets if b['up_to_sf'] is None or used < b['up_to_sf']
+            )
+            take = (
+                remaining
+                if whole or band['up_to_sf'] is None
+                else min(remaining, Decimal(band['up_to_sf']) - used)
+            )
+            price = Decimal(band['unit_price']) * _dec(line['unit_price'])
+            exact += take * price * (1 + _dec(line['waste_percent']) / HUNDRED)
+            total = _money(exact) - rounded
+            rounded += total
+            index = brackets.index(band)
+            lower = brackets[index - 1]['up_to_sf'] if index else 0
+            label = (
+                f'over {lower:,} sq ft'
+                if band['up_to_sf'] is None
+                else f'over {lower:,} through {band["up_to_sf"]:,} sq ft'
+            )
+            result.append(
+                dict(
+                    line,
+                    quantity=float(take),
+                    area=float(take),
+                    unit_price=float(price),
+                    total=float(total),
+                    description=f'{line["description"]} ({bracket_mode_of(policy)} bracket: {label}'
+                    + (" of the job's total square feet)" if whole else ')'),
+                    price_bracket=dict(band),
+                    bracket_mode=bracket_mode_of(policy),
+                )
+            )
+            remaining -= take
+            used += take
+    return result
+
+
+def price_scope(data, table, numbers=None, growth=None):
     """(lines, warnings) for a job and a table holding `items` and `policy`.
 
-    `numbers` are job numbers to price in place of the entered ones (high_numbers)."""
+    `numbers` are job numbers to price in place of the entered ones (high_numbers). `growth` orders
+    tiered bracket bands for the uncertainty high end (_uncertain_high)."""
     policy = table['policy']
     warnings = []
     job_overrides, room_overrides = _overrides(data, warnings)
@@ -319,7 +440,7 @@ def price_scope(data, table, numbers=None):
         if key not in known:
             warnings.append(dict(code='unknown_scope_item', item_id=key))
     categories = {room.category for room in data.rooms}
-    lines = []
+    priced = []
     enabled = (item for item in table['items'] if item['enabled'])
     extras_taxable = False
     for item in sorted(
@@ -329,7 +450,7 @@ def price_scope(data, table, numbers=None):
             extras_taxable = item['taxable']
             if _has_unpriced_quantity(item, data):
                 warnings.append(dict(code='unpriced_extras_quantity', item_id=item['item_id']))
-        if item['unit_price'] == '':
+        if _unpriced(item):
             warnings.append(dict(code='blank_price_item', item_id=item['item_id']))
             continue
         # The extras item only supplies the rate an owner approves work at (extras.rate_for).
@@ -338,21 +459,29 @@ def price_scope(data, table, numbers=None):
             continue
         source = parse_source(item['quantity_source'])
         if source.kind == 'room':
-            lines += _room_lines(item, source, data, policy, room_overrides, warnings)
+            priced.append((item, _room_lines(item, source, data, policy, room_overrides, warnings)))
             continue
         if item['categories'] and not categories.intersection(item['categories']):
             continue
         quantity = _job_quantity(item, source, data, job_overrides, numbers or {})
         if quantity:
-            lines.append(
-                _line(
-                    item,
-                    item['customer_description'] or item['name'],
-                    quantity,
-                    Decimal(item['unit_price']),
-                    Decimal(item['waste_percent']),
-                )
+            line = _line(
+                item,
+                item['customer_description'] or item['name'],
+                quantity,
+                ONE if item.get('price_brackets') else Decimal(item['unit_price']),
+                Decimal(item['waste_percent']),
             )
+            priced.append((item, [line]))
+    whole = bracket_mode_of(policy) == 'whole-job'
+    job_sf = _job_sf(data, table['items'], policy) if whole else None
+    lines = []
+    for item, item_lines in priced:
+        lines += (
+            _bracket_lines(item, item_lines, policy, job_sf, growth)
+            if item.get('price_brackets')
+            else item_lines
+        )
     for extra in data.extras:
         if extra.approval:
             total = _money(_dec(extra.hours) * _dec(extra.approval.rate))
@@ -381,13 +510,14 @@ def _cushion_lines(lines, policy):
     """(dollars, square feet) of each area line, as the flat cushion counts them.
 
     Dollars never change. The waste basis only fills the first square feet sooner; every other
-    basis counts each line's own square feet."""
+    basis counts each line's own square feet. A bracket-priced line counts the pre-waste square
+    feet its price bands count, so added work cannot shrink the area holding costly bands."""
     waste_counts = policy['area_basis'] == 'demolition_with_waste'
     return [
         (
-            _dec(line['total']),
+            _exact(line) if 'price_bracket' in line else _dec(line['total']),
             _dec(line['area']) * (1 + _dec(line['waste_percent']) / HUNDRED)
-            if waste_counts
+            if waste_counts and 'price_bracket' not in line
             else _dec(line['area']),
         )
         for line in lines
@@ -455,18 +585,40 @@ def _room_percents(data, assist):
 def _uncertain_high(data, lines, items, policy, assist):
     """The high end's amounts under the uncertainty method. Taxable labor and materials stay exact."""
     numbers = high_numbers(data, assist)
-    high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers)
     percents = _room_percents(data, assist)
     largest = max(percents.values(), default=ZERO)
+
+    def growth(line):
+        if line['bucket'] != 'labor_material':
+            return ZERO
+        # A line with no area (labor hours) carries the largest percent on the job (decision D4).
+        return percents.get(line['room'], largest) if line['area'] else largest
+
+    high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers, growth)
     labor_material = taxed_labor_material = ZERO
-    for line in lines:
+    # This end fills bracket bands by grown cost, so it cannot drop as work is added.
+    bracketed = {}
+    for line in [
+        *(line for line in lines if 'price_bracket' not in line),
+        *(line for line in high_lines if 'price_bracket' in line),
+    ]:
         if line['bucket'] != 'labor_material':
             continue
-        # A line with no area (labor hours) carries the largest percent on the job (decision D4).
-        grown = _dec(line['total']) * (1 + (percents[line['room']] if line['area'] else largest))
+        if 'price_bracket' in line:
+            amount, _ = bracketed.get(line['item_id'], (ZERO, line['taxable']))
+            bracketed[line['item_id']] = (
+                amount + _exact(line) * (1 + growth(line)),
+                line['taxable'],
+            )
+            continue
+        grown = _dec(line['total']) * (1 + growth(line))
         labor_material += grown
         if line['taxable']:
             taxed_labor_material += grown
+    for amount, taxable in bracketed.values():
+        labor_material += _money(amount)
+        if taxable:
+            taxed_labor_material += _money(amount)
     return dict(
         numbers=numbers,
         labor_material=_money(labor_material),
@@ -501,15 +653,34 @@ def totals(data, lines, policy, items):
         uncertain = _uncertain_high(data, lines, items, policy, assist)
         high_lm = uncertain['labor_material']
     else:
-        tier = policy['range']
-        first, beyond = (
-            Decimal(tier['first_percent']) / HUNDRED,
-            Decimal(tier['beyond_percent']) / HUNDRED,
-        )
-        top = _top_dollars(_cushion_lines(area_priced, policy), Decimal(tier['first_sf']))
-        high_lm = _money(
-            (1 + beyond) * area_dollars + (first - beyond) * top + (1 + first) * other_dollars
-        )
+        bands = cushion_brackets_of(policy)
+        areas = _cushion_lines(area_priced, policy)
+        if bracket_mode_of(policy) == 'whole-job':
+            percent = Decimal(_band_for(bands, _job_sf(data, items, policy))['percent']) / HUNDRED
+            high_lm = _money((area_dollars + other_dollars) * (1 + percent))
+        elif len(bands) == 2 and not any('price_bracket' in line for line in area_priced):
+            # Preserve the exact two-step operation order, even at a half-cent boundary.
+            first = Decimal(bands[0]['percent']) / HUNDRED
+            beyond = Decimal(bands[1]['percent']) / HUNDRED
+            top = _top_dollars(areas, Decimal(bands[0]['up_to_sf']))
+            high_lm = _money(
+                (1 + beyond) * area_dollars + (first - beyond) * top + (1 + first) * other_dollars
+            )
+        else:
+            previous = allowance = ZERO
+            for band in bands:
+                top = (
+                    sum((dollars for dollars, _ in areas), ZERO)
+                    if band['up_to_sf'] is None
+                    else _top_dollars(areas, Decimal(band['up_to_sf']))
+                )
+                allowance += (top - previous) * Decimal(band['percent']) / HUNDRED
+                previous = top
+            high_lm = _money(
+                area_dollars
+                + allowance
+                + (1 + Decimal(bands[0]['percent']) / HUNDRED) * other_dollars
+            )
 
     multiplier = Decimal(policy['after_hours']['multiplier']) if data.is_after_hours else ONE
     overhead = Decimal(policy['overhead_profit_percent']) / HUNDRED
@@ -663,6 +834,8 @@ def range_explanation(policy, data):
     assist = assist_of(policy)
     if assist['range_method'] == 'uncertainty':
         return _uncertainty_sentence(data, assist)
+    if 'brackets' in policy['range'] or bracket_mode_of(policy) == 'whole-job':
+        return _bracket_cushion_sentence(policy)
     tier = policy['range']
     first, beyond = Decimal(tier['first_percent']), Decimal(tier['beyond_percent'])
     if not first:
@@ -692,6 +865,12 @@ def _how_the_ends_differ(policy, data):
             'allowance above to labor and materials.',
             'Job charges and approved additional work are the same in both amounts.',
         ]
+    if 'brackets' in policy['range'] or bracket_mode_of(policy) == 'whole-job':
+        return [
+            'The low amount is the itemized total.',
+            _bracket_cushion_sentence(policy),
+            'Job charges, drying equipment and approved additional work are the same in both amounts.',
+        ]
     tier = policy['range']
     first, beyond = _percent_text(tier['first_percent']), _percent_text(tier['beyond_percent'])
     return [
@@ -701,6 +880,34 @@ def _how_the_ends_differ(policy, data):
         f'(highest-priced areas first), {beyond}% on area beyond that, and {first}% on labor hours.',
         'Job charges, drying equipment and approved additional work are the same in both amounts.',
     ]
+
+
+def _bracket_cushion_sentence(policy):
+    bands = cushion_brackets_of(policy)
+    parts = []
+    previous = 0
+    for band in bands:
+        limit = band['up_to_sf']
+        label = (
+            f'over {previous:,} sq ft'
+            if limit is None
+            else f'over {previous:,} through {limit:,} sq ft'
+        )
+        parts.append(f'{_percent_text(band["percent"])}% {label}')
+        previous = limit
+    if bracket_mode_of(policy) == 'whole-job':
+        return (
+            'The high end applies one whole-job cushion to labor and materials, selected by the '
+            "job's total square feet before waste: each room once at the largest area figure its "
+            'priced square-foot items use (finished plus unfinished demolition is one figure), '
+            'plus square feet typed without a room: ' + '; '.join(parts) + '.'
+        )
+    return (
+        'The high end adds a tiered cushion to area-priced labor and materials, highest-priced '
+        'square feet first: '
+        + '; '.join(parts)
+        + f'; and {_percent_text(bands[0]["percent"])}% on labor hours.'
+    )
 
 
 def _range_sentences(policy, data):

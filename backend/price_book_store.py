@@ -14,7 +14,7 @@ from uuid import uuid4
 from google.cloud import firestore
 
 try:
-    from . import pricing_v2
+    from . import pricing_v2, price_table
     from .pricing import price_and_range
     from .adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from .claims import price_scope, proposal_range
@@ -59,6 +59,7 @@ try:
     from .workspaces import AccessDenied
 except ImportError:
     import pricing_v2
+    import price_table
     from pricing import price_and_range
     from adr_price_book import ADR_COMPANY_ID, adr_rates, foreign_adr_rates
     from claims import price_scope, proposal_range
@@ -272,6 +273,145 @@ def _rate_book_samples(rates, calculation_version):
             }
         )
     return samples
+
+
+def _boundary_samples(table):
+    """Boundary demonstrations price isolated work, never a saved job or an owner's defaults."""
+    groups = []
+    item_policy = copy.deepcopy(table['policy'])
+    item_policy.update(minimum_job_charge='0', overhead_profit_percent='0')
+    for item in table['items']:
+        if not item.get('price_brackets') or any(
+            band['unit_price'] == '' for band in item['price_brackets']
+        ):
+            continue
+        groups.append((item['name'], item['price_brackets'], item, item_policy))
+    if price_table.assist_of(table['policy'])['range_method'] == 'cushion':
+        bands = price_table.cushion_brackets_of(table['policy'])
+        # A stated $1/sq ft scope isolates the allowance from the owner's item rates.
+        item = price_table.normalize_items(
+            [
+                dict(
+                    item_id='cushion_sample',
+                    code='SAMPLE',
+                    group='treatment',
+                    name='Sample work',
+                    unit='sf',
+                    quantity_source='room:floor',
+                    unit_price='1',
+                )
+            ],
+            publish=False,
+        )[0]
+        policy = copy.deepcopy(table['policy'])
+        policy.update(
+            minimum_job_charge='0',
+            overhead_profit_percent='0',
+            category_multipliers={'1': '1', '2': '1', '3': '1'},
+        )
+        groups.append(('Cushion ($1 per sq ft sample work)', bands, item, policy))
+    results = []
+    for label, bands, item, policy in groups:
+        item = dict(item, enabled=True)
+        for band in bands[:-1]:
+            boundary = band['up_to_sf']
+            samples = []
+            for sf in (
+                Decimal(boundary) + offset
+                for offset in (
+                    Decimal(-1),
+                    Decimal('-0.01'),
+                    Decimal(0),
+                    Decimal('0.01'),
+                    Decimal(1),
+                )
+            ):
+                if sf > 100000 and item['quantity_source'] == 'typed':
+                    samples.append(
+                        dict(
+                            sf=float(sf),
+                            low='Outside the 100,000 sq ft typed-quantity limit',
+                            high=None,
+                            low_value=None,
+                            high_value=None,
+                        )
+                    )
+                    continue
+                category = next(iter(item['categories']), 1)
+                areas = [sf] if sf <= 100000 else [100000, sf - 100000]
+                data = InspectionData.model_validate(
+                    dict(
+                        pricing_v2._SAMPLE_BASE,
+                        drying_days=1,
+                        air_movers=0,
+                        dehumidifiers=0,
+                        rooms=[
+                            dict(
+                                name=f'Sample room {index + 1}',
+                                category=category,
+                                finished_sf=0
+                                if item['quantity_source'] == 'room:demolition:unfinished'
+                                else area,
+                                unfinished_sf=area
+                                if item['quantity_source'] == 'room:demolition:unfinished'
+                                else 0,
+                                wet_floor_sf=area,
+                                floor_sf=area or None,
+                            )
+                            for index, area in enumerate(areas)
+                        ],
+                        scope_items={item['item_id']: {'quantity': str(min(sf, 100000))}},
+                    )
+                )
+                lines, _ = pricing_v2.price_scope(data, {'items': [item], 'policy': policy})
+                try:
+                    totals = pricing_v2.totals(data, lines, policy, [item])
+                    low = totals['low']['total']
+                    high = totals['high']['total'] if totals['high'] else None
+                except ValueError:
+                    low, high = (
+                        Decimal(0),
+                        Decimal(0) if policy['estimate_mode'] == 'range' else None,
+                    )
+                samples.append(
+                    {
+                        'sf': float(sf),
+                        'low': f'${low:,.2f}',
+                        'high': f'${high:,.2f}' if high is not None else None,
+                        'low_value': low,
+                        'high_value': high,
+                    }
+                )
+            drop = any(
+                samples[i]['low_value'] is not None
+                and samples[i - 1]['low_value'] is not None
+                and (
+                    samples[i]['low_value'] < samples[i - 1]['low_value']
+                    or (
+                        samples[i]['high_value'] is not None
+                        and samples[i]['high_value'] < samples[i - 1]['high_value']
+                    )
+                )
+                for i in range(1, len(samples))
+            )
+            results.append(
+                {
+                    'label': label,
+                    'boundary_sf': boundary,
+                    'price_drop': drop,
+                    'mode': price_table.bracket_mode_of(policy),
+                    'samples': [
+                        {key: sample[key] for key in ('sf', 'low', 'high')} for sample in samples
+                    ],
+                    'notice': 'Isolated sample work only; other items and saved jobs are excluded. '
+                    'Minimum job charge and overhead/profit are excluded. '
+                    "On a job, whole-job mode picks the band from the job's total square feet "
+                    'before waste: each room once at the largest area figure its priced square-foot '
+                    'items use (finished plus unfinished demolition is one figure), plus square feet '
+                    'typed without a room.',
+                }
+            )
+    return results
 
 
 def _pin_body(inspection_id, company_id, chosen, reason, pin_version=1):
@@ -740,6 +880,7 @@ class PriceBookStore:
         )
         return {
             'samples': _sample_jobs(table),
+            'boundary_samples': _boundary_samples(table),
             'problems': self._publish_problems(table, payload.get('acknowledgements') or []),
         }
 
@@ -1366,7 +1507,14 @@ class PriceBookStore:
             base_generation = book['generation']
             base_version = book['version_id']
         if _is_v2(book):
-            items = public_table(book, manage=manage)['items']
+            table = public_table(book, manage=manage)
+            items = table['items']
+            if (
+                'bracket_mode' in table['policy']
+                or 'brackets' in table['policy']['range']
+                or any(item.get('price_brackets') for item in items)
+            ):
+                return company_id, base_version, base_generation, table
             return company_id, base_version, base_generation, items
         return company_id, base_version, base_generation, book['rates']
 
@@ -1457,7 +1605,7 @@ class PriceBookStore:
             ok, normalized = _valid_v2_doc(pin)
             if not ok or normalized is None:
                 raise Conflict("This draft's saved prices are missing. Contact support.")
-            return {
+            basis = {
                 'company_id': company_id,
                 'version_id': pin['version_id'],
                 'sequence': pin.get('sequence', 1),
@@ -1467,6 +1615,14 @@ class PriceBookStore:
                 'policy': normalized['policy'],
                 'item_count': len(normalized['items']),
             }
+            brackets = {
+                item['item_id']: item['price_brackets']
+                for item in normalized['items']
+                if item['enabled'] and item.get('price_brackets')
+            }
+            if brackets:
+                basis['price_brackets'] = brackets
+            return basis
         if not _valid_v1_doc(pin):
             raise Conflict("This draft's saved prices are missing. Contact support.")
         _refuse_adr_rates(company_id, pin['rates'])
@@ -1751,7 +1907,14 @@ class PriceBookStore:
             acknowledgements = [
                 it['item_id']
                 for it in version['items']
-                if it.get('allow_zero') and it.get('unit_price') in ('0', '0.0', '0.00')
+                if it.get('allow_zero')
+                and (
+                    it.get('unit_price') in ('0', '0.0', '0.00')
+                    or any(
+                        band['unit_price'] != '' and Decimal(band['unit_price']) == 0
+                        for band in it.get('price_brackets', [])
+                    )
+                )
             ]
             return self.preview(
                 uid,

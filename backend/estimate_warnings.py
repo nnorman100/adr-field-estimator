@@ -55,7 +55,7 @@ def _room_warnings(data, table):
         item
         for item in table['items']
         if item['enabled']
-        and item['unit_price'] != ''
+        and (item['unit_price'] != '' or item.get('price_brackets'))
         and item['group'] != EXTRAS_GROUP
         and parse_source(item['quantity_source']).kind == 'room'
     ]
