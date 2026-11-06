@@ -75,9 +75,8 @@ No TTL policy or automatic billing reconciliation is added.
 
 A refusal is a 429 that says field work can continue. When settled spending alone
 leaves no room for this particular call, it explains that this request does not fit
-and that the allowance resets next month UTC; it does not claim every AI operation
-is unavailable,
-with `Retry-After: 3600`. When the remaining allowance is only held by other
+and that the allowance resets next month UTC, with `Retry-After: 3600`; it does not
+claim every AI operation is unavailable. When the remaining allowance is only held by other
 reservations (calls in progress or awaiting confirmation), it says so instead, with
 `Retry-After: 60`; those holds may settle at a lower actual cost, while crash holds
 stay charged. The phone pauses photo readings or voice-note audio uploads for the
