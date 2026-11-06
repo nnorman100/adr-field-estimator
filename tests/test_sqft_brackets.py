@@ -9,6 +9,7 @@ import pytest
 from backend import price_table, pricing_v2
 from backend.contracts import InspectionData, PricingPolicy
 from backend.price_book_import import export_csv, export_xlsx, parse_upload
+from backend.price_book_api import XLSX_TYPE as XLSX_KIND
 from tests.test_price_books import _publish_v2, enabled  # noqa: F401
 from tests.test_workspaces import ID, api, data, store  # noqa: F401
 
@@ -844,3 +845,118 @@ def test_disabled_blank_price_brackets_can_publish_and_restore(api, enabled):
         json={'change_reason': 'Keep disabled bracket draft'},
     )
     assert restored.status_code == 200, restored.text
+
+
+def _whole_job_cushion_book(*extra_items):
+    book = table('whole-job')
+    book['items'][0].update(
+        price_brackets=[dict(up_to_sf=750, unit_price='10'), dict(up_to_sf=None, unit_price='5')],
+    )
+    book['items'].extend(extra_items)
+    book['policy']['range']['brackets'] = [
+        dict(up_to_sf=750, percent='50'),
+        dict(up_to_sf=None, percent='10'),
+    ]
+    return price_table.normalize_table(book, publish=True)
+
+
+def _flat(item_id, **rest):
+    item = dict(
+        item_id=item_id,
+        code=item_id.upper().replace('_', '-')[:16],
+        group='demolition',
+        name=item_id,
+        unit='sf',
+        quantity_source='room:demolition:finished',
+        unit_price='1',
+    )
+    item.update(rest)
+    return item
+
+
+def test_whole_job_counts_one_room_once_across_several_square_foot_items():
+    book = _whole_job_cushion_book(
+        _flat('flat_finished'), _flat('flat_floor', quantity_source='room:floor')
+    )
+    room = dict(name='Kitchen', category=1, finished_sf=500, floor_sf=500)
+    assert pricing_v2._job_sf(_job(room), book['items'], book['policy']) == D('500')
+    lines, _ = pricing_v2.price_scope(_job(room), book)
+    bracketed = [line for line in lines if 'price_bracket' in line]
+    assert [line['unit_price'] for line in bracketed] == [10.0]
+    result = estimate(book, _job(room))
+    assert (result['low']['total'], result['high']['total']) == (D('6000'), D('9000'))
+
+
+def test_whole_job_keeps_same_name_rooms_separate_and_adds_typed_square_feet():
+    book = _whole_job_cushion_book()
+    kitchen = dict(name='Kitchen', category=1, finished_sf=400)
+    twins = _job(kitchen, dict(kitchen, name=' kitchen '))
+    assert pricing_v2._job_sf(twins, book['items'], book['policy']) == D('800')
+    result = estimate(book, twins)
+    assert (result['low']['total'], result['high']['total']) == (D('4000'), D('4400'))
+
+    typed = _flat('typed_area', group='treatment', quantity_source='typed')
+    book = _whole_job_cushion_book(typed)
+    job = _job(kitchen, scope_items={'typed_area': {'quantity': '400'}})
+    assert pricing_v2._job_sf(job, book['items'], book['policy']) == D('800')
+    result = estimate(book, job)
+    assert (result['low']['total'], result['high']['total']) == (D('2400'), D('2640'))
+    alone = estimate(book, _job(kitchen))
+    assert (alone['low']['total'], alone['high']['total']) == (D('4000'), D('6000'))
+
+
+@pytest.mark.parametrize('fmt,kind', [('csv', 'text/csv'), ('xlsx', XLSX_KIND)])
+def test_disabled_blank_bracket_rates_round_trip_through_spreadsheets(api, enabled, fmt, kind):
+    import csv
+    import io
+
+    client, current, _ = api
+    current['uid'] = 'owner'
+    book = table()
+    disabled = copy.deepcopy(book['items'][0])
+    disabled.update(item_id='later_work', code='LATER', unit_price='', enabled=False)
+    disabled['price_brackets'] = [
+        dict(up_to_sf=500, unit_price=''),
+        dict(up_to_sf=None, unit_price=''),
+    ]
+    book['items'].append(disabled)
+    published = _publish_v2(client, book)
+    exported = client.get('/api/companies/adr/prices/export', params={'format': fmt})
+    assert exported.status_code == 200, exported.text
+    parsed = parse_upload(
+        exported.content,
+        kind,
+        'adr',
+        published['version_id'],
+        published['generation'],
+        'dryscope-v2',
+    )
+    later = next(item for item in parsed['items'] if item['item_id'] == 'later_work')
+    assert later['price_brackets'] == disabled['price_brackets']
+    assert later['enabled'] is False
+    preview = client.post(
+        '/api/companies/adr/prices/import-preview',
+        data={'change_reason': 'Round trip a disabled bracket draft'},
+        files={'file': (f'prices.{fmt}', exported.content, kind)},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()['no_changes'] is True
+
+    if fmt == 'csv':
+        rows = list(csv.DictReader(io.StringIO(exported.content.decode('utf-8-sig'))))
+        for row in rows:
+            row['enabled'] = 'yes'
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+        enabled_blank = client.post(
+            '/api/companies/adr/prices/import-preview',
+            data={'change_reason': 'Enable a blank bracket draft'},
+            files={'file': ('prices.csv', buffer.getvalue().encode(), 'text/csv')},
+        )
+        assert enabled_blank.status_code == 400, enabled_blank.text
+        assert 'Row LATER' in enabled_blank.json()['detail']
+        assert (
+            client.get('/api/companies/adr/prices').json()['version_id'] == published['version_id']
+        )

@@ -251,7 +251,10 @@ def _bracket_table(rows, company, version, generation):
         try:
             if price:
                 item['price_brackets'] = normalize_brackets(
-                    json.loads(price), where=f'Row {offset}', value_field='unit_price'
+                    json.loads(price),
+                    where=f'Row {offset}',
+                    value_field='unit_price',
+                    allow_blank=True,
                 )
             if mode not in ('tiered', 'whole-job') or not cushion:
                 raise ValueError('enter cushion brackets and a tiered or whole-job mode.')

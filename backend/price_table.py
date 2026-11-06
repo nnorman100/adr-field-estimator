@@ -1438,8 +1438,9 @@ def switch_differences(policy: dict) -> list[str]:
     if 'brackets' in range_rule or bracket_mode_of(policy) == 'whole-job':
         if bracket_mode_of(policy) == 'whole-job':
             return [
-                "The high end uses one whole-job cushion selected by the job's total square feet, "
-                'every square-foot line before waste. A larger job may cost less when it crosses '
+                "The high end uses one whole-job cushion selected by the job's total square feet "
+                'before waste, each room counted once plus square feet typed without a room. '
+                'A larger job may cost less when it crosses '
                 'a bracket boundary.',
                 'Labor hours carry the same selected cushion as the area-priced work.',
                 late,

@@ -403,8 +403,8 @@ def _boundary_samples(table):
                     ],
                     'notice': 'Isolated sample work only; other items and saved jobs are excluded. '
                     'Minimum job charge and overhead/profit are excluded. '
-                    "On a job, whole-job mode picks the band from the job's total square feet, every "
-                    'square-foot line before waste.',
+                    "On a job, whole-job mode picks the band from the job's total square feet "
+                    'before waste: each room once, plus square feet typed without a room.',
                 }
             )
     return results

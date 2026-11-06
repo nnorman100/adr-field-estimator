@@ -9,7 +9,10 @@ and changes no ADR rates or v1 rate books.
 A price bracket belongs to one item. In tiered mode its quantity is that item's
 combined square feet across matching rooms, or its typed square-foot quantity,
 **before waste**. In whole-job mode the job's total square footage picks the band:
-every square-foot line on the job, flat-priced items included, before waste. It is
+each room counts once, at the largest square footage any priced square-foot item
+(flat or bracketed) reads from it, plus each square-foot quantity typed without a
+room, before waste. Several items on one 500 sq ft room count 500 sq ft; separate
+rooms count separately even when they share a name. It is
 not a separate region price. Room category
 and cabinetry multipliers and waste still apply. Price brackets are available only
 on `sf` items with a room or typed quantity source. Without brackets, the item
@@ -62,8 +65,8 @@ item's grown amount once, and the cushion rounds once in total, so a cent moved
 between rooms cannot lower the high end. Existing flat items keep their original
 per-line rounding.
 
-Whole-job chooses each item's bracket using the job's total square feet (every
-square-foot line, flat-priced items included, before waste) and applies that rate
+Whole-job chooses each item's bracket using the job's total square feet (each room
+once plus typed square feet, flat-priced items included, before waste) and applies that rate
 to all the item's square feet. For example, two items on separate 500 sq ft rooms
 with a 750 sq ft boundary both take the over-750 rate, as does one bracketed item
 on a 500 sq ft room when a flat-priced item covers another 500 sq ft room.
@@ -94,8 +97,8 @@ H = round_cents(L_area + sum(dollars_in_band * percent_in_band / 100)
 ```
 
 Whole-job selects one cushion percentage using the same job total square feet as
-whole-job prices (every square-foot line, flat-priced items included, before
-waste) and applies it to all labor/material dollars, labor hours included. A drop is allowed
+whole-job prices (each room once plus typed square feet, flat-priced items
+included, before waste) and applies it to all labor/material dollars, labor hours included. A drop is allowed
 at the boundary. Job charges, equipment, approved extras, minimums, after-hours,
 overhead and tax keep their existing rules. The uncertainty method ignores the
 cushion bands, as it ignores the legacy cushion; its calculation is unchanged.
@@ -109,7 +112,7 @@ the company policy, with minimum job charge and overhead/profit excluded so they
 cannot hide a bracket drop. Cushion previews also exclude those settings and state a synthetic $1/sq ft scope to show
 the percentage effect separately. Other items and saved jobs are excluded and
 this is stated beside the samples; on a job, whole-job mode picks the band from the
-job's total square feet, every square-foot line before waste. A whole-job drop in either estimate end is
+job's total square feet before waste, each room once plus typed square feet. A whole-job drop in either estimate end is
 flagged. Typed quantities above 100,000 sq ft are outside the job-input limit,
 so that sample says it is unavailable. Multi-room samples can cross that limit.
 

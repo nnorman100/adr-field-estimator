@@ -315,9 +315,37 @@ def _band_for(brackets, area):
     return next(band for band in brackets if band['up_to_sf'] is None or area <= band['up_to_sf'])
 
 
-def _job_sf(lines):
-    """The job's total square feet: every square-foot line, flat or bracketed, before waste."""
-    return sum((_dec(line['quantity']) for line in lines if line['unit'] == 'sf'), ZERO)
+def _unpriced(item):
+    return (item['unit_price'] == '' and not item.get('price_brackets')) or any(
+        band['unit_price'] == '' for band in item.get('price_brackets', [])
+    )
+
+
+def _job_sf(data, items, policy):
+    """The job's total square feet, before waste: each room once, at the largest square footage a
+    priced square-foot item reads from it, plus each square-foot quantity typed without a room."""
+    job_overrides, room_overrides = _overrides(data, [])
+    categories = {room.category for room in data.rooms}
+    rooms, typed = {}, ZERO
+    for item in items:
+        if (
+            not item['enabled']
+            or item['unit'] != 'sf'
+            or item['group'] == EXTRAS_GROUP
+            or _unpriced(item)
+        ):
+            continue
+        source = parse_source(item['quantity_source'])
+        if source.kind != 'room':
+            if not item['categories'] or categories.intersection(item['categories']):
+                typed += _job_quantity(item, source, data, job_overrides, {})
+            continue
+        for index, room in enumerate(data.rooms):
+            if item['categories'] and room.category not in item['categories']:
+                continue
+            quantity = _room_quantity(room, source, policy, room_overrides) or ZERO
+            rooms[index] = max(rooms.get(index, ZERO), quantity)
+    return sum(rooms.values(), typed)
 
 
 def _exact(line):
@@ -414,9 +442,7 @@ def price_scope(data, table, numbers=None, growth=None):
             extras_taxable = item['taxable']
             if _has_unpriced_quantity(item, data):
                 warnings.append(dict(code='unpriced_extras_quantity', item_id=item['item_id']))
-        if (item['unit_price'] == '' and not item.get('price_brackets')) or any(
-            band['unit_price'] == '' for band in item.get('price_brackets', [])
-        ):
+        if _unpriced(item):
             warnings.append(dict(code='blank_price_item', item_id=item['item_id']))
             continue
         # The extras item only supplies the rate an owner approves work at (extras.rate_for).
@@ -439,7 +465,8 @@ def price_scope(data, table, numbers=None, growth=None):
                 Decimal(item['waste_percent']),
             )
             priced.append((item, [line]))
-    job_sf = _job_sf(line for _, item_lines in priced for line in item_lines)
+    whole = bracket_mode_of(policy) == 'whole-job'
+    job_sf = _job_sf(data, table['items'], policy) if whole else None
     lines = []
     for item, item_lines in priced:
         lines += (
@@ -621,7 +648,7 @@ def totals(data, lines, policy, items):
         bands = cushion_brackets_of(policy)
         areas = _cushion_lines(area_priced, policy)
         if bracket_mode_of(policy) == 'whole-job':
-            percent = Decimal(_band_for(bands, _job_sf(lines))['percent']) / HUNDRED
+            percent = Decimal(_band_for(bands, _job_sf(data, items, policy))['percent']) / HUNDRED
             high_lm = _money((area_dollars + other_dollars) * (1 + percent))
         elif len(bands) == 2 and not any('price_bracket' in line for line in area_priced):
             # Preserve the exact two-step operation order, even at a half-cent boundary.
@@ -863,9 +890,8 @@ def _bracket_cushion_sentence(policy):
     if bracket_mode_of(policy) == 'whole-job':
         return (
             'The high end applies one whole-job cushion to labor and materials, selected by the '
-            "job's total square feet, every square-foot line before waste: "
-            + '; '.join(parts)
-            + '.'
+            "job's total square feet before waste, each room counted once plus square feet typed "
+            'without a room: ' + '; '.join(parts) + '.'
         )
     return (
         'The high end adds a tiered cushion to area-priced labor and materials, highest-priced '
