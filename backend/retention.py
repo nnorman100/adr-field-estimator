@@ -546,22 +546,21 @@ class Retention:
             for path in photo_paths(photo):
                 if path not in pending:
                     pending.append(path)
+        stamp = now()
+        summary = {}
         if photos:
+            summary = dict(status='draft', updated_at=stamp)
             tx.update(
                 record_ref,
-                {
-                    'photos': [],
-                    'audit': None,
-                    'revision': record['revision'] + 1,
-                    'updated_at': now(),
-                },
+                dict(summary, photos=[], audit=None, revision=record['revision'] + 1),
             )
         tx.set(
             job_ref,
             dict(
+                summary,
                 evidence_pending_paths=pending,
                 evidence_pending=bool(pending),
-                evidence_deleted_at=now(),
+                evidence_deleted_at=stamp,
                 evidence_deleted_photos=len(photos),
             ),
             merge=True,

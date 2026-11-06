@@ -685,3 +685,16 @@ def test_a_retried_photo_delete_never_touches_the_original_of_a_later_upload(
     assert keeper(store).tick('owner', 'adr', NOW + DAY + 1)['deleted']['evidence_photos'] == 1
     assert original_of(first) not in objects(store)
     assert {p for p in photo_paths(later)} <= objects(store)
+
+
+def test_an_audited_draft_whose_photos_expire_comes_back_as_a_draft(store, on):
+    archived_draft(store, ID, 91)
+    store.db.records['inspections/' + ID].update(status='audited', audit={'synthetic': True})
+    store.db.records['_workspace_jobs/' + ID]['status'] = 'audited'
+    assert keeper(store).tick('owner', 'adr', NOW)['deleted']['evidence_photos'] == 1
+    record = store.db.records['inspections/' + ID]
+    job = store.db.records['_workspace_jobs/' + ID]
+    assert record['status'] == job['status'] == 'draft' and record['audit'] is None
+    assert job['updated_at'] == record['updated_at']
+    store.workspaces.restore_job('owner', ID, ArchiveRequest(expected_version=job['version']))
+    assert store.get_inspection('owner', ID)['status'] == 'draft'

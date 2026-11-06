@@ -112,3 +112,36 @@ for (const role of ['estimator', 'office']) {
     expect(runs).toEqual(['POST']);
   });
 }
+
+test('both archive confirmations say archived photos follow the retention period', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', { data: { enabled: true } });
+  const promise =
+    "Its photos are kept until the company's retention period for archived-draft photos passes, once automatic deletion is switched on, and cannot be restored after that.";
+  await start(page, 'owner');
+  await page.locator('#dashboardJobs').click();
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.locator('#archiveJob').click();
+  await expect(page.locator('#archiveDescription')).toContainText(promise);
+  await expect(page.locator('#archiveDescription')).not.toContainText(
+    'photos and history are kept',
+  );
+  await page.locator('#cancelArchive').click();
+
+  await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid('admin'));
+  await page.goto('/app');
+  await page.locator('#dashboardAdmin').click();
+  await page
+    .locator('.dashboard-card')
+    .filter({ has: page.getByRole('heading', { name: 'Alert Disaster Restoration' }) })
+    .getByRole('button', { name: 'Manage company' })
+    .click();
+  await page.getByRole('button', { name: 'Suspend company' }).click();
+  await page.getByRole('button', { name: 'Open read-only support view' }).click();
+  await page.getByRole('button', { name: /Assigned bathroom/ }).click();
+  await page.getByRole('button', { name: 'Archive draft (support action)' }).click();
+  await expect(page.locator('#archiveDescription')).toContainText(promise);
+  await page.locator('#cancelArchive').click();
+});

@@ -21,6 +21,8 @@ window.WorkspaceUI = (() => {
     POSITIONING_LINE =
       'Walk the loss, talk and photograph as you go, and leave with a priced proposal, itemized claim, scope defense letter and photo log.';
   const SUPPORT_EYEBROW = 'READ-ONLY SUPPORT VIEW',
+    ARCHIVED_PHOTOS =
+      "Its photos are kept until the company's retention period for archived-draft photos passes, once automatic deletion is switched on, and cannot be restored after that.",
     SUPPORT_NOTE =
       'Read-only: jobs and signed documents cannot be edited here; unsigned drafts can only be archived or restored. Every view and support action is recorded in the audit log.';
   const enabled = () => !!state.session?.workspaces_enabled;
@@ -1529,7 +1531,9 @@ window.WorkspaceUI = (() => {
           if (
             !(await confirmArchive(
               'Archive ' + (record.address || 'this draft') + '?',
-              'The draft leaves every job list for this company and can no longer be opened. Its photos and history are kept, the action is recorded in the audit log, and it can be restored from Archived drafts.',
+              'The draft leaves every job list for this company and can no longer be opened. ' +
+                ARCHIVED_PHOTOS +
+                ' Its history is kept, the action is recorded in the audit log, and it can be restored from Archived drafts.',
               'Archive draft',
             ))
           )
@@ -1886,7 +1890,9 @@ window.WorkspaceUI = (() => {
     if (
       !(await confirmArchive(
         'Archive ' + name + '?',
-        'The draft leaves every job list and can no longer be opened. Its photos and history are kept for the record. Signed jobs cannot be archived.',
+        'The draft leaves every job list and can no longer be opened. ' +
+          ARCHIVED_PHOTOS +
+          ' Its history is kept for the record. Signed jobs cannot be archived.',
         'Archive draft',
       ))
     )
