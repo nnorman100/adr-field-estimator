@@ -32,8 +32,11 @@ rollback path, which prices from rates without a job pin.
 1. `normalized_inspection`: the stored inspection record (`inspection_payload`). Everything after
    it prices that record reloaded (`InspectionData.model_validate`), as the audit does, so a
    default the save writes (for example `drying_days`) is priced.
-2. `pin` and `price_basis`: the job pin built by `_pin_body` and the basis `basis_for` returns;
-   for v2 the pin carries the normalized table and its `content_sha256`.
+2. `pin` and `price_basis`: the first job pin, built as `ensure_pin` builds it (the company's
+   stored version, as its only published version, through `effective` and `_book_for_job`, then
+   `_pin_body`), and the basis `basis_for` returns; for v2 the pin carries the normalized table
+   and its `content_sha256`. A stored version whose calculation version is unknown, malformed or
+   missing is refused there, at `pin`.
 3. `pricing`: `lines` (every price line the engine returns), `itemized_total`, `buckets`
    (v2: fixed, equipment and labor/material sums with their taxable parts; v1: the job,
    labor/material and equipment sums and affected square feet the estimating-sheet range reads),

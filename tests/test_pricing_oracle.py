@@ -13,8 +13,9 @@ from decimal import ROUND_HALF_EVEN
 
 import pytest
 
-from backend import pricing_v2, signing_links
-from backend.contracts import AuthorizeRequest, HomeownerSignature
+from backend import claims, pricing_v2, signing_links
+from backend.contracts import AIResult, AuthorizeRequest, HomeownerSignature, InspectionData
+from backend.main import inspection_payload
 from scripts import pricing_oracle as oracle
 from scripts.pricing_oracle_cases import corpus
 from tests.fakes import FakeStore
@@ -125,22 +126,38 @@ def test_canonical_bytes_hash_to_the_recorded_proposal_hash():
 
 
 def _audited(stored_input, expected):
-    """A fake store holding the case's inspection, audited by the production save_audit."""
+    """The case saved as the save routes store it, reloaded as the audit reloads it, documented
+    from that reloaded record and audited by the production save_audit."""
     store = FakeStore()
-    store._ref(stored_input['inspection_id']).create(
+    inspection_id, revision = stored_input['inspection_id'], stored_input['revision']
+    store._ref(inspection_id).create(
         dict(
-            inspection_id=stored_input['inspection_id'],
+            inspection_id=inspection_id,
             owner_uid=OWNER,
-            revision=stored_input['revision'],
+            revision=revision,
             status='draft',
-            data=expected['normalized_inspection'],
+            data=inspection_payload(InspectionData.model_validate(stored_input['data'])),
             photos=stored_input['photos'],
             audit=None,
         )
     )
-    record = store.save_audit(
-        OWNER, stored_input['inspection_id'], stored_input['revision'], expected['documents']
-    )
+    saved = store.get_inspection(OWNER, inspection_id)
+    assert saved['data'] == expected['normalized_inspection'], inspection_id
+    pin = expected.get('pin')
+    with oracle.frozen():
+        documents = claims.make_documents(
+            InspectionData.model_validate(saved['data']),
+            saved['photos'],
+            AIResult.model_validate(stored_input['ai']),
+            stored_input.get('identity'),
+            stored_input.get('customer_name', ''),
+            stored_input.get('claim'),
+            pin.get('rates') if pin else stored_input['rates'],
+            expected.get('price_basis'),
+            pin,
+        )
+    assert oracle.plain(documents) == expected['documents'], inspection_id
+    record = store.save_audit(OWNER, inspection_id, revision, documents)
     return store, record
 
 

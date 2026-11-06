@@ -33,9 +33,9 @@
       "year_built": 1985
     },
     "rejected": {
-      "message": "'calculation_version'",
+      "message": "This company price book cannot be used. Contact support.",
       "stage": "pin",
-      "type": "KeyError"
+      "type": "Conflict"
     }
   },
   "id": "v1-reject-version-missing",

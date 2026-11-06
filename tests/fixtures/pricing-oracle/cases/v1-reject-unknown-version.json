@@ -33,7 +33,7 @@
       "year_built": 1985
     },
     "rejected": {
-      "message": "This draft's saved prices are missing. Contact support.",
+      "message": "This company price book cannot be used. Contact support.",
       "stage": "pin",
       "type": "Conflict"
     }

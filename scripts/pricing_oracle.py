@@ -40,9 +40,14 @@ from backend.contracts import (  # noqa: E402
     check_quantity_overrides,
     distinct_rooms,
 )
-from backend.inspection_store import canonical  # noqa: E402
+from backend.inspection_store import Conflict, canonical  # noqa: E402
 from backend.main import inspection_payload  # noqa: E402
-from backend.price_book_store import PriceBookStore, _pin_body  # noqa: E402
+from backend.price_book_store import (  # noqa: E402
+    PriceBookStore,
+    _is_unset,
+    _not_set_message,
+    _pin_body,
+)
 from backend.pricing import price_and_range  # noqa: E402
 from backend.sizing import equipment_sizing  # noqa: E402
 
@@ -69,14 +74,23 @@ V1 = price_books.CALCULATION_VERSION
 V2 = price_table.CALCULATION_VERSION
 
 
-class _VersionReader:
-    """What PriceBookStore.basis_for reads besides the pin: the stored version's calculation."""
+class _StoredBook:
+    """What PriceBookStore reads for a company with one published price version: its head and
+    that stored version."""
 
-    def __init__(self, calculation_version):
-        self.calculation_version = calculation_version
+    def __init__(self, version):
+        self.version = version
+        self.head = {
+            'latest_version_id': version['version_id'],
+            'generation': 1,
+            'calculation_version': version.get('calculation_version'),
+        }
 
-    def _version(self, _version_id):
-        return {'calculation_version': self.calculation_version}
+    def _head(self, _company_id, tx=None):
+        return self.head
+
+    def _version(self, version_id, tx=None):
+        return self.version if version_id == self.version['version_id'] else None
 
 
 @contextmanager
@@ -113,8 +127,9 @@ def _rejected(stage, error):
 
 
 def _pin_and_basis(case, normalized_table):
-    """The job pin and the price basis the audit reads, from the code that makes them. A case
-    without `calculation` is a stored price version without the field."""
+    """The job pin and the price basis the audit reads, built as ensure_pin builds a first pin
+    from the company's stored version. A case without `calculation` is a stored version without
+    the field."""
     calculation = case.get('calculation')
     if normalized_table is not None:
         source = dict(normalized_table, content_sha256=price_table.content_hash(normalized_table))
@@ -127,10 +142,18 @@ def _pin_and_basis(case, normalized_table):
         )
     if 'calculation' in case:
         source['calculation_version'] = calculation
-    source.update(version_id=case['version_id'], sequence=case['sequence'])
-    pin = _pin_body(case['inspection_id'], case['company_id'], source, 'first_price')
+    source.update(
+        version_id=case['version_id'], sequence=case['sequence'], company_id=case['company_id']
+    )
+    stored = _StoredBook(source)
+    company = {'company_id': case['company_id']}
+    book = PriceBookStore.effective(stored, company)
+    if _is_unset(book):
+        raise Conflict(_not_set_message('owner'))
+    chosen, reason = PriceBookStore._book_for_job(stored, company, {}, book)
+    pin = _pin_body(case['inspection_id'], case['company_id'], chosen, reason)
     pin['priced_at'] = PRICED_AT
-    basis = PriceBookStore.basis_for(_VersionReader(calculation), pin, case['company_id'])
+    basis = PriceBookStore.basis_for(stored, pin, case['company_id'])
     return pin, basis
 
 
