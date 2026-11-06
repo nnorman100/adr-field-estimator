@@ -58,23 +58,30 @@ test('monthly cap refuses generation while saved work and the owner display stay
   await expect(page.locator('.ai-spending')).toHaveText('AI used this month: $0.00 of $0.00');
 });
 
-test('a refused queued photo recognition stays pending while later queued drafts still sync', async ({
-  page,
-}) => {
-  const uid = 'test-owner-spending-' + randomUUID(),
-    hex = () => randomUUID().replaceAll('-', '').slice(1),
-    open = 'ADR-INS-f' + hex(),
-    first = 'ADR-INS-0' + hex(),
-    later = 'ADR-INS-1' + hex();
-  let recognitions = 0;
+function queuedDrafts() {
+  const hex = () => randomUUID().replaceAll('-', '').slice(1);
+  return {
+    uid: 'test-owner-spending-' + randomUUID(),
+    open: 'ADR-INS-f' + hex(),
+    first: 'ADR-INS-0' + hex(),
+    later: 'ADR-INS-1' + hex(),
+  };
+}
+
+async function refuseRecognition(page, seconds) {
+  const counter = { calls: 0 };
   await page.route('**/api/inspections/*/photos/*/ocr', (route) => {
-    recognitions++;
+    counter.calls++;
     return route.fulfill({
       status: 429,
-      headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+      headers: { 'Retry-After': String(seconds), 'Content-Type': 'application/json' },
       body: JSON.stringify({ detail: "Your company has reached this month's AI spending limit." }),
     });
   });
+  return counter;
+}
+
+async function seedQueuedDrafts(page, { uid, open, first, later }) {
   await page.goto('/manifest.webmanifest');
   await page.evaluate(
     async ({ uid, open, first, later, data }) => {
@@ -131,6 +138,15 @@ test('a refused queued photo recognition stays pending while later queued drafts
     },
     { uid, open, first, later, data: core.emptyData() },
   );
+}
+
+test('a refused queued photo recognition stays pending while later queued drafts still sync', async ({
+  page,
+}) => {
+  const drafts = queuedDrafts(),
+    { uid, first, later } = drafts;
+  const refusals = await refuseRecognition(page, 3600);
+  await seedQueuedDrafts(page, drafts);
   await page.goto('/app');
   await expect(page.locator('#address')).toHaveValue('Open property', { timeout: 15000 });
   const remote = async (id) => {
@@ -142,12 +158,12 @@ test('a refused queued photo recognition stays pending while later queued drafts
   await expect.poll(async () => (await remote(later))?.data.address).toBe('Queued manual property');
   const queued = await remote(first);
   expect(queued.photos.map((p) => [p.width, p.ocr_status])).toEqual([[120, 'pending']]);
-  expect(recognitions).toBeGreaterThan(0);
+  expect(refusals.calls).toBeGreaterThan(0);
   await expect.poll(() => page.evaluate(() => drainingQueue)).toBe(false);
-  const refused = recognitions;
+  const refused = refusals.calls;
   await page.evaluate(() => drainQueue());
   await page.evaluate(() => drainQueue());
-  expect(recognitions).toBe(refused);
+  expect(refusals.calls).toBe(refused);
 });
 
 test('a photo recognition refusal pauses its initiating account even after the job changes', async ({
@@ -186,4 +202,25 @@ test('a photo recognition refusal pauses its initiating account even after the j
     return aiWait(pause);
   });
   expect(kept).toBeGreaterThan(3500000);
+});
+
+test('Retry recognition re-enables when a background refusal pause ends on the opened draft', async ({
+  page,
+}) => {
+  const drafts = queuedDrafts();
+  const refusals = await refuseRecognition(page, 4);
+  await seedQueuedDrafts(page, drafts);
+  await page.goto('/app');
+  await expect(page.locator('#address')).toHaveValue('Open property', { timeout: 15000 });
+  await expect.poll(() => refusals.calls).toBe(1);
+  await expect.poll(() => page.evaluate(() => drainingQueue)).toBe(false);
+  await page.evaluate((id) => restoreDraft(id), drafts.first);
+  await expect(page.locator('#address')).toHaveValue('Queued photo property');
+  await page.locator('.task-nav [data-task="walkthrough"]').click();
+  const retry = page.getByRole('button', { name: 'Retry recognition' });
+  await expect(retry).toBeDisabled();
+  await expect(retry).toBeEnabled({ timeout: 6000 });
+  expect(refusals.calls).toBe(1);
+  await retry.click();
+  await expect.poll(() => refusals.calls).toBe(2);
 });

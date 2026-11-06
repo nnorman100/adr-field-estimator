@@ -1203,7 +1203,9 @@ function aiRefused(pause, e) {
     pause,
     Math.max(aiPauses.get(pause) || 0, Date.now() + Math.max(1, e.retryAfter) * 1000),
   );
-  return aiWait(pause);
+  const wait = aiWait(pause);
+  setTimeout(renderPhotos, wait + 20);
+  return wait;
 }
 function aiGate(pause) {
   const seconds = Math.ceil(aiWait(pause) / 1000);
@@ -1466,7 +1468,6 @@ function startOCR(photo) {
       absorb(record);
     } catch (e) {
       const wait = e.status === 429 ? aiRefused(pause, e) : 0;
-      if (wait) setTimeout(renderPhotos, wait);
       if (state.draft?.inspection_id === inspectionId) {
         if (wait) {
           say(
