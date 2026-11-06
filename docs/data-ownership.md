@@ -1,6 +1,6 @@
 # Destination data ownership and submission
 
-This is the accepted rebuild target, not a description of the current deployment or authority to migrate it. The current Python app uses private Firestore records and a private evidence bucket; see [the legacy inventory](legacy-data-inventory.md). Test and live resources are separate within the dedicated project. Each fact has one authoritative owner; a projection, cache or acknowledgement cannot acquire write authority.
+This is the accepted rebuild target, not a description of the current deployment or authority to migrate it. The current Python app uses private Firestore records and a private evidence bucket; see [the legacy inventory](legacy-data-inventory.md). Test and live resources are separate within the dedicated project `alert-disaster-field-2026`: the owner superseded D-006's separate test project ("build everything in these two"), so all test and lab resources stay inside it. Each fact has one authoritative owner; a projection, cache or acknowledgement cannot acquire write authority.
 
 | Data | Authoritative owner | Permitted copies and constraints |
 | --- | --- | --- |
