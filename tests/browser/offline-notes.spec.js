@@ -487,6 +487,61 @@ test.describe('controlled voice-note uploads', () => {
     await page.evaluate(() => drainQueue());
     expect(calls).toBe(1);
   });
+  test('a transcription pause still registers another job’s offline note as pending', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    await page.addInitScript(() =>
+      Object.defineProperty(Navigator.prototype, 'onLine', {
+        configurable: true,
+        get: () => !window.fakeOffline,
+      }),
+    );
+    let calls = 0;
+    await page.route('**/voice-notes', (route) => {
+      calls++;
+      return route.fulfill({
+        status: 429,
+        headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          detail: "Your company has reached this month's AI spending limit.",
+        }),
+      });
+    });
+    await page.goto('/app');
+    await ready(page);
+    const first = await page.evaluate(() => state.draft.inspection_id);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect.poll(() => calls).toBe(1);
+    await page.locator('#jobMenu > summary').click();
+    await page.locator('#newInspection').click();
+    await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
+    await ready(page);
+    const second = await page.evaluate(() => state.draft.inspection_id);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.evaluate(() => (window.fakeOffline = true));
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(1);
+    const pending = (id) =>
+      page.evaluate(
+        async (id) =>
+          ((await jsonApi('/api/inspections/' + id)).voice_notes || []).map((row) => row.status),
+        id,
+      );
+    await page.evaluate(() => {
+      window.fakeOffline = false;
+      window.dispatchEvent(new Event('online'));
+    });
+    await expect.poll(() => pending(second)).toEqual(['pending']);
+    expect(calls).toBe(1);
+  });
   test('a refused draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let refuse = true;

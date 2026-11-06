@@ -60,10 +60,12 @@ leaves no room for the call, it explains that AI is unavailable until next month
 with `Retry-After: 3600`. When the remaining allowance is only held by other
 reservations (calls in progress or awaiting confirmation), it says so instead, with
 `Retry-After: 60`; those holds may settle at a lower actual cost, while crash holds
-stay charged. The phone pauses that user's photo readings or voice-note
-transcription in that company workspace until the `Retry-After` deadline; autosave,
-newly recorded notes and queue restarts do not resend early, and a refused reading
-does not stop other queued drafts' manual work from syncing. It does not change the draft,
+stay charged. The phone pauses photo readings or voice-note audio uploads for the
+user and company workspace that sent the refused request, until the latest
+`Retry-After` deadline, even if another job is open when the refusal arrives.
+Autosave, newly recorded notes, queue restarts and Retry recognition do not resend
+early. Draft saves and pending-note registration continue during the pause, and a
+refused reading does not stop other queued drafts' manual work from syncing. It does not change the draft,
 photos, voice-note ledger or agreement because of that refusal. Offline notes may
 still be recorded and synced as pending field work. Ordinary manual work, document
 reads and signing a previously prepared eligible agreement do not consult spending.

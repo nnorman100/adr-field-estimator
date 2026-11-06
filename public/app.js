@@ -1195,13 +1195,27 @@ function syncDraft() {
 }
 const aiPauses = new Map();
 const aiPauseKey = (kind) => [state.user?.uid, window.WorkspaceUI?.context(), kind].join('|');
-function aiWait(kind) {
-  return Math.max(0, (aiPauses.get(aiPauseKey(kind)) || 0) - Date.now());
+function aiWait(pause) {
+  return Math.max(0, (aiPauses.get(pause) || 0) - Date.now());
 }
-function aiRefused(kind, e) {
-  const wait = Math.max(1, e.retryAfter) * 1000;
-  aiPauses.set(aiPauseKey(kind), Date.now() + wait);
-  return wait;
+function aiRefused(pause, e) {
+  aiPauses.set(
+    pause,
+    Math.max(aiPauses.get(pause) || 0, Date.now() + Math.max(1, e.retryAfter) * 1000),
+  );
+  return aiWait(pause);
+}
+function aiGate(pause) {
+  const seconds = Math.ceil(aiWait(pause) / 1000);
+  if (seconds)
+    throw Object.assign(
+      Error(
+        'AI is paused after a refusal. This stays on the phone and retries in ' +
+          seconds +
+          ' seconds.',
+      ),
+      { status: 429, retryAfter: seconds },
+    );
 }
 let drainingQueue = false,
   drainAgain = false;
@@ -1219,7 +1233,8 @@ async function drainQueue() {
     return;
   drainingQueue = true;
   const uid = state.user.uid,
-    queueContext = window.WorkspaceUI?.context();
+    queueContext = window.WorkspaceUI?.context(),
+    ocrPause = aiPauseKey('ocr');
   const guard = () => {
     if (
       state.user?.uid !== uid ||
@@ -1342,11 +1357,11 @@ async function drainQueue() {
         row.record = record;
         await saveRow(row);
         await markOriginalsReady(row.key, [saved]);
-        if (photo.ocr_status === 'pending' && !aiWait('ocr')) {
+        if (photo.ocr_status === 'pending' && !aiWait(ocrPause)) {
           try {
             record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
           } catch (e) {
-            if (e.status === 429) aiRefused('ocr', e);
+            if (e.status === 429) aiRefused(ocrPause, e);
             else record = await request(path);
           }
           Object.assign(
@@ -1362,7 +1377,7 @@ async function drainQueue() {
       await saveRow(row);
       const sent = await sendNotes(
         row.key,
-        async (note) => {
+        async (note, pause) => {
           if (!note.reserved) {
             record = await request(path + '/voice-notes/pending', 'POST', { note_id: note.id });
             note.reserved = true;
@@ -1379,6 +1394,7 @@ async function drainQueue() {
               await saveRow(row);
             }
           }
+          aiGate(pause);
           record = await request(path + '/voice-notes', 'POST', await notePayload(note));
           if (id === state.draft?.inspection_id) {
             syncChain = syncChain
@@ -1397,7 +1413,7 @@ async function drainQueue() {
       );
       if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
     }
-    const ocrWait = aiWait('ocr');
+    const ocrWait = aiWait(ocrPause);
     if (ocrWait) retry = retry ? Math.min(retry, ocrWait) : ocrWait;
     if (retry) {
       clearTimeout(state.queueRetry);
@@ -1434,9 +1450,10 @@ async function drainQueue() {
     } else uploadOriginals();
   }
 }
-function startOCR(photo, manual = false) {
+function startOCR(photo) {
   if (!canEditDraft('ocr') || !navigator.onLine || !photo?.uploaded) return;
-  if (!manual && aiWait('ocr')) return;
+  const pause = aiPauseKey('ocr');
+  if (aiWait(pause)) return;
   const inspectionId = state.draft.inspection_id;
   if (state.ocr.has(photo.id)) return;
   const promise = (async () => {
@@ -1448,12 +1465,14 @@ function startOCR(photo, manual = false) {
       );
       absorb(record);
     } catch (e) {
+      const wait = e.status === 429 ? aiRefused(pause, e) : 0;
+      if (wait) setTimeout(renderPhotos, wait);
       if (state.draft?.inspection_id === inspectionId) {
-        if (e.status === 429) {
+        if (wait) {
           say(
             e.message +
               ' The photo remains pending; retry recognition after ' +
-              aiRefused('ocr', e) / 1000 +
+              Math.ceil(wait / 1000) +
               ' seconds.',
             'error',
           );
@@ -2788,10 +2807,13 @@ function photoCard(p) {
     p.uploaded &&
     ['failed', 'pending', 'no_meter'].includes(p.ocr_status)
   ) {
-    const retry = button('Retry recognition', () => startOCR(p, true));
+    const retry = button('Retry recognition', () => startOCR(p));
     if (!navigator.onLine) {
       retry.disabled = true;
       retry.title = 'Photo recognition needs a connection.';
+    } else if (aiWait(aiPauseKey('ocr'))) {
+      retry.disabled = true;
+      retry.title = 'Photo recognition is paused after a refusal. Retry after the pause.';
     }
     caption.append(retry);
   }
@@ -5491,12 +5513,11 @@ async function renderNotes() {
 // the server refused the note itself for good. The open draft and the background queue share it.
 const sendingNotes = new Map();
 async function sendNotes(key, upload, save = saveNote, stop = () => false) {
+  const pause = aiPauseKey('transcribe');
   let added = 0;
   for (;;) {
     const note = (await draftNotes(key)).find((n) => n.status === 'saved' && n.parts);
     if (!note || stop()) return { added, retry: 0 };
-    const paused = aiWait('transcribe');
-    if (paused) return { added, retry: paused };
     if (sendingNotes.has(note.id)) {
       await sendingNotes.get(note.id);
       if ((await draftNotes(key)).some((n) => n.id === note.id && n.status === 'done')) added++;
@@ -5506,7 +5527,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
       sent;
     sendingNotes.set(note.id, new Promise((resolve) => (sent = resolve)));
     try {
-      await upload(note);
+      await upload(note, pause);
       note.status = 'done';
       note.error = '';
       note.scoped = false;
@@ -5529,7 +5550,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
             : e.message;
         retry =
           e.status === 429 && !e.draftSync
-            ? aiRefused('transcribe', e)
+            ? aiRefused(pause, e)
             : e.status === 429
               ? Math.max(1, e.retryAfter) * 1000
               : NOTE_RETRY_MS;
@@ -5567,12 +5588,12 @@ async function processNotes(carried = 0) {
   renderNotes();
   let sent;
   try {
-    sent = await sendNotes(noteKey(), async (note) => {
+    sent = await sendNotes(noteKey(), async (note, pause) => {
       if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
       notes.active = note.id;
       renderNotes();
       try {
-        await uploadNote(note, draft);
+        await uploadNote(note, draft, pause);
       } finally {
         notes.active = null;
       }
@@ -5737,7 +5758,7 @@ async function reviewVoiceNotes() {
     await fillScopeFromWalkthrough();
   }
 }
-async function uploadNote(note, draft) {
+async function uploadNote(note, draft, pause) {
   const payload = await notePayload(note);
   const task = async () => {
     try {
@@ -5754,6 +5775,7 @@ async function uploadNote(note, draft) {
     if (state.conflict || !state.record || stable(draft.data) !== state.ack)
       throw Error('Save the draft first. The note stays on this phone.');
     if (!note.reserved) await reserveNote(note, draft);
+    aiGate(pause);
     $('technicianTranscript').readOnly = true;
     const base = draft.data.technician_transcript;
     try {

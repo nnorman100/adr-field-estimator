@@ -149,3 +149,41 @@ test('a refused queued photo recognition stays pending while later queued drafts
   await page.evaluate(() => drainQueue());
   expect(recognitions).toBe(refused);
 });
+
+test('a photo recognition refusal pauses its initiating account even after the job changes', async ({
+  page,
+}) => {
+  let release,
+    recognitions = 0;
+  const answered = new Promise((resolve) => (release = resolve));
+  await page.route('**/api/inspections/*/photos/*/ocr', async (route) => {
+    recognitions++;
+    await answered;
+    return route.fulfill({
+      status: 429,
+      headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ detail: "Your company has reached this month's AI spending limit." }),
+    });
+  });
+  await page.goto('/app');
+  await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  const first = await page.evaluate(() => state.draft.inspection_id);
+  await page.evaluate(() => startOCR({ id: '9'.repeat(32), uploaded: true }));
+  await expect.poll(() => recognitions).toBe(1);
+  await page.locator('#jobMenu > summary').click();
+  await page.locator('#newInspection').click();
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  release();
+  await expect.poll(() => page.evaluate(() => aiWait(aiPauseKey('ocr')))).toBeGreaterThan(3500000);
+  await page.evaluate(() => startOCR({ id: '8'.repeat(32), uploaded: true }));
+  await page.evaluate(() => drainQueue());
+  expect(recognitions).toBe(1);
+  const kept = await page.evaluate(() => {
+    const pause = aiPauseKey('ocr');
+    aiRefused(pause, { retryAfter: 60 });
+    return aiWait(pause);
+  });
+  expect(kept).toBeGreaterThan(3500000);
+});
