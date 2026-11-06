@@ -195,6 +195,7 @@ audited support access and read-only boundaries.
 
 The shared $10 per-company UTC-month allowance applies independently of feature
 switches, with hard REST reservations and the owner's chosen soft Live threshold.
-Owners see one read-only line of this month's use on their dashboard. The private company
-settings, ledger, crash behavior and Live limitation are described in
+Owners see one read-only line of this month's use on their dashboard. The private
+server-only collections `_company_ai_budgets`, `_company_ai_months` and
+`_company_ai_reservations`, the ledger, crash behavior and Live limitation are described in
 [Company AI spending](ai-spending.md). Existing per-user quotas remain unchanged.
