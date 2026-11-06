@@ -315,21 +315,27 @@ def _band_for(brackets, area):
     return next(band for band in brackets if band['up_to_sf'] is None or area <= band['up_to_sf'])
 
 
-def _bracket_lines(item, lines, policy):
+def _bracket_lines(item, lines, policy, job_sf, growth=None):
     """Price an item's combined job quantity, highest adjusted cost first, then split by band.
 
-    The input prices are category/cabinetry multipliers. Cumulative rounding keeps a change in
-    how bands split across rooms from losing cents from the item's total.
+    The input prices are category/cabinetry multipliers. Whole-job mode selects the band from
+    job_sf, the job's combined bracketed square feet. `growth` is each line's high-end share; the
+    uncertainty high end fills bands by grown cost so its own total cannot drop as work is added.
+    Cumulative rounding keeps a change in how bands split across rooms from losing cents from the
+    item's total.
     """
     brackets = item['price_brackets']
-    area = sum((_dec(line['quantity']) for line in lines), ZERO)
     whole = bracket_mode_of(policy) == 'whole-job'
-    selected = _band_for(brackets, area) if whole else None
+    selected = _band_for(brackets, job_sf) if whole else None
     used = exact = rounded = ZERO
     result = []
     for line in sorted(
         lines,
-        key=lambda row: _dec(row['unit_price']) * (1 + _dec(row['waste_percent']) / HUNDRED),
+        key=lambda row: (
+            _dec(row['unit_price'])
+            * (1 + _dec(row['waste_percent']) / HUNDRED)
+            * (1 + (growth(row) if growth else ZERO))
+        ),
         reverse=True,
     ):
         remaining = _dec(line['quantity'])
@@ -361,7 +367,7 @@ def _bracket_lines(item, lines, policy):
                     unit_price=float(price),
                     total=float(total),
                     description=f'{line["description"]} ({bracket_mode_of(policy)} bracket: {label}'
-                    + (' of item work on the job)' if whole else ')'),
+                    + (' of bracketed work on the job)' if whole else ')'),
                     price_bracket=dict(band),
                     bracket_mode=bracket_mode_of(policy),
                 )
@@ -371,10 +377,11 @@ def _bracket_lines(item, lines, policy):
     return result
 
 
-def price_scope(data, table, numbers=None):
+def price_scope(data, table, numbers=None, growth=None):
     """(lines, warnings) for a job and a table holding `items` and `policy`.
 
-    `numbers` are job numbers to price in place of the entered ones (high_numbers)."""
+    `numbers` are job numbers to price in place of the entered ones (high_numbers). `growth` orders
+    tiered bracket bands for the uncertainty high end (_uncertain_high)."""
     policy = table['policy']
     warnings = []
     job_overrides, room_overrides = _overrides(data, warnings)
@@ -383,7 +390,7 @@ def price_scope(data, table, numbers=None):
         if key not in known:
             warnings.append(dict(code='unknown_scope_item', item_id=key))
     categories = {room.category for room in data.rooms}
-    lines = []
+    priced = []
     enabled = (item for item in table['items'] if item['enabled'])
     extras_taxable = False
     for item in sorted(
@@ -402,31 +409,36 @@ def price_scope(data, table, numbers=None):
             continue
         source = parse_source(item['quantity_source'])
         if source.kind == 'room':
-            item_lines = _room_lines(item, source, data, policy, room_overrides, warnings)
-            lines += (
-                _bracket_lines(item, item_lines, policy)
-                if item.get('price_brackets')
-                else item_lines
-            )
+            priced.append((item, _room_lines(item, source, data, policy, room_overrides, warnings)))
             continue
         if item['categories'] and not categories.intersection(item['categories']):
             continue
         quantity = _job_quantity(item, source, data, job_overrides, numbers or {})
         if quantity:
-            item_lines = [
-                _line(
-                    item,
-                    item['customer_description'] or item['name'],
-                    quantity,
-                    ONE if item.get('price_brackets') else Decimal(item['unit_price']),
-                    Decimal(item['waste_percent']),
-                )
-            ]
-            lines += (
-                _bracket_lines(item, item_lines, policy)
-                if item.get('price_brackets')
-                else item_lines
+            line = _line(
+                item,
+                item['customer_description'] or item['name'],
+                quantity,
+                ONE if item.get('price_brackets') else Decimal(item['unit_price']),
+                Decimal(item['waste_percent']),
             )
+            priced.append((item, [line]))
+    job_sf = sum(
+        (
+            _dec(line['quantity'])
+            for item, item_lines in priced
+            if item.get('price_brackets')
+            for line in item_lines
+        ),
+        ZERO,
+    )
+    lines = []
+    for item, item_lines in priced:
+        lines += (
+            _bracket_lines(item, item_lines, policy, job_sf, growth)
+            if item.get('price_brackets')
+            else item_lines
+        )
     for extra in data.extras:
         if extra.approval:
             total = _money(_dec(extra.hours) * _dec(extra.approval.rate))
@@ -455,13 +467,14 @@ def _cushion_lines(lines, policy):
     """(dollars, square feet) of each area line, as the flat cushion counts them.
 
     Dollars never change. The waste basis only fills the first square feet sooner; every other
-    basis counts each line's own square feet."""
+    basis counts each line's own square feet. A bracket-priced line counts the pre-waste square
+    feet its price bands count, so added work cannot shrink the area holding costly bands."""
     waste_counts = policy['area_basis'] == 'demolition_with_waste'
     return [
         (
             _dec(line['total']),
             _dec(line['area']) * (1 + _dec(line['waste_percent']) / HUNDRED)
-            if waste_counts
+            if waste_counts and 'price_bracket' not in line
             else _dec(line['area']),
         )
         for line in lines
@@ -529,17 +542,25 @@ def _room_percents(data, assist):
 def _uncertain_high(data, lines, items, policy, assist):
     """The high end's amounts under the uncertainty method. Taxable labor and materials stay exact."""
     numbers = high_numbers(data, assist)
-    high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers)
     percents = _room_percents(data, assist)
     largest = max(percents.values(), default=ZERO)
+
+    def growth(line):
+        if line['bucket'] != 'labor_material':
+            return ZERO
+        # A line with no area (labor hours) carries the largest percent on the job (decision D4).
+        return percents.get(line['room'], largest) if line['area'] else largest
+
+    high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers, growth)
     labor_material = taxed_labor_material = ZERO
-    for line in lines:
+    # This end fills bracket bands by grown cost, so it cannot drop as work is added.
+    for line in [
+        *(line for line in lines if 'price_bracket' not in line),
+        *(line for line in high_lines if 'price_bracket' in line),
+    ]:
         if line['bucket'] != 'labor_material':
             continue
-        # A line with no area (labor hours) carries the largest percent on the job (decision D4).
-        grown = _dec(line['total']) * (
-            1 + (percents.get(line['room'], largest) if line['area'] else largest)
-        )
+        grown = _dec(line['total']) * (1 + growth(line))
         labor_material += grown
         if line['taxable']:
             taxed_labor_material += grown

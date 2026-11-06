@@ -6,9 +6,11 @@ Office staff, estimators and support retain their read-only price view. These
 controls use the existing price-book rollout switch; this change enables no flags
 and changes no ADR rates or v1 rate books.
 
-A price bracket belongs to one item. Its quantity is that item's combined square
-feet across matching rooms, or its typed square-foot quantity, **before waste**.
-It is not the property's floor area or a separate region price. Room category
+A price bracket belongs to one item. In tiered mode its quantity is that item's
+combined square feet across matching rooms, or its typed square-foot quantity,
+**before waste**. In whole-job mode the job's total square footage, every
+bracket-priced item's square feet before waste combined, picks the band. It is not a
+separate region price. Room category
 and cabinetry multipliers and waste still apply. Price brackets are available only
 on `sf` items with a room or typed quantity source. Without brackets, the item
 keeps its flat unit price. With brackets, the bracket rates replace that price;
@@ -43,16 +45,19 @@ two decimal places. Cushion bands use the same limits and a `percent` from 0 to
 Tiered assigns each band's rate only to the square feet within it. Across rooms,
 it fills the highest adjusted-cost rooms first (category and cabinetry
 multipliers times waste), so adding work cannot shift expensive existing work
-into cheaper bands and lower the job's price. Lines split at band boundaries;
+into cheaper bands and lower the job's price. Under the uncertainty method the
+high end fills the bands again, highest grown cost first (adjusted cost times one
+plus the room's hidden-damage percent), so neither end can drop as work is added. Lines split at band boundaries;
 each names the mode and bracket. Rounding follows the item's cumulative exact
 amount: a split line is the difference between the cumulative cents before and
 after it. The lines therefore add to the item's rounded total without losing
 cents when a band shifts between rooms. Existing flat items keep their original
 per-line rounding.
 
-Whole-job chooses the bracket using the item's total square feet and applies
-that rate to all its square feet. It can produce a lower price just above a
-boundary. The owner's mode is stored as optional `policy.bracket_mode` and
+Whole-job chooses each item's bracket using the job's total bracketed square
+feet and applies that rate to all the item's square feet. For example, two items
+on separate 500 sq ft rooms with a 750 sq ft boundary both take the over-750 rate.
+It can produce a lower price just above a boundary. The owner's mode is stored as optional `policy.bracket_mode` and
 applies to both prices and cushions. An absent mode reads as tiered without
 adding a field to existing tables or changing their content hash.
 
@@ -67,8 +72,10 @@ cushion bands are present. **Use two-step cushion** returns to those saved field
 
 Tiered cushions count all area-priced labor/material lines together, highest
 price per square foot first, using each line's own counted area. As before, the
-`demolition_with_waste` basis counts waste in that area; other bases use each
-line's raw square feet. Each band's percentage applies to its share of those
+`demolition_with_waste` basis counts waste in a flat-priced line's area; other bases,
+and every bracket-priced line, use the line's raw square feet. A bracket-priced line
+counts the same square feet its price bands count, so added work cannot shrink the
+area held by expensive bands and lower the high end. Each band's percentage applies to its share of those
 dollars. Non-area labor takes the first band's percentage. In notation:
 
 ```
@@ -89,7 +96,8 @@ square foot above **every** boundary, plus 0.01 sq ft below and above to reveal
 small drops that whole-foot samples would miss. Price previews use that item's rates and
 the company policy. Cushion previews state a synthetic $1/sq ft scope to show
 the percentage effect separately. Other items and saved jobs are excluded and
-this is stated beside the samples. A whole-job drop in either estimate end is
+this is stated beside the samples; on a job, whole-job mode picks the band from all
+bracketed square feet. A whole-job drop in either estimate end is
 flagged. Typed quantities above 100,000 sq ft are outside the job-input limit,
 so that sample says it is unavailable. Multi-room samples can cross that limit.
 

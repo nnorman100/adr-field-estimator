@@ -390,15 +390,12 @@ def _import_preview(book, uid, company_id, upload):
         if isinstance(parsed, dict):
             policy = dict(policy, range=dict(policy['range']))
             settings = parsed['bracket_policy']
-            if settings:
-                # Export includes effective defaults. An unchanged round trip must not add
-                # optional keys to an existing table and manufacture a new price version.
-                if 'bracket_mode' in policy or settings['bracket_mode'] != bracket_mode_of(policy):
-                    policy['bracket_mode'] = settings['bracket_mode']
-                if 'brackets' in policy['range'] or settings['brackets'] != cushion_brackets_of(
-                    policy
-                ):
-                    policy['range']['brackets'] = settings['brackets']
+            # Export includes effective defaults. An unchanged round trip must not add
+            # optional keys to an existing table and manufacture a new price version.
+            if 'bracket_mode' in policy or settings['bracket_mode'] != bracket_mode_of(policy):
+                policy['bracket_mode'] = settings['bracket_mode']
+            if 'brackets' in policy['range'] or settings['brackets'] != cushion_brackets_of(policy):
+                policy['range']['brackets'] = settings['brackets']
             parsed = parsed['items']
         zero_rows = [
             item['item_id']

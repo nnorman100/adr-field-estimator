@@ -81,8 +81,6 @@ def export_csv(company_id, base_version_id, base_generation, rates):
         for row in _bracket_rows(company_id, base_version_id, base_generation, rates):
             writer.writerow(row)
         return ('\ufeff' + buffer.getvalue()).encode('utf-8')
-    if isinstance(rates, list) and any(item.get('price_brackets') for item in rates):
-        return export_csv(company_id, base_version_id, base_generation, {'items': rates})
     if isinstance(rates, list):
         writer = csv.DictWriter(buffer, fieldnames=V2_COLUMNS, lineterminator='\n')
         writer.writeheader()
@@ -97,8 +95,6 @@ def export_csv(company_id, base_version_id, base_generation, rates):
 
 
 def export_xlsx(company_id, base_version_id, base_generation, rates):
-    if isinstance(rates, list) and any(item.get('price_brackets') for item in rates):
-        rates = {'items': rates}
     if isinstance(rates, dict) and 'items' in rates:
         rows = [
             list(BRACKET_COLUMNS),
@@ -233,17 +229,16 @@ def _safe(value):
 
 
 def _bracket_rows(company, version, generation, table):
-    policy = table.get('policy')
+    policy = table['policy']
+    cushion = json.dumps(cushion_brackets_of(policy), separators=(',', ':'))
     for item in table['items']:
         yield {
             **_row_v2(company, version, generation, item),
             'price_brackets': json.dumps(item['price_brackets'], separators=(',', ':'))
             if item.get('price_brackets')
             else '',
-            'cushion_brackets': json.dumps(cushion_brackets_of(policy), separators=(',', ':'))
-            if policy
-            else '',
-            'bracket_mode': bracket_mode_of(policy) if policy else '',
+            'cushion_brackets': cushion,
+            'bracket_mode': bracket_mode_of(policy),
         }
 
 
@@ -257,22 +252,16 @@ def _bracket_table(rows, company, version, generation):
                 item['price_brackets'] = normalize_brackets(
                     json.loads(price), where=f'Row {offset}', value_field='unit_price'
                 )
-            current = (
-                {
-                    'bracket_mode': mode,
-                    'brackets': normalize_brackets(
-                        json.loads(cushion), where=f'Row {offset}: cushion', value_field='percent'
-                    ),
-                }
-                if cushion
-                else None
-            )
+            if mode not in ('tiered', 'whole-job') or not cushion:
+                raise ValueError('enter cushion brackets and a tiered or whole-job mode.')
+            current = {
+                'bracket_mode': mode,
+                'brackets': normalize_brackets(
+                    json.loads(cushion), where=f'Row {offset}: cushion', value_field='percent'
+                ),
+            }
         except (ValueError, TypeError) as error:
             raise ValueError(f'Row {offset}: invalid brackets: {error}') from error
-        if mode not in ('', 'tiered', 'whole-job') or bool(mode) != bool(cushion):
-            raise ValueError(
-                f'Row {offset}: cushion brackets and tiered or whole-job mode must be supplied together.'
-            )
         if offset == 2:
             settings = current
         elif settings != current:

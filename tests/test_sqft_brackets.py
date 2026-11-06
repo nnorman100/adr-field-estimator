@@ -84,7 +84,7 @@ def test_whole_job_selects_one_rate_and_cushion_and_preview_flags_drop():
     assert ends(book, 501) == (D('2505'), D('2755.50'))
     lines, _ = pricing_v2.price_scope(scope(501), book)
     assert (
-        'whole-job bracket: over 500 through 1,000 sq ft of item work on the job'
+        'whole-job bracket: over 500 through 1,000 sq ft of bracketed work on the job'
         in lines[0]['description']
     )
     samples = _boundary_samples(book)
@@ -454,3 +454,138 @@ def test_unchanged_csv_round_trip_keeps_absent_defaults_and_content_hash(api, en
     assert 'bracket_mode' not in view['policy']
     assert 'brackets' not in view['policy']['range']
     assert price_table.content_hash(view) == price_table.content_hash(book)
+
+
+def _uncertainty(book):
+    book['policy']['assist'] = copy.deepcopy(price_table.DEFAULT_ASSIST)
+    book['policy']['assist'].update(
+        range_method='uncertainty', hidden_damage_percent={'1': '10', '2': '15', '3': '25'}
+    )
+
+
+def _job(*rooms):
+    return InspectionData(
+        rooms=list(rooms), emergency_calls=0, monitoring_hours=0, air_movers=0, dehumidifiers=0
+    )
+
+
+def test_tiered_uncertainty_high_never_drops_when_a_cheaper_grown_room_is_added():
+    book = table()
+    book['items'][0]['price_brackets'] = [
+        dict(up_to_sf=500, unit_price='10'),
+        dict(up_to_sf=None, unit_price='1'),
+    ]
+    _uncertainty(book)
+    existing = dict(name='Existing', category=3, finished_sf=500)
+    before = estimate(book, _job(existing))
+    after = estimate(book, _job(existing, dict(name='Added', finished_sf=500, waste_percent=1)))
+    assert (before['low']['total'], before['high']['total']) == (D('5000'), D('6250'))
+    assert (after['low']['total'], after['high']['total']) == (D('5550'), D('6805.50'))
+
+
+def test_tiered_waste_basis_cushion_never_drops_when_work_is_added():
+    book = table()
+    book['items'][0]['price_brackets'] = [
+        dict(up_to_sf=100, unit_price='10'),
+        dict(up_to_sf=None, unit_price='0.10'),
+    ]
+    book['policy']['area_basis'] = 'demolition_with_waste'
+    book['policy']['category_multipliers'] = {'1': '1', '2': '1', '3': '1.201'}
+    book['policy']['range']['brackets'] = [
+        dict(up_to_sf=100, percent='0'),
+        dict(up_to_sf=None, percent='100'),
+    ]
+    existing = dict(name='Existing', finished_sf=100, waste_percent=20)
+    before = estimate(book, _job(existing))
+    after = estimate(book, _job(existing, dict(name='Added', category=3, finished_sf=100)))
+    assert after['low']['total'] >= before['low']['total']
+    assert after['high']['total'] >= before['high']['total']
+
+
+def test_tiered_monotonicity_across_range_methods_area_bases_and_mixed_rooms():
+    rng = random.Random(4417)
+    for _ in range(300):
+        book = table('tiered')
+        book['items'][0]['price_brackets'] = [
+            dict(up_to_sf=limit, unit_price=str(rng.randint(0, 2000) / 100))
+            for limit in [200, 600, None]
+        ]
+        book['items'][0]['allow_zero'] = True
+        book['policy']['area_basis'] = rng.choice(
+            ['demolition', 'demolition_with_waste', 'wet_floor']
+        )
+        book['policy']['category_multipliers'] = {
+            key: str(rng.randint(1000, 2500) / 1000) for key in ('1', '2', '3')
+        }
+        book['policy']['range']['brackets'] = [
+            dict(up_to_sf=limit, percent=str(rng.randint(0, 100))) for limit in [150, 500, None]
+        ]
+        if rng.random() < 0.5:
+            _uncertainty(book)
+        rooms = [
+            dict(
+                name=f'Room {index}',
+                category=rng.choice([1, 2, 3]),
+                finished_sf=rng.randint(1, 400),
+                waste_percent=rng.randint(0, 30),
+            )
+            for index in range(rng.randint(1, 3))
+        ]
+        grown = copy.deepcopy(rooms)
+        if rng.random() < 0.5:
+            grown.append(
+                dict(
+                    name='Added',
+                    category=rng.choice([1, 2, 3]),
+                    finished_sf=rng.randint(1, 400),
+                    waste_percent=rng.randint(0, 30),
+                )
+            )
+        else:
+            grown[rng.randrange(len(grown))]['finished_sf'] += rng.choice([0.01, 1, 100])
+        try:
+            before = estimate(book, _job(*rooms))
+        except ValueError:
+            continue
+        after = estimate(book, _job(*grown))
+        assert after['low']['total'] >= before['low']['total']
+        assert after['high']['total'] >= before['high']['total'] - D('0.02')
+        assert after['high']['total'] >= after['low']['total']
+
+
+def test_whole_job_picks_every_items_band_from_the_jobs_total_square_feet():
+    book = table('whole-job')
+    first = book['items'][0]
+    first.update(
+        categories=[1],
+        price_brackets=[dict(up_to_sf=750, unit_price='10'), dict(up_to_sf=None, unit_price='5')],
+    )
+    book['items'].append(dict(first, item_id='area_work_cat3', code='AREA3', categories=[3]))
+    book = price_table.normalize_table(book, publish=True)
+    job = _job(
+        dict(name='Kitchen', category=1, finished_sf=500),
+        dict(name='Bath', category=3, finished_sf=500),
+    )
+    lines, _ = pricing_v2.price_scope(job, book)
+    assert len(lines) == 2
+    assert all('over 750 sq ft' in line['description'] for line in lines)
+    assert estimate(book, job)['low']['total'] == D('5000')
+    alone = estimate(book, _job(dict(name='Kitchen', category=1, finished_sf=500)))
+    assert alone['low']['total'] == D('5000')
+
+
+def test_bracket_spreadsheet_without_cushion_policy_is_rejected():
+    import csv
+    import io
+
+    book = table('whole-job')
+    exported = export_csv('company', 'v1', 1, book).decode('utf-8-sig')
+    rows = list(csv.reader(io.StringIO(exported)))
+    for row in rows[1:]:
+        row[-2:] = ['', '']
+    buffer = io.StringIO()
+    csv.writer(buffer, lineterminator='\n').writerows(rows)
+    with pytest.raises(ValueError, match='cushion brackets'):
+        parse_upload(
+            buffer.getvalue().encode('utf-8'), 'text/csv', 'company', 'v1', 1, 'dryscope-v2'
+        )
