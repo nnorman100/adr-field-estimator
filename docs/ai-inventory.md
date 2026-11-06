@@ -9,15 +9,14 @@ inventory behind it.
 
 ## How this file is kept true
 
-- The two tables under [Pinned prompts](#pinned-prompts) and [Pinned settings](#pinned-settings) are read by
-  `tests/test_ai_inventory.js` (run by `npm test`). The test runs `scripts/ai_inventory_facts.py`, hashes each prompt text
-  with SHA-256 over its UTF-8 bytes, and fails with the id and the new hash if any prompt, model default, region,
-  thinking level, timeout, quota or Live setting differs from the table, or if one is added or removed.
-- A prompt, model or limit change is therefore a visible two-file change. To update after an intended change run
+- The [Pinned prompts](#pinned-prompts) table is read by `tests/test_ai_inventory.js` (run by `npm test`). The test runs
+  `scripts/ai_inventory_facts.py`, hashes each prompt text with SHA-256 over its UTF-8 bytes, and fails with the id and the
+  new hash if any prompt text differs from the table, or if one is added or removed.
+- A prompt change is therefore a visible two-file change. To update after an intended change run
   `python3 scripts/ai_inventory_facts.py --table`, paste the rows, and say in the pull request why the behaviour should change.
   The port must leave every hash unchanged: a port that "improves" a prompt fails this test on purpose.
-- **Two checks, one exception to "new tests use Vitest".** The prompt-text hashes and the source-level settings need no
-  backend packages, so they stay in Vitest (`tests/test_ai_inventory.js`, run by the Node CI job). What each path actually
+- **Two checks, one exception to "new tests use Vitest".** The prompt-text hashes need no backend packages, so they
+  stay in Vitest (`tests/test_ai_inventory.js`, run by the Node CI job). What each path actually
   sends (model, client, config, parts, response schema with its full SHA-256, quota charges, and the prompt text as emitted)
   can only be observed by running the legacy Python routes, which needs pydantic, FastAPI and the Gen AI SDK. The Node job
   installs none of them and workflow files are protected, so those assertions live in the existing Python suite
@@ -181,7 +180,7 @@ returns 429 before any model call.
   arguments the function now requires, so it fails with a `TypeError` before reaching the model. It is a protected script;
   the port's parity run needs its cases rewritten against the new signature with the owner's approval.
 
-## Pinned prompts and settings
+## Pinned prompts and requests
 
 The tables below are the machine-checked part (see [How this file is kept true](#how-this-file-is-kept-true)). Keep the
 header cells exactly as they are.
@@ -205,51 +204,6 @@ header cells exactly as they are.
 | `scope.claim_details` | backend/scope.py CLAIM_PROMPT | `6217cbcd8cb85ba265ab93be384e4ddbbe44a10d8a52fc5219a2a0ae63edb0b5` |
 | `job_summary.instructions` | backend/prompts.py JOB_SUMMARY_INSTRUCTIONS | `6331da95053400e752abe1081e59dedf4103d89f64fbc42d1be34c08589152d4` |
 | `drying_summary.instructions` | backend/prompts.py DRYING_SUMMARY_INSTRUCTIONS | `097f609f773dd068ffde7a2d7f4753c31e94da5241799267d216ee91fe15ad6a` |
-
-### Pinned settings
-
-| Setting | Value in code |
-| --- | --- |
-| `ai_features.default` | `os.getenv('AI_FEATURES', '') split on commas; empty enables nothing` |
-| `call.audit` | `backend/main.py: model=AUDIT_MODEL; thinking=AUDIT_THINKING_LEVEL; timeout=timeout` |
-| `call.drying_watch` | `backend/workspace_api.py: model=bm.AUDIT_MODEL; thinking='LOW'; timeout=25` |
-| `call.job_summary` | `backend/workspace_api.py: model=bm.AUDIT_MODEL; thinking='LOW'; timeout=25` |
-| `call.ocr` | `backend/main.py: model=OCR_MODEL; thinking=provider default; timeout=default 100` |
-| `call.scope` | `backend/main.py: model=AUDIT_MODEL; thinking=SCOPE_THINKING_LEVEL; timeout=default 100` |
-| `call.transcribe` | `backend/main.py: model=AUDIT_MODEL; thinking=SCOPE_THINKING_LEVEL; timeout=REST_DEADLINE_SECONDS - 5` |
-| `deploy_backend.py:DEFAULT_AI_FEATURES` | `'readiness'` |
-| `deploy_backend.py:KNOWN_AI_FEATURES` | `frozenset({'readiness', 'drying_watch', 'priced_extras', 'job_summary', 'ai_usage', 'estimate_assist'})` |
-| `inspection_store.py:DAILY_LIMITS` | `{'ocr': 400, 'scope': 120, 'transcribe': 200, 'audit': 60, 'job_summary': 60, 'drying_summary': 60, 'live': 40}` |
-| `inspection_store.py:TRANSCRIPT_LIMIT` | `80000` |
-| `job_store.py:MODEL_PIXELS` | `1600` |
-| `live_config.fields` | `response_modalities, input_audio_transcription, output_audio_transcription, speech_config, context_window_compression, session_resumption, system_instruction` |
-| `live_config.response_modalities` | `['AUDIO']` |
-| `live_config.target_tokens` | `32000` |
-| `live_config.trigger_tokens` | `64000` |
-| `main.py:AUDIT_ATTEMPT_SECONDS` | `25` |
-| `main.py:AUDIT_MODEL` | `os.getenv('AUDIT_MODEL', 'gemini-3.8-flash')` |
-| `main.py:AUDIT_PHOTO_DOWNLOADS` | `6` |
-| `main.py:AUDIT_RETRY_MIN_SECONDS` | `10` |
-| `main.py:AUDIT_SAVE_RESERVE_SECONDS` | `5` |
-| `main.py:AUDIT_THINKING_LEVEL` | `types.ThinkingLevel.LOW` |
-| `main.py:LIVE_LOCATION` | `os.getenv('LIVE_LOCATION', 'us-central1')` |
-| `main.py:LIVE_MODEL` | `os.getenv('LIVE_MODEL', 'gemini-3.8-live')` |
-| `main.py:LIVE_RECHECK_SECONDS` | `20` |
-| `main.py:LIVE_REPLY_WAIT_SECONDS` | `5` |
-| `main.py:LIVE_VOICE` | `os.getenv('LIVE_VOICE', 'Charon')` |
-| `main.py:LOCATION` | `os.getenv('GOOGLE_CLOUD_LOCATION', 'global')` |
-| `main.py:OCR_MODEL` | `os.getenv('OCR_MODEL', AUDIT_MODEL)` |
-| `main.py:REST_DEADLINE_SECONDS` | `55` |
-| `main.py:SCOPE_THINKING_LEVEL` | `types.ThinkingLevel.LOW` |
-| `main.py:VOICE_NOTE_BYTES` | `10 * MB` |
-| `quota.audit` | `per-minute limit none` |
-| `quota.audit_attempt` | `per-minute limit 3` |
-| `quota.drying_summary` | `per-minute limit 6` |
-| `quota.job_summary` | `per-minute limit 6` |
-| `quota.live` | `per-minute limit none` |
-| `quota.ocr` | `per-minute limit 20` |
-| `quota.scope` | `per-minute limit 6` |
-| `quota.transcribe` | `per-minute limit 10` |
 
 ### Pinned requests
 

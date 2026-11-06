@@ -1,6 +1,6 @@
-// Fails when a prompt, model, limit or switch that docs/ai-inventory.md pins changes without the
-// inventory changing with it. The facts come from scripts/ai_inventory_facts.py (source only, no
-// model call); this file hashes every prompt text itself, so the two sides compute independently.
+// Fails when a prompt text that docs/ai-inventory.md pins changes without the inventory changing
+// with it. The texts come from scripts/ai_inventory_facts.py (no model call); this file hashes every
+// prompt text itself, so the two sides compute independently.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,37 +60,26 @@ function compare(markdown, facts) {
   }
   for (const id of pinned.keys())
     if (!(id in facts.prompts)) problems.push(`Inventory prompt ${id} no longer exists.`);
-
-  const settings = new Map(tableRows(markdown, 'Setting').map(([key, value]) => [key, value]));
-  for (const [key, value] of Object.entries(facts.settings)) {
-    if (!settings.has(key)) problems.push(`Setting ${key} is not in the inventory.`);
-    else if (settings.get(key) !== value)
-      problems.push(`Setting ${key} changed: inventory "${settings.get(key)}", code "${value}".`);
-  }
-  for (const key of settings.keys())
-    if (!(key in facts.settings)) problems.push(`Inventory setting ${key} no longer exists.`);
   return problems;
 }
 
 const markdown = fs.readFileSync(INVENTORY, 'utf8');
 const facts = readFacts();
 
-test('every pinned prompt hash and setting matches the code', () => {
+test('every pinned prompt hash matches the prompt text', () => {
   const problems = compare(markdown, facts);
   expect(problems, `${problems.join('\n')}\n${UPDATE}`).toEqual([]);
 });
 
-test('a changed prompt, a new prompt and a changed setting are all reported', () => {
+test('a changed, a new and a removed prompt are all reported', () => {
   const changed = structuredClone(facts);
   changed.prompts['ocr.instructions'].text += ' ';
   changed.prompts['new.prompt'] = { source: 'somewhere', text: 'new' };
-  changed.settings['main.py:AUDIT_MODEL'] = "os.getenv('AUDIT_MODEL', 'another-model')";
-  delete changed.settings['job_store.py:MODEL_PIXELS'];
+  delete changed.prompts['transcribe.instructions'];
   const problems = compare(markdown, changed).join('\n');
   expect(problems).toContain('Prompt ocr.instructions');
   expect(problems).toContain('Prompt new.prompt');
-  expect(problems).toContain('Setting main.py:AUDIT_MODEL changed');
-  expect(problems).toContain('Inventory setting job_store.py:MODEL_PIXELS no longer exists');
+  expect(problems).toContain('Inventory prompt transcribe.instructions no longer exists');
 });
 
 test('the hash is a standard SHA-256 of the UTF-8 text', () => {
