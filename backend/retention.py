@@ -404,19 +404,16 @@ class Retention:
     @staticmethod
     def _job_closed_at(record, rows):
         """The close time stored on the sidecar. A sidecar from before close times were stored
-        counts from its own last write or its history row's close, whichever is later; one whose
-        history row says the job is open has no clock."""
+        counts from its history row's close or its own last write, whichever is later; without
+        either proof that the job closed it has no clock."""
         stored = _epoch(record.get('job_closed_at'))
         if stored is not None:
             return stored
         row = rows.get(record.get('job_id'))
-        if isinstance(row, dict) and not row.get('closed_at'):
+        closed = _epoch(row.get('closed_at')) if isinstance(row, dict) else None
+        if closed is None:
             return None
-        stamps = [_epoch(record.get('updated_at'))]
-        if isinstance(row, dict):
-            stamps.append(_epoch(row['closed_at']))
-        stamps = [stamp for stamp in stamps if stamp is not None]
-        return max(stamps) if stamps else None
+        return max(closed, _epoch(record.get('updated_at')) or closed)
 
     @staticmethod
     def _marker(record, company_id, closed_at):

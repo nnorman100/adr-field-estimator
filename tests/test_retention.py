@@ -9,12 +9,14 @@ import pytest
 
 import backend.retention as retention
 from backend.inspection_store import Conflict
+from backend import monitoring_store
 from backend.monitoring_store import WatchAction
 from backend.outcomes import JobClose
-from backend.retention import DAY, Retention, RetentionUpdate
+from backend.retention import DAY, Retention, RetentionUpdate, photo_paths
 from backend.workspaces import AccessDenied, ArchiveRequest
 from tests.fakes import png
 from tests.test_drying_watch import request, watched  # noqa: F401  (fixtures)
+from tests.test_photo_originals import ORIGINAL, pending
 from tests.test_workspaces import ID, OTHER, api, data, store  # noqa: F401  (fixtures)
 
 NOW = time.time()
@@ -617,11 +619,69 @@ def test_a_sidecar_from_before_close_times_were_stored_counts_from_its_last_writ
     assert keeper(store).tick('owner', 'adr', NOW + 81 * DAY)['deleted']['job_monitoring'] == 1
 
 
-def test_a_sidecar_from_before_close_times_whose_history_row_was_trimmed_still_expires(store, on):
+def test_a_sidecar_without_proof_that_its_job_closed_is_never_expired(store, on):
     job_id = 'ADR-INS-' + '6' * 32
     monitored_job(store, job_id, 'adr', 200)
     del store.db.records['_estimate_history/adr']['rows'][job_id]
-    store.db.records['_job_monitoring/' + job_id]['updated_at'] = iso(89)
+    store.db.records['_job_monitoring/' + job_id]['updated_at'] = iso(200)
+    before = deepcopy(store.db.records['_job_monitoring/' + job_id])
     assert keeper(store).tick('owner', 'adr', NOW)['deleted']['job_monitoring'] == 0
-    assert keeper(store).tick('owner', 'adr', NOW + 2 * DAY)['deleted']['job_monitoring'] == 1
-    assert set(store.db.records['_job_monitoring/' + job_id]) == MARKER_KEYS
+    assert store.db.records['_job_monitoring/' + job_id] == before
+
+
+def test_a_reminder_sent_while_its_watch_expires_still_counts(watched, on, monkeypatch):
+    client, current, store, watch = watched
+    close_job(store)
+    monkeypatch.setattr(monitoring_store, 'mail_settings', lambda: {})
+    sent = []
+
+    def send(*args, **kwargs):
+        sent.append(args)
+        keeper(store).tick('owner', 'adr', time.time() + 91 * DAY)
+
+    monkeypatch.setattr(monitoring_store, 'send_email', send)
+    shown = watch.remind('office', ID, request(watch))
+    assert len(sent) == 1 and shown['status'] == 'closed'
+    assert set(store.db.records['_job_monitoring/' + ID]) == MARKER_KEYS
+    assert store.db.records['_email_counts/daily']['sent']['count'] == 1
+
+
+def test_a_retried_photo_delete_never_touches_the_original_of_a_later_upload(
+    store, on, monkeypatch
+):
+    def upload(revision):
+        return store.add_photo(
+            'owner',
+            ID,
+            dict(
+                photo_id='c' * 32,
+                expected_revision=revision,
+                room='Bathroom',
+                captured_at='2026-10-01T10:00:00Z',
+                data_url=png(),
+                original=pending(),
+            ),
+        )['photos'][0]
+
+    def original_of(photo):
+        [path] = [p for p in photo_paths(photo) if '/original-' in p]
+        return path
+
+    store.create_inspection('owner', ID, data())
+    first = upload(1)
+    store.add_original('owner', ID, 'c' * 32, ORIGINAL, 'jpeg')
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.workspaces.archive_job('owner', ID, ArchiveRequest(expected_version=job['version']))
+    store.db.records['_workspace_jobs/' + ID]['archived_at'] = iso(91)
+    heal = failing_photo_deletes(store, monkeypatch)
+    assert keeper(store).tick('owner', 'adr', NOW)['deleted']['evidence_photos'] == 0
+    job = store.db.records['_workspace_jobs/' + ID]
+    store.workspaces.restore_job('owner', ID, ArchiveRequest(expected_version=job['version']))
+    # The phone retries the same photo after the restore and sends its original again.
+    later = upload(store.db.records['inspections/' + ID]['revision'])
+    store.add_original('owner', ID, 'c' * 32, ORIGINAL, 'jpeg')
+    assert original_of(later) != original_of(first)
+    heal()
+    assert keeper(store).tick('owner', 'adr', NOW + DAY + 1)['deleted']['evidence_photos'] == 1
+    assert original_of(first) not in objects(store)
+    assert {p for p in photo_paths(later)} <= objects(store)

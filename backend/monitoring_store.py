@@ -421,13 +421,17 @@ class Monitoring:
             status, reason, retryable = 'failed', FAILED, True
 
         def finish(tx):
-            current = self.w.read('_job_monitoring', job_id, tx)
-            entry = next(r for r in current['reminders'] if r['reminder_id'] == req.reminder_id)
-            if entry['attempt'] != attempt:
+            current = self.w.read('_job_monitoring', job_id, tx) or {}
+            entry = next(
+                (r for r in current.get('reminders') or [] if r['reminder_id'] == req.reminder_id),
+                None,
+            )
+            if entry is not None and entry['attempt'] != attempt:
                 return None
             counter = self.w.email_count(tx) if status == 'sent' else None
-            entry.update(status=status, reason=reason, retryable=retryable)
-            self.save(tx, job_id, current)
+            if entry is not None:
+                entry.update(status=status, reason=reason, retryable=retryable)
+                self.save(tx, job_id, current)
             if counter:
                 tx.set(self.w.ref('_email_counts', 'daily'), counter)
             return counter

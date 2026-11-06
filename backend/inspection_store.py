@@ -357,7 +357,7 @@ class InspectionStore(JobStore):
             raise Conflict('Restore the latest draft before adding a photo.')
         with Image.open(io.BytesIO(raw)) as image:
             width, height = image.size
-        path = f'users/{uid}/inspections/{inspection_id}/{upload["photo_id"]}/{uuid4().hex}-{digest}.{extension}'
+        path = f'users/{uid}/inspections/{inspection_id}/{upload["photo_id"]}/{uuid4().hex}/{digest}.{extension}'
         photo = dict(
             id=upload['photo_id'],
             room=upload['room'],
