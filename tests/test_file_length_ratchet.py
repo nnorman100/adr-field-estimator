@@ -24,7 +24,19 @@ def test_existing_files_cannot_grow_past_their_baseline(tmp_path, name):
     assert len(errors) == 1 and '1100-line baseline' in errors[0]
 
 
+@pytest.mark.parametrize('name', ['public/old.css', 'docs/old.md', 'public/old.js', 'old.py'])
+def test_shrunk_files_must_lower_their_ceiling_before_growing_again(tmp_path, name):
+    write(tmp_path, name, 1050)
+    errors, _, _ = check_file_length.check(tmp_path, 1000, {name}, {name: 1100})
+    assert len(errors) == 1 and 'from 1100 to 1050' in errors[0]
+    args = (tmp_path, 1000, {name}, {name: 1050})
+    assert check_file_length.check(*args)[0] == []
+    write(tmp_path, name, 1100)
+    errors, _, _ = check_file_length.check(*args)
+    assert len(errors) == 1 and '1050-line baseline' in errors[0]
+
+
 def test_generated_and_vendor_files_remain_excluded(tmp_path):
-    for name in ['public/vendor/library.md', 'node_modules/pkg/file.css', 'dist/generated.md']:
+    for name in ['public/vendor/library.md', 'node_modules/pkg/file.css']:
         write(tmp_path, name, 2000)
     assert check_file_length.check(tmp_path, 1000, set()) == ([], [], [])

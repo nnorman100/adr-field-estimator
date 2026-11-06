@@ -1,7 +1,8 @@
 """Enforce the 1,000-line limit and recorded no-growth ceilings.
 
 JavaScript's general limit is also checked by ESLint. The baseline file records the
-maximum line count for every existing exception, including JavaScript, CSS and Markdown.
+exact line count of every existing exception, including JavaScript, CSS and Markdown: a
+listed file may not grow, and when it shrinks its ceiling must be lowered to match.
 Lines are counted like ESLint: blank lines and comments count, a final newline does not.
 """
 
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = ROOT / 'scripts' / 'file_length_allowlist.json'
 CODE_SUFFIXES = ('.py', '.js', '.mjs', '.cjs', '.css', '.md')
 BASELINES = ROOT / 'scripts' / 'file_length_baselines.json'
-EXCLUDED_PREFIXES = ('public/vendor/', 'node_modules/', 'dist/', 'build/', 'coverage/')
+EXCLUDED_PREFIXES = ('public/vendor/', 'node_modules/')
 LINE_BREAK = re.compile(r'\r\n|[\r\n  ]')
 
 
@@ -79,6 +80,12 @@ def check(root=ROOT, limit=None, allowlist=None, baselines=None):
         if name in baselines and lines > baselines[name]:
             errors.append(
                 f'{name} has {lines} lines, exceeding its {baselines[name]}-line baseline.'
+            )
+            continue
+        if name in baselines and lines < baselines[name]:
+            errors.append(
+                f'{name} has shrunk to {lines} lines; lower its ceiling in '
+                f'scripts/file_length_baselines.json from {baselines[name]} to {lines}.'
             )
             continue
         if lines <= limit or (name.endswith(('.js', '.mjs', '.cjs')) and name not in baselines):
