@@ -43,7 +43,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Update `docs/STATUS.md` if a feature's state changes.
 
 ## Risk and merging
-Agents do not merge PRs; the owner approves every merge (decision D-009, Oct 28, 2026). Every production release also needs the owner's explicit go. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
+Pull requests merge automatically once every check passes and the review is done; high-risk work needs two independent reviews (this supersedes D-009). Deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
 
 ## How to work
 1. Read the relevant doc first (`docs/company-workspaces.md` for auth/workspaces, `docs/firebase-isolation.md` for cloud, `docs/pricing-source.md` for prices).
@@ -51,7 +51,7 @@ Agents do not merge PRs; the owner approves every merge (decision D-009, Oct 28,
 3. Write the failing test first, then the smallest change.
 4. Run the Python, JS and (for UI) browser tests.
 5. Report: what changed, what you were unsure of, what the owner must check on a phone.
-6. Work on a branch; open a PR; do not merge unless allowed above.
+6. Work on a branch; open a PR; it merges only as allowed above.
 
 ## Commands for this repo (in `.claude/commands/`)
 `/new-slice` drafts a spec; `/review-slice` is an independent review (run in a fresh session).

@@ -8,7 +8,7 @@ Hosting, Firebase Authentication, Firestore, Cloud Run, private evidence storage
 
 The new build adds isolated company workspaces with superadmin, owner, estimator and office roles. Owners manage their company and team; estimators see jobs they create or are assigned; office staff coordinate jobs and view documents. Google or verified email/password sign-in uses private server-checked memberships. Password accounts are created by invitation, whose email carries a link to set the password, or for a company owner by a superadmin with a temporary password that the owner must replace at first sign-in. Public sign-up is disabled in the Firebase project and must stay disabled. Invitations require explicit acceptance by a verified account with the matching email. The initial ADR owner also has a separate superadmin role.
 
-Company workspaces are enabled in production since October 15, 2026; the serving backend and Hosting release are recorded in [RELEASES.md](RELEASES.md). Invitations are sent by Gmail SMTP. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; workbook pricing remains shared and unchanged.
+Company workspaces are enabled in production since October 15, 2026; the serving backend and Hosting release are recorded in [RELEASES.md](RELEASES.md). Invitations are sent by Gmail SMTP. See [workspace permissions, migration and release checks](docs/company-workspaces.md). The new dashboard does not create a blank inspection at sign-in. Company identity is saved with documents; each company prices from its own published prices and there is no default price list (see [Pricing and evidence](#pricing-and-evidence)).
 
 For homeowner email behavior, see [Inspection workflow](#inspection-workflow); delivery records, retries, status and Resend, company email identity and the shared daily email warning are described in [Document delivery](docs/company-workspaces.md#document-delivery).
 
@@ -121,6 +121,8 @@ npm run format ; npm run lint                      # JavaScript/CSS format and l
 ```
 
 A single `.py` or `.js` file may have up to 1,000 lines. `npm run lint` fails a new file over the limit (ESLint `max-lines` for JavaScript, `scripts/check_file_length.py` for Python) and only warns for the files listed in `scripts/file_length_allowlist.json`, which were already over it; it also lists any of them that have dropped under, so their entry can be removed. Split those during planned work, and never add a file to the list.
+
+`npm run lint` also runs the required-docs check (`scripts/check_required_docs.js`, tested by `tests/test_required_docs.js`), which fails when any of `README.md`, `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `docs/spec.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/DATA.md`, `docs/RUNBOOK.md` or `docs/AI.md` is missing or empty. `HANDOFF.md` records what is live and the open items; `docs/spec.md` (a draft for owner review) lists every role and screen with acceptance checks; `docs/DATA.md` and `docs/AI.md` cover personal data and AI features.
 
 Direct Python dependencies live in `backend/requirements.in` (runtime) and `backend/requirements-dev.in` (tests and lint). The hash-locked `requirements.txt` and `requirements-dev.txt` beside them are generated for Python 3.11 and used by Docker, CI and local installs. After editing an `.in` file, regenerate both locks from `backend/` with [uv](https://docs.astral.sh/uv/):
 

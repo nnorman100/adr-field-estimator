@@ -1,6 +1,6 @@
 # Release checklist
 
-The owner approves every production release. Follow the recipe at the top of `RELEASES.md`; this list adds the checks around it. Automatic deploys (`docs/firebase-isolation.md#automatic-deploys`) are recorded in the Actions job summary, not `RELEASES.md`. Never run a blanket `firebase deploy`.
+Merged pull requests deploy automatically, test then live (`docs/firebase-isolation.md#automatic-deploys`), and are recorded in the Actions job summary, not `RELEASES.md`. A hand release is a production step the owner runs; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do"). For a hand release, follow the recipe at the top of `RELEASES.md`; this list adds the checks around it. Never run a blanket `firebase deploy`.
 
 ## Before
 - [ ] Master CI is green **on the exact commit being released**

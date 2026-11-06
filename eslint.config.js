@@ -39,6 +39,10 @@ module.exports = [
     languageOptions: { sourceType: 'module', globals: { ...globals.browser } },
   },
   {
+    files: ['tests/test_required_docs.js'],
+    languageOptions: { sourceType: 'module' },
+  },
+  {
     // Playwright specs run callbacks inside the page, so they reference page globals too.
     files: ['tests/browser/**/*.js'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
