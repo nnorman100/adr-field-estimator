@@ -315,11 +315,16 @@ def _band_for(brackets, area):
     return next(band for band in brackets if band['up_to_sf'] is None or area <= band['up_to_sf'])
 
 
+def _job_sf(lines):
+    """The job's total square feet: every square-foot line, flat or bracketed, before waste."""
+    return sum((_dec(line['quantity']) for line in lines if line['unit'] == 'sf'), ZERO)
+
+
 def _bracket_lines(item, lines, policy, job_sf, growth=None):
     """Price an item's combined job quantity, highest adjusted cost first, then split by band.
 
     The input prices are category/cabinetry multipliers. Whole-job mode selects the band from
-    job_sf, the job's combined bracketed square feet. `growth` is each line's high-end share; the
+    job_sf, the job's total square feet (_job_sf). `growth` is each line's high-end share; the
     uncertainty high end fills bands by grown cost so its own total cannot drop as work is added.
     Cumulative rounding keeps a change in how bands split across rooms from losing cents from the
     item's total.
@@ -367,7 +372,7 @@ def _bracket_lines(item, lines, policy, job_sf, growth=None):
                     unit_price=float(price),
                     total=float(total),
                     description=f'{line["description"]} ({bracket_mode_of(policy)} bracket: {label}'
-                    + (' of bracketed work on the job)' if whole else ')'),
+                    + (" of the job's total square feet)" if whole else ')'),
                     price_bracket=dict(band),
                     bracket_mode=bracket_mode_of(policy),
                 )
@@ -423,15 +428,7 @@ def price_scope(data, table, numbers=None, growth=None):
                 Decimal(item['waste_percent']),
             )
             priced.append((item, [line]))
-    job_sf = sum(
-        (
-            _dec(line['quantity'])
-            for item, item_lines in priced
-            if item.get('price_brackets')
-            for line in item_lines
-        ),
-        ZERO,
-    )
+    job_sf = _job_sf(line for _, item_lines in priced for line in item_lines)
     lines = []
     for item, item_lines in priced:
         lines += (
@@ -601,10 +598,7 @@ def totals(data, lines, policy, items):
         bands = cushion_brackets_of(policy)
         areas = _cushion_lines(area_priced, policy)
         if bracket_mode_of(policy) == 'whole-job':
-            percent = (
-                Decimal(_band_for(bands, sum((area for _, area in areas), ZERO))['percent'])
-                / HUNDRED
-            )
+            percent = Decimal(_band_for(bands, _job_sf(lines))['percent']) / HUNDRED
             high_lm = _money((area_dollars + other_dollars) * (1 + percent))
         elif len(bands) == 2:
             # Preserve the exact two-step operation order, even at a half-cent boundary.
@@ -846,7 +840,9 @@ def _bracket_cushion_sentence(policy):
     if bracket_mode_of(policy) == 'whole-job':
         return (
             'The high end applies one whole-job cushion to labor and materials, selected by the '
-            'combined square feet of area-priced labor and materials: ' + '; '.join(parts) + '.'
+            "job's total square feet, every square-foot line before waste: "
+            + '; '.join(parts)
+            + '.'
         )
     return (
         'The high end adds a tiered cushion to area-priced labor and materials, highest-priced '

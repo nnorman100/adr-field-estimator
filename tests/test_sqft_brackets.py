@@ -84,7 +84,7 @@ def test_whole_job_selects_one_rate_and_cushion_and_preview_flags_drop():
     assert ends(book, 501) == (D('2505'), D('2755.50'))
     lines, _ = pricing_v2.price_scope(scope(501), book)
     assert (
-        'whole-job bracket: over 500 through 1,000 sq ft of bracketed work on the job'
+        "whole-job bracket: over 500 through 1,000 sq ft of the job's total square feet"
         in lines[0]['description']
     )
     samples = _boundary_samples(book)
@@ -589,3 +589,50 @@ def test_bracket_spreadsheet_without_cushion_policy_is_rejected():
         parse_upload(
             buffer.getvalue().encode('utf-8'), 'text/csv', 'company', 'v1', 1, 'dryscope-v2'
         )
+
+
+def test_whole_job_counts_flat_priced_square_feet_for_item_and_cushion_bands():
+    book = table('whole-job')
+    bracketed = book['items'][0]
+    bracketed.update(
+        categories=[1],
+        price_brackets=[dict(up_to_sf=750, unit_price='10'), dict(up_to_sf=None, unit_price='5')],
+    )
+    flat = dict(bracketed, item_id='flat_cat3', code='FLAT3', categories=[3], unit_price='1')
+    del flat['price_brackets']
+    book['items'].append(flat)
+    book['policy']['range']['brackets'] = [
+        dict(up_to_sf=750, percent='50'),
+        dict(up_to_sf=None, percent='10'),
+    ]
+    book = price_table.normalize_table(book, publish=True)
+    kitchen = dict(name='Kitchen', category=1, finished_sf=500)
+    both = estimate(book, _job(kitchen, dict(name='Bath', category=3, finished_sf=500)))
+    assert (both['low']['total'], both['high']['total']) == (D('3000'), D('3300'))
+    alone = estimate(book, _job(kitchen))
+    assert (alone['low']['total'], alone['high']['total']) == (D('5000'), D('7500'))
+
+
+def test_reader_version_diff_keeps_bracket_only_changes_and_added_bracket_items():
+    before = table()
+    changed = copy.deepcopy(before)
+    changed['items'][0]['price_brackets'][1]['unit_price'] = '6'
+    diff, _ = price_table.public_diff(before, changed)
+    [row] = diff['items']
+    assert row['item_id'] == 'area_work'
+    assert [field['field'] for field in row['fields']] == ['price_brackets']
+    assert row['fields'][0]['after'][1]['unit_price'] == '6.00'
+
+    added = copy.deepcopy(before)
+    added['items'].append(
+        dict(before['items'][0], item_id='more_area', code='MORE', unit_price='', sort_order=1)
+    )
+    diff, _ = price_table.public_diff(before, price_table.normalize_table(added, publish=True))
+    [row] = diff['items']
+    assert (row['item_id'], row['change']) == ('more_area', 'added')
+    assert row['fields'][0]['field'] == 'price_brackets'
+
+    flat_before, flat_after = table(price_bands=False), table(price_bands=False)
+    flat_after['items'][0]['unit_price'] = '12.00'
+    diff, _ = price_table.public_diff(flat_before, flat_after)
+    assert diff == price_table.diff_tables(flat_before, flat_after)[0]

@@ -1424,8 +1424,9 @@ def switch_differences(policy: dict) -> list[str]:
     if 'brackets' in range_rule or bracket_mode_of(policy) == 'whole-job':
         if bracket_mode_of(policy) == 'whole-job':
             return [
-                'The high end uses one whole-job cushion selected by the combined square feet '
-                'of area-priced work. A larger job may cost less when it crosses a bracket boundary.',
+                "The high end uses one whole-job cushion selected by the job's total square feet, "
+                'every square-foot line before waste. A larger job may cost less when it crosses '
+                'a bracket boundary.',
                 'Labor hours carry the same selected cushion as the area-priced work.',
                 late,
             ]
@@ -1683,7 +1684,11 @@ def public_diff(before: dict | None, after: dict) -> tuple[dict, list[str]]:
         if row['change'] == 'removed':
             continue
         if 'fields' in row:
-            shown = [field for field in row['fields'] if field['field'] in _PUBLIC_ITEM_KEYS]
+            shown = [
+                field
+                for field in row['fields']
+                if field['field'] in (*_PUBLIC_ITEM_KEYS, 'price_brackets')
+            ]
             if not shown:
                 continue
             row = {**row, 'fields': shown}

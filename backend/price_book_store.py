@@ -399,7 +399,8 @@ def _boundary_samples(table):
                         {key: sample[key] for key in ('sf', 'low', 'high')} for sample in samples
                     ],
                     'notice': 'Isolated sample work only; other items and saved jobs are excluded. '
-                    'On a job, whole-job mode picks the band from all bracketed square feet.',
+                    "On a job, whole-job mode picks the band from the job's total square feet, every "
+                    'square-foot line before waste.',
                 }
             )
     return results
