@@ -6,6 +6,7 @@ sheets are rejected. Prices stay strings until the catalog normalizes them.
 
 import csv
 import io
+import json
 import zipfile
 from xml.etree import ElementTree
 
@@ -26,6 +27,9 @@ try:
         STARTER_VERSION as V2_STARTER_VERSION,
         TEMPLATE_VERSION as V2_TEMPLATE_VERSION,
         normalize_items,
+        normalize_brackets,
+        cushion_brackets_of,
+        bracket_mode_of,
     )
 except ImportError:
     from price_books import (
@@ -44,15 +48,20 @@ except ImportError:
         STARTER_VERSION as V2_STARTER_VERSION,
         TEMPLATE_VERSION as V2_TEMPLATE_VERSION,
         normalize_items,
+        normalize_brackets,
+        cushion_brackets_of,
+        bracket_mode_of,
     )
 
 CSV_LIMIT = 256 * 1024
+BRACKET_CSV_LIMIT = 512 * 1024
 XLSX_LIMIT = 1024 * 1024
 UNZIPPED_LIMIT = 5 * 1024 * 1024
 ENTRY_LIMIT = 100
 ROW_LIMIT = 100
 COLUMN_LIMIT = 24
 CELL_LIMIT = 320
+BRACKET_COLUMNS = (*V2_COLUMNS, 'price_brackets', 'cushion_brackets', 'bracket_mode')
 NS = {
     'm': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
     'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
@@ -67,6 +76,12 @@ class SizeLimit(ValueError):
 
 def export_csv(company_id, base_version_id, base_generation, rates):
     buffer = io.StringIO()
+    if isinstance(rates, dict) and 'items' in rates:
+        writer = csv.DictWriter(buffer, fieldnames=BRACKET_COLUMNS, lineterminator='\n')
+        writer.writeheader()
+        for row in _bracket_rows(company_id, base_version_id, base_generation, rates):
+            writer.writerow(row)
+        return ('\ufeff' + buffer.getvalue()).encode('utf-8')
     if isinstance(rates, list):
         writer = csv.DictWriter(buffer, fieldnames=V2_COLUMNS, lineterminator='\n')
         writer.writeheader()
@@ -81,7 +96,15 @@ def export_csv(company_id, base_version_id, base_generation, rates):
 
 
 def export_xlsx(company_id, base_version_id, base_generation, rates):
-    if isinstance(rates, list):
+    if isinstance(rates, dict) and 'items' in rates:
+        rows = [
+            list(BRACKET_COLUMNS),
+            *[
+                [_safe(row[key]) for key in BRACKET_COLUMNS]
+                for row in _bracket_rows(company_id, base_version_id, base_generation, rates)
+            ],
+        ]
+    elif isinstance(rates, list):
         rows = [
             list(V2_COLUMNS),
             *[
@@ -130,7 +153,7 @@ def parse_upload(
         raise ValueError('Upload a CSV or XLSX file.')
     kind = (content_type or '').split(';', 1)[0].strip().lower()
     if kind in ('text/csv', 'application/csv', 'text/plain'):
-        if len(raw) > CSV_LIMIT:
+        if len(raw) > (BRACKET_CSV_LIMIT if _bracket_header(raw) else CSV_LIMIT):
             raise SizeLimit('The CSV file is too large.')
         fmt, table = _parse_csv(raw)
     elif (
@@ -147,13 +170,15 @@ def parse_upload(
     else:
         raise ValueError('Upload a CSV or XLSX file.')
 
-    if calculation_version == V2_CALCULATION_VERSION and fmt != 'v2':
+    if calculation_version == V2_CALCULATION_VERSION and fmt not in ('v2', 'v2-brackets'):
         raise ValueError('Row 2: this file is not the current DryScope price template.')
 
-    if fmt == 'v2':
+    if fmt in ('v2', 'v2-brackets'):
         # A company with no prices downloads its v2 template against the starter table.
         base = V2_STARTER_VERSION if base_version_id == 'unset' else str(base_version_id)
-        return _table_to_items(table, company_id, base, str(base_generation))
+        if fmt == 'v2':
+            return _table_to_items(table, company_id, base, str(base_generation))
+        return _bracket_table(table, company_id, base, str(base_generation))
     return _table_to_rates(table, company_id, str(base_version_id), str(base_generation))
 
 
@@ -204,12 +229,64 @@ def _safe(value):
     return text
 
 
+def _bracket_rows(company, version, generation, table):
+    policy = table['policy']
+    cushion = json.dumps(cushion_brackets_of(policy), separators=(',', ':'))
+    for item in table['items']:
+        yield {
+            **_row_v2(company, version, generation, item),
+            'price_brackets': json.dumps(item['price_brackets'], separators=(',', ':'))
+            if item.get('price_brackets')
+            else '',
+            'cushion_brackets': cushion,
+            'bracket_mode': bracket_mode_of(policy),
+        }
+
+
+def _bracket_table(rows, company, version, generation):
+    items = _table_to_items([row[: len(V2_COLUMNS)] for row in rows], company, version, generation)
+    settings = None
+    for offset, (item, row) in enumerate(zip(items, rows, strict=True), start=2):
+        price, cushion, mode = row[len(V2_COLUMNS) :]
+        try:
+            if price:
+                item['price_brackets'] = normalize_brackets(
+                    json.loads(price),
+                    where=f'Row {offset}',
+                    value_field='unit_price',
+                    allow_blank=True,
+                )
+            if mode not in ('tiered', 'whole-job') or not cushion:
+                raise ValueError('enter cushion brackets and a tiered or whole-job mode.')
+            current = {
+                'bracket_mode': mode,
+                'brackets': normalize_brackets(
+                    json.loads(cushion), where=f'Row {offset}: cushion', value_field='percent'
+                ),
+            }
+        except (ValueError, TypeError) as error:
+            raise ValueError(f'Row {offset}: invalid brackets: {error}') from error
+        if offset == 2:
+            settings = current
+        elif settings != current:
+            raise ValueError(f'Row {offset}: cushion brackets and mode must match on every row.')
+    return {'items': normalize_items(items, publish=False), 'bracket_policy': settings}
+
+
 def _detect_columns(header):
+    if header == list(BRACKET_COLUMNS):
+        return 'v2-brackets', BRACKET_COLUMNS, V2_ROW_LIMIT
     if header == list(V2_COLUMNS):
         return 'v2', V2_COLUMNS, V2_ROW_LIMIT
     if header == list(V1_COLUMNS):
         return 'v1', V1_COLUMNS, ROW_LIMIT
     raise ValueError('The file must use the DryScope price template columns.')
+
+
+def _bracket_header(raw):
+    first = bytes(raw[:4096]).split(b'\n', 1)[0].decode('utf-8-sig', 'replace')
+    header = next(csv.reader([first]), [])
+    return [name.strip() for name in header] == list(BRACKET_COLUMNS)
 
 
 def _parse_csv(raw):
@@ -342,7 +419,7 @@ def _cells(raw, strings):
             if index is None or index >= COLUMN_LIMIT:
                 raise ValueError('The file has too many columns.')
             text = _cell_text(cell, strings)
-            if len(text) > CELL_LIMIT:
+            if len(text) > (2048 if index in (20, 21) else CELL_LIMIT):
                 raise ValueError(f'Row {number} has a value that is too long.')
             cells_by_idx[index] = text.strip()
         if cells_by_idx and any(cells_by_idx.values()):

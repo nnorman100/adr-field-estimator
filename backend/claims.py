@@ -278,6 +278,8 @@ def proposal_date():
 V2 = 'dryscope-v2'
 # Engine line keys that the printed claim carries; the engine's own working keys stay out.
 V2_LINE_KEYS = (
+    'price_bracket',
+    'bracket_mode',
     'code',
     'description',
     'quantity',

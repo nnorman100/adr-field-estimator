@@ -90,6 +90,8 @@ A signature never fails because of the history. An error reading the document or
 
 A table refuses a `first_percent` below its `beyond_percent`, so the server holds the cushion suggestion at the published `beyond_percent` and the page says so. **Use suggestion** holds it at the working copy's value when an unpublished edit raised it further.
 
+When custom `policy.range.brackets` are set, `range.first_percent` is unused, so its suggestion is not used; see [Owner square-foot brackets](sqft-brackets.md#cushion).
+
 The overrun is a coverage number. It counts everything that raised the invoice above the low end (hidden damage, more equipment, approved extras, more days), and the page says so. A company on a rate book gets the hit rate and day numbers, with `suggestions: null` and `reason: 'rate_book'`. A company that prints one price gets `reason: 'single_price'`, because these settings only shape a high end it does not print.
 
 **On the phone.** `public/job-close.js` is the **Job close** card on a signed job's Check Scope and Review, for owners and office staff. `public/estimate-accuracy.js` is the dashboard card and the section on the Prices page. **Use suggestion** writes into the working copy like a typed change, so the normal **Unpublished changes** and review apply. All of it needs a connection and says so.
