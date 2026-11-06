@@ -51,7 +51,10 @@ plus the room's hidden-damage percent), so neither end can drop as work is added
 each names the mode and bracket. Rounding follows the item's cumulative exact
 amount: a split line is the difference between the cumulative cents before and
 after it. The lines therefore add to the item's rounded total without losing
-cents when a band shifts between rooms. Existing flat items keep their original
+cents when a band shifts between rooms. The high end reads each split line's exact
+amount instead of its rounded share: the uncertainty method rounds each bracketed
+item's grown amount once, and the cushion rounds once in total, so a cent moved
+between rooms cannot lower the high end. Existing flat items keep their original
 per-line rounding.
 
 Whole-job chooses each item's bracket using the job's total square feet (every

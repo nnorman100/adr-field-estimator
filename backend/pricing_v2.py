@@ -320,6 +320,15 @@ def _job_sf(lines):
     return sum((_dec(line['quantity']) for line in lines if line['unit'] == 'sf'), ZERO)
 
 
+def _exact(line):
+    """A line's unrounded amount. Bracket lines carry rounding shares; the high end reads this."""
+    return (
+        _dec(line['quantity'])
+        * _dec(line['unit_price'])
+        * (1 + _dec(line['waste_percent']) / HUNDRED)
+    )
+
+
 def _bracket_lines(item, lines, policy, job_sf, growth=None):
     """Price an item's combined job quantity, highest adjusted cost first, then split by band.
 
@@ -469,7 +478,7 @@ def _cushion_lines(lines, policy):
     waste_counts = policy['area_basis'] == 'demolition_with_waste'
     return [
         (
-            _dec(line['total']),
+            _exact(line) if 'price_bracket' in line else _dec(line['total']),
             _dec(line['area']) * (1 + _dec(line['waste_percent']) / HUNDRED)
             if waste_counts and 'price_bracket' not in line
             else _dec(line['area']),
@@ -551,16 +560,28 @@ def _uncertain_high(data, lines, items, policy, assist):
     high_lines, _ = price_scope(data, {'items': items, 'policy': policy}, numbers, growth)
     labor_material = taxed_labor_material = ZERO
     # This end fills bracket bands by grown cost, so it cannot drop as work is added.
+    bracketed = {}
     for line in [
         *(line for line in lines if 'price_bracket' not in line),
         *(line for line in high_lines if 'price_bracket' in line),
     ]:
         if line['bucket'] != 'labor_material':
             continue
+        if 'price_bracket' in line:
+            amount, _ = bracketed.get(line['item_id'], (ZERO, line['taxable']))
+            bracketed[line['item_id']] = (
+                amount + _exact(line) * (1 + growth(line)),
+                line['taxable'],
+            )
+            continue
         grown = _dec(line['total']) * (1 + growth(line))
         labor_material += grown
         if line['taxable']:
             taxed_labor_material += grown
+    for amount, taxable in bracketed.values():
+        labor_material += _money(amount)
+        if taxable:
+            taxed_labor_material += _money(amount)
     return dict(
         numbers=numbers,
         labor_material=_money(labor_material),
@@ -600,7 +621,7 @@ def totals(data, lines, policy, items):
         if bracket_mode_of(policy) == 'whole-job':
             percent = Decimal(_band_for(bands, _job_sf(lines))['percent']) / HUNDRED
             high_lm = _money((area_dollars + other_dollars) * (1 + percent))
-        elif len(bands) == 2:
+        elif len(bands) == 2 and not any('price_bracket' in line for line in area_priced):
             # Preserve the exact two-step operation order, even at a half-cent boundary.
             first = Decimal(bands[0]['percent']) / HUNDRED
             beyond = Decimal(bands[1]['percent']) / HUNDRED
@@ -612,7 +633,7 @@ def totals(data, lines, policy, items):
             previous = allowance = ZERO
             for band in bands:
                 top = (
-                    area_dollars
+                    sum((dollars for dollars, _ in areas), ZERO)
                     if band['up_to_sf'] is None
                     else _top_dollars(areas, Decimal(band['up_to_sf']))
                 )

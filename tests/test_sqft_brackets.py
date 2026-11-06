@@ -463,9 +463,14 @@ def _uncertainty(book):
     )
 
 
-def _job(*rooms):
+def _job(*rooms, **rest):
     return InspectionData(
-        rooms=list(rooms), emergency_calls=0, monitoring_hours=0, air_movers=0, dehumidifiers=0
+        rooms=list(rooms),
+        emergency_calls=0,
+        monitoring_hours=0,
+        air_movers=0,
+        dehumidifiers=0,
+        **rest,
     )
 
 
@@ -504,53 +509,117 @@ def test_tiered_waste_basis_cushion_never_drops_when_work_is_added():
 
 def test_tiered_monotonicity_across_range_methods_area_bases_and_mixed_rooms():
     rng = random.Random(4417)
-    for _ in range(300):
+
+    def room(name):
+        return dict(
+            name=name,
+            category=rng.choice([1, 2, 3]),
+            finished_sf=rng.randint(1, 40000) / 100,
+            waste_percent=rng.randint(0, 30),
+        )
+
+    for _ in range(400):
         book = table('tiered')
-        book['items'][0]['price_brackets'] = [
-            dict(up_to_sf=limit, unit_price=str(rng.randint(0, 2000) / 100))
-            for limit in [200, 600, None]
-        ]
-        book['items'][0]['allow_zero'] = True
+        template = book['items'][0]
+        book['items'] = []
+        for index in range(rng.randint(1, 3)):
+            limits = rng.choice([[None], [200, None], [150, 600, None]])
+            book['items'].append(
+                dict(
+                    template,
+                    item_id=f'area_{index}',
+                    code=f'AREA{index}',
+                    sort_order=index,
+                    allow_zero=True,
+                    price_brackets=[
+                        dict(up_to_sf=limit, unit_price=str(rng.randint(0, 2000) / 100))
+                        for limit in limits
+                    ],
+                )
+            )
         book['policy']['area_basis'] = rng.choice(
             ['demolition', 'demolition_with_waste', 'wet_floor']
         )
         book['policy']['category_multipliers'] = {
-            key: str(rng.randint(1000, 2500) / 1000) for key in ('1', '2', '3')
+            key: str(rng.randint(1000, 3000) / 1000) for key in ('1', '2', '3')
         }
         book['policy']['range']['brackets'] = [
-            dict(up_to_sf=limit, percent=str(rng.randint(0, 100))) for limit in [150, 500, None]
+            dict(up_to_sf=limit, percent=str(rng.randint(0, 100)))
+            for limit in rng.choice([[100, None], [150, 500, None]])
         ]
+        book['policy']['after_hours']['multiplier'] = rng.choice(['1', '1.5', '2'])
+        book['policy']['overhead_profit_percent'] = rng.choice(['0', '15', '100'])
         if rng.random() < 0.5:
             _uncertainty(book)
-        rooms = [
-            dict(
-                name=f'Room {index}',
-                category=rng.choice([1, 2, 3]),
-                finished_sf=rng.randint(1, 400),
-                waste_percent=rng.randint(0, 30),
-            )
-            for index in range(rng.randint(1, 3))
-        ]
+            book['policy']['assist']['hidden_damage_percent'] = {
+                key: str(rng.randint(0, 100)) for key in ('1', '2', '3')
+            }
+        rooms = [room(f'Room {index}') for index in range(rng.randint(1, 3))]
         grown = copy.deepcopy(rooms)
         if rng.random() < 0.5:
-            grown.append(
-                dict(
-                    name='Added',
-                    category=rng.choice([1, 2, 3]),
-                    finished_sf=rng.randint(1, 400),
-                    waste_percent=rng.randint(0, 30),
-                )
-            )
+            grown.append(room('Added'))
         else:
-            grown[rng.randrange(len(grown))]['finished_sf'] += rng.choice([0.01, 1, 100])
+            grown[rng.randrange(len(grown))]['finished_sf'] += rng.choice([0.01, 0.17, 1, 100])
+        after_hours = rng.random() < 0.5
         try:
-            before = estimate(book, _job(*rooms))
+            before = estimate(book, _job(*rooms, is_after_hours=after_hours))
         except ValueError:
             continue
-        after = estimate(book, _job(*grown))
+        after = estimate(book, _job(*grown, is_after_hours=after_hours))
         assert after['low']['total'] >= before['low']['total']
-        assert after['high']['total'] >= before['high']['total'] - D('0.02')
+        assert after['high']['total'] >= before['high']['total']
         assert after['high']['total'] >= after['low']['total']
+
+
+def _cent_items(book, count):
+    template = book['items'][0]
+    book['items'] = [
+        dict(
+            template,
+            item_id=f'cent_{index}',
+            code=f'CENT{index}',
+            sort_order=index,
+            unit_price='',
+            price_brackets=[dict(up_to_sf=None, unit_price='0.01')],
+        )
+        for index in range(count)
+    ]
+    return price_table.normalize_table(book, publish=True)
+
+
+def test_uncertainty_high_does_not_lose_redistributed_cents_across_items():
+    book = table()
+    book['policy']['category_multipliers'] = {'1': '3', '2': '1', '3': '1'}
+    _uncertainty(book)
+    book['policy']['assist']['hidden_damage_percent'] = {'1': '0', '2': '0', '3': '100'}
+    book = _cent_items(book, 3)
+    existing = dict(name='Existing', category=3, finished_sf=100.5)
+    before = estimate(book, _job(existing))
+    after = estimate(book, _job(existing, dict(name='Added', category=1, finished_sf=0.17)))
+    assert after['low']['total'] >= before['low']['total']
+    assert after['high']['total'] >= before['high']['total']
+
+
+@pytest.mark.parametrize('amplified', [False, True])
+def test_cushion_high_does_not_lose_redistributed_cents(amplified):
+    book = table()
+    book['policy']['category_multipliers'] = {'1': '1.001', '2': '1', '3': '3'}
+    book['policy']['range']['brackets'] = [
+        dict(up_to_sf=100, percent='100'),
+        dict(up_to_sf=None, percent='0'),
+    ]
+    if amplified:
+        book['policy']['after_hours']['multiplier'] = '2'
+        book['policy']['overhead_profit_percent'] = '100'
+    book = _cent_items(book, 1)
+    existing = dict(name='Existing', category=1, finished_sf=100.45)
+    before = estimate(book, _job(existing, is_after_hours=amplified))
+    after = estimate(
+        book,
+        _job(existing, dict(name='Added', category=3, finished_sf=0.17), is_after_hours=amplified),
+    )
+    assert after['low']['total'] >= before['low']['total']
+    assert after['high']['total'] >= before['high']['total']
 
 
 def test_whole_job_picks_every_items_band_from_the_jobs_total_square_feet():
