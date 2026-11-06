@@ -110,6 +110,8 @@ T_L_high = Σ taxable area lines total × (1 + p_c)  +  T_L_other × (1 + p_top)
 
 An owner on `adr-residential-v1` moves with **Switch to v2** (`POST /api/companies/{id}/prices/start-v2`). `price_table.from_v1_rates` maps that company's own 21 rates to items with the same prices and quantity sources, and sets the policy to the rate book's rules: range 1,000 sq ft / 50% / 20%, after-hours x1.2, cabinetry x2 on finished surfaces, demolition area basis, no overhead and profit or tax. A company holding no prices of its own, including one holding ADR's rates, starts from the blank starter list instead.
 
+The pricing oracle in `tests/fixtures/pricing-oracle/` pins what this code produces for a synthetic corpus of both versions, stage by stage, down to the canonical proposal bytes and their hash; `tests/test_pricing_oracle.py` fails on any difference. Its [README](../tests/fixtures/pricing-oracle/README.md) says how it is checked and when it may be regenerated; a rewrite never regenerates it.
+
 For the same job the table matches the rate book at or below 1,000 sq ft, low and high, after hours included. It differs in three ways, which `price_table.switch_differences` states in plain words on the Switch card, in the review and in a draft's reprice review. The list below is for a table on the cushion, which a mapped table keeps; if the owner chooses the uncertainty method, the first two are replaced by how the high end is built and that labor hours carry the job's hidden-damage percent at every size, and the after-hours line is unchanged (see [Range from real uncertainty](#range-from-real-uncertainty)):
 
 1. The high end tapers above 1,000 sq ft instead of stepping down at 1,001.
