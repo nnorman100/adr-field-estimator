@@ -35,8 +35,8 @@ is the index; it links to the detailed docs instead of copying them:
 | `LIVE_VOICE` | `Charon` | |
 | `AI_FEATURES` | deploy baseline `readiness` | comma list; empty enables nothing |
 
-`scripts/deploy_backend.py` sets only `WORKSPACES_ENABLED`, `AI_FEATURES`, `PRICE_BOOKS_ENABLED` (and
-optionally `STAFF_EMAILS`), so the model and location values above apply unless the serving
+`scripts/deploy_backend.py` sets only `WORKSPACES_ENABLED`, `AI_FEATURES`, `PRICE_BOOKS_ENABLED`,
+`RETENTION_ENABLED` (and optionally `STAFF_EMAILS`), so the model and location values above apply unless the serving
 service already carries its own; check the revision before relying on them. Verify a model in the
 dedicated project before enabling a different one (`AGENTS.md` section 2).
 

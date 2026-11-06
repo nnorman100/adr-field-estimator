@@ -28,6 +28,7 @@ owner's word, never by a flag on the deploy command (`docs/firebase-isolation.md
 | `WORKSPACES_ENABLED` | on (the live service has it on; `auto_deploy.py` passes `on`) | company workspaces, roles, memberships. Off is a rollback mode that uses the `STAFF_EMAILS` allowlist |
 | `AI_FEATURES` | `readiness` | comma list. Names the code checks: `readiness`, `drying_watch`, `priced_extras`, `job_summary`, `ai_usage`, `estimate_assist` (`docs/AI.md`) |
 | `PRICE_BOOKS_ENABLED` | `false` | the price editor, the `prices_read`/`prices_manage` capabilities, the estimator item list, Switch to v2 |
+| `RETENTION_ENABLED` | `false` (`DEFAULT_RETENTION = 'off'` in `scripts/deploy_backend.py`) | the record-retention deletion sweep; the owner's retention setting works with it off, and nothing is deleted (`docs/company-workspaces.md#record-retention`) |
 | `APPCHECK_MODE` | `monitor` by default; only `off` or `monitor` are accepted, enforcement is not built | App Check (`docs/app-check.md`) |
 | `AUTO_DEPLOY_ENABLED` (GitHub repository variable) | owner-set | automatic deploys after CI; anything but `true` pauses them |
 
@@ -73,8 +74,9 @@ Known gaps in automated proof of the standard's three required checks are listed
 `docs/spec.md` under "Standard checks".
 
 Pending work in other branches and pull requests as of 2026-11-06: square-foot price brackets
-(#228), record retention (#229) and a per-company monthly AI cap (#230) are open pull requests
-and are **not** described in this repository's docs until they merge.
+(#228) and a per-company monthly AI cap (#230) are open pull requests and are **not** described
+in this repository's docs until they merge. Record retention (#229) is merged with its deletion
+sweep off.
 
 ## Rules that decide what you may do
 

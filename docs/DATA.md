@@ -12,9 +12,12 @@ are in [SECURITY.md](SECURITY.md).
 - Browsers never read Firestore: `firestore.rules` denies all reads and writes (a test enforces it).
   Every read goes through the Cloud Run backend, which checks identity, company membership and job
   access, or a single-use link token.
-- **Retention today: almost nothing is deleted.** Only short-lived records expire. Signed
-  agreements, draft jobs, photos, transcripts, customer details and audit events are kept
-  indefinitely, and there is no customer or company deletion or export in code. See "Retention".
+- **Retention today: almost nothing is deleted.** Short-lived records expire. Per-company record
+  retention is built (the owner sets 90 to 3,650 days for invitations, the activity log,
+  drying-watch history and archived-draft photos), but its deletion sweep is off
+  (`RETENTION_ENABLED=false`), so those are kept too. Signed agreements and their photos, open
+  drafts, transcripts and customer details are kept indefinitely, and there is no customer or
+  company deletion or export in code. See "Retention".
 
 ## Where personal data lives
 
@@ -31,7 +34,8 @@ are in [SECURITY.md](SECURITY.md).
 | `_estimate_history/{company}` | per signed job: dates, range, final invoiced amount, drying days, closing uid | owner and office |
 | `_companies` | company name, address, phone, email, license, signoff, logo, crew-lead email | company members; superadmin |
 | `_memberships`, `_invitations` | member and invitee email addresses, role, status | owner; superadmin read-only |
-| `_admin_events` | superadmin audit log (actor uid, action, company, record IDs only) | superadmin |
+| `_admin_events` | superadmin audit log and company activity log (actor uid, action, company, record IDs, retention days and run counts) | superadmin |
+| `_company_retention`, `_retention_state` | the company's retention days per class with a version; the daily sweep's lease and last run (no personal data) | settings: owner (`retention_manage`); state: server code only |
 | `_signing_links`, `_document_links` | link records keyed by the SHA-256 of the token (the token is never stored), with job, revision and expiry | nobody directly; the link holder acts through the link routes |
 | `_limits`, `_live_sessions`, `_live_resume`, `_server_keys`, `_company_limits`, `_email_counts`, `_migrations`, `_signing_link_jobs`, `_document_link_agreements`, `_workspace_authorizations`, `_platform_admins`, `_invite_keys`, `_owner_login_reservations` | counters, leases, keys, pointers and markers; per-address counters are keyed by an HMAC of the IP so the address is not recoverable; the Live resume record holds a provider session handle | server code only |
 | price book collections (`_company_price_books`, `_price_book_versions`, `_price_book_drafts`, `_price_book_previews`, `_job_pricing`) | company prices; no customer data | members with `prices_read`; owner edits |
@@ -115,7 +119,8 @@ soft-delete and read-access statements).
 | Live resume checkpoint | 600 s (TTL) |
 | Per-address anonymous counters | 1 hour (TTL) |
 | Job summary cache | 30 days (TTL) |
-| Staff invitation | expires logically after 7 days; the record stays (owners can hide it with "clear") |
+| Staff invitation | expires logically after 7 days; the record, with the invitee's email, stays (owners can hide it with "clear") until the retention sweep deletes it, below |
+| Company record retention (`backend/retention.py`, sweep flag `RETENTION_ENABLED`, off) | owner-set per class, 90 days by default and at least 90, at most 3,650: invitations from their expiry; activity-log entries from creation; a closed signed job's drying-watch history from the close (a marker stays); an archived unsigned draft's photo objects from the archiving. With the flag off nothing is deleted. Never deleted: a signed agreement and its photos, an open draft's photos, a pending unexpired invitation, an unclosed job's watch, and drying readings ([company-workspaces.md](company-workspaces.md#record-retention)) |
 | Estimate history rows | the newest 300 per company |
 | Vault copies | 90 days |
 | Firestore recovery and evidence-bucket soft delete | 7 days point-in-time recovery, 98 days of daily backups and 7-day soft delete, **doc-only** (not configured in the repository) |
@@ -123,14 +128,16 @@ soft-delete and read-access statements).
 The five TTL policies are enabled by an owner-run script (`scripts/ensure_firestore_ttls.py`); the
 app does not enable them (`docs/firebase-isolation.md`).
 
-**Kept with no deletion and no retention rule in code:** signed agreements (with the signer's IP
-and user agent) and their photo and signature objects; draft jobs including archived ones, their
-photos and transcripts; drying logs; customer and coordination sidecars, delivery and monitoring
-records; memberships and invitations; company profiles; the audit log; Firebase Auth users; and
+**Kept with no deletion rule in code:** signed agreements (with the signer's IP and user agent)
+and their photo and signature objects; draft jobs including archived ones, their transcripts, and
+the photos of open drafts; drying logs; customer and coordination sidecars and delivery records;
+memberships; company profiles; Firebase Auth users; and
 phone data until sign-out, signing, archiving or a confirmed original upload, as listed under "The phone". Archiving is a soft status change that
-hides a job without deleting it. The only deletes in the backend are leases, price-book working
-copies, a drying reading, owner-login reservations and the orphan of a failed upload.
+hides a job without deleting it. While `RETENTION_ENABLED` is off, invitations, the activity log,
+drying-watch history and archived-draft photos are kept as well. The only deletes in the backend
+are leases, price-book working copies, a drying reading, owner-login reservations, the orphan of a
+failed upload, and, once that flag is on, the retention sweep.
 
-There is no customer data export or deletion endpoint. The open pull request for record retention
-(#229, default off) and the standard's company export and deletion are not part of this
-repository's behaviour yet; update this file when they merge.
+There is no customer data export or deletion endpoint. Record retention (#229) is merged with its
+sweep off; turning deletion on is owner-only (`HANDOFF.md`). The standard's company export and
+deletion are not built yet; update this file when they are.
