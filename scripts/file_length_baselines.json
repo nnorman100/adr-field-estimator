@@ -13,7 +13,6 @@
   "tests/browser/scope-items.spec.js": 1599,
   "tests/browser/workflows.spec.js": 1166,
   "tests/browser/workspaces.spec.js": 1481,
-  "tests/test_auto_deploy.py": 1236,
   "tests/test_backend.py": 1190,
   "tests/test_claims.py": 1503,
   "tests/test_firestore_emulator.py": 1571,
