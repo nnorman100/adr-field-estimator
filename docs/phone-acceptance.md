@@ -33,13 +33,14 @@ Each line is what you do, then what you should see.
    Home Screen. → The name is **DryScope** and the app fills the screen with no Safari bars.
 2. Sign in (email and password, or **Sign in with Google**). → You land on the dashboard; the
    Google window closes by itself and returns to the app.
-3. Tap **+ New job**, then open **Check Scope** and type the made-up address in **Property
-   address**. → The job first opens on **Walk & Photo**; after typing, the address shows at the
-   top, the status settles on **Saved**, and the top bar does not jump.
+3. Tap **+ New job**, then open **Check Scope**, type the made-up address in **Property
+   address** and `1985` in **Year built**. → The job first opens on **Walk & Photo**; after
+   typing, the address shows at the top, the status settles on **Saved**, and the top bar does
+   not jump.
 
 **Photos and working offline**
 
-4. Tap **Capture photo** and take a portrait photo. → The photo is upright and not stretched, and
+4. Go back to **Walk & Photo**, tap **Capture photo** and take a portrait photo. → The photo is upright and not stretched, and
    it appears under **Photos**.
 5. Turn on Airplane mode. In **Check Scope**, tap **Add room** and type a measurement; go back to
    **Walk & Photo** and capture a photo. → The status reads **Offline · saved on phone**.
@@ -48,14 +49,16 @@ Each line is what you do, then what you should see.
 7. Still in Airplane mode, tap **Offline notes** → **Record voice note**, talk for 20 seconds,
    lock the phone for 10 seconds, unlock it and tap **Stop and save note**. → The note is listed
    under **Voice notes**.
-8. Turn Airplane mode off. → Within a minute the status goes **Saving…** then **Saved**, each
-   photo shows once, and the voice note's words appear in the walkthrough transcript.
+8. Turn Airplane mode off, wait a minute, then tap **Review transcript**. → The status goes
+   **Saving…** then **Saved**, each photo shows once, the voice note's words appear in the
+   walkthrough transcript, and **Transcript reviewed.** shows.
 
 **Live walkthrough with the earpiece**
 
-9. With the earpiece connected, tap **Start walkthrough** and allow camera and microphone. →
-   **Live AI connected** shows, the assistant speaks first in the earpiece, and what you say about
-   the room appears under **Technician observations**.
+9. With the earpiece connected, tap **Back to live assistant**, then **Start walkthrough**, and
+   allow camera and microphone; open **More walkthrough options**. → **Live AI connected** shows,
+   the assistant speaks first in the earpiece, and what you say about the room appears under
+   **Technician observations**.
 10. While the assistant is talking, interrupt it ("Stop, let's do the bedroom"). → It stops at
     once, no leftover sentence plays, and it answers the new request.
 11. Ask five short questions and time each gap between finishing your sentence and the first
@@ -74,11 +77,11 @@ Each line is what you do, then what you should see.
 **Review and sign**
 
 15. Tap **Fill scope from walkthrough**, then **Confirm scope**; check the numbers in **Check
-    Scope**, tick the "I confirmed room quantities…" box and tap **Finish & review**. In **Review &
-    Sign**, open **Proposal**, **Itemized claim**, **Defense letter** and **Photo audit log**, tick
+    Scope**, tick the "I confirmed room quantities…" box and tap **Finish & review** (if **Ready to
+    review?** opens, tap **Continue to review anyway**). In **Review & Sign**, open **Proposal**, **Itemized claim**, **Defense letter** and **Photo audit log**, tick
     "I reviewed the proposal…", sign with your finger and tap **Authorize & sign**. → All four
-    documents show the company letterhead with no blanks, and the status at the top reads
-    **Signed**.
+    documents open with no blanks, **Proposal** and **Defense letter** show the company
+    letterhead, and the status at the top reads **Signed**.
 
 ## Record the result
 
