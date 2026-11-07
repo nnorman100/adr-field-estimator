@@ -1,14 +1,15 @@
 # Mocked checks for the app root. Nothing here reaches Google Cloud: the mock
 # provider answers every call. Run once per environment:
-#   terraform test -var-file=envs/test.tfvars
-#   terraform test -var-file=envs/live.tfvars
+#   terraform test -var-file=envs/test.tfvars -var-file=tests/images-test.tfvars
+#   terraform test -var-file=envs/live.tfvars -var-file=tests/images-live.tfvars
 
 mock_provider "google" {}
 
-# Values the release controller and the owner supply at apply time.
+# Images come from tests/images-<env>.tfvars, so each environment is exercised
+# with an image from its own repository (a test file's own variables would
+# override the command line). Pass both files:
+#   terraform test -var-file=envs/test.tfvars -var-file=tests/images-test.tfvars
 variables {
-  api_image   = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/web@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  live_image  = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
   alert_email = "alerts@example.invalid"
 }
 
@@ -197,7 +198,7 @@ run "tagged_image_is_refused" {
   command = plan
 
   variables {
-    api_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/web:latest"
+    api_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment}/web:latest"
   }
 
   expect_failures = [var.api_image]
@@ -208,6 +209,28 @@ run "image_from_another_project_is_refused" {
 
   variables {
     live_image = "us-west2-docker.pkg.dev/mitigation-project/other/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }
+
+  expect_failures = [var.live_image]
+}
+
+# The other environment's repository, in both directions: under test.tfvars this
+# is the live repository, under live.tfvars it is the test one.
+run "web_image_from_the_other_environments_repository_is_refused" {
+  command = plan
+
+  variables {
+    api_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment == "test" ? "live" : "test"}/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }
+
+  expect_failures = [var.api_image]
+}
+
+run "relay_image_from_the_other_environments_repository_is_refused" {
+  command = plan
+
+  variables {
+    live_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment == "test" ? "live" : "test"}/live@sha256:3333333333333333333333333333333333333333333333333333333333333333"
   }
 
   expect_failures = [var.live_image]

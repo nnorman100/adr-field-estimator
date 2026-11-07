@@ -110,8 +110,16 @@ resource "google_cloud_run_v2_service" "svc" {
 
   lifecycle {
     prevent_destroy = true
-    # The deploy tooling stamps these; they are not configuration.
-    ignore_changes = [client, client_version]
+    # One owner for what is running. Terraform creates the service with the first
+    # image; releases and rollbacks go through gcloud as the deploy account, which
+    # cannot run this root. Without these lines the next apply would put the
+    # tfvars image and traffic back. client and client_version are stamped by tooling.
+    ignore_changes = [
+      client,
+      client_version,
+      template[0].containers[0].image,
+      traffic,
+    ]
   }
 }
 

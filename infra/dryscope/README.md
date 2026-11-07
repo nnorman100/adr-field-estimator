@@ -23,10 +23,17 @@ Each root has `envs/test.tfvars`, `envs/live.tfvars` and a matching `envs/backen
 ## Checks
 
 ```
-TERRAFORM=/path/to/terraform infra/dryscope/scripts/check.sh      # format, validate, mocked tests
+TERRAFORM=/path/to/terraform infra/dryscope/scripts/check.sh      # format, validate, mocked tests, plan check
+npx vitest run tests/test_terraform_plan_check.js                  # the plan check itself, on fixtures
 ```
 
-`terraform test` runs with mock providers and `command = plan`; it needs no credentials. The suites in `data/tests` and `app/tests` assert region, environment-scoped names, protection settings, IAM-only database users, the reviewed role on every grant, the deploy role's lack of delete permissions, invocation-only public access, and that the legacy project, region, accounts, database, bucket and service are refused or never managed. The check script never plans against, applies to, or imports from the real project. CI does not run `check.sh` yet: adding Terraform to a workflow is a protected-path change for the owner.
+`terraform test` runs with mock providers and `command = plan`; it needs no credentials. The suites in `data/tests` and `app/tests` assert region, environment-scoped names, protection settings, IAM-only database users, the reviewed role on every grant, the deploy role's lack of delete permissions, invocation-only public access, and that the legacy project, region, accounts, database, bucket and service are refused or never managed. `scripts/check-plan.js` reads the whole mocked plan of each root and environment and requires every resource, every IAM grant (role, member and exact condition) and every protection setting to match a fixed table, so a grant nobody listed, a wider condition, a shared-core tier or a delete or replacement fails even though no test names it. The owner runs the same script on the saved plan before an apply (RUNBOOK). `prevent_destroy` is not in plan JSON and cannot be tested; the refusal of every delete action stands behind it. The check script never plans against, applies to, or imports from the real project. CI does not run `check.sh` yet: adding Terraform to a workflow is a protected-path change for the owner.
+
+## Accepted risks
+
+- **The deploy account is as powerful as the runtime it deploys.** It may act as the web app and relay accounts and update their services, so any code it ships runs with that environment's data and secrets. GitHub environment protection and the principal set's repository scope are the real controls; it must never be given `iam.roles.update` on its own custom role.
+- **Runtime accounts can delete rows and documents in their own environment** (`roles/datastore.user`, SQL grants). Point-in-time recovery on both stores is the backstop.
+- **Gemini calls need a project-level role.** Vertex AI cannot be scoped to one environment; the custom role holds `aiplatform.endpoints.predict` only.
 
 ## Open owner decisions
 

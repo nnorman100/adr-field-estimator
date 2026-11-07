@@ -41,8 +41,8 @@ run "cloud_sql_is_protected_dedicated_and_recoverable" {
     error_message = "The instance must be in us-central1."
   }
   assert {
-    condition     = (var.environment == "live") == startswith(google_sql_database_instance.main.settings[0].tier, "db-custom-")
-    error_message = "Live uses a dedicated-core tier; test may use a small one."
+    condition     = startswith(google_sql_database_instance.main.settings[0].tier, "db-custom-")
+    error_message = "Both environments use a dedicated-core tier, never shared-core."
   }
 }
 
@@ -167,8 +167,8 @@ run "only_reviewed_roles_are_granted" {
   command = plan
 
   assert {
-    condition     = alltrue([for m in google_project_iam_member.sql_client : m.role == "roles/cloudsql.client"]) && alltrue([for m in google_project_iam_member.sql_login : m.role == "roles/cloudsql.instanceUser"]) && alltrue([for m in google_project_iam_member.firestore_user : m.role == "roles/datastore.user"]) && alltrue([for m in google_project_iam_member.vertex_user : m.role == "roles/aiplatform.user"])
-    error_message = "Project-level grants are limited to SQL connect and login, Firestore user and Vertex AI user."
+    condition     = alltrue([for m in google_project_iam_member.sql_client : m.role == "roles/cloudsql.client"]) && alltrue([for m in google_project_iam_member.sql_login : m.role == "roles/cloudsql.instanceUser"]) && alltrue([for m in google_project_iam_member.firestore_user : m.role == "roles/datastore.user"]) && alltrue([for m in google_project_iam_member.gemini_caller : m.role == "projects/alert-disaster-field-2026/roles/dryscopeGemini${title(var.environment)}"])
+    error_message = "Project-level grants are limited to SQL connect and login, Firestore user and the predict-only Gemini caller role."
   }
   assert {
     condition     = length(google_service_account_iam_member.deploy_acts_as) == 2 && alltrue([for m in google_service_account_iam_member.deploy_acts_as : m.role == "roles/iam.serviceAccountUser"])
@@ -179,8 +179,25 @@ run "only_reviewed_roles_are_granted" {
     error_message = "The deploy account pushes immutable images and holds no repository admin."
   }
   assert {
-    condition     = length(google_project_iam_member.vertex_user) == 2 && length(google_project_iam_member.firestore_user) == 2
-    error_message = "The migrator gets neither Vertex AI nor Firestore access."
+    condition     = length(google_project_iam_member.gemini_caller) == 2 && length(google_project_iam_member.firestore_user) == 2
+    error_message = "The migrator gets neither Gemini nor Firestore access."
+  }
+}
+
+run "gemini_caller_can_only_predict" {
+  command = plan
+
+  assert {
+    condition     = google_project_iam_custom_role.gemini_caller.role_id == "dryscopeGemini${title(var.environment)}"
+    error_message = "Each environment has its own Gemini caller role."
+  }
+  assert {
+    condition     = toset(google_project_iam_custom_role.gemini_caller.permissions) == toset(["aiplatform.endpoints.predict"])
+    error_message = "The Gemini caller role holds predict only: no custom jobs, agents, tuning, create or delete."
+  }
+  assert {
+    condition     = toset(keys(google_project_iam_member.gemini_caller)) == toset(["api", "live"])
+    error_message = "Only the web app and the relay may call Gemini."
   }
 }
 
@@ -248,4 +265,61 @@ run "short_backup_history_is_refused" {
   }
 
   expect_failures = [var.sql_backup_retained_count]
+}
+
+run "shared_core_sql_tier_is_refused" {
+  command = plan
+
+  variables {
+    sql_tier = "db-f1-micro"
+  }
+
+  expect_failures = [var.sql_tier]
+}
+
+run "pool_wide_workload_identity_principal_set_is_refused" {
+  command = plan
+
+  variables {
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/*"
+  }
+
+  expect_failures = [var.workload_identity_principal_set]
+}
+
+run "wildcard_inside_the_repository_is_refused" {
+  command = plan
+
+  variables {
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repository/nnorman100/*"
+  }
+
+  expect_failures = [var.workload_identity_principal_set]
+}
+
+run "a_single_identity_is_not_a_principal_set" {
+  command = plan
+
+  variables {
+    workload_identity_principal_set = "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/subject/anyone"
+  }
+
+  expect_failures = [var.workload_identity_principal_set]
+}
+
+run "a_repository_scoped_principal_set_is_accepted_and_bound_to_deploy_only" {
+  command = plan
+
+  variables {
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repository_id/987654321"
+  }
+
+  assert {
+    condition     = length(google_service_account_iam_member.deploy_workload_identity) == 1
+    error_message = "A scoped principal set creates exactly one binding."
+  }
+  assert {
+    condition     = google_service_account_iam_member.deploy_workload_identity[0].role == "roles/iam.workloadIdentityUser"
+    error_message = "The binding is workload identity user, nothing broader."
+  }
 }

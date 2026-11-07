@@ -79,8 +79,10 @@ resource "google_sql_user" "iam" {
 
   project  = var.project_id
   instance = google_sql_database_instance.main.name
-  name     = trimsuffix(google_service_account.runtime[each.key].email, ".gserviceaccount.com")
+  name     = trimsuffix(local.n.service_account_emails[each.key], ".gserviceaccount.com")
   type     = "CLOUD_IAM_SERVICE_ACCOUNT"
 
   deletion_policy = "ABANDON"
+
+  depends_on = [google_service_account.runtime]
 }

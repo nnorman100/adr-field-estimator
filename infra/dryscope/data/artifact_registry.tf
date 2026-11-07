@@ -25,5 +25,7 @@ resource "google_artifact_registry_repository_iam_member" "deploy_write" {
   location   = var.region
   repository = google_artifact_registry_repository.images.repository_id
   role       = "roles/artifactregistry.writer"
-  member     = "serviceAccount:${google_service_account.deploy.email}"
+  member     = "serviceAccount:${local.n.service_account_emails["deploy"]}"
+
+  depends_on = [google_service_account.deploy]
 }

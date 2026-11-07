@@ -2,8 +2,8 @@ project_id  = "alert-disaster-field-2026"
 region      = "us-central1"
 environment = "test"
 
-# Shared-core tier: synthetic load only, no SQL SLA.
-sql_tier                  = "db-f1-micro"
+# Dedicated 1 vCPU, 3.75 GiB, zonal: the same small tier as live, with a smaller disk.
+sql_tier                  = "db-custom-1-3840"
 sql_disk_size_gb          = 10
 sql_backup_retained_count = 7
 sql_pitr_log_days         = 3

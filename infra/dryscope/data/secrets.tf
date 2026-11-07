@@ -35,5 +35,7 @@ resource "google_secret_manager_secret_iam_member" "accessor" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.app[each.value.secret].secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.runtime[each.value.service].email}"
+  member    = "serviceAccount:${local.n.service_account_emails[each.value.service]}"
+
+  depends_on = [google_service_account.runtime]
 }

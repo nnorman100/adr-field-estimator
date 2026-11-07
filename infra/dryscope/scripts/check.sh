@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Offline checks for infra/dryscope: format, validate, and the mocked test suites.
+# Offline checks for infra/dryscope: format, validate, the mocked test suites, and the
+# closed-set plan check over every mocked plan (scripts/check-plan.js, needs node).
 #
 # Uses mock providers and `init -backend=false`, so it needs no Google Cloud
 # credentials and cannot reach the real project. Set TERRAFORM to use a binary
@@ -19,7 +20,12 @@ for root in data app; do
   "$TF" -chdir="$dir" validate
   for env in test live; do
     echo "== $root: mocked tests ($env)"
-    "$TF" -chdir="$dir" test -var-file="envs/$env.tfvars"
+    extra=()
+    if [ "$root" = app ]; then extra=(-var-file="tests/images-$env.tfvars"); fi
+    "$TF" -chdir="$dir" test -var-file="envs/$env.tfvars" "${extra[@]}"
+    echo "== $root: plan check ($env)"
+    "$TF" -chdir="$dir" test -json -verbose -var-file="envs/$env.tfvars" "${extra[@]}" |
+      node "$HERE/scripts/check-plan.js" "$root" "$env" -
   done
 done
 

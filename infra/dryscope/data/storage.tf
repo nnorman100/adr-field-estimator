@@ -32,11 +32,15 @@ resource "google_storage_bucket" "evidence" {
 resource "google_storage_bucket_iam_member" "api_create" {
   bucket = google_storage_bucket.evidence.name
   role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${google_service_account.runtime["api"].email}"
+  member = "serviceAccount:${local.n.service_account_emails["api"]}"
+
+  depends_on = [google_service_account.runtime]
 }
 
 resource "google_storage_bucket_iam_member" "api_view" {
   bucket = google_storage_bucket.evidence.name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.runtime["api"].email}"
+  member = "serviceAccount:${local.n.service_account_emails["api"]}"
+
+  depends_on = [google_service_account.runtime]
 }

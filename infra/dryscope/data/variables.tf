@@ -36,7 +36,12 @@ variable "sql_database_version" {
 
 variable "sql_tier" {
   type        = string
-  description = "Dedicated-core tier for live; a small tier for synthetic test load."
+  description = "Dedicated-core tier. Both environments use a dedicated zonal instance; shared-core tiers have no SQL SLA."
+
+  validation {
+    condition     = startswith(var.sql_tier, "db-custom-")
+    error_message = "sql_tier must be a dedicated-core tier (db-custom-...). Shared-core tiers are not accepted in either environment."
+  }
 }
 
 variable "sql_disk_size_gb" {
@@ -76,6 +81,14 @@ variable "evidence_soft_delete_days" {
 
 variable "workload_identity_principal_set" {
   type        = string
-  description = "Optional principalSet:// string of the GitHub Actions workload identity pool allowed to impersonate the deploy account. Empty until the owner creates the pool."
+  description = "Optional principalSet:// string, scoped to one repository, of the GitHub Actions workload identity pool allowed to impersonate the deploy account. Empty until the owner creates the pool."
   default     = ""
+
+  validation {
+    condition = var.workload_identity_principal_set == "" || can(regex(
+      "^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[^/*]+/attribute\\.(repository_id|repository)/[^*]+$",
+      var.workload_identity_principal_set,
+    ))
+    error_message = "Pass a principalSet scoped to one repository (attribute.repository_id or attribute.repository). The pool-wide wildcard lets every identity in the pool impersonate the deploy account."
+  }
 }
