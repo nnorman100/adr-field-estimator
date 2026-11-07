@@ -14,7 +14,11 @@
     "tests/browser/scope-items.spec.js",
     "tests/browser/workflows.spec.js",
     "tests/browser/workspaces.spec.js",
+<<<<<<< HEAD
     "tests/test_claims.py",
+=======
+    "tests/test_backend.py",
+>>>>>>> 867c3a8 (refactor(tests): split claims document tests)
     "tests/test_firestore_emulator.py",
     "tests/test_frontend.js",
     "tests/test_price_books.py",
