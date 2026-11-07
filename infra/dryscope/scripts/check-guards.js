@@ -13,6 +13,13 @@
 const fs = require('node:fs');
 const readline = require('node:readline');
 
+// Runs that must pass for the report to mean anything. The app root also proves that a
+// later image digest is not planned (Terraform ignores the image after create).
+const REQUIRED_RUNS = {
+  data: ['create_everything'],
+  app: ['create_everything', 'a_different_image_is_not_planned_after_create'],
+};
+
 const PROTECTED = {
   data: [
     'google_sql_database_instance.main',
@@ -31,7 +38,7 @@ const PROTECTED = {
 function checkGuards(lines, root) {
   const problems = [];
   const refused = new Set();
-  let applied = false;
+  const passed = new Set();
   for (const line of lines) {
     const text = line.trim();
     if (!text.startsWith('{')) continue;
@@ -42,9 +49,7 @@ function checkGuards(lines, root) {
       continue;
     }
     const run = doc.test_run;
-    if (run && run.progress === 'complete' && run.run === 'create_everything') {
-      applied = run.status === 'pass';
-    }
+    if (run && run.progress === 'complete' && run.status === 'pass') passed.add(run.run);
     const diagnostic = doc.diagnostic;
     if (!diagnostic) continue;
     const match = /^Resource (.+?) has lifecycle\.prevent_destroy set/.exec(
@@ -56,7 +61,10 @@ function checkGuards(lines, root) {
       problems.push(`unexpected error: ${diagnostic.summary}`);
     }
   }
-  if (!applied) problems.push('the mocked apply of the root did not pass, so nothing was tested');
+  for (const name of REQUIRED_RUNS[root]) {
+    if (!passed.has(name))
+      problems.push(`run ${name} did not pass, so what it covers was not tested`);
+  }
   for (const address of PROTECTED[root]) {
     if (!refused.has(address)) {
       problems.push(
@@ -89,4 +97,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }
 
-module.exports = { checkGuards, PROTECTED };
+module.exports = { checkGuards, PROTECTED, REQUIRED_RUNS };

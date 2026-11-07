@@ -1,3 +1,8 @@
+const finished = (name, status) =>
+  JSON.stringify({
+    '@type': 'test_run',
+    test_run: { path: 'guards/guards.tftest.hcl', run: name, progress: 'complete', status },
+  });
 // The DryScope Terraform plan check: the full mocked plan of each root and environment must match
 // the closed table of resources, IAM grants (role, member, exact condition) and protection
 // settings, and any delete, replacement or extra grant must be refused.
@@ -19,7 +24,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-plan.js');
 const { checkPlan } = require(SCRIPT);
 const GUARDS = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js');
-const { checkGuards, PROTECTED } = require(GUARDS);
+const { checkGuards, PROTECTED, REQUIRED_RUNS } = require(GUARDS);
 
 const CASES = [
   ['data', 'test'],
@@ -447,7 +452,10 @@ describe.each(['data', 'app'])('destroy guards, %s root', (root) => {
         status,
       },
     });
-  const stream = (addresses, status = 'pass') => [applied(status), ...addresses.map(refusal)];
+  const stream = (addresses, status = 'pass', runs = REQUIRED_RUNS[root]) => [
+    ...runs.map((name) => finished(name, status)),
+    ...addresses.map(refusal),
+  ];
 
   test('a report with a refusal for every protected resource passes', () => {
     expect(checkGuards(stream(PROTECTED[root]), root)).toEqual([]);
@@ -467,8 +475,14 @@ describe.each(['data', 'app'])('destroy guards, %s root', (root) => {
 
   test('a mocked apply that failed proves nothing and is refused', () => {
     const problems = checkGuards(stream(PROTECTED[root], 'error'), root);
-    expect(problems).toHaveLength(1);
+    expect(problems).toHaveLength(REQUIRED_RUNS[root].length);
     expect(problems[0]).toContain('did not pass');
+  });
+
+  test.each(REQUIRED_RUNS[root])('a report without a passing %s run is refused', (name) => {
+    const runs = REQUIRED_RUNS[root].filter((r) => r !== name);
+    const problems = checkGuards(stream(PROTECTED[root], 'pass', runs), root);
+    expect(problems).toEqual([`run ${name} did not pass, so what it covers was not tested`]);
   });
 
   test('an unrelated error is reported, not mistaken for a guard', () => {
