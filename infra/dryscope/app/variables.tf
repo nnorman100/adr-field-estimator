@@ -77,17 +77,6 @@ variable "live_scaling" {
   }
 }
 
-variable "ingress" {
-  type        = string
-  description = "Cloud Run ingress. Tightening it waits on the owner's front-door decision (load balancer and Cloud Armor)."
-  default     = "INGRESS_TRAFFIC_ALL"
-
-  validation {
-    condition     = contains(["INGRESS_TRAFFIC_ALL", "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"], var.ingress)
-    error_message = "ingress must be INGRESS_TRAFFIC_ALL or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER."
-  }
-}
-
 variable "uptime_check_enabled" {
   type        = bool
   description = "Probe /api/health every five minutes. Off in test so scale-to-zero stays at zero."

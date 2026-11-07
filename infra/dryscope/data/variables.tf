@@ -81,14 +81,14 @@ variable "evidence_soft_delete_days" {
 
 variable "workload_identity_principal_set" {
   type        = string
-  description = "Optional principalSet:// string, scoped to one repository, of the GitHub Actions workload identity pool allowed to impersonate the deploy account. Empty until the owner creates the pool."
+  description = "Optional principalSet:// string, scoped to one repository, from this environment's own GitHub Actions workload identity pool (dryscope-<environment>), allowed to impersonate the deploy account. Empty until the owner creates the pool."
   default     = ""
 
   validation {
     condition = var.workload_identity_principal_set == "" || can(regex(
-      "^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[^/*]+/attribute\\.(repository_id|repository)/[^*]+$",
+      "^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute\\.(repository_id|repository)/[^*]+$",
       var.workload_identity_principal_set,
     ))
-    error_message = "Pass a principalSet scoped to one repository (attribute.repository_id or attribute.repository). The pool-wide wildcard lets every identity in the pool impersonate the deploy account."
+    error_message = "Pass a principalSet from this environment's own pool (dryscope-<environment>, never a pool shared with the other environment) scoped to one repository (attribute.repository_id or attribute.repository). The pool-wide wildcard lets every identity in the pool impersonate the deploy account."
   }
 }

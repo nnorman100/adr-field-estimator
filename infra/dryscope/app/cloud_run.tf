@@ -41,7 +41,7 @@ resource "google_cloud_run_v2_service" "svc" {
   project             = var.project_id
   name                = each.value.name
   location            = var.region
-  ingress             = var.ingress
+  ingress             = "INGRESS_TRAFFIC_ALL"
   launch_stage        = "GA"
   deletion_protection = true
   labels              = local.labels

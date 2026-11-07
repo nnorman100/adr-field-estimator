@@ -82,14 +82,6 @@ describe.each(CASES)('%s root, %s environment', (root, environment) => {
     }
   });
 
-  test('an in-place change is allowed only when the owner asks for it, a delete never', () => {
-    const changed = plan();
-    changed[0].change.actions = ['update'];
-    expect(check(changed, root, environment, { allowUpdates: true })).toEqual([]);
-    changed[0].change.actions = ['delete'];
-    expect(check(changed, root, environment, { allowUpdates: true })).toHaveLength(1);
-  });
-
   test('a resource missing from the full plan is refused', () => {
     const changed = plan().slice(1);
     const problems = check(changed, root, environment);
@@ -280,11 +272,38 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
       });
       return check(changed, 'data', environment);
     };
-    const pool =
-      'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/github';
+    const pools =
+      'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools';
+    const pool = `${pools}/dryscope-${environment}`;
     expect(withBinding(`${pool}/attribute.repository_id/42`)).toEqual([]);
+    expect(withBinding(`${pool}/attribute.repository/nnorman100/adr-field-estimator`)).toEqual([]);
     expect(withBinding(`${pool}/*`)).toHaveLength(1);
     expect(withBinding(`${pool}/attribute.repository_owner/nnorman100`)).toHaveLength(1);
+  });
+
+  test('a pool shared between environments or the other environment’s pool is refused', () => {
+    const address = 'google_service_account_iam_member.deploy_workload_identity[0]';
+    const other = environment === 'test' ? 'live' : 'test';
+    const pools =
+      'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools';
+    for (const pool of ['github', `dryscope-${other}`]) {
+      const changed = plan();
+      changed.push({
+        address,
+        type: 'google_service_account_iam_member',
+        change: {
+          actions: ['create'],
+          after: {
+            role: 'roles/iam.workloadIdentityUser',
+            member: `${pools}/${pool}/attribute.repository_id/42`,
+            service_account_id: `projects/alert-disaster-field-2026/serviceAccounts/dryscope-deploy-${environment}@alert-disaster-field-2026.iam.gserviceaccount.com`,
+          },
+        },
+      });
+      const problems = check(changed, 'data', environment);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(`${address}: member is`);
+    }
   });
 });
 

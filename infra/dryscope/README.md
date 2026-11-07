@@ -31,10 +31,10 @@ npx vitest run tests/test_terraform_plan_check.js                  # the plan ch
 
 ## Accepted risks
 
-- **The deploy account is as powerful as the runtime it deploys.** It may act as the web app and relay accounts and update their services, so any code it ships runs with that environment's data and secrets. GitHub environment protection and the principal set's repository scope are the real controls; it must never be given `iam.roles.update` on its own custom role.
+- **The deploy account is as powerful as the runtime it deploys.** It may act as the web app and relay accounts and update their services, so any code it ships runs with that environment's data and secrets. GitHub environment protection, the principal set's repository scope and a separate workload identity pool per environment (`dryscope-test`, `dryscope-live`; the variable refuses any other pool) are the real controls; it must never be given `iam.roles.update` on its own custom role.
 - **Runtime accounts can delete rows and documents in their own environment** (`roles/datastore.user`, SQL grants). Point-in-time recovery on both stores is the backstop.
 - **Gemini calls need a project-level role.** Vertex AI cannot be scoped to one environment; the custom role holds `aiplatform.endpoints.predict` only.
 
 ## Open owner decisions
 
-Private IP for Cloud SQL (needs a VPC), HA versus zonal for live, the public front door (load balancer and Cloud Armor) which sets Cloud Run ingress, evidence retention and any lock, Workload Identity pool for keyless deploys, the billing account for the budget alert, and Cloud Tasks, Model Armor and Identity Platform tenants (not in this change).
+Private IP for Cloud SQL (needs a VPC), HA versus zonal for live, the public front door (load balancer and Cloud Armor), which will reintroduce a Cloud Run ingress setting when the owner decides (until then both services take all traffic, `INGRESS_TRAFFIC_ALL`), evidence retention and any lock, creating the per-environment Workload Identity pools for keyless deploys, the billing account for the budget alert, and Cloud Tasks, Model Armor and Identity Platform tenants (not in this change).

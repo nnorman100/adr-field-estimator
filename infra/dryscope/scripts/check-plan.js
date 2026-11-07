@@ -11,7 +11,7 @@
 //   - the mocked plans that `terraform test -json -verbose` prints (scripts/check.sh), and
 //   - the owner's saved plan before an apply: `terraform show -json test.tfplan > test.json`.
 //
-//   node check-plan.js <data|app> <test|live> [--allow-updates] <plan.json | stream | ->
+//   node check-plan.js <data|app> <test|live> <plan.json | stream | ->
 //   node check-plan.js export <stream | -> > fixture.json   (first mocked plan, trimmed)
 //
 // The table is deliberately written out here: adding a resource or a grant means changing it
@@ -152,13 +152,15 @@ function expectedPlan(root, env) {
       repository: `dryscope-${env}`,
       location: REGION,
     };
-    // Present only after the owner supplies a repository-scoped principal set.
+    // Present only after the owner supplies a repository-scoped principal set from this
+    // environment's own pool.
     const wif = 'google_service_account_iam_member.deploy_workload_identity[0]';
     optional.add(wif);
     grants[wif] = {
       role: 'roles/iam.workloadIdentityUser',
-      member:
-        /^principalSet:\/\/iam\.googleapis\.com\/projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/*]+\/attribute\.(repository_id|repository)\/[^*]+$/,
+      member: new RegExp(
+        `^principalSet://iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/dryscope-${env}/attribute\\.(repository_id|repository)/[^*]+$`,
+      ),
       condition: null,
       service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-deploy-${env}@${PROJECT}.iam.gserviceaccount.com`,
     };
@@ -285,7 +287,7 @@ const same = (want, got) =>
 const empty = (v) => v == null || (Array.isArray(v) && v.length === 0);
 
 /** Returns a list of problems; an empty list means the plan matches the table. */
-function checkPlan(resourceChanges, { root, environment, allowUpdates = false, complete = true }) {
+function checkPlan(resourceChanges, { root, environment, complete = true }) {
   const problems = [];
   const want = expectedPlan(root, environment);
   const byAddress = new Map(resourceChanges.map((rc) => [rc.address, rc]));
@@ -294,7 +296,7 @@ function checkPlan(resourceChanges, { root, environment, allowUpdates = false, c
     const actions = rc.change?.actions ?? [];
     if (actions.includes('delete')) {
       problems.push(`${rc.address}: plan would delete or replace it (${actions.join(', ')})`);
-    } else if (actions.includes('update') && !allowUpdates) {
+    } else if (actions.includes('update')) {
       problems.push(`${rc.address}: plan would change it in place; a first apply only creates`);
     } else if (!actions.every((a) => ['create', 'no-op', 'read', 'update'].includes(a))) {
       problems.push(`${rc.address}: unexpected plan action ${actions.join(', ')}`);
@@ -424,9 +426,7 @@ const trim = (rcs) =>
     change: { actions: rc.change.actions, after: scrub(rc) },
   }));
 
-async function main(argv) {
-  const args = argv.filter((a) => !a.startsWith('--'));
-  const allowUpdates = argv.includes('--allow-updates');
+async function main(args) {
   if (args[0] === 'export') {
     const plans = await readPlans(args[1]);
     process.stdout.write(`${JSON.stringify({ resource_changes: trim(plans[0]) }, null, 1)}\n`);
@@ -434,9 +434,7 @@ async function main(argv) {
   }
   const [root, environment, file] = args;
   if (!['data', 'app'].includes(root) || !['test', 'live'].includes(environment) || !file) {
-    console.error(
-      'usage: check-plan.js <data|app> <test|live> [--allow-updates] <plan.json|stream|->',
-    );
+    console.error('usage: check-plan.js <data|app> <test|live> <plan.json|stream|->');
     return 2;
   }
   const plans = await readPlans(file);
@@ -448,7 +446,7 @@ async function main(argv) {
   plans.forEach((plan, i) => {
     // A mocked run that expects a validation failure plans only part of the root, so
     // only the first plan (or a single saved plan) must contain everything.
-    for (const problem of checkPlan(plan, { root, environment, allowUpdates, complete: i === 0 })) {
+    for (const problem of checkPlan(plan, { root, environment, complete: i === 0 })) {
       failed += 1;
       console.error(`plan ${i + 1}: ${problem}`);
     }
