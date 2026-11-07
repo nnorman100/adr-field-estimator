@@ -43,7 +43,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Update `docs/STATUS.md` if a feature's state changes.
 
 ## Risk and merging
-Pull requests merge automatically once every check passes and the review is done; high-risk work needs two independent reviews (this supersedes D-009). Deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
+Pull requests merge automatically once every check passes and the review is done; high-risk work needs two separate independent reviews on top of the pipeline review, from models that did not write the code (this supersedes D-009). Deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
 
 ## How to work
 1. Read the relevant doc first (`docs/company-workspaces.md` for auth/workspaces, `docs/firebase-isolation.md` for cloud, `docs/pricing-source.md` for prices).

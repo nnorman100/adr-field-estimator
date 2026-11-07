@@ -39,7 +39,7 @@ module.exports = [
     languageOptions: { sourceType: 'module', globals: { ...globals.browser } },
   },
   {
-    files: ['tests/test_required_docs.js'],
+    files: ['tests/test_required_docs.js', 'tests/test_ai_inventory.js'],
     languageOptions: { sourceType: 'module' },
   },
   {
