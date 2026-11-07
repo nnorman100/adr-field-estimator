@@ -3,7 +3,6 @@
   "files": [
     "backend/main.py",
     "backend/price_book_store.py",
-    "backend/price_table.py",
     "backend/workspaces.py",
     "public/app.css",
     "public/app.js",
