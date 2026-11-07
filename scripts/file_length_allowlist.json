@@ -10,7 +10,6 @@
     "public/prices.js",
     "public/scope-items.js",
     "public/workspaces.js",
-    "scripts/auto_deploy.py",
     "tests/browser/photo-originals.spec.js",
     "tests/browser/prices.spec.js",
     "tests/browser/scope-items.spec.js",
