@@ -49,7 +49,7 @@ function harness(withRestores = false) {
     context.makeButton = context.button;
     context.initialState = context.state;
     vm.runInNewContext(
-      fs.readFileSync('public/app.js', 'utf8') +
+      require('./app_scripts')() +
         `
         Object.assign(state, initialState, {user: {uid: 'reader'}});
         globalThis.mutationApi = jsonApi;

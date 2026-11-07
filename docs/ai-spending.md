@@ -169,3 +169,16 @@ remain open until observed. No production service or database was changed here.
 Kun's input: research provider billing and existing call boundaries before choosing
 the mechanism; use one transactional invariant across features and test concurrent
 and crash behavior, rather than adding independent counters per feature.
+
+## Code boundaries
+
+`backend/ai_generation.py` owns counted generation, reservations and bounded ledger
+cleanup. `backend/main.py` binds it to the existing provider client, storage access,
+workspace setting and logger; the routes retain their generation entry points.
+`public/ai-spending-ui.js` owns authenticated dispatch and the existing per-user,
+per-company cooldowns. The app shell loads it before `app.js` and precaches both.
+`InsightUI.dashboardUsage` composes the existing request-count card and monthly
+spending line in their original order. SDK wire and emulator reservation cases live
+in `tests/test_ai_spending_sdk.py` and `tests/ai_spending_emulator.py`; the emulator
+case keeps its entry point in the existing CI collector, with the same assertions
+and shared fixtures as before extraction.

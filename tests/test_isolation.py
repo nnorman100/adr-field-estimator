@@ -129,5 +129,5 @@ def test_no_shared_api_url_in_either_frontend():
     assert public == (ROOT / 'index.html').read_bytes()
     assert b'219826144890' not in public
     assert b'.run.app' not in public
-    app = (ROOT / 'public' / 'app.js').read_text()
+    app = ''.join((ROOT / 'public' / name).read_text() for name in ('ai-spending-ui.js', 'app.js'))
     assert 'fetch(path,' in app and '219826144890' not in app

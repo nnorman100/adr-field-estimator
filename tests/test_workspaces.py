@@ -31,6 +31,7 @@ from backend.workspaces import (
 from backend.inspection_store import Conflict, Limited
 from backend.workspace_migration import migrate
 from tests.fakes import ADR_PROFILE, FakeCompanyStore, FakeStore, png
+from tests.ai_spending_fakes import counting_client, confirmed_scope
 from tests.test_voice_notes import note as voice_note
 
 ID = 'ADR-INS-' + 'a' * 32
@@ -123,20 +124,8 @@ def api(store, monkeypatch):
                 if getattr(dep.call, '__name__', '') == 'get_job_store':
                     bm.app.dependency_overrides[dep.call] = lambda: store
 
-    async def generate(schema, *args, **kwargs):
-        return AIResult(summary='Confirmed scope.', suggestions=[], unpriced_work=[])
-
-    async def count_tokens(**kwargs):
-        return SimpleNamespace(total_tokens=100)
-
-    monkeypatch.setattr(bm, 'generate', generate)
-    monkeypatch.setattr(
-        bm,
-        'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(count_tokens=count_tokens))
-        ),
-    )
+    monkeypatch.setattr(bm, 'generate', confirmed_scope)
+    monkeypatch.setattr(bm, 'get_ai_client', counting_client)
     with TestClient(
         bm.app, headers={'X-ADR-Workspace-Protocol': '1', 'Authorization': 'Bearer synthetic'}
     ) as client:

@@ -78,7 +78,7 @@ function load({
   context.window = context.self = context;
   if (debug !== undefined) context.FIREBASE_APPCHECK_DEBUG_TOKEN = debug;
   vm.runInNewContext(
-    fs.readFileSync('public/app.js', 'utf8') +
+    require('./app_scripts')() +
       ';globalThis.hooks={state,api,connectLive,loadAppCheck,activateAppCheck:siteKey=>activateAppCheck(firebaseApp,sdk,siteKey)};',
     Object.assign(context, { firebaseApp, sdk }),
     { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER },

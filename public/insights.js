@@ -267,6 +267,10 @@ window.InsightUI = (() => {
     }
     load();
   }
+  function dashboardUsage(target) {
+    usage(target);
+    spending(target);
+  }
   function spending(target) {
     if (state.session.role !== 'owner') return;
     const requested = identity(),
@@ -310,5 +314,5 @@ window.InsightUI = (() => {
       if ($('accountMenu').open) refreshAccount();
     }),
   );
-  return { reset, job, row, support, usage, spending, account, enabled };
+  return { reset, job, row, support, usage, spending, dashboardUsage, account, enabled };
 })();
