@@ -442,16 +442,6 @@ describe.each(['data', 'app'])('destroy guards, %s root', (root) => {
         detail: `Resource ${address} has lifecycle.prevent_destroy set, but the plan calls for this resource to be destroyed.`,
       },
     });
-  const applied = (status) =>
-    JSON.stringify({
-      '@type': 'test_run',
-      test_run: {
-        path: 'guards/guards.tftest.hcl',
-        run: 'create_everything',
-        progress: 'complete',
-        status,
-      },
-    });
   const stream = (addresses, status = 'pass', runs = REQUIRED_RUNS[root]) => [
     ...runs.map((name) => finished(name, status)),
     ...addresses.map(refusal),
