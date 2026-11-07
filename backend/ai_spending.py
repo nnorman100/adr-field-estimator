@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException
+from google.api_core.exceptions import Aborted
 
 DEFAULT_CAP = 10_000_000
 LIVE_MARGIN = 2_000_000
@@ -17,7 +18,7 @@ HELD_RETRY_SECONDS = 60
 REST_INPUT_LIMIT = 1_048_576
 REST_OUTPUT_LIMIT = 65_536
 REST_OUTPUT_LIMITS = dict(
-    audit=16_384, scope=4096, ocr=1024, transcribe=8192, job_summary=2048, drying_watch=2048
+    audit=16_384, scope=16_384, ocr=8192, transcribe=8192, job_summary=2048, drying_watch=2048
 )
 # Standard non-global list prices, without promotional credits, checked 2026-11-06.
 # https://cloud.google.com/model-garden/pricing
@@ -86,6 +87,16 @@ class CompanySpending:
     def ref(self, collection, identifier):
         return self.store.db.collection(collection).document(identifier)
 
+    def _atomic(self, callback):
+        try:
+            return self.store._atomic(callback)
+        except (Aborted, ValueError) as error:
+            # Firestore wraps exhausted commit retries in ValueError from Aborted.
+            # Keep ordinary validation errors and other storage failures distinct.
+            if isinstance(error, Aborted) or isinstance(error.__cause__, Aborted):
+                raise limited(False) from error
+            raise
+
     @staticmethod
     def read(ref, tx):
         snapshot = ref.get(transaction=tx)
@@ -138,7 +149,7 @@ class CompanySpending:
             tx.create(reservation, hold)
             return identifier
 
-        return self.store._atomic(acquire)
+        return self._atomic(acquire)
 
     def check_available(self, amount):
         """Avoid token-count calls for an already refused request; reserve still checks atomically."""
@@ -171,7 +182,7 @@ class CompanySpending:
             tx.set(month_ref, month)
             tx.set(ref, hold)
 
-        self.store._atomic(finish)
+        self._atomic(finish)
 
     def live_usage(self, identifier, estimate):
         """Account before reporting exhaustion; raising inside the transaction would undo it.
@@ -198,7 +209,7 @@ class CompanySpending:
                 return None
             return month['spent_microusd'] + amount >= cap
 
-        return self.store._atomic(update)
+        return self._atomic(update)
 
     def summary(self):
         def view(tx):
@@ -210,7 +221,7 @@ class CompanySpending:
                 live_margin_microusd=LIVE_MARGIN,
             )
 
-        return self.store._atomic(view)
+        return self._atomic(view)
 
 
 def owner_spending(store, uid, company_id):

@@ -54,8 +54,13 @@ that earlier precheck.
 The hold is counted input times $1.65 per million tokens plus the operation's
 explicit output maximum times $8.25 per million tokens, rounded up to micro-USD.
 These standard non-global rates omit promotional discounts. Output limits include
-thinking: audit 16,384; scope 4,096; OCR 1,024; voice transcription 8,192; job summary
-and drying summary 2,048 each. The SDK sends exactly that maximum. Small OCR calls
+thinking: audit 16,384; scope 16,384; OCR 8,192; voice transcription 8,192; job summary
+and drying summary 2,048 each. OCR keeps the model's existing default thinking;
+scope keeps LOW thinking. The larger bounds provide headroom for reasoning and
+quoted scope changes without changing those thinking settings. Observed real-provider
+token counts and count-versus-billed-input comparisons remain release checks;
+offline tests verify the emitted limits and corresponding holds, not model accuracy.
+The SDK sends exactly that maximum. Small OCR calls
 therefore reserve their own counted bound rather than the model's absolute $2.27
 maximum. Successful usage metadata settles input plus output/thinking tokens;
 cached input receives no discount. A hold can still refuse a request whose eventual
@@ -92,6 +97,13 @@ refused reading does not stop other queued drafts' manual work from syncing. It 
 photos, voice-note ledger or agreement because of that refusal. Offline notes may
 still be recorded and synced as pending field work. Ordinary manual work, document
 reads and signing a previously prepared eligible agreement do not consult spending.
+
+Company-ledger transaction contention also returns the held-allowance 429 with
+`Retry-After: 60`, including Firestore's exhausted commit retries wrapped around
+an `Aborted` error. A refused OCR attempt keeps its pending photo and reading state,
+and the same client cooldown applies. Contention while settling a paid result still
+returns that result and retains the hold. Unrelated validation and storage failures
+keep their existing error handling.
 
 ## Live: soft threshold, chosen by the owner
 
