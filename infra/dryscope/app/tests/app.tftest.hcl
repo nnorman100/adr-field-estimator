@@ -1,0 +1,189 @@
+# Mocked checks for the app root. Nothing here reaches Google Cloud: the mock
+# provider answers every call. Run once per environment:
+#   terraform test -var-file=envs/test.tfvars
+#   terraform test -var-file=envs/live.tfvars
+
+mock_provider "google" {}
+
+# Values the release controller and the owner supply at apply time.
+variables {
+  api_image   = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/web@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  live_image  = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  alert_email = "alerts@example.invalid"
+}
+
+run "services_are_central_protected_and_use_their_own_accounts" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : s.location == "us-central1"])
+    error_message = "Both services must be in us-central1."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : s.deletion_protection == true])
+    error_message = "Cloud Run deletion protection must be on."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : endswith(s.name, "-${var.environment}")])
+    error_message = "Service names carry the environment."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.svc["api"].template[0].service_account == "dryscope-api-${var.environment}@alert-disaster-field-2026.iam.gserviceaccount.com"
+    error_message = "The web app runs as its own environment's account."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.svc["live"].template[0].service_account == "dryscope-live-${var.environment}@alert-disaster-field-2026.iam.gserviceaccount.com"
+    error_message = "The relay runs as its own environment's account."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : alltrue([for c in s.template[0].containers : can(regex("@sha256:", c.image))])])
+    error_message = "Images must be pinned by digest."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : s.name != "alert-disaster-field-estimator"])
+    error_message = "The legacy us-west2 service must not be managed here."
+  }
+}
+
+run "relay_keeps_long_sockets_on_one_instance" {
+  command = plan
+
+  assert {
+    condition     = google_cloud_run_v2_service.svc["live"].template[0].timeout == "3600s"
+    error_message = "The relay needs the 3600-second request timeout."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.svc["live"].template[0].session_affinity == true
+    error_message = "The relay needs session affinity."
+  }
+}
+
+run "test_scales_to_zero_and_live_stays_warm" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : s.template[0].scaling[0].min_instance_count == 0]) || var.environment == "live"
+    error_message = "Test services must scale to zero."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : s.template[0].scaling[0].min_instance_count >= 1]) || var.environment == "test"
+    error_message = "Live services keep a warm instance."
+  }
+}
+
+run "secrets_are_references_only" {
+  command = plan
+
+  assert {
+    condition = alltrue(flatten([
+      for k, s in google_cloud_run_v2_service.svc : [
+        for c in s.template[0].containers : [
+          for e in c.env : (e.value == null || e.value == "") == (length(e.value_source) == 1)
+        ]
+      ]
+    ]))
+    error_message = "A secret variable has a reference and no literal value; a plain one has the reverse."
+  }
+  assert {
+    condition = alltrue(flatten([
+      for k, s in google_cloud_run_v2_service.svc : [
+        for c in s.template[0].containers : [
+          for e in c.env : startswith(e.value_source[0].secret_key_ref[0].secret, "dryscope-${var.environment}-") if length(e.value_source) == 1
+        ]
+      ]
+    ]))
+    error_message = "Secret references must name this environment's secrets."
+  }
+}
+
+run "data_stays_inside_this_environment" {
+  command = plan
+
+  assert {
+    condition     = contains(google_cloud_run_v2_service.svc["api"].template[0].volumes[0].cloud_sql_instance[0].instances, "alert-disaster-field-2026:us-central1:dryscope-${var.environment}-pg")
+    error_message = "The service connects to this environment's SQL instance."
+  }
+  assert {
+    condition     = contains([for e in google_cloud_run_v2_service.svc["api"].template[0].containers[0].env : e.value], "dryscope-field-${var.environment}")
+    error_message = "The service names this environment's Firestore database explicitly."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service_iam_member.deploy["api"].role == "roles/run.developer"
+    error_message = "The deploy account gets the narrow developer role on the service."
+  }
+}
+
+run "alerts_exist_and_only_live_probes_health" {
+  command = plan
+
+  assert {
+    condition     = length(google_monitoring_alert_policy.server_errors) == 2 && length(google_monitoring_alert_policy.sql) == 2
+    error_message = "Server-error alerts for both services and two database alerts."
+  }
+  assert {
+    condition     = (length(google_monitoring_uptime_check_config.api_health) == 1) == (var.environment == "live")
+    error_message = "Only live probes health."
+  }
+}
+
+run "budget_is_a_stub_until_a_billing_account_is_given" {
+  command = plan
+
+  assert {
+    condition     = length(google_billing_budget.monthly) == 0
+    error_message = "No budget without a billing account."
+  }
+}
+
+run "budget_alerts_when_a_billing_account_is_given" {
+  command = plan
+
+  variables {
+    billing_account_id = "000000-000000-000000"
+  }
+
+  assert {
+    condition     = length(google_billing_budget.monthly) == 1
+    error_message = "A billing account creates the budget alert."
+  }
+}
+
+run "wrong_project_is_refused" {
+  command = plan
+
+  variables {
+    project_id = "mitigation-project"
+  }
+
+  expect_failures = [var.project_id]
+}
+
+run "legacy_region_is_refused" {
+  command = plan
+
+  variables {
+    region = "us-west2"
+  }
+
+  expect_failures = [var.region]
+}
+
+run "tagged_image_is_refused" {
+  command = plan
+
+  variables {
+    api_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/web:latest"
+  }
+
+  expect_failures = [var.api_image]
+}
+
+run "image_from_another_project_is_refused" {
+  command = plan
+
+  variables {
+    live_image = "us-west2-docker.pkg.dev/mitigation-project/other/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }
+
+  expect_failures = [var.live_image]
+}

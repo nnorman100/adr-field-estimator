@@ -43,6 +43,21 @@ Change `DEFAULT_PRICE_BOOKS` back to `off` in a reviewed PR, then release that c
 - A company that switched stays switched: no release can return it to its rate book. To change its prices the flag must be on.
 - Unpublished working copies stay saved. Turning the flag on again brings them back.
 
+## Apply the central Terraform
+`infra/dryscope/` holds the Terraform for the rebuilt app's central test and live resources (`data` and `app` roots; see its [README](../infra/dryscope/README.md)). It has not been applied. The owner reviews every plan; an agent never runs plan or apply against the project. Everything is new and in `us-central1`; nothing touches the `us-west2` service, the `(default)` database, the old evidence bucket or the existing accounts.
+
+1. Run the offline checks: `TERRAFORM=<binary> infra/dryscope/scripts/check.sh` and `python -m pytest tests/test_infra_terraform.py -q -p no:cacheprovider`.
+2. One time, create the state bucket (versioned, private, uniform access) named in `infra/dryscope/*/envs/backend-*.hcl`, in `us-central1`, with `gcloud storage buckets create ... --uniform-bucket-level-access --public-access-prevention`, then `gcloud storage buckets update ... --versioning`. Give only the applying identity access.
+3. Start with **test**. In `infra/dryscope/data`: `terraform init -backend-config=envs/backend-test.hcl`, then `terraform plan -var-file=envs/test.tfvars -out=test.tfplan`. Read the plan: every line must be a create. Any update, replace or destroy line, or any resource outside `dryscope-*` names, stops the apply.
+4. `terraform apply test.tfplan`. Cloud SQL takes several minutes. Then add a value to each secret the data root created (`gcloud secrets versions add dryscope-test-<name> --data-file=-`), never through Terraform or chat.
+5. Run the schema migrator as `dryscope-migrate-test` (a numbered migration creates the non-owner runtime role with row-level security forced and grants it table rights; Terraform only creates the IAM database users).
+6. Build and push the first images into the `dryscope-test` Artifact Registry repository by digest, then in `infra/dryscope/app` plan and apply with `-var-file=envs/test.tfvars -var api_image=<digest ref> -var live_image=<digest ref>` and `TF_VAR_alert_email` set in the shell (the address is never in git).
+7. Verify with the test identity: it reads only test resources and is refused on live ones. Check an alert test notification, the uptime check (live only), and that test services scale to zero.
+8. Repeat for **live** with `envs/live.tfvars`, only after the test run is clean and the owner approves. The `project_iam_member` lines (conditioned Cloud SQL and Firestore access, Vertex AI) and the `allUsers` invoker on both Cloud Run services are IAM changes: confirm each in the plan.
+9. For keyless deploys, create the GitHub workload identity pool, then pass `-var workload_identity_principal_set=principalSet://...` to the data root. For the budget alert, pass `-var billing_account_id=...` to the app root.
+
+**Roll back.** Nothing is deleted by Terraform. To stop traffic, route Cloud Run traffic to an earlier revision or pass an earlier image digest. The old us-west2 service keeps serving until the cutover plan says otherwise. Removing a protected resource is a separate owner operation: lift its protection by hand, with a backup and a recorded reason.
+
 ## Common problems
 | Symptom | First checks |
 |---|---|

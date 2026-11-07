@@ -62,7 +62,7 @@ database names are proposals.
 | Schema changes | none; one-off scripts | numbered Drizzle migrations, additive, run before traffic | Gap | S2 |
 | Identity | Firebase Auth plus private memberships | Identity Platform with a tenant per company and TOTP for privileged users | Gap | S3, S8 identity mapping |
 | Pricing and documents | Python Decimal (`claims.py`, `pricing_v2.py`) | TypeScript calculator with zero byte or hash differences, proved by an A/B harness | Gap | S4 |
-| Infrastructure and release | scripts and `.github/workflows/deploy.yml` | Terraform (separate data and app roots) through Actions OIDC, test then live; App Lifecycle Manager after launch | Gap | S2, S11 |
+| Infrastructure and release | scripts and `.github/workflows/deploy.yml` | Terraform (separate data and app roots) through Actions OIDC, test then live; App Lifecycle Manager after launch | Partly: roots written in `infra/dryscope/`, not applied | S2 apply and release controller, S11 |
 | Tests | pytest, `node:test`, Playwright | new tests in Vitest (the required-docs test is the first); old suites convert by area without weakening | Gap | S1 onward |
 
 Still **[open]** (owner gates in the rebuild plan, section 10): the Google Cloud organization (R1),
