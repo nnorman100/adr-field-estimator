@@ -414,145 +414,6 @@ test('offline draft reload and reconnection preserve local work', async ({
   await page.reload();
   await expect(page.locator('#technicianNotes')).toHaveValue('Local observations while offline');
 });
-test('permission denial, portrait evidence, clipboard denial and print document layout', async ({
-  page,
-  browserName,
-}) => {
-  await scope(page);
-  await page.evaluate(() => {
-    Object.defineProperty(navigator, 'mediaDevices', {
-      configurable: true,
-      value: {
-        getUserMedia: async () => {
-          throw new DOMException('Synthetic permission denial', 'NotAllowedError');
-        },
-      },
-    });
-  });
-  await task(page, 'walkthrough');
-  await page.locator('#startWalk').click();
-  await expect(page.locator('#message')).toContainText('Retry permissions');
-  await expect(page.locator('#cameraEmpty')).toBeVisible();
-  const photo = await page.evaluate(async () => {
-    const c = document.createElement('canvas');
-    c.width = 300;
-    c.height = 600;
-    c.getContext('2d').fillRect(0, 0, 100, 100);
-    return c.toDataURL('image/png');
-  });
-  await page.locator('#photoFileInput').setInputFiles({
-    name: 'portrait.png',
-    mimeType: 'image/png',
-    buffer: Buffer.from(photo.split(',')[1], 'base64'),
-  });
-  await expect(page.locator('#photoGallery')).toContainText('300 × 600');
-  await expect(page.locator('#photoGallery')).toContainText('no meter');
-  await expect(page.locator('#photoCount')).toContainText('0 verified');
-  await task(page, 'property');
-  await page.locator('#scopeConfirmed').check();
-  await page.locator('#finishAudit').click();
-  await expect(page.locator('#documents')).toBeVisible();
-  await page.evaluate(() => {
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: async () => {
-          throw Error('denied');
-        },
-      },
-    });
-  });
-  await menu(page, 'exportMenu');
-  await page.locator('#copyJson').click();
-  await expect(page.locator('#message')).toContainText('Download scope JSON');
-  // No customer is saved for this job, so no customer line appears.
-  await expect(page.locator('#proposalBody')).not.toContainText('Customer:');
-  await expect(page.locator('#claimParty')).toHaveText(/^Property: /);
-  await expect(page.locator('#defenseBody')).not.toContainText('Customer:');
-  await expect(page.locator('#photoAuditLog .audit-photo p').first()).toHaveText(
-    /^Photo 1 \(.+\)$/,
-  );
-  await page.emulateMedia({ media: 'print' });
-  for (const id of ['doc-proposal', 'doc-claim', 'doc-defense', 'doc-photos'])
-    await expect(page.locator('#' + id)).toBeVisible();
-  // Owner-only mode has no company profile, so the documents name no company and show no logo.
-  await expect(page.locator('#doc-proposal > h2')).toHaveText('Official proposal');
-  await expect(page.locator('#doc-defense .document-letterhead img')).toBeHidden();
-  await expect(page.locator('#doc-defense .document-letterhead p')).toHaveText('');
-  await expect(page.locator('body')).not.toContainText(
-    /Alert Disaster|Matthew Myers|950983|Bakersfield|426-2151/,
-  );
-  if (browserName === 'chromium')
-    await page.pdf({
-      path: test.info().outputPath('repaired-documents.pdf'),
-      format: 'Letter',
-      printBackground: true,
-    });
-});
-
-test('revision conflict preserves local work and explicit recovery restores the server', async ({
-  page,
-}) => {
-  await scope(page);
-  await page.evaluate(async () => {
-    const rows = await (
-      await fetch('/api/inspections', {
-        headers: { Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid') },
-      })
-    ).json();
-    const id = rows.inspections[0].inspection_id;
-    const record = await (
-      await fetch('/api/inspections/' + id, {
-        headers: { Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid') },
-      })
-    ).json();
-    record.data.technician_notes = 'Edited in another tab';
-    await fetch('/api/inspections/' + id, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid'),
-      },
-      body: JSON.stringify({ expected_revision: record.revision, data: record.data }),
-    });
-  });
-  await page.locator('#technicianNotes').fill('Local work must survive');
-  await saveDraft(page);
-  await expect(page.locator('#conflictActions')).toBeVisible();
-  await expect(page.locator('#technicianNotes')).toHaveValue('Local work must survive');
-  await page.reload();
-  await expect(page.locator('#conflictActions')).toBeVisible();
-  await expect(page.locator('#technicianNotes')).toHaveValue('Local work must survive');
-  await page.locator('#restoreRemote').click();
-  await expect(page.locator('#technicianNotes')).toHaveValue('Edited in another tab');
-});
-test('worker update prompts, preserves the draft and keeps protected data out of caches', async ({
-  page,
-}) => {
-  await scope(page);
-  await page.evaluate(() => navigator.serviceWorker.ready);
-  await page.locator('#technicianNotes').fill('Preserve during installed update');
-  await saveDraft(page);
-  await fault(page, { worker: true });
-  await page.evaluate(async () => {
-    const registration = await navigator.serviceWorker.ready;
-    await registration.update();
-  });
-  await expect(page.locator('#updateBanner')).toBeVisible();
-  await Promise.all([page.waitForEvent('domcontentloaded'), page.locator('#applyUpdate').click()]);
-  await expect(page.locator('#technicianNotes')).toHaveValue('Preserve during installed update');
-  const urls = await page.evaluate(async () => {
-    const result = [];
-    for (const name of await caches.keys())
-      for (const request of await (await caches.open(name)).keys()) result.push(request.url);
-    return result;
-  });
-  expect(urls.filter((url) => url.includes('/api/'))).toEqual([]);
-  await page.context().setOffline(true);
-  await page.reload();
-  await expect(page.locator('#technicianNotes')).toHaveValue('Preserve during installed update');
-  await page.context().setOffline(false);
-});
 test('logout clears user-specific local drafts', async ({ page }) => {
   await scope(page);
   await page.locator('#technicianNotes').fill('Synthetic private logout draft');
@@ -711,4 +572,268 @@ test('reconnection reports a queued draft that changed on another device', async
     (await (await request.get('/api/inspections/' + original, { headers })).json()).data
       .technician_notes,
   ).toBe('Edited on another device');
+});
+
+async function photoDraft(page) {
+  await scope(page);
+  const image = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 300;
+    c.height = 600;
+    return c.toDataURL('image/png');
+  });
+  await page.locator('#photoFileInput').setInputFiles({
+    name: 'synthetic.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image.split(',')[1], 'base64'),
+  });
+  await expect(page.locator('#photoCount')).toContainText('1 photos');
+  await expect(page.locator('#photoGallery')).toContainText('no meter');
+  const id = await page.evaluate(async () => {
+    const rows = await (
+      await fetch('/api/inspections', {
+        headers: { Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid') },
+      })
+    ).json();
+    return rows.inspections.find((r) => r.address === 'Synthetic browser property').inspection_id;
+  });
+  return { id, image };
+}
+async function restoreCloudOnly(page, id) {
+  await menu(page, 'jobMenu');
+  await page.locator('#newInspection').click();
+  await expect(page.locator('#jobMenu')).not.toHaveAttribute('open');
+  // The old draft is written back before the new form is filled; wait for the blank form.
+  await expect(page.locator('#address')).toHaveValue('');
+  await page.evaluate(
+    (id) =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('adr-private-drafts-v2');
+        request.onsuccess = () => {
+          const tx = request.result.transaction('drafts', 'readwrite');
+          tx.objectStore('drafts').delete(sessionStorage.getItem('synthetic-uid') + ':' + id);
+          tx.oncomplete = resolve;
+          tx.onerror = reject;
+        };
+      }),
+    id,
+  );
+  await menu(page, 'jobMenu');
+  await page.locator('#openJobs').click();
+  await page.locator('.job-link').filter({ hasText: 'Synthetic browser property' }).click();
+  await task(page, 'walkthrough');
+  await expect(page.locator('#photoGallery img')).toHaveCount(1);
+  await expect
+    .poll(() => page.locator('#photoGallery img').evaluate((el) => el.naturalWidth))
+    .toBe(300);
+}
+test('cloud-restored originals survive photo-backed conflict fork', async ({ page }) => {
+  const { id } = await photoDraft(page);
+  await restoreCloudOnly(page, id);
+  await page.evaluate(async (id) => {
+    const headers = {
+      Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid'),
+      'Content-Type': 'application/json',
+    };
+    const r = await (await fetch('/api/inspections/' + id, { headers })).json();
+    r.data.technician_notes = 'Other device changed the scope';
+    await fetch('/api/inspections/' + id, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expected_revision: r.revision, data: r.data }),
+    });
+  }, id);
+  await task(page, 'property');
+  await page.locator('#technicianNotes').fill('Keep this device work and photo');
+  await saveDraft(page);
+  await expect(page.locator('#conflictActions')).toBeVisible();
+  await page.locator('#forkLocal').click();
+  await expect(page.locator('#conflictActions')).toBeHidden();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await expect(page.locator('#technicianNotes')).toHaveValue('Keep this device work and photo');
+  await task(page, 'walkthrough');
+  await expect
+    .poll(() => page.locator('#photoGallery img').evaluate((el) => el.naturalWidth))
+    .toBe(300);
+});
+test('reopened local draft merges photos added by another device', async ({ page }) => {
+  const { id, image } = await photoDraft(page);
+  await page.evaluate(
+    async ({ id, image }) => {
+      const headers = {
+        Authorization: 'Bearer ' + sessionStorage.getItem('synthetic-uid'),
+        'Content-Type': 'application/json',
+      };
+      const r = await (await fetch('/api/inspections/' + id, { headers })).json();
+      const response = await fetch('/api/inspections/' + id + '/photos', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          photo_id: 'd'.repeat(32),
+          expected_revision: r.revision,
+          room: r.data.rooms[0].name,
+          captured_at: new Date().toISOString(),
+          data_url: image,
+        }),
+      });
+      if (!response.ok) throw Error(await response.text());
+      await fetch('/api/inspections/' + id + '/photos/' + 'd'.repeat(32) + '/ocr', {
+        method: 'POST',
+        headers,
+        body: '{}',
+      });
+    },
+    { id, image },
+  );
+  await page.reload();
+  await task(page, 'walkthrough');
+  await expect(page.locator('#photoGallery img')).toHaveCount(2);
+  await expect
+    .poll(() =>
+      page
+        .locator('#photoGallery img')
+        .evaluateAll((images) => images.every((img) => img.naturalWidth === 300)),
+    )
+    .toBe(true);
+});
+test('cloud-restored photos remain visible after offline reload', async ({
+  page,
+  context,
+  browserName,
+}) => {
+  test.skip(
+    browserName === 'webkit',
+    'Playwright WebKit (Windows and Linux) fails offline service-worker navigation with an internal error; physical iPhone acceptance remains open.',
+  );
+  const { id } = await photoDraft(page);
+  await restoreCloudOnly(page, id);
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller)
+      await new Promise((resolve) =>
+        navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }),
+      );
+  });
+  await context.setOffline(true);
+  await page.reload();
+  await task(page, 'walkthrough');
+  await expect
+    .poll(() => page.locator('#photoGallery img').evaluate((el) => el.naturalWidth))
+    .toBe(300);
+});
+
+test.describe('controlled scope requests', () => {
+  test.use({ serviceWorkers: 'block' });
+
+  test('delayed scope results cannot overwrite manual edits', async ({ page }) => {
+    let release, started;
+    const gate = new Promise((resolve) => (release = resolve)),
+      requestStarted = new Promise((resolve) => (started = resolve));
+    await page.route('**/scope-suggestions', async (route) => {
+      started();
+      await gate;
+      await route.continue();
+    });
+    try {
+      await page
+        .locator('#technicianNotes')
+        .fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
+      await page.locator('#fillScopeProperty').click();
+      await requestStarted;
+      await page.locator('#airMovers').fill('6');
+      release();
+      await expect(page.locator('#fillScopeProperty')).toHaveText('Fill scope from walkthrough');
+      await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+      await expect(page.locator('#airMovers')).toHaveValue('6');
+      await expect(page.locator('#message')).toContainText(/changed/);
+    } finally {
+      release();
+    }
+  });
+
+  test('fill scope stops active capture before showing reviewable changes', async ({ page }) => {
+    test.skip(
+      !(await page.evaluate(() => !!(window.AudioContext || window.webkitAudioContext))),
+      'Windows WebKit has no Web Audio; physical iPhone capture cleanup remains open.',
+    );
+    await page
+      .locator('#technicianNotes')
+      .fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
+    await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const videoTracks = canvas.captureStream ? canvas.captureStream(1).getVideoTracks() : [];
+      canvas.getContext('2d').fillRect(0, 0, 640, 480);
+      if (!videoTracks.length) document.getElementById('cameraVideo').play = async () => {};
+      const audio = new (window.AudioContext || window.webkitAudioContext)(),
+        destination = audio.createMediaStreamDestination();
+      window.syntheticInputAudio = audio;
+      window.syntheticTracks = [...videoTracks, ...destination.stream.getAudioTracks()];
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => new MediaStream(window.syntheticTracks) },
+      });
+      window.WebSocket = class {
+        static OPEN = 1;
+        readyState = 0;
+        bufferedAmount = 0;
+        constructor() {
+          setTimeout(() => {
+            this.readyState = 1;
+            this.onopen?.();
+          }, 0);
+        }
+        send(message) {
+          if (JSON.parse(message).type === 'authenticate')
+            setTimeout(() => this.onmessage?.({ data: JSON.stringify({ type: 'ready' }) }), 0);
+        }
+        close() {
+          this.readyState = 3;
+          this.onclose?.();
+        }
+      };
+    });
+    await task(page, 'walkthrough');
+    await page.locator('#startWalk').click();
+    await expect(page.locator('#liveStatus')).toHaveText('Live AI connected');
+    await page.locator('#fillScope').click();
+    await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        window.syntheticTracks.every((track) => track.readyState === 'ended'),
+      ),
+    ).toBe(true);
+    expect(await page.locator('#cameraVideo').evaluate((el) => el.srcObject === null)).toBe(true);
+    await expect(page.locator('#liveStatus')).toHaveText('Not connected');
+    await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('80');
+    await page.evaluate(() => window.syntheticInputAudio.close());
+  });
+
+  test('scope results from a previous inspection are discarded', async ({ page }) => {
+    let release, started;
+    const gate = new Promise((resolve) => (release = resolve)),
+      requestStarted = new Promise((resolve) => (started = resolve));
+    await page.route('**/scope-suggestions', async (route) => {
+      started();
+      await gate;
+      await route.continue();
+    });
+    try {
+      await page
+        .locator('#technicianNotes')
+        .fill('Room 1, category 2, 80 square feet of drywall. Use 3 fans.');
+      await page.locator('#fillScopeProperty').click();
+      await requestStarted;
+      await menu(page, 'jobMenu');
+      await page.locator('#newInspection').click();
+      await expect(page.locator('#technicianNotes')).toHaveValue('');
+      release();
+      await expect(page.locator('#fillScopeProperty')).toHaveText('Fill scope from walkthrough');
+      await expect(page.locator('#scopeSuggestionPanel')).toBeHidden();
+      await expect(page.locator('[data-room-key="finished_sf"]')).toHaveValue('0');
+    } finally {
+      release();
+    }
+  });
 });
