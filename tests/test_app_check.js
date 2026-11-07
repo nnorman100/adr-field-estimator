@@ -4,6 +4,7 @@ const assert = require('node:assert/strict'),
   vm = require('node:vm'),
   { registerHooks } = require('node:module'),
   { pathToFileURL } = require('node:url');
+const PROJECT_HOST = 'alert-disaster-field-2026.web.app';
 const LIVE_URL = 'wss://alert-disaster-field-estimator-545776254070.us-west2.run.app/api/live';
 // app.js imports the SDK by its Hosting path; serve those imports from public/, or fail them while vendorMissing is set.
 const imports = [];
@@ -22,7 +23,7 @@ registerHooks({
 const firebaseApp = { name: '[DEFAULT]' };
 // Runs the production app.js; activateAppCheck receives a fake modular App Check SDK whose getToken decides what attestation returns.
 function load({
-  hostname = 'alert-disaster-field-2026.web.app',
+  hostname = PROJECT_HOST,
   debug,
   getToken = async () => ({ token: 'app-check-token' }),
 } = {}) {
@@ -100,6 +101,18 @@ function load({
     console.log(
       'PASS: no site key loads no App Check script, activates nothing and sends no App Check header',
     );
+  }
+  {
+    const { calls, api, context } = load();
+    for (const path of ['/api/inspections', '/api/ocr', '/api/voice-notes/transcribe'])
+      await api(path, { pause: 'ocr' });
+    for (const { path } of calls.fetches)
+      assert.equal(new URL(path, context.location.href).origin, 'https://' + PROJECT_HOST);
+    assert.deepEqual(
+      calls.fetches.map((fetch) => fetch.path),
+      ['/api/inspections', '/api/ocr', '/api/voice-notes/transcribe'],
+    );
+    console.log('PASS: API dispatch sends each request to the same-origin Hosting path unchanged');
   }
   {
     const loaded = await load().loadAppCheck('site-key');
