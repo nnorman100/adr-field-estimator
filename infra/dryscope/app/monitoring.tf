@@ -80,7 +80,7 @@ resource "google_monitoring_alert_policy" "sql" {
   conditions {
     display_name = each.value.label
     condition_threshold {
-      filter          = "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"${local.n.sql_connection_name}\" AND metric.type = \"${each.value.metric}\""
+      filter          = "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"${var.project_id}:${local.n.sql_instance_name}\" AND metric.type = \"${each.value.metric}\""
       comparison      = "COMPARISON_GT"
       threshold_value = each.value.threshold
       duration        = each.value.duration

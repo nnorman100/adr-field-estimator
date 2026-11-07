@@ -121,6 +121,10 @@ run "alerts_exist_and_only_live_probes_health" {
     error_message = "Server-error alerts for both services and two database alerts."
   }
   assert {
+    condition     = alltrue([for k, p in google_monitoring_alert_policy.sql : strcontains(p.conditions[0].condition_threshold[0].filter, "resource.labels.database_id = \"alert-disaster-field-2026:dryscope-${var.environment}-pg\"")])
+    error_message = "Database alerts match Cloud SQL's project:instance monitoring identifier."
+  }
+  assert {
     condition     = (length(google_monitoring_uptime_check_config.api_health) == 1) == (var.environment == "live")
     error_message = "Only live probes health."
   }
