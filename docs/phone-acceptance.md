@@ -46,16 +46,18 @@ Each line is what you do, then what you should see.
    **Walk & Photo** and capture a photo. → The status reads **Offline · saved on phone**.
 6. Still in Airplane mode, swipe the app closed and reopen it from the Home Screen. → The app
    opens, and the new room, the measurement and the photo are all still there.
-7. Still in Airplane mode, tap **Offline notes** → **Record voice note**, talk for 20 seconds,
-   lock the phone for 10 seconds, unlock it and tap **Stop and save note**. → The note is listed
+7. Still in Airplane mode, tap **Offline notes** → **Record voice note**, describe the room for
+   20 seconds ("Kitchen, category two, fifty square feet of drywall removed"), lock the phone for
+   10 seconds, unlock it and tap **Stop and save note**. → The note is listed
    under **Voice notes**.
 8. Turn Airplane mode off, wait a minute, then tap **Review transcript**. → The status goes
    **Saving…** then **Saved**, each photo shows once, the voice note's words appear in the
-   walkthrough transcript, and **Transcript reviewed.** shows.
+   walkthrough transcript, and the app opens **Check Scope** with the **Scope from walkthrough**
+   summary filled from the note.
 
 **Live walkthrough with the earpiece**
 
-9. With the earpiece connected, tap **Back to live assistant**, then **Start walkthrough**, and
+9. With the earpiece connected, go back to **Walk & Photo**, tap **Back to live assistant** and
    allow camera and microphone; open **More walkthrough options**. → **Live AI connected** shows,
    the assistant speaks first in the earpiece, and what you say about the room appears under
    **Technician observations**.
