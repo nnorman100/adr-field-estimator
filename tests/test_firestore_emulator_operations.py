@@ -2,7 +2,7 @@
 
 Skipped unless FIRESTORE_EMULATOR_HOST is set. Run locally from the repository root:
     npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator \
-        "python -m pytest tests/test_firestore_emulator*.py -q -p no:cacheprovider"
+        "python -m pytest tests/test_firestore_emulator.py tests/test_firestore_emulator_operations.py -q -p no:cacheprovider"
 Evidence objects use the in-memory bucket; only Firestore is real here.
 
 The emulator resolves lock conflicts by timeout rather than production's wound-wait, so
@@ -17,9 +17,7 @@ import json
 import os
 import time
 import urllib.error
-import urllib.request
 from copy import deepcopy
-from types import SimpleNamespace
 import pytest
 
 EMULATOR = os.getenv('FIRESTORE_EMULATOR_HOST')
@@ -33,76 +31,23 @@ pytestmark = pytest.mark.skipif(
 # The demo- prefix keeps the client offline: no credentials, no real project.
 PROJECT = 'demo-adr-emulator'
 
-from google.api_core.exceptions import Aborted, ServiceUnavailable
-from google.auth.credentials import AnonymousCredentials
-from google.cloud import firestore
-import backend.inspection_store as inspection_store
+from google.api_core.exceptions import ServiceUnavailable
 from backend.adr_price_book import adr_rates
 from tests.adr_pricing import make_documents
 from backend.company_store import CompanyInspectionStore
 from backend.contracts import AIResult, InspectionData
-from backend.inspection_store import Conflict, InspectionStore, Limited
+from backend.inspection_store import Conflict, Limited
 from backend.workspaces import AccessDenied, MemberUpdate, WorkspaceStore
-from tests.fakes import ADR_PROFILE, Bucket, png
+from tests.fakes import ADR_PROFILE, png
 from tests.ai_spending_emulator import concurrently, company_spending_reservations
 from tests.test_backend import ID, data, sign_payload
-
-
-def client():
-    return firestore.Client(project=PROJECT, credentials=AnonymousCredentials())
-
-
-@pytest.fixture(autouse=True)
-def empty_database():
-    assert PROJECT.startswith('demo-')
-    request = urllib.request.Request(
-        f'http://{EMULATOR}/emulator/v1/projects/{PROJECT}/databases/(default)/documents',
-        method='DELETE',
-    )
-    urllib.request.urlopen(request, timeout=10).close()
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    moment = [1_000_000.0]
-    monkeypatch.setattr(inspection_store, 'time', SimpleNamespace(time=lambda: moment[0]))
-    return moment
-
-
-def instances(kind=InspectionStore, count=2):
-    """Separate clients stand in for separate Cloud Run instances sharing one database."""
-    bucket = Bucket()
-    return [kind(client(), bucket) for _ in range(count)]
-
-
-def contended(error):
-    """Emulator lock timeouts surface as Aborted, or as exhausted transaction retries."""
-    return isinstance(error, Aborted) or (
-        type(error) is ValueError and str(error).startswith('Failed to commit transaction')
-    )
-
-
-def outcomes(results, refused=Limited):
-    """Return the successes, asserting every failure is a refusal or emulator contention."""
-    unexpected = [
-        r
-        for r in results
-        if isinstance(r, Exception) and not isinstance(r, refused) and not contended(r)
-    ]
-    assert not unexpected, unexpected
-    return [r for r in results if not isinstance(r, Exception)]
-
-
-def stored(db, path):
-    snapshot = db.document(path).get()
-    return snapshot.to_dict() if snapshot.exists else None
-
-
-def counted(db, action):
-    return (stored(db, '_limits/owner') or {}).get(action, {}).get('count', 0)
-
-
 from tests.test_firestore_emulator import (
+    client,
+    empty_database,
+    clock,
+    instances,
+    outcomes,
+    stored,
     seed_company,
     audited,
     verified,
