@@ -158,7 +158,7 @@ Live stays the default walkthrough. **Offline notes** is a record-now, process-l
 - **Finish & review**, scope filling, on-device signing and signing-link creation wait until voice notes are transcribed and reviewed, or explicitly resolved. Finish stops an active recording first. Starting a recording online reserves the note and invalidates the current estimate and homeowner signing link before capturing observations. While offline, recording is blocked if a signing link is outstanding or an audited job’s link status has not been fetched on this device. Connect to check and cancel the link before recording; other offline work remains available.
 - The Walkthrough panel shows each note's status and how many notes and photos are waiting to upload. Temporary failures retry every minute. A note the server refuses for good stops retrying; **Play** replays its local audio. After typing its key facts, use **Remove**. On an unsigned draft, removal requires a connection and successful server resolution before deleting the local note and audio. The phone keeps each note beside its local draft; see [the server ledger and storage contract](docs/firebase-isolation.md).
 
-Physical iPhone recording, screen lock during a recording, Bluetooth microphones and real reception loss remain open until observed on a device; see [the guided iPhone acceptance](docs/review-repairs.md#guided-iphone-acceptance--open).
+Physical iPhone recording, screen lock during a recording, Bluetooth microphones and real reception loss remain open until observed on a device; see the owner's script in [phone-acceptance.md](docs/phone-acceptance.md).
 
 ## Voice-driven scope entry and Live reliability — deployed, acceptance pending
 

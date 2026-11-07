@@ -47,7 +47,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 Company workbook upload; AI-suggested prices; crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
 
 ## Open items for the owner
-1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1.
+1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1; script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo — Phase 0 item 2.
 3. Invitation check to a Google and an Outlook address — Phase 0 item 3.
 4. Local SMTP timeout test on Windows — Phase 0 item 6.
