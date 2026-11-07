@@ -44,12 +44,14 @@ Each line is what you do, then what you should see.
    it appears under **Photos**.
 5. Turn on Airplane mode. In **Check Scope**, tap **Add room** and type a measurement; go back to
    **Walk & Photo** and capture a photo. → The status reads **Offline · saved on phone**.
-6. Still in Airplane mode, swipe the app closed and reopen it from the Home Screen. → The app
-   opens, and the new room, the measurement and the photo are all still there.
-7. Still in Airplane mode, tap **Offline notes** → **Record voice note**, describe the room for
-   20 seconds ("Kitchen, category two, fifty square feet of drywall removed"), lock the phone for
-   10 seconds, unlock it and tap **Stop and save note**. → The note is listed
-   under **Voice notes**.
+6. Still in Airplane mode, swipe the app closed and reopen it from the Home Screen; it opens on
+   the dashboard, so tap **Menu** → **Company jobs** and tap the made-up address. → The job opens
+   on **Check Scope** with the new room and measurement, and the photo is still under **Photos**
+   in **Walk & Photo**.
+7. Still in Airplane mode, in **Walk & Photo** tap **Offline notes** → **Record voice note**,
+   describe the room for 20 seconds ("Kitchen, category two, fifty square feet of drywall
+   removed"), lock the phone for 10 seconds, unlock it and tap **Stop and save note**. → The note
+   is listed under **Voice notes**.
 8. Turn Airplane mode off, wait a minute, then tap **Review transcript**. → The status goes
    **Saving…** then **Saved**, each photo shows once, the voice note's words appear in the
    walkthrough transcript, and the app opens **Check Scope** with the **Scope from walkthrough**
