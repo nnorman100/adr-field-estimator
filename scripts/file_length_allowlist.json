@@ -15,7 +15,6 @@
     "tests/browser/workflows.spec.js",
     "tests/browser/workspaces.spec.js",
     "tests/test_firestore_emulator.py",
-    "tests/test_frontend.js",
     "tests/test_price_books.py",
     "tests/test_price_table.py",
     "tests/test_pricing_v2.py",
