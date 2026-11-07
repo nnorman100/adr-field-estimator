@@ -1,25 +1,28 @@
 """Version publication and rollback coverage for automatic releases."""
 
+import itertools
 import json
-import shlex
 
 import pytest
 import yaml
 
 from scripts import auto_deploy as auto
+from tests.github_workflow import condition, interpolate, run_step
 from tests.test_auto_deploy import (
+    GITHUB_TOKEN,
     NEW,
     OLD,
     WORKFLOW,
     FakeRunner,
-    confirmations,
     deploy_job,
+    deploy_step,
     release,
     serving_with,
     stage_values,
     step_argv,
     summary,
     todays_baseline,
+    workflow_context,
 )
 
 
@@ -322,10 +325,30 @@ def test_workflow_rollback_step_restores_an_older_revision_when_the_baseline_is_
 
 
 def test_workflow_passes_each_rollback_confirmation_from_its_own_input():
-    assert confirmations(deploy_job()['env']['CONFIRM_ARGS']) == {
+    job = deploy_job()
+    rollback = deploy_step('Roll back to version')
+    flags = {
         'confirm_past_migration': '--confirm-past-migration',
         'confirm_baseline': '--confirm-baseline',
     }
+    for past, baseline in itertools.product(['no', 'yes'], repeat=2):
+        inputs = {
+            'version': '2026.10.30-1',
+            'confirm_past_migration': past,
+            'confirm_baseline': baseline,
+        }
+        context = workflow_context('workflow_dispatch', **inputs)
+        assert condition(rollback['if'], context)
+        env = {name: interpolate(value, context) for name, value in job['env'].items()}
+        expected = [flag for name, flag in flags.items() if inputs[name] == 'yes']
+        assert step_argv('Roll back to version', env) == [
+            '--rollback',
+            '2026.10.30-1',
+            '--run-id',
+            '41140166919',
+            *expected,
+        ]
+    assert not condition(rollback['if'], workflow_context('workflow_run'))
 
 
 def test_workflow_publish_step_publishes_the_commit_that_was_released(summary):
@@ -338,13 +361,21 @@ def test_workflow_publish_step_publishes_the_commit_that_was_released(summary):
 def test_only_the_publish_step_receives_a_github_write_token():
     job = deploy_job()
     assert job['permissions'] == {'contents': 'write', 'id-token': 'write'}
-    assert 'GH_TOKEN' not in job['env']
+    context = workflow_context('workflow_run')
+    env = interpolate(job['env'], context)
+    assert GITHUB_TOKEN not in env.values()
     checkout = job['steps'][0]
     assert checkout['uses'].startswith('actions/checkout@')
     assert checkout['with']['persist-credentials'] is False
-    holders = [step for step in job['steps'] if 'github.token' in json.dumps(step)]
+    holders = [
+        step for step in job['steps'] if GITHUB_TOKEN in json.dumps(interpolate(step, context))
+    ]
     assert [step['name'] for step in holders] == ['Publish version']
-    assert holders[0]['env'] == {'GH_TOKEN': '${{ github.token }}'}
-    assert holders[0]['if'] == "${{ github.event_name == 'workflow_run' }}"
-    run = holders[0]['run']
-    assert not {'npm', 'npx', 'pip', 'deploy_backend'} & set(shlex.split(run))
+    assert interpolate(holders[0]['env'], context) == {'GH_TOKEN': GITHUB_TOKEN}
+    assert condition(holders[0]['if'], context)
+    assert not condition(holders[0]['if'], workflow_context('workflow_dispatch', version=''))
+    commands = run_step(holders[0], {**env, **interpolate(holders[0]['env'], context)})
+    assert commands == [
+        ['gh', 'auth', 'setup-git'],
+        ['python3', 'scripts/auto_deploy.py', '--publish', NEW],
+    ]

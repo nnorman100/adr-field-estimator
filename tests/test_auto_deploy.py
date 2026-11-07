@@ -6,7 +6,6 @@ Everything outside the process is replaced by FakeRunner; no test touches Google
 import importlib
 import json
 import re
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +15,7 @@ import yaml
 
 from scripts import auto_deploy as auto
 from scripts import deploy_backend
+from tests.github_workflow import condition, interpolate, run_step
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
@@ -514,11 +514,6 @@ def test_a_baseline_that_is_not_less_permissive_is_recorded_not_blocked(summary,
     assert "PRICE_BOOKS_ENABLED '(unset)' -> 'false'" in summary.text()
 
 
-def confirmations(expression):
-    """The flag each dispatch input turns on in a workflow expression."""
-    return dict(re.findall(r"inputs\.(\w+) == 'yes' && '(--[\w-]+)'", expression))
-
-
 def serving_with(runner, commit=OLD, **env):
     runner.revisions['rev-old'] = revision(commit, env)
     return runner
@@ -673,10 +668,18 @@ def test_automatic_rollback_after_a_confirmed_release_restores_the_serving_revis
 
 
 def test_the_automatic_workflow_can_never_confirm_a_lower_baseline():
-    step = next(step for step in deploy_job()['steps'] if step.get('name') == 'Release')
-    variables = {token for token in shlex.split(step['run'], comments=True) if '$' in token}
-    assert variables == {'$COMMIT', '$RUN_ID', '$DEPLOY_ARGS'}
-    assert confirmations(deploy_job()['env']['DEPLOY_ARGS']) == {}
+    job = deploy_job()
+    release_step = deploy_step('Release')
+    yes = {'version': '', 'confirm_past_migration': 'yes', 'confirm_baseline': 'yes'}
+    for event, inputs, expected in (
+        ('workflow_run', {}, []),
+        ('workflow_dispatch', yes, ['--check-only']),
+    ):
+        context = workflow_context(event, **inputs)
+        assert condition(release_step['if'], context)
+        env = {name: interpolate(value, context) for name, value in job['env'].items()}
+        argv = step_argv('Release', env)
+        assert argv == ['--commit', NEW, '--run-id', '41140166919', *expected]
 
 
 def test_one_constant_sets_the_baseline_for_both_deploy_scripts(monkeypatch):
@@ -884,13 +887,32 @@ def deploy_job():
     return yaml.safe_load(WORKFLOW)['jobs']['deploy']
 
 
+GITHUB_TOKEN = 'github-write-token'
+
+
+def workflow_context(event_name, **inputs):
+    """What GitHub supplies to the deploy job's expressions for one trigger."""
+    return {
+        'github': {
+            'event_name': event_name,
+            'sha': NEW,
+            'run_id': '41140166919',
+            'token': GITHUB_TOKEN,
+        },
+        'secrets': {'GITHUB_TOKEN': GITHUB_TOKEN},
+        'inputs': inputs,
+    }
+
+
+def deploy_step(name):
+    return next(step for step in deploy_job()['steps'] if step.get('name') == name)
+
+
 def step_argv(name, env):
-    step = next(step for step in deploy_job()['steps'] if step.get('name') == name)
-    tokens = shlex.split(step['run'], comments=True)
-    for key, value in env.items():
-        tokens = [token.replace(f'${key}', value) for token in tokens]
-    tokens = [token for token in tokens if token]
-    return tokens[tokens.index('scripts/auto_deploy.py') + 1 :]
+    commands = run_step(deploy_step(name), env)
+    calls = [argv for argv in commands if argv[1:2] == ['scripts/auto_deploy.py']]
+    assert len(calls) == 1, calls
+    return calls[0][2:]
 
 
 def release_argv(run_id):
