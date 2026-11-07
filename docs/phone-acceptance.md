@@ -53,7 +53,7 @@ Physical checks must test four distinct connectivity states:
 4. **Network Transitions & Reconnection**:
    - Toggling Airplane mode off or walking out of a basement into Wi-Fi/cellular coverage.
    - Automatic background drain of queued photos and draft revisions without duplicate uploads.
-   - Going offline during Live stops the walkthrough and releases the camera and microphone; observations already captured stay on the phone. Back online, the technician taps **Resume walkthrough**, which starts a new Live session without replaying earlier audio.
+   - Going offline during Live stops the walkthrough and releases the camera and microphone; observations already captured stay on the phone. Back online, the technician taps **Resume walkthrough**, which resumes the conversation (or restarts Live from the saved inspection) without replaying earlier audio.
 
 ---
 
@@ -325,10 +325,10 @@ Physical checks must test four distinct connectivity states:
   4. Tap **Resume walkthrough**.
   5. Listen for the first few seconds after Live reconnects.
 - **Expected Result**:
-  - On going offline, Live stops and the screen shows: `"Connection went offline. Tap Resume walkthrough when online and review missing observations."` with the offer to switch to offline notes.
+  - On going offline, Live stops: the Live status reads `"Not connected"`, the offer `"You are offline, so Live stopped. Switch to offline notes and keep working?"` appears, the transcript status reads `"Transcript capture needs review for unfinished or interrupted observations."`, and the walkthrough button reads **Resume walkthrough**.
   - The camera and microphone dots disappear within a few seconds.
   - Observations captured before going offline are still listed.
-  - After **Resume walkthrough**, the status returns to `"Live AI connected"` and the assistant continues; no earlier assistant audio or technician speech is played back again.
+  - After **Resume walkthrough**, the Live status reads `"Live conversation resumed"` or `"Live restarted using saved inspection"`, the transcript status reads `"Conversation recovered. Review transcript boundaries and any missing observations."`, and the assistant continues; no earlier assistant audio or technician speech is played back again.
 - **Report**: Exact message shown when offline; whether the dots went out; whether earlier observations survived; any replayed audio after resuming.
 
 #### Check 4.6: Sub-Second Conversational Latency Benchmark
