@@ -12,11 +12,6 @@
   "tests/browser/scope-items.spec.js": 1599,
   "tests/browser/workflows.spec.js": 1166,
   "tests/browser/workspaces.spec.js": 1481,
-<<<<<<< HEAD
-  "tests/test_claims.py": 1503,
-=======
-  "tests/test_backend.py": 1190,
->>>>>>> 867c3a8 (refactor(tests): split claims document tests)
   "tests/test_firestore_emulator.py": 1571,
   "tests/test_frontend.js": 1392,
   "tests/test_price_books.py": 2286,

@@ -117,7 +117,7 @@ returns 429 before any model call.
   `Vertex AI retry`.
 - **Budget hooks:** 3 attempts a minute (`audit_attempt`, charged before the checks) and 60 a day (`audit`, charged only
   when no saved audit can be reused). A reusable audit makes no model call.
-- **Evals:** `tests/test_audit_retry.py`, `tests/test_claims.py` with `tests/golden/v1-documents.json` (provider-free);
+- **Evals:** `tests/test_audit_retry.py`, `tests/test_claims.py`, `tests/test_claims_documents.py` with `tests/golden/v1-documents.json` (provider-free);
   real service: `verify_estimate_prompts.py` (`audit_specialty`, `audit_priced_extra` run three times, `audit_cleaning_only`)
   and `verify_estimate_batch3.py` (health, evidence and open-extent cases). All assertions must hold; the priced-extra case
   must pass 3 of 3.
