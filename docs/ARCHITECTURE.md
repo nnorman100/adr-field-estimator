@@ -35,7 +35,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Warnings while estimating | `backend/estimate_warnings.py`, `public/app.js` (the readiness dialog), `docs/estimate-assist.md` |
 | Readiness, insights, AI usage | `readiness.py`, `insights.py`, `ai_usage.py` |
 | Feature flags | `AI_FEATURES`, `PRICE_BOOKS_ENABLED`, `RETENTION_ENABLED`, `WORKSPACES_ENABLED` (set by `scripts/deploy_backend.py`) |
-| Release scripts | `scripts/deploy_backend.py`, `stamp_hosting.py`, `verify_*`, `auto_deploy.py` (automatic deploys) |
+| Release scripts | `scripts/deploy_backend.py`, `stamp_hosting.py`, `verify_*`, `auto_deploy.py` (automatic deploys; shared helpers in `auto_deploy_helpers.py`) |
 
 ## Data model (high level)
 - Signed agreements and evidence are **immutable**. Mutable coordination (assignment, claim details, delivery, readings) lives in **sidecars** beside the job.
