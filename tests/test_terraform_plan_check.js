@@ -98,6 +98,16 @@ describe.each(CASES)('%s root, %s environment', (root, environment) => {
     expect(check(changed, root, environment, { complete: false })).toEqual([]);
   });
 
+  test('a listed resource in another project is refused', () => {
+    const changed = plan();
+    const target = changed.find((rc) => rc.change.after.project);
+    target.change.after.project = 'mitigation-project';
+    const problems = check(changed, root, environment);
+    expect(problems).toEqual([
+      `${target.address}: project is "mitigation-project", expected alert-disaster-field-2026`,
+    ]);
+  });
+
   test('the table for the other environment does not match', () => {
     const other = environment === 'test' ? 'live' : 'test';
     expect(check(plan(), root, other).length).toBeGreaterThan(0);
@@ -211,6 +221,47 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     ).toHaveLength(1);
   });
 
+  test.each([
+    ['google_sql_user.iam["api"]', 'instance'],
+    ['google_sql_user.iam["migrate"]', 'name'],
+    ['google_sql_database.app', 'instance'],
+    ['google_service_account.runtime["live"]', 'account_id'],
+    ['google_service_account.deploy', 'account_id'],
+    ['google_secret_manager_secret.app["stripe-secret-key"]', 'secret_id'],
+  ])('%s pointed at the other environment by %s is refused', (address, field) => {
+    const other = environment === 'test' ? 'live' : 'test';
+    const problems = edit(address, (after) => {
+      after[field] = after[field].replace(`-${environment}`, `-${other}`);
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(`${address}: ${field} is`);
+  });
+
+  test('an API entry enabling another service is refused', () => {
+    const address = 'google_project_service.apis["iam.googleapis.com"]';
+    const problems = edit(address, (after) => {
+      after.service = 'compute.googleapis.com';
+    });
+    expect(problems).toEqual([
+      `${address}: service is "compute.googleapis.com", expected iam.googleapis.com`,
+    ]);
+  });
+
+  test('a secret replicated outside the region or to a second location is refused', () => {
+    const address = 'google_secret_manager_secret.app["link-signing-key"]';
+    const replicas = (after) => after.replication[0].user_managed[0].replicas;
+    expect(
+      edit(address, (after) => {
+        replicas(after)[0].location = 'us-west2';
+      }),
+    ).toHaveLength(1);
+    expect(
+      edit(address, (after) => {
+        replicas(after).push({ customer_managed_encryption: [], location: 'us-east1' });
+      }),
+    ).toHaveLength(1);
+  });
+
   test('a pool-wide workload identity member is refused, a repository-scoped one passes', () => {
     const address = 'google_service_account_iam_member.deploy_workload_identity[0]';
     const withBinding = (member) => {
@@ -233,6 +284,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
       'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/github';
     expect(withBinding(`${pool}/attribute.repository_id/42`)).toEqual([]);
     expect(withBinding(`${pool}/*`)).toHaveLength(1);
+    expect(withBinding(`${pool}/attribute.repository_owner/nnorman100`)).toHaveLength(1);
   });
 });
 
@@ -277,7 +329,7 @@ describe.each(['test', 'live'])('app root, %s: services and deploy role', (envir
     const probe = {
       address: 'google_monitoring_uptime_check_config.api_health[0]',
       type: 'google_monitoring_uptime_check_config',
-      change: { actions: ['create'], after: {} },
+      change: { actions: ['create'], after: { project: 'alert-disaster-field-2026' } },
     };
     const problems = check([...changed, probe], 'app', environment);
     expect(problems.length).toBe(environment === 'live' ? 0 : 1);

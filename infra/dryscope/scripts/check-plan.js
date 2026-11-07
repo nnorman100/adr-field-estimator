@@ -4,8 +4,8 @@
 //
 // `terraform test` can only look at resources it is told about, so a new IAM grant, a wider
 // condition or a replaced database slips past it. This check reads the WHOLE plan instead and
-// requires every resource, every IAM grant (role, member, exact condition) and every protection
-// setting to match a fixed table, and refuses any delete or replacement.
+// requires every resource (its project and name), every IAM grant (role, member, exact condition)
+// and every protection setting to match a fixed table, and refuses any delete or replacement.
 //
 // It runs on two inputs:
 //   - the mocked plans that `terraform test -json -verbose` prints (scripts/check.sh), and
@@ -57,6 +57,13 @@ const DEPLOY_PERMISSIONS = [
   'run.services.list',
   'run.services.update',
 ];
+
+// Resource types with no project attribute; every other resource must name PROJECT.
+const PROJECTLESS = new Set([
+  'google_service_account_iam_member',
+  'google_storage_bucket_iam_member',
+  'google_billing_budget',
+]);
 
 const title = (s) => s[0].toUpperCase() + s.slice(1);
 
@@ -150,7 +157,8 @@ function expectedPlan(root, env) {
     optional.add(wif);
     grants[wif] = {
       role: 'roles/iam.workloadIdentityUser',
-      member: /^principalSet:\/\/[^*]+$/,
+      member:
+        /^principalSet:\/\/iam\.googleapis\.com\/projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/*]+\/attribute\.(repository_id|repository)\/[^*]+$/,
       condition: null,
       service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-deploy-${env}@${PROJECT}.iam.gserviceaccount.com`,
     };
@@ -185,12 +193,30 @@ function expectedPlan(root, env) {
       'versioning.0.enabled': true,
     };
     absent['google_storage_bucket.evidence'] = ['retention_policy', 'lifecycle_rule'];
-    attrs['google_sql_database.app'] = { deletion_policy: 'ABANDON' };
-    for (const k of RUNTIME)
+    attrs['google_sql_database.app'] = {
+      name: 'dryscope',
+      instance: `dryscope-${env}-pg`,
+      deletion_policy: 'ABANDON',
+    };
+    for (const k of RUNTIME) {
       attrs[`google_sql_user.iam["${k}"]`] = {
+        name: `dryscope-${k}-${env}@${PROJECT}.iam`,
+        instance: `dryscope-${env}-pg`,
         deletion_policy: 'ABANDON',
         type: 'CLOUD_IAM_SERVICE_ACCOUNT',
       };
+      attrs[`google_service_account.runtime["${k}"]`] = { account_id: `dryscope-${k}-${env}` };
+    }
+    attrs['google_service_account.deploy'] = { account_id: `dryscope-deploy-${env}` };
+    for (const a of APIS) attrs[`google_project_service.apis["${a}"]`] = { service: a };
+    for (const s of Object.keys(SECRET_ACCESS)) {
+      const address = `google_secret_manager_secret.app["${s}"]`;
+      attrs[address] = {
+        secret_id: `dryscope-${env}-${s}`,
+        'replication.0.user_managed.0.replicas.0.location': REGION,
+      };
+      absent[address] = ['replication.0.auto', 'replication.0.user_managed.0.replicas.1'];
+    }
     attrs['google_artifact_registry_repository.images'] = {
       repository_id: `dryscope-${env}`,
       location: REGION,
@@ -277,8 +303,14 @@ function checkPlan(resourceChanges, { root, environment, allowUpdates = false, c
 
   const allowed = new Set([...want.others, ...Object.keys(want.grants)]);
   for (const rc of resourceChanges) {
-    if (!allowed.has(rc.address))
+    const after = rc.change?.after;
+    if (!allowed.has(rc.address)) {
       problems.push(`${rc.address}: not in the expected ${root} inventory`);
+    } else if (after && !PROJECTLESS.has(rc.address.split('.')[0]) && after.project !== PROJECT) {
+      problems.push(
+        `${rc.address}: project is ${JSON.stringify(after.project)}, expected ${PROJECT}`,
+      );
+    }
   }
   for (const address of complete ? allowed : []) {
     if (!byAddress.has(address) && !want.optional.has(address)) {
