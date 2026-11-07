@@ -74,7 +74,7 @@ Run by CI (provider-free, `python -m pytest tests`, `npm test`): `test_audit_ret
 `test_live*.py`, `test_voice_notes.py`, `test_voice_note_gate.py`, `test_late_transcript_gate.py`,
 `test_scope.py`, `test_claims.py` with `tests/golden/v1-documents.json`, `test_insights.py`,
 `test_drying_watch.py`, `test_readiness.py` (includes the `scripts/readiness_eval.py` accept and
-reject cases), `test_sizing.py`, `test_estimate_warnings.py`, `test_outcomes.py`,
+reject cases), `test_sizing.py`, `test_estimate_warnings.py`, `test_outcomes.py`, `test_outcome_history.py`,
 `test_pricing_v2.py`, `test_logging.py`.
 
 Real-service checks, run by hand with synthetic data and **not** in CI: `scripts/verify_scope_extraction.py`,
