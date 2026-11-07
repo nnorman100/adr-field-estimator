@@ -44,8 +44,8 @@ inventory behind it.
 All REST calls go through one function, `generate()` in `backend/main.py`, with `response_mime_type='application/json'`, a
 response schema and Pydantic validation of the reply. The Gen AI client is built with `enterprise=True` for the dedicated
 project `alert-disaster-field-2026` and a 95-second HTTP timeout. The Live relay builds its own client for `LIVE_LOCATION`.
-No call sets a maximum output token count, a temperature or a tool list; output size is bounded only by the schemas below
-and by the thinking level. Application-level safety today is prompt labelling of untrusted data, schema validation, size
+No call sets a temperature or a tool list. Every REST call sets a per-operation maximum output token count and holds a
+reservation against the company's monthly AI allowance before dispatch (limits and rates in [ai-spending.md](ai-spending.md)). Application-level safety today is prompt labelling of untrusted data, schema validation, size
 and rate limits, and server-written prices and prose (see [AI.md](AI.md#model-armor)).
 
 Features that are **not** model calls and so are not inventoried: readiness gaps (`backend/readiness.py`), estimate assist
@@ -170,8 +170,8 @@ returns 429 before any model call.
 
 ## Budget and evaluation status
 
-- **Spend budget:** none today. The only controls are the per-user per-minute and daily counts above. `ai_usage` reports the
-  sum of those counts per company and enforces nothing; a per-company monthly cap is the open pull request #230.
+- **Spend budget:** a shared per-company monthly AI allowance applies to every path above ([ai-spending.md](ai-spending.md)),
+  beside the per-user per-minute and daily counts. `ai_usage` reports those counts per company and enforces nothing.
 - **Gating evals:** no numeric score or threshold gates a release. The thresholds that exist are exact-match assertions in
   the hand-run real-service scripts and the fixed pass bars named above (job and drying summaries 5 of 5, readiness 3 of 3,
   priced-extra audit 3 of 3). Provider-free tests run in CI; real-service checks are run by hand and recorded apart from
