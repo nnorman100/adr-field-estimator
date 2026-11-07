@@ -1,7 +1,8 @@
 'use strict';
 // ESLint max-lines config for the 1,000-line single-file limit. A JavaScript file over the limit
 // is an error, except the files listed in scripts/file_length_allowlist.json (already over the
-// limit when the rule was adopted), which only warn. scripts/check_file_length.py covers .py files.
+// limit when the rule was adopted), which only warn. scripts/check_file_length.py covers .py, .css and .md files
+// and the no-growth ceilings in file_length_baselines.json.
 const fs = require('node:fs');
 const path = require('node:path');
 
