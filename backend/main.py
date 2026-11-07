@@ -16,7 +16,7 @@ from uuid import uuid4
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress, AsyncExitStack
-from functools import partial, wraps
+from functools import partial
 from typing import Optional
 from fastapi import (
     FastAPI,
@@ -42,10 +42,13 @@ from starlette.requests import ClientDisconnect
 import firebase_admin
 from firebase_admin import app_check, auth as firebase_auth
 from google import genai
-from google.genai import types
+from google.genai import types, errors as genai_errors
 from websockets.exceptions import ConnectionClosed
 
 try:
+    from . import ai_generation
+    from .ai_spending import SpendingError, rest_output_limit
+    from .live_spending import LiveSpending
     from .contracts import (
         CopyRequest,
         ExtraQuote,
@@ -122,6 +125,9 @@ try:
     from .cloud_log import event
     from .migration_ledger import list_applied
 except ImportError:
+    import ai_generation
+    from ai_spending import SpendingError, rest_output_limit
+    from live_spending import LiveSpending
     from contracts import (
         CopyRequest,
         ExtraQuote,
@@ -333,12 +339,7 @@ def get_job_store():
 def get_ai_client():
     global genai_client
     if genai_client is None:
-        genai_client = genai.Client(
-            enterprise=True,
-            project=PROJECT_ID,
-            location=LOCATION,
-            http_options=types.HttpOptions(timeout=95000),
-        )
+        genai_client = ai_generation.create_ai_client(PROJECT_ID, LOCATION)
     return genai_client
 
 
@@ -583,6 +584,8 @@ async def stored(method, *args, failure=None):
     """failure is the 503 message for an unexpected error (see failure_for); None is the generic one."""
     try:
         return await run_in_threadpool(method, *args)
+    except SpendingError:
+        raise
     except Limited as error:
         raise HTTPException(429, str(error), headers={'Retry-After': str(error.retry_after)})
     except AccessDenied as error:
@@ -763,110 +766,27 @@ async def draft_record(store, uid, record):
     )
 
 
-def parse_json_from_llm(text):
-    text = (text or '').strip()
-    if text.startswith('```'):
-        text = '\n'.join(text.splitlines()[1:])
-        if text.rstrip().endswith('```'):
-            text = text.rstrip()[:-3]
-    return json.loads(text)
+_generation = ai_generation.Generation(
+    client=lambda: get_ai_client(),
+    stored=lambda *args: stored(*args),
+    workspaces=lambda: WORKSPACES_ENABLED,
+    parser=lambda text: parse_json_from_llm(text),
+    output_limit=lambda *args: rest_output_limit(*args),
+    log=lambda *args, **fields: event(*args, **fields),
+    deadline_seconds=lambda: REST_DEADLINE_SECONDS,
+)
+parse_json_from_llm = ai_generation.parse_json_from_llm
+background = _generation.background
+within = _generation.within
+generation_config = _generation.generation_config
+reserve_generation = _generation.reserve_generation
+count_input = _generation.count_input
+generate = _generation.generate
+rest_deadline = _generation.rest_deadline
+LEDGER_JOBS = _generation.jobs
 
 
-async def generate(
-    schema,
-    contents,
-    model,
-    operation,
-    inspection_id,
-    wire_schema=None,
-    thinking_level=None,
-    timeout=100,
-    check=None,
-    invalid_detail=None,
-):
-    started = time.monotonic()
-    outcome = 'cancelled'
-    error_fields = {}
-    try:
-        response = await asyncio.wait_for(
-            get_ai_client().aio.models.generate_content(
-                model=model,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type='application/json',
-                    response_schema=wire_schema or schema,
-                    thinking_config=(
-                        types.ThinkingConfig(thinking_level=thinking_level)
-                        if thinking_level
-                        else None
-                    ),
-                ),
-            ),
-            timeout=timeout,
-        )
-        result = schema.model_validate(parse_json_from_llm(response.text))
-        if check is not None:
-            # Domain rejection is logged with this call. The validator's message can quote the
-            # technician; only the fixed detail is returned, and the log line has no text.
-            try:
-                checked = check(result)
-            except (ValueError, ValidationError):
-                outcome = 'validation'
-                raise HTTPException(
-                    502,
-                    invalid_detail
-                    or 'AI returned an unavailable or invalid result. Retry; no document or reading was verified.',
-                )
-            if checked is not None:
-                result = checked
-        outcome = 'ok'
-        return result
-    except HTTPException:
-        raise
-    except (asyncio.TimeoutError, TimeoutError):
-        outcome = 'timeout'
-        raise HTTPException(
-            504, 'AI generation timed out. Retry; no document or reading was verified.'
-        )
-    except Exception as error:
-        # Provider messages can echo the prompt; record only the class and status.
-        outcome = type(error).__name__
-        error_fields = dict(
-            provider_status=getattr(error, 'status', None),
-            provider_code=getattr(error, 'code', None),
-        )
-        raise HTTPException(
-            502,
-            'AI returned an unavailable or invalid result. Retry; no document or reading was verified.',
-        )
-    finally:
-        event(
-            'Vertex AI call',
-            logging.INFO if outcome == 'ok' else logging.ERROR,
-            model=model,
-            operation=operation,
-            elapsed_ms=round((time.monotonic() - started) * 1000),
-            outcome=outcome,
-            inspection_id=inspection_id,
-            **error_fields,
-        )
-
-
-def rest_deadline(operation):
-    @wraps(operation)
-    async def bounded(*args, **kwargs):
-        try:
-            return await asyncio.wait_for(operation(*args, **kwargs), REST_DEADLINE_SECONDS)
-        except asyncio.TimeoutError:
-            raise HTTPException(
-                504,
-                'The request timed out. Your draft is preserved; retry. No document or reading was verified.',
-            )
-
-    return bounded
-
-
-async def generate_audit(contents, inspection_id, started):
+async def generate_audit(contents, inspection_id, started, spending):
     # `started` is when the request's REST deadline began, so no attempt can outlast it. A timed-out
     # attempt is cancelled with its HTTP request and discarded; nothing is saved until one succeeds.
     end = started + REST_DEADLINE_SECONDS - AUDIT_SAVE_RESERVE_SECONDS
@@ -886,6 +806,7 @@ async def generate_audit(contents, inspection_id, started):
                 inspection_id,
                 thinking_level=AUDIT_THINKING_LEVEL,
                 timeout=timeout,
+                spending=spending,
             )
         except HTTPException as error:
             timeout = end - time.monotonic()
@@ -1438,6 +1359,7 @@ async def photo_evidence(
 async def ocr_photo(
     inspection_id: str, photo_id: str, staff=Depends(current_staff), store=Depends(get_job_store)
 ):
+    started = time.monotonic()
     await stored(store.quota, staff['uid'], 'ocr', 20)
     record = await stored(store.get_inspection, staff['uid'], inspection_id)
     await stored(store._access, staff['uid'], record, 'ocr')
@@ -1449,8 +1371,14 @@ async def ocr_photo(
             OCR_MODEL,
             'ocr',
             inspection_id,
+            timeout=started + REST_DEADLINE_SECONDS - 5 - time.monotonic(),
+            spending=(store, staff['uid']),
         )
-    except (HTTPException, asyncio.CancelledError):
+    except HTTPException as error:
+        if error.status_code != 429:
+            await stored(store.set_ocr, staff['uid'], inspection_id, photo_id, None)
+        raise
+    except asyncio.CancelledError:
         await stored(store.set_ocr, staff['uid'], inspection_id, photo_id, None)
         raise
     return await draft_record(
@@ -1470,6 +1398,7 @@ async def suggest_scope(
     staff=Depends(current_staff),
     store=Depends(get_job_store),
 ):
+    started = time.monotonic()
     if req.inspection_id != inspection_id:
         raise HTTPException(400, 'Inspection references must match.')
     record = await stored(store.get_inspection, staff['uid'], inspection_id)
@@ -1503,6 +1432,8 @@ async def suggest_scope(
         invalid_detail=(
             'Scope suggestions could not be verified. Clarify the recorded room, category and quantities, then retry.'
         ),
+        timeout=started + REST_DEADLINE_SECONDS - 5 - time.monotonic(),
+        spending=(store, staff['uid']),
     )
     latest = await stored(store.get_inspection, staff['uid'], inspection_id)
     await stored(store._access, staff['uid'], latest, 'scope')
@@ -1640,6 +1571,7 @@ async def transcribe_voice_note(
     store=Depends(get_job_store),
 ):
     """Transcribes an offline voice note into the walkthrough transcript; the audio is not kept."""
+    started = time.monotonic()
     record = await _voice_note_ready(store, staff['uid'], inspection_id)
     marker = voice_note_marker(req.note_id)
     if marker in record['data'].get('technician_transcript', ''):
@@ -1655,55 +1587,88 @@ async def transcribe_voice_note(
                 req.note_id,
             ),
         )
-    saved, moved = await stored(
-        store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
-    )
-    await revoke_moved_link(store, staff['uid'], inspection_id, moved)
-
-    async def fail():
-        await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
-
     try:
         raw = voice_note_audio(req)
     except HTTPException as error:
         if error.status_code == 400:
-            await fail()
+            _saved, moved = await stored(
+                store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
+            )
+            await revoke_moved_link(store, staff['uid'], inspection_id, moved)
+            await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
         raise
-    transcript = saved['data'].get('technician_transcript', '')
-    longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
-    if len(transcript) + 1 + len(longest) > TRANSCRIPT_LIMIT:
-        await fail()
-        raise HTTPException(
-            400, 'Transcript storage is full. Type the remaining observations in notes.'
-        )
-    # A quota 429 leaves the note pending so the phone can retry. A model failure marks it failed.
-    await stored(store.quota, staff['uid'], 'transcribe', 10)
-    try:
-        result = await generate(
-            TranscriptionResult,
-            [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS],
-            AUDIT_MODEL,
-            'transcribe',
-            inspection_id,
-            thinking_level=SCOPE_THINKING_LEVEL,
-            timeout=REST_DEADLINE_SECONDS - 5,
-        )
-    except HTTPException as error:
-        if error.status_code != 429:
-            await fail()
-        raise
-    return await draft_record(
-        store,
-        staff['uid'],
-        await stored(
-            store.append_transcript,
-            staff['uid'],
-            inspection_id,
-            marker,
-            voice_note_block(req, result.text),
-            req.note_id,
+    contents = [types.Part.from_bytes(data=raw, mime_type=req.mime_type), TRANSCRIBE_INSTRUCTIONS]
+    deadline = started + REST_DEADLINE_SECONDS - 5
+    held = await reserve_generation(
+        contents,
+        AUDIT_MODEL,
+        'transcribe',
+        generation_config(
+            TranscriptionResult, AUDIT_MODEL, 'transcribe', thinking_level=SCOPE_THINKING_LEVEL
         ),
+        (store, staff['uid']),
+        deadline,
     )
+    try:
+        saved, moved = await stored(
+            store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'reserve'
+        )
+        await revoke_moved_link(store, staff['uid'], inspection_id, moved)
+
+        async def fail():
+            await stored(store.update_voice_note, staff['uid'], inspection_id, req.note_id, 'fail')
+
+        transcript = saved['data'].get('technician_transcript', '')
+        longest = voice_note_block(req, 'x' * min(20000, int(req.duration_seconds * 40) + 200))
+        if len(transcript) + 1 + len(longest) > TRANSCRIPT_LIMIT:
+            await fail()
+            raise HTTPException(
+                400, 'Transcript storage is full. Type the remaining observations in notes.'
+            )
+        # A quota 429 leaves the note pending so the phone can retry. A model failure marks it failed.
+        await stored(store.quota, staff['uid'], 'transcribe', 10)
+        try:
+            result = await generate(
+                TranscriptionResult,
+                contents,
+                AUDIT_MODEL,
+                'transcribe',
+                inspection_id,
+                thinking_level=SCOPE_THINKING_LEVEL,
+                timeout=deadline - time.monotonic(),
+                spending=held,
+            )
+        except HTTPException as error:
+            if error.status_code != 429:
+                await fail()
+            raise
+        return await draft_record(
+            store,
+            staff['uid'],
+            await stored(
+                store.append_transcript,
+                staff['uid'],
+                inspection_id,
+                marker,
+                voice_note_block(req, result.text),
+                req.note_id,
+            ),
+        )
+    finally:
+        if not held.dispatched:
+            with anyio.CancelScope(shield=True):
+                try:
+                    await within(deadline, held.release_unused)
+                except Exception as error:
+                    event(
+                        'AI spending settlement failed',
+                        logging.ERROR,
+                        operation='transcribe',
+                        model=AUDIT_MODEL,
+                        outcome=type(error).__name__,
+                        reservation_id=held.identifier,
+                        company_id=held.ledger.company_id,
+                    )
 
 
 @app.post('/api/audit')
@@ -1787,7 +1752,9 @@ async def audit_inspection(
         photo_count=len(images),
         elapsed_ms=round((time.monotonic() - prepared) * 1000),
     )
-    ai = await generate_audit([prompt, *images], req.inspection_id, started)
+    ai = await generate_audit(
+        [prompt, *images], req.inspection_id, started, spending=(store, staff['uid'])
+    )
     try:
         documents = make_documents(
             data,
@@ -2352,6 +2319,8 @@ async def live_walkthrough(socket: WebSocket):
     total_tokens = None
     provider_code = None
     counters = LiveCounters()
+    live_spending = None
+    error_message = None
     try:
         packet = await asyncio.wait_for(socket.receive_text(), 10)
         if len(packet) > 16384:
@@ -2417,6 +2386,7 @@ async def live_walkthrough(socket: WebSocket):
         # Only a saved checkpoint for this user, capture and scope makes a start free.
         if not handle:
             await stored(store.quota, uid, 'live')
+        live_spending = await stored(LiveSpending.start, store, uid, WORKSPACES_ENABLED, LIVE_MODEL)
         client = genai.Client(
             enterprise=True,
             project=PROJECT_ID,
@@ -2424,6 +2394,9 @@ async def live_walkthrough(socket: WebSocket):
             http_options=types.HttpOptions(timeout=95000),
         )
         async with AsyncExitStack() as stack:
+            # Registered before the provider context so this runs just after its
+            # close, excluding later database/client cleanup from connected time.
+            stack.callback(live_spending.closed)
             config = live_config(
                 live_prompt(
                     record['data'],
@@ -2441,8 +2414,8 @@ async def live_walkthrough(socket: WebSocket):
                 session = await stack.enter_async_context(
                     client.aio.live.connect(model=LIVE_MODEL, config=config)
                 )
-            except Exception:
-                if not handle:
+            except Exception as error:
+                if not handle or (isinstance(error, genai_errors.APIError) and error.code == 429):
                     raise
                 await stored(
                     store.live_resume,
@@ -2473,6 +2446,7 @@ async def live_walkthrough(socket: WebSocket):
                         ),
                     )
                 )
+            live_spending.opened()
             connection = uuid4().hex
             sequence = 0
             pending = False
@@ -2646,15 +2620,6 @@ async def live_walkthrough(socket: WebSocket):
                                 bool(getattr(update, 'resumable', False)),
                             )
                         usage = getattr(response, 'usage_metadata', None)
-                        if usage:
-                            total_tokens = getattr(usage, 'total_token_count', None) or total_tokens
-                        if usage and protocol == 2:
-                            await socket.send_json(
-                                {
-                                    'type': 'usage',
-                                    'total_tokens': getattr(usage, 'total_token_count', None),
-                                }
-                            )
                         away = getattr(response, 'go_away', None)
                         content = getattr(response, 'server_content', None)
                         if content:
@@ -2717,6 +2682,14 @@ async def live_walkthrough(socket: WebSocket):
                                 shots['expected'] = 0.0
                             if shots['wanted'] and not replying():
                                 shot_wake.set()
+                        # Deliver this message's audio before any spending transaction.
+                        if usage:
+                            await stored(live_spending.observe, usage)
+                            total_tokens = getattr(usage, 'total_token_count', None) or total_tokens
+                            if protocol == 2:
+                                await socket.send_json(
+                                    {'type': 'usage', 'total_tokens': total_tokens}
+                                )
                         if away:
                             outcome = 'rollover'
                             if protocol == 2:
@@ -2727,6 +2700,7 @@ async def live_walkthrough(socket: WebSocket):
                 nonlocal retain
                 while True:
                     await asyncio.sleep(LIVE_RECHECK_SECONDS)
+                    await stored(live_spending.check)
                     if staff.get('exp', 0) < time.time():
                         raise ValueError('Sign-in expired. Reconnect to continue.')
                     # Always repeats the revocation lookup, so a revoked account ends at this recheck.
@@ -2777,19 +2751,31 @@ async def live_walkthrough(socket: WebSocket):
             retain = False
         outcome = type(error).__name__
         status = getattr(error, 'status_code', None)
+        if isinstance(error, genai_errors.APIError) and error.code == 429:
+            status = 429
         # Vertex's close code, an SDK error code, or 1006 for a code-less provider timeout.
         # Client auth and input rejections stay without a provider code and do not page.
         provider_code = live_provider_code(error)
-        message = {
+        error_message = {
             'type': 'error',
             'message': error.detail
             if isinstance(error, HTTPException)
             else 'Live coaching disconnected. Your draft is preserved; reconnect to continue.',
         }
-        if protocol == 2 and isinstance(error, HTTPException):
-            message['status'] = error.status_code
-        with suppress(Exception):
-            await socket.send_json(message)
+        if protocol == 2 and status is not None:
+            error_message['status'] = status
+            if status == 429:
+                headers = (
+                    error.headers
+                    if isinstance(error, HTTPException)
+                    else getattr(getattr(error, 'response', None), 'headers', None)
+                )
+                try:
+                    seconds = max(1, int((headers or {}).get('Retry-After', 60)))
+                except (TypeError, ValueError):
+                    seconds = 60
+                error_message['retry_after'] = seconds
+                error_message['message'] += f' Retry in {seconds} seconds.'
     finally:
 
         async def cleanup():
@@ -2814,6 +2800,9 @@ async def live_walkthrough(socket: WebSocket):
                 if client:
                     with suppress(Exception):
                         await client.aio.aclose()
+                if live_spending:
+                    with suppress(Exception):
+                        await stored(live_spending.finish)
                 event(
                     'Live session ended',
                     logging.INFO
@@ -2829,6 +2818,11 @@ async def live_walkthrough(socket: WebSocket):
                     provider_code=provider_code,
                     **counters.fields(),
                 )
+                if error_message:
+                    # Receipt of an error means the microphone/provider connection and
+                    # user lease are already released, including during client teardown.
+                    with suppress(Exception):
+                        await socket.send_json(error_message)
                 with suppress(Exception):
                     await socket.close()
 

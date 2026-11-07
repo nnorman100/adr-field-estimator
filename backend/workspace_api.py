@@ -30,6 +30,7 @@ try:
     from .cloud_log import event
     from .insights import Insights, JobSummary, validate_summary as validate_insight, sentences
     from .ai_usage import company_usage
+    from .ai_spending import owner_spending
     from .outcomes import JobClose
     from .retention import Retention, RetentionUpdate, retention_enabled
     from .prompts import JOB_SUMMARY_INSTRUCTIONS
@@ -58,6 +59,7 @@ except ImportError:
     from cloud_log import event
     from insights import Insights, JobSummary, validate_summary as validate_insight, sentences
     from ai_usage import company_usage
+    from ai_spending import owner_spending
     from outcomes import JobClose
     from retention import Retention, RetentionUpdate, retention_enabled
     from prompts import JOB_SUMMARY_INSTRUCTIONS
@@ -142,6 +144,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             current['job_id'],
             thinking_level='LOW',
             timeout=25,
+            spending=(store, claims['uid']),
         )
         try:
             validate_insight(result, current['facts'])
@@ -162,6 +165,12 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
     @app.get('/api/companies/{company_id}/ai-usage')
     async def ai_usage(company_id: str, claims=live_identity, store=Depends(get_store)):
         return await stored(company_usage, ai_store(store, 'ai_usage'), claims['uid'], company_id)
+
+    @app.get('/api/companies/{company_id}/ai-spending')
+    async def ai_spending(company_id: str, claims=live_identity, store=Depends(get_store)):
+        if not getattr(store, 'workspaces', None):
+            raise HTTPException(404, 'Company workspaces are not enabled.')
+        return await stored(owner_spending, store, claims['uid'], company_id)
 
     @app.get('/api/admin/companies/{company_id}/ai-usage')
     async def support_ai_usage(company_id: str, claims=live_identity, store=Depends(get_store)):
@@ -232,6 +241,7 @@ def register_workspace_routes(app, identity, get_store, stored, live, account):
             inspection_id,
             thinking_level='LOW',
             timeout=25,
+            spending=(store, claims['uid']),
         )
         try:
             validate_summary(result, pack)

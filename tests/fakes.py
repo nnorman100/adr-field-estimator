@@ -1,10 +1,21 @@
 from copy import deepcopy
 import operator
 from threading import RLock
+from types import SimpleNamespace
 import io, base64
 from PIL import Image, ImageDraw
 from google.api_core.exceptions import AlreadyExists
 from backend.inspection_store import InspectionStore
+
+
+def genai_models(generate):
+    """Synthetic provider with the same unbilled input-count step as production."""
+
+    async def count_tokens(**kwargs):
+        return SimpleNamespace(total_tokens=100)
+
+    return SimpleNamespace(generate_content=generate, count_tokens=count_tokens)
+
 
 # ADR's details as its owner would enter them in Company settings; the app itself ships no company identity.
 ADR_PROFILE = dict(

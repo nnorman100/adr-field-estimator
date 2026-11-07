@@ -23,6 +23,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 | Drying watch | yes | flag off | no | |
 | Priced extras | yes | flag off | no | |
 | Job summaries and AI usage | yes | flag off | no | |
+| Company monthly AI spending | yes | not yet released | no | $10 per company per UTC calendar month before launch. Counted-input REST reservations with operation output bounds (OCR 8,192 and scope 16,384 tokens, thinking unchanged); ledger contention returns retryable 429. Owner-chosen soft Live threshold with a $2 admission margin. Failed provider HTTP replies release their holds; Live settles reported cost plus its unreported time tail. Owner dashboard line ("AI used this month") works independently of AI request-count flags. Crash holds remain charged. Generation and browser cooldown helpers are extracted into separate modules without changing behavior. See [Company AI spending](ai-spending.md); real-service and phone acceptance open |
 | Price editor (company price books) | yes | flag off (`PRICE_BOOKS_ENABLED=false` as of the Oct 27 release) | no | Arbitrary workbook upload not built. A company other than ADR cannot set prices or estimate with the flag off. Turning the flag on is one reviewed PR that changes `DEFAULT_PRICE_BOOKS`, with the owner's word (`docs/firebase-isolation.md#turning-a-feature-on-or-off`; see the switch row) |
 | No default prices (a company without prices is blocked; ADR's rates are ADR's alone) | yes | on with the code | no | Owner notice and blocked audit not yet checked on a phone |
 | Owner-defined pricing v2 data model | yes | flag off | no | v2 item/policy schema, starter catalog, working copy, v2 CSV/XLSX template; table catalog and comparison code split into modules without changing behavior |
@@ -46,7 +47,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 Company workbook upload; AI-suggested prices; crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
 
 ## Open items for the owner
-1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1.
+1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1; script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo — Phase 0 item 2.
 3. Invitation check to a Google and an Outlook address — Phase 0 item 3.
 4. Local SMTP timeout test on Windows — Phase 0 item 6.

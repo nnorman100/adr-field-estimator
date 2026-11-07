@@ -24,7 +24,7 @@ from backend.adr_price_book import adr_rates
 from backend.price_book_store import PriceBookStore
 
 bm.ORIGINS.extend([f'https://localhost:{BROWSER_PORT}', f'https://127.0.0.1:{BROWSER_PORT}'])
-from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore
+from tests.fakes import ADR_PROFILE, FakeAuth, FakeStore, FakeCompanyStore, genai_models
 import backend.workspaces as wm
 import backend.document_links as document_links
 from backend.contracts import InspectionData
@@ -106,7 +106,7 @@ bm.get_job_store = lambda: store
 CLAIM_WORDS = 'Synthetic Mutual claim number CLM 0042 77.'
 
 
-async def generate(**kwargs):
+async def generated_reply(**kwargs):
     schema = kwargs['config'].response_schema
     if isinstance(schema, type) and schema.__name__ == 'JobSummary':
         return SimpleNamespace(text=json.dumps({'topics': ['rooms', 'equipment', 'review']}))
@@ -218,9 +218,18 @@ async def generate(**kwargs):
     return SimpleNamespace(text=json.dumps(result))
 
 
-bm.get_ai_client = lambda: SimpleNamespace(
-    aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
-)
+async def generate(**kwargs):
+    response = await generated_reply(**kwargs)
+    # The real provider reports billable usage. Keep the synthetic adapter faithful
+    # so independent browser scenarios exercise settlement, rather than all looking
+    # like crashed/unknown calls sharing the legacy company's monthly allowance.
+    response.usage_metadata = SimpleNamespace(
+        prompt_token_count=100, total_token_count=200, response_token_count=100
+    )
+    return response
+
+
+bm.get_ai_client = lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(generate)))
 
 
 # Address suggestions: the real routes and caps run; only the network call to Google is replaced.
@@ -425,6 +434,14 @@ async def workspaces_fixture(request: Request):
             version=1,
             updated_at='2026',
         )
+    if 'ai_monthly_cap_microusd' in body:
+        cap = body['ai_monthly_cap_microusd']
+        if type(cap) is not int or cap < 0:
+            raise HTTPException(400, 'Invalid synthetic spending cap.')
+        for cid in ('adr', 'other'):
+            store.db.records['_company_ai_budgets/' + cid] = dict(
+                company_id=cid, monthly_cap_microusd=cap
+            )
     store.db.records['_platform_admins/test-owner-ws-owner'] = {'active': True}
     store.db.records['_platform_admins/test-owner-ws-admin'] = {'active': True}
     # Stored in the shape the inspections API saves, so a later client save compares equal.

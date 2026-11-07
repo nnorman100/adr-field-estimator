@@ -44,8 +44,8 @@ inventory behind it.
 All REST calls go through one function, `generate()` in `backend/main.py`, with `response_mime_type='application/json'`, a
 response schema and Pydantic validation of the reply. The Gen AI client is built with `enterprise=True` for the dedicated
 project `alert-disaster-field-2026` and a 95-second HTTP timeout. The Live relay builds its own client for `LIVE_LOCATION`.
-No call sets a maximum output token count, a temperature or a tool list; output size is bounded only by the schemas below
-and by the thinking level. Application-level safety today is prompt labelling of untrusted data, schema validation, size
+No call sets a temperature or a tool list. Every REST call sets a per-operation maximum output token count and holds a
+reservation against the company's monthly AI allowance before dispatch (limits and rates in [ai-spending.md](ai-spending.md)). Application-level safety today is prompt labelling of untrusted data, schema validation, size
 and rate limits, and server-written prices and prose (see [AI.md](AI.md#model-armor)).
 
 Features that are **not** model calls and so are not inventoried: readiness gaps (`backend/readiness.py`), estimate assist
@@ -65,7 +65,7 @@ returns 429 before any model call.
 - **Output:** `OcrResult` (`meter_detected`, `meter_type` ≤100, `value` ≤100, `classification` ≤100, `notes` ≤1,000
   characters). A failed or timed-out call stores no reading (`ocr_status` stays unverified); pending, failed, no-meter and
   unreadable results are never treated as verified.
-- **Limits:** thinking level provider default; call timeout 100 s inside the 55 s REST deadline; no retry.
+- **Limits:** thinking level provider default; call timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry.
 - **Budget hooks:** 20 a minute, 400 a day (`ocr`). `Vertex AI call` log line with model, operation, time and outcome only.
 - **Evals:** none in CI beyond fakes (`tests/test_image_handling.py`, `tests/test_backend.py`). Real-service check: the
   `ocr_case` in `scripts/verify_estimate_batch3.py` (non-meter image must give `meter_detected=false` and an empty value).
@@ -94,7 +94,7 @@ returns 429 before any model call.
 - **Output:** `ScopeSuggestions`: at most 100 `changes` (each needs an exact `source_quote` from the technician's words),
   `claim_changes` checked one by one, at most 20 `questions`. The server drops unverifiable quotes and applies nothing on its
   own; the technician confirms in the form. No price, rate or reading is ever accepted.
-- **Limits:** thinking level LOW; timeout 100 s inside the 55 s REST deadline; no retry. Staged check on 2026-10-13: 10 calls
+- **Limits:** thinking level LOW; timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry. Staged check on 2026-10-13: 10 calls
   at most 4.5 s, median 2.6 s (comment in `backend/main.py`).
 - **Budget hooks:** 6 a minute, 120 a day (`scope`).
 - **Evals:** `tests/test_scope.py` (provider-free); real service: `scripts/verify_scope_extraction.py`,
@@ -170,8 +170,8 @@ returns 429 before any model call.
 
 ## Budget and evaluation status
 
-- **Spend budget:** none today. The only controls are the per-user per-minute and daily counts above. `ai_usage` reports the
-  sum of those counts per company and enforces nothing; a per-company monthly cap is the open pull request #230.
+- **Spend budget:** a shared per-company monthly AI allowance applies to every path above ([ai-spending.md](ai-spending.md)),
+  beside the per-user per-minute and daily counts. `ai_usage` reports those counts per company and enforces nothing.
 - **Gating evals:** no numeric score or threshold gates a release. The thresholds that exist are exact-match assertions in
   the hand-run real-service scripts and the fixed pass bars named above (job and drying summaries 5 of 5, readiness 3 of 3,
   priced-extra audit 3 of 3). Provider-free tests run in CI; real-service checks are run by hand and recorded apart from
@@ -232,9 +232,9 @@ These two tables are read by `tests/test_ai_inventory.py`, which drives every ca
 | `call.audit_pre_1978` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json AIResult; parts=text, image/jpeg; image=JPEG 1600x1200` |
 | `call.drying_summary` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json DryingSummary; parts=text` |
 | `call.job_summary` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json JobSummary; parts=text` |
-| `call.ocr` | `model=gemini-3.8-flash; thinking=provider default; timeout=100; response=application/json OcrResult; parts=image/jpeg, text; image=JPEG 1600x1200` |
-| `call.scope` | `model=gemini-3.8-flash; thinking=LOW; timeout=100; response=application/json wire schema; parts=text` |
-| `call.scope_with_claim` | `model=gemini-3.8-flash; thinking=LOW; timeout=100; response=application/json wire schema; parts=text` |
+| `call.ocr` | `model=gemini-3.8-flash; thinking=provider default; timeout=50; response=application/json OcrResult; parts=image/jpeg, text; image=JPEG 1600x1200` |
+| `call.scope` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json wire schema; parts=text` |
+| `call.scope_with_claim` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json wire schema; parts=text` |
 | `call.transcribe` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json TranscriptionResult; parts=audio/mp4, text` |
 | `client.live` | `enterprise=True; project=alert-disaster-field-2026; location=us-central1; http_timeout_ms=95000` |
 | `client.rest` | `enterprise=True; project=alert-disaster-field-2026; location=global; http_timeout_ms=95000` |

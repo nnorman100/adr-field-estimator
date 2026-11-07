@@ -1,5 +1,6 @@
 """A transcript that arrives after a voice note was resolved must be reviewed before money moves."""
 
+from tests.fakes import genai_models
 import json
 from types import SimpleNamespace
 import backend.main as bm
@@ -131,9 +132,7 @@ def test_resolving_during_transcription_still_blocks_when_the_transcript_lands(
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
     landed = send(client)
     assert landed.status_code == 200, landed.text

@@ -13,6 +13,7 @@ const ASSETS = [
   '/app.css?v=' + VERSION,
   '/core.js?v=' + VERSION,
   '/documents.js?v=' + VERSION,
+  '/ai-spending-ui.js?v=' + VERSION,
   '/app.js?v=' + VERSION,
   '/workspaces.js?v=' + VERSION,
   '/prices.js?v=' + VERSION,
