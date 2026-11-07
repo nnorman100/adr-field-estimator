@@ -18,6 +18,8 @@ const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-plan.js');
 const { checkPlan } = require(SCRIPT);
+const GUARDS = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js');
+const { checkGuards, PROTECTED } = require(GUARDS);
 
 const CASES = [
   ['data', 'test'],
@@ -419,5 +421,86 @@ describe('the command line', () => {
     });
     expect(output).not.toContain('someone@example.invalid');
     expect(JSON.parse(output).resource_changes).toHaveLength(plan.length);
+  });
+});
+
+// The destroy-guard report: guards/guards.tftest.hcl applies a root against the mock provider and
+// Terraform's teardown refuses every resource with lifecycle.prevent_destroy. The stream below is
+// what `terraform test -json` prints for it.
+describe.each(['data', 'app'])('destroy guards, %s root', (root) => {
+  const refusal = (address) =>
+    JSON.stringify({
+      '@type': 'diagnostic',
+      diagnostic: {
+        severity: 'error',
+        summary: 'Instance cannot be destroyed',
+        detail: `Resource ${address} has lifecycle.prevent_destroy set, but the plan calls for this resource to be destroyed.`,
+      },
+    });
+  const applied = (status) =>
+    JSON.stringify({
+      '@type': 'test_run',
+      test_run: {
+        path: 'guards/guards.tftest.hcl',
+        run: 'create_everything',
+        progress: 'complete',
+        status,
+      },
+    });
+  const stream = (addresses, status = 'pass') => [applied(status), ...addresses.map(refusal)];
+
+  test('a report with a refusal for every protected resource passes', () => {
+    expect(checkGuards(stream(PROTECTED[root]), root)).toEqual([]);
+  });
+
+  test.each(PROTECTED[root])('a missing guard on %s is named and refused', (address) => {
+    const rest = PROTECTED[root].filter((a) => a !== address);
+    const problems = checkGuards(stream(rest), root);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(address);
+    expect(problems[0]).toContain('did not refuse to destroy');
+  });
+
+  test('no guards at all is refused', () => {
+    expect(checkGuards(stream([]), root)).toHaveLength(PROTECTED[root].length);
+  });
+
+  test('a mocked apply that failed proves nothing and is refused', () => {
+    const problems = checkGuards(stream(PROTECTED[root], 'error'), root);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('did not pass');
+  });
+
+  test('an unrelated error is reported, not mistaken for a guard', () => {
+    const other = JSON.stringify({
+      '@type': 'diagnostic',
+      diagnostic: { severity: 'error', summary: 'No value for required variable', detail: 'x' },
+    });
+    const problems = checkGuards([...stream(PROTECTED[root]), other], root);
+    expect(problems).toEqual(['unexpected error: No value for required variable']);
+  });
+
+  test('the command line exits 1 on a missing guard and 0 on a full report', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-guards-'));
+    const write = (name, lines) => {
+      const file = path.join(dir, name);
+      fs.writeFileSync(file, lines.join('\n'));
+      return file;
+    };
+    const full = spawnSync('node', [GUARDS, root, write('full.json', stream(PROTECTED[root]))], {
+      encoding: 'utf8',
+    });
+    const short = spawnSync(
+      'node',
+      [GUARDS, root, write('short.json', stream(PROTECTED[root].slice(1)))],
+      { encoding: 'utf8' },
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(full.status).toBe(0);
+    expect(full.stdout).toContain(
+      `${root}: ${PROTECTED[root].length} destroy guard(s) checked, 0 problem(s)`,
+    );
+    expect(short.status).toBe(1);
+    expect(short.stderr).toContain(PROTECTED[root][0]);
   });
 });
