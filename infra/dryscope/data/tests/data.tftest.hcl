@@ -163,6 +163,53 @@ run "runtime_grants_are_limited_to_this_environment" {
   }
 }
 
+run "only_reviewed_roles_are_granted" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.sql_client : m.role == "roles/cloudsql.client"]) && alltrue([for m in google_project_iam_member.sql_login : m.role == "roles/cloudsql.instanceUser"]) && alltrue([for m in google_project_iam_member.firestore_user : m.role == "roles/datastore.user"]) && alltrue([for m in google_project_iam_member.vertex_user : m.role == "roles/aiplatform.user"])
+    error_message = "Project-level grants are limited to SQL connect and login, Firestore user and Vertex AI user."
+  }
+  assert {
+    condition     = length(google_service_account_iam_member.deploy_acts_as) == 2 && alltrue([for m in google_service_account_iam_member.deploy_acts_as : m.role == "roles/iam.serviceAccountUser"])
+    error_message = "The deploy account may only act as the two service runtime accounts."
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.deploy_write.role == "roles/artifactregistry.writer" && google_artifact_registry_repository.images.docker_config[0].immutable_tags == true
+    error_message = "The deploy account pushes immutable images and holds no repository admin."
+  }
+  assert {
+    condition     = length(google_project_iam_member.vertex_user) == 2 && length(google_project_iam_member.firestore_user) == 2
+    error_message = "The migrator gets neither Vertex AI nor Firestore access."
+  }
+}
+
+run "removing_a_resource_never_drops_data" {
+  command = plan
+
+  assert {
+    condition     = google_sql_database.app.deletion_policy == "ABANDON" && alltrue([for u in google_sql_user.iam : u.deletion_policy == "ABANDON"])
+    error_message = "Removing the database or a user from configuration must not drop it."
+  }
+}
+
+run "legacy_resources_are_never_managed" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for a in concat(values(google_service_account.runtime), [google_service_account.deploy]) : !contains(["adr-runtime", "adr-builder"], a.account_id)])
+    error_message = "The legacy runtime and builder accounts must not be managed here."
+  }
+  assert {
+    condition     = google_firestore_database.field.name != "(default)"
+    error_message = "The legacy default database must not be managed here."
+  }
+  assert {
+    condition     = google_artifact_registry_repository.images.location == "us-central1" && google_sql_database_instance.main.name == "dryscope-${var.environment}-pg"
+    error_message = "New resources are this environment's, in us-central1."
+  }
+}
+
 run "wrong_project_is_refused" {
   command = plan
 

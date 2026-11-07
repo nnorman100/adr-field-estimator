@@ -16,7 +16,7 @@ Each root has `envs/test.tfvars`, `envs/live.tfvars` and a matching `envs/backen
 ## What it will not do
 
 - Touch anything in `us-west2`: the legacy Cloud Run service, the `(default)` Firestore database, the old evidence bucket, `adr-runtime` and `adr-builder`, or other apps in the project. The roots refuse any other project or region at plan time.
-- Destroy anything. Cloud SQL, the Firestore database, the bucket, secrets, the image repository and Cloud Run services all set native deletion protection (or `deletion_policy = "ABANDON"`) and `prevent_destroy`. There is no variable to switch protection off.
+- Destroy anything through Terraform. Cloud SQL, the Firestore database, the bucket, secrets, the image repository and Cloud Run services all set `prevent_destroy`, and SQL databases, SQL users and Firestore set `deletion_policy = "ABANDON"`. There is no variable to switch protection off. Only Cloud SQL (`deletion_protection_enabled`) and Firestore (`delete_protection_state`) also carry Google-side protection; Cloud Run's `deletion_protection` and every `prevent_destroy` stop Terraform only, not a direct API delete. Against that, no account created here can delete a Cloud Run service or revision: the deploy account holds the custom role `dryscopeDeploy<Env>` (Cloud Run reads plus `run.services.update`, no delete) instead of `roles/run.developer`, and the evidence roles carry no object delete.
 - Hold a secret. Secrets are created empty, by name. No password user exists; the database is reached with IAM database authentication.
 - Replace existing IAM. Only additive `*_iam_member` resources, from a short list of roles.
 
@@ -24,10 +24,9 @@ Each root has `envs/test.tfvars`, `envs/live.tfvars` and a matching `envs/backen
 
 ```
 TERRAFORM=/path/to/terraform infra/dryscope/scripts/check.sh      # format, validate, mocked tests
-python -m pytest tests/test_infra_terraform.py -q -p no:cacheprovider   # static guard, no Terraform needed
 ```
 
-`terraform test` runs with mock providers and `command = plan`; it needs no credentials. The check script never plans against, applies to, or imports from the real project. CI does not run `check.sh` yet: adding Terraform to a workflow is a protected-path change for the owner.
+`terraform test` runs with mock providers and `command = plan`; it needs no credentials. The suites in `data/tests` and `app/tests` assert region, environment-scoped names, protection settings, IAM-only database users, the reviewed role on every grant, the deploy role's lack of delete permissions, invocation-only public access, and that the legacy project, region, accounts, database, bucket and service are refused or never managed. The check script never plans against, applies to, or imports from the real project. CI does not run `check.sh` yet: adding Terraform to a workflow is a protected-path change for the owner.
 
 ## Open owner decisions
 

@@ -107,9 +107,30 @@ run "data_stays_inside_this_environment" {
     condition     = contains([for e in google_cloud_run_v2_service.svc["api"].template[0].containers[0].env : e.value], "dryscope-field-${var.environment}")
     error_message = "The service names this environment's Firestore database explicitly."
   }
+}
+
+run "deploy_role_cannot_delete_and_public_access_is_invocation_only" {
+  command = plan
+
   assert {
-    condition     = google_cloud_run_v2_service_iam_member.deploy["api"].role == "roles/run.developer"
-    error_message = "The deploy account gets the narrow developer role on the service."
+    condition     = google_project_iam_custom_role.deploy.role_id == "dryscopeDeploy${title(var.environment)}"
+    error_message = "Each environment has its own deploy role."
+  }
+  assert {
+    condition     = alltrue([for p in google_project_iam_custom_role.deploy.permissions : startswith(p, "run.") && (endswith(p, ".get") || endswith(p, ".list") || p == "run.services.update")])
+    error_message = "The deploy role only reads Cloud Run and updates services: no delete, create or IAM change."
+  }
+  assert {
+    condition     = contains(google_project_iam_custom_role.deploy.permissions, "run.services.update")
+    error_message = "The deploy role can deploy revisions and move traffic."
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.deploy) == 2 && alltrue([for k, b in google_cloud_run_v2_service_iam_member.deploy : b.role == "projects/alert-disaster-field-2026/roles/dryscopeDeploy${title(var.environment)}" && b.member == "serviceAccount:dryscope-deploy-${var.environment}@alert-disaster-field-2026.iam.gserviceaccount.com"])
+    error_message = "Only this environment's deploy account gets the custom deploy role, on each service."
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.public) == 2 && alltrue([for k, b in google_cloud_run_v2_service_iam_member.public : b.role == "roles/run.invoker" && b.member == "allUsers"])
+    error_message = "Public access is invocation of the two services only."
   }
 }
 

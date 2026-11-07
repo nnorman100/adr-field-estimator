@@ -77,12 +77,6 @@ variable "live_scaling" {
   }
 }
 
-variable "public_invoker" {
-  type        = bool
-  description = "Allow unauthenticated HTTP invocation. The app verifies Firebase sign-in itself; Cloud Run IAM cannot front a browser app. Owner reviews this binding."
-  default     = true
-}
-
 variable "ingress" {
   type        = string
   description = "Cloud Run ingress. Tightening it waits on the owner's front-door decision (load balancer and Cloud Armor)."

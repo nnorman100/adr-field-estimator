@@ -118,13 +118,36 @@ resource "google_cloud_run_v2_service" "svc" {
 # Cloud Run's own IAM cannot sit in front of a browser app, so both services take
 # unauthenticated calls and verify the Firebase token themselves.
 resource "google_cloud_run_v2_service_iam_member" "public" {
-  for_each = var.public_invoker ? google_cloud_run_v2_service.svc : {}
+  for_each = google_cloud_run_v2_service.svc
 
   project  = var.project_id
   location = var.region
   name     = each.value.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# Deploy without delete. roles/run.developer would also let the deploy account
+# delete services and revisions through the API, which Terraform protection
+# cannot stop. The owner reviews this role at apply time.
+resource "google_project_iam_custom_role" "deploy" {
+  project     = var.project_id
+  role_id     = "dryscopeDeploy${title(var.environment)}"
+  title       = "DryScope ${var.environment} deploy"
+  description = "Deploy revisions and move traffic on the DryScope ${var.environment} Cloud Run services. No delete."
+  permissions = [
+    "run.configurations.get",
+    "run.configurations.list",
+    "run.operations.get",
+    "run.operations.list",
+    "run.revisions.get",
+    "run.revisions.list",
+    "run.routes.get",
+    "run.routes.list",
+    "run.services.get",
+    "run.services.list",
+    "run.services.update",
+  ]
 }
 
 # The deploy account may update these two services and nothing else.
@@ -134,6 +157,6 @@ resource "google_cloud_run_v2_service_iam_member" "deploy" {
   project  = var.project_id
   location = var.region
   name     = each.value.name
-  role     = "roles/run.developer"
+  role     = "projects/${var.project_id}/roles/${google_project_iam_custom_role.deploy.role_id}"
   member   = "serviceAccount:${local.n.service_account_emails["deploy"]}"
 }
