@@ -698,13 +698,14 @@ async function appCheckHeaders() {
   const token = await appCheckToken();
   return token ? { 'X-Firebase-AppCheck': token } : {};
 }
-async function api(path, options = {}) {
+async function api(path, { pause, ...options } = {}) {
   if (!navigator.onLine)
     throw Error('You are offline. Your draft is saved locally; reconnect to continue.');
   if (!state.user || !state.session)
     throw Error('Sign in with an approved, verified account to continue.');
   const [token, appCheckHeader] = await Promise.all([state.user.getIdToken(), appCheckHeaders()]),
     controller = new AbortController();
+  aiGate(pause);
   const timer = setTimeout(() => controller.abort(), 115000);
   try {
     const response = await fetch(path, {
@@ -743,13 +744,14 @@ async function api(path, options = {}) {
     clearTimeout(timer);
   }
 }
-async function jsonApi(path, method = 'GET', body) {
+async function jsonApi(path, method = 'GET', body, pause) {
   const id = state.draft?.inspection_id,
     uid = state.user?.uid,
     workspace = window.WorkspaceUI?.context();
   const result = await (
     await api(path, {
       method,
+      pause,
       // A photo goes as multipart binary; the browser sets that content type and its boundary.
       ...(body === undefined
         ? {}
@@ -1361,7 +1363,7 @@ async function drainQueue() {
         await markOriginalsReady(row.key, [saved]);
         if (photo.ocr_status === 'pending' && !aiWait(ocrPause)) {
           try {
-            record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
+            record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {}, ocrPause);
           } catch (e) {
             if (e.status === 429) aiRefused(ocrPause, e);
             else record = await request(path);
@@ -1396,9 +1398,7 @@ async function drainQueue() {
               await saveRow(row);
             }
           }
-          const payload = await notePayload(note);
-          aiGate(pause);
-          record = await request(path + '/voice-notes', 'POST', payload);
+          record = await request(path + '/voice-notes', 'POST', await notePayload(note), pause);
           if (id === state.draft?.inspection_id) {
             syncChain = syncChain
               .catch(() => {})
@@ -1465,6 +1465,7 @@ function startOCR(photo) {
         '/api/inspections/' + inspectionId + '/photos/' + photo.id + '/ocr',
         'POST',
         {},
+        pause,
       );
       absorb(record);
     } catch (e) {
@@ -5779,7 +5780,6 @@ async function uploadNote(note, draft, pause) {
     if (state.conflict || !state.record || stable(draft.data) !== state.ack)
       throw Error('Save the draft first. The note stays on this phone.');
     if (!note.reserved) await reserveNote(note, draft);
-    aiGate(pause);
     $('technicianTranscript').readOnly = true;
     const base = draft.data.technician_transcript;
     try {
@@ -5787,6 +5787,7 @@ async function uploadNote(note, draft, pause) {
         '/api/inspections/' + draft.inspection_id + '/voice-notes',
         'POST',
         payload,
+        pause,
       );
       if (state.draft !== draft) return;
       absorb(record);

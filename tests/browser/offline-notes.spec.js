@@ -794,6 +794,47 @@ test.describe('controlled voice-note uploads', () => {
       'saved',
     ]);
   });
+  test('a transcription pause that begins while credentials are prepared stops a background upload', async ({
+    page,
+  }) => {
+    let calls = 0;
+    const first = await noteForOtherJob(page, () =>
+      page.route('**/voice-notes', (route) => {
+        calls++;
+        return route.continue();
+      }),
+    );
+    await page.evaluate(() => {
+      const read = notePayload,
+        headers = appCheckHeaders;
+      window.notePayload = async (note) => {
+        const payload = await read(note);
+        window.payloadRead = true;
+        return payload;
+      };
+      window.appCheckHeaders = async () => {
+        const result = await headers();
+        if (window.payloadRead && !window.paused) {
+          aiRefused(aiPauseKey('transcribe'), { retryAfter: 3600 });
+          window.paused = true;
+        }
+        return result;
+      };
+      window.dispatchEvent(new Event('online'));
+    });
+    await page.waitForFunction(() => window.paused && !drainingQueue);
+    expect(calls).toBe(0);
+    expect(
+      await page.evaluate(
+        async (id) =>
+          ((await jsonApi('/api/inspections/' + id)).voice_notes || []).map((row) => row.status),
+        first,
+      ),
+    ).toEqual(['pending']);
+    expect(await page.evaluate(async () => (await allNotes()).map((note) => note.status))).toEqual([
+      'saved',
+    ]);
+  });
   test('opening a job while its note uploads in the background does not send the note twice', async ({
     page,
   }) => {
