@@ -1,5 +1,6 @@
 """Structured Cloud Logging lines for provider calls and Live sessions carry no customer content."""
 
+from tests.fakes import genai_models
 import asyncio, json, time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
@@ -43,9 +44,7 @@ def test_failing_provider_call_logs_error_class_and_no_sensitive_fields(
             },
         )
 
-    monkeypatch.setattr(
-        bm, 'get_ai_client', lambda: NS(aio=NS(models=NS(generate_content=rejected)))
-    )
+    monkeypatch.setattr(bm, 'get_ai_client', lambda: NS(aio=NS(models=genai_models(rejected))))
     capsys.readouterr()
     assert suggest(client).status_code == 502
     output = capsys.readouterr().out
@@ -384,7 +383,12 @@ def test_live_session_end_logs_the_provider_close_code(
         )
         assert socket.receive_json()['type'] == 'ready'
         message = socket.receive_json()
-        assert message['type'] == 'error' and 'status' not in message
+        if provider_code == 429:
+            assert message['type'] == 'error' and message['status'] == 429
+            assert message['retry_after'] == 60
+            assert message['message'].endswith('Retry in 60 seconds.')
+        else:
+            assert message['type'] == 'error' and 'status' not in message
         assert message['message'].startswith('Live coaching disconnected.')
         with pytest.raises(WebSocketDisconnect):
             while True:

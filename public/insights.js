@@ -267,6 +267,32 @@ window.InsightUI = (() => {
     }
     load();
   }
+  function dashboardUsage(target) {
+    usage(target);
+    spending(target);
+  }
+  function spending(target) {
+    if (state.session.role !== 'owner') return;
+    const requested = identity(),
+      card = node('section', undefined, 'dashboard-card ai-spending'),
+      show = (text) => card.replaceChildren(node('p', 'AI used this month: ' + text));
+    target.append(card);
+    if (!navigator.onLine) return show('connect to load.');
+    show('loading…');
+    const money = (micro) => '$' + (micro / 1000000).toFixed(2);
+    jsonApi(`/api/companies/${state.session.company_id}/ai-spending`).then(
+      (result) => {
+        if (requested !== identity() || !card.isConnected) return;
+        show(
+          `${money(result.spent_microusd + result.reserved_microusd)} of ${money(result.monthly_cap_microusd)}`,
+        );
+      },
+      () => {
+        if (requested !== identity() || !card.isConnected) return;
+        show('unavailable.');
+      },
+    );
+  }
   function connectivity() {
     check();
     account();
@@ -288,5 +314,5 @@ window.InsightUI = (() => {
       if ($('accountMenu').open) refreshAccount();
     }),
   );
-  return { reset, job, row, support, usage, account, enabled };
+  return { reset, job, row, support, usage, spending, dashboardUsage, account, enabled };
 })();

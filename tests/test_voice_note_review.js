@@ -20,7 +20,7 @@ const context = {
 };
 context.window = context;
 vm.createContext(context);
-vm.runInContext(fs.readFileSync('public/app.js', 'utf8'), context);
+vm.runInContext(require('./app_scripts')(), context);
 (async () => {
   await vm.runInContext(
     `(async () => {

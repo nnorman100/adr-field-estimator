@@ -416,7 +416,7 @@ window.WorkspaceUI = (() => {
     content.append(grid);
     window.DryingWatch?.dashboard(content);
     window.EstimateAccuracy?.dashboard(content);
-    window.InsightUI?.usage(content);
+    window.InsightUI?.dashboardUsage(content);
     if (state.session.role) {
       const card = node('section', undefined, 'dashboard-card');
       card.append(

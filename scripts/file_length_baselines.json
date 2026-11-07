@@ -1,10 +1,10 @@
 {
-  "backend/main.py": 2840,
+  "backend/main.py": 2834,
   "backend/price_book_store.py": 1973,
   "backend/price_table.py": 1714,
   "backend/workspaces.py": 2101,
   "public/app.css": 3302,
-  "public/app.js": 6621,
+  "public/app.js": 6597,
   "public/prices.js": 2159,
   "public/scope-items.js": 1056,
   "public/workspaces.js": 2268,
@@ -14,12 +14,12 @@
   "tests/browser/workflows.spec.js": 1166,
   "tests/browser/workspaces.spec.js": 1481,
   "tests/test_auto_deploy.py": 1236,
-  "tests/test_backend.py": 1328,
+  "tests/test_backend.py": 1190,
   "tests/test_claims.py": 1503,
-  "tests/test_firestore_emulator.py": 1573,
+  "tests/test_firestore_emulator.py": 1571,
   "tests/test_frontend.js": 1392,
   "tests/test_price_books.py": 2286,
   "tests/test_price_table.py": 1152,
   "tests/test_pricing_v2.py": 2426,
-  "tests/test_workspaces.py": 4873
+  "tests/test_workspaces.py": 4872
 }

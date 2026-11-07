@@ -14,6 +14,7 @@ import importlib.util
 import inspect
 import io
 import json
+import math
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,10 +25,10 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import backend.main as bm
-from backend import ai_features, inspection_store, workspace_api
+from backend import ai_features, ai_spending, inspection_store, workspace_api
 from backend.contracts import AIResult, InspectionData
 from scripts import deploy_backend
-from tests.fakes import FakeCompanyStore, FakeStore
+from tests.fakes import FakeCompanyStore, FakeStore, genai_models
 from tests.test_voice_notes import note
 from tests.test_workspaces import data as company_data, identity, seed, signed_job
 
@@ -154,7 +155,7 @@ class Recorder:
 
         return NS(
             aio=NS(
-                models=NS(generate_content=generate_content),
+                models=genai_models(generate_content),
                 live=NS(connect=connect),
                 aclose=aclose,
             )
@@ -170,7 +171,8 @@ class Recorder:
     async def generate(self, *args, **kwargs):
         bound = inspect.signature(REAL_GENERATE).bind(*args, **kwargs)
         bound.apply_defaults()
-        self.timeouts.append(bound.arguments['timeout'])
+        # OCR, scope and transcription pass what is left of a fixed budget; pin the budget itself.
+        self.timeouts.append(math.ceil(bound.arguments['timeout']))
         return await REAL_GENERATE(*args, **kwargs)
 
 
@@ -492,11 +494,20 @@ def test_a_changed_emitted_prompt_or_setting_is_reported(recorder, monkeypatch):
     monkeypatch.setattr(bm, 'OCR_INSTRUCTIONS', bm.OCR_INSTRUCTIONS + ' Changed.')
     monkeypatch.setattr(workspace_api, 'JOB_SUMMARY_INSTRUCTIONS', 'Replaced.')
     monkeypatch.setattr(bm, 'OCR_MODEL', 'another-model')
+    # The inventory reports a model change; spending would otherwise refuse the unverified model.
+    for module in (bm, ai_spending):
+        monkeypatch.setattr(
+            module,
+            'rest_output_limit',
+            lambda model, operation: ai_spending.REST_OUTPUT_LIMITS[operation],
+        )
     wire = bm.scope_response_schema()
     wire['required'] = [*wire.get('required', []), 'extra']
     monkeypatch.setattr(bm, 'scope_response_schema', lambda: wire)
     monkeypatch.setattr(
-        bm.OcrResult, 'model_json_schema', classmethod(lambda cls: {'changed': True})
+        bm.OcrResult,
+        'model_json_schema',
+        classmethod(lambda cls: {'type': 'object', 'properties': {'changed': {'type': 'boolean'}}}),
     )
     prompts, settings = observed(recorder, monkeypatch)
     problems = '\n'.join(differences(INVENTORY.read_text(encoding='utf8'), prompts, settings))

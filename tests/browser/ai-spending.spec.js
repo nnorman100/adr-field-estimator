@@ -1,0 +1,226 @@
+const { test, expect } = require('@playwright/test');
+const { randomUUID } = require('node:crypto');
+const core = require('../../public/core.js');
+const JOB = 'ADR-INS-' + 'c'.repeat(32);
+const headers = { Authorization: 'Bearer test-owner-ws-owner' };
+test.use({ serviceWorkers: 'block' });
+test.afterEach(async ({ page, request }) => {
+  await page.close();
+  await request.post('/__test/workspaces', { data: { enabled: false } });
+});
+
+async function owner(page) {
+  await page.addInitScript(() => sessionStorage.setItem('synthetic-uid', 'test-owner-ws-owner'));
+  await page.goto('/app');
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+}
+
+test('monthly spending uses real settlement with synthetic provider usage and no count feature', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: { enabled: true, ai_features: ['job_summary'] },
+  });
+  const summary = await request.get(`/api/jobs/${JOB}/insight`, { headers });
+  expect(summary.status()).toBe(200);
+  const session = await (await request.get('/api/session', { headers })).json();
+  expect(session.ai_spending).toBeUndefined();
+  const spending = await (await request.get('/api/companies/adr/ai-spending', { headers })).json();
+  expect(spending.monthly_cap_microusd).toBe(10000000);
+  expect(spending.spent_microusd).toBe(990);
+  expect(spending.reserved_microusd).toBe(0);
+  await owner(page);
+  const card = page.locator('.ai-spending');
+  await expect(card).toHaveText('AI used this month: $0.00 of $10.00');
+  await expect(card.locator('button')).toHaveCount(0);
+  await expect(page.locator('.ai-usage')).toHaveCount(0);
+});
+
+test('monthly cap refuses generation while saved work and the owner display stay available', async ({
+  page,
+  request,
+}) => {
+  await request.post('/__test/workspaces', {
+    data: { enabled: true, ai_features: ['job_summary'], ai_monthly_cap_microusd: 0 },
+  });
+  const before = await (await request.get(`/api/inspections/${JOB}`, { headers })).json();
+  const refused = await request.get(`/api/jobs/${JOB}/insight`, { headers });
+  expect(refused.status()).toBe(429);
+  expect((await refused.json()).detail).toContain('next month (UTC)');
+  expect(Number(refused.headers()['retry-after'])).toBeGreaterThan(1);
+  const after = await (await request.get(`/api/inspections/${JOB}`, { headers })).json();
+  expect(after).toEqual(before);
+  expect(
+    (await request.get(`/api/jobs/${JOB}/insight?facts_only=true`, { headers })).status(),
+  ).toBe(200);
+  await owner(page);
+  await expect(page.locator('.ai-spending')).toHaveText('AI used this month: $0.00 of $0.00');
+});
+
+function queuedDrafts() {
+  const hex = () => randomUUID().replaceAll('-', '').slice(1);
+  return {
+    uid: 'test-owner-spending-' + randomUUID(),
+    open: 'ADR-INS-f' + hex(),
+    first: 'ADR-INS-0' + hex(),
+    later: 'ADR-INS-1' + hex(),
+  };
+}
+
+async function refuseRecognition(page, seconds) {
+  const counter = { calls: 0 };
+  await page.route('**/api/inspections/*/photos/*/ocr', (route) => {
+    counter.calls++;
+    return route.fulfill({
+      status: 429,
+      headers: { 'Retry-After': String(seconds), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ detail: "Your company has reached this month's AI spending limit." }),
+    });
+  });
+  return counter;
+}
+
+async function seedQueuedDrafts(page, { uid, open, first, later }) {
+  await page.goto('/manifest.webmanifest');
+  await page.evaluate(
+    async ({ uid, open, first, later, data }) => {
+      sessionStorage.setItem('synthetic-uid', uid);
+      const c = document.createElement('canvas');
+      c.width = 120;
+      c.height = 80;
+      c.getContext('2d').fillRect(0, 0, 10, 10);
+      const row = (id, address, photos, updated_at) => ({
+        key: uid + ':' + id,
+        uid,
+        company_id: null,
+        draft: { inspection_id: id, data: { ...data, address }, photos },
+        record: null,
+        ack: null,
+        session: null,
+        updated_at,
+      });
+      const rows = [
+        row(open, 'Open property', [], '2026-10-10T12:00:00.000Z'),
+        row(
+          first,
+          'Queued photo property',
+          [
+            {
+              id: '2'.repeat(32),
+              room: 'Room 1',
+              captured_at: new Date().toISOString(),
+              data_url: c.toDataURL('image/png'),
+              width: 120,
+              height: 80,
+              ocr_status: 'pending',
+              uploaded: false,
+            },
+          ],
+          '2026-10-09T12:00:00.000Z',
+        ),
+        row(later, 'Queued manual property', [], '2026-10-08T12:00:00.000Z'),
+      ];
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('adr-private-drafts-v2', 1);
+        request.onupgradeneeded = () =>
+          request.result.createObjectStore('drafts', { keyPath: 'key' });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = reject;
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('drafts', 'readwrite');
+        for (const r of rows) tx.objectStore('drafts').put(r);
+        tx.oncomplete = resolve;
+        tx.onerror = reject;
+      });
+      db.close();
+    },
+    { uid, open, first, later, data: core.emptyData() },
+  );
+}
+
+test('a refused queued photo recognition stays pending while later queued drafts still sync', async ({
+  page,
+}) => {
+  const drafts = queuedDrafts(),
+    { uid, first, later } = drafts;
+  const refusals = await refuseRecognition(page, 3600);
+  await seedQueuedDrafts(page, drafts);
+  await page.goto('/app');
+  await expect(page.locator('#address')).toHaveValue('Open property', { timeout: 15000 });
+  const remote = async (id) => {
+    const response = await page.request.get('/api/inspections/' + id, {
+      headers: { Authorization: 'Bearer ' + uid },
+    });
+    return response.ok() ? response.json() : null;
+  };
+  await expect.poll(async () => (await remote(later))?.data.address).toBe('Queued manual property');
+  const queued = await remote(first);
+  expect(queued.photos.map((p) => [p.width, p.ocr_status])).toEqual([[120, 'pending']]);
+  expect(refusals.calls).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => drainingQueue)).toBe(false);
+  const refused = refusals.calls;
+  await page.evaluate(() => drainQueue());
+  await page.evaluate(() => drainQueue());
+  expect(refusals.calls).toBe(refused);
+});
+
+test('a photo recognition refusal pauses its initiating account even after the job changes', async ({
+  page,
+}) => {
+  let release,
+    recognitions = 0;
+  const answered = new Promise((resolve) => (release = resolve));
+  await page.route('**/api/inspections/*/photos/*/ocr', async (route) => {
+    recognitions++;
+    await answered;
+    return route.fulfill({
+      status: 429,
+      headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ detail: "Your company has reached this month's AI spending limit." }),
+    });
+  });
+  await page.goto('/app');
+  await expect(page.locator('#address')).toBeEnabled({ timeout: 15000 });
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  const first = await page.evaluate(() => state.draft.inspection_id);
+  await page.evaluate(() => startOCR({ id: '9'.repeat(32), uploaded: true }));
+  await expect.poll(() => recognitions).toBe(1);
+  await page.locator('#jobMenu > summary').click();
+  await page.locator('#newInspection').click();
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  release();
+  await expect.poll(() => page.evaluate(() => aiWait(aiPauseKey('ocr')))).toBeGreaterThan(3500000);
+  await page.evaluate(() => startOCR({ id: '8'.repeat(32), uploaded: true }));
+  await page.evaluate(() => drainQueue());
+  expect(recognitions).toBe(1);
+  const kept = await page.evaluate(() => {
+    const pause = aiPauseKey('ocr');
+    aiRefused(pause, { retryAfter: 60 });
+    return aiWait(pause);
+  });
+  expect(kept).toBeGreaterThan(3500000);
+});
+
+test('Retry recognition re-enables when a background refusal pause ends on the opened draft', async ({
+  page,
+}) => {
+  const drafts = queuedDrafts();
+  const refusals = await refuseRecognition(page, 4);
+  await seedQueuedDrafts(page, drafts);
+  await page.goto('/app');
+  await expect(page.locator('#address')).toHaveValue('Open property', { timeout: 15000 });
+  await expect.poll(() => refusals.calls).toBe(1);
+  await expect.poll(() => page.evaluate(() => drainingQueue)).toBe(false);
+  await page.evaluate((id) => restoreDraft(id), drafts.first);
+  await expect(page.locator('#address')).toHaveValue('Queued photo property');
+  await page.locator('.task-nav [data-task="walkthrough"]').click();
+  const retry = page.getByRole('button', { name: 'Retry recognition' });
+  await expect(retry).toBeDisabled();
+  await expect(retry).toBeEnabled({ timeout: 6000 });
+  expect(refusals.calls).toBe(1);
+  await retry.click();
+  await expect.poll(() => refusals.calls).toBe(2);
+});

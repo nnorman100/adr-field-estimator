@@ -52,7 +52,7 @@ Owners may see how their prices compare with anonymized aggregates drawn from fi
 ADR's superadmin, or a support role ADR assigns, may open a subscriber's jobs read-only to diagnose a problem; every access is logged and visible to that company's owner (superadmin read-only support access with an audit log is built, per `docs/company-workspaces.md`; a separate support role and showing the log to the company's owner are not built yet).
 The walkthrough is recorded from the start of Live, the signed proposal carries the recording notice, and the audio and frames are kept in the private evidence bucket, bound to the signed agreement (not built yet; today Live audio and offline voice notes are transcribed without the audio being stored, and the proposal has no recording notice, per `docs/firebase-isolation.md`).
 Logs carry allowlisted fields only, never prompts, transcripts, emails, tokens or user paths.
-Every AI call is capped per user per day, so a bug or a stolen session cannot run up the bill.
+Every AI call is capped per user per day and per company per month, so a bug or a stolen session cannot run up the bill.
 The frontend stays a static web app with no build step and same-origin vendored dependencies.
 
 ## Proven before it is claimed

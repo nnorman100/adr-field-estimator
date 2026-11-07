@@ -64,10 +64,11 @@ Per-user daily and per-minute limits are `DAILY_LIMITS` in `backend/inspection_s
 
 ## Company budget and daily ceiling
 
-None in this repository at the commit this file describes. `backend/ai_usage.py` only reports the
-sum of each active member's usage (`ai_usage` switch); it enforces nothing, and nothing watches
-spend. The standard's per-company budget is covered by the open pull request for a per-company
-monthly AI cap (#230); update this section when it merges.
+Each company has a shared monthly AI spending allowance ($10 per UTC calendar month before launch) on top
+of the per-user limits above. REST calls hold a counted-input reservation before dispatch; Live has a soft
+threshold with an admission margin. The mechanism, refusals, overrides and crash behavior are owned by
+[ai-spending.md](ai-spending.md). `backend/ai_usage.py` still only reports request counts (`ai_usage`
+switch) and enforces nothing. There is no separate daily company ceiling.
 
 ## Evaluation tests
 
