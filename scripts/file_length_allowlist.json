@@ -10,7 +10,6 @@
     "public/scope-items.js",
     "public/workspaces.js",
     "tests/browser/prices.spec.js",
-    "tests/browser/scope-items.spec.js",
     "tests/browser/workspaces.spec.js",
     "tests/test_firestore_emulator.py",
     "tests/test_price_books.py",
