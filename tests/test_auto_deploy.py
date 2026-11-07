@@ -6,6 +6,7 @@ Everything outside the process is replaced by FakeRunner; no test touches Google
 import importlib
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,6 @@ import yaml
 
 from scripts import auto_deploy as auto
 from scripts import deploy_backend
-from tests.github_workflow import condition, interpolate, run_step
 
 ROOT = Path(__file__).resolve().parents[1]
 OLD = 'a' * 40
@@ -514,6 +514,11 @@ def test_a_baseline_that_is_not_less_permissive_is_recorded_not_blocked(summary,
     assert "PRICE_BOOKS_ENABLED '(unset)' -> 'false'" in summary.text()
 
 
+def confirmations(expression):
+    """The flag each dispatch input turns on in a workflow expression."""
+    return dict(re.findall(r"inputs\.(\w+) == 'yes' && '(--[\w-]+)'", expression))
+
+
 def serving_with(runner, commit=OLD, **env):
     runner.revisions['rev-old'] = revision(commit, env)
     return runner
@@ -668,18 +673,10 @@ def test_automatic_rollback_after_a_confirmed_release_restores_the_serving_revis
 
 
 def test_the_automatic_workflow_can_never_confirm_a_lower_baseline():
-    job = deploy_job()
-    release_step = deploy_step('Release')
-    yes = {'version': '', 'confirm_past_migration': 'yes', 'confirm_baseline': 'yes'}
-    for event, inputs, expected in (
-        ('workflow_run', {}, []),
-        ('workflow_dispatch', yes, ['--check-only']),
-    ):
-        context = workflow_context(event, **inputs)
-        assert condition(release_step['if'], context)
-        env = {name: interpolate(value, context) for name, value in job['env'].items()}
-        argv = step_argv('Release', env)
-        assert argv == ['--commit', NEW, '--run-id', '41140166919', *expected]
+    step = next(step for step in deploy_job()['steps'] if step.get('name') == 'Release')
+    variables = {token for token in shlex.split(step['run'], comments=True) if '$' in token}
+    assert variables == {'$COMMIT', '$RUN_ID', '$DEPLOY_ARGS'}
+    assert confirmations(deploy_job()['env']['DEPLOY_ARGS']) == {}
 
 
 def test_one_constant_sets_the_baseline_for_both_deploy_scripts(monkeypatch):
@@ -797,9 +794,64 @@ def test_matching_specs_have_no_differences():
     )
 
 
-# --- The workflow ------------------------------------------------------------------------------
+# --- The workflow and setup script -------------------------------------------------------------
 
 WORKFLOW = (ROOT / '.github' / 'workflows' / 'deploy.yml').read_text(encoding='utf8')
+SETUP = (ROOT / 'scripts' / 'setup_auto_deploy.sh').read_text(encoding='utf8')
+
+
+def test_workflow_runs_only_after_ci_succeeds_on_a_master_push():
+    assert re.search(
+        r'workflow_run:\s*\n\s*workflows: \[CI\]\s*\n\s*types: \[completed\]', WORKFLOW
+    )
+    assert 'branches: [master]' in WORKFLOW
+    for condition in (
+        "github.event.workflow_run.conclusion == 'success'",
+        "github.event.workflow_run.event == 'push'",
+        "github.event.workflow_run.head_branch == 'master'",
+        'github.event.workflow_run.head_repository.full_name == github.repository',
+    ):
+        assert condition in WORKFLOW
+    assert 'pull_request' not in WORKFLOW
+
+
+def test_workflow_serializes_deploys_and_never_cancels_one_in_flight():
+    assert re.search(
+        r'concurrency:\s*\n\s*group: production-deploy\s*\n\s*cancel-in-progress: false', WORKFLOW
+    )
+
+
+def test_workflow_uses_keyless_auth_and_never_a_blanket_firebase_deploy():
+    assert 'workload_identity_provider: ${{ vars.' in WORKFLOW
+    assert 'id-token: write' in WORKFLOW
+    assert 'credentials_json' not in WORKFLOW and 'secrets.' not in WORKFLOW
+    assert 'firebase deploy' not in WORKFLOW
+    assert 'firebase-tools' not in WORKFLOW or '--only' in WORKFLOW
+
+
+def test_workflow_deploys_the_tested_commit_not_the_branch_tip():
+    assert 'ref: ${{ github.event.workflow_run.head_sha || github.sha }}' in WORKFLOW
+    assert 'fetch-depth: 0' in WORKFLOW
+    assert 'scripts/auto_deploy.py --commit' in WORKFLOW
+
+
+def test_workflow_actions_are_pinned_to_commits():
+    for line in WORKFLOW.splitlines():
+        match = re.search(r'uses: (\S+)', line)
+        if match:
+            assert re.search(r'@[0-9a-f]{40}$', match.group(1)), line
+
+
+def test_setup_script_restricts_the_identity_to_this_repository_and_master():
+    assert 'REPO=nnorman100/adr-field-estimator' in SETUP
+    assert "assertion.repository == '$REPO'" in SETUP
+    assert "assertion.ref == 'refs/heads/master'" in SETUP
+    assert 'roles/owner' not in SETUP and 'roles/editor' not in SETUP
+    assert 'keys create' not in SETUP
+
+
+def test_setup_script_has_valid_shell_syntax():
+    subprocess.run(['bash', '-n', str(ROOT / 'scripts' / 'setup_auto_deploy.sh')], check=True)
 
 
 def test_default_tag_fits_cloud_run_limit_for_real_run_ids():
@@ -832,32 +884,13 @@ def deploy_job():
     return yaml.safe_load(WORKFLOW)['jobs']['deploy']
 
 
-GITHUB_TOKEN = 'github-write-token'
-
-
-def workflow_context(event_name, **inputs):
-    """What GitHub supplies to the deploy job's expressions for one trigger."""
-    return {
-        'github': {
-            'event_name': event_name,
-            'sha': NEW,
-            'run_id': '41140166919',
-            'token': GITHUB_TOKEN,
-        },
-        'secrets': {'GITHUB_TOKEN': GITHUB_TOKEN},
-        'inputs': inputs,
-    }
-
-
-def deploy_step(name):
-    return next(step for step in deploy_job()['steps'] if step.get('name') == name)
-
-
 def step_argv(name, env):
-    commands = run_step(deploy_step(name), env)
-    calls = [argv for argv in commands if argv[1:2] == ['scripts/auto_deploy.py']]
-    assert len(calls) == 1, calls
-    return calls[0][2:]
+    step = next(step for step in deploy_job()['steps'] if step.get('name') == name)
+    tokens = shlex.split(step['run'], comments=True)
+    for key, value in env.items():
+        tokens = [token.replace(f'${key}', value) for token in tokens]
+    tokens = [token for token in tokens if token]
+    return tokens[tokens.index('scripts/auto_deploy.py') + 1 :]
 
 
 def release_argv(run_id):
