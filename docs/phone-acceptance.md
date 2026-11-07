@@ -53,7 +53,7 @@ Physical checks must test four distinct connectivity states:
 4. **Network Transitions & Reconnection**:
    - Toggling Airplane mode off or walking out of a basement into Wi-Fi/cellular coverage.
    - Automatic background drain of queued photos and draft revisions without duplicate uploads.
-   - Re-established Live connections resume via server lease without replaying historical audio.
+   - Going offline during Live stops the walkthrough and releases the camera and microphone; observations already captured stay on the phone. Back online, the technician taps **Resume walkthrough**, which starts a new Live session without replaying earlier audio.
 
 ---
 
@@ -112,7 +112,7 @@ Physical checks must test four distinct connectivity states:
 
 #### Check 1.4: PWA Installation ("Add to Home Screen")
 - **Applies to**: `[Both]`
-- **Setup**: Safari on iPhone signed into an active estimator account.
+- **Setup**: Safari on iPhone signed into the test company's owner account (use this account for the rest of the script).
 - **Steps**:
   1. In Safari, tap the **Share** button (box with upward arrow).
   2. Tap **Add to Home Screen**.
@@ -139,7 +139,7 @@ Physical checks must test four distinct connectivity states:
 
 #### Check 2.1: Start New Job & Fixed-Height Header
 - **Applies to**: `[Both]`
-- **Setup**: Signed in on iPhone as an estimator.
+- **Setup**: Signed in on iPhone with the company owner account from Check 1.4.
 - **Steps**:
   1. On the dashboard, tap **+ New job** (or open the menu and tap **New inspection**).
   2. Observe the top navy header.
@@ -152,7 +152,7 @@ Physical checks must test four distinct connectivity states:
 
 #### Check 2.2: Job Coordination & Customer Details
 - **Applies to**: `[Both]`
-- **Setup**: Open the newly created draft.
+- **Setup**: Open the newly created draft, still signed in as the company owner (estimator accounts cannot edit customer details on the rebuilt app and see a separate **Customer** card on today's app).
 - **Steps**:
   1. Navigate to **Job coordination** (under **More** or top tabs).
   2. Enter:
@@ -315,7 +315,23 @@ Physical checks must test four distinct connectivity states:
   - At 25 seconds of continuous weak signal, button appears: **Switch to offline notes**.
 - **Report**: Did video pause gracefully? Did voice drop or stutter? Did the offline notes prompt appear at ~25 seconds?
 
-#### Check 4.5: Sub-Second Conversational Latency Benchmark
+#### Check 4.5: Going Offline During Live & Resume
+- **Applies to**: `[Both]`
+- **Setup**: Live walkthrough running on good signal, with at least one spoken observation already shown under **Technician observations**.
+- **Steps**:
+  1. Swipe down to Control Center and turn on **Airplane mode** while Live is running.
+  2. Observe the screen and the green camera / orange microphone dots at the top of the iPhone.
+  3. Wait 10 seconds, then turn **Airplane mode** off and wait for Wi-Fi or cellular to return.
+  4. Tap **Resume walkthrough**.
+  5. Listen for the first few seconds after Live reconnects.
+- **Expected Result**:
+  - On going offline, Live stops and the screen shows: `"Connection went offline. Tap Resume walkthrough when online and review missing observations."` with the offer to switch to offline notes.
+  - The camera and microphone dots disappear within a few seconds.
+  - Observations captured before going offline are still listed.
+  - After **Resume walkthrough**, the status returns to `"Live AI connected"` and the assistant continues; no earlier assistant audio or technician speech is played back again.
+- **Report**: Exact message shown when offline; whether the dots went out; whether earlier observations survived; any replayed audio after resuming.
+
+#### Check 4.6: Sub-Second Conversational Latency Benchmark
 - **Applies to**: `[Both]`
 - **Setup**: Good signal condition; Bluetooth connected.
 - **Steps**:
@@ -324,7 +340,7 @@ Physical checks must test four distinct connectivity states:
 - **Expected Result**: Target turnaround is **sub-second (<1.0 s)**; conversational turnaround should feel natural in the earpiece.
 - **Report**: Record all 5 measured latencies in seconds (e.g., 0.85s, 0.92s, 1.10s, 0.78s, 0.88s) and the measurement method.
 
-#### Check 4.6: Finish & Teardown Cleanliness
+#### Check 4.7: Finish & Teardown Cleanliness
 - **Applies to**: `[Both]`
 - **Steps**:
   1. Tap **Finish & review**.
@@ -570,8 +586,9 @@ Print or copy this table when conducting physical phone acceptance rounds:
 | **4.2** | Assistant First Greeting| | | 5G | | |
 | **4.3** | Interruption Flush | | | 5G | | |
 | **4.4** | Weak Signal Video Pause | | | Basement | | |
-| **4.5** | Latency Benchmark (5x) | | | 5G | | P50: ___s / Max: ___s |
-| **4.6** | Hardware Dots Teardown | | | 5G | | |
+| **4.5** | Offline Mid-Live & Resume | | | 5G→Airplane→5G | | |
+| **4.6** | Latency Benchmark (5x) | | | 5G | | P50: ___s / Max: ___s |
+| **4.7** | Hardware Dots Teardown | | | 5G | | |
 | **5.1** | ADR Sheet Baseline | | | Wi-Fi | | $1,775.00 Base / Range: |
 | **5.2** | Unpriced Company Block | | | Wi-Fi | | |
 | **5.3** | Price Books Editor | | | Wi-Fi | | |
