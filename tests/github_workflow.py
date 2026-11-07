@@ -126,11 +126,13 @@ STUB = """#!{python}
 import json, os, sys
 with open(os.environ['STEP_LOG'], 'a') as log:
     log.write(json.dumps([os.path.basename(sys.argv[0]), *sys.argv[1:]]) + '\\n')
+fails = os.environ.get('STUB_FAILS')
+sys.exit(1 if fails and fails in sys.argv else 0)
 """
 
 
-def run_step(step, env, commands=('python3', 'gh')):
-    """Run a step's script the way the runner's bash does, with only stub commands on PATH."""
+def run_stubbed(argv, env, commands, passthrough=(), fails=None):
+    """Run argv with only stubs and the named real tools on PATH; return the stub calls."""
     with tempfile.TemporaryDirectory() as tmp:
         stubs, log = Path(tmp, 'bin'), Path(tmp, 'commands.jsonl')
         stubs.mkdir()
@@ -138,12 +140,19 @@ def run_step(step, env, commands=('python3', 'gh')):
             stub = stubs / command
             stub.write_text(STUB.format(python=sys.executable))
             stub.chmod(0o755)
+        for tool in passthrough:
+            (stubs / tool).symlink_to(shutil.which(tool))
         result = subprocess.run(
-            [shutil.which('bash'), '--noprofile', '--norc', '-eo', 'pipefail', '-c', step['run']],
-            env={**env, 'PATH': str(stubs), 'STEP_LOG': str(log)},
+            [shutil.which('bash'), '--noprofile', '--norc', *argv],
+            env={**env, 'PATH': str(stubs), 'STEP_LOG': str(log), 'STUB_FAILS': fails or ''},
             cwd=ROOT,
             capture_output=True,
             text=True,
         )
         assert result.returncode == 0, result.stderr
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def run_step(step, env, commands=('python3', 'gh')):
+    """Run a step's script the way the runner's bash does, with only stub commands on PATH."""
+    return run_stubbed(['-eo', 'pipefail', '-c', step['run']], env, commands)

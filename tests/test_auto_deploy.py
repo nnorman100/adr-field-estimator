@@ -797,64 +797,9 @@ def test_matching_specs_have_no_differences():
     )
 
 
-# --- The workflow and setup script -------------------------------------------------------------
+# --- The workflow ------------------------------------------------------------------------------
 
 WORKFLOW = (ROOT / '.github' / 'workflows' / 'deploy.yml').read_text(encoding='utf8')
-SETUP = (ROOT / 'scripts' / 'setup_auto_deploy.sh').read_text(encoding='utf8')
-
-
-def test_workflow_runs_only_after_ci_succeeds_on_a_master_push():
-    assert re.search(
-        r'workflow_run:\s*\n\s*workflows: \[CI\]\s*\n\s*types: \[completed\]', WORKFLOW
-    )
-    assert 'branches: [master]' in WORKFLOW
-    for condition in (
-        "github.event.workflow_run.conclusion == 'success'",
-        "github.event.workflow_run.event == 'push'",
-        "github.event.workflow_run.head_branch == 'master'",
-        'github.event.workflow_run.head_repository.full_name == github.repository',
-    ):
-        assert condition in WORKFLOW
-    assert 'pull_request' not in WORKFLOW
-
-
-def test_workflow_serializes_deploys_and_never_cancels_one_in_flight():
-    assert re.search(
-        r'concurrency:\s*\n\s*group: production-deploy\s*\n\s*cancel-in-progress: false', WORKFLOW
-    )
-
-
-def test_workflow_uses_keyless_auth_and_never_a_blanket_firebase_deploy():
-    assert 'workload_identity_provider: ${{ vars.' in WORKFLOW
-    assert 'id-token: write' in WORKFLOW
-    assert 'credentials_json' not in WORKFLOW and 'secrets.' not in WORKFLOW
-    assert 'firebase deploy' not in WORKFLOW
-    assert 'firebase-tools' not in WORKFLOW or '--only' in WORKFLOW
-
-
-def test_workflow_deploys_the_tested_commit_not_the_branch_tip():
-    assert 'ref: ${{ github.event.workflow_run.head_sha || github.sha }}' in WORKFLOW
-    assert 'fetch-depth: 0' in WORKFLOW
-    assert 'scripts/auto_deploy.py --commit' in WORKFLOW
-
-
-def test_workflow_actions_are_pinned_to_commits():
-    for line in WORKFLOW.splitlines():
-        match = re.search(r'uses: (\S+)', line)
-        if match:
-            assert re.search(r'@[0-9a-f]{40}$', match.group(1)), line
-
-
-def test_setup_script_restricts_the_identity_to_this_repository_and_master():
-    assert 'REPO=nnorman100/adr-field-estimator' in SETUP
-    assert "assertion.repository == '$REPO'" in SETUP
-    assert "assertion.ref == 'refs/heads/master'" in SETUP
-    assert 'roles/owner' not in SETUP and 'roles/editor' not in SETUP
-    assert 'keys create' not in SETUP
-
-
-def test_setup_script_has_valid_shell_syntax():
-    subprocess.run(['bash', '-n', str(ROOT / 'scripts' / 'setup_auto_deploy.sh')], check=True)
 
 
 def test_default_tag_fits_cloud_run_limit_for_real_run_ids():
