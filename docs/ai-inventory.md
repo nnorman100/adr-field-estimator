@@ -65,7 +65,7 @@ returns 429 before any model call.
 - **Output:** `OcrResult` (`meter_detected`, `meter_type` ≤100, `value` ≤100, `classification` ≤100, `notes` ≤1,000
   characters). A failed or timed-out call stores no reading (`ocr_status` stays unverified); pending, failed, no-meter and
   unreadable results are never treated as verified.
-- **Limits:** thinking level provider default; call timeout 100 s inside the 55 s REST deadline; no retry.
+- **Limits:** thinking level provider default; call timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry.
 - **Budget hooks:** 20 a minute, 400 a day (`ocr`). `Vertex AI call` log line with model, operation, time and outcome only.
 - **Evals:** none in CI beyond fakes (`tests/test_image_handling.py`, `tests/test_backend.py`). Real-service check: the
   `ocr_case` in `scripts/verify_estimate_batch3.py` (non-meter image must give `meter_detected=false` and an empty value).
@@ -94,7 +94,7 @@ returns 429 before any model call.
 - **Output:** `ScopeSuggestions`: at most 100 `changes` (each needs an exact `source_quote` from the technician's words),
   `claim_changes` checked one by one, at most 20 `questions`. The server drops unverifiable quotes and applies nothing on its
   own; the technician confirms in the form. No price, rate or reading is ever accepted.
-- **Limits:** thinking level LOW; timeout 100 s inside the 55 s REST deadline; no retry. Staged check on 2026-10-13: 10 calls
+- **Limits:** thinking level LOW; timeout 50 s (the 55 s REST deadline less its 5 s save reserve); no retry. Staged check on 2026-10-13: 10 calls
   at most 4.5 s, median 2.6 s (comment in `backend/main.py`).
 - **Budget hooks:** 6 a minute, 120 a day (`scope`).
 - **Evals:** `tests/test_scope.py` (provider-free); real service: `scripts/verify_scope_extraction.py`,
@@ -232,9 +232,9 @@ These two tables are read by `tests/test_ai_inventory.py`, which drives every ca
 | `call.audit_pre_1978` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json AIResult; parts=text, image/jpeg; image=JPEG 1600x1200` |
 | `call.drying_summary` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json DryingSummary; parts=text` |
 | `call.job_summary` | `model=gemini-3.8-flash; thinking=LOW; timeout=25; response=application/json JobSummary; parts=text` |
-| `call.ocr` | `model=gemini-3.8-flash; thinking=provider default; timeout=100; response=application/json OcrResult; parts=image/jpeg, text; image=JPEG 1600x1200` |
-| `call.scope` | `model=gemini-3.8-flash; thinking=LOW; timeout=100; response=application/json wire schema; parts=text` |
-| `call.scope_with_claim` | `model=gemini-3.8-flash; thinking=LOW; timeout=100; response=application/json wire schema; parts=text` |
+| `call.ocr` | `model=gemini-3.8-flash; thinking=provider default; timeout=50; response=application/json OcrResult; parts=image/jpeg, text; image=JPEG 1600x1200` |
+| `call.scope` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json wire schema; parts=text` |
+| `call.scope_with_claim` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json wire schema; parts=text` |
 | `call.transcribe` | `model=gemini-3.8-flash; thinking=LOW; timeout=50; response=application/json TranscriptionResult; parts=audio/mp4, text` |
 | `client.live` | `enterprise=True; project=alert-disaster-field-2026; location=us-central1; http_timeout_ms=95000` |
 | `client.rest` | `enterprise=True; project=alert-disaster-field-2026; location=global; http_timeout_ms=95000` |
