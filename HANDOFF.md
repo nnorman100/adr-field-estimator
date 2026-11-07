@@ -5,7 +5,8 @@ stay current instead of copying them: **what is serving** is read from `RELEASES
 Deploy run history and `/api/health`, never from this file.
 
 Read in this order: `CLAUDE.md` and `AGENTS.md` (rules), `VISION.md` (what the product is),
-this file, `docs/STATUS.md` (each feature: built, on, checked on a phone), `docs/spec.md`.
+this file, `docs/STATUS.md` (each feature: built, on, checked on a phone), `docs/spec.md`,
+`docs/phone-acceptance.md`.
 
 ## What is live
 
@@ -59,7 +60,8 @@ a recorded migration (`docs/RUNBOOK.md`).
 Owner actions (from `docs/STATUS.md`, recheck there):
 
 1. Phone test 2 on a real iPhone (roadmap Phase 0 item 1): camera, microphone, Bluetooth,
-   reconnect, interruption, Finish cleanup, sub-second latency. All still open.
+   reconnect, interruption, Finish cleanup, sub-second latency. All still open; see the numbered
+   owner script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo (Phase 0 item 2).
 3. Invitation check to a Google and an Outlook address (Phase 0 item 3).
 4. Before a second company subscribes: isolated test resources (databases, identities and release
