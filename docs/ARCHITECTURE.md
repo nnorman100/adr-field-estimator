@@ -30,7 +30,7 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 | Signing and document links | `backend/signing_links.py`, `document_links.py` |
 | Drying log / watch | `psychrometrics.py`, `drying_watch.py`, `public/drying*.js` |
 | Delivery (email) | `backend/delivery.py`, `workspaces.py` |
-| Price books (off by default) | `price_book_*.py`, `price_books.py`, `price_table.py` (v2 tables), `pricing.py` (calculation dispatch), `pricing_v2.py` (v2 calculation), `public/scope-items.js` (v2 Check Scope item list) |
+| Price books (off by default) | `price_book_*.py`, `price_books.py`, `price_table.py` (v2 tables; starter catalog rows in `price_table_starter.py`, presentation, v1 conversion and diffs in `price_table_comparison.py`), `pricing.py` (calculation dispatch), `pricing_v2.py` (v2 calculation), `public/scope-items.js` (v2 Check Scope item list) |
 | Job close, estimate accuracy | `backend/outcomes.py`, `public/job-close.js`, `public/estimate-accuracy.js`, `docs/estimate-assist.md` |
 | Warnings while estimating | `backend/estimate_warnings.py`, `public/app.js` (the readiness dialog), `docs/estimate-assist.md` |
 | Readiness, insights, AI usage | `readiness.py`, `insights.py`, `ai_usage.py` |

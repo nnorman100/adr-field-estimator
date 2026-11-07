@@ -1,7 +1,6 @@
 {
   "backend/main.py": 2834,
   "backend/price_book_store.py": 1973,
-  "backend/price_table.py": 1714,
   "backend/workspaces.py": 2101,
   "public/app.css": 3302,
   "public/app.js": 6597,
