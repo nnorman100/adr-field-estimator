@@ -761,6 +761,39 @@ test.describe('controlled voice-note uploads', () => {
       .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
       .toEqual(['done']);
   });
+  test('a transcription pause that begins while a background note is read stops its upload', async ({
+    page,
+  }) => {
+    let calls = 0;
+    const first = await noteForOtherJob(page, () =>
+      page.route('**/voice-notes', (route) => {
+        calls++;
+        return route.continue();
+      }),
+    );
+    await page.evaluate(() => {
+      const read = notePayload;
+      window.notePayload = async (note) => {
+        const payload = await read(note);
+        aiRefused(aiPauseKey('transcribe'), { retryAfter: 3600 });
+        window.payloadRead = true;
+        return payload;
+      };
+      window.dispatchEvent(new Event('online'));
+    });
+    await page.waitForFunction(() => window.payloadRead && !drainingQueue);
+    expect(calls).toBe(0);
+    expect(
+      await page.evaluate(
+        async (id) =>
+          ((await jsonApi('/api/inspections/' + id)).voice_notes || []).map((row) => row.status),
+        first,
+      ),
+    ).toEqual(['pending']);
+    expect(await page.evaluate(async () => (await allNotes()).map((note) => note.status))).toEqual([
+      'saved',
+    ]);
+  });
   test('opening a job while its note uploads in the background does not send the note twice', async ({
     page,
   }) => {

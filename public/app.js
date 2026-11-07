@@ -1396,8 +1396,9 @@ async function drainQueue() {
               await saveRow(row);
             }
           }
+          const payload = await notePayload(note);
           aiGate(pause);
-          record = await request(path + '/voice-notes', 'POST', await notePayload(note));
+          record = await request(path + '/voice-notes', 'POST', payload);
           if (id === state.draft?.inspection_id) {
             syncChain = syncChain
               .catch(() => {})
