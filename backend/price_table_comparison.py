@@ -3,6 +3,7 @@
 import copy
 from decimal import Decimal, ROUND_HALF_UP
 
+
 def _table_module():
     # Resolve at call time so either module can be imported first.
     try:
@@ -84,7 +85,10 @@ def from_v1_rates(rates: dict[str, str]) -> dict:
     """Map the 21 v1 rate keys to a v2 table with equivalent policy settings."""
     table = _table_module()
     price_books, _default_code = table.price_books, table._default_code
-    DEFAULT_AFTER_HOURS_LABEL, DEFAULT_ASSIST = table.DEFAULT_AFTER_HOURS_LABEL, table.DEFAULT_ASSIST
+    DEFAULT_AFTER_HOURS_LABEL, DEFAULT_ASSIST = (
+        table.DEFAULT_AFTER_HOURS_LABEL,
+        table.DEFAULT_ASSIST,
+    )
     normalize_table = table.normalize_table
     if not isinstance(rates, dict):
         raise ValueError('Provide a v1 rates mapping.')

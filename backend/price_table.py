@@ -979,13 +979,27 @@ _GROUP_RANK = {group: idx for idx, group in enumerate(GROUPS)}
 # Re-export the table presentation and comparison API from its focused module.
 try:
     from .price_table_comparison import (
-        public_table, _V1_KEY_MAPPING, from_v1_rates, switch_differences,
-        _POLICY_DIFF_PATHS, _LARGE_CHANGE_POLICY_FIELDS, _nested_get,
-        _DIFF_ITEM_FIELDS, diff_tables, public_diff,
+        public_table,
+        _V1_KEY_MAPPING,
+        from_v1_rates,
+        switch_differences,
+        _POLICY_DIFF_PATHS,
+        _LARGE_CHANGE_POLICY_FIELDS,
+        _nested_get,
+        _DIFF_ITEM_FIELDS,
+        diff_tables,
+        public_diff,
     )
 except ImportError:
     from price_table_comparison import (
-        public_table, _V1_KEY_MAPPING, from_v1_rates, switch_differences,
-        _POLICY_DIFF_PATHS, _LARGE_CHANGE_POLICY_FIELDS, _nested_get,
-        _DIFF_ITEM_FIELDS, diff_tables, public_diff,
+        public_table,
+        _V1_KEY_MAPPING,
+        from_v1_rates,
+        switch_differences,
+        _POLICY_DIFF_PATHS,
+        _LARGE_CHANGE_POLICY_FIELDS,
+        _nested_get,
+        _DIFF_ITEM_FIELDS,
+        diff_tables,
+        public_diff,
     )

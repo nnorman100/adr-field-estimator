@@ -299,5 +299,3 @@ _STARTER_ROWS = (
         True,
     ),
 )
-
-
