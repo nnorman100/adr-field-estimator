@@ -1,4 +1,6 @@
-"""Real Firestore transactions for quotas, Live leases and signing, run against the local emulator.
+"""Real Firestore transactions for delivery, monitoring, extras, insight, price-book, retention and
+spending, run against the local emulator (the quota, lease and signing ones are in
+tests/test_firestore_emulator.py, whose helpers and fixtures this module reuses).
 
 Skipped unless FIRESTORE_EMULATOR_HOST is set. Run locally from the repository root:
     npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator \
