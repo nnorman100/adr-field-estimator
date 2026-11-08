@@ -8,7 +8,6 @@
   "public/scope-items.js": 1056,
   "public/workspaces.js": 2268,
   "tests/browser/prices.spec.js": 1523,
-  "tests/browser/workspaces.spec.js": 1481,
   "tests/test_firestore_emulator.py": 1571,
   "tests/test_price_books.py": 2286,
   "tests/test_price_table.py": 1152,
