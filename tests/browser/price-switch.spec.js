@@ -284,16 +284,6 @@ test.describe('without a service worker', () => {
         status,
       async ({ page, context }) => {
         await switched(page);
-        // Publishing starts a table load. Let it finish before forcing the next load to fail.
-        await expect
-          .poll(() =>
-            page.evaluate(
-              () =>
-                !!ScopeItems.table()?.version_id &&
-                ScopeItems.table().version_id === state.session.pricing_table_version,
-            ),
-          )
-          .toBe(true);
         await page.route('**/api/companies/*/prices', (route) =>
           route.fulfill({
             status,
@@ -302,7 +292,27 @@ test.describe('without a service worker', () => {
           }),
         );
         await page.evaluate(() => ScopeItems.loadCompany());
-        await expect(await unsavedJob(page, context)).toContainText(text);
+        // The unsaved job's pricing 404 starts a refresh. Hold its table reload until offline.
+        if (status === 401)
+          await page.evaluate(() => {
+            const original = ScopeItems.sessionChanged;
+            window.priceRefreshStarted = false;
+            window.priceRefreshDone = false;
+            const gate = new Promise((resolve) => (window.releasePriceRefresh = resolve));
+            ScopeItems.sessionChanged = async () => {
+              window.priceRefreshStarted = true;
+              await gate;
+              await original();
+              window.priceRefreshDone = true;
+            };
+          });
+        const statusMessage = await unsavedJob(page, context);
+        if (status === 401) {
+          await expect.poll(() => page.evaluate(() => window.priceRefreshStarted)).toBe(true);
+          await page.evaluate(() => window.releasePriceRefresh());
+          await expect.poll(() => page.evaluate(() => window.priceRefreshDone)).toBe(true);
+        }
+        await expect(statusMessage).toContainText(text);
         await context.setOffline(false);
       },
     );
