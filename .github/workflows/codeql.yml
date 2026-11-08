@@ -27,13 +27,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
       # Code scanning is not enabled on this private repository, so results are
       # kept as a SARIF artifact. Switch upload to 'always' once it is enabled.
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           upload: never
           output: codeql-results
