@@ -517,10 +517,10 @@
         if (refused) await dbAction('readwrite', (store) => store.delete(key)).catch(() => {});
         return;
       }
-      companyTrouble = '';
       const row = await dbAction('readonly', (store) => store.get(key)).catch(() => null);
-      if (mine === companySeq)
-        company = row?.prices?.table ? { ...row.prices, from_cache: true } : null;
+      if (mine !== companySeq) return;
+      company = row?.prices?.table ? { ...row.prices, from_cache: true } : null;
+      if (company) companyTrouble = '';
     }
   }
   // A new draft for a v2 company: zero charge quantities, then the table's defaults.
