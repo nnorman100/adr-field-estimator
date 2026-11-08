@@ -187,12 +187,13 @@ const switched = async (page) => {
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
   await expect.poll(() => page.evaluate(() => !!state.session.switched_at)).toBe(true);
 };
-const unsavedJob = async (page, context) => {
+const unsavedJob = async (page, context, beforeOffline = async () => {}) => {
   await page.route('**/api/inspections**', (route) =>
     ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
   );
   await page.evaluate(() => openNew().catch(() => {}));
   const id = await page.evaluate(() => state.draft.inspection_id);
+  await beforeOffline();
   await context.setOffline(true);
   await page.evaluate((value) => restoreDraft(value), id);
   expect(await page.evaluate(() => [state.record, state.draft.data.seeded_from_version])).toEqual([
@@ -306,9 +307,11 @@ test.describe('without a service worker', () => {
               window.priceRefreshDone = true;
             };
           });
-        const statusMessage = await unsavedJob(page, context);
+        const statusMessage = await unsavedJob(page, context, async () => {
+          if (status === 401)
+            await expect.poll(() => page.evaluate(() => window.priceRefreshStarted)).toBe(true);
+        });
         if (status === 401) {
-          await expect.poll(() => page.evaluate(() => window.priceRefreshStarted)).toBe(true);
           await page.evaluate(() => window.releasePriceRefresh());
           await expect.poll(() => page.evaluate(() => window.priceRefreshDone)).toBe(true);
         }
