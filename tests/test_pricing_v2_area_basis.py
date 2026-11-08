@@ -46,6 +46,7 @@ def test_the_three_area_bases_on_a_job_area_item(area_basis, quantities, low, hi
     assert estimate['low']['total'] == D(low)
     assert estimate['high']['total'] == D(high)
 
+
 @pytest.mark.parametrize(
     'area_basis,high',
     [
@@ -75,6 +76,7 @@ def test_the_three_area_bases_on_a_starter_list_job(area_basis, high):
     assert estimate['low']['total'] == D('4462.00')
     assert estimate['high']['total'] == D(high)
 
+
 def test_the_waste_basis_charges_waste_once():
     # 100 sq ft with 10% waste at $10 is $1,100, on any item and either demolition choice.
     data = job([room('Hall', finished_sf=100, waste_percent=10)])
@@ -86,6 +88,7 @@ def test_the_waste_basis_charges_waste_once():
             assert lines[0]['waste_percent'] == 10.0
             assert lines[0]['total'] == 1100.0
             assert estimate['low']['total'] == D('1100.00')
+
 
 def test_the_waste_basis_uses_the_item_waste_when_the_room_has_none():
     # The cushion's first 100 sq ft: 105 counted sq ft leaves 5 of them at the 20% beyond.
@@ -100,6 +103,7 @@ def test_the_waste_basis_uses_the_item_waste_when_the_room_has_none():
         assert estimate['low']['total'] == D('400.00')
         assert estimate['high']['total'] == D('600.00')
 
+
 def test_a_room_with_no_demolition_area_prices_nothing_on_the_waste_basis():
     # It has a floor and a waste percent, and the demolition bases read neither on their own.
     data = job([room('Hall', floor_sf=100, wet_floor_sf=100, waste_percent=10)])
@@ -107,6 +111,7 @@ def test_a_room_with_no_demolition_area_prices_nothing_on_the_waste_basis():
     lines, warnings = pricing_v2.price_scope(data, chosen)
     assert lines == []
     assert warnings == [dict(code='missing_area', item_id='area', room='Hall')]
+
 
 def test_the_waste_basis_counts_waste_on_an_entered_quantity():
     first = {'first_sf': 200, 'first_percent': '50', 'beyond_percent': '20'}
@@ -122,6 +127,7 @@ def test_the_waste_basis_counts_waste_on_an_entered_quantity():
     # 220 counted sq ft, 200 of them at 50%: 1.2 x 880 + 0.3 x 800.
     assert estimate['high']['total'] == D('1296.00')
 
+
 def test_a_range_built_from_uncertainty_does_not_read_the_area_setting():
     assist = {
         'range_method': 'uncertainty',
@@ -136,6 +142,7 @@ def test_a_range_built_from_uncertainty_does_not_read_the_area_setting():
     ]
     assert estimates[0]['low'] == estimates[1]['low'] == estimates[2]['low']
     assert estimates[0]['high'] == estimates[1]['high'] == estimates[2]['high']
+
 
 @pytest.mark.parametrize(
     'source',
@@ -154,6 +161,7 @@ def test_the_waste_basis_never_changes_a_line(source):
         data, table(items, area_basis=WASTE_BASIS)
     ) == pricing_v2.price_scope(data, table(items))
 
+
 def test_the_wet_floor_basis_does_not_change_the_flat_cushion():
     # No item here is set to job area, so wet floor must match raw to the cent.
     items = [
@@ -166,6 +174,7 @@ def test_the_wet_floor_basis_does_not_change_the_flat_cushion():
         wet = run(data, table(items, area_basis='wet_floor'))[1]
         assert wet['low'] == raw['low']
         assert wet['high'] == raw['high']
+
 
 def test_the_waste_basis_stays_monotone_in_every_input_and_never_falls_below_the_low():
     rng = random.Random(20261104)
@@ -183,6 +192,7 @@ def test_the_waste_basis_stays_monotone_in_every_input_and_never_falls_below_the
             checks += 1
     assert checks > 10000
 
+
 def test_the_waste_basis_never_raises_the_high_above_raw():
     rng = random.Random(20261105)
     for _ in range(600):
@@ -194,6 +204,7 @@ def test_the_waste_basis_never_raises_the_high_above_raw():
         assert waste_low == low
         assert low <= waste_high <= high
 
+
 def test_existing_tables_keep_their_hash_and_totals():
     rng = random.Random(20261104)
     for number, pin in enumerate(EXISTING_TABLE_PINS, start=1):
@@ -201,6 +212,7 @@ def test_existing_tables_keep_their_hash_and_totals():
         low, high = ends(values, chosen)
         actual = (chosen['policy']['area_basis'], price_table.content_hash(chosen), low, high)
         assert actual == pin, f'seeded job {number}'
+
 
 def test_tables_that_never_chose_the_waste_basis_keep_their_content_hash():
     # Hashes from before the third choice existed. A change here would move every stored pin.
@@ -218,6 +230,7 @@ def test_tables_that_never_chose_the_waste_basis_keep_their_content_hash():
     assert price_table.content_hash(table(area_basis=WASTE_BASIS)) != price_table.content_hash(
         table()
     )
+
 
 def test_what_the_cabinetry_definitions_say_each_scope_reaches():
     # Finished-surface demolition only: just the finished lines.
@@ -238,6 +251,7 @@ def test_what_the_cabinetry_definitions_say_each_scope_reaches():
         'item4': 20.0,
         'calls': 10.0,
     }
+
 
 def test_the_cabinetry_definitions_worked_example():
     def total(multiplier):

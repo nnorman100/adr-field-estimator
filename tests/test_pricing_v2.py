@@ -133,6 +133,7 @@ def test_worked_examples_a_to_g():
     assert result['low']['total'] == D('1260.00')
     assert result['high']['total'] == D('1485.00')
 
+
 @pytest.mark.parametrize(
     'area,low_lm,high_lm,factor,low,high',
     [
@@ -158,6 +159,7 @@ def test_small_job_factor_equals_first_percent_and_taper_is_continuous_at_n(
     assert result['low']['total'] == D(low)
     assert result['high']['total'] == D(high)
 
+
 def test_top_n_takes_the_most_expensive_square_feet_first():
     # Three rooms; 800 at $8 and 100 at $3 are whole, then 100 of the 600 at $2 are a partial line.
     rooms = [
@@ -178,10 +180,12 @@ def test_top_n_takes_the_most_expensive_square_feet_first():
     _, more, _ = run(job(rooms + [room('Garage', 1, unfinished_sf=500)]))
     assert more['high']['total'] > result['high']['total']
 
+
 def test_labor_hours_carry_the_first_percent_at_every_size():
     _, result, _ = run(job([room(finished_sf=5000)], labor_hours=10))
     # Area 15,000 tapers, the 500 of labor hours carry 50%.
     assert result['labor_material_high'] == D('18900.00') + D('750.00')
+
 
 def test_monotone_in_every_input_and_price():
     rng = random.Random(20261102)
@@ -206,6 +210,7 @@ def test_monotone_in_every_input_and_price():
             assert new_high >= high - tolerance, (values, row, chosen['policy'])
     assert checks > 40000
 
+
 def test_high_never_below_low_and_single_mode_returns_no_high():
     rng = random.Random(7)
     for _ in range(500):
@@ -219,6 +224,7 @@ def test_high_never_below_low_and_single_mode_returns_no_high():
         else:
             assert result['mode'] == 'range'
             assert result['high']['total'] >= result['low']['total']
+
 
 def test_every_printed_summary_adds_up_to_its_total():
     rng = random.Random(11)
@@ -238,6 +244,7 @@ def test_every_printed_summary_adds_up_to_its_total():
             for amount in end.values():
                 assert amount == amount.quantize(D('0.01'))
 
+
 def test_after_hours_multiplier_and_flat_charge():
     rooms = [room(finished_sf=100)]
     lines, regular, _ = run(job(rooms))
@@ -256,6 +263,7 @@ def test_after_hours_multiplier_and_flat_charge():
     assert [line['total'] for line in lines if line['item_id'] == 'after_hours'] == [200.0]
     assert flat['low']['after_hours'] == D('0.00') and flat['high']['after_hours'] == D('0.00')
 
+
 def test_after_hours_line_label_is_the_owners():
     default = run(job([room(finished_sf=100)], is_after_hours=True))[1]
     assert default['after_hours_label'] == 'After-hours adjustment'
@@ -263,6 +271,7 @@ def test_after_hours_line_label_is_the_owners():
     labelled = run(job([room(finished_sf=100)], is_after_hours=True), chosen)[1]
     assert labelled['after_hours_label'] == 'Emergency response adjustment'
     assert 'Emergency response adjustment' in labelled['explanation']
+
 
 def test_category_and_cabinetry_multipliers_and_scope():
     both = [
@@ -298,6 +307,7 @@ def test_category_and_cabinetry_multipliers_and_scope():
     plain = [room('Mold', 3, finished_sf=100)]
     lines, _, _ = run(job(plain), wide)
     assert [line['unit_price'] for line in lines if line['room']] == [10.0]
+
 
 def test_overhead_profit_and_tax_bases_and_rounding():
     on = {'enabled': True, 'percent': '8'}
@@ -339,6 +349,7 @@ def test_overhead_profit_and_tax_bases_and_rounding():
         job(air_movers=1, drying_days=1), table(sales_tax={'enabled': True, 'percent': '8.25'})
     )
     assert cents['low']['tax'] == D('2.48')
+
 
 def test_minimum_job_charge_raises_the_low_before_overhead_profit_and_tax():
     # Off by default.
@@ -385,6 +396,7 @@ def test_minimum_job_charge_raises_the_low_before_overhead_profit_and_tax():
     assert stacked['low']['total'] == D('5550.16')
     assert stacked['high'] == stacked['low']
 
+
 def test_minimum_job_charge_never_lets_more_work_lower_the_high():
     # Under the minimum, the taxable share at the high end shrinks as non-taxable area is added.
     # Flooring the high separately would let that lower the total; the high follows the low instead.
@@ -408,6 +420,7 @@ def test_minimum_job_charge_never_lets_more_work_lower_the_high():
         if previous is not None:
             assert high >= previous
         previous = high
+
 
 def test_room_waste_overrides_item_waste_only_when_positive():
     rows = priced(ITEMS, demo_c2_fin={'waste_percent': '10'}, trip={'waste_percent': '50'})

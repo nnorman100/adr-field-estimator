@@ -67,6 +67,7 @@ def test_uncertainty_examples_a_to_i(example, values, chosen, low, high):
         D(high),
     )
 
+
 def test_uncertainty_example_a_shows_its_working():
     result = priced_on(job(**SIZED_JOB), uncertain())
     assert result['labor_material_low'] == D('1570.00')
@@ -81,6 +82,7 @@ def test_uncertainty_example_a_shows_its_working():
         'hidden_damage_percent': {'1': '10', '2': '15', '3': '25'},
     }
 
+
 def test_uncertainty_example_e_and_g_single_price_and_an_old_table():
     single = priced_on(job(**SIZED_JOB), uncertain(estimate_mode='single'))
     assert single['low']['total'] == D('2950.00') and single['high'] is None
@@ -90,6 +92,7 @@ def test_uncertainty_example_e_and_g_single_price_and_an_old_table():
     result = priced_on(job(**EXAMPLE_A), old)
     assert (result['low']['total'], result['high']['total']) == (D('2880.00'), D('3630.00'))
     assert result['uncertainty'] is None
+
 
 def test_the_cushion_path_is_byte_identical_with_and_without_the_assist_map():
     stored_unused = dict(
@@ -119,6 +122,7 @@ def test_the_cushion_path_is_byte_identical_with_and_without_the_assist_map():
             # Everything the documents read, line by line and end by end, texts included.
             assert priced_on(data, plain) == priced_on(data, mapped)
             assert run(data, plain)[1] == priced_on(data, plain)
+
 
 def test_high_numbers_take_the_s500_maximum_and_recommended_units_and_never_fall_below_entered():
     assist = dict(UNCERTAIN, extra_drying_days=2)
@@ -152,6 +156,7 @@ def test_high_numbers_take_the_s500_maximum_and_recommended_units_and_never_fall
     unrated = job(**{**SIZED_JOB, 'dehumidifier_ppd': None})
     assert pricing_v2.high_numbers(unrated, assist)['dehumidifiers'] == 1
 
+
 def test_an_unavailable_sizing_check_prices_equipment_as_entered_at_the_high_end():
     assist = dict(UNCERTAIN)
     for values in (
@@ -175,6 +180,7 @@ def test_an_unavailable_sizing_check_prices_equipment_as_entered_at_the_high_end
     numbers = pricing_v2.high_numbers(walls, assist)
     assert numbers == dict(air_movers=3, dehumidifiers=1, drying_days=4, sizing_available=True)
 
+
 def test_equipment_lines_appear_at_the_high_end_when_none_were_entered():
     data = job(**{**SIZED_JOB, 'air_movers': 0, 'dehumidifiers': 0})
     assert 'Air mover' not in [
@@ -183,6 +189,7 @@ def test_equipment_lines_appear_at_the_high_end_when_none_were_entered():
     result = priced_on(data, uncertain())
     # 4 air movers and 1 dehumidifier for 4 days appear only in the high end.
     assert result['high']['subtotal'] - result['low']['subtotal'] == D('880.00') + D('235.50')
+
 
 def test_an_unset_job_number_keeps_its_default_quantity_at_both_ends():
     items = priced(ITEMS, air_mover={'default_quantity': '12'})
@@ -203,12 +210,14 @@ def test_an_unset_job_number_keeps_its_default_quantity_at_both_ends():
     )
     assert next(line for line in high_lines if line['description'] == 'Air mover')['quantity'] == 12
 
+
 def test_the_high_numbers_reach_only_the_equipment_bucket():
     # Air movers priced as a job charge stay the low line at the high end.
     items = priced(ITEMS, air_mover={'group': 'job_charges'})
     result = priced_on(job(**SIZED_JOB), uncertain(items))
     # Job charges 810 + the 270 air mover line, flat; the dehumidifier moves from 300 to 400.
     assert result['high']['subtotal'] == D('1080.00') + D('400.00') + D('1805.50')
+
 
 def test_hidden_damage_applies_per_room_category_and_labor_hours_carry_the_largest():
     data = job(
@@ -235,6 +244,7 @@ def test_hidden_damage_applies_per_room_category_and_labor_hours_carry_the_large
     twins = job(rooms=[room('Hall', 1, finished_sf=100), room('Hall', 3, finished_sf=100)])
     assert priced_on(twins, uncertain())['labor_material_high'] == D('1250.00')
 
+
 def test_tax_at_the_high_end_is_exact_per_line():
     chosen = uncertain(overhead_profit_percent='10', sales_tax={'enabled': True, 'percent': '8'})
     result = priced_on(job(**TWO_CATEGORIES), chosen)
@@ -250,6 +260,7 @@ def test_tax_at_the_high_end_is_exact_per_line():
         'total': D('10969.42'),
     }
 
+
 def test_minimum_job_charge_floors_both_ends_and_the_high_is_never_below_the_low():
     floored = priced_on(job(**SIZED_JOB), uncertain(minimum_job_charge='5000'))
     assert floored['high'] == floored['low']
@@ -259,6 +270,7 @@ def test_minimum_job_charge_floors_both_ends_and_the_high_is_never_below_the_low
     assert between['low']['total'] == D('3200.00')
     assert between['high']['total'] == D('3495.50')
     assert between['high']['minimum_charge'] == 0
+
 
 def test_monotone_in_every_input_price_and_assist_setting():
     rng = random.Random(20261103)
@@ -307,6 +319,7 @@ def test_monotone_in_every_input_price_and_assist_setting():
         checks += 1
     assert checks > 20000
 
+
 def test_single_mode_prices_the_low_and_hides_the_uncertainty_fields():
     chosen = uncertain(estimate_mode='single')
     result = priced_on(job(**SIZED_JOB), chosen)
@@ -317,6 +330,7 @@ def test_single_mode_prices_the_low_and_hides_the_uncertainty_fields():
     assert result['uncertainty']['air_movers'] == 4
     assert result['range_explanation'] is None
     assert result['explanation'] == 'The price covers the itemized scope below.'
+
 
 def test_range_explanation_names_counts_days_and_only_the_categories_on_the_job():
     assert _sentence(SIZED_JOB) == (
@@ -359,6 +373,7 @@ def test_range_explanation_names_counts_days_and_only_the_categories_on_the_job(
         SIZED_JOB, uncertain(assist=dict(hidden_damage_percent={'1': '0', '2': '12.50', '3': '0'}))
     ).endswith('and hidden damage of 12.5% in category 2 rooms.')
 
+
 def test_the_sentence_says_the_s500_most_only_when_the_counts_are_the_checks():
     # Above the maximum, unsized and unrated counts are the technician's, not the placement's.
     for values in (
@@ -395,6 +410,7 @@ def test_the_sentence_says_the_s500_most_only_when_the_counts_are_the_checks():
         'damage of 15% in category 2 rooms.'
     )
 
+
 def test_the_sentence_is_omitted_when_the_two_amounts_are_equal():
     flat = dict(extra_drying_days=0, hidden_damage_percent={'1': '0', '2': '0', '3': '0'})
     within = {**SIZED_JOB, 'air_movers': 4}
@@ -416,6 +432,7 @@ def test_the_sentence_is_omitted_when_the_two_amounts_are_equal():
         uncertain(assist=dict(flat, hidden_damage_percent=UNCERTAIN['hidden_damage_percent'])),
     )['range_explanation'].endswith('and hidden damage of 15% in category 2 rooms.')
 
+
 def test_the_explanation_paragraph_prices_the_same_clause():
     result = priced_on(
         job(**{**SIZED_JOB, 'is_after_hours': True}),
@@ -436,6 +453,7 @@ def test_the_explanation_paragraph_prices_the_same_clause():
         'The high amount prices the equipment counts as entered for 4 drying days (1 more than '
         'planned) and adds'
     )
+
 
 def test_sample_jobs_state_sizing_inputs_and_still_hold_no_workbook_values():
     small, medium, large = (
@@ -466,6 +484,7 @@ def test_sample_jobs_state_sizing_inputs_and_still_hold_no_workbook_values():
     for sample in pricing_v2.SAMPLE_JOBS:
         text = f'{sample["label"]} {sample["description"]}'.lower()
         assert not any(word in text for word in workbook_words)
+
 
 def test_the_editors_sample_jobs_price_the_high_end_from_the_table():
     from backend import price_book_store

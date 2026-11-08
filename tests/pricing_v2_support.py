@@ -19,6 +19,7 @@ from backend.adr_price_book import adr_rates
 
 from backend.contracts import InspectionData
 
+
 def _item(item_id, group, name, unit, source, price, **rest):
     return dict(
         {
@@ -32,6 +33,7 @@ def _item(item_id, group, name, unit, source, price, **rest):
         },
         **rest,
     )
+
 
 ITEMS = [
     _item('trip', 'job_charges', 'Emergency service call', 'each', 'field:emergency_calls', '150'),
@@ -143,6 +145,7 @@ POLICY = {
     'show_line_breakdown': False,
 }
 
+
 def table(items=None, **policy):
     """A table normalized by the real publish rules, so the engine reads what a pin holds."""
     merged = copy.deepcopy(POLICY)
@@ -152,12 +155,14 @@ def table(items=None, **policy):
         publish=True,
     )
 
+
 def priced(items, **changes):
     """Copies of the fixture items with price or field changes by item id."""
     out = copy.deepcopy(items)
     for row in out:
         row.update(changes.get(row['item_id'], {}))
     return out
+
 
 def job(rooms=(), **changes):
     values = dict(
@@ -175,13 +180,16 @@ def job(rooms=(), **changes):
     values.update(changes)
     return InspectionData.model_validate(values)
 
+
 def room(name='Room', category=2, **changes):
     return dict(name=name, category=category, **changes)
+
 
 def run(data, chosen=None):
     chosen = chosen or table()
     lines, warnings = pricing_v2.price_scope(data, chosen)
     return lines, pricing_v2.totals(data, lines, chosen['policy'], chosen['items']), warnings
+
 
 EXAMPLE_A = dict(rooms=[room('Living room', finished_sf=500)], air_movers=3, dehumidifiers=1)
 
@@ -241,6 +249,7 @@ SCAN_ITEMS = ITEMS + [
     _item('heater', 'drying_equipment', 'Heater', 'unit_day', 'typed_count_days', '40'),
 ]
 
+
 def random_table(rng):
     items = copy.deepcopy(SCAN_ITEMS)
     for row in items:
@@ -272,6 +281,7 @@ def random_table(rng):
             'percent': rng.choice(['0', '7.25', '8', '9.5', '15']),
         },
     )
+
 
 def random_job(rng):
     rooms = [
@@ -311,6 +321,7 @@ def random_job(rng):
     # Guarantee a priced job so the $0 guard is not what the scan measures.
     values['emergency_calls'] = max(values['emergency_calls'], 1)
     return values
+
 
 def bumps(values):
     """One small increase of every job input, one at a time."""
@@ -361,18 +372,22 @@ def bumps(values):
     )
     yield {**copy.deepcopy(values), 'extras': [extra]}
 
+
 def ends(values, chosen):
     data = InspectionData.model_validate(values)
     _, result, _ = run(data, chosen)
     return result['low']['total'], (result['high'] or result['low'])['total']
 
+
 def _one(source, unit='sf', group='treatment', **rest):
     return [_item('probe', group, 'Probe', unit, source, '1', **rest)]
+
 
 def _quantity(data, source, unit='sf', group='treatment', chosen_policy=None, **rest):
     chosen = table(_one(source, unit, group, **rest), **(chosen_policy or {}))
     lines, warnings = pricing_v2.price_scope(data, chosen)
     return [line['quantity'] for line in lines], warnings
+
 
 FULL_ROOM = dict(unfinished_sf=11, finished_sf=22, floor_sf=44, wet_floor_sf=33)
 
@@ -391,9 +406,11 @@ APPROVED_EXTRA = dict(
     ),
 )
 
+
 def _quantities(data, chosen):
     lines, _ = pricing_v2.price_scope(data, chosen)
     return {line['item_id']: line['quantity'] for line in lines if not line['room']}
+
 
 UNCERTAIN = dict(
     drying_days=3,
@@ -457,17 +474,21 @@ APPROVED_HOURS = dict(
     ),
 )
 
+
 def uncertain(items=None, assist=None, **policy):
     return table(items, assist={**UNCERTAIN, **(assist or {})}, **policy)
+
 
 def priced_on(data, chosen):
     """What a job comes to on a table, the way the audit prices it."""
     pin = {'calculation_version': 'dryscope-v2', **chosen}
     return pricing.price_and_range(data, pin).totals
 
+
 def without_sizing(**changes):
     rooms = [room('Living room', **{**SIZED_ROOM, 'ceiling_height_ft': None})]
     return {**SIZED_JOB, 'rooms': rooms, **changes}
+
 
 def uncertain_table(rng):
     chosen = random_table(rng)
@@ -478,6 +499,7 @@ def uncertain_table(rng):
         hidden_damage_percent={key: str(rng.choice([0, 5, 10, 15, 25, 50, 100])) for key in '123'},
     )
     return chosen
+
 
 def sized_job(rng):
     values = random_job(rng)
@@ -493,6 +515,7 @@ def sized_job(rng):
             min(wet, current['floor_sf']) if wet is not None and stated else None
         )
     return values
+
 
 def sizing_bumps(values):
     for index, current in enumerate(values['rooms']):
@@ -511,12 +534,15 @@ def sizing_bumps(values):
             changed['rooms'][index][key] = current[key] + 1
             yield changed
 
+
 def uncertain_ends(values, chosen):
     result = priced_on(InspectionData.model_validate(values), chosen)
     return result['low']['total'], (result['high'] or result['low'])['total']
 
+
 def _sentence(values, chosen=None):
     return priced_on(job(**values), chosen or uncertain())['range_explanation']
+
 
 WASTE_BASIS = 'demolition_with_waste'
 
@@ -527,11 +553,13 @@ TWO_ROOMS = [
     room('Den', finished_sf=900, floor_sf=1000, wet_floor_sf=800),
 ]
 
+
 def _job_area_table(area_basis, price='4', waste='5', **policy):
     item = _item(
         'area', 'demolition', 'Area removal', 'sf', 'room:basis', price, waste_percent=waste
     )
     return table([item], area_basis=area_basis, **policy)
+
 
 def _starter_job_table(area_basis):
     """The starter list on a flat cushion, priced where this job reaches it."""
@@ -547,6 +575,7 @@ def _starter_job_table(area_basis):
     chosen['policy']['area_basis'] = area_basis
     chosen['policy']['assist']['range_method'] = 'cushion'
     return price_table.normalize_table(chosen, publish=False)
+
 
 EXISTING_TABLE_PINS = [
     (
@@ -645,6 +674,7 @@ ROOM_SOURCES = [
     'room:floor',
     'room:basis',
 ]
+
 
 def _cabinetry_prices(scope):
     items = [

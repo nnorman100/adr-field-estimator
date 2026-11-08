@@ -42,6 +42,7 @@ def test_quantity_sources_read_the_room_fields(source, changes, expected):
     quantities, _ = _quantity(job([room(**FULL_ROOM, **changes)]), source)
     assert quantities == [expected]
 
+
 @pytest.mark.parametrize(
     'field,unit',
     [
@@ -65,6 +66,7 @@ def test_quantity_sources_read_every_job_field(field, unit):
     zeroed[field] = 0
     assert _quantity(job(**zeroed), f'field:{field}', unit=unit)[0] == []
 
+
 @pytest.mark.parametrize(
     'pair,count_field,days_field',
     [
@@ -77,6 +79,7 @@ def test_quantity_sources_read_counts_times_days(pair, count_field, days_field):
     data = job(**{count_field: 3, days_field: 4})
     quantities, _ = _quantity(data, f'count_days:{pair}', unit='unit_day', group='drying_equipment')
     assert quantities == [12.0]
+
 
 def test_quantity_sources_edge_rules():
     # room:basis under the wet-floor basis, and the wet-floor fallback to floor then zero.
@@ -131,6 +134,7 @@ def test_quantity_sources_edge_rules():
     assert _quantity(job(rooms), 'field:emergency_calls', 'each', **only_three)[0] == [1.0]
     assert _quantity(job(rooms[:1]), 'field:emergency_calls', 'each', **only_three)[0] == []
 
+
 def test_lines_carry_the_document_fields_in_group_then_sort_order():
     rows = priced(
         ITEMS,
@@ -171,6 +175,7 @@ def test_lines_carry_the_document_fields_in_group_then_sort_order():
     assert labor['xactimate_code'] == 'WTR LAB'
     assert labor['room'] is None and labor['area'] is None
 
+
 def test_warnings_are_advisory_and_unknown_items_are_not_priced():
     data = job(
         [room('Empty', 2)],
@@ -208,12 +213,14 @@ def test_warnings_are_advisory_and_unknown_items_are_not_priced():
     assert 'odor_off' not in {line['item_id'] for line in lines}
     assert not [warning for warning in warnings if warning['code'] == 'unknown_scope_item']
 
+
 def test_the_extras_item_supplies_the_rate_and_is_never_priced_by_quantity():
     rows = priced(ITEMS, extra_work={'default_quantity': '5'})
     data = job(scope_items={'extra_work': {'quantity': '8'}})
     lines, warnings = pricing_v2.price_scope(data, table(rows))
     assert 'extra_work' not in {line['item_id'] for line in lines}
     assert warnings == [{'code': 'unpriced_extras_quantity', 'item_id': 'extra_work'}]
+
 
 @pytest.mark.parametrize(
     'default,scope,warned',
@@ -233,6 +240,7 @@ def test_an_extras_quantity_that_will_not_be_priced_is_named(default, scope, war
     expected = {'code': 'unpriced_extras_quantity', 'item_id': 'extra_work'}
     assert (expected in warnings) is warned
 
+
 def test_a_blank_priced_extras_item_is_named_for_both_problems():
     rows = priced(ITEMS, extra_work={'default_quantity': '5', 'unit_price': ''})
     draft = price_table.normalize_table({'items': rows, 'policy': table()['policy']}, publish=False)
@@ -240,10 +248,12 @@ def test_a_blank_priced_extras_item_is_named_for_both_problems():
     assert {'code': 'unpriced_extras_quantity', 'item_id': 'extra_work'} in warnings
     assert {'code': 'blank_price_item', 'item_id': 'extra_work'} in warnings
 
+
 def test_a_disabled_extras_item_is_not_named():
     rows = priced(ITEMS, extra_work={'default_quantity': '5', 'enabled': False})
     _, warnings = pricing_v2.price_scope(job(), table(rows))
     assert warnings == []
+
 
 @pytest.mark.parametrize(
     'changes,taxable,tax',
@@ -262,12 +272,14 @@ def test_an_approved_extra_is_taxable_as_the_enabled_extras_item_is(changes, tax
     assert result['low']['tax'] == D(tax)
     assert result['high']['tax'] == D(tax)
 
+
 def test_an_approved_extra_is_not_taxable_with_no_extras_item():
     rows = [row for row in ITEMS if row['group'] != 'extras']
     chosen = table(rows, sales_tax={'enabled': True, 'percent': '8'})
     lines, result, _ = run(job(**EXAMPLE_A, extras=[APPROVED_EXTRA]), chosen)
     assert lines[-1]['code'] == 'EXTRA' and lines[-1]['taxable'] is False
     assert result['low']['tax'] == D('45.60')
+
 
 def test_the_monotonicity_tables_tax_the_extras_row_in_some_cases():
     rng = random.Random(20261102)
@@ -277,10 +289,12 @@ def test_the_monotonicity_tables_tax_the_extras_row_in_some_cases():
     }
     assert flags == {True, False}
 
+
 def test_an_unset_job_number_prices_nothing_when_the_item_has_no_default():
     omitted = InspectionData.model_validate(dict(rooms=[room(finished_sf=100)]))
     assert omitted.monitoring_hours == 13.25 and omitted.air_scrubbers == 1
     assert _quantities(omitted, table(SCAN_ITEMS)) == {}
+
 
 def test_an_unset_job_number_prices_the_owners_default_quantity():
     rows = priced(
@@ -302,6 +316,7 @@ def test_an_unset_job_number_prices_the_owners_default_quantity():
     for partial in ({'air_movers': 2}, {'drying_days': 5}):
         data = InspectionData.model_validate(dict(rooms=[room(finished_sf=100)], **partial))
         assert _quantities(data, chosen)['air_mover'] == 6.0
+
 
 def test_an_explicit_job_number_wins_over_the_default_quantity():
     chosen = table(
@@ -332,6 +347,7 @@ def test_an_explicit_job_number_wins_over_the_default_quantity():
     # An override of only one side leaves the other unset, so the default still prices.
     data = InspectionData.model_validate(dict(quantity_overrides={'air_movers': entered}))
     assert _quantities(data, chosen)['air_mover'] == 6.0
+
 
 def test_entered_quantity_overrides_the_walkthrough_measurement():
     override = dict(measured='3', entered='5', reason='Added two fans for the hallway')
@@ -385,6 +401,7 @@ def test_entered_quantity_overrides_the_walkthrough_measurement():
     lines, _, _ = run(data, table(typed))
     assert next(line for line in lines if line['item_id'] == 'odor')['quantity'] == 6.0
 
+
 def test_zero_total_and_unbucketed_guards():
     nothing = job(emergency_calls=0, monitoring_hours=0, haul_loads=0)
     lines, _ = pricing_v2.price_scope(nothing, table())
@@ -411,6 +428,7 @@ def test_zero_total_and_unbucketed_guards():
     with pytest.raises(RuntimeError, match='mystery'):
         pricing_v2.price_scope(job(), corrupt)
 
+
 def test_v1_dispatch_unchanged():
     rates = adr_rates()
     data = InspectionData.model_validate(
@@ -433,6 +451,7 @@ def test_v1_dispatch_unchanged():
     # Today's pinned workbook example.
     assert (result.low, result.high) == (D('2219.90'), D('2356.25'))
 
+
 def test_v2_dispatch_returns_the_engine_result():
     chosen = table(overhead_profit_percent='10', sales_tax={'enabled': True, 'percent': '8'})
     result = pricing.price_and_range(
@@ -454,6 +473,7 @@ def test_v2_dispatch_returns_the_engine_result():
         job(**EXAMPLE_A), {'calculation_version': 'dryscope-v2', **single}
     )
     assert result.low == D('2880.00') and result.high is None
+
 
 def test_sample_jobs_contain_no_workbook_values():
     keys = [sample['key'] for sample in pricing_v2.SAMPLE_JOBS]
@@ -510,6 +530,7 @@ def test_sample_jobs_contain_no_workbook_values():
         )
         assert priced_job.low > 0
 
+
 def test_a_tables_default_quantity_never_reaches_a_sample():
     job_numbers = set(price_table.FIELD_SOURCES).union(*price_table.COUNT_DAYS_SOURCES)
     with_defaults = copy.deepcopy(SCAN_ITEMS)
@@ -523,6 +544,7 @@ def test_a_tables_default_quantity_never_reaches_a_sample():
             pricing_v2.price_scope(data, table(with_defaults))[0]
             == pricing_v2.price_scope(data, table(SCAN_ITEMS))[0]
         )
+
 
 def test_a_typed_items_default_quantity_does_reach_a_sample():
     typed = copy.deepcopy(SCAN_ITEMS) + [
@@ -543,12 +565,14 @@ def test_a_typed_items_default_quantity_does_reach_a_sample():
     lines, _ = pricing_v2.price_scope(data, table(typed))
     assert next(line for line in lines if line['item_id'] == 'typed_fee')['total'] == 20.0
 
+
 def test_the_mold_sample_states_its_floor_areas():
     large = InspectionData.model_validate(pricing_v2.SAMPLE_JOBS[2]['data'])
     assert sum(room.floor_sf for room in large.rooms) == 2500
     assert sum(room.wet_floor_sf for room in large.rooms) == 2500
     _, warnings = pricing_v2.price_scope(large, table(SCAN_ITEMS))
     assert not [row for row in warnings if row['code'] == 'missing_area']
+
 
 def test_explanation_text_comes_from_the_policy():
     chosen = table()['policy']
@@ -584,6 +608,7 @@ def test_explanation_text_comes_from_the_policy():
     assert floored['low']['minimum_charge'] > 0
     assert 'minimum' not in floored['explanation'].lower()
 
+
 @pytest.mark.parametrize(
     'first,beyond,expected',
     [
@@ -611,6 +636,7 @@ def test_range_explanation_names_the_cushion_tiers(first, beyond, expected):
     assert pricing_v2.range_explanation(chosen['policy'], job(**EXAMPLE_A)) == expected
     _, result, _ = run(job(**EXAMPLE_A), chosen)
     assert result['range_explanation'] == expected
+
 
 def test_single_mode_has_no_range_explanation():
     chosen = table(estimate_mode='single')
