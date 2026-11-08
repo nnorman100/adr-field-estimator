@@ -293,23 +293,23 @@ test.describe('without a service worker', () => {
           }),
         );
         await page.evaluate(() => ScopeItems.loadCompany());
-        // The unsaved job's pricing 404 starts a refresh. Hold its table reload until offline.
-        if (status === 401)
-          await page.evaluate(() => {
-            const original = ScopeItems.sessionChanged;
-            window.priceRefreshStarted = false;
-            window.priceRefreshDone = false;
-            const gate = new Promise((resolve) => (window.releasePriceRefresh = resolve));
-            ScopeItems.sessionChanged = async () => {
-              window.priceRefreshStarted = true;
-              await gate;
-              await original();
-              window.priceRefreshDone = true;
-            };
-          });
+        // The unsaved job's pricing 404 starts a refresh. Control its order with going offline.
+        await page.evaluate((hold) => {
+          const original = ScopeItems.sessionChanged;
+          window.priceRefreshStarted = false;
+          window.priceRefreshDone = false;
+          const gate = new Promise((resolve) => (window.releasePriceRefresh = resolve));
+          ScopeItems.sessionChanged = async () => {
+            window.priceRefreshStarted = true;
+            if (hold) await gate;
+            await original();
+            window.priceRefreshDone = true;
+          };
+        }, status === 401);
         const statusMessage = await unsavedJob(page, context, async () => {
           if (status === 401)
             await expect.poll(() => page.evaluate(() => window.priceRefreshStarted)).toBe(true);
+          else await expect.poll(() => page.evaluate(() => window.priceRefreshDone)).toBe(true);
         });
         if (status === 401) {
           await page.evaluate(() => window.releasePriceRefresh());
