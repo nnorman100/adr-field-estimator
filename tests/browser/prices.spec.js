@@ -1,6 +1,8 @@
 const { test, expect } = require('@playwright/test');
 const {
   uid,
+  csvRows,
+  csvText,
   start,
   navigate,
   startUnset,
@@ -632,33 +634,6 @@ test('confirming a zero price clears the problem it raised', async ({ page, requ
   await row.getByLabel('I confirm this zero price is intentional.').check();
   await expect(row.locator('.price-problem')).toHaveText('');
 });
-
-function csvRows(text) {
-  const rows = [[]];
-  let cell = '',
-    quoted = false;
-  for (let at = 0; at < text.length; at += 1) {
-    const char = text[at];
-    if (quoted && char === '"' && text[at + 1] === '"') {
-      cell += '"';
-      at += 1;
-    } else if (char === '"') quoted = !quoted;
-    else if (char === ',' && !quoted) {
-      rows[rows.length - 1].push(cell);
-      cell = '';
-    } else if (char === '\n' && !quoted) {
-      rows[rows.length - 1].push(cell);
-      cell = '';
-      rows.push([]);
-    } else cell += char;
-  }
-  return rows.filter((row) => row.length > 1);
-}
-function csvText(rows) {
-  return rows
-    .map((row) => row.map((cell) => '"' + cell.replaceAll('"', '""') + '"').join(','))
-    .join('\n');
-}
 
 test('a starter company imports its template, confirms a zero price and is warned about its working copy', async ({
   page,

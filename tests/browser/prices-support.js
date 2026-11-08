@@ -61,7 +61,36 @@ async function publishTable(page, reason = 'First price table') {
   await expect(page.locator('#dashboardContent')).toContainText('Prices v1');
 }
 
+function csvRows(text) {
+  const rows = [[]];
+  let cell = '',
+    quoted = false;
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at];
+    if (quoted && char === '"' && text[at + 1] === '"') {
+      cell += '"';
+      at += 1;
+    } else if (char === '"') quoted = !quoted;
+    else if (char === ',' && !quoted) {
+      rows[rows.length - 1].push(cell);
+      cell = '';
+    } else if (char === '\n' && !quoted) {
+      rows[rows.length - 1].push(cell);
+      cell = '';
+      rows.push([]);
+    } else cell += char;
+  }
+  return rows.filter((row) => row.length > 1);
+}
+function csvText(rows) {
+  return rows
+    .map((row) => row.map((cell) => '"' + cell.replaceAll('"', '""') + '"').join(','))
+    .join('\n');
+}
+
 module.exports = {
+  csvRows,
+  csvText,
   uid,
   start,
   navigate,
