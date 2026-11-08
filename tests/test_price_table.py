@@ -1,7 +1,6 @@
 """Unit tests for the v2 owner-defined price table model, contracts and dispatch."""
 
 import copy
-import json
 from decimal import Decimal
 import pytest
 from pydantic import ValidationError
@@ -9,12 +8,9 @@ from pydantic import ValidationError
 from backend import (
     claims,
     main as bm,
-    price_book_store,
     price_books,
     price_table,
     pricing,
-    prompts,
-    scope,
 )
 from backend.adr_price_book import adr_rates
 from backend.contracts import (
@@ -23,7 +19,6 @@ from backend.contracts import (
     PricingPolicy,
     QuantityOverride,
     ScopeQuantity,
-    Extra,
 )
 from tests.price_table_support import _priced_starter
 from tests.test_workspaces import store  # noqa: F401

@@ -12,7 +12,6 @@ from backend.adr_price_book import adr_rates
 from backend.contracts import (
     Extra,
     InspectionData,
-    PriceBasis,
     PricingPolicy,
     QuantityOverride,
     ScopeQuantity,
