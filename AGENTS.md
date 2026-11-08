@@ -2,6 +2,8 @@
 
 This document specifies the operational protocols, business rules, architectural patterns, and safety constraints for AI agents working in this repository.
 
+Merging, releases and the other loop rules live in [`CLAUDE.md`](CLAUDE.md) ("Merging and releases"), taken from the owner's [Technology Standard Stack](https://app.notion.com/p/40f0b80d5e268136aeaedd2044f2eb75) page. Agent tools that do not load `CLAUDE.md` must read it before starting work.
+
 ---
 
 ## 1. Project Mission & Identity

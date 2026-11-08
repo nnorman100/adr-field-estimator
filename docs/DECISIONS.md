@@ -36,7 +36,7 @@ Status: accepted (owner). Gmail stays for ADR until then. Background: production
 Status: accepted (owner). Options considered: stay standalone; fold into the platform later; rebuild on the platform. Keep shipping in this repo; revisit once DryScope has paying companies. Billing for other companies does not exist here yet.
 
 ### D-009: Agents ask before merging any PR (Oct 28, 2026)
-Status: accepted (owner). Overrides the roadmap's earlier rule that agents may merge Low/Medium risk PRs with green CI. Enforced by the `gh pr merge` approval rule in `.claude/settings.json`.
+Status: superseded by D-012 (Nov 6, 2026). Overrode the roadmap's earlier rule that agents may merge Low/Medium risk PRs with green CI. Enforced by the `gh pr merge` approval rule in `.claude/settings.json`.
 
 Superseded (Nov 6, 2026, owner, per the rebuild plan's settled "test-to-live deployment and ordinary automatic reviewed merges"): pull requests merge automatically once every check passes and the review is done, with two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work; deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs.
 
@@ -45,3 +45,6 @@ Status: accepted (owner). ADR's estimating sheet is proprietary to ADR, so it is
 
 ### D-011: Owner-defined pricing tables; ADR stays on v1 until the owner switches (Nov 3, 2026)
 Status: accepted (owner). Every company prices from its own table of items and estimate settings (`dryscope-v2`). A new company starts from the blank starter list; no company but ADR ever sees ADR's rates. A company already on a rate book, ADR included, stays on `adr-residential-v1` until its owner chooses **Switch to v2**, reviews the mapped table and publishes it. There is no way back after publishing. A draft begun before the switch keeps its rate book until the owner applies the new table to that one draft, and signed documents never change. The switch names its three differences for the same job: the high end tapers above 1,000 sq ft instead of stepping, labor hours carry 50% at every size, and the after-hours 20% prints as a line inside the itemized total. `PRICE_BOOKS_ENABLED` is the only flag; turning it on in production is a separate release with the owner's word.
+
+### D-012: Automatic merging under the loop rules (Nov 6, 2026)
+Status: accepted (owner). Pull requests merge automatically once every check passes and the independent review approves; high-risk pull requests need two independent reviews; deletions, irreversible steps, security or permission changes, and turning on deletion or new pricing still go to the owner. Supersedes D-009. Source: the Technology Standard Stack page.
