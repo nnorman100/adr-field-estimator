@@ -378,7 +378,11 @@ test('a queued job reads its originals once when its photos reach the server', a
   await context.setOffline(true);
   for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await addJpeg(page, name, 3000, 2000);
   await expect(page.locator('#photoGallery .photo')).toHaveCount(3);
+  const queuedId = await page.evaluate(() => state.draft.inspection_id);
   await newJob(page);
+  // Both jobs have a blank address; wait until the queued job has actually been left.
+  await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(queuedId);
+  await settled(page);
   expect((await kept(page)).map((row) => row.ready)).toEqual([false, false, false]);
   await originalReads(page);
   await context.setOffline(false);

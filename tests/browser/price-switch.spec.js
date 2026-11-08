@@ -284,6 +284,16 @@ test.describe('without a service worker', () => {
         status,
       async ({ page, context }) => {
         await switched(page);
+        // Publishing starts a table load. Let it finish before forcing the next load to fail.
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                !!ScopeItems.table()?.version_id &&
+                ScopeItems.table().version_id === state.session.pricing_table_version,
+            ),
+          )
+          .toBe(true);
         await page.route('**/api/companies/*/prices', (route) =>
           route.fulfill({
             status,
