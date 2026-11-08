@@ -1,4 +1,48 @@
-from tests.test_workspaces import *  # noqa: F403
+import backend.main as bm
+import backend.workspaces as workspaces
+import base64
+import html
+import json
+import logging
+import pytest
+import smtplib
+import socket
+import time
+from backend.inspection_store import Conflict
+from backend.workspaces import AccessDenied
+from backend.workspaces import MemberUpdate
+from copy import deepcopy
+from fastapi.testclient import TestClient
+from tests.fakes import png
+from tests.test_voice_notes import note as voice_note
+from types import SimpleNamespace
+from tests.test_workspaces import (
+    ID,
+    NON_SUPERADMINS,
+    OTHER,
+    OVERRIDES,
+    PHOTO,
+    QUANTITY_NOTE,
+    SIGNED,
+    assert_refused,
+    branded,
+    data,
+    direct_invite,
+    identity,
+    message_parts,
+    signed_job,
+    superadmin_gate,
+    superadmin_tools,
+    support_events,
+    unrestricted,
+    with_note,
+)
+from tests.test_workspaces import (  # noqa: F401  (pytest fixtures)
+    store,
+    api,
+    mail,
+    smtp,
+)
 
 
 def test_invitation_email_escapes_a_hostile_company_name():

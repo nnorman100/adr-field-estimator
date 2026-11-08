@@ -1,4 +1,32 @@
-from tests.test_workspaces import *  # noqa: F403
+import backend.main as bm
+import backend.workspaces as workspaces
+import json
+import logging
+import pytest
+import time
+from backend.contracts import AIResult
+from backend.workspaces import AccessDenied
+from copy import deepcopy
+from tests.fakes import ADR_PROFILE
+from tests.test_workspaces import (
+    CHOSEN,
+    COPY,
+    ID,
+    SIGNED,
+    TEMPORARY,
+    copy_request,
+    create_owner_login,
+    data,
+    identity,
+    owner_events,
+    real_verification,
+    signed_job,
+)
+from tests.test_workspaces import (  # noqa: F401  (pytest fixtures)
+    store,
+    api,
+    mail,
+)
 
 
 def test_password_change_keeps_the_gate_when_firebase_fails(mail, monkeypatch):

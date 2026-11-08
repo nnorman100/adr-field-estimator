@@ -1,4 +1,48 @@
-from tests.test_workspaces import *  # noqa: F403
+import asyncio
+import backend.main as bm
+import backend.workspaces as workspaces
+import base64
+import html
+import json
+import pytest
+import time
+from backend.contracts import AIResult
+from backend.contracts import InspectionData
+from backend.inspection_store import Conflict
+from backend.inspection_store import Limited
+from backend.workspace_migration import migrate
+from backend.workspaces import AccessDenied
+from backend.workspaces import CompanyCreate
+from backend.workspaces import CompanyProfile
+from backend.workspaces import CoordinationUpdate
+from backend.workspaces import MemberUpdate
+from backend.workspaces import StatusUpdate
+from concurrent.futures import ThreadPoolExecutor
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from tests.adr_pricing import make_documents
+from tests.fakes import ADR_PROFILE
+from tests.fakes import FakeCompanyStore
+from tests.fakes import FakeStore
+from tests.fakes import png
+from tests.test_workspaces import (
+    ID,
+    OTHER,
+    branded,
+    coordinate_customer,
+    data,
+    direct_invite,
+    identity,
+    message_parts,
+    seed,
+    verify_with,
+)
+from tests.test_workspaces import (  # noqa: F401  (pytest fixtures)
+    store,
+    api,
+    mail,
+    smtp,
+)
 
 
 @pytest.mark.parametrize('change', ['role', 'company', 'assignment'])

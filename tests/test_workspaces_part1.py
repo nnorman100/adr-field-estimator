@@ -1,4 +1,37 @@
-from tests.test_workspaces import *  # noqa: F403
+import backend.main as bm
+import json
+import pytest
+import smtplib
+import time
+from backend.contracts import AIResult
+from backend.contracts import InspectionData
+from backend.inspection_store import Conflict
+from backend.workspace_migration import migrate
+from backend.workspaces import AccessDenied
+from backend.workspaces import CompanyProfile
+from backend.workspaces import CoordinationUpdate
+from backend.workspaces import MemberUpdate
+from backend.workspaces import ProfileUpdate
+from backend.workspaces import StatusUpdate
+from copy import deepcopy
+from fastapi.testclient import TestClient
+from tests.adr_pricing import make_documents
+from tests.fakes import ADR_PROFILE
+from tests.fakes import FakeCompanyStore
+from tests.fakes import FakeStore
+from tests.fakes import png
+from tests.test_voice_notes import note as voice_note
+from tests.test_workspaces import (
+    ID,
+    OTHER,
+    data,
+    identity,
+    seed_jobs,
+)
+from tests.test_workspaces import (  # noqa: F401  (pytest fixtures)
+    store,
+    api,
+)
 
 
 def test_roles_and_cross_company_scoped_jobs(store):

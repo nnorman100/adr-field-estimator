@@ -1,4 +1,51 @@
-from tests.test_workspaces import *  # noqa: F403
+import backend.main as bm
+import backend.workspaces as workspaces
+import base64
+import pytest
+import time
+from backend.inspection_store import Conflict
+from backend.workspaces import AccessDenied
+from copy import deepcopy
+from fastapi.testclient import TestClient
+from types import SimpleNamespace
+from tests.test_workspaces import (
+    CHOSEN,
+    DRAFT,
+    FORGED_CLAIMS,
+    FORGED_HEADERS,
+    ID,
+    LIVE_KEEPS,
+    LIVE_LOSSES,
+    LiveHarness,
+    OTHER,
+    REFUSED_LOGINS,
+    SIGNED,
+    TEMPORARY,
+    active_owners,
+    apply_loss,
+    assert_refused,
+    company_records,
+    create_owner_login,
+    data,
+    events,
+    identity,
+    live_participant,
+    member_routes,
+    owner_events,
+    owner_routes,
+    real_verification,
+    revoke_admin,
+    revoked,
+    superadmin_gate,
+    superadmin_tools,
+    transfer_setup,
+    unrestricted,
+)
+from tests.test_workspaces import (  # noqa: F401  (pytest fixtures)
+    store,
+    api,
+    mail,
+)
 
 
 @pytest.mark.parametrize(
