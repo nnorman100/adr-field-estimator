@@ -1,0 +1,11 @@
+{
+  "backend/main.py": 2834,
+  "backend/price_book_store.py": 1973,
+  "backend/workspaces.py": 2101,
+  "public/app.css": 3302,
+  "public/app.js": 6597,
+  "public/prices.js": 2159,
+  "public/scope-items.js": 1056,
+  "public/workspaces.js": 2268,
+  "tests/test_firestore_emulator.py": 1571
+}

@@ -63,7 +63,7 @@ const context = {
 };
 context.window = context;
 vm.runInNewContext(
-  fs.readFileSync('public/app.js', 'utf8') +
+  require('./app_scripts')() +
     ';globalThis.hooks={state,playback,flushPlayback,clearPlayback,renderSignal,acknowledged,notifyLiveShots,shotSignature};',
   context,
 );

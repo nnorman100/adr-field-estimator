@@ -1,14 +1,9 @@
-"""Check the 1,000-line limit on a single code file.
+"""Enforce the 1,000-line limit and recorded no-growth ceilings.
 
-A tracked .py file over the limit fails, unless it is listed in
-scripts/file_length_allowlist.json (files that were already over the limit when the rule
-was adopted); those only print a warning and are meant to be split during planned work.
-JavaScript files are checked by ESLint's max-lines rule (see eslint.config.js), which reads
-the same allowlist. This script also reports every allowlisted file, .py or .js, that is
-now at or under the limit, or no longer exists, so its entry can be removed.
-
-Lines are counted the way ESLint's max-lines does: every line, blank and comment lines
-included, and a final line break does not add a line.
+JavaScript's general limit is also checked by ESLint. The baseline file records the
+exact line count of every existing exception, including JavaScript, CSS and Markdown: a
+listed file may not grow, and when it shrinks its ceiling must be lowered to match.
+Lines are counted like ESLint: blank lines and comments count, a final newline does not.
 """
 
 import json
@@ -19,7 +14,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = ROOT / 'scripts' / 'file_length_allowlist.json'
-CODE_SUFFIXES = ('.py', '.js', '.mjs', '.cjs')
+CODE_SUFFIXES = ('.py', '.js', '.mjs', '.cjs', '.css', '.md')
+BASELINES = ROOT / 'scripts' / 'file_length_baselines.json'
 EXCLUDED_PREFIXES = ('public/vendor/', 'node_modules/')
 LINE_BREAK = re.compile(r'\r\n|[\r\n  ]')
 
@@ -67,19 +63,32 @@ def tracked_code_files(root=ROOT):
     )
 
 
-def check(root=ROOT, limit=None, allowlist=None):
+def check(root=ROOT, limit=None, allowlist=None, baselines=None):
     """Return (errors, warnings, stale) as lists of messages."""
     if limit is None or allowlist is None:
         file_limit, file_allowlist = load_allowlist()
         limit = file_limit if limit is None else limit
         allowlist = file_allowlist if allowlist is None else allowlist
+    if baselines is None:
+        baselines = json.loads(BASELINES.read_text(encoding='utf-8')) if root == ROOT else {}
     errors, warnings, stale = [], [], []
     counts = {}
     for name in tracked_code_files(root):
         text = (Path(root) / name).read_text(encoding='utf-8', errors='replace')
         counts[name] = count_lines(text)
     for name, lines in counts.items():
-        if not name.endswith('.py') or lines <= limit:
+        if name in baselines and lines > baselines[name]:
+            errors.append(
+                f'{name} has {lines} lines, exceeding its {baselines[name]}-line baseline.'
+            )
+            continue
+        if name in baselines and lines < baselines[name]:
+            errors.append(
+                f'{name} has shrunk to {lines} lines; lower its ceiling in '
+                f'scripts/file_length_baselines.json from {baselines[name]} to {lines}.'
+            )
+            continue
+        if lines <= limit or (name.endswith(('.js', '.mjs', '.cjs')) and name not in baselines):
             continue
         if name in allowlist:
             warnings.append(
@@ -90,6 +99,8 @@ def check(root=ROOT, limit=None, allowlist=None):
                 f'{name} has {lines} lines, over the {limit}-line limit. Split it; new files '
                 'cannot be added to scripts/file_length_allowlist.json.'
             )
+    if baselines and set(baselines) != set(allowlist):
+        errors.append('File length baselines must match the allowlist.')
     for name in sorted(allowlist):
         if name not in counts:
             stale.append(

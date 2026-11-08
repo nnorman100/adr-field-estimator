@@ -18,7 +18,6 @@ import os
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from types import SimpleNamespace
 import pytest
@@ -45,6 +44,7 @@ from backend.contracts import AIResult, InspectionData
 from backend.inspection_store import Conflict, InspectionStore, Limited
 from backend.workspaces import AccessDenied, MemberUpdate, WorkspaceStore
 from tests.fakes import ADR_PROFILE, Bucket, png
+from tests.ai_spending_emulator import concurrently, company_spending_reservations
 from tests.test_backend import ID, data, sign_payload
 
 
@@ -73,12 +73,6 @@ def instances(kind=InspectionStore, count=2):
     """Separate clients stand in for separate Cloud Run instances sharing one database."""
     bucket = Bucket()
     return [kind(client(), bucket) for _ in range(count)]
-
-
-def concurrently(calls):
-    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
-        futures = [pool.submit(call) for call in calls]
-        return [future.exception() or future.result() for future in futures]
 
 
 def contended(error):
@@ -1571,3 +1565,7 @@ def test_two_instances_run_one_retention_sweep_that_deletes_each_record_once(mon
     assert path not in store.bucket.objects
     assert stored(db, 'inspections/' + ID)['photos'] == []
     assert keepers[1].tick('owner', 'adr', now + 60) == {'ran': False}
+
+
+def test_company_spending_reservations_and_crash_holds_across_real_clients():
+    company_spending_reservations(instances, concurrently, outcomes)

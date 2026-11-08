@@ -1,5 +1,6 @@
 """Voice notes must be transcribed and reviewed before an estimate is generated or signed."""
 
+from tests.fakes import genai_models
 import json
 from types import SimpleNamespace
 import backend.main as bm
@@ -151,9 +152,7 @@ def test_transcription_failure_logs_no_transcript_or_audio(context, monkeypatch,
     monkeypatch.setattr(
         bm,
         'get_ai_client',
-        lambda: SimpleNamespace(
-            aio=SimpleNamespace(models=SimpleNamespace(generate_content=respond))
-        ),
+        lambda: SimpleNamespace(aio=SimpleNamespace(models=genai_models(respond))),
     )
     capsys.readouterr()
     assert send(client).status_code == 502

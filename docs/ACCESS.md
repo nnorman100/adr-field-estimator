@@ -1,12 +1,13 @@
 # Access matrix
 
-Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dictionary in `backend/workspaces.py`, enforced by `job_access` and the route checks. `can()` in `public/workspaces.js` only hides buttons. Prose detail: `docs/company-workspaces.md`. If this file and the code disagree, the code wins; fix this file in the same PR.
+Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dictionary in `backend/workspaces.py`, enforced by `job_access` and the route checks. Some routes test the caller's *role* (owner) instead of a capability key; those are listed under "Checks by role" below. `can()` in `public/workspaces.js` only hides buttons. Prose detail: `docs/company-workspaces.md`. If this file and the code disagree, the code wins; fix this file in the same PR.
 
 ## Principles
 1. Identity = verified Firebase ID token (Google or password sign-in, email verified). Public sign-up stays **disabled**.
 2. Authorization = private Firestore membership and job-access records. Never custom claims or anything from the browser. (Exception: the `password_change_required` claim only *denies*.)
 3. Browsers never reach Firestore (`firestore.rules` is deny-all; a test enforces it). Server SDK access is controlled by IAM, not rules.
-4. Every business endpoint checks identity, company membership and job access on every call, including evidence downloads and Live reconnects.
+4. Every business endpoint checks identity, company membership and job access on every call, including evidence downloads and Live reconnects. An estimator also needs to be on the job's `accessible_estimator_uids` (created it or assigned); a job outside their company or list answers 404, and an archived job answers 410.
+   With `WORKSPACES_ENABLED` off (a rollback mode) there are no capabilities: access is the `STAFF_EMAILS` allowlist plus `owner_uid == uid`.
 5. One active owner and one company membership per user.
 6. Superadmin support access is read-only plus listed support actions, always audited, and is not a membership.
 
@@ -16,18 +17,18 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `jobs_read` | See jobs (estimator: only jobs they created or are assigned) | yes | yes | yes |
 | `jobs_create` | Start a job (office: empty scope only) | yes | yes | yes |
 | `jobs_copy` | Copy a signed job to a new draft | yes | yes | yes |
-| `coordination` | Job coordination and claim/loss details; record a signed job's close (final invoiced amount, actual drying days) | yes | no | yes |
+| `coordination` | Job coordination and claim/loss details; record a signed job's close (final invoiced amount, actual drying days); drying-watch state changes and reminders; the full coordination view (others get the customer view) | yes | no | yes |
 | `assignment` | Assign estimators to jobs | yes | no | yes |
-| `scope` | Edit rooms, measurements, scope; accept suggested equipment counts | yes | yes | no |
+| `scope` | Edit rooms, measurements, scope; accept suggested equipment counts; edit the customer; add and remove drying readings; voice notes; scope suggestions; additional-work quotes; reprice (owner); edit claim details (with `coordination`, either key suffices); an estimator marking a drying job dry | yes | yes | no |
 | `places` | Address suggestions and job map | yes | yes | no |
-| `photos` | Add photos, and send a photo's full-size original later (also on a signed job) | yes | yes | no |
+| `photos` | Add photos, move or tag them, and send a photo's full-size original later. Adding a photo to a signed job is refused; the original of a photo already on the job may arrive after signing and changes nothing in the record | yes | yes | no |
 | `ocr` | Meter-photo recognition | yes | yes | no |
 | `audit` | Finish & review (generate documents) | yes | yes | no |
 | `sign` | Capture signature / send signing link | yes | yes | no |
 | `live` | Live walkthrough | yes | yes | no |
 | `jobs_archive` | Archive and restore unsigned drafts | yes | no | no |
-| `team_manage` | Team and invitations | yes | no | no |
-| `profile_manage` | Company profile and logo | yes | no | no |
+| `team_manage` | Team and invitations (the server uses this key only to choose the full team list; invitations and member changes require the owner role) | yes | no | no |
+| `profile_manage` | Company profile and logo (browser key only: the server allows `PUT /api/companies/{id}` to the company's owner role, not by this key) | yes | no | no |
 | `delivery_manage` | Company delivery settings | yes | no | no |
 | `delivery_resend` | Resend signed documents | yes | no | yes |
 | `retention_manage` | Read and change how many days each kind of record is kept (invitations, activity log, drying-watch history, photos on archived drafts); see `docs/company-workspaces.md`, Record retention. Any active member's app may start the company's daily deletion run, which honours only the owner's setting and returns counts | yes | no | no |
@@ -37,12 +38,23 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 
 Office can read only active estimators' uid/email from the team, for assignment.
 
+## Checks by role (no capability key)
+These routes test the owner role directly, so a new role would not gain them from a key:
+- Approve additional work (`/extras/{id}/approve`), read company AI usage, read this month's company AI spending (`GET /api/companies/{id}/ai-spending`; other companies, estimators, office and superadmin support are refused), restore a price version, preview a reprice, read price version detail and history events, list pending signing links of a member, clear invitations, and all member and invitation changes.
+- Company drying-watch list: owner or office only (estimators use "My drying jobs").
+- `POST /api/companies/{id}/prices/import-preview` is checked with `prices_read`, so any role that can read prices can run an import preview; saving or publishing still needs `prices_manage`. This looks like a gap and is recorded here, not changed.
+- `POST /api/qr-tags` needs a signed-in member but no capability and no job.
+
+## Feature switches that gate routes
+`AI_FEATURES` names: `priced_extras`, `job_summary`, `ai_usage`, `drying_watch`, `estimate_assist`, `readiness`. A switched-off feature's routes answer 404. `PRICE_BOOKS_ENABLED` decides whether `prices_read` and `prices_manage` exist at all; with it off every price route answers 404.
+
 ## Superadmin
-Not a company role and not a membership. Can create/suspend/reactivate companies and invite or replace owners (or create an owner login with a temporary password). Read-only, audited support access to any company's jobs, documents, photos, team and invitations, plus listed support actions: resend or cancel a staff invitation, switch a non-owner between estimator and office, re-enable a disabled member, archive or restore an unsigned draft (also in a suspended company). Never edits customer jobs.
+Not a company role and not a membership. Can create/suspend/reactivate companies and invite or replace owners (or create an owner login with a temporary password). Read-only, audited support access to any company's profile, jobs, documents, photos, evidence, team, invitations, price books, job summaries, AI usage and drying watch, plus listed support actions: resend or cancel a staff invitation, switch a non-owner between estimator and office, re-enable a disabled member, archive or restore an unsigned draft (also in a suspended company). Never edits customer jobs.
 
 ## Non-role access
-- **Homeowner signing link** (`/api/sign*`): single-use token, expires in 7 days, stops working on any edit; acts as the technician who sent it.
-- **Document link** (`/documents`): read-only, bound to one signed agreement and one document set, expires in 30 days, revocable, multi-view.
+- **Anonymous**: `GET /health` and `GET /api/health` (status, schema version, release version, source commit). `GET /api/health/details` needs a signed-in member.
+- **Homeowner signing link** (`/api/sign*`): single-use token, expires in 7 days, stops working on any edit; acts as the technician who sent it and needs that technician to still hold `sign`. After signing, the used link can still view the documents for 30 days. Limits: 120 requests a minute per client address across link routes and 10 signing attempts per link.
+- **Document link** (`/documents`): read-only, bound to one signed agreement and one document set, expires in 30 days, revocable, multi-view; the technician who created it must still hold `sign`.
 - **Server-only**: Cloud Run runtime service account `adr-runtime@…`; background jobs (vault backup, monitoring).
 
 ## Rules for adding a feature

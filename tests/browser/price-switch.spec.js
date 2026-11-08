@@ -187,12 +187,13 @@ const switched = async (page) => {
   await expect(page.locator('#dashboardContent')).toContainText('Current: Prices v2');
   await expect.poll(() => page.evaluate(() => !!state.session.switched_at)).toBe(true);
 };
-const unsavedJob = async (page, context) => {
+const unsavedJob = async (page, context, beforeOffline = async () => {}) => {
   await page.route('**/api/inspections**', (route) =>
     ['POST', 'PUT', 'PATCH'].includes(route.request().method()) ? route.abort() : route.continue(),
   );
   await page.evaluate(() => openNew().catch(() => {}));
   const id = await page.evaluate(() => state.draft.inspection_id);
+  await beforeOffline();
   await context.setOffline(true);
   await page.evaluate((value) => restoreDraft(value), id);
   expect(await page.evaluate(() => [state.record, state.draft.data.seeded_from_version])).toEqual([
@@ -292,7 +293,29 @@ test.describe('without a service worker', () => {
           }),
         );
         await page.evaluate(() => ScopeItems.loadCompany());
-        await expect(await unsavedJob(page, context)).toContainText(text);
+        // The unsaved job's pricing 404 starts a refresh. Control its order with going offline.
+        await page.evaluate((hold) => {
+          const original = ScopeItems.sessionChanged;
+          window.priceRefreshStarted = false;
+          window.priceRefreshDone = false;
+          const gate = new Promise((resolve) => (window.releasePriceRefresh = resolve));
+          ScopeItems.sessionChanged = async () => {
+            window.priceRefreshStarted = true;
+            if (hold) await gate;
+            await original();
+            window.priceRefreshDone = true;
+          };
+        }, status === 401);
+        const statusMessage = await unsavedJob(page, context, async () => {
+          if (status === 401)
+            await expect.poll(() => page.evaluate(() => window.priceRefreshStarted)).toBe(true);
+          else await expect.poll(() => page.evaluate(() => window.priceRefreshDone)).toBe(true);
+        });
+        if (status === 401) {
+          await page.evaluate(() => window.releasePriceRefresh());
+          await expect.poll(() => page.evaluate(() => window.priceRefreshDone)).toBe(true);
+        }
+        await expect(statusMessage).toContainText(text);
         await context.setOffline(false);
       },
     );

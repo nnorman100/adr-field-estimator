@@ -8,11 +8,11 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Merged and released:** all of Phase 1 and all six Phase 2 steps (see the Oct 24–25 rows in `RELEASES.md`). Phase 0 items 1–4 and 6 are not recorded as done; item 6 (the local SMTP timeout test fails on Windows, passes in CI) is still open.
 - **In the serving revision:** Phase 3a readiness (F1, #147) is on. The newest 100% row in `RELEASES.md` records `AI_FEATURES=readiness`. The voice-note gate (#148) is in that revision and is not behind `AI_FEATURES`. Drying watch (A1, #149), priced extras (F2, #150), job summaries and AI usage (O1 + O3, #151), and the price editor (#153) are in that same revision and stay off: `AI_FEATURES` is only `readiness`, and `PRICE_BOOKS_ENABLED` is unset. Compare each later merge with the source commit of the newest `live` row. The rel5 commit was rolled back, so it is on `master` and is not serving.
 - **In flight:** the price editor is not an open PR. #153 is already in the serving revision, with the editor off until `PRICE_BOOKS_ENABLED` is set. Check `gh-axi pr list` before editing shared files.
-- **Next for Nate:** phone checks that are still open (check 8 below, including a physical iPhone), the ADR company profile and invitation check (Phase 0 items 1–3), and a go for the next production release. Every production release needs his go.
+- **Next for Nate:** phone checks that are still open (check 8 below, including a physical iPhone), and the ADR company profile and invitation check (Phase 0 items 1–3). Merged pull requests deploy automatically, test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do").
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
-  - Agents do not merge PRs; Nate approves every merge (D-009 in `docs/DECISIONS.md`, Oct 28). Every production deploy needs Nate's go.
+  - Pull requests merge automatically after every check and the review (two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work); deploys run test then live. D-009 in `docs/DECISIONS.md` is superseded (Nov 6); deleting data, irreversible or security/permission changes, turning on deletion or new pricing, and production steps Nate runs stay owner-only.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
@@ -35,7 +35,7 @@ _History only. For current feature state use `docs/STATUS.md`; for what is servi
 
 ## How every item ships
 - One small PR per item, each with a test that fails without the change (VISION "Proven before it is claimed").
-- Firstmate merges Low and Medium risk PRs with green CI. High risk PRs and every production release need Nate's go.
+- Pull requests merge automatically after every check and the review (two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work) and deploy test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do"). D-009 is superseded.
 - Releases follow the existing `RELEASES.md` recipe: `scripts/deploy_backend.py` stages the backend, then a preview channel, then promotion, then a Hosting deploy (`hosting:alert-disaster` only), then a 15-minute watch. Each release appends its rows to `RELEASES.md`.
 - Batch the releases. Release once after Phase 1. In Phase 2, release steps 1–2 together, then steps 3–6 together.
 
@@ -64,7 +64,7 @@ _History only. For current feature state use `docs/STATUS.md`; for what is servi
 3. **Invitation check:** send one invitation to a Google account and one to an Outlook address. Check the logo renders and that accepting works.
 4. Fix only what the test finds, as small PRs.
 5. ~~Update the wiki notes~~ Done Oct 24 (ADR note, Dryscope note, index, log).
-6. **Fix the local SMTP timeout test.** `tests/test_workspaces.py::test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry` fails on `master` on this Windows machine and passes in CI. Find out why, probably timing or sockets on Windows, and fix the test or the code so the local suite is green. Small PR, Low risk.
+6. **Fix the local SMTP timeout test.** `tests/test_workspaces_part3.py::test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry` fails on `master` on this Windows machine and passes in CI. Find out why, probably timing or sockets on Windows, and fix the test or the code so the local suite is green. Small PR, Low risk.
 
 ## Phase 1: Port the four Dryscope features
 Source files are in `nnorman100/Dryscope`; read them with `gh api`. Rebuild each in the field estimator's static frontend (`public/*.js`, no build step) and Python backend (`backend/`).

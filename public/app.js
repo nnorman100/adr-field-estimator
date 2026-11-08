@@ -698,58 +698,14 @@ async function appCheckHeaders() {
   const token = await appCheckToken();
   return token ? { 'X-Firebase-AppCheck': token } : {};
 }
-async function api(path, options = {}) {
-  if (!navigator.onLine)
-    throw Error('You are offline. Your draft is saved locally; reconnect to continue.');
-  if (!state.user || !state.session)
-    throw Error('Sign in with an approved, verified account to continue.');
-  const [token, appCheckHeader] = await Promise.all([state.user.getIdToken(), appCheckHeaders()]),
-    controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 115000);
-  try {
-    const response = await fetch(path, {
-      ...options,
-      cache: 'no-store',
-      signal: controller.signal,
-      headers: {
-        ...options.headers,
-        ...appCheckHeader,
-        Authorization: 'Bearer ' + token,
-        ...(state.session.workspaces_enabled ? { 'X-ADR-Workspace-Protocol': '1' } : {}),
-      },
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({})),
-        invalid =
-          Array.isArray(payload.detail) && typeof payload.detail[0]?.msg === 'string'
-            ? payload.detail[0].msg.replace(/^Value error, /, '')
-            : '';
-      const e = Error(
-        typeof payload.detail === 'string'
-          ? payload.detail
-          : invalid || 'The request could not be completed. Retry.',
-      );
-      e.status = response.status;
-      e.retryAfter = Number(response.headers.get('Retry-After') || 0);
-      if (
-        (e.status === 403 || e.status === 404 || e.status === 410) &&
-        window.WorkspaceUI?.enabled()
-      )
-        queueMicrotask(() => WorkspaceUI.refresh().catch(() => {}));
-      throw e;
-    }
-    return response;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function jsonApi(path, method = 'GET', body) {
+async function jsonApi(path, method = 'GET', body, pause) {
   const id = state.draft?.inspection_id,
     uid = state.user?.uid,
     workspace = window.WorkspaceUI?.context();
   const result = await (
     await api(path, {
       method,
+      pause,
       // A photo goes as multipart binary; the browser sets that content type and its boundary.
       ...(body === undefined
         ? {}
@@ -1209,7 +1165,8 @@ async function drainQueue() {
     return;
   drainingQueue = true;
   const uid = state.user.uid,
-    queueContext = window.WorkspaceUI?.context();
+    queueContext = window.WorkspaceUI?.context(),
+    ocrPause = aiPauseKey('ocr');
   const guard = () => {
     if (
       state.user?.uid !== uid ||
@@ -1332,12 +1289,12 @@ async function drainQueue() {
         row.record = record;
         await saveRow(row);
         await markOriginalsReady(row.key, [saved]);
-        if (photo.ocr_status === 'pending') {
+        if (photo.ocr_status === 'pending' && !aiWait(ocrPause)) {
           try {
-            record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {});
+            record = await request(path + '/photos/' + photo.id + '/ocr', 'POST', {}, ocrPause);
           } catch (e) {
-            if (e.status === 429) throw e;
-            record = await request(path);
+            if (e.status === 429) aiRefused(ocrPause, e);
+            else record = await request(path);
           }
           Object.assign(
             photo,
@@ -1352,7 +1309,7 @@ async function drainQueue() {
       await saveRow(row);
       const sent = await sendNotes(
         row.key,
-        async (note) => {
+        async (note, pause) => {
           if (!note.reserved) {
             record = await request(path + '/voice-notes/pending', 'POST', { note_id: note.id });
             note.reserved = true;
@@ -1369,7 +1326,7 @@ async function drainQueue() {
               await saveRow(row);
             }
           }
-          record = await request(path + '/voice-notes', 'POST', await notePayload(note));
+          record = await request(path + '/voice-notes', 'POST', await notePayload(note), pause);
           if (id === state.draft?.inspection_id) {
             syncChain = syncChain
               .catch(() => {})
@@ -1387,6 +1344,8 @@ async function drainQueue() {
       );
       if (sent.retry) retry = retry ? Math.min(retry, sent.retry) : sent.retry;
     }
+    const ocrWait = aiWait(ocrPause);
+    if (ocrWait) retry = retry ? Math.min(retry, ocrWait) : ocrWait;
     if (retry) {
       clearTimeout(state.queueRetry);
       state.queueRetry = setTimeout(() => drainQueue(), retry);
@@ -1424,6 +1383,8 @@ async function drainQueue() {
 }
 function startOCR(photo) {
   if (!canEditDraft('ocr') || !navigator.onLine || !photo?.uploaded) return;
+  const pause = aiPauseKey('ocr');
+  if (aiWait(pause)) return;
   const inspectionId = state.draft.inspection_id;
   if (state.ocr.has(photo.id)) return;
   const promise = (async () => {
@@ -1432,14 +1393,17 @@ function startOCR(photo) {
         '/api/inspections/' + inspectionId + '/photos/' + photo.id + '/ocr',
         'POST',
         {},
+        pause,
       );
       absorb(record);
     } catch (e) {
+      const wait = e.status === 429 ? aiRefused(pause, e) : 0;
       if (state.draft?.inspection_id === inspectionId) {
-        if (e.status === 429) {
+        if (wait) {
           say(
-            'Recognition limit reached. Retry the pending photo after ' +
-              e.retryAfter +
+            e.message +
+              ' The photo remains pending; retry recognition after ' +
+              Math.ceil(wait / 1000) +
               ' seconds.',
             'error',
           );
@@ -2778,6 +2742,9 @@ function photoCard(p) {
     if (!navigator.onLine) {
       retry.disabled = true;
       retry.title = 'Photo recognition needs a connection.';
+    } else if (aiWait(aiPauseKey('ocr'))) {
+      retry.disabled = true;
+      retry.title = 'Photo recognition is paused after a refusal. Retry after the pause.';
     }
     caption.append(retry);
   }
@@ -4810,7 +4777,9 @@ async function connectLive() {
       state.liveUsage = msg.total_tokens;
     } else if (msg.type === 'error') {
       say(msg.message, 'error');
-      if (window.WorkspaceUI?.enabled() && [401, 403, 404].includes(msg.status)) {
+      if (msg.status === 429) {
+        stopWalk({ preserveResume: true, drain: false });
+      } else if (window.WorkspaceUI?.enabled() && [401, 403, 404].includes(msg.status)) {
         state.resumeAvailable = false;
         stopWalk({ drain: false });
         queueMicrotask(() => WorkspaceUI.refresh().catch((e) => say(e.message, 'error')));
@@ -5477,6 +5446,7 @@ async function renderNotes() {
 // the server refused the note itself for good. The open draft and the background queue share it.
 const sendingNotes = new Map();
 async function sendNotes(key, upload, save = saveNote, stop = () => false) {
+  const pause = aiPauseKey('transcribe');
   let added = 0;
   for (;;) {
     const note = (await draftNotes(key)).find((n) => n.status === 'saved' && n.parts);
@@ -5490,7 +5460,7 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
       sent;
     sendingNotes.set(note.id, new Promise((resolve) => (sent = resolve)));
     try {
-      await upload(note);
+      await upload(note, pause);
       note.status = 'done';
       note.error = '';
       note.scoped = false;
@@ -5511,7 +5481,12 @@ async function sendNotes(key, upload, save = saveNote, stop = () => false) {
           e instanceof TypeError || e.name === 'AbortError'
             ? 'no connection to the server, retrying'
             : e.message;
-        retry = e.status === 429 ? Math.max(1, e.retryAfter) * 1000 : NOTE_RETRY_MS;
+        retry =
+          e.status === 429 && !e.draftSync
+            ? aiRefused(pause, e)
+            : e.status === 429
+              ? Math.max(1, e.retryAfter) * 1000
+              : NOTE_RETRY_MS;
       }
     }
     try {
@@ -5546,12 +5521,12 @@ async function processNotes(carried = 0) {
   renderNotes();
   let sent;
   try {
-    sent = await sendNotes(noteKey(), async (note) => {
+    sent = await sendNotes(noteKey(), async (note, pause) => {
       if (state.draft !== draft) throw Error('Another job is open. The note stays on this phone.');
       notes.active = note.id;
       renderNotes();
       try {
-        await uploadNote(note, draft);
+        await uploadNote(note, draft, pause);
       } finally {
         notes.active = null;
       }
@@ -5716,7 +5691,7 @@ async function reviewVoiceNotes() {
     await fillScopeFromWalkthrough();
   }
 }
-async function uploadNote(note, draft) {
+async function uploadNote(note, draft, pause) {
   const payload = await notePayload(note);
   const task = async () => {
     try {
@@ -5740,6 +5715,7 @@ async function uploadNote(note, draft) {
         '/api/inspections/' + draft.inspection_id + '/voice-notes',
         'POST',
         payload,
+        pause,
       );
       if (state.draft !== draft) return;
       absorb(record);

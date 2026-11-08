@@ -3,27 +3,12 @@
   "files": [
     "backend/main.py",
     "backend/price_book_store.py",
-    "backend/price_table.py",
     "backend/workspaces.py",
+    "public/app.css",
     "public/app.js",
     "public/prices.js",
     "public/scope-items.js",
     "public/workspaces.js",
-    "scripts/auto_deploy.py",
-    "tests/browser/photo-originals.spec.js",
-    "tests/browser/prices.spec.js",
-    "tests/browser/scope-items.spec.js",
-    "tests/browser/workflows.spec.js",
-    "tests/browser/workspaces.spec.js",
-    "tests/test_auto_deploy.py",
-    "tests/test_backend.py",
-    "tests/test_claims.py",
-    "tests/test_firestore_emulator.py",
-    "tests/test_frontend.js",
-    "tests/test_outcomes.py",
-    "tests/test_price_books.py",
-    "tests/test_price_table.py",
-    "tests/test_pricing_v2.py",
-    "tests/test_workspaces.py"
+    "tests/test_firestore_emulator.py"
   ]
 }

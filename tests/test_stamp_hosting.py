@@ -75,7 +75,8 @@ def test_stamp_check_and_reset_round_trip(shell):
     assert hosting.check(shell, fake_git()) == HEAD
     assert f"const VERSION='{HEAD}';" in (shell / 'public/sw.js').read_text()
     html = (shell / 'public/app.html').read_text(encoding='utf8')
-    assert html.count(f'?v={HEAD}') == 16 and f'App version {HEAD[:12]}</small>' in html
+    assert html.count(f'?v={HEAD}') == 17 and f'App version {HEAD[:12]}</small>' in html
+    assert f'/ai-spending-ui.js?v={HEAD}' in html
     assert (shell / 'public/index.html').read_text(encoding='utf8').count(f'?v={HEAD}') == 2
     assert (shell / 'public/sign.html').read_text(encoding='utf8').count(f'?v={HEAD}') == 4
     assert f'/audio-worklet.js?v={HEAD}' in (shell / 'public/app.js').read_text(encoding='utf8')
@@ -239,7 +240,7 @@ def test_stamp_with_release_version_stamps_both_account_and_footer_displays(shel
     hosting.write(HEAD, shell, version='2026.11.02-1')
     assert hosting.check(shell, fake_git()) == HEAD
     html = (shell / 'public/app.html').read_text(encoding='utf8')
-    assert html.count(f'?v={HEAD}') == 16
+    assert html.count(f'?v={HEAD}') == 17
     assert html.count('App version 2026.11.02-1</small>') == 2
     assert 'id="footerVersion"' in html
     # Disagreeing display markers in public/app.html are rejected by check().

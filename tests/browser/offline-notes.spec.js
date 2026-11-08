@@ -455,6 +455,93 @@ test.describe('controlled voice-note uploads', () => {
     );
     expect(await savedParts(page)).toBeLessThan(before);
   });
+  test('a spending refusal pauses transcription so a new note does not resend refused audio early', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    let calls = 0;
+    await page.route('**/voice-notes', (route) => {
+      calls++;
+      return route.fulfill({
+        status: 429,
+        headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          detail: "Your company has reached this month's AI spending limit.",
+        }),
+      });
+    });
+    await page.goto('/app');
+    await ready(page);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect.poll(() => calls).toBe(1);
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(2);
+    await page.evaluate(() => processNotes());
+    await page.waitForFunction(() => !notes.processing);
+    await page.evaluate(() => drainQueue());
+    expect(calls).toBe(1);
+  });
+  test('a transcription pause still registers another job’s offline note as pending', async ({
+    page,
+  }) => {
+    await fakeRecorder(page);
+    await page.addInitScript(() =>
+      Object.defineProperty(Navigator.prototype, 'onLine', {
+        configurable: true,
+        get: () => !window.fakeOffline,
+      }),
+    );
+    let calls = 0;
+    await page.route('**/voice-notes', (route) => {
+      calls++;
+      return route.fulfill({
+        status: 429,
+        headers: { 'Retry-After': '3600', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          detail: "Your company has reached this month's AI spending limit.",
+        }),
+      });
+    });
+    await page.goto('/app');
+    await ready(page);
+    const first = await page.evaluate(() => state.draft.inspection_id);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(1);
+    await page.locator('#recordNote').click();
+    await expect.poll(() => calls).toBe(1);
+    await page.locator('#jobMenu > summary').click();
+    await page.locator('#newInspection').click();
+    await expect.poll(() => page.evaluate(() => state.draft.inspection_id)).not.toBe(first);
+    await ready(page);
+    const second = await page.evaluate(() => state.draft.inspection_id);
+    await walkthrough(page);
+    await page.locator('#startNotes').click();
+    await page.evaluate(() => (window.fakeOffline = true));
+    await page.locator('#recordNote').click();
+    await expect.poll(() => savedParts(page)).toBeGreaterThan(3);
+    await page.locator('#recordNote').click();
+    await expect(page.locator('#voiceNotes li')).toHaveCount(1);
+    const pending = (id) =>
+      page.evaluate(
+        async (id) =>
+          ((await jsonApi('/api/inspections/' + id)).voice_notes || []).map((row) => row.status),
+        id,
+      );
+    await page.evaluate(() => {
+      window.fakeOffline = false;
+      window.dispatchEvent(new Event('online'));
+    });
+    await expect.poll(() => pending(second)).toEqual(['pending']);
+    expect(calls).toBe(1);
+  });
   test('a refused draft save blocks recording before any audio accumulates', async ({ page }) => {
     await fakeRecorder(page);
     let refuse = true;
@@ -673,6 +760,80 @@ test.describe('controlled voice-note uploads', () => {
     await expect
       .poll(() => page.evaluate(async () => (await allNotes()).map((note) => note.status)))
       .toEqual(['done']);
+  });
+  test('a transcription pause that begins while a background note is read stops its upload', async ({
+    page,
+  }) => {
+    let calls = 0;
+    const first = await noteForOtherJob(page, () =>
+      page.route('**/voice-notes', (route) => {
+        calls++;
+        return route.continue();
+      }),
+    );
+    await page.evaluate(() => {
+      const read = notePayload;
+      window.notePayload = async (note) => {
+        const payload = await read(note);
+        aiRefused(aiPauseKey('transcribe'), { retryAfter: 3600 });
+        window.payloadRead = true;
+        return payload;
+      };
+      window.dispatchEvent(new Event('online'));
+    });
+    await page.waitForFunction(() => window.payloadRead && !drainingQueue);
+    expect(calls).toBe(0);
+    expect(
+      await page.evaluate(
+        async (id) =>
+          ((await jsonApi('/api/inspections/' + id)).voice_notes || []).map((row) => row.status),
+        first,
+      ),
+    ).toEqual(['pending']);
+    expect(await page.evaluate(async () => (await allNotes()).map((note) => note.status))).toEqual([
+      'saved',
+    ]);
+  });
+  test('a transcription pause that begins while credentials are prepared stops a background upload', async ({
+    page,
+  }) => {
+    let calls = 0;
+    const first = await noteForOtherJob(page, () =>
+      page.route('**/voice-notes', (route) => {
+        calls++;
+        return route.continue();
+      }),
+    );
+    await page.evaluate(() => {
+      const read = notePayload,
+        headers = appCheckHeaders;
+      window.notePayload = async (note) => {
+        const payload = await read(note);
+        window.payloadRead = true;
+        return payload;
+      };
+      window.appCheckHeaders = async () => {
+        const result = await headers();
+        if (window.payloadRead && !window.paused) {
+          aiRefused(aiPauseKey('transcribe'), { retryAfter: 3600 });
+          window.paused = true;
+        }
+        return result;
+      };
+      window.dispatchEvent(new Event('online'));
+    });
+    await page.waitForFunction(() => window.paused && !drainingQueue);
+    expect(calls).toBe(0);
+    expect(
+      await page.evaluate(
+        async (id) =>
+          ((await jsonApi('/api/inspections/' + id)).voice_notes || []).map((row) => row.status),
+        first,
+      ),
+    ).toEqual(['pending']);
+    expect(await page.evaluate(async () => (await allNotes()).map((note) => note.status))).toEqual([
+      'saved',
+    ]);
   });
   test('opening a job while its note uploads in the background does not send the note twice', async ({
     page,

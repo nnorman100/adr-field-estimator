@@ -43,7 +43,7 @@ const context = {
 };
 context.window = context;
 vm.runInNewContext(
-  fs.readFileSync('public/app.js', 'utf8') + ';globalThis.hooks={state,stopWalk,clearPlayback};',
+  require('./app_scripts')() + ';globalThis.hooks={state,stopWalk,clearPlayback};',
   context,
 );
 (async () => {

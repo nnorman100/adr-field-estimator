@@ -465,10 +465,14 @@ def test_daily_live_start_cap_rejects_before_vertex(monkeypatch):
         assert '_live_sessions/owner' not in store.db.records
         with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
             socket.send_json(auth)
-            assert socket.receive_json() == {
+            refused = socket.receive_json()
+            seconds = refused['retry_after']
+            assert 0 < seconds <= 86400
+            assert refused == {
                 'type': 'error',
-                'message': 'Too many requests. Please wait and retry.',
+                'message': f'Too many requests. Please wait and retry. Retry in {seconds} seconds.',
                 'status': 429,
+                'retry_after': seconds,
             }
             with pytest.raises(WebSocketDisconnect):
                 socket.receive_json()
@@ -509,7 +513,16 @@ def test_resume_flag_without_checkpoint_is_charged_as_a_new_start(monkeypatch, p
         with client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket:
             socket.send_json(auth)
             error = socket.receive_json()
-            assert error['message'] == 'Too many requests. Please wait and retry.'
+            if protocol == 2:
+                seconds = error['retry_after']
+                assert 0 < seconds <= 86400
+                assert (
+                    error['message']
+                    == f'Too many requests. Please wait and retry. Retry in {seconds} seconds.'
+                )
+                assert error['status'] == 429
+            else:
+                assert error['message'] == 'Too many requests. Please wait and retry.'
             with pytest.raises(WebSocketDisconnect):
                 socket.receive_json()
     assert opened == [True] and '_live_sessions/owner' not in store.db.records

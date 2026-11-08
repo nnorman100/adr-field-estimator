@@ -49,7 +49,7 @@ function harness(withRestores = false) {
     context.makeButton = context.button;
     context.initialState = context.state;
     vm.runInNewContext(
-      fs.readFileSync('public/app.js', 'utf8') +
+      require('./app_scripts')() +
         `
         Object.assign(state, initialState, {user: {uid: 'reader'}});
         globalThis.mutationApi = jsonApi;
@@ -286,3 +286,68 @@ for (const blocked of ['offline', 'cooldown']) {
     assert.equal(h.target.children.at(-1).disabled, true);
   });
 }
+
+test('owner spending loads without the optional AI counts feature', async () => {
+  const h = harness();
+  h.context.state.session.role = 'owner';
+  h.context.state.session.company_id = 'adr';
+  h.context.state.session.ai_features = [];
+  h.ui.spending(h.target);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].path, '/api/companies/adr/ai-spending');
+  h.requests[0].resolve({
+    month: '2026-11',
+    spent_microusd: 2000000,
+    reserved_microusd: 2000000,
+    monthly_cap_microusd: 10000000,
+    live_margin_microusd: 2000000,
+  });
+  await h.flush();
+  const card = h.target.children[0];
+  assert.deepEqual(
+    card.children.map((c) => [c.tag, c.text]),
+    [['p', 'AI used this month: $4.00 of $10.00']],
+  );
+});
+
+test('spending is owner-only and does not reuse another company response', async () => {
+  const h = harness();
+  h.context.state.session.role = 'office';
+  h.ui.spending(h.target);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.target.children.length, 0);
+  h.context.state.session.role = 'owner';
+  h.context.state.session.company_id = 'adr';
+  h.ui.spending(h.target);
+  h.context.state.session.uid = 'another-owner';
+  h.requests[0].resolve({ spent_microusd: 2000000, reserved_microusd: 0, monthly_cap_microusd: 1 });
+  await h.flush();
+  assert.equal(h.target.children[0].children[0].text, 'AI used this month: loading…');
+});
+
+test('spending failure shows unavailable without a refresh control', async () => {
+  const h = harness();
+  h.context.state.session.role = 'owner';
+  h.context.state.session.company_id = 'adr';
+  h.ui.spending(h.target);
+  h.requests[0].reject(Object.assign(Error('Synthetic outage'), { status: 503 }));
+  await h.flush();
+  const card = h.target.children[0];
+  assert.deepEqual(
+    card.children.map((c) => [c.tag, c.text]),
+    [['p', 'AI used this month: unavailable.']],
+  );
+});
+
+test('offline spending makes no request and offers no controls', async () => {
+  const h = harness();
+  h.context.state.session.role = 'owner';
+  h.context.navigator.onLine = false;
+  h.ui.spending(h.target);
+  assert.equal(h.requests.length, 0);
+  const card = h.target.children[0];
+  assert.deepEqual(
+    card.children.map((c) => [c.tag, c.text]),
+    [['p', 'AI used this month: connect to load.']],
+  );
+});
