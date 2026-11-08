@@ -11,6 +11,5 @@
   "tests/test_firestore_emulator.py": 1571,
   "tests/test_price_books.py": 2286,
   "tests/test_price_table.py": 1152,
-  "tests/test_pricing_v2.py": 2426,
-  "tests/test_workspaces.py": 4872
+  "tests/test_pricing_v2.py": 2426
 }

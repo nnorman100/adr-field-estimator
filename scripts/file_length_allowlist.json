@@ -13,7 +13,6 @@
     "tests/test_firestore_emulator.py",
     "tests/test_price_books.py",
     "tests/test_price_table.py",
-    "tests/test_pricing_v2.py",
-    "tests/test_workspaces.py"
+    "tests/test_pricing_v2.py"
   ]
 }
