@@ -143,7 +143,7 @@ and no false conflict.
 
 Existing proof: `tests/browser/photo-originals.spec.js` (a failed photo upload resends only that
 photo; an original whose copy reached the server unseen), `tests/browser/offline-notes.spec.js`
-(a note saved with its response lost appears once), `tests/browser/scope-items.spec.js` (a lost
+(a note saved with its response lost appears once), `tests/browser/scope-items-office.spec.js` (a lost
 create response), `tests/browser/workflows.spec.js` and `local-drafts.spec.js` (offline draft,
 reconnection), `tests/test_inspection_store.py::test_photo_retry_same_id_cannot_substitute_room_or_evidence`,
 `tests/test_photo_originals.py::test_a_retried_original_that_is_already_stored_succeeds`,

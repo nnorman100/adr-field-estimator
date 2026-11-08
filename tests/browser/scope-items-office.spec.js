@@ -1,0 +1,840 @@
+const { test, expect } = require('@playwright/test');
+const { saveDraft, checkScope } = require('./actions');
+
+const uid = (role) => 'test-owner-ws-' + role;
+const auth = (role) => ({ Authorization: 'Bearer ' + uid(role) });
+const ITEMS = {
+  air_mover: { unit_price: '30.00' },
+  lgr_dehumidifier: { unit_price: '100.00' },
+  service_call: { unit_price: '150.00', default_quantity: '2' },
+  setup_documentation: { unit_price: '40.00', default_quantity: '1' },
+  desiccant_dehumidifier: { unit_price: '120.00' },
+};
+
+test.beforeEach(async ({ request }) => {
+  await request.post('/__test/workspaces', {
+    data: { enabled: true, price_books: true, ai_features: [] },
+  });
+});
+test.afterEach(async ({ request }) => {
+  await request.post('/__test/workspaces', { data: { enabled: false } });
+});
+const publish = (request, extra = {}) =>
+  request.post('/__test/price-table', { data: { items: ITEMS, ...extra } });
+
+async function open(page, role = 'owner') {
+  await page.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid(role));
+  await page.goto('/app');
+  await expect(page.locator('#workspaceDashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'New job', exact: true }).click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  await checkScope(page);
+}
+// Decimal quantities come back from the server as strings.
+const numbers = (items) =>
+  Object.fromEntries(
+    Object.entries(items || {}).map(([id, q]) => [id, { ...q, quantity: Number(q.quantity) }]),
+  );
+const jobId = (page) => page.evaluate(() => state.draft.inspection_id);
+const remote = async (page, id, role = 'owner') =>
+  (await page.request.get('/api/inspections/' + id, { headers: auth(role) })).json();
+const storedRows = (page) =>
+  page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('adr-private-drafts-v2');
+        request.onerror = reject;
+        request.onsuccess = () => {
+          const db = request.result,
+            all = db.transaction(['drafts']).objectStore('drafts').getAll();
+          all.onsuccess = () => {
+            db.close();
+            resolve(all.result);
+          };
+        };
+      }),
+  );
+const cachedTable = async (page) =>
+  (await storedRows(page)).find((row) => row.key.startsWith('prices:'))?.prices || null;
+test.describe('without a service worker', () => {
+  test.use({ serviceWorkers: 'block' });
+
+  const startOfficeJob = async (context) => {
+    const office = await context.newPage();
+    await office.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('office'),
+    );
+    await office.goto('/app');
+    await expect(office.locator('#workspaceDashboard')).toBeVisible();
+    await office.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(office.locator('#saveStatus')).toHaveText('Saved');
+    return office;
+  };
+  const openOn = async (context, id, role = 'owner') => {
+    const other = await context.newPage();
+    await other.addInitScript((value) => sessionStorage.setItem('synthetic-uid', value), uid(role));
+    await other.goto('/app');
+    await expect(other.locator('#workspaceDashboard')).toBeVisible();
+    await other.evaluate((value) => restoreDraft(value), id);
+    await checkScope(other);
+    return other;
+  };
+
+  test('an office job starts at the table defaults, seeded by the server', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, hepa_filter: { enabled: false, unit_price: '' } },
+    });
+    const office = await startOfficeJob(context);
+    const id = await jobId(office);
+    // The office phone holds the server's copy, so reopening it is not a sync conflict.
+    await expect(office.locator('#emergencyCalls')).toHaveValue('2');
+    await office.evaluate((value) => restoreDraft(value), id);
+    await expect(office.locator('#conflictActions')).toBeHidden();
+    const path = '/api/jobs/' + id + '/coordination';
+    const headers = { ...auth('office'), 'X-ADR-Workspace-Protocol': '1' };
+    const coordination = await (await office.request.get(path, { headers })).json();
+    const saved = await office.request.put(path, {
+      headers,
+      data: {
+        expected_version: coordination.version,
+        address: 'Synthetic office intake',
+        assigned_estimator_uid: null,
+        customer_name: '',
+        customer_phone: '',
+        customer_email: '',
+        office_notes: '',
+      },
+    });
+    expect(saved.ok()).toBe(true);
+    await office.close();
+    await open(page);
+    const before = await remote(page, id);
+    expect(before.revision).toBeGreaterThan(1);
+    expect(before.data.address).toBe('Synthetic office intake');
+    expect(before.data.monitoring_hours).toBe(0);
+    expect(before.data.hepa_filters).toBe(0);
+    expect(before.data.seeded_from_version).toBeTruthy();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('#monitoringHours')).toHaveValue('0');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await expect(page.locator('#v2Unlisted')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).revision).toBe(before.revision);
+  });
+
+  test('an office phone that lost the create response still takes the seeded copy', async ({
+    context,
+    request,
+  }) => {
+    await publish(request);
+    const office = await context.newPage();
+    await office.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('office'),
+    );
+    await office.goto('/app');
+    await expect(office.locator('#workspaceDashboard')).toBeVisible();
+    // The server saves the job, but its answer never reaches the phone.
+    let lost = 0;
+    await office.route('**/api/inspections', async (route) => {
+      if (route.request().method() !== 'POST' || lost) return route.fallback();
+      lost++;
+      await route.fetch();
+      return route.abort();
+    });
+    await office.getByRole('button', { name: 'New job', exact: true }).click();
+    await expect(office.locator('#emergencyCalls')).toHaveValue('1');
+    await expect.poll(() => lost).toBe(1);
+    await expect(office.locator('#saveStatus')).not.toHaveText('Saving…');
+    expect(await office.evaluate(() => state.record)).toBeNull();
+    await office.evaluate(() => syncDraft().catch(() => {}));
+    await expect(office.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(office.locator('#conflictActions')).toBeHidden();
+    const id = await jobId(office);
+    await office.evaluate((value) => restoreDraft(value), id);
+    await expect(office.locator('#conflictActions')).toBeHidden();
+    await expect(office.locator('#emergencyCalls')).toHaveValue('2');
+    await office.close();
+  });
+
+  test("a worked office job keeps the estimator's zero on a phone with no row for it", async ({
+    page,
+    context,
+    browser,
+    request,
+  }) => {
+    await publish(request, {
+      items: { ...ITEMS, air_mover: { unit_price: '30.00', default_quantity: '3' } },
+    });
+    const office = await startOfficeJob(context);
+    const id = await jobId(office);
+    await office.close();
+    await open(page);
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('0');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const before = await remote(page, id);
+    // The same person on another phone: a fresh browser profile holds no row for the job.
+    const phone = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block' });
+    const other = await openOn(phone, id);
+    await expect(other.locator('#airMovers')).toHaveValue('0');
+    await other.waitForTimeout(1500);
+    const after = await remote(other, id);
+    expect(after.revision).toBe(before.revision);
+    expect(after.data.air_movers).toBe(0);
+    await phone.close();
+  });
+
+  test('a job begun before the first publish is left as it is when opened', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await open(page, 'estimator');
+    const id = await jobId(page);
+    await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const before = await remote(page, id, 'estimator');
+    await publish(request);
+    const owner = await openOn(context, id);
+    await expect(owner.locator('#v2Scope')).toBeVisible();
+    await expect(owner.locator('#monitoringHours')).toHaveValue('13.25');
+    await expect(owner.locator('[data-scope-item="setup_documentation"]')).toHaveValue('0');
+    await owner.waitForTimeout(1500);
+    const after = await remote(owner, id);
+    expect(after.revision).toBe(before.revision);
+    expect(after.data.seeded_from_version).toBeUndefined();
+    await owner.close();
+  });
+
+  test('a worked job opened on a phone with no row for it keeps its deliberate zeros', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request, {
+      items: {
+        ...ITEMS,
+        service_call: { unit_price: '150.00', default_quantity: '1' },
+        setup_documentation: { unit_price: '40.00', default_quantity: '0' },
+        monitoring_visit: { unit_price: '25.00', default_quantity: '13.25' },
+        debris_haul: { unit_price: '25.00', default_quantity: '1' },
+        air_scrubber: { unit_price: '25.00', default_quantity: '1' },
+        hepa_filter: { unit_price: '25.00', default_quantity: '1' },
+        air_mover: { unit_price: '30.00', default_quantity: '3' },
+      },
+    });
+    await open(page, 'estimator');
+    const id = await jobId(page);
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page.locator('#airMovers').fill('0');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#technicianNotes').fill('Second save');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const before = await remote(page, id, 'estimator');
+    expect(before.revision).toBeGreaterThan(1);
+    const owner = await context.newPage();
+    await owner.addInitScript(
+      (value) => sessionStorage.setItem('synthetic-uid', value),
+      uid('owner'),
+    );
+    await owner.goto('/app');
+    await expect(owner.locator('#workspaceDashboard')).toBeVisible();
+    await owner.evaluate((value) => restoreDraft(value), id);
+    await checkScope(owner);
+    await expect(owner.locator('#airMovers')).toHaveValue('0');
+    await owner.evaluate(() => syncChain);
+    await owner.waitForTimeout(1500);
+    await expect(owner.locator('#saveStatus')).toHaveText('Saved');
+    const after = await remote(owner, id);
+    expect(after.revision).toBe(before.revision);
+    expect(after.data.air_movers).toBe(0);
+    await owner.close();
+  });
+
+  test('a first publish leaves quantities the technician already changed', async ({
+    page,
+    request,
+  }) => {
+    await open(page);
+    await page.locator('details.sheet-charges summary').click();
+    await page.locator('#monitoringHours').fill('8');
+    await publish(request);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#v2Scope')).toBeVisible();
+    await expect(page.locator('#monitoringHours')).toHaveValue('8');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('1');
+  });
+
+  test('a company with no published prices gets the prices gap on the phone', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const pricing = await page.evaluate(() => {
+      const id = state.draft.inspection_id,
+        before = ScopeItems.readinessPricing();
+      state.session.prices_set = false;
+      const pinned = ScopeItems.readinessPricing();
+      state.session.pricing_version = null;
+      ScopeItems.seed(id, null);
+      return { before, pinned, unset: ScopeItems.readinessPricing() };
+    });
+    expect(pricing.before.prices_set).toBe(true);
+    expect(pricing.pinned.prices_set).toBe(true);
+    expect(pricing.unset).toEqual({ prices_set: false });
+  });
+
+  test('a company on the v1 rate book sees the form it always had', async ({ page }) => {
+    await open(page);
+    await expect(page.locator('#v1Scope')).toBeVisible();
+    await expect(page.locator('#v2Scope')).toBeHidden();
+    await expect(page.locator('#emergencyCalls')).toHaveValue('1');
+    await expect(page.locator('#monitoringHours')).toHaveValue('13.25');
+    await expect(page.locator('#panel-property')).toContainText('Standard job charges');
+    expect(
+      await page.evaluate(
+        () => state.draft.data.scope_items === undefined && !('pricing' in state.draft),
+      ),
+    ).toBe(true);
+  });
+
+  test('changing a walkthrough-filled value needs a short reason the owner can read', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    await page.locator('#address').fill('Synthetic override property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#scopeSuggestionPanel')).toBeVisible();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    const reason = page.locator('[data-override-reason="air_movers"]');
+    await expect(reason).toBeHidden();
+    await page.locator('#airMovers').fill('5');
+    await expect(reason).toBeVisible();
+    // Unexplained, the form refuses to go on and the change stays on the phone.
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(false);
+    expect(await page.evaluate(() => state.draft.data.quantity_overrides.air_movers)).toEqual({
+      measured: '3',
+      entered: '5',
+    });
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
+    // Spaces are not a reason, whatever the browser's own length check would say.
+    await reason.fill('     ');
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(false);
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
+    expect((await remote(page, id)).data.air_movers).not.toBe(5);
+    await reason.fill('Two more fans for the hall');
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(true);
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.quantity_overrides.air_movers).toEqual({
+      measured: '3',
+      entered: '5',
+      reason: 'Two more fans for the hall',
+    });
+    // Back at the measured value there is nothing to explain.
+    await page.locator('#airMovers').fill('3');
+    await expect(reason).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.quantity_overrides.air_movers).toEqual({
+      measured: '3',
+      entered: '3',
+    });
+    // A later change is measured against the same value, with the entered value kept current.
+    // The earlier reason does not carry over: this change has to be explained on its own.
+    await page.locator('#airMovers').fill('5');
+    await expect(reason).toHaveValue('');
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(false);
+    await expect(page.locator('#saveStatus')).toHaveText('Reason needed');
+    await reason.fill('Two more fans for the hall');
+    await page.locator('#airMovers').fill('7');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.quantity_overrides.air_movers).toEqual({
+      measured: '3',
+      entered: '7',
+      reason: 'Two more fans for the hall',
+    });
+    // A room measurement the walkthrough filled is covered the same way.
+    const finished = page.locator('[data-room-index="0"][data-room-key="finished_sf"]');
+    await expect(finished).toHaveValue('80');
+    await finished.fill('95');
+    const roomReason = page.locator('[data-override-reason="Kitchen:finished_sf"]');
+    await expect(roomReason).toBeVisible();
+    await roomReason.fill('Wet behind the pantry');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    expect((await remote(page, id)).data.quantity_overrides['Kitchen:finished_sf']).toEqual({
+      measured: '80',
+      entered: '95',
+      reason: 'Wet behind the pantry',
+    });
+    // Renaming the room keeps its measured value, its reason and its reason box.
+    await page.locator('[data-room-index="0"][data-room-key="name"]').fill('Pantry');
+    const renamed = page.locator('[data-override-reason="Pantry:finished_sf"]');
+    await expect(renamed).toBeVisible();
+    await renamed.fill('Wet behind the back wall');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const overrides = (await remote(page, id)).data.quantity_overrides;
+    expect(overrides['Kitchen:finished_sf']).toBeUndefined();
+    expect(overrides['Pantry:finished_sf']).toEqual({
+      measured: '80',
+      entered: '95',
+      reason: 'Wet behind the back wall',
+    });
+    // Another phone, with no local row, sees the same requirement.
+    await page.evaluate((value) => {
+      ScopeItems.forget();
+      ScopeItems.seed(value, null);
+      fillForm();
+    }, id);
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeVisible();
+    await page.locator('#airMovers').fill('9');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toHaveValue(
+      'Two more fans for the hall',
+    );
+  });
+
+  test('Save draft says so when a missing reason keeps the change on the phone', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const id = await jobId(page);
+    await page.locator('#address').fill('Synthetic save property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await page.locator('#airMovers').fill('5');
+    await saveDraft(page);
+    const reason = page.locator('[data-override-reason="air_movers"]');
+    const message = page.locator('#message');
+    await expect(message).toContainText('Saved on this phone only');
+    await expect(message).not.toContainText('saved privately');
+    await expect(page.locator('#validationFeedback')).toBeVisible();
+    await expect(reason).toBeFocused();
+    expect((await remote(page, id)).data.air_movers).toBe(3);
+    // Going back to the measured value leaves nothing to explain, so the prompt goes too.
+    await page.locator('#airMovers').fill('3');
+    await expect(page.locator('#validationFeedback')).toBeHidden();
+    await page.locator('#airMovers').fill('5');
+    await saveDraft(page);
+    await expect(page.locator('#validationFeedback')).toBeVisible();
+    await reason.fill('Two more fans for the hall');
+    await expect(page.locator('#validationFeedback')).toBeHidden();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    await saveDraft(page);
+    await expect(message).toContainText('Draft saved privately');
+    expect((await remote(page, id)).data.air_movers).toBe(5);
+  });
+
+  test('undoing a walkthrough value asks for no reason', async ({ page, request }) => {
+    await publish(request);
+    await open(page);
+    await page.locator('#address').fill('Synthetic undo property');
+    await page.locator('#yearBuilt').fill('1998');
+    await page.locator('#technicianNotes').fill('Kitchen, category 2, 80 SF drywall. Use 3 fans.');
+    await page.locator('#fillScopeProperty').click();
+    await expect(page.locator('#airMovers')).toHaveValue('3');
+    await page
+      .locator('label', { has: page.locator('#airMovers') })
+      .getByRole('button', { name: 'Undo' })
+      .click();
+    await expect(page.locator('#airMovers')).toHaveValue('0');
+    await expect(page.locator('[data-override-reason="air_movers"]')).toBeHidden();
+    expect(await page.evaluate(() => $('inspectionForm').checkValidity())).toBe(true);
+    expect(
+      await page.evaluate(() => state.draft.data.quantity_overrides.air_movers),
+    ).toBeUndefined();
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  });
+
+  const roomField = (page, key) => page.locator(`[data-room-index="0"][data-room-key="${key}"]`);
+  const tapMold = async (page) => {
+    await page.locator('[name="room-loss-0"][value="mold"]').check({ force: true });
+    await page.locator('#rooms .room-more > summary').first().click();
+  };
+
+  const NO_WET_FLOOR_ITEM = {
+    items: { ...ITEMS, antimicrobial: { enabled: false, unit_price: '' } },
+  };
+
+  test('a mold room on a price list asks for the floor area it prices from', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, NO_WET_FLOOR_ITEM);
+    await open(page);
+    await tapMold(page);
+    await expect(roomField(page, 'floor_sf')).toBeVisible();
+    for (const hidden of ['wet_floor_sf', 'ceiling_height_ft', 'water_class'])
+      await expect(roomField(page, hidden)).toBeHidden();
+    await expect(page.locator('#rooms .room-sizing-title')).toBeHidden();
+    await expect(page.locator('#rooms .wet-floor-hint')).toBeHidden();
+    await roomField(page, 'floor_sf').fill('120');
+    await expect(
+      page.locator('[data-from-rooms="surface_cleaning"]', { hasText: '· 120 sq ft' }),
+    ).toHaveCount(1);
+    // Back on water the whole drying check returns.
+    await page.locator('[name="room-loss-0"][value="water"]').check({ force: true });
+    for (const shown of ['floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'])
+      await expect(roomField(page, shown)).toBeVisible();
+    await expect(page.locator('#rooms .room-sizing-title')).toBeVisible();
+  });
+
+  test('a mold room on a wet-floor price list keeps both areas', async ({ page, request }) => {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await publish(request, { policy: { area_basis: 'wet_floor' } });
+    await open(page);
+    await tapMold(page);
+    const wet = roomField(page, 'wet_floor_sf');
+    await expect(wet).toBeVisible();
+    expect(await wet.evaluate((el) => !el.closest('.room-more'))).toBe(true);
+    await expect(roomField(page, 'floor_sf')).toBeVisible();
+    await expect(roomField(page, 'ceiling_height_ft')).toBeHidden();
+    // Tapping back to water finds the wet floor input already on the card.
+    await page.locator('[name="room-loss-0"][value="water"]').check({ force: true });
+    await expect(roomField(page, 'ceiling_height_ft')).toBeVisible();
+    await expect(wet).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test('a mold room shows the wet floor input an item prices it from, on any area basis', async ({
+    page,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    const wet = roomField(page, 'wet_floor_sf');
+    const line = page.locator('[data-from-rooms="antimicrobial"]');
+    await roomField(page, 'floor_sf').evaluate((el) => (el.closest('details').open = true));
+    await roomField(page, 'floor_sf').fill('120');
+    await wet.fill('40');
+    await expect(line).toContainText('· 40 sq ft');
+    await page.locator('[name="room-loss-0"][value="mold"]').check({ force: true });
+    // The saved area still prices the room, so it can still be corrected.
+    await expect(wet).toBeVisible();
+    await expect(page.locator('#rooms .wet-floor-hint')).toBeVisible();
+    await expect(roomField(page, 'ceiling_height_ft')).toBeHidden();
+    await wet.fill('');
+    await expect(line).toContainText('· 120 sq ft');
+  });
+
+  test('the wet floor input follows the categories the item prices', async ({ page, request }) => {
+    await publish(request, {
+      items: { ...ITEMS, antimicrobial: { unit_price: '25.00', categories: [1] } },
+    });
+    await open(page);
+    await tapMold(page);
+    const wet = roomField(page, 'wet_floor_sf');
+    await expect(wet).toBeHidden();
+    // On a mold room moved to a category the item prices, the same area counts again.
+    await roomField(page, 'category').selectOption('1');
+    await expect(wet).toBeVisible();
+  });
+
+  test('a changed wet floor value on a room turned mold keeps its reason box', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, NO_WET_FLOOR_ITEM);
+    await open(page);
+    const key = await page.evaluate(() => {
+      const room = state.draft.data.rooms[0];
+      room.wet_floor_sf = 40;
+      const name = room.name + ':wet_floor_sf';
+      state.draft.data.quantity_overrides = { [name]: { measured: '30', entered: '40' } };
+      changed();
+      fillForm();
+      return name;
+    });
+    await tapMold(page);
+    await expect(roomField(page, 'wet_floor_sf')).toBeVisible();
+    const reason = page.locator(`[data-override-reason="${key}"]`);
+    await expect(reason).toBeVisible();
+    await reason.fill('Only the closet floor stayed wet');
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+  });
+
+  test('a mold room on the v1 form still has no floor area input', async ({ page }) => {
+    await open(page);
+    await tapMold(page);
+    for (const hidden of ['floor_sf', 'wet_floor_sf', 'ceiling_height_ft', 'water_class'])
+      await expect(roomField(page, hidden)).toBeHidden();
+  });
+
+  test('a wet-floor company enters the wet floor area on the room card', async ({
+    page,
+    request,
+  }) => {
+    await publish(request, { policy: { area_basis: 'wet_floor' } });
+    await open(page);
+    const wet = page.locator('[data-room-index="0"][data-room-key="wet_floor_sf"]');
+    await expect(wet).toBeVisible();
+    expect(await wet.evaluate((el) => !el.closest('.room-more'))).toBe(true);
+  });
+});
+
+test.describe('with the service worker', () => {
+  async function controlled(page) {
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller)
+        await new Promise((resolve) =>
+          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }),
+        );
+    });
+  }
+  const rows = (page) =>
+    page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('adr-private-drafts-v2');
+          request.onerror = reject;
+          request.onsuccess = () => {
+            const db = request.result,
+              all = db.transaction(['drafts']).objectStore('drafts').getAll();
+            all.onsuccess = () => {
+              db.close();
+              resolve(all.result);
+            };
+          };
+        }),
+    );
+
+  test('the price list is cached on the phone, never listed as a draft, and drives an offline job', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await controlled(page);
+    await expect
+      .poll(async () => (await rows(page)).some((r) => r.key.startsWith('prices:')))
+      .toBe(true);
+    const all = await rows(page);
+    const cached = all.find((r) => r.key.startsWith('prices:'));
+    expect(cached.prices.table.items.length).toBeGreaterThan(10);
+    expect(cached.draft).toBeUndefined();
+    expect(all.find((r) => r.draft).pricing.calculation_version).toBe('dryscope-v2');
+    // The cached row is never offered as a draft.
+    expect(await page.evaluate(async () => (await localDrafts()).every((r) => r.draft))).toBe(true);
+    const id = await jobId(page);
+    await context.setOffline(true);
+    await page.locator('[data-scope-item="setup_documentation"]').fill('5');
+    await page.locator('#technicianNotes').fill('Entered with no signal');
+    await expect
+      .poll(
+        async () =>
+          (await rows(page)).find((r) => r.draft?.inspection_id === id)?.draft.data.scope_items,
+      )
+      .toMatchObject({ setup_documentation: { quantity: '5' } });
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#v2Scope')).toBeVisible();
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('5');
+    // A job the server has saved is priced from its own table, so it carries no date.
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
+    await context.setOffline(false);
+    await saveDraft(page);
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    const saved = await remote(page, id);
+    expect(numbers(saved.data.scope_items).setup_documentation.quantity).toBe(5);
+    expect(saved.data.technician_notes).toBe('Entered with no signal');
+  });
+
+  test('offline, a new job seeds from a current phone copy and shows its date', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await controlled(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await page.evaluate(() => syncChain);
+    await page.waitForTimeout(1500);
+    // Date the copy, so the screen can only be reading the cached date.
+    await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open('adr-private-drafts-v2');
+          open.onerror = reject;
+          open.onsuccess = () => {
+            const db = open.result,
+              tx = db.transaction(['drafts'], 'readwrite'),
+              store = tx.objectStore('drafts'),
+              all = store.getAll();
+            all.onsuccess = () => {
+              for (const row of all.result)
+                if (row.key.startsWith('prices:')) {
+                  row.prices.cached_at = '2026-10-05T12:00:00.000Z';
+                  store.put(row);
+                }
+            };
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+          };
+        }),
+    );
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('Prices as of Oct 5, 2026.');
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    // Reopened after a reload, the unsaved draft reads the same copy from its own row.
+    const id = await jobId(page);
+    await page.waitForTimeout(1500);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('Prices as of Oct 5, 2026.');
+    await expect(page.locator('#v2Scope')).toContainText('$30.00 per unit-day');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    // Back online, the same table is fetched fresh rather than kept as the dated copy.
+    const fetched = page.waitForRequest((sent) => sent.url().endsWith('/prices'));
+    await context.setOffline(false);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await fetched;
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
+  });
+
+  test('offline, a stored session older than the phone copy does not mark the copy out of date', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await controlled(page);
+    await expect.poll(() => cachedTable(page)).toBeTruthy();
+    await page.evaluate(() => syncChain);
+    await page.waitForTimeout(1500);
+    // The session stored beside the draft names an earlier table than the copy on the phone.
+    await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open('adr-private-drafts-v2');
+          open.onerror = reject;
+          open.onsuccess = () => {
+            const db = open.result,
+              tx = db.transaction(['drafts'], 'readwrite'),
+              store = tx.objectStore('drafts'),
+              all = store.getAll();
+            all.onsuccess = () => {
+              for (const row of all.result)
+                if (row.session) {
+                  row.session.pricing_table_version = 'an-earlier-table';
+                  store.put(row);
+                }
+            };
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+          };
+        }),
+    );
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    expect(await page.evaluate(() => state.session.pricing_table_version)).toBe('an-earlier-table');
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    await expect(page.locator('#v2ScopeStatus')).toContainText('Prices as of');
+    await expect(page.locator('#v2ScopeStatus')).not.toContainText('newer');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+    await context.setOffline(false);
+  });
+
+  test('a phone that never loaded the price list says to connect once', async ({
+    page,
+    context,
+    request,
+  }) => {
+    await publish(request);
+    await open(page);
+    await controlled(page);
+    await expect(page.locator('#saveStatus')).toHaveText('Saved');
+    // Let the pending pricing refresh and its debounced local save finish before removing the cache.
+    await page.evaluate(() => syncChain);
+    await page.waitForTimeout(1500);
+    await page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open('adr-private-drafts-v2');
+          open.onerror = reject;
+          open.onsuccess = () => {
+            const db = open.result,
+              tx = db.transaction(['drafts'], 'readwrite'),
+              store = tx.objectStore('drafts'),
+              all = store.getAll();
+            all.onsuccess = () => {
+              for (const row of all.result) {
+                if (row.key.startsWith('prices:')) store.delete(row.key);
+                else {
+                  delete row.pricing;
+                  store.put(row);
+                }
+              }
+            };
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+          };
+        }),
+    );
+    const id = await jobId(page);
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#workspaceDashboard')).toBeVisible();
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#v2ScopeStatus')).toContainText(
+      "Connect once to load your company's price list",
+    );
+    await expect(page.locator('#v1Scope')).toBeHidden();
+    // Rooms still work.
+    await expect(page.locator('#rooms .room')).toHaveCount(1);
+    // A job begun with no table stays at zero; the next new job has the table once connected.
+    await page.evaluate(() => openNew());
+    await checkScope(page);
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+    await context.setOffline(false);
+    await page.evaluate(() => WorkspaceUI.refresh());
+    await expect(page.locator('#v2ScopeStatus')).toHaveText('');
+    await expect(page.locator('#emergencyCalls')).toHaveValue('0');
+    await page.evaluate(() => openNew());
+    await expect(page.locator('#emergencyCalls')).toHaveValue('2');
+    await expect(page.locator('[data-scope-item="setup_documentation"]')).toHaveValue('1');
+  });
+});
