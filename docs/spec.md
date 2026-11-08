@@ -108,8 +108,8 @@ agreements, evidence, photos, coordination, delivery, prices, drying-watch, outc
 records: every request answers 403 or 404, no lists contain A's records, and a superadmin's view
 of A is audited.
 
-Existing proof: `tests/test_workspaces.py::test_roles_and_cross_company_scoped_jobs`,
-`::test_signed_job_records_evidence_and_coordination_stay_scoped`,
+Existing proof: `tests/test_workspaces_part1.py::test_roles_and_cross_company_scoped_jobs`,
+`tests/test_workspaces_part2.py::test_signed_job_records_evidence_and_coordination_stay_scoped`,
 `tests/test_job_archive_and_customer.py::test_other_company_owner_cannot_reach_this_company`,
 `tests/test_outcomes.py` (isolation and 404 cases), `tests/test_drying_watch.py::test_lists_are_company_scoped_and_support_is_read_only`,
 `tests/browser/workspaces.spec.js` (branding and account-switch isolation).

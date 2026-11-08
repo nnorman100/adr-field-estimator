@@ -64,7 +64,7 @@ _History only. For current feature state use `docs/STATUS.md`; for what is servi
 3. **Invitation check:** send one invitation to a Google account and one to an Outlook address. Check the logo renders and that accepting works.
 4. Fix only what the test finds, as small PRs.
 5. ~~Update the wiki notes~~ Done Oct 24 (ADR note, Dryscope note, index, log).
-6. **Fix the local SMTP timeout test.** `tests/test_workspaces.py::test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry` fails on `master` on this Windows machine and passes in CI. Find out why, probably timing or sockets on Windows, and fix the test or the code so the local suite is green. Small PR, Low risk.
+6. **Fix the local SMTP timeout test.** `tests/test_workspaces_part3.py::test_smtp_session_that_hangs_is_cut_off_at_the_deadline_without_a_retry` fails on `master` on this Windows machine and passes in CI. Find out why, probably timing or sockets on Windows, and fix the test or the code so the local suite is green. Small PR, Low risk.
 
 ## Phase 1: Port the four Dryscope features
 Source files are in `nnorman100/Dryscope`; read them with `gh api`. Rebuild each in the field estimator's static frontend (`public/*.js`, no build step) and Python backend (`backend/`).
