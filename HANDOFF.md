@@ -82,11 +82,7 @@ sweep off.
 
 ## Rules that decide what you may do
 
-- Pull requests merge automatically once every check passes and the review is done; high-risk
-  work needs two separate independent reviews on top of the pipeline review, from models that did not write the code. Deploys run to test first, then live. Still owner-only:
-  anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets,
-  Firebase Auth settings); turning on deletion or new pricing; and production steps the owner
-  runs. This supersedes D-009 (`docs/DECISIONS.md`).
+- Merging, risk review, releases and the owner-only exceptions: `CLAUDE.md` ("Merging and releases") is the owner's rule set; D-012 in `docs/DECISIONS.md` records it and supersedes D-009.
 - Never run a blanket `firebase deploy`; only `firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026`
   after the backend is deployed.
 - Never weaken a test, eval fixture, threshold or workflow; the Test guard blocks it.

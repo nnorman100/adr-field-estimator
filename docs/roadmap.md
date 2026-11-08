@@ -12,7 +12,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
-  - Pull requests merge automatically after every check and the review (two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work); deploys run test then live. D-009 in `docs/DECISIONS.md` is superseded (Nov 6); deleting data, irreversible or security/permission changes, turning on deletion or new pricing, and production steps Nate runs stay owner-only.
+  - Merging, risk review, releases and owner-only exceptions: `CLAUDE.md` ("Merging and releases"); D-012 in `docs/DECISIONS.md` supersedes D-009.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
@@ -35,7 +35,7 @@ _History only. For current feature state use `docs/STATUS.md`; for what is servi
 
 ## How every item ships
 - One small PR per item, each with a test that fails without the change (VISION "Proven before it is claimed").
-- Pull requests merge automatically after every check and the review (two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work) and deploy test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do"). D-009 is superseded.
+- Merging, risk review and owner-only exceptions follow `CLAUDE.md` ("Merging and releases"); D-012 in `docs/DECISIONS.md` supersedes D-009.
 - Releases follow the existing `RELEASES.md` recipe: `scripts/deploy_backend.py` stages the backend, then a preview channel, then promotion, then a Hosting deploy (`hosting:alert-disaster` only), then a 15-minute watch. Each release appends its rows to `RELEASES.md`.
 - Batch the releases. Release once after Phase 1. In Phase 2, release steps 1–2 together, then steps 3–6 together.
 
