@@ -9,7 +9,6 @@
     "public/prices.js",
     "public/scope-items.js",
     "public/workspaces.js",
-    "tests/browser/prices.spec.js",
     "tests/test_firestore_emulator.py",
     "tests/test_price_table.py"
   ]
