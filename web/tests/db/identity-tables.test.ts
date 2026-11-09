@@ -174,6 +174,47 @@ describe('identity tables (migration 0002)', () => {
     ).rejects.toMatchObject(refusedBy(UNIQUE_VIOLATION, 'companies_auth_tenant_id_key'));
   });
 
+  it("refuses an actor whose sign-in tenant is not its company's tenant", async () => {
+    await migrateAll();
+    const a = await company('tenant-a');
+    await company('tenant-b');
+
+    await expect(actor(a, 'tenant-b', 'person-b')).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'actors_company_tenant_fkey'),
+    );
+    const person = await actor(a, 'tenant-a', 'person-a');
+    await expect(
+      sql`UPDATE actors SET auth_tenant_id = 'tenant-b' WHERE id = ${person}`,
+    ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'actors_company_tenant_fkey'));
+    await expect(
+      sql`UPDATE companies SET auth_tenant_id = 'tenant-c' WHERE id = ${a}`,
+    ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'actors_company_tenant_fkey'));
+    // An actor with no company, such as a platform operator, is bound to its own tenant only.
+    await actor(null, 'operators', 'operator-1');
+  });
+
+  it('stores identity match strings without surrounding spaces', async () => {
+    await migrateAll();
+    const a = await company('tenant-a');
+    const CHECK_VIOLATION = '23514';
+
+    await invitation(a, 'ada@example.test');
+    await expect(invitation(a, 'ada@example.test ')).rejects.toMatchObject(
+      refusedBy(CHECK_VIOLATION, 'invitations_email_check'),
+    );
+    await expect(
+      sql`INSERT INTO actors (company_id, auth_tenant_id, uid, email)
+          VALUES (${a}, 'tenant-a', 'u1', ' u1@example.test')`,
+    ).rejects.toMatchObject(refusedBy(CHECK_VIOLATION, 'actors_email_check'));
+    await expect(actor(a, 'tenant-a', 'u1 ')).rejects.toMatchObject(refusedBy(CHECK_VIOLATION, 'actors_uid_check'));
+    await expect(actor(null, ' operators', 'operator-1')).rejects.toMatchObject(
+      refusedBy(CHECK_VIOLATION, 'actors_auth_tenant_id_check'),
+    );
+    await expect(
+      sql`INSERT INTO companies (name, auth_tenant_id) VALUES ('Spaced', 'tenant-z ')`,
+    ).rejects.toMatchObject(refusedBy(CHECK_VIOLATION, 'companies_auth_tenant_id_check'));
+  });
+
   it('refuses a membership that points at an actor or invitation of another company', async () => {
     await migrateAll();
     const a = await company('tenant-a');

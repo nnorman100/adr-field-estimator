@@ -161,14 +161,16 @@ uuid, `created_at` timestamptz). Those two tables hold no personal data.
 `sign_in_slug` (the company's sign-in address), `status` (active, suspended, archived) and
 `auth_tenant_id` (unique: one sign-in tenant names one company). A company row made before `0002`
 is kept and named "Unnamed company". New tables: `actors` (a signed-in person, unique by
-`(auth_tenant_id, uid)`, never matched by email alone), `memberships` (owner, estimator or office;
+`(auth_tenant_id, uid)`, never matched by email alone; an actor of a company carries that
+company's `auth_tenant_id`), `memberships` (owner, estimator or office;
 one active owner per company and one active membership per actor), `invitations` (pending, accepted
 or cancelled; expiry is `expires_at`), `platform_admins`, `audit_events` (ids and counts only in
 `details`), `company_feature_flags` (a missing row means off) and `access_projection_outbox`
 (actors whose Firestore access record must follow a committed membership change). Rows that refer
 to another company row carry `company_id` in a composite key, so a membership, accepted invitation
 or outbox row can never point at an actor or invitation of another company. `actors.email`,
-`actors.display_name` and `invitations.email` are personal data. Nothing writes these tables yet,
+`actors.display_name` and `invitations.email` are personal data. Emails are stored lowercase and
+tenant ids, uids and emails without surrounding spaces, so one person is one stored key. Nothing writes these tables yet,
 and they have no row-level security yet; the runtime role and row-level security come in `0003`.
 Prices and signed documents are later work.
 

@@ -26,32 +26,37 @@ ALTER TABLE companies
   ADD CONSTRAINT companies_sign_in_slug_check
     CHECK (sign_in_slug ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
   ADD CONSTRAINT companies_sign_in_slug_key UNIQUE (sign_in_slug),
-  ADD CONSTRAINT companies_auth_tenant_id_check CHECK (auth_tenant_id <> ''),
+  ADD CONSTRAINT companies_auth_tenant_id_check
+    CHECK (auth_tenant_id <> '' AND auth_tenant_id = btrim(auth_tenant_id)),
   -- The company is found from the verified token's tenant, so one tenant names one company.
-  ADD CONSTRAINT companies_auth_tenant_id_key UNIQUE (auth_tenant_id);
+  ADD CONSTRAINT companies_auth_tenant_id_key UNIQUE (auth_tenant_id),
+  -- Lets an actor's company and sign-in tenant be checked together.
+  ADD CONSTRAINT companies_id_auth_tenant_id_key UNIQUE (id, auth_tenant_id);
 
 -- A signed-in person. company_id is empty only for an actor that belongs to no company, such as
 -- a platform operator; such an actor can hold no membership because the composite keys below
--- never match an empty company_id.
+-- never match an empty company_id. An actor of a company signs in through that company's tenant.
 CREATE TABLE actors (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id uuid REFERENCES companies (id),
-  auth_tenant_id text NOT NULL CHECK (auth_tenant_id <> ''),
-  uid text NOT NULL CHECK (uid <> ''),
+  company_id uuid,
+  auth_tenant_id text NOT NULL CHECK (auth_tenant_id <> '' AND auth_tenant_id = btrim(auth_tenant_id)),
+  uid text NOT NULL CHECK (uid <> '' AND uid = btrim(uid)),
   -- Last verified email seen at sign-in, for display and invitation matching only.
-  email text NOT NULL CHECK (email <> '' AND email = lower(email)),
+  email text NOT NULL CHECK (email <> '' AND email = lower(btrim(email))),
   display_name text CHECK (char_length(display_name) <= 200),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT actors_tenant_uid_key UNIQUE (auth_tenant_id, uid),
-  CONSTRAINT actors_company_id_id_key UNIQUE (company_id, id)
+  CONSTRAINT actors_company_id_id_key UNIQUE (company_id, id),
+  CONSTRAINT actors_company_tenant_fkey FOREIGN KEY (company_id, auth_tenant_id)
+    REFERENCES companies (id, auth_tenant_id)
 );
 
 -- Stored states are pending, accepted and cancelled; an invitation past expires_at is expired.
 CREATE TABLE invitations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL REFERENCES companies (id),
-  email text NOT NULL CHECK (email <> '' AND email = lower(email)),
+  email text NOT NULL CHECK (email <> '' AND email = lower(btrim(email))),
   role text NOT NULL CHECK (role IN ('owner', 'estimator', 'office')),
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'cancelled')),
   expires_at timestamptz NOT NULL,

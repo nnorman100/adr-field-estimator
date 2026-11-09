@@ -34,21 +34,25 @@ export const migrationLedger = pgTable('migration_ledger', {
   appliedAt: timestamp('applied_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 
-export const companies = pgTable('companies', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  createdAt: createdAt(),
-  name: text('name').notNull(),
-  signInSlug: text('sign_in_slug').unique('companies_sign_in_slug_key'),
-  status: text('status', { enum: companyStatuses }).notNull().default('active'),
-  authTenantId: text('auth_tenant_id').unique('companies_auth_tenant_id_key'),
-  updatedAt: updatedAt(),
-});
+export const companies = pgTable(
+  'companies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    createdAt: createdAt(),
+    name: text('name').notNull(),
+    signInSlug: text('sign_in_slug').unique('companies_sign_in_slug_key'),
+    status: text('status', { enum: companyStatuses }).notNull().default('active'),
+    authTenantId: text('auth_tenant_id').unique('companies_auth_tenant_id_key'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique('companies_id_auth_tenant_id_key').on(t.id, t.authTenantId)],
+);
 
 export const actors = pgTable(
   'actors',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    companyId: uuid('company_id').references(() => companies.id),
+    companyId: uuid('company_id'),
     authTenantId: text('auth_tenant_id').notNull(),
     uid: text('uid').notNull(),
     email: text('email').notNull(),
@@ -59,6 +63,11 @@ export const actors = pgTable(
   (t) => [
     unique('actors_tenant_uid_key').on(t.authTenantId, t.uid),
     unique('actors_company_id_id_key').on(t.companyId, t.id),
+    foreignKey({
+      name: 'actors_company_tenant_fkey',
+      columns: [t.companyId, t.authTenantId],
+      foreignColumns: [companies.id, companies.authTenantId],
+    }),
   ],
 );
 
