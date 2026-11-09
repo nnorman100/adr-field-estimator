@@ -320,6 +320,190 @@ test.describe('without a service worker', () => {
       },
     );
 
+  // A local draft that shows the company table, not a pin the server stored.
+  const unpinnedJob = async (page, context) => {
+    await page.route('**/api/inspections**', (route) =>
+      ['POST', 'PUT', 'PATCH'].includes(route.request().method())
+        ? route.abort()
+        : route.continue(),
+    );
+    await page.evaluate(() => openNew().catch(() => {}));
+    const id = await page.evaluate(() => state.draft.inspection_id);
+    // The aborted save never reaches the server. Reopen the local draft offline, as unsavedJob does.
+    await context.setOffline(true);
+    await page.evaluate((value) => restoreDraft(value), id);
+    await checkScope(page);
+    await expect(page.locator('#v2Scope')).toContainText('$200.00');
+    await context.setOffline(false);
+  };
+  const priceRowCached = (page) =>
+    page.evaluate(
+      () =>
+        new Promise((resolve, reject) => {
+          const open = indexedDB.open('adr-private-drafts-v2');
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => {
+            const db = open.result,
+              all = db.transaction(['drafts']).objectStore('drafts').getAll();
+            all.onsuccess = () => {
+              db.close();
+              resolve(
+                all.result.some(
+                  (row) => String(row.key).startsWith('prices:') && row.prices?.table,
+                ),
+              );
+            };
+          };
+        }),
+    );
+
+  test('an offline load keeps the access-denied message while a refused price-list delete is still pending', async ({
+    page,
+    context,
+  }) => {
+    await switched(page);
+    await expect.poll(() => priceRowCached(page)).toBe(true);
+    await unpinnedJob(page, context);
+    await page.evaluate(() => {
+      const original = dbAction;
+      window.heldDeletes = [];
+      window.dbAction = (mode, fn) => {
+        if (mode === 'readwrite' && fn.toString().includes('store.delete') && window.heldDeletes)
+          return new Promise((resolve, reject) => {
+            window.heldDeletes.push(() => original(mode, fn).then(resolve, reject));
+          });
+        return original(mode, fn);
+      };
+    });
+    await page.route('**/api/companies/*/prices', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Not available.' }),
+      }),
+    );
+    await page.evaluate(() => {
+      window.refusal = ScopeItems.loadCompany();
+    });
+    await expect.poll(() => page.evaluate(() => window.heldDeletes.length > 0)).toBe(true);
+    expect(await priceRowCached(page)).toBe(true);
+    await context.setOffline(true);
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    const status = page.locator('#v2ScopeStatus');
+    await expect(status).toContainText("You don't have access to your company's price list");
+    await page.evaluate(() => {
+      const held = window.heldDeletes;
+      window.heldDeletes = null;
+      held.forEach((release) => release());
+    });
+    await page.evaluate(() => window.refusal);
+    await context.setOffline(false);
+  });
+
+  test('an offline load keeps the access-denied message when the refused price-list delete fails', async ({
+    page,
+    context,
+  }) => {
+    await switched(page);
+    await expect.poll(() => priceRowCached(page)).toBe(true);
+    await unpinnedJob(page, context);
+    await page.evaluate(() => {
+      const original = dbAction;
+      window.dbAction = (mode, fn) =>
+        mode === 'readwrite' && fn.toString().includes('store.delete')
+          ? Promise.reject(Error('price cache delete failed'))
+          : original(mode, fn);
+    });
+    await page.route('**/api/companies/*/prices', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Not available.' }),
+      }),
+    );
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    const status = page.locator('#v2ScopeStatus');
+    await expect(status).toContainText("You don't have access to your company's price list");
+    expect(await priceRowCached(page)).toBe(true);
+    await context.setOffline(true);
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("You don't have access to your company's price list");
+    await context.setOffline(false);
+  });
+
+  test('an offline load serves no refused price list after a later server error replaced the access-denied message', async ({
+    page,
+    context,
+  }) => {
+    await switched(page);
+    await expect.poll(() => priceRowCached(page)).toBe(true);
+    await unpinnedJob(page, context);
+    await page.evaluate(() => {
+      const original = dbAction;
+      window.dbAction = (mode, fn) =>
+        mode === 'readwrite' && fn.toString().includes('store.delete')
+          ? Promise.reject(Error('price cache delete failed'))
+          : original(mode, fn);
+    });
+    let answer = 401;
+    await page.route('**/api/companies/*/prices', (route) =>
+      route.fulfill({
+        status: answer,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Not available.' }),
+      }),
+    );
+    const status = page.locator('#v2ScopeStatus');
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("You don't have access to your company's price list");
+    answer = 503;
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("Your company's price list could not load");
+    expect(await priceRowCached(page)).toBe(true);
+    await context.setOffline(true);
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("Your company's price list could not load");
+    await expect(status).not.toContainText('Prices as of');
+    await context.setOffline(false);
+  });
+
+  for (const [status, text] of [
+    [401, "You don't have access to your company's price list"],
+    [503, "Your company's price list could not load"],
+  ])
+    test(
+      'a company switch offline with no cached price list replaces a ' +
+        status +
+        ' message with connect once',
+      async ({ page, context }) => {
+        await switched(page);
+        await unpinnedJob(page, context);
+        await page.route('**/api/companies/*/prices', (route) =>
+          route.fulfill({
+            status,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'Not available.' }),
+          }),
+        );
+        await page.evaluate(() => ScopeItems.sessionChanged());
+        const statusMessage = page.locator('#v2ScopeStatus');
+        await expect(statusMessage).toContainText(text);
+        await context.setOffline(true);
+        await page.evaluate(() => {
+          state.session = { ...state.session, company_id: 'another-company' };
+          return ScopeItems.loadCompany();
+        });
+        // A job started now has no table for the new company, so the note is about that company only.
+        await page.evaluate(() => openNew());
+        await checkScope(page);
+        await expect(page.locator('#v2ScopeStatus')).toContainText(
+          "Connect once to load your company's price list",
+        );
+        await expect(page.locator('#v2ScopeStatus')).not.toContainText(text);
+        await context.setOffline(false);
+      },
+    );
+
   test('a job started after the switch from an out-of-date phone copy keeps the item list and its date', async ({
     page,
     context,
