@@ -1,7 +1,8 @@
 // InspectionData validation and the inspection_payload dump. Types match pydantic's JSON dump.
 
+import { chars, printable, places, toBool, toChoice, toDateTime, toDecimal, toFloat, toInt, toIntChoice, toPattern, toStr } from './coerce';
 import { Dec, ZERO } from './decimal';
-import { JFloat, JInt, type JObj, type JVal, jfloat, jint, pyFloat } from './json';
+import { JInt, type JObj, type JVal, jfloat, jint } from './json';
 import { collapse, decFloat, decInt, has, isObj, oneLine, orZero } from './values';
 
 export class Reject extends Error {
@@ -41,7 +42,7 @@ export type Approval = {
   rate: Dec;
   total: Dec;
   companyId: string;
-  companyVersion: number;
+  companyVersion: JInt;
   priceVersionId: string;
   priceContentSha256: string;
 };
@@ -200,75 +201,46 @@ function keysOf(value: JObj, allowed: Set<string>, label: string): void {
   }
 }
 
-function readFloat(
-  value: JVal | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-  gt: boolean,
-): number {
+function between(n: number, min: number, max: number, gt: boolean): boolean {
+  return (gt ? n > min : n >= min) && n <= max;
+}
+
+function readFloat(value: JVal | undefined, fallback: number, min: number, max: number, gt: boolean): number {
   if (value === undefined) return fallback;
-  let n: number;
-  if (value instanceof JInt) n = Object.is(value.value, -0) ? 0 : value.value;
-  else if (value instanceof JFloat) n = value.value;
-  else bad('float');
-  if (gt) {
-    if (!(n > min) || n > max) bad('float range');
-  } else if (n < min || n > max) bad('float range');
+  const n = toFloat(value, 'float');
+  if (!between(n, min, max, gt)) bad('float range');
+  return n;
+}
+
+function readBig(value: JVal | undefined, min: bigint, max: bigint | null): bigint {
+  const n = toInt(value, 'int');
+  if (n < min || (max !== null && n > max)) bad('int range');
   return n;
 }
 
 function readInt(value: JVal | undefined, fallback: number, min: number, max: number): number {
   if (value === undefined) return fallback;
-  if (!(value instanceof JInt) || Object.is(value.value, -0)) {
-    if (value instanceof JInt && Object.is(value.value, -0)) return 0;
-    bad('int');
-  }
-  const n = value.value;
-  if (n < min || n > max) bad('int range');
-  return n;
+  return Number(readBig(value, BigInt(min), BigInt(max)));
 }
 
 function readBool(value: JVal | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
-  if (typeof value !== 'boolean') bad('bool');
-  return value;
+  return toBool(value, 'bool');
 }
 
 function readText(value: JVal | undefined, fallback: string, max: number): string {
   if (value === undefined) return fallback;
-  if (typeof value !== 'string' || value.length > max) bad('text');
-  return value;
+  return toStr(value, 'text', 0, max);
 }
 
-function printable(text: string): boolean {
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 32 || (code >= 127 && code <= 159)) return false;
-  }
-  return true;
+function optText(value: JVal | undefined, max: number): string | null {
+  if (value === undefined || value === null) return null;
+  return toStr(value, 'text', 0, max);
 }
 
-function readDec(
-  value: JVal,
-  min: Dec,
-  max: Dec,
-  places: number,
-  gt: boolean,
-): Dec {
-  let text: string;
-  if (typeof value === 'string') text = value.trim();
-  else if (value instanceof JInt) text = Object.is(value.value, -0) ? '0' : String(value.value);
-  else if (value instanceof JFloat) text = pyFloat(value.value);
-  else bad('decimal');
-  let amount: Dec;
-  try {
-    amount = Dec.parse(text);
-  } catch {
-    bad('decimal');
-  }
-  const scale = amount.exp < 0 ? -amount.exp : 0;
-  if (scale > places) bad('decimal places');
+function readDec(value: JVal | undefined, min: Dec, max: Dec, decimals: number, gt: boolean): Dec {
+  const amount = toDecimal(value, 'decimal');
+  if (places(amount) > decimals) bad('decimal places');
   if (gt ? amount.cmp(min) <= 0 : amount.cmp(min) < 0) bad('decimal range');
   if (amount.cmp(max) > 0) bad('decimal range');
   return amount;
@@ -286,32 +258,16 @@ function optInt(value: JVal | undefined, min: number, max: number): number | nul
 
 function optBool(value: JVal | undefined): boolean | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'boolean') bad('bool');
-  return value;
+  return toBool(value, 'bool');
 }
 
 function readRoom(value: JVal): Room {
   const raw = obj(value, 'room');
   keysOf(raw, ROOM_KEYS, 'room');
-  if (!has(raw, 'name') || typeof raw.name !== 'string' || raw.name.length < 1 || raw.name.length > 100) {
-    bad('room name');
-  }
-  const loss = raw.loss;
-  if (loss !== undefined && loss !== null && loss !== 'water' && loss !== 'mold' && loss !== 'both') {
-    bad('loss');
-  }
-  const water = raw.water_class;
-  if (
-    water !== undefined &&
-    water !== null &&
-    (!(water instanceof JInt) || ![1, 2, 3, 4].includes(water.value))
-  ) {
-    bad('water class');
-  }
   return {
-    name: raw.name,
-    category: readInt(raw.category, 1, 1, 3),
-    loss: typeof loss === 'string' ? loss : null,
+    name: toStr(raw.name, 'room name', 1, 100),
+    category: raw.category === undefined ? 1 : toIntChoice(raw.category, [1, 2, 3], 'category'),
+    loss: raw.loss === undefined || raw.loss === null ? null : toChoice(raw.loss, ['water', 'mold', 'both'], 'loss'),
     unfinishedSf: readFloat(raw.unfinished_sf, 0, 0, 100000, false),
     finishedSf: readFloat(raw.finished_sf, 0, 0, 100000, false),
     customCabinetry: readBool(raw.custom_cabinetry, false),
@@ -319,7 +275,10 @@ function readRoom(value: JVal): Room {
     floorSf: optFloat(raw.floor_sf, 0, 100000, true),
     wetFloorSf: optFloat(raw.wet_floor_sf, 0, 100000, false),
     ceilingHeightFt: optFloat(raw.ceiling_height_ft, 0, 60, true),
-    waterClass: water instanceof JInt ? water.value : null,
+    waterClass:
+      raw.water_class === undefined || raw.water_class === null
+        ? null
+        : toIntChoice(raw.water_class, [1, 2, 3, 4], 'water class'),
     sourceOfLoss: optBool(raw.source_of_loss),
     contentsPresent: optBool(raw.contents_present),
     equipmentPlaced: optBool(raw.equipment_placed),
@@ -328,98 +287,41 @@ function readRoom(value: JVal): Room {
   };
 }
 
-function cleanReason(value: JVal | undefined | null, required: boolean): string | null {
-  if (value === undefined || value === null) {
-    if (required) bad('reason');
-    return null;
-  }
-  if (typeof value !== 'string') bad('reason');
-  const text = oneLine(value);
-  if (text.length < 3 || text.length > 300 || !printable(text)) bad('reason');
+function cleanReason(value: JVal | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const text = oneLine(toStr(value, 'reason', 3, 300));
+  if (chars(text) < 3 || !printable(text)) bad('reason');
   return text;
 }
+
+const MAX_QUANTITY = Dec.parse('100000');
 
 function readScope(value: JVal): ScopeEntry {
   const raw = obj(value, 'scope');
   const allowed = new Set(['quantity', 'count', 'days', 'measured_quantity', 'override_reason']);
   keysOf(raw, allowed, 'scope');
-  const quantity = has(raw, 'quantity')
-    ? readDec(raw.quantity as JVal, ZERO, Dec.parse('100000'), 2, false)
-    : ZERO;
+  const quantity = raw.quantity === undefined ? ZERO : readDec(raw.quantity, ZERO, MAX_QUANTITY, 2, false);
   const measured =
     raw.measured_quantity === undefined || raw.measured_quantity === null
       ? null
-      : readDec(raw.measured_quantity, ZERO, Dec.parse('100000'), 2, false);
-  const reason = cleanReason(raw.override_reason, false);
+      : readDec(raw.measured_quantity, ZERO, MAX_QUANTITY, 2, false);
+  const count = readInt(raw.count, 0, 0, 100);
+  const days = readInt(raw.days, 0, 0, 60);
+  const reason = cleanReason(raw.override_reason);
   if (measured !== null && measured.cmp(quantity) !== 0 && !reason) bad('scope reason');
   if (reason !== null && measured === null) bad('scope reason');
-  return {
-    quantity,
-    count: readInt(raw.count, 0, 0, 100),
-    days: readInt(raw.days, 0, 0, 60),
-    measured,
-    reason,
-  };
+  return { quantity, count, days, measured, reason };
 }
 
 function readOverride(value: JVal): QuantityOverride {
   const raw = obj(value, 'override');
   keysOf(raw, new Set(['measured', 'entered', 'reason']), 'override');
-  if (!has(raw, 'measured') || !has(raw, 'entered')) bad('override');
-  const measured = readDec(raw.measured as JVal, ZERO, Dec.parse('100000'), 2, false);
-  const entered = readDec(raw.entered as JVal, ZERO, Dec.parse('100000'), 2, false);
-  const reason = cleanReason(raw.reason, false);
-  if (entered.cmp(measured) !== 0 && !reason) bad('override reason');
+  required(raw, ['measured', 'entered'], 'override');
+  const measured = readDec(raw.measured, ZERO, MAX_QUANTITY, 2, false);
+  const entered = readDec(raw.entered, ZERO, MAX_QUANTITY, 2, false);
+  const reason = cleanReason(raw.reason);
+  if (reason === null && entered.cmp(measured) !== 0) bad('override reason');
   return { measured, entered, reason };
-}
-
-function daysIn(year: number, month: number): number {
-  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
-  return [4, 6, 9, 11].includes(month) ? 30 : 31;
-}
-
-export function validDate(year: number, month: number, day: number): boolean {
-  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month);
-}
-
-function readDateTime(value: JVal | undefined, label: string): string {
-  if (typeof value !== 'string') bad(label);
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})(?:[Tt _](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?([Zz]|[+-]\d{2}:?\d{2})?)?$/.exec(value);
-  if (!match) bad(label);
-  const [, year, month, day, hour = '00', minute = '00', second = '00', fraction = '', zone] = match;
-  if (!validDate(Number(year), Number(month), Number(day))) bad(label);
-  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) bad(label);
-  const micro = fraction.slice(0, 6).padEnd(6, '0');
-  let offset = '';
-  if (zone !== undefined) {
-    const hours = zone.length > 1 ? zone.slice(1, 3) : '00';
-    const minutes = zone.length > 1 ? zone.slice(-2) : '00';
-    if (Number(hours) > 23 || Number(minutes) > 59) bad(label);
-    offset = Number(hours) === 0 && Number(minutes) === 0 ? 'Z' : `${zone[0]}${hours}:${minutes}`;
-  }
-  const time = `${hour}:${minute}:${second}${Number(micro) ? `.${micro}` : ''}`;
-  return `${year}-${month}-${day}T${time}${offset}`;
-}
-
-function chars(value: string): number {
-  return [...value].length;
-}
-
-function readString(value: JVal | undefined, min: number, max: number, label: string): string {
-  if (typeof value !== 'string' || chars(value) < min || chars(value) > max) bad(label);
-  return value;
-}
-
-function readPattern(value: JVal | undefined, pattern: RegExp, label: string): string {
-  if (typeof value !== 'string' || !pattern.test(value)) bad(label);
-  return value;
-}
-
-function readChoice(value: JVal | undefined, choices: string[], fallback: string | undefined, label: string): string {
-  if (value === undefined && fallback !== undefined) return fallback;
-  if (typeof value !== 'string' || !choices.includes(value)) bad(label);
-  return value;
 }
 
 function required(raw: JObj, keys: string[], label: string): void {
@@ -433,7 +335,7 @@ function readCoordinates(value: JVal): JObj {
   keysOf(raw, new Set(['latitude', 'longitude', 'address']), 'coordinates');
   required(raw, ['latitude', 'longitude', 'address'], 'coordinates');
   return {
-    address: readString(raw.address, 1, 500, 'coordinates'),
+    address: toStr(raw.address, 'coordinates', 1, 500),
     latitude: jfloat(readFloat(raw.latitude, 0, -90, 90, false)),
     longitude: jfloat(readFloat(raw.longitude, 0, -180, 180, false)),
   };
@@ -444,11 +346,11 @@ function readSegment(value: JVal): JObj {
   keysOf(raw, new Set(['speaker', 'connection_id', 'sequence', 'text', 'finished']), 'segment');
   required(raw, ['speaker', 'connection_id', 'sequence', 'text'], 'segment');
   return {
-    connection_id: readString(raw.connection_id, 0, 64, 'segment'),
+    connection_id: toStr(raw.connection_id, 'segment', 0, 64),
     finished: optBool(raw.finished),
-    sequence: jint(readInt(raw.sequence, 0, 1, Number.MAX_SAFE_INTEGER)),
-    speaker: readChoice(raw.speaker, ['technician', 'assistant'], undefined, 'segment'),
-    text: readString(raw.text, 0, 80000, 'segment'),
+    sequence: new JInt(readBig(raw.sequence, 1n, null)),
+    speaker: toChoice(raw.speaker, ['technician', 'assistant'], 'segment'),
+    text: toStr(raw.text, 'segment', 0, 80000),
   };
 }
 
@@ -460,11 +362,14 @@ function readCapture(value: JVal): JObj {
   const segments = raw.segments === undefined ? [] : raw.segments;
   if (!Array.isArray(segments) || segments.length > 2000) bad('capture');
   return {
-    capture_id: readPattern(raw.capture_id, HEX_ID, 'capture'),
+    capture_id: toPattern(raw.capture_id, HEX_ID, 'capture'),
     gap_count: jint(readInt(raw.gap_count, 0, 0, 1000000)),
     recovery_count: jint(readInt(raw.recovery_count, 0, 0, 10000)),
     segments: segments.map((segment) => readSegment(segment)),
-    status: readChoice(raw.status, ['recording', 'complete', 'incomplete', 'truncated'], 'recording', 'capture'),
+    status:
+      raw.status === undefined
+        ? 'recording'
+        : toChoice(raw.status, ['recording', 'complete', 'incomplete', 'truncated'], 'capture'),
     technician_edited: readBool(raw.technician_edited, false),
   };
 }
@@ -475,11 +380,11 @@ function readScan(value: JVal): JObj {
   keysOf(raw, new Set(allowed), 'scan');
   required(raw, allowed, 'scan');
   return {
-    asset_id: readPattern(raw.asset_id, /^[A-Z0-9][A-Z0-9._/-]{0,31}$/, 'scan'),
-    id: readPattern(raw.id, HEX_ID, 'scan'),
-    kind: readChoice(raw.kind, ['air_mover', 'dehumidifier', 'air_scrubber'], undefined, 'scan'),
-    room: readString(raw.room, 1, 100, 'scan'),
-    scanned_at: readDateTime(raw.scanned_at, 'scan'),
+    asset_id: toPattern(raw.asset_id, /^[A-Z0-9][A-Z0-9._/-]{0,31}$/, 'scan'),
+    id: toPattern(raw.id, HEX_ID, 'scan'),
+    kind: toChoice(raw.kind, ['air_mover', 'dehumidifier', 'air_scrubber'], 'scan'),
+    room: toStr(raw.room, 'scan', 1, 100),
+    scanned_at: toDateTime(raw.scanned_at, 'scan'),
   };
 }
 
@@ -497,57 +402,38 @@ function readApproval(value: JVal): Approval {
     'price_content_sha256',
   ]);
   keysOf(raw, allowed, 'approval');
-  for (const key of ['accepted_by_uid', 'accepted_by_name', 'accepted_at', 'company_id', 'rate', 'total', 'company_version']) {
-    if (!has(raw, key)) bad('approval');
-  }
-  const uid = raw.accepted_by_uid;
-  const name = raw.accepted_by_name;
-  const at = readDateTime(raw.accepted_at, 'approval time');
-  const company = raw.company_id;
-  if (typeof uid !== 'string' || uid.length < 1 || uid.length > 128) bad('approval uid');
-  if (typeof name !== 'string' || name.length < 1 || name.length > 150) bad('approval name');
-  if (typeof company !== 'string') bad('approval company');
-  const version = raw.price_version_id;
-  const hash = raw.price_content_sha256;
+  required(raw, ['accepted_by_uid', 'accepted_by_name', 'accepted_at', 'company_id', 'rate', 'total', 'company_version'], 'approval');
   return {
-    acceptedByUid: uid,
-    acceptedByName: name,
-    acceptedAt: at,
-    rate: readDec(raw.rate as JVal, ZERO, Dec.parse('10000'), 2, true),
-    total: readDec(raw.total as JVal, ZERO, Dec.parse('2000000'), 2, false),
-    companyId: company,
-    companyVersion: readInt(raw.company_version, 0, 1, 1_000_000_000),
-    priceVersionId: typeof version === 'string' ? version : '',
-    priceContentSha256: typeof hash === 'string' ? hash : '',
+    acceptedByUid: toStr(raw.accepted_by_uid, 'approval uid', 1, 128),
+    acceptedByName: toStr(raw.accepted_by_name, 'approval name', 1, 150),
+    acceptedAt: toDateTime(raw.accepted_at, 'approval time'),
+    rate: readDec(raw.rate, ZERO, Dec.parse('10000'), 2, true),
+    total: readDec(raw.total, ZERO, Dec.parse('2000000'), 2, false),
+    companyId: toStr(raw.company_id, 'approval company'),
+    companyVersion: new JInt(readBig(raw.company_version, 1n, null)),
+    priceVersionId: readText(raw.price_version_id, '', Infinity),
+    priceContentSha256: readText(raw.price_content_sha256, '', Infinity),
   };
 }
 
 function readExtra(value: JVal): Extra {
   const raw = obj(value, 'extra');
   keysOf(raw, new Set(['id', 'description', 'hours', 'origin', 'unpriced_item', 'approval']), 'extra');
-  if (typeof raw.id !== 'string' || !/^[a-f0-9]{32}$/.test(raw.id)) bad('extra id');
-  if (typeof raw.description !== 'string') bad('extra description');
-  const description = oneLine(raw.description);
-  if (!description || description.length > 300 || !printable(description)) bad('extra description');
-  const origin = raw.origin === undefined ? 'manual' : raw.origin;
-  if (origin !== 'manual') bad('extra origin');
-  const unpriced = raw.unpriced_item === undefined ? '' : raw.unpriced_item;
-  if (typeof unpriced !== 'string' || unpriced.length > 1000) bad('extra item');
-  return {
-    id: raw.id,
-    description,
-    hours: readDec(raw.hours as JVal, Dec.parse('0.25'), Dec.parse('200'), 2, false),
-    origin: 'manual',
-    unpricedItem: unpriced,
-    approval: raw.approval === undefined || raw.approval === null ? null : readApproval(raw.approval),
-  };
+  required(raw, ['id', 'description', 'hours'], 'extra');
+  const id = toPattern(raw.id, HEX_ID, 'extra id');
+  const description = oneLine(toStr(raw.description, 'extra description', 1, 300));
+  const hours = readDec(raw.hours, Dec.parse('0.25'), Dec.parse('200'), 2, false);
+  if (raw.origin !== undefined) toChoice(raw.origin, ['manual'], 'extra origin');
+  const unpricedItem = readText(raw.unpriced_item, '', 1000);
+  const approval = raw.approval === undefined || raw.approval === null ? null : readApproval(raw.approval);
+  if (!description || !printable(description)) bad('extra description');
+  return { id, description, hours, origin: 'manual', unpricedItem, approval };
 }
 
 function readYear(value: JVal | undefined): number | null {
   if (value === undefined || value === null) return null;
-  if (!(value instanceof JInt)) bad('year');
-  const year = value.value;
-  if (year < 1800 || year > new Date().getFullYear()) bad('year');
+  const year = Number(readBig(value, 1800n, null));
+  if (year > new Date().getFullYear()) bad('year');
   return year;
 }
 
@@ -578,17 +464,9 @@ export function validateInspection(value: JVal): Inspection {
     if (entries.length > 150) bad('overrides');
     overrides = {};
     for (const [key, entry] of entries) {
-      if (key.length < 1 || key.length > 120) bad('override key');
+      if (chars(key) < 1 || chars(key) > 120) bad('override key');
       overrides[key] = readOverride(entry as JVal);
     }
-  }
-  const seeded = raw.seeded_from_version;
-  if (seeded !== undefined && seeded !== null && (typeof seeded !== 'string' || seeded.length > 120)) {
-    bad('seed');
-  }
-  const packagePrice = raw.package_price;
-  if (packagePrice !== undefined && packagePrice !== null && (typeof packagePrice !== 'string' || packagePrice.length > 30)) {
-    bad('package');
   }
   return {
     address: readText(raw.address, '', 500),
@@ -615,7 +493,7 @@ export function validateInspection(value: JVal): Inspection {
     powerDistribution: readInt(raw.power_distribution, 0, 0, 100),
     woodFloorSystems: readInt(raw.wood_floor_systems, 0, 0, 100),
     woodFloorDays: readInt(raw.wood_floor_days, 7, 1, 60),
-    packagePrice: typeof packagePrice === 'string' ? packagePrice : null,
+    packagePrice: optText(raw.package_price, 30),
     technicianNotes: readText(raw.technician_notes, '', 40000),
     technicianTranscript: readText(raw.technician_transcript, '', 80000),
     assistantTranscript: readText(raw.assistant_transcript, '', 80000),
@@ -624,7 +502,7 @@ export function validateInspection(value: JVal): Inspection {
     extrasSet: has(raw, 'extras'),
     scopeItems: scope,
     quantityOverrides: overrides,
-    seededFromVersion: typeof seeded === 'string' ? seeded : null,
+    seededFromVersion: optText(raw.seeded_from_version, 120),
     coordinates: raw.coordinates === undefined || raw.coordinates === null ? null : readCoordinates(raw.coordinates),
     captureMetadata:
       raw.capture_metadata === undefined || raw.capture_metadata === null ? null : readCapture(raw.capture_metadata),
@@ -661,7 +539,7 @@ function dumpApproval(approval: Approval): JObj {
     accepted_by_name: approval.acceptedByName,
     accepted_by_uid: approval.acceptedByUid,
     company_id: approval.companyId,
-    company_version: jint(approval.companyVersion),
+    company_version: approval.companyVersion,
     price_content_sha256: approval.priceContentSha256,
     price_version_id: approval.priceVersionId,
     rate: approval.rate.toString(),

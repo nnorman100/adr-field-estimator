@@ -121,7 +121,7 @@ describe('photo log', () => {
   it('rejects a reading on another photo that breaks the reading contract', () => {
     const { input } = fixture('v1-photos-ocr-states');
     at(input, 'photos', 1).ocr = parseJson(
-      '{"meter_detected":"yes","meter_type":"","value":"","classification":"","notes":""}',
+      '{"meter_detected":"maybe","meter_type":"","value":"","classification":"","notes":""}',
     );
     expect(evaluate(input).rejected).toBe('documents');
   });
@@ -129,7 +129,7 @@ describe('photo log', () => {
   it('rejects non-integer sizes and out-of-range locations', () => {
     const edits: Array<(photo: JObj) => void> = [
       (photo) => (photo.width = parseJson('1600.5')),
-      (photo) => (photo.height = '1200'),
+      (photo) => (photo.height = '1200.5'),
       (photo) =>
         (photo.location = parseJson(
           '{"source":"device","latitude":91,"longitude":0,"accuracy_m":1}',

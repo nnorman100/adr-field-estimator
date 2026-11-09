@@ -3,7 +3,8 @@
 import { Dec, HUNDRED, money, percentText } from './decimal';
 import type { JObj, JVal } from './json';
 import { JFloat, JInt, jfloat, jint, pyFloat } from './json';
-import { validDate, type Inspection } from './inspection';
+import { toBool, toChoice, toFloat, toInt, toStr, validDate } from './coerce';
+import type { Inspection } from './inspection';
 import { letterParagraph, equipmentSizing } from './sizing';
 import { V2 } from './table';
 import { aiNote, plain, technicianStatement } from './text';
@@ -57,12 +58,7 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-function textOf(value: JVal | undefined, max: number): string {
-  if (typeof value !== 'string' || value.length > max) fail('text');
-  return value;
-}
-
-function identityOf(value: JVal | null): JObj | null {
+export function identityOf(value: JVal | null): JObj | null {
   if (value === null) return null;
   if (!isObj(value)) fail('identity');
   const allowed = new Set([
@@ -78,51 +74,48 @@ function identityOf(value: JVal | null): JObj | null {
     'water_heater_notice',
   ]);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(`identity ${key}`);
-  const version = value.version;
-  if (!(version instanceof JInt) || version.value < 1) fail('identity version');
+  const version = toInt(value.version, 'identity version');
+  if (version < 1n) fail('identity version');
+  const optional = (key: string) => (value[key] === undefined ? '' : toStr(value[key], 'identity'));
   return {
-    address: textOf(value.address, 500),
-    company_id: textOf(value.company_id, 128),
-    email: textOf(value.email, 254),
-    license: textOf(value.license, 80),
-    logo_data_url: typeof value.logo_data_url === 'string' ? value.logo_data_url : '',
-    name: textOf(value.name, 200),
-    phone: textOf(value.phone, 80),
-    signoff: textOf(value.signoff, 200),
-    version: jint(version.value),
-    water_heater_notice: typeof value.water_heater_notice === 'string' ? value.water_heater_notice : '',
+    address: toStr(value.address, 'identity'),
+    company_id: toStr(value.company_id, 'identity'),
+    email: toStr(value.email, 'identity'),
+    license: toStr(value.license, 'identity'),
+    logo_data_url: optional('logo_data_url'),
+    name: toStr(value.name, 'identity'),
+    phone: toStr(value.phone, 'identity'),
+    signoff: toStr(value.signoff, 'identity'),
+    version: new JInt(version),
+    water_heater_notice: optional('water_heater_notice'),
   };
 }
 
-function claimLine(value: JVal | undefined, max: number): string {
-  if (value === undefined || value === null) return '';
-  if (typeof value !== 'string' || value.length > max) fail('claim');
-  const text = oneLine(value);
-  if (text.length > max) fail('claim');
-  return text;
+function claimText(value: JVal | undefined, max: number): string {
+  return value === undefined ? '' : toStr(value, 'claim', 0, max);
 }
 
 function claimEmail(value: JVal | undefined): string {
-  const text = claimLine(value, 254).toLowerCase();
+  const text = claimText(value, 254).trim().toLowerCase();
   if (text && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(text)) fail('claim email');
   return text;
 }
 
 function claimDate(value: JVal | undefined): string {
-  const text = claimLine(value, 10);
-  if (!text) return '';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) fail('claim date');
-  const [year, month, day] = text.split('-').map((part) => Number(part)) as [number, number, number];
+  const raw = claimText(value, 10);
+  if (!/^(\d{4}-\d{2}-\d{2})?$/.test(raw)) fail('claim date');
+  if (!raw) return '';
+  const [year, month, day] = raw.split('-').map((part) => Number(part)) as [number, number, number];
   if (!validDate(year, month, day)) fail('claim date');
   const loss = new Date(2000, 0, 1);
   loss.setFullYear(year, month - 1, day);
   const today = new Date();
   const limit = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   if (loss > limit) fail('claim date');
-  return text;
+  return raw;
 }
 
-function claimOf(value: JVal | null): JObj | null {
+export function claimOf(value: JVal | null): JObj | null {
   if (value === null) return null;
   if (!isObj(value)) fail('claim');
   const allowed = new Set([
@@ -137,16 +130,17 @@ function claimOf(value: JVal | null): JObj | null {
     'deductible',
   ]);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(`claim ${key}`);
+  const line = (key: string, max: number) => oneLine(claimText(value[key], max));
   return {
     adjuster_email: claimEmail(value.adjuster_email),
-    adjuster_name: claimLine(value.adjuster_name, 150),
-    adjuster_phone: claimLine(value.adjuster_phone, 80),
-    carrier: claimLine(value.carrier, 150),
-    claim_number: claimLine(value.claim_number, 80),
+    adjuster_name: line('adjuster_name', 150),
+    adjuster_phone: line('adjuster_phone', 80),
+    carrier: line('carrier', 150),
+    claim_number: line('claim_number', 80),
     date_of_loss: claimDate(value.date_of_loss),
-    deductible: claimLine(value.deductible, 40),
-    loss_cause: claimLine(value.loss_cause, 500),
-    policy_number: claimLine(value.policy_number, 80),
+    deductible: line('deductible', 40),
+    loss_cause: line('loss_cause', 500),
+    policy_number: line('policy_number', 80),
   };
 }
 
@@ -154,34 +148,24 @@ function aiOf(value: JVal): { summary: string; suggestions: string[]; unpriced: 
   if (!isObj(value)) fail('ai');
   const allowed = new Set(['summary', 'suggestions', 'unpriced_work', 'testing_advice']);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(`ai ${key}`);
-  const summary = value.summary;
-  if (typeof summary !== 'string' || summary.length < 1 || summary.length > 6000) fail('ai summary');
-  const list = (key: string, max: number, itemMax: number, required: boolean): string[] => {
+  const list = (key: string, max: number, required: boolean): string[] => {
     const raw = value[key];
     if (raw === undefined && !required) return [];
     if (!Array.isArray(raw) || raw.length > max) fail(key);
-    return raw.map((item) => {
-      if (typeof item !== 'string' || item.length > itemMax) fail(key);
-      return item;
-    });
+    return raw.map((item) => toStr(item, key, 0, 1000));
   };
   return {
-    summary,
-    suggestions: list('suggestions', 30, 1000, true),
-    unpriced: list('unpriced_work', 30, 1000, true),
-    testing: list('testing_advice', 10, 1000, false),
+    summary: toStr(value.summary, 'ai summary', 1, 6000),
+    suggestions: list('suggestions', 30, true),
+    unpriced: list('unpriced_work', 30, true),
+    testing: list('testing_advice', 10, false),
   };
 }
 
 function floatOf(value: JVal | undefined, min: number, max: number): JFloat {
-  if (!(value instanceof JInt || value instanceof JFloat)) fail('photo');
-  if (!(value.value >= min && value.value <= max)) fail('photo');
-  return jfloat(value.value);
-}
-
-function intOf(value: JVal | undefined): JInt {
-  if (!(value instanceof JInt || value instanceof JFloat) || !Number.isInteger(value.value)) fail('photo');
-  return jint(Object.is(value.value, -0) ? 0 : value.value);
+  const n = toFloat(value, 'photo');
+  if (!(n >= min && n <= max)) fail('photo');
+  return jfloat(n);
 }
 
 function keysIn(value: JObj, allowed: string[]): void {
@@ -191,37 +175,25 @@ function keysIn(value: JObj, allowed: string[]): void {
 function locationOf(value: JVal): JObj {
   if (!isObj(value)) fail('photo');
   keysIn(value, ['source', 'latitude', 'longitude', 'accuracy_m']);
-  const source = value.source;
-  if (source !== 'device' && source !== 'not_available' && source !== 'not_shared') fail('photo');
+  const source = toChoice(value.source, ['device', 'not_available', 'not_shared'], 'photo');
   const present = (key: string) => has(value, key) && value[key] != null;
-  if (source === 'device') {
-    if (!present('latitude') || !present('longitude') || !present('accuracy_m')) fail('photo');
-    return {
-      accuracy_m: floatOf(value.accuracy_m, 0, 1000000),
-      latitude: floatOf(value.latitude, -90, 90),
-      longitude: floatOf(value.longitude, -180, 180),
-      source,
-    };
-  }
-  if (present('latitude') || present('longitude') || present('accuracy_m')) fail('photo');
-  return { source };
-}
-
-function ocrText(value: JVal | undefined, max: number): string {
-  if (typeof value !== 'string' || value.length > max) fail('photo');
-  return value;
+  const row: JObj = { source };
+  if (present('latitude')) row.latitude = floatOf(value.latitude, -90, 90);
+  if (present('longitude')) row.longitude = floatOf(value.longitude, -180, 180);
+  if (present('accuracy_m')) row.accuracy_m = floatOf(value.accuracy_m, 0, 1000000);
+  if (Object.keys(row).length !== (source === 'device' ? 4 : 1)) fail('photo');
+  return row;
 }
 
 function ocrOf(value: JVal): JObj {
   if (!isObj(value)) fail('photo');
   keysIn(value, ['meter_detected', 'meter_type', 'value', 'classification', 'notes']);
-  if (typeof value.meter_detected !== 'boolean') fail('photo');
   return {
-    classification: ocrText(value.classification, 100),
-    meter_detected: value.meter_detected,
-    meter_type: ocrText(value.meter_type, 100),
-    notes: ocrText(value.notes, 1000),
-    value: ocrText(value.value, 100),
+    classification: toStr(value.classification, 'photo', 0, 100),
+    meter_detected: toBool(value.meter_detected, 'photo'),
+    meter_type: toStr(value.meter_type, 'photo', 0, 100),
+    notes: toStr(value.notes, 'photo', 0, 1000),
+    value: toStr(value.value, 'photo', 0, 100),
   };
 }
 
@@ -229,22 +201,25 @@ type PhotoRow = { row: JObj; room: string; status: string; ocr: JObj | null };
 
 function photoOf(photo: JVal): PhotoRow {
   if (!isObj(photo)) fail('photo');
-  const status = photo.ocr_status;
-  if (status !== 'pending' && status !== 'verified' && status !== 'no_meter' && status !== 'failed') fail('photo');
-  if (typeof photo.id !== 'string' || typeof photo.room !== 'string' || typeof photo.captured_at !== 'string') fail('photo');
+  const status = toChoice(photo.ocr_status, ['pending', 'verified', 'no_meter', 'failed'], 'photo');
+  const room = toStr(photo.room, 'photo');
   const ocr = photo.ocr == null ? null : ocrOf(photo.ocr);
   if (status === 'verified' && ocr === null) fail('photo');
   const row: JObj = {
-    captured_at: photo.captured_at,
-    height: intOf(photo.height),
-    id: photo.id,
+    captured_at: toStr(photo.captured_at, 'photo'),
+    height: new JInt(toInt(photo.height, 'photo')),
+    id: toStr(photo.id, 'photo'),
     ocr_status: status,
-    room: photo.room,
-    width: intOf(photo.width),
+    room,
+    width: new JInt(toInt(photo.width, 'photo')),
   };
   if (ocr) row.ocr = ocr;
   if (photo.location != null) row.location = locationOf(photo.location);
-  return { row, room: photo.room, status, ocr };
+  return { row, room, status, ocr };
+}
+
+export function photoRecord(photo: JVal): JObj {
+  return photoOf(photo).row;
 }
 
 function endFloats(end: End): JObj {
@@ -488,10 +463,11 @@ export function makeDocuments(input: {
     companyLicense.trim() ? `CSLB #${companyLicense}` : '',
   ]);
   const sizing = letterParagraph(equipmentSizing(data));
-  const claimRows = claimReference(claim ?? {});
+  const rawClaim = isObj(input.claim) ? input.claim : {};
+  const claimRows = claimReference(rawClaim);
   const letter = [
     ...(head ? [head] : []),
-    addressee(claim ?? {}),
+    addressee(rawClaim),
     [`RE: Remediation scope for ${data.address}`, ...(customer ? [`Customer: ${customer}`] : []), ...claimRows].join('\n'),
     'This scope describes proposed work; completion has not been recorded.',
     'The scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.',

@@ -7,9 +7,11 @@ import { Dec } from './decimal';
 export class JInt {
   readonly kind = 'int' as const;
   readonly value: number;
+  readonly big: bigint;
 
-  constructor(value: number) {
-    this.value = value;
+  constructor(value: number | bigint) {
+    this.big = typeof value === 'bigint' ? value : BigInt(value);
+    this.value = Number(this.big);
   }
 }
 
@@ -159,7 +161,7 @@ export function canonical(value: JVal): string {
   if (value === true) return 'true';
   if (value === false) return 'false';
   if (typeof value === 'string') return escapeString(value);
-  if (value instanceof JInt) return String(value.value);
+  if (value instanceof JInt) return value.big.toString();
   if (value instanceof JFloat) return pyFloat(value.value);
   if (Array.isArray(value)) return `[${value.map((item) => canonical(item)).join(',')}]`;
   const keys = Object.keys(value).sort(compareKeys);
@@ -324,7 +326,7 @@ class Parser {
     const token = this.text.slice(start, this.index);
     if (token === '-' || token === '') throw new Error('Expected number');
     const value = Number(token);
-    if (!isFloat) return new JInt(Object.is(value, -0) ? 0 : value);
+    if (!isFloat) return new JInt(BigInt(token));
     return new JFloat(value);
   }
 }

@@ -23,7 +23,8 @@ export class Dec {
   }
 
   static parse(raw: string): Dec {
-    let text = raw.trim();
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(raw)) throw new Error(`Invalid decimal ${raw}`);
+    let text = raw;
     let sign: 0 | 1 = 0;
     if (text.startsWith('+') || text.startsWith('-')) {
       sign = text.startsWith('-') ? 1 : 0;
@@ -39,9 +40,6 @@ export class Dec {
     if (dot >= 0) {
       exp -= text.length - dot - 1;
       text = text.slice(0, dot) + text.slice(dot + 1);
-    }
-    if (!/^\d+$/.test(text)) {
-      throw new Error(`Invalid decimal ${raw}`);
     }
     if (/^0+$/.test(text)) return new Dec(sign, '0', exp);
     return new Dec(sign, text.replace(/^0+/, ''), exp);
@@ -200,6 +198,9 @@ export class Dec {
 }
 
 function compareAbs(left: Dec, right: Dec): number {
+  if (left.isZero() || right.isZero()) return left.isZero() ? (right.isZero() ? 0 : -1) : 1;
+  const adjusted = left.exp + left.digits.length - (right.exp + right.digits.length);
+  if (adjusted !== 0) return adjusted < 0 ? -1 : 1;
   const exp = Math.min(left.exp, right.exp);
   const a = BigInt(left.digits) * 10n ** BigInt(left.exp - exp);
   const b = BigInt(right.digits) * 10n ** BigInt(right.exp - exp);

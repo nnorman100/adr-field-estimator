@@ -1,0 +1,27 @@
+{
+  "id": "claim-date",
+  "model": "claim",
+  "path": [
+    "date_of_loss"
+  ],
+  "probes": [
+    {"accepted": true, "input": "2026-10-10", "value": "2026-10-10"},
+    {"accepted": false, "input": "2026-02-30"},
+    {"accepted": true, "input": "2024-02-29", "value": "2024-02-29"},
+    {"accepted": false, "input": "2025-02-29"},
+    {"accepted": false, "input": " 2026-10-10"},
+    {"accepted": false, "input": "2026-10-10 "},
+    {"accepted": true, "input": "", "value": ""},
+    {"accepted": false, "input": "2026-1-10"},
+    {"accepted": false, "input": "20261010"},
+    {"accepted": false, "input": "2026/10/10"},
+    {"accepted": false, "input": "2099-01-01"},
+    {"accepted": false, "input": "0000-01-01"},
+    {"accepted": true, "input": "0001-01-01", "value": "0001-01-01"},
+    {"accepted": false, "input": "\u0662\u0660\u0662\u0666-\u0661\u0660-\u0661\u0660"},
+    {"accepted": false, "input": null},
+    {"accepted": false, "input": 5},
+    {"accepted": false, "input": true}
+  ],
+  "template": {}
+}
