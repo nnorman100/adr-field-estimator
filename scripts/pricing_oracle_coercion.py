@@ -20,6 +20,7 @@ from backend.contracts import (
     PhotoLog,
     distinct_rooms,
 )
+from backend.inspection_store import canonical
 from backend.main import inspection_payload
 from scripts.pricing_oracle_cases_v2 import table
 
@@ -185,6 +186,12 @@ TABLE_DECIMALS = [
     ),
     *('\uff11\uff12', '12.505', '12.\u0665\u0660\u0660', '1_2', '+12', '-12', '12.', '.5', '1e1'),
     *(12, 0, -1, 12.5, True, None, '', ' ', '0', '0.00', '9' * 30),
+]
+CANONICAL = [
+    *('Wet\x7f wall', '\x7f', '~', ' ', '\x00', '\x1f', '\x80', '\u2028', '\U0001f4a7', '"\\/'),
+    *(0.59604644775390625, 2.0**-24, 0.1 + 0.2, 1e-05, 0.0001, 1e16, 1e15, 1e21, 1e22, 1.5e-07),
+    *(5e-324, 1.7976931348623157e308, 123456789012345680.0, 2.5, -0.0, 0.0, 9007199254740993),
+    *({'\x7f': 1, '~': 2, '\x80': 3}, ['\x7f', 0.59604644775390625], True, None),
 ]
 
 ROOM = {'name': 'Kitchen'}
@@ -370,6 +377,7 @@ TARGETS = [
     ('unicode-table-price', 'table', table(), ['items', 0, 'unit_price'], TABLE_DECIMALS),
     ('unicode-ai-note', 'ai_note', {'text': ''}, ['text'], AI_TEXT),
     ('unicode-statement', 'statement', {'text': ''}, ['text'], TRANSCRIPTS),
+    ('canonical-bytes', 'canonical', {'value': None}, ['value'], CANONICAL),
 ]
 
 
@@ -385,6 +393,8 @@ def _dump(model, data):
     if model == 'statement':
         transcript = InspectionData(technician_transcript=data['text'])
         return {'text': claims.technician_statement(transcript)}
+    if model == 'canonical':
+        return {'value': canonical(data['value'])}
     if model == 'photo':
         return PhotoLog.model_validate(data).model_dump(mode='json', exclude_none=True)
     if model == 'identity':

@@ -32,6 +32,7 @@ function dump(model: string, data: JVal): JVal {
   }
   if (model === 'ai_note') return { text: aiNote(String((data as JObj).text)) };
   if (model === 'statement') return { text: technicianStatement(String((data as JObj).text)) };
+  if (model === 'canonical') return { value: canonical((data as JObj).value as JVal) };
   if (model === 'photo') return photoRecord(data);
   if (model === 'identity') return identityOf(data);
   if (model === 'claim') return claimOf(data);

@@ -18,8 +18,10 @@ unexplained differences before it prices any live estimate. Nothing here is cust
   field (numbers, numeric and boolean strings, decimals with exponents or trailing zeros, dates,
   Unicode text and whitespace), whether the Python model accepted it (pydantic lax mode, as the
   backend reads it) and the value it dumped at the path. A port must accept and reject the same
-  values and dump the same value. They are built by `scripts/pricing_oracle_coercion.py` and are
-  not listed in `manifest.json`.
+  values and dump the same value. `canonical-bytes.json` instead records the exact canonical text
+  (`json.dumps` with sorted keys) of tricky strings, keys and floats, such as U+007F and
+  shortest-float ties. They are built by `scripts/pricing_oracle_coercion.py` and are not listed
+  in `manifest.json`.
 
 The existing `tests/golden/v1-documents.json` is separate and unchanged.
 

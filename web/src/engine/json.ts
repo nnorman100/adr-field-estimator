@@ -56,15 +56,7 @@ export function pyFloat(value: number): string {
   if (value === 0) return '0.0';
   const sign = value < 0 ? '-' : '';
   const abs = Math.abs(value);
-  let digits: string | null = null;
-  for (let precision = 1; precision <= 17; precision += 1) {
-    const candidate = abs.toPrecision(precision);
-    if (Number(candidate) === abs) {
-      digits = candidate;
-      break;
-    }
-  }
-  if (digits === null) digits = abs.toPrecision(17);
+  const digits = abs.toString();
   const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(digits);
   if (!match) return sign + digits;
   const intPart = match[1] ?? '0';
@@ -73,7 +65,7 @@ export function pyFloat(value: number): string {
   const raw = intPart + frac;
   let first = 0;
   while (first < raw.length - 1 && raw[first] === '0') first += 1;
-  const sig = raw.slice(first);
+  const sig = raw.slice(first).replace(/0+$/, '');
   const lastExp = expGiven - frac.length;
   const firstExp = lastExp + (raw.length - 1 - first);
   const useExp = firstExp < -4 || firstExp >= 16;
@@ -119,7 +111,7 @@ function escapeString(value: string): string {
     else if (char === '\r') out += '\\r';
     else if (char === '\t') out += '\\t';
     else if (code < 0x20) out += `\\u${code.toString(16).padStart(4, '0')}`;
-    else if (code < 0x80) out += char;
+    else if (code < 0x7f) out += char;
     else if (code < 0x10000) out += `\\u${code.toString(16).padStart(4, '0')}`;
     else {
       const shifted = code - 0x10000;
