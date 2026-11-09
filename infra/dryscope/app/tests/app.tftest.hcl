@@ -245,3 +245,14 @@ run "relay_image_from_the_other_environments_repository_is_refused" {
 
   expect_failures = [var.live_image]
 }
+
+# The app refuses to start without APP_ENV (web/src/lib/config.ts), so a revision built from any
+# other name never becomes ready.
+run "both_services_receive_the_environment_name_the_app_reads" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : contains([for e in s.template[0].containers[0].env : e.value if e.name == "APP_ENV"], var.environment)])
+    error_message = "Each service must set APP_ENV to its environment."
+  }
+}

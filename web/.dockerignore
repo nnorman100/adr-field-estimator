@@ -1,0 +1,13 @@
+# Keep the build context to source: no local builds, dependencies, test output or env files.
+node_modules
+.next
+out
+coverage
+test-results
+playwright-report
+tsconfig.tsbuildinfo
+next-env.d.ts
+.env
+.env.*
+Dockerfile
+.dockerignore

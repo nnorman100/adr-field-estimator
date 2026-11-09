@@ -30,4 +30,12 @@ describe('health route', () => {
     const res = GET();
     expect(await res.json()).toEqual({ status: 'ok', env: 'local' });
   });
+
+  it('reports the build commit when the image carries one', async () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567';
+    vi.stubEnv('APP_ENV', 'test');
+    vi.stubEnv('APP_COMMIT', commit);
+    const res = GET();
+    expect(await res.json()).toEqual({ status: 'ok', env: 'test', commit });
+  });
 });

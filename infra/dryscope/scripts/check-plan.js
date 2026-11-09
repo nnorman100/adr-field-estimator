@@ -194,6 +194,13 @@ function expectedPlan(root, env) {
       condition: null,
       service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-deploy-${env}@${PROJECT}.iam.gserviceaccount.com`,
     };
+    // The same principal set signs in as the migrator, so migrations run before traffic moves.
+    const wifMigrate = 'google_service_account_iam_member.migrate_workload_identity[0]';
+    optional.add(wifMigrate);
+    grants[wifMigrate] = {
+      ...grants[wif],
+      service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-migrate-${env}@${PROJECT}.iam.gserviceaccount.com`,
+    };
 
     attrs['google_sql_database_instance.main'] = {
       name: `dryscope-${env}-pg`,

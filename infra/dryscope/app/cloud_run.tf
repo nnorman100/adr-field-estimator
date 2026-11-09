@@ -18,7 +18,7 @@ locals {
   }
 
   common_env = {
-    APP_ENVIRONMENT       = var.environment
+    APP_ENV               = var.environment
     GOOGLE_CLOUD_PROJECT  = var.project_id
     GOOGLE_CLOUD_LOCATION = var.region
     FIRESTORE_DATABASE_ID = local.n.firestore_database_id

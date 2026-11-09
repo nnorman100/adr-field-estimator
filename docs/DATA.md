@@ -145,7 +145,10 @@ deletion are not built yet; update this file when they are.
 ## Rebuilt app Postgres (not deployed)
 
 The TypeScript app in `web/` keeps a Postgres schema beside the Firestore data above. Nothing in
-that schema is applied to Cloud SQL. An agent does not create the instance, run Terraform or change
+that schema is applied to Cloud SQL yet. Once the owner finishes the setup in
+[RUNBOOK.md](RUNBOOK.md#release-the-rebuilt-app-to-test), the test release workflow applies it to
+the test instance only, as `dryscope-migrate-test`, before each new revision takes traffic; nothing
+applies it to live. An agent does not create the instance, run Terraform or change
 IAM. The owner applies infrastructure. There is no earlier Postgres schema to backfill, and the
 Firestore records in this file are unchanged.
 

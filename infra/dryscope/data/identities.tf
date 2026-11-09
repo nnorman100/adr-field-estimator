@@ -124,3 +124,17 @@ resource "google_service_account_iam_member" "deploy_workload_identity" {
 
   depends_on = [google_service_account.deploy]
 }
+
+# The release workflow runs numbered migrations as the migrator before a new revision takes
+# traffic. It signs in as the migrator directly, through the same repository-scoped principal set,
+# so the deploy account keeps no route to the database. Cloud SQL IAM login needs a service
+# account, which is why the principal set itself is never made a database user.
+resource "google_service_account_iam_member" "migrate_workload_identity" {
+  count = var.workload_identity_principal_set == "" ? 0 : 1
+
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.n.service_account_emails["migrate"]}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = var.workload_identity_principal_set
+
+  depends_on = [google_service_account.runtime]
+}

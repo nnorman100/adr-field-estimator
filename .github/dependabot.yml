@@ -37,3 +37,12 @@ updates:
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
+
+  # Base images of the rebuilt app and the Live relay placeholder, pinned by digest.
+  - package-ecosystem: docker
+    directories: [/web, /live-relay-placeholder]
+    schedule:
+      interval: weekly
+    groups:
+      web-docker-minor-patch:
+        update-types: [minor, patch]

@@ -5,9 +5,9 @@ name: Web app
 on:
   push:
     branches: [master]
-    paths: ['web/**', '.github/workflows/web.yml']
+    paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
   pull_request:
-    paths: ['web/**', '.github/workflows/web.yml']
+    paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
 
 permissions:
   contents: read
@@ -117,3 +117,45 @@ jobs:
             web/test-results
             web/playwright-report
           retention-days: 7
+
+  # The production image the release workflow (web-release.yml) ships: build it, run it the way
+  # Cloud Run does and run the release smoke check against it, so a broken Dockerfile or start
+  # fails here rather than at release.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      - run: docker build --build-arg "COMMIT_SHA=$GITHUB_SHA" --tag dryscope-web:ci .
+      - name: Refuse a build without the commit
+        run: |
+          if docker build --target build --tag dryscope-web:nocommit . >/dev/null 2>&1; then
+            echo "::error::The image built without COMMIT_SHA."; exit 1
+          fi
+      - name: Run as on Cloud Run and smoke-check
+        run: |
+          test "$(docker image inspect --format '{{.Config.User}}' dryscope-web:ci)" = node
+          docker run --detach --name web --publish 127.0.0.1:8080:8080 --env APP_ENV=test dryscope-web:ci
+          node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --env test \
+            || { docker logs web; exit 1; }
+          docker image inspect --format 'image size: {{.Size}} bytes' dryscope-web:ci
+      - name: Refuse to start without APP_ENV
+        run: |
+          docker run --name noenv dryscope-web:ci || true
+          test "$(docker inspect --format '{{.State.ExitCode}}' noenv)" = 1
+      - name: Live relay placeholder answers 503
+        working-directory: live-relay-placeholder
+        run: |
+          docker build --tag dryscope-live-placeholder:ci .
+          docker run --detach --publish 127.0.0.1:8081:8080 dryscope-live-placeholder:ci
+          for _ in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/ || true)
+            [ "$code" = 503 ] && exit 0
+            sleep 1
+          done
+          echo "::error::The placeholder did not answer 503 (last: $code)."; exit 1

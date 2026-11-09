@@ -25,11 +25,17 @@ const schema = z.object({
     .string()
     .refine(isPostgresUrl, { message: 'DATABASE_URL must be a postgres URL' })
     .optional(),
+  // The commit the image was built from. web/Dockerfile bakes it in; local runs leave it unset.
+  APP_COMMIT: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })
+    .optional(),
 });
 
 export type AppConfig = {
   appEnv: z.infer<typeof schema>['APP_ENV'];
   databaseUrl: string | null;
+  commit?: string;
 };
 
 export class ConfigError extends Error {
@@ -45,5 +51,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     // Only variable names and messages are reported, never the values.
     throw new ConfigError(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
-  return { appEnv: result.data.APP_ENV, databaseUrl: result.data.DATABASE_URL ?? null };
+  const config = { appEnv: result.data.APP_ENV, databaseUrl: result.data.DATABASE_URL ?? null };
+  const commit = result.data.APP_COMMIT;
+  return commit === undefined ? config : { ...config, commit };
 }

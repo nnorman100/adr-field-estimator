@@ -43,7 +43,7 @@
          "depends_on": null,
          "env": [
           {
-           "name": "APP_ENVIRONMENT",
+           "name": "APP_ENV",
            "value": "test",
            "value_source": []
           },
@@ -250,7 +250,7 @@
          "depends_on": null,
          "env": [
           {
-           "name": "APP_ENVIRONMENT",
+           "name": "APP_ENV",
            "value": "test",
            "value_source": []
           },
