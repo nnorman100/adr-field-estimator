@@ -1,4 +1,5 @@
-# Cloud SQL for PostgreSQL: one dedicated zonal instance per environment.
+# Cloud SQL for PostgreSQL: one zonal ENTERPRISE instance per environment
+# (shared-core db-f1-micro in test; dedicated db-custom-1-3840 in live).
 # Official records (companies, prices, submitted snapshots, signatures) live here.
 #
 # Access is by IAM database authentication only. No built-in password user is

@@ -29,11 +29,11 @@ run "services_are_central_protected_and_use_their_own_accounts" {
     error_message = "Service names carry the environment."
   }
   assert {
-    condition     = google_cloud_run_v2_service.svc["api"].template[0].service_account == "dryscope-api-${var.environment}@alert-disaster-field-2026.iam.gserviceaccount.com"
+    condition     = google_cloud_run_v2_service.svc["api"].template[0].service_account == "dryscope-api-${var.environment}@dryscope.iam.gserviceaccount.com"
     error_message = "The web app runs as its own environment's account."
   }
   assert {
-    condition     = google_cloud_run_v2_service.svc["live"].template[0].service_account == "dryscope-live-${var.environment}@alert-disaster-field-2026.iam.gserviceaccount.com"
+    condition     = google_cloud_run_v2_service.svc["live"].template[0].service_account == "dryscope-live-${var.environment}@dryscope.iam.gserviceaccount.com"
     error_message = "The relay runs as its own environment's account."
   }
   assert {
@@ -101,7 +101,7 @@ run "data_stays_inside_this_environment" {
   command = plan
 
   assert {
-    condition     = contains(google_cloud_run_v2_service.svc["api"].template[0].volumes[0].cloud_sql_instance[0].instances, "alert-disaster-field-2026:us-central1:dryscope-${var.environment}-pg")
+    condition     = contains(google_cloud_run_v2_service.svc["api"].template[0].volumes[0].cloud_sql_instance[0].instances, "dryscope:us-central1:dryscope-${var.environment}-pg")
     error_message = "The service connects to this environment's SQL instance."
   }
   assert {
@@ -126,7 +126,7 @@ run "deploy_role_cannot_delete_and_public_access_is_invocation_only" {
     error_message = "The deploy role can deploy revisions and move traffic."
   }
   assert {
-    condition     = length(google_cloud_run_v2_service_iam_member.deploy) == 2 && alltrue([for k, b in google_cloud_run_v2_service_iam_member.deploy : b.role == "projects/alert-disaster-field-2026/roles/dryscopeDeploy${title(var.environment)}" && b.member == "serviceAccount:dryscope-deploy-${var.environment}@alert-disaster-field-2026.iam.gserviceaccount.com"])
+    condition     = length(google_cloud_run_v2_service_iam_member.deploy) == 2 && alltrue([for k, b in google_cloud_run_v2_service_iam_member.deploy : b.role == "projects/dryscope/roles/dryscopeDeploy${title(var.environment)}" && b.member == "serviceAccount:dryscope-deploy-${var.environment}@dryscope.iam.gserviceaccount.com"])
     error_message = "Only this environment's deploy account gets the custom deploy role, on each service."
   }
   assert {
@@ -143,7 +143,7 @@ run "alerts_exist_and_only_live_probes_health" {
     error_message = "Server-error alerts for both services and two database alerts."
   }
   assert {
-    condition     = alltrue([for k, p in google_monitoring_alert_policy.sql : strcontains(p.conditions[0].condition_threshold[0].filter, "resource.labels.database_id = \"alert-disaster-field-2026:dryscope-${var.environment}-pg\"")])
+    condition     = alltrue([for k, p in google_monitoring_alert_policy.sql : strcontains(p.conditions[0].condition_threshold[0].filter, "resource.labels.database_id = \"dryscope:dryscope-${var.environment}-pg\"")])
     error_message = "Database alerts match Cloud SQL's project:instance monitoring identifier."
   }
   assert {
@@ -184,6 +184,16 @@ run "wrong_project_is_refused" {
   expect_failures = [var.project_id]
 }
 
+run "legacy_project_is_refused" {
+  command = plan
+
+  variables {
+    project_id = "alert-disaster-field-2026"
+  }
+
+  expect_failures = [var.project_id]
+}
+
 run "legacy_region_is_refused" {
   command = plan
 
@@ -198,7 +208,7 @@ run "tagged_image_is_refused" {
   command = plan
 
   variables {
-    api_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment}/web:latest"
+    api_image = "us-central1-docker.pkg.dev/dryscope/dryscope-${var.environment}/web:latest"
   }
 
   expect_failures = [var.api_image]
@@ -208,7 +218,7 @@ run "image_from_another_project_is_refused" {
   command = plan
 
   variables {
-    live_image = "us-west2-docker.pkg.dev/mitigation-project/other/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    live_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment}/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
   }
 
   expect_failures = [var.live_image]
@@ -220,7 +230,7 @@ run "web_image_from_the_other_environments_repository_is_refused" {
   command = plan
 
   variables {
-    api_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment == "test" ? "live" : "test"}/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    api_image = "us-central1-docker.pkg.dev/dryscope/dryscope-${var.environment == "test" ? "live" : "test"}/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
   }
 
   expect_failures = [var.api_image]
@@ -230,7 +240,7 @@ run "relay_image_from_the_other_environments_repository_is_refused" {
   command = plan
 
   variables {
-    live_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-${var.environment == "test" ? "live" : "test"}/live@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    live_image = "us-central1-docker.pkg.dev/dryscope/dryscope-${var.environment == "test" ? "live" : "test"}/live@sha256:3333333333333333333333333333333333333333333333333333333333333333"
   }
 
   expect_failures = [var.live_image]

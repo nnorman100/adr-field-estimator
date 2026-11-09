@@ -7,8 +7,10 @@ const finished = (name, status) =>
 // the closed table of resources, IAM grants (role, member, exact condition) and protection
 // settings, and any delete, replacement or extra grant must be refused.
 //
-// Fixtures in tests/fixtures/terraform/ are the first mocked plan that `terraform test -json
+// Fixtures in infra/dryscope/fixtures/ are the first mocked plan that `terraform test -json
 // -verbose` prints for each root and environment (infra/dryscope/scripts/check-plan.js export).
+// The legacy alert-disaster-field-2026 plans in tests/fixtures/terraform/ are kept to prove the
+// checker refuses plans targeting the legacy project.
 // infra/dryscope/scripts/check.sh runs the same check against freshly generated plans, so a
 // fixture that drifts from the configuration is caught there.
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -34,6 +36,11 @@ const CASES = [
 ];
 
 function load(root, environment) {
+  const file = path.join(ROOT, 'infra', 'dryscope', 'fixtures', `${root}-${environment}.plan.json`);
+  return JSON.parse(fs.readFileSync(file, 'utf8')).resource_changes;
+}
+
+function loadLegacy(root, environment) {
   const file = path.join(
     ROOT,
     'tests',
@@ -55,6 +62,12 @@ describe.each(CASES)('%s root, %s environment', (root, environment) => {
     expect(check(plan(), root, environment)).toEqual([]);
   });
 
+  test('a plan targeting the legacy alert-disaster-field-2026 project is refused', () => {
+    const problems = check(loadLegacy(root, environment), root, environment);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.some((p) => p.includes('expected dryscope'))).toBe(true);
+  });
+
   test('a second grant nobody listed is refused', () => {
     const changed = plan();
     changed.push({
@@ -64,7 +77,7 @@ describe.each(CASES)('%s root, %s environment', (root, environment) => {
         actions: ['create'],
         after: {
           role: 'roles/storage.admin',
-          member: `serviceAccount:dryscope-api-${environment}@alert-disaster-field-2026.iam.gserviceaccount.com`,
+          member: `serviceAccount:dryscope-api-${environment}@dryscope.iam.gserviceaccount.com`,
         },
       },
     });
@@ -103,7 +116,7 @@ describe.each(CASES)('%s root, %s environment', (root, environment) => {
     target.change.after.project = 'mitigation-project';
     const problems = check(changed, root, environment);
     expect(problems).toEqual([
-      `${target.address}: project is "mitigation-project", expected alert-disaster-field-2026`,
+      `${target.address}: project is "mitigation-project", expected dryscope`,
     ]);
   });
 
@@ -207,7 +220,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     expect(problems[0]).toContain(address);
   });
 
-  test('a deleting lifecycle rule or a shared-core tier is refused', () => {
+  test('a deleting lifecycle rule or the wrong Cloud SQL tier for the environment is refused', () => {
     expect(
       edit('google_storage_bucket.evidence', (after) => {
         after.lifecycle_rule = [{ action: [{ type: 'Delete' }], condition: [{ age: 30 }] }];
@@ -215,7 +228,12 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     ).toHaveLength(1);
     expect(
       edit('google_sql_database_instance.main', (after) => {
-        after.settings[0].tier = 'db-f1-micro';
+        after.settings[0].tier = environment === 'test' ? 'db-custom-1-3840' : 'db-f1-micro';
+      }),
+    ).toHaveLength(1);
+    expect(
+      edit('google_sql_database_instance.main', (after) => {
+        after.settings[0].tier = 'db-g1-small';
       }),
     ).toHaveLength(1);
   });
@@ -273,7 +291,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
           after: {
             role: 'roles/iam.workloadIdentityUser',
             member,
-            service_account_id: `projects/alert-disaster-field-2026/serviceAccounts/dryscope-deploy-${environment}@alert-disaster-field-2026.iam.gserviceaccount.com`,
+            service_account_id: `projects/dryscope/serviceAccounts/dryscope-deploy-${environment}@dryscope.iam.gserviceaccount.com`,
           },
         },
       });
@@ -303,7 +321,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
           after: {
             role: 'roles/iam.workloadIdentityUser',
             member: `${pools}/${pool}/attribute.repository_id/42`,
-            service_account_id: `projects/alert-disaster-field-2026/serviceAccounts/dryscope-deploy-${environment}@alert-disaster-field-2026.iam.gserviceaccount.com`,
+            service_account_id: `projects/dryscope/serviceAccounts/dryscope-deploy-${environment}@dryscope.iam.gserviceaccount.com`,
           },
         },
       });
@@ -355,7 +373,7 @@ describe.each(['test', 'live'])('app root, %s: services and deploy role', (envir
     const probe = {
       address: 'google_monitoring_uptime_check_config.api_health[0]',
       type: 'google_monitoring_uptime_check_config',
-      change: { actions: ['create'], after: { project: 'alert-disaster-field-2026' } },
+      change: { actions: ['create'], after: { project: 'dryscope' } },
     };
     const problems = check([...changed, probe], 'app', environment);
     expect(problems.length).toBe(environment === 'live' ? 0 : 1);
@@ -366,7 +384,7 @@ describe('the command line', () => {
   const run = (...args) => spawnSync('node', [SCRIPT, ...args], { encoding: 'utf8' });
 
   test('passes a good plan and prints the count', () => {
-    const file = path.join(ROOT, 'tests', 'fixtures', 'terraform', 'data-live.plan.json');
+    const file = path.join(ROOT, 'infra', 'dryscope', 'fixtures', 'data-live.plan.json');
     const result = run('data', 'live', file);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('data/live: 1 plan(s) checked, 0 problem(s)');

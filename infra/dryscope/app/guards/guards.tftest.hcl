@@ -25,16 +25,16 @@ run "a_different_image_is_not_planned_after_create" {
   command = plan
 
   variables {
-    api_image  = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/web@sha256:4444444444444444444444444444444444444444444444444444444444444444"
-    live_image = "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/live@sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    api_image  = "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    live_image = "us-central1-docker.pkg.dev/dryscope/dryscope-test/live@sha256:5555555555555555555555555555555555555555555555555555555555555555"
   }
 
   assert {
-    condition     = google_cloud_run_v2_service.svc["api"].template[0].containers[0].image == "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/web@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    condition     = google_cloud_run_v2_service.svc["api"].template[0].containers[0].image == "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     error_message = "A new web image digest was planned: Terraform and the release path would fight over the image."
   }
   assert {
-    condition     = google_cloud_run_v2_service.svc["live"].template[0].containers[0].image == "us-central1-docker.pkg.dev/alert-disaster-field-2026/dryscope-test/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    condition     = google_cloud_run_v2_service.svc["live"].template[0].containers[0].image == "us-central1-docker.pkg.dev/dryscope/dryscope-test/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     error_message = "A new relay image digest was planned: Terraform and the release path would fight over the image."
   }
 }
