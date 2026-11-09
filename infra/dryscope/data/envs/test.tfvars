@@ -2,8 +2,8 @@ project_id  = "dryscope"
 region      = "us-central1"
 environment = "test"
 
-# Dedicated 1 vCPU, 3.75 GiB, zonal: the same small tier as live, with a smaller disk.
-sql_tier                  = "db-custom-1-3840"
+# Shared-core db-f1-micro (ENTERPRISE edition, zonal): about $10/month; no uptime guarantee, fine for test.
+sql_tier                  = "db-f1-micro"
 sql_disk_size_gb          = 10
 sql_backup_retained_count = 7
 sql_pitr_log_days         = 3

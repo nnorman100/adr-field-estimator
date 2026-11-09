@@ -41,8 +41,16 @@ run "cloud_sql_is_protected_dedicated_and_recoverable" {
     error_message = "The instance must be in us-central1."
   }
   assert {
-    condition     = startswith(google_sql_database_instance.main.settings[0].tier, "db-custom-")
-    error_message = "Both environments use a dedicated-core tier, never shared-core."
+    condition     = google_sql_database_instance.main.settings[0].edition == "ENTERPRISE"
+    error_message = "The instance must use ENTERPRISE edition."
+  }
+  assert {
+    condition = (
+      var.environment == "test"
+      ? google_sql_database_instance.main.settings[0].tier == "db-f1-micro"
+      : startswith(google_sql_database_instance.main.settings[0].tier, "db-custom-")
+    )
+    error_message = "Test uses shared-core db-f1-micro; live uses a dedicated-core tier (db-custom-...)."
   }
 }
 
@@ -277,11 +285,21 @@ run "short_backup_history_is_refused" {
   expect_failures = [var.sql_backup_retained_count]
 }
 
-run "shared_core_sql_tier_is_refused" {
+run "wrong_sql_tier_for_environment_is_refused" {
   command = plan
 
   variables {
-    sql_tier = "db-f1-micro"
+    sql_tier = var.environment == "test" ? "db-custom-1-3840" : "db-f1-micro"
+  }
+
+  expect_failures = [var.sql_tier]
+}
+
+run "unapproved_shared_core_sql_tier_is_refused" {
+  command = plan
+
+  variables {
+    sql_tier = "db-g1-small"
   }
 
   expect_failures = [var.sql_tier]

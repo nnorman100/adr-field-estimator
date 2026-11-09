@@ -888,7 +888,7 @@
        "read_pool_auto_scale_config": [],
        "retain_backups_on_delete": null,
        "sql_server_audit_config": [],
-       "tier": "db-custom-1-3840",
+       "tier": "db-f1-micro",
        "time_zone": null,
        "user_labels": {
         "app": "dryscope",

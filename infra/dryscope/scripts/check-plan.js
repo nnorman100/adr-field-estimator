@@ -170,11 +170,12 @@ function expectedPlan(root, env) {
       region: REGION,
       deletion_protection: true,
       'settings.0.deletion_protection_enabled': true,
+      'settings.0.edition': 'ENTERPRISE',
       'settings.0.availability_type': 'ZONAL',
       'settings.0.backup_configuration.0.enabled': true,
       'settings.0.backup_configuration.0.point_in_time_recovery_enabled': true,
       'settings.0.ip_configuration.0.ssl_mode': 'ENCRYPTED_ONLY',
-      'settings.0.tier': /^db-custom-/,
+      'settings.0.tier': env === 'test' ? 'db-f1-micro' : /^db-custom-/,
     };
     absent['google_sql_database_instance.main'] = [
       'settings.0.ip_configuration.0.authorized_networks',

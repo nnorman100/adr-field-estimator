@@ -220,7 +220,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     expect(problems[0]).toContain(address);
   });
 
-  test('a deleting lifecycle rule or a shared-core tier is refused', () => {
+  test('a deleting lifecycle rule or the wrong Cloud SQL tier for the environment is refused', () => {
     expect(
       edit('google_storage_bucket.evidence', (after) => {
         after.lifecycle_rule = [{ action: [{ type: 'Delete' }], condition: [{ age: 30 }] }];
@@ -228,7 +228,12 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     ).toHaveLength(1);
     expect(
       edit('google_sql_database_instance.main', (after) => {
-        after.settings[0].tier = 'db-f1-micro';
+        after.settings[0].tier = environment === 'test' ? 'db-custom-1-3840' : 'db-f1-micro';
+      }),
+    ).toHaveLength(1);
+    expect(
+      edit('google_sql_database_instance.main', (after) => {
+        after.settings[0].tier = 'db-g1-small';
       }),
     ).toHaveLength(1);
   });
