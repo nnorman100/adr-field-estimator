@@ -170,8 +170,8 @@ on each, from the 2026-11-09 review, in plain words:
   (`docs/STATUS.md`, price editor row). The remaining new-company setup changes are in 6.1.
 - **AI-suggested prices:** not now.
 - **Crew calendar and reminders:** could be helpful, later.
-- **Homeowner photo upload through the link:** good in the right context, later. The conditions
-  are **[open]**.
+- **Homeowner photo upload through the link:** could be good in the right context,
+  later. The conditions are **[open]**.
 - **Recipient texting:** could be good down the road, later.
 - **Support role:** undecided. **[open]**
 - **Owner-visible access log:** could be beneficial, later.
