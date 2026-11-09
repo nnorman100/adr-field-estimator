@@ -390,7 +390,8 @@
   const dom = () =>
     typeof document !== 'undefined' && typeof document.getElementById === 'function';
   let company = null; // the company's current table; from_cache marks the copy kept on the phone
-  let companyTrouble = ''; // what to tell the user when the server would not give the table
+  let companyTrouble = '',
+    companyTroubleKey = ''; // message and the company key it belongs to
   const jobs = new Map(); // inspection id -> { pricing }
   let rendered = null; // the form and table the screen was last built for
   let renderedRows = null; // the item rows it was last built with
@@ -469,15 +470,12 @@
   function forget() {
     jobs.clear();
   }
-
-  // Company table: fetched when online, kept in the drafts store for offline launches. Only a request
-  // that never got an answer falls back to that copy; an answer from the server is never overruled.
   const cacheKey = () => 'prices:' + state.user.uid + ':' + state.session.company_id;
   async function loadCompany() {
     const mine = ++companySeq;
     if (!dom() || state?.session?.pricing_version !== V2 || !state.user) {
       company = null;
-      companyTrouble = '';
+      companyTrouble = companyTroubleKey = '';
       return;
     }
     const uid = state.user.uid,
@@ -488,7 +486,7 @@
       const view = await jsonApi('/api/companies/' + companyId + '/prices');
       if (mine !== companySeq) return;
       company = null;
-      companyTrouble = '';
+      companyTrouble = companyTroubleKey = '';
       if (view.calculation_version === V2) {
         company = {
           key,
@@ -514,13 +512,15 @@
         if (refused || company?.from_cache || company?.key !== key) company = null;
         if (message !== companyTrouble) say(message, 'error');
         companyTrouble = message;
+        companyTroubleKey = key;
         if (refused) await dbAction('readwrite', (store) => store.delete(key)).catch(() => {});
         return;
       }
       const row = await dbAction('readonly', (store) => store.get(key)).catch(() => null);
       if (mine !== companySeq) return;
-      company = row?.prices?.table ? { ...row.prices, from_cache: true } : null;
-      if (company) companyTrouble = '';
+      if (companyTrouble === PRICES_REFUSED && companyTroubleKey === key) company = null;
+      else company = row?.prices?.table ? { ...row.prices, from_cache: true } : null;
+      if (company || companyTroubleKey !== key) companyTrouble = companyTroubleKey = '';
     }
   }
   // A new draft for a v2 company: zero charge quantities, then the table's defaults.
