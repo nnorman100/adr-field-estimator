@@ -126,6 +126,106 @@ def shell(tmp_path):
     return Shell(tmp_path)
 
 
+TOKEN = re.compile(r"\s*('(?:[^']|'')*'|&&|\|\||==|!=|!|\(|\)|[A-Za-z_][\w.-]*)")
+
+
+LITERALS = {'true': True, 'false': False, 'null': None}
+
+
+def evaluate(expression, context):
+    """Evaluate the subset of the Actions expression language the workflow's `if` conditions use
+    (string, boolean and null literals, property paths, ==, !=, !, &&, ||, parentheses and status functions) against
+    context, where a missing property is null."""
+    tokens, rest = [], expression.strip()
+    while rest:
+        match = TOKEN.match(rest)
+        assert match, rest
+        tokens.append(match.group(1))
+        rest = rest[match.end() :].strip()
+    position = 0
+
+    def peek():
+        return tokens[position] if position < len(tokens) else None
+
+    def take(expected=None):
+        nonlocal position
+        token = tokens[position]
+        assert expected is None or token == expected, (expected, token)
+        position += 1
+        return token
+
+    def either():
+        value = both()
+        while peek() == '||':
+            take()
+            right = both()
+            value = value or right
+        return value
+
+    def both():
+        value = compare()
+        while peek() == '&&':
+            take()
+            right = compare()
+            value = value and right
+        return value
+
+    def compare():
+        value = unary()
+        while peek() in ('==', '!='):
+            op, right = take(), unary()
+            value = (value == right) if op == '==' else (value != right)
+        return value
+
+    def unary():
+        if peek() == '!':
+            take()
+            return not unary()
+        if peek() == '(':
+            take()
+            value = either()
+            take(')')
+            return value
+        token = take()
+        if token.startswith("'"):
+            return token[1:-1].replace("''", "'")
+        if token in LITERALS:
+            return LITERALS[token]
+        if peek() == '(':
+            take()
+            take(')')
+            return context[token]()
+        value = context
+        for part in token.split('.'):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value
+
+    value = either()
+    assert position == len(tokens), tokens[position:]
+    return value
+
+
+def workflow_run(**changes):
+    run = {
+        'conclusion': 'success',
+        'event': 'push',
+        'head_branch': 'master',
+        'head_repository': {'full_name': 'owner/repo'},
+    }
+    return {
+        'github': {
+            'event_name': 'workflow_run',
+            'ref': 'refs/heads/master',
+            'repository': 'owner/repo',
+            'event': {'workflow_run': {**run, **changes}},
+        }
+    }
+
+
+def dispatch(ref):
+    return {'github': {'event_name': 'workflow_dispatch', 'ref': ref, 'repository': 'owner/repo'}}
+
+
 @pytest.fixture(scope='module')
 def release():
     return load(RELEASE)
@@ -139,16 +239,25 @@ def test_release_runs_only_after_web_app_passes_on_master(release):
         'types': ['completed'],
         'branches': ['master'],
     }
-    gate = release['jobs']['gate']['if']
-    for needed in (
-        "github.event.workflow_run.conclusion == 'success'",
-        "github.event.workflow_run.event == 'push'",
-        "github.event.workflow_run.head_branch == 'master'",
-        'github.event.workflow_run.head_repository.full_name == github.repository',
-        "github.ref == 'refs/heads/master'",
-    ):
-        assert needed in gate
     assert release['env']['COMMIT'] == '${{ github.event.workflow_run.head_sha || github.sha }}'
+
+
+@pytest.mark.parametrize(
+    'context, runs',
+    [
+        (workflow_run(), True),
+        (dispatch('refs/heads/master'), True),
+        (workflow_run(conclusion='failure'), False),
+        (workflow_run(conclusion='cancelled'), False),
+        (workflow_run(event='pull_request'), False),
+        (workflow_run(head_branch='feature'), False),
+        (workflow_run(head_repository={'full_name': 'fork/repo'}), False),
+        (dispatch('refs/heads/feature'), False),
+        ({'github': {'event_name': 'push', 'ref': 'refs/heads/master'}}, False),
+    ],
+)
+def test_gate_admits_only_a_passing_master_push_or_a_manual_master_run(release, context, runs):
+    assert bool(evaluate(release['jobs']['gate']['if'], context)) is runs
 
 
 def test_one_release_at_a_time_and_none_cancelled_midway(release):
@@ -378,10 +487,6 @@ def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
         'test',
     ]
     assert deploy[smoke].get('if') is None and deploy[promote].get('if') is None
-    condition = deploy[rollback]['if']
-    assert condition.startswith('(failure() || cancelled()) && (')
-    for outcome in ('success', 'failure', 'cancelled'):
-        assert f"steps.promote.outcome == '{outcome}'" in condition
     assert deploy[rollback]['env'] == {'PREVIOUS': '${{ steps.before.outputs.previous }}'}
     # The smoke script needs web/package.json ("type": "module") beside it.
     checkout = deploy[0]
@@ -389,6 +494,31 @@ def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
         checkout['uses'].startswith('actions/checkout@')
         and checkout['with']['sparse-checkout'] == 'web'
     )
+
+
+@pytest.mark.parametrize(
+    'promote, failed, cancelled, runs',
+    [
+        ('success', True, False, True),
+        ('failure', True, False, True),
+        ('cancelled', False, True, True),
+        ('success', False, True, True),
+        ('skipped', True, False, False),
+        ('skipped', False, True, False),
+        (None, True, False, False),
+        ('success', False, False, False),
+    ],
+)
+def test_rollback_runs_only_when_a_traffic_move_ran_and_the_job_did_not_pass(
+    release, promote, failed, cancelled, runs
+):
+    context = {
+        'steps': {'promote': {'outcome': promote}} if promote else {},
+        'failure': lambda: failed,
+        'cancelled': lambda: cancelled,
+    }
+    condition = step(release['jobs']['deploy'], 'Roll back traffic')['if']
+    assert bool(evaluate(condition, context)) is runs
 
 
 def test_rollback_restores_the_remembered_traffic_split(release, shell):
