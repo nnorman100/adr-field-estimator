@@ -12,6 +12,7 @@ import { distinctRooms, dumpInspection, validateInspection } from '../../src/eng
 import { itemToJ, normalizeTable, policyToJ } from '../../src/engine/table';
 import { aiNote, technicianStatement } from '../../src/engine/text';
 import { canonical, parseJson, type JObj, type JVal } from '../../src/engine/json';
+import { storedJson } from './stored-json';
 
 const root = fileURLToPath(
   new URL('../../../tests/fixtures/pricing-oracle/coercion/', import.meta.url),
@@ -33,6 +34,7 @@ function dump(model: string, data: JVal): JVal {
   if (model === 'ai_note') return { text: aiNote(String((data as JObj).text)) };
   if (model === 'statement') return { text: technicianStatement(String((data as JObj).text)) };
   if (model === 'canonical') return { value: canonical((data as JObj).value as JVal) };
+  if (model === 'json_text') return { text: canonical(parseJson(String((data as JObj).text))) };
   if (model === 'photo') return photoRecord(data);
   if (model === 'identity') return identityOf(data);
   if (model === 'claim') return claimOf(data);
@@ -85,21 +87,22 @@ describe('coercion oracle', () => {
 
   for (const file of files) {
     it(`matches ${file}`, () => {
-      const body = parseJson(readFileSync(`${root}/${file}`, 'utf8')) as JObj;
+      const text = readFileSync(`${root}/${file}`, 'utf8');
+      const body = parseJson(text) as JObj;
       const path = (body.path as JVal[]).map((key) =>
         typeof key === 'string' ? key : (key as { value: number }).value,
       );
       const problems: string[] = [];
-      for (const raw of body.probes as JObj[]) {
+      (body.probes as JObj[]).forEach((raw, index) => {
         const input = raw.input as JVal;
         const expected = raw.accepted
           ? 'missing' in raw
             ? 'accepted, missing'
-            : `accepted, ${canonical(raw.value as JVal)}`
+            : `accepted, ${storedJson(text, ['probes', index, 'value'])}`
           : 'rejected';
         const actual = outcome(String(body.model), body.template as JVal, path, input);
         if (actual !== expected) problems.push(`${canonical(input)}: ${actual} != ${expected}`);
-      }
+      });
       expect(problems).toEqual([]);
     });
   }

@@ -193,6 +193,12 @@ CANONICAL = [
     *(5e-324, 1.7976931348623157e308, 123456789012345680.0, 2.5, -0.0, 0.0, 9007199254740993),
     *({'\x7f': 1, '~': 2, '\x80': 3}, ['\x7f', 0.59604644775390625], True, None),
 ]
+JSON_TEXT = [
+    *('1e2', '1e+2', '1e-1', '1E2', '1E+2', '1.0e2', '1.5E-7', '-1e2', '1e400', '-1e400', '1e-400'),
+    *('-1e-400', '9007199254740993', '-9007199254740993', '9007199254740993.0', '-0', '-0.0'),
+    *('18446744073709551617', '123456789012345678901234567890', '100', '100.0', '0.1'),
+    *('[1e2, 1E+2, 1e-1, 9007199254740993]', '{"b": 1E2, "a": 9007199254740993}'),
+]
 
 ROOM = {'name': 'Kitchen'}
 EXTRA = {'id': HEX, 'description': 'Detach dishwasher', 'hours': '1.25'}
@@ -378,6 +384,7 @@ TARGETS = [
     ('unicode-ai-note', 'ai_note', {'text': ''}, ['text'], AI_TEXT),
     ('unicode-statement', 'statement', {'text': ''}, ['text'], TRANSCRIPTS),
     ('canonical-bytes', 'canonical', {'value': None}, ['value'], CANONICAL),
+    ('canonical-json-text', 'json_text', {'text': ''}, ['text'], JSON_TEXT),
 ]
 
 
@@ -393,6 +400,8 @@ def _dump(model, data):
     if model == 'statement':
         transcript = InspectionData(technician_transcript=data['text'])
         return {'text': claims.technician_statement(transcript)}
+    if model == 'json_text':
+        return {'text': canonical(json.loads(data['text']))}
     if model == 'canonical':
         return {'value': canonical(data['value'])}
     if model == 'photo':

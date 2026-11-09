@@ -1,0 +1,36 @@
+{
+  "id": "canonical-json-text",
+  "model": "json_text",
+  "path": [
+    "text"
+  ],
+  "probes": [
+    {"accepted": true, "input": "1e2", "value": "100.0"},
+    {"accepted": true, "input": "1e+2", "value": "100.0"},
+    {"accepted": true, "input": "1e-1", "value": "0.1"},
+    {"accepted": true, "input": "1E2", "value": "100.0"},
+    {"accepted": true, "input": "1E+2", "value": "100.0"},
+    {"accepted": true, "input": "1.0e2", "value": "100.0"},
+    {"accepted": true, "input": "1.5E-7", "value": "1.5e-07"},
+    {"accepted": true, "input": "-1e2", "value": "-100.0"},
+    {"accepted": false, "input": "1e400"},
+    {"accepted": false, "input": "-1e400"},
+    {"accepted": true, "input": "1e-400", "value": "0.0"},
+    {"accepted": true, "input": "-1e-400", "value": "-0.0"},
+    {"accepted": true, "input": "9007199254740993", "value": "9007199254740993"},
+    {"accepted": true, "input": "-9007199254740993", "value": "-9007199254740993"},
+    {"accepted": true, "input": "9007199254740993.0", "value": "9007199254740992.0"},
+    {"accepted": true, "input": "-0", "value": "0"},
+    {"accepted": true, "input": "-0.0", "value": "-0.0"},
+    {"accepted": true, "input": "18446744073709551617", "value": "18446744073709551617"},
+    {"accepted": true, "input": "123456789012345678901234567890", "value": "123456789012345678901234567890"},
+    {"accepted": true, "input": "100", "value": "100"},
+    {"accepted": true, "input": "100.0", "value": "100.0"},
+    {"accepted": true, "input": "0.1", "value": "0.1"},
+    {"accepted": true, "input": "[1e2, 1E+2, 1e-1, 9007199254740993]", "value": "[100.0,100.0,0.1,9007199254740993]"},
+    {"accepted": true, "input": "{\"b\": 1E2, \"a\": 9007199254740993}", "value": "{\"a\":9007199254740993,\"b\":100.0}"}
+  ],
+  "template": {
+    "text": ""
+  }
+}

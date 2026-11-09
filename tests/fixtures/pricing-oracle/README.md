@@ -20,8 +20,9 @@ unexplained differences before it prices any live estimate. Nothing here is cust
   backend reads it) and the value it dumped at the path. A port must accept and reject the same
   values and dump the same value. `canonical-bytes.json` instead records the exact canonical text
   (`json.dumps` with sorted keys) of tricky strings, keys and floats, such as U+007F and
-  shortest-float ties. They are built by `scripts/pricing_oracle_coercion.py` and are not listed
-  in `manifest.json`.
+  shortest-float ties, and `canonical-json-text.json` the canonical text of JSON source text read
+  back (exponent spellings, integers above 2^53 and out-of-range floats). They are built by
+  `scripts/pricing_oracle_coercion.py` and are not listed in `manifest.json`.
 
 The existing `tests/golden/v1-documents.json` is separate and unchanged.
 
@@ -76,7 +77,9 @@ clock. Every case runs under the `C` locale; the code reads no locale (dates pri
 manifest's `frozen` block records all of these.
 
 Files are ASCII JSON with sorted keys; containers four levels down print on one line so each file
-stays under 1,000 lines. A reader parses them; the layout is not part of the contract. The
+stays under 1,000 lines. A reader parses them; the layout is not part of the contract, but a port
+compares its canonical output to the stored text of each expected value with only the whitespace
+outside strings removed, never to a re-serialization of the parsed value. The
 contract for the canonical proposal is the decoded bytes of `canonical_bytes_base64`, compared
 exactly: never parse and re-serialize them, and never normalize two outputs through one new
 serializer before comparing.

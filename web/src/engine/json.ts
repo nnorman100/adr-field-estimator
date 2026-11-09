@@ -129,7 +129,11 @@ export function canonical(value: JVal): string {
   if (value === false) return 'false';
   if (typeof value === 'string') return escapeString(value);
   if (value instanceof JInt) return value.big.toString();
-  if (value instanceof JFloat) return pyFloat(value.value);
+  if (value instanceof JFloat) {
+    if (!Number.isFinite(value.value))
+      throw new Error('Out of range float values are not JSON compliant');
+    return pyFloat(value.value);
+  }
   if (Array.isArray(value)) return `[${value.map((item) => canonical(item)).join(',')}]`;
   const keys = Object.keys(value).sort(compareKeys);
   return `{${keys.map((key) => `${escapeString(key)}:${canonical(value[key] as JVal)}`).join(',')}}`;
