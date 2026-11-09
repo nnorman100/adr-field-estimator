@@ -368,6 +368,7 @@ def test_ci_browser_scope_runs_when_push_base_is_not_ancestor(tmp_path):
     assert 'not an ancestor of HEAD; running legacy browser suite' in result.stdout
     assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
 
+
 # The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
 # and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
 # docs/RUNBOOK.md, "CI runners".
