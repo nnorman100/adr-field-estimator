@@ -4,7 +4,6 @@ on:
   push:
     branches: [master]
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -81,17 +80,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # browser is a required check on every PR, so keep the job and skip its steps when a PR
-      # touches no files the legacy app or its Playwright suite depends on. Pushes to master and
-      # manual runs always run the full suite.
+      # browser is a required check on every PR and push to master, so keep the job and skip its
+      # steps when a PR or push touches no files the legacy app or its Playwright suite depends on.
+      # When the base/before commit is unavailable (such as a new branch or force push), run the
+      # full suite.
       - name: Check whether legacy browser files changed
         id: scope
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$BASE_SHA" ]; then
-            echo "Running legacy browser suite: event is ${EVENT_NAME} (not pull_request)."
+          if [ "$EVENT_NAME" != "pull_request" ] && [ "$EVENT_NAME" != "push" ]; then
+            echo "Running legacy browser suite: event is ${EVENT_NAME}."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$BASE_SHA" ] || [[ "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "Base commit ${BASE_SHA:-<empty>} is unavailable; running legacy browser suite."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "push" ] && ! git merge-base --is-ancestor "$BASE_SHA" HEAD 2>/dev/null; then
+            echo "Push base ${BASE_SHA} is not an ancestor of HEAD; running legacy browser suite."
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

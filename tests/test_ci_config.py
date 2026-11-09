@@ -83,9 +83,8 @@ def load_ci_workflow():
 def test_ci_browser_job_gates_steps_on_legacy_scope():
     workflow = load_ci_workflow()
     triggers = workflow.get('on') or workflow.get(True)
+    assert set(triggers) == {'push', 'pull_request'}
     assert triggers['push']['branches'] == ['master']
-    assert 'pull_request' in triggers
-    assert 'workflow_dispatch' in triggers
 
     browser = workflow['jobs']['browser']
     assert 'if' not in browser, 'browser is a required check and must report on every PR'
@@ -261,6 +260,7 @@ def init_scope_repo(tmp_path):
     return repo, base_sha
 
 
+@pytest.mark.parametrize('event_name', ['pull_request', 'push'])
 @pytest.mark.parametrize(
     'changed_paths',
     [
@@ -274,7 +274,7 @@ def init_scope_repo(tmp_path):
         ['docs/RUNBOOK.md', 'README.md', 'RELEASES.md'],
     ],
 )
-def test_ci_browser_scope_skips_unrelated_pr_changes(tmp_path, changed_paths):
+def test_ci_browser_scope_skips_unrelated_changes(tmp_path, event_name, changed_paths):
     repo, base_sha = init_scope_repo(tmp_path)
     for rel in changed_paths:
         target = repo / rel
@@ -284,11 +284,12 @@ def test_ci_browser_scope_skips_unrelated_pr_changes(tmp_path, changed_paths):
     subprocess.run(['git', 'commit', '-m', 'change'], cwd=repo, check=True, capture_output=True)
 
     output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, 'pull_request', base_sha, output_file)
+    result = run_browser_scope_step(repo, event_name, base_sha, output_file)
     assert 'Skipping legacy browser suite' in result.stdout
     assert output_file.read_text(encoding='utf-8').strip() == 'run=false'
 
 
+@pytest.mark.parametrize('event_name', ['pull_request', 'push'])
 @pytest.mark.parametrize(
     'legacy_path',
     [
@@ -314,7 +315,7 @@ def test_ci_browser_scope_skips_unrelated_pr_changes(tmp_path, changed_paths):
         'scripts/verify_routing.js',
     ],
 )
-def test_ci_browser_scope_runs_when_legacy_files_change(tmp_path, legacy_path):
+def test_ci_browser_scope_runs_when_legacy_files_change(tmp_path, event_name, legacy_path):
     repo, base_sha = init_scope_repo(tmp_path)
     target = repo / legacy_path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -323,14 +324,21 @@ def test_ci_browser_scope_runs_when_legacy_files_change(tmp_path, legacy_path):
     subprocess.run(['git', 'commit', '-m', 'legacy'], cwd=repo, check=True, capture_output=True)
 
     output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, 'pull_request', base_sha, output_file)
+    result = run_browser_scope_step(repo, event_name, base_sha, output_file)
     assert legacy_path in result.stdout
     assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
 
 
-@pytest.mark.parametrize('event_name', ['push', 'workflow_dispatch'])
-def test_ci_browser_scope_always_runs_on_push_and_manual_dispatch(tmp_path, event_name):
-    repo, base_sha = init_scope_repo(tmp_path)
+@pytest.mark.parametrize(
+    'missing_base',
+    [
+        '',
+        '0000000000000000000000000000000000000000',
+        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    ],
+)
+def test_ci_browser_scope_runs_when_base_commit_unavailable(tmp_path, missing_base):
+    repo, _ = init_scope_repo(tmp_path)
     target = repo / 'web' / 'src' / 'index.ts'
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('changed\n', encoding='utf-8')
@@ -338,6 +346,24 @@ def test_ci_browser_scope_always_runs_on_push_and_manual_dispatch(tmp_path, even
     subprocess.run(['git', 'commit', '-m', 'web only'], cwd=repo, check=True, capture_output=True)
 
     output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, event_name, base_sha, output_file)
-    assert f'event is {event_name}' in result.stdout
+    result = run_browser_scope_step(repo, 'push', missing_base, output_file)
+    assert 'unavailable; running legacy browser suite' in result.stdout
+    assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
+
+
+def test_ci_browser_scope_runs_when_push_base_is_not_ancestor(tmp_path):
+    repo, base_sha = init_scope_repo(tmp_path)
+    target = repo / 'web' / 'src' / 'index.ts'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('changed\n', encoding='utf-8')
+    subprocess.run(['git', 'add', '.'], cwd=repo, check=True, capture_output=True)
+    subprocess.run(['git', 'commit', '-m', 'diverged'], cwd=repo, check=True, capture_output=True)
+    diverged_sha = subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(['git', 'reset', '--hard', base_sha], cwd=repo, check=True, capture_output=True)
+
+    output_file = tmp_path / 'github_output.txt'
+    result = run_browser_scope_step(repo, 'push', diverged_sha, output_file)
+    assert 'not an ancestor of HEAD; running legacy browser suite' in result.stdout
     assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
