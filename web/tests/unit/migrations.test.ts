@@ -59,6 +59,15 @@ describe('migration files', () => {
     expect(findDestructiveSql("DO 'BEGIN EXECUTE ''TRUNCATE companies''; END';")).toBe('TRUNCATE');
   });
 
+  it('refuses a destructive statement split by a comment inside a block that runs it', () => {
+    expect(findDestructiveSql('DO $$ BEGIN DELETE /* cleanup */ FROM companies; END $$;')).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO $$ BEGIN DELETE -- cleanup\nFROM companies; END $$;")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO 'BEGIN DELETE /* x */ FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO E'BEGIN DELETE /* x */ FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql('DO $a$ BEGIN EXECUTE $b$DELETE/**/FROM companies$b$; END $a$;')).toBe('DELETE FROM');
+    expect(findDestructiveSql("SELECT 'unterminated DROP")).toBe('DROP');
+  });
+
   it('reads nested block comments the way Postgres does', () => {
     expect(findDestructiveSql('/* outer /* inner */ DROP still a comment */ SELECT 1;')).toBeNull();
     expect(findDestructiveSql('/* outer /* inner */ */ DROP TABLE companies;')).toBe('DROP');

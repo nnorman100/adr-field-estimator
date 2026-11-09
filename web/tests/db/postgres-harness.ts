@@ -18,7 +18,8 @@ export type DisposablePostgres = {
 };
 
 // Live is never a place for a throwaway database. An external URL must be loopback and
-// opted in, so a Cloud SQL proxy on localhost is not wiped by accident.
+// opted in, so a Cloud SQL proxy on localhost is not wiped by accident. Query parameters and
+// fragments are refused because the driver lets them change the host and database it connects to.
 export function assertHarnessAllowed(env: Record<string, string | undefined>): void {
   if (env.APP_ENV === 'live') {
     throw new Error('Refusing to start a disposable database when APP_ENV is live');
@@ -30,6 +31,9 @@ export function assertHarnessAllowed(env: Record<string, string | undefined>): v
     url = new URL(databaseUrl);
   } catch {
     throw new Error('DATABASE_URL must be a postgres URL');
+  }
+  if (/[?#]/.test(databaseUrl)) {
+    throw new Error('DATABASE_URL for a throwaway database must not carry query parameters or a fragment');
   }
   const host = url.hostname;
   if (host !== 'localhost' && host !== '127.0.0.1' && host !== '::1') {

@@ -63,7 +63,7 @@ function endOfQuoted(sql: string, start: number, quote: string, backslash: boole
       i += 1;
     }
   }
-  return sql.length;
+  return sql.length + 1;
 }
 
 function endOfBlockComment(sql: string, start: number): number {
@@ -84,8 +84,15 @@ function endOfBlockComment(sql: string, start: number): number {
   return sql.length;
 }
 
-// Comments may discuss the removal rule, so they are blanked the way Postgres reads them. String,
-// identifier and dollar-quoted text stays in the scan, because DO blocks and EXECUTE run it.
+function unescapeEString(body: string): string {
+  return body.replace(/\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/g, (_, c) =>
+    c === "'" ? "'" : ' ',
+  );
+}
+
+// Comments may discuss the removal rule, so they are blanked the way Postgres reads them. String
+// and dollar-quoted bodies stay in the scan with their own comments blanked, because DO blocks and
+// EXECUTE run that text. Identifier text stays as written.
 function stripSqlComments(sql: string): string {
   let out = '';
   let i = 0;
@@ -103,13 +110,22 @@ function stripSqlComments(sql: string): string {
       out += ' ';
       continue;
     }
-    if (ch === "'" || ch === '"') {
+    if (ch === "'") {
+      end = endOfQuoted(sql, i, ch, false);
+      out += ` ${stripSqlComments(sql.slice(i + 1, end - 1).replaceAll("''", "'"))} `;
+      i = end;
+      continue;
+    } else if (ch === '"') {
       end = endOfQuoted(sql, i, ch, false);
     } else if (ch === '$') {
       const tag = DOLLAR_TAG.exec(sql.slice(i))?.[0];
       if (tag) {
         const close = sql.indexOf(tag, i + tag.length);
         end = close === -1 ? sql.length : close + tag.length;
+        const body = sql.slice(i + tag.length, close === -1 ? sql.length : close);
+        out += ` ${stripSqlComments(body)} `;
+        i = end;
+        continue;
       } else {
         end = i + 1;
         while (end < sql.length && /[0-9]/.test(sql[end] ?? '')) end += 1;
@@ -118,7 +134,11 @@ function stripSqlComments(sql: string): string {
       end = i + 1;
       while (end < sql.length && IDENTIFIER_PART.test(sql[end] ?? '')) end += 1;
       if (end === i + 1 && (ch === 'e' || ch === 'E') && sql[end] === "'") {
-        end = endOfQuoted(sql, end, "'", true);
+        const close = endOfQuoted(sql, end, "'", true);
+        const body = unescapeEString(sql.slice(end + 1, close - 1)).replaceAll("''", "'");
+        out += ` ${stripSqlComments(body)} `;
+        i = close;
+        continue;
       }
     } else {
       end = i + 1;

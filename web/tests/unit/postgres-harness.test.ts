@@ -16,6 +16,18 @@ describe('disposable database guard', () => {
     expect(() => assertHarnessAllowed(env)).not.toThrow(/super-secret-db-password/);
   });
 
+  it('refuses query parameters that move the connection to another host or database', () => {
+    for (const DATABASE_URL of [
+      'postgres://user:password@127.0.0.1/postgres?host=remote-db.example',
+      'postgres://user:password@127.0.0.1/postgres?database=dryscope',
+      'postgres://user:password@127.0.0.1#@remote-db.example/postgres',
+    ]) {
+      expect(() =>
+        assertHarnessAllowed({ APP_ENV: 'test', DATABASE_URL, DRYSCOPE_DISPOSABLE_DATABASE: '1' }),
+      ).toThrow(/query parameters or a fragment/);
+    }
+  });
+
   it('requires an explicit opt-in before using DATABASE_URL', () => {
     expect(() =>
       assertHarnessAllowed({
