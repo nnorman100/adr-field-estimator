@@ -253,3 +253,16 @@ Target acceptance checks (**not built**):
 Still **[open]**: an explicit field-owner transfer (the plan's alternative, preserving pending work
 and an audit), and how today's rule that a company owner or assignee can edit scope maps onto
 field ownership.
+
+### 6.3 Live voice walkthrough as the default
+
+Source: owner decision of 2026-11-09 ("I want live voice as the default option").
+
+In the rebuild, the Live voice walkthrough is the default way to capture a job, and the job editor
+leads with it. Manual scope entry, offline voice notes and photos stay available as fallbacks
+whenever Live cannot run: no signal, AI switched off, or a company or user without Live.
+
+Target acceptance check (**not built**):
+
+- When Live is unavailable, the technician can still complete the job through manual scope entry,
+  offline voice notes and photos.
