@@ -10,7 +10,8 @@ import { V2 } from './table';
 import { aiNote, plain, technicianStatement } from './text';
 import { BASELINE_SOURCES, SCOPE_EXCLUDED, V1, priceScopeV1, proposalRange } from './price-v1';
 import { priceAndRange, type End, type Totals } from './totals';
-import { documentLine, floatMoney, has, isObj, oneLine, type PriceLine } from './values';
+import { collapse, documentLine, floatMoney, has, isObj, oneLine, type PriceLine } from './values';
+import { pyRe, pyStrip } from './pystr';
 import type { JobPin } from './pin';
 
 const PROPOSAL_DATE = '11-06-2026';
@@ -95,9 +96,11 @@ function claimText(value: JVal | undefined, max: number): string {
   return value === undefined ? '' : toStr(value, 'claim', 0, max);
 }
 
+const EMAIL = pyRe(String.raw`^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$`);
+
 function claimEmail(value: JVal | undefined): string {
-  const text = claimText(value, 254).trim().toLowerCase();
-  if (text && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(text)) fail('claim email');
+  const text = pyStrip(claimText(value, 254)).toLowerCase();
+  if (text && !EMAIL.test(text)) fail('claim email');
   return text;
 }
 
@@ -262,7 +265,7 @@ function wording(extra: Inspection['extras'][number], company: string): string {
 function notesOf(data: Inspection): JObj[] | null {
   const rooms = new Map<string, string>();
   for (const room of data.rooms) {
-    const key = room.name.split(/\s+/).filter(Boolean).join(' ').toLowerCase();
+    const key = collapse(room.name);
     if (!rooms.has(key)) rooms.set(key, room.name);
   }
   const notes: JObj[] = [];
@@ -270,7 +273,7 @@ function notesOf(data: Inspection): JObj[] | null {
     const split = key.lastIndexOf(':');
     const name = split >= 0 ? key.slice(0, split) : '';
     const field = split >= 0 ? key.slice(split + 1) : key;
-    const room = rooms.get(name.split(/\s+/).filter(Boolean).join(' ').toLowerCase());
+    const room = rooms.get(collapse(name));
     const label = room ? ROOM_LABELS[field] : JOB_LABELS[key];
     if (!label || override.measured.eq(override.entered)) continue;
     const row: JObj = {
@@ -323,7 +326,7 @@ function addressee(claim: JObj): string {
   const carrier = typeof claim.carrier === 'string' ? claim.carrier : '';
   const contact = [claim.adjuster_email, claim.adjuster_phone].filter((value) => typeof value === 'string' && value).join(' \u00b7 ');
   return ['TO: ' + (name ? `${name}, Adjuster` : 'Insurance Claims Examiner / Adjuster'), carrier, contact]
-    .filter((value) => value.trim())
+    .filter((value) => pyStrip(value))
     .join('\n');
 }
 
@@ -343,8 +346,8 @@ function estimateSentence(v2: boolean, total: number, low: Dec, high: Dec | null
 function letterhead(parts: string[]): string {
   return parts
     .map((part) => part.replaceAll('\u2022', '\u00b7'))
-    .map((part) => part.split(/\s+/).filter(Boolean).join(' '))
-    .filter((part) => part.trim())
+    .map((part) => oneLine(part))
+    .filter((part) => pyStrip(part))
     .join(' \u00b7 ');
 }
 
@@ -369,7 +372,7 @@ export function makeDocuments(input: {
   const companyLicense = typeof identity?.license === 'string' ? identity.license : '';
   const companyPhone = typeof identity?.phone === 'string' ? identity.phone : '';
   const signoff = typeof identity?.signoff === 'string' ? identity.signoff : '';
-  const clauseCompany = companyName.trim() || 'the contractor';
+  const clauseCompany = pyStrip(companyName) || 'the contractor';
   const setup = identity
     ? (
         [
@@ -380,10 +383,10 @@ export function makeDocuments(input: {
         ] as const
       ).flatMap(([key, label]) => {
         const field = identity[key];
-        return typeof field === 'string' && field.trim() ? [] : [label];
+        return typeof field === 'string' && pyStrip(field) ? [] : [label];
       })
     : [];
-  if (!data.address.trim() || data.yearBuilt === null || data.rooms.length === 0) {
+  if (!pyStrip(data.address) || data.yearBuilt === null || data.rooms.length === 0) {
     fail('Enter the address, year built and rooms before auditing.');
   }
   if (data.packagePrice !== null) fail('Update the app and clear the old package-tier selection before auditing.');
@@ -439,7 +442,7 @@ export function makeDocuments(input: {
     : `The home was built in ${data.yearBuilt}. Therefore, no lead or asbestos testing is required prior to the start of work.`;
   const clauses = [...(before ? [PRETEST] : []), EXCLUSIONS.replaceAll('{company}', clauseCompany), REPRICE, VALIDITY];
   const observations = [age];
-  if (data.technicianNotes.trim()) observations.push(`Technician observations: ${data.technicianNotes.trim()}`);
+  if (pyStrip(data.technicianNotes)) observations.push(`Technician observations: ${pyStrip(data.technicianNotes)}`);
   const statement = technicianStatement(data.technicianTranscript);
   if (statement) observations.push(`Technician walkthrough statement: ${statement}`);
   photos.forEach((photo, index) => {
@@ -455,12 +458,12 @@ export function makeDocuments(input: {
     ...items.filter((item) => (estimate ? item.group !== 'job_charges' : !SCOPE_EXCLUDED.has(item.code))).map((item) => item.description),
     ADDITIONAL,
   ];
-  const customer = input.customerName.trim();
+  const customer = pyStrip(input.customerName);
   const head = letterhead([
     companyName,
     companyAddress,
     companyPhone,
-    companyLicense.trim() ? `CSLB #${companyLicense}` : '',
+    pyStrip(companyLicense) ? `CSLB #${companyLicense}` : '',
   ]);
   const sizing = letterParagraph(equipmentSizing(data));
   const rawClaim = isObj(input.claim) ? input.claim : {};
@@ -476,7 +479,7 @@ export function makeDocuments(input: {
     `Scope:\n${recommendations.join('\n')}`,
     clauses.join('\n'),
     estimateSentence(Boolean(estimate), total, low, high, items, explanation, single),
-    ['Sincerely,', signoff, companyName].filter((line) => line.trim()).join('\n'),
+    ['Sincerely,', signoff, companyName].filter((line) => pyStrip(line)).join('\n'),
   ].join('\n\n');
   const worked = estimate && input.pin ? hasWork(items, input.pin, data) : v1Work(data);
   const proposed = high ? jfloat(high.toNumber()) : jfloat(low.toNumber());

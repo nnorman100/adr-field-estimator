@@ -1,5 +1,6 @@
 // Owner price-table normalization. Decimal strings match price_table.py, including fixed padding.
 
+import { asciiDigits, chars, printable, pyRe, pyStrip } from './pystr';
 import { createHash } from 'node:crypto';
 
 import { Dec, ZERO } from './decimal';
@@ -59,7 +60,7 @@ export const DEFAULT_AFTER_HOURS_LABEL = 'After-hours adjustment';
 const ITEM_ID = /^[a-z][a-z0-9_]{1,39}$/;
 const CODE_RE = /^[A-Z0-9][A-Z0-9-]{0,15}$/;
 const XACT = /^[A-Z0-9][A-Z0-9 ._/-]{0,29}$/;
-const DECIMAL_RE = /^\d+(?:\.\d+)?$/;
+const DECIMAL_RE = pyRe(String.raw`^\d+(?:\.\d+)?$`);
 const FORMULA = /^[=+\-@]/;
 
 export type Source = {
@@ -182,11 +183,11 @@ function decimalStr(
   if (raw === undefined || raw === null || typeof raw === 'boolean' || raw instanceof JFloat) {
     throw new Error('decimal');
   }
-  const text = typeof raw === 'string' ? raw.trim() : raw instanceof JInt ? String(raw.value) : '';
+  const text = typeof raw === 'string' ? pyStrip(raw) : raw instanceof JInt ? raw.big.toString() : '';
   if (!DECIMAL_RE.test(text)) throw new Error('decimal');
   const fraction = text.split('.')[1];
-  if (fraction && fraction.length > maxDecimals) throw new Error('decimal places');
-  const amount = Dec.parse(text);
+  if (fraction && chars(fraction) > maxDecimals) throw new Error('decimal places');
+  const amount = Dec.parse(asciiDigits(text));
   if (amount.cmp(low) < 0 || amount.cmp(high) > 0) throw new Error('decimal range');
   if (fixed !== null) return fixedText(amount, fixed);
   if (amount.isZero()) return '0';
@@ -195,14 +196,11 @@ function decimalStr(
   return normalized.replace(/0+$/, '').replace(/\.$/, '') || '0';
 }
 
-function printable(raw: JVal | undefined, min: number, max: number): string {
+function tableText(raw: JVal | undefined, min: number, max: number): string {
   if (typeof raw !== 'string') throw new Error('text');
-  const text = raw.trim();
-  if (text.length < min || text.length > max) throw new Error('text length');
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 32 || code === 127 || (code >= 128 && code <= 159)) throw new Error('text');
-  }
+  const text = pyStrip(raw);
+  if (chars(text) < min || chars(text) > max) throw new Error('text length');
+  if (!printable(text)) throw new Error('text');
   if (FORMULA.test(text)) throw new Error('text');
   return text;
 }
@@ -231,7 +229,7 @@ function normalizeBrackets(raw: JVal, valueField: 'unit_price' | 'percent', allo
     }
     let stored: string;
     const value = band[valueField];
-    if (allowBlank && typeof value === 'string' && value.trim() === '') stored = '';
+    if (allowBlank && typeof value === 'string' && pyStrip(value) === '') stored = '';
     else {
       stored = decimalStr(
         value,
@@ -267,9 +265,9 @@ export function normalizeItems(raw: JVal, publish: boolean, acknowledgements: st
     if (typeof itemId !== 'string' || !ITEM_ID.test(itemId)) throw new Error(`id ${index}`);
     const rawCode = value.code;
     let code: string;
-    if (rawCode === undefined || rawCode === null || (typeof rawCode === 'string' && rawCode.trim() === '')) {
+    if (rawCode === undefined || rawCode === null || (typeof rawCode === 'string' && pyStrip(rawCode) === '')) {
       code = defaultCode(itemId);
-    } else if (typeof rawCode === 'string') code = rawCode.trim();
+    } else if (typeof rawCode === 'string') code = pyStrip(rawCode);
     else throw new Error('code');
     if (!CODE_RE.test(code)) throw new Error('code');
     if (seenIds.has(itemId) || seenCodes.has(code)) throw new Error('duplicate');
@@ -277,10 +275,10 @@ export function normalizeItems(raw: JVal, publish: boolean, acknowledgements: st
     seenCodes.add(code);
     const group = value.group;
     if (typeof group !== 'string' || !GROUPS.includes(group as (typeof GROUPS)[number])) throw new Error('group');
-    const name = printable(value.name, 1, 80);
+    const name = tableText(value.name, 1, 80);
     let descRaw = value.customer_description;
     if (descRaw === undefined || descRaw === null) descRaw = '';
-    const customerDescription = printable(descRaw, 0, 300);
+    const customerDescription = tableText(descRaw, 0, 300);
     const unit = value.unit;
     if (typeof unit !== 'string' || !UNITS.includes(unit as (typeof UNITS)[number])) throw new Error('unit');
     const sourceText = value.quantity_source;
@@ -306,7 +304,7 @@ export function normalizeItems(raw: JVal, publish: boolean, acknowledgements: st
     let priceRaw = value.unit_price;
     if (priceRaw === undefined || priceRaw === null) priceRaw = '';
     let unitPrice: string;
-    if (typeof priceRaw === 'string' && priceRaw.trim() === '') {
+    if (typeof priceRaw === 'string' && pyStrip(priceRaw) === '') {
       if (publish && enabled && !brackets) throw new Error('price');
       unitPrice = '';
     } else {
@@ -353,7 +351,7 @@ export function normalizeItems(raw: JVal, publish: boolean, acknowledgements: st
     let xactRaw = value.xactimate_code;
     if (xactRaw === undefined || xactRaw === null) xactRaw = '';
     if (typeof xactRaw !== 'string') throw new Error('xact');
-    const xactimateCode = xactRaw.trim();
+    const xactimateCode = pyStrip(xactRaw);
     if (xactimateCode && !XACT.test(xactimateCode)) throw new Error('xact');
     const orderRaw = has(value, 'sort_order') && value.sort_order !== null ? value.sort_order : 0;
     const sortOrder = asInt(orderRaw === 0 ? jint(0) : orderRaw, 0, 10000);
@@ -438,7 +436,7 @@ export function normalizePolicy(raw: JVal): Policy {
   }
   if (!isObj(raw.after_hours)) throw new Error('after hours');
   const multiplier = decimalStr(raw.after_hours.multiplier, Dec.parse('1'), Dec.parse('2'), 3, 3);
-  const label = printable(
+  const label = tableText(
     raw.after_hours.label === undefined ? DEFAULT_AFTER_HOURS_LABEL : raw.after_hours.label,
     1,
     80,

@@ -357,15 +357,6 @@ export const ONE = Dec.fromInt(1);
 export const HUNDRED = Dec.fromInt(100);
 export const CENT = Dec.parse('0.01');
 
-export function D(value: string | number | Dec): Dec {
-  if (value instanceof Dec) return value;
-  if (typeof value === 'number') {
-    if (Number.isInteger(value)) return Dec.fromInt(value);
-    throw new Error('Use Dec.parse for non-integer numbers');
-  }
-  return Dec.parse(value);
-}
-
 export function money(value: Dec): Dec {
   return value.quantize(-2, 'HALF_UP');
 }
@@ -381,10 +372,6 @@ export function maxDec(left: Dec, right: Dec): Dec {
 
 export function minDec(left: Dec, right: Dec): Dec {
   return left.cmp(right) <= 0 ? left : right;
-}
-
-export function maxOf(values: Dec[], fallback: Dec = ZERO): Dec {
-  return values.reduce((best, value) => maxDec(best, value), values[0] ?? fallback);
 }
 
 export function percentText(value: Dec | string): string {

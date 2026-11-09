@@ -12,8 +12,16 @@ import json
 
 from pydantic import ValidationError
 
-from backend.contracts import ClaimDetails, CompanyIdentity, InspectionData, PhotoLog
+from backend import claims, price_table
+from backend.contracts import (
+    ClaimDetails,
+    CompanyIdentity,
+    InspectionData,
+    PhotoLog,
+    distinct_rooms,
+)
 from backend.main import inspection_payload
+from scripts.pricing_oracle_cases_v2 import table
 
 HEX = '0123456789abcdef' * 2
 NUMBERS = [
@@ -61,6 +69,122 @@ CLAIM_DATES = [
     *('2026-10-10', '2026-02-30', '2024-02-29', '2025-02-29', ' 2026-10-10', '2026-10-10 '),
     *('', '2026-1-10', '20261010', '2026/10/10', '2099-01-01', '0000-01-01', '0001-01-01'),
     *('٢٠٢٦-١٠-١٠', None, 5, True),
+]
+
+SPACES = (
+    '\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0\u1680\u2003\u2028\u2029\u202f\u205f\u3000\ufeff\u200b'
+)
+UNICODE_TEXT = [
+    *(f'Water{space}extraction' for space in SPACES),
+    *(f'{space}Water extraction{space}' for space in SPACES),
+    *(
+        '\U0001f4a7' * 80,
+        '\U0001f4a7' * 81,
+        'e\u0301' * 40,
+        'e\u0301' * 41,
+        '\U0001d7cf\u0661\uff11',
+    ),
+    *('Wa\u00adter', 'Wa\u200dter', 'Wa\ue000ter', 'Wa\U000e0001ter', 'Wa\u0378ter', '=SUM', ' -1'),
+    *(
+        'K\u0130TCHEN',
+        'k\u0131tchen',
+        'Kitchen',
+        ' kitchen ',
+        'KITCHEN',
+        'kitche\u0274',
+        'ki\u0307tchen',
+    ),
+    *('a@b.co', ' A@B.CO ', 'a\u00a0b@c.de', 'a@b\u2003.de', 'a\x1c@b.de', '\u0130@x.io', 'a@b'),
+]
+AI_TEXT = [
+    *(
+        'The cost is \uff11\uff10\uff10.',
+        'The cost is \u0663.',
+        'The cost is \u2460.',
+        'Price five.',
+    ),
+    *('The pr\u0131ce is 5.', 'The PR\u0130CE is 5.', 'Co\u017ft 5.', 'Fee \u00bd.', 'Fees: two.'),
+    *(
+        'Total \U0001d7d1 rooms.',
+        'Totals\u0301 3.',
+        '\u00e9total 3.',
+        'total\u00e9 3.',
+        'ztotal 3.',
+    ),
+    *('Costs ten\u0301 dollars.', 'It is \u20ac5.', 'It is 5 USD.', 'It is 5 \uff35\uff33\uff24.'),
+    *(
+        'Five bucks.',
+        'Five BUCKS.',
+        'Ninety-nine cents.',
+        'cents\u00e9 apply.',
+        '\u00e9cents apply.',
+    ),
+    *('caf\u00e9_bar metadata.', '\u00e9x_y field.', 'snake_case_ok here.', 'x_\u00e9y here.'),
+    *(
+        'JSON data here.',
+        'JSON\u00a0data here.',
+        'The\u2003inspection JSON record.',
+        'json\u0301 data.',
+    ),
+    *(
+        '\u0130nspection JSON payload starts.',
+        'inspect\u0131on JSON.',
+        'The ſaved JSON.',
+        'METADATA.',
+    ),
+    *(
+        'One.\u2028Two dollars.',
+        'Line one\x1cLine two cost 5.',
+        'A.\u00a0B costs 4.',
+        'A.\x85B costs 4.',
+    ),
+    *('A.\u3000B costs 4.', 'A.\ufeffB costs 4.', 'A.\x0bB costs 4.', 'A.\x0cB.\rC price 9.'),
+    *('  Padded.\u00a0', '\u2028', 'Quote\u00a0three.', 'Budget ‒ \u0967.', 'Ch\u0430rge 5.'),
+]
+TRANSCRIPTS = [
+    *(
+        'Okay. Water under sink.',
+        'OKAY!',
+        'o\u212a.',
+        '\u017fure.',
+        'H\u0131.',
+        'H\u0130.',
+        'Hi\u0345.',
+    ),
+    *(
+        'Thanks\u2028Moisture high.',
+        'Hello\x0bWet drywall.',
+        '\ufb01ne.',
+        'Great. Great.',
+        '  Hello  ',
+    ),
+    *(
+        'Good morning.\u00a0Wet.',
+        'Good morning.\u3000Wet.',
+        'Good morning.\ufeffWet.',
+        'Bye\x1cWet.',
+    ),
+    *('Thank you very much. Wet\x85Dry.', 'ok\u00a0ok', 'ok\u2003ok.', 'Um, uh. Wet.', '\u1e96mm.'),
+    *(
+        'Gr\u00e9at.',
+        'GREAT\u0301.',
+        'can I add a photo',
+        'Can I add a ph\u00f6to?',
+        'Stra\u00dfe.',
+    ),
+]
+TABLE_DECIMALS = [
+    *(
+        '12.50',
+        ' 12.50 ',
+        '\u00a012.50',
+        '\x1c12.50',
+        '\ufeff12.50',
+        '\u0661\u0662.\u0665',
+        '\U0001d7cf2',
+    ),
+    *('\uff11\uff12', '12.505', '12.\u0665\u0660\u0660', '1_2', '+12', '-12', '12.', '.5', '1e1'),
+    *(12, 0, -1, 12.5, True, None, '', ' ', '0', '0.00', '9' * 30),
 ]
 
 ROOM = {'name': 'Kitchen'}
@@ -209,12 +333,58 @@ TARGETS = [
     ('identity-name', 'identity', IDENTITY, ['name'], TEXT),
     ('claim-carrier', 'claim', {}, ['carrier'], TEXT),
     ('claim-date', 'claim', {}, ['date_of_loss'], CLAIM_DATES),
+    ('unicode-room-name', 'inspection', {'rooms': [ROOM]}, ['rooms', 0, 'name'], UNICODE_TEXT),
+    (
+        'unicode-room-key',
+        'rooms',
+        {'rooms': [ROOM, {'name': 'Hall'}]},
+        ['rooms', 1, 'name'],
+        UNICODE_TEXT,
+    ),
+    (
+        'unicode-extra-description',
+        'inspection',
+        {'extras': [EXTRA]},
+        ['extras', 0, 'description'],
+        UNICODE_TEXT,
+    ),
+    (
+        'unicode-override-reason',
+        'inspection',
+        {'quantity_overrides': {'air_movers': OVERRIDE}},
+        ['quantity_overrides', 'air_movers', 'reason'],
+        UNICODE_TEXT,
+    ),
+    ('unicode-claim-carrier', 'claim', {}, ['carrier'], UNICODE_TEXT),
+    ('unicode-claim-email', 'claim', {}, ['adjuster_email'], UNICODE_TEXT),
+    ('unicode-table-name', 'table', table(), ['items', 0, 'name'], UNICODE_TEXT),
+    (
+        'unicode-table-description',
+        'table',
+        table(),
+        ['items', 0, 'customer_description'],
+        UNICODE_TEXT,
+    ),
+    ('unicode-table-code', 'table', table(), ['items', 0, 'code'], UNICODE_TEXT),
+    ('unicode-table-label', 'table', table(), ['policy', 'after_hours', 'label'], UNICODE_TEXT),
+    ('unicode-table-price', 'table', table(), ['items', 0, 'unit_price'], TABLE_DECIMALS),
+    ('unicode-ai-note', 'ai_note', {'text': ''}, ['text'], AI_TEXT),
+    ('unicode-statement', 'statement', {'text': ''}, ['text'], TRANSCRIPTS),
 ]
 
 
 def _dump(model, data):
     if model == 'inspection':
         return inspection_payload(InspectionData.model_validate(data))
+    if model == 'rooms':
+        return inspection_payload(distinct_rooms(InspectionData.model_validate(data)))
+    if model == 'table':
+        return price_table.normalize_table(data, publish=True, acknowledgements=[])
+    if model == 'ai_note':
+        return {'text': claims.ai_note(data['text'])}
+    if model == 'statement':
+        transcript = InspectionData(technician_transcript=data['text'])
+        return {'text': claims.technician_statement(transcript)}
     if model == 'photo':
         return PhotoLog.model_validate(data).model_dump(mode='json', exclude_none=True)
     if model == 'identity':
@@ -246,7 +416,7 @@ def probe(model, template, path, value):
     data = json.loads(json.dumps(data))
     try:
         dumped = _dump(model, data)
-    except ValidationError:
+    except (ValidationError, ValueError):
         return {'input': value, 'accepted': False}
     return {'input': value, 'accepted': True, **_get(dumped, path)}
 

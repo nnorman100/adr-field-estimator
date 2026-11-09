@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { claimOf, identityOf, photoRecord } from '../../src/engine/documents';
-import { dumpInspection, validateInspection } from '../../src/engine/inspection';
+import { distinctRooms, dumpInspection, validateInspection } from '../../src/engine/inspection';
+import { itemToJ, normalizeTable, policyToJ } from '../../src/engine/table';
+import { aiNote, technicianStatement } from '../../src/engine/text';
 import { canonical, parseJson, type JObj, type JVal } from '../../src/engine/json';
 
 const root = fileURLToPath(
@@ -19,6 +21,17 @@ type Path = Array<string | number>;
 
 function dump(model: string, data: JVal): JVal {
   if (model === 'inspection') return dumpInspection(validateInspection(data));
+  if (model === 'rooms') {
+    const inspection = validateInspection(data);
+    distinctRooms(inspection);
+    return dumpInspection(inspection);
+  }
+  if (model === 'table') {
+    const table = normalizeTable(data, true, []);
+    return { items: table.items.map((item) => itemToJ(item)), policy: policyToJ(table.policy) };
+  }
+  if (model === 'ai_note') return { text: aiNote(String((data as JObj).text)) };
+  if (model === 'statement') return { text: technicianStatement(String((data as JObj).text)) };
   if (model === 'photo') return photoRecord(data);
   if (model === 'identity') return identityOf(data);
   if (model === 'claim') return claimOf(data);

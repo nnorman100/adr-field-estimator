@@ -28,6 +28,11 @@ export type JNum = JInt | JFloat;
 export type JObj = { [key: string]: JVal };
 export type JVal = null | boolean | string | JNum | JVal[] | JObj;
 
+/** A key-value record without a prototype, so every key reads as Python dict.get reads it. */
+export function dict<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 export function jint(value: number): JInt {
   return new JInt(value);
 }
@@ -36,39 +41,9 @@ export function jfloat(value: number): JFloat {
   return new JFloat(value);
 }
 
-export function isNum(value: JVal): value is JNum {
-  return value instanceof JInt || value instanceof JFloat;
-}
-
-export function asNumber(value: JVal): number {
-  if (value instanceof JInt || value instanceof JFloat) return value.value;
-  throw new Error('Expected a number');
-}
-
 export function asString(value: JVal): string {
   if (typeof value === 'string') return value;
   throw new Error('Expected a string');
-}
-
-export function asObject(value: JVal): JObj {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value) && !isNum(value)) {
-    return value;
-  }
-  throw new Error('Expected an object');
-}
-
-export function asArray(value: JVal): JVal[] {
-  if (Array.isArray(value)) return value;
-  throw new Error('Expected an array');
-}
-
-/** Drop undefined entries so optional document keys stay absent. */
-export function jobj(entries: Record<string, JVal | undefined>): JObj {
-  const out: JObj = {};
-  for (const [key, value] of Object.entries(entries)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
 }
 
 /** Decimal(str(float)), the conversion the pricing code uses when it rereads a JSON number. */
@@ -209,7 +184,7 @@ class Parser {
 
   private parseObject(): JObj {
     this.index += 1;
-    const out: JObj = {};
+    const out = dict<JVal>();
     this.skip();
     if (this.text[this.index] === '}') {
       this.index += 1;

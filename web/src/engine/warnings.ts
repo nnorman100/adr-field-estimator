@@ -8,6 +8,7 @@ import { priceScopeV2 } from './price-v2';
 import { equipmentSizing, type Sizing } from './sizing';
 import { COUNT_DAYS, FIELD_SOURCES, parseSource, type Table } from './table';
 import { decFloat, numberText, orZero, truthy } from './values';
+import { pyStrip } from './pystr';
 import type { Priced } from './totals';
 
 const COMPARABLE_LOW = Dec.parse('2').div(Dec.parse('3'));
@@ -57,7 +58,7 @@ function roomWarnings(data: Inspection, table: Table): JObj[] {
     const other = roomArea(room, !wet);
     const used = truthy(area) ? area : other;
     if (!truthy(used)) continue;
-    const name = room.name.trim() || 'Unnamed room';
+    const name = pyStrip(room.name) || 'Unnamed room';
     found.push(
       warning(
         'unpriced_room',

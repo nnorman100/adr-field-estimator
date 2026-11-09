@@ -1,8 +1,9 @@
 // InspectionData validation and the inspection_payload dump. Types match pydantic's JSON dump.
 
-import { chars, printable, places, toBool, toChoice, toDateTime, toDecimal, toFloat, toInt, toIntChoice, toPattern, toStr } from './coerce';
+import { places, toBool, toChoice, toDateTime, toDecimal, toFloat, toInt, toIntChoice, toPattern, toStr } from './coerce';
+import { chars, printable } from './pystr';
 import { Dec, ZERO } from './decimal';
-import { JInt, type JObj, type JVal, jfloat, jint } from './json';
+import { JInt, type JObj, type JVal, dict, jfloat, jint } from './json';
 import { collapse, decFloat, decInt, has, isObj, oneLine, orZero } from './values';
 
 export class Reject extends Error {
@@ -451,7 +452,7 @@ export function validateInspection(value: JVal): Inspection {
     if (!isObj(raw.scope_items)) bad('scope');
     const entries = Object.entries(raw.scope_items);
     if (entries.length > 150) bad('scope');
-    scope = {};
+    scope = dict<ScopeEntry>();
     for (const [key, entry] of entries) {
       if (!/^[a-z][a-z0-9_]{1,39}$/.test(key)) bad('scope id');
       scope[key] = readScope(entry as JVal);
@@ -462,7 +463,7 @@ export function validateInspection(value: JVal): Inspection {
     if (!isObj(raw.quantity_overrides)) bad('overrides');
     const entries = Object.entries(raw.quantity_overrides);
     if (entries.length > 150) bad('overrides');
-    overrides = {};
+    overrides = dict<QuantityOverride>();
     for (const [key, entry] of entries) {
       if (chars(key) < 1 || chars(key) > 120) bad('override key');
       overrides[key] = readOverride(entry as JVal);
@@ -594,7 +595,7 @@ export function dumpInspection(data: Inspection): JObj {
     }));
   }
   if (data.scopeItems) {
-    const items: JObj = {};
+    const items = dict<JVal>();
     for (const [key, entry] of Object.entries(data.scopeItems)) {
       const row: JObj = {
         count: jint(entry.count),
@@ -609,7 +610,7 @@ export function dumpInspection(data: Inspection): JObj {
   }
   if (data.seededFromVersion !== null) out.seeded_from_version = data.seededFromVersion;
   if (data.quantityOverrides) {
-    const rows: JObj = {};
+    const rows = dict<JVal>();
     for (const [key, entry] of Object.entries(data.quantityOverrides)) {
       const row: JObj = {
         entered: entry.entered.toString(),

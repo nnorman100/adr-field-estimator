@@ -3,7 +3,7 @@
     "adr-residential-v1",
     "dryscope-v2"
   ],
-  "case_count": 205,
+  "case_count": 208,
   "cases": [
     {"calculation_version": "adr-residential-v1", "file": "cases/v1-ai-text-cleaned.json", "id": "v1-ai-text-cleaned", "sha256": "b565f6eee0d578d118da380d1f6faba1e891dcabae4e203b6f301f333ed9b1c7", "tags": ["ai_text"]},
     {"calculation_version": "adr-residential-v1", "file": "cases/v1-capture-metadata-full.json", "id": "v1-capture-metadata-full", "sha256": "74f969cb2ad61611f699ba27f49ed997f3d9f255f242bcbf3bba371c82e2ea43", "tags": ["capture_metadata", "inspection_record"]},
@@ -151,6 +151,9 @@
     {"calculation_version": "dryscope-v2", "file": "cases/v2-minimum-both-ends.json", "id": "v2-minimum-both-ends", "sha256": "2a69b9c40a2711b718a60b8bbeed0869cfc61fd421643f2aa460a5086e6640cd", "tags": ["minimum_charge", "v2"]},
     {"calculation_version": "dryscope-v2", "file": "cases/v2-minimum-not-reached.json", "id": "v2-minimum-not-reached", "sha256": "adf932f2b7ca4c17905ba628512323cb163ee837ac2634e7ba62bc3f0ac62f08", "tags": ["minimum_charge", "tax", "v2"]},
     {"calculation_version": "dryscope-v2", "file": "cases/v2-one-cent-half-cent.json", "id": "v2-one-cent-half-cent", "sha256": "535205e1fb90d61aa29dc0dc821ba18ffdaae9a5d6565f30bfe00e6f64d62f28", "tags": ["cent_boundary", "half_cent", "v2"]},
+    {"calculation_version": "dryscope-v2", "file": "cases/v2-prototype-key-count-days.json", "id": "v2-prototype-key-count-days", "sha256": "386cfca6a9367b97b3bcd19ab62dba994420dc12d3be2456b50276249a57ec0e", "tags": ["typed", "unicode_keys", "v2"]},
+    {"calculation_version": "dryscope-v2", "file": "cases/v2-prototype-key-typed-entered.json", "id": "v2-prototype-key-typed-entered", "sha256": "47baf9b44a75e9ed5ecdcb0e3e06db528374e164bd4c6a62511f3fe2d0cf549b", "tags": ["typed", "unicode_keys", "v2"]},
+    {"calculation_version": "dryscope-v2", "file": "cases/v2-prototype-key-typed.json", "id": "v2-prototype-key-typed", "sha256": "a1ac8cf2775904f7a48b9a25a77ef2eea861717dc644322094c7d9db37f6d0b2", "tags": ["typed", "unicode_keys", "v2"]},
     {"calculation_version": "dryscope-v2", "file": "cases/v2-reject-count-days-empty-days.json", "id": "v2-reject-count-days-empty-days", "sha256": "9d30fde9519add9973c131ddff909f694be7f66cc8593430919783b6fe1297f0", "tags": ["quantity_source", "rejection", "v2"]},
     {"calculation_version": "dryscope-v2", "file": "cases/v2-reject-count-days-extra-factor.json", "id": "v2-reject-count-days-extra-factor", "sha256": "93f0f9183ba939d28775de9e35e7c8e803fd9a9d51049d037cc2fa4d0b8070f9", "tags": ["quantity_source", "rejection", "v2"]},
     {"calculation_version": "dryscope-v2", "file": "cases/v2-reject-count-days-no-days.json", "id": "v2-reject-count-days-no-days", "sha256": "707cebc8d1f368cfb3bc79d4e4e054436fa79d701e77d3abc9e62dfbbdc5aec4", "tags": ["quantity_source", "rejection", "v2"]},
@@ -212,7 +215,7 @@
     {"calculation_version": "dryscope-v2", "file": "cases/v2-zero-price-acknowledged.json", "id": "v2-zero-price-acknowledged", "sha256": "6869622c794e718202c0d2076fb590851d89e2766eb2c102871f863459e840dc", "tags": ["cent_boundary", "v2"]}
   ],
   "corpus_builder": "scripts/pricing_oracle_cases.py",
-  "corpus_sha256": "c967c2d7e1b0d1b4e2d0e660ab95f981383042d9fb612864496e557cb1325bc3",
+  "corpus_sha256": "39218397f7271b3b785a9af5a4dcd3a03820b345eb9829a24b097112f360ddd4",
   "environment": {
     "decimal_context": {"prec": 28, "rounding": "ROUND_HALF_EVEN"},
     "implementation": "CPython",

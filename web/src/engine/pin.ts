@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import type { JObj, JVal } from './json';
-import { JInt, asString, canonical, jint } from './json';
+import { JInt, asString, canonical, dict, jint } from './json';
 import { has, isObj } from './values';
 import {
   V2,
@@ -102,7 +102,7 @@ function v1Hash(rates: Record<string, string>, version: string): string {
 
 function readRates(raw: JVal | undefined): Record<string, string> {
   if (!isObj(raw)) throw new Error('rates');
-  const rates: Record<string, string> = {};
+  const rates = dict<string>();
   for (const [key, value] of Object.entries(raw)) {
     if (typeof value !== 'string') throw new Error('rate');
     rates[key] = value;

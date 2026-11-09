@@ -681,6 +681,33 @@ def seeded_v2(count=40, seed=19780102):
     return cases
 
 
+def _prototype_key_cases():
+    """An owner item id that names a JavaScript object prototype key reads only entered quantities."""
+    rooms = [room('Kitchen', 2, finished_sf=95)]
+    entered = {'baseboard_removal': {'quantity': '10'}}
+    rename = {'item_id': 'constructor', 'code': 'CONSTRUCTOR'}
+    return [
+        v2(
+            f'v2-prototype-key-{label}',
+            f'An item named constructor, {note}, prices from its own entry only',
+            ['typed', 'unicode_keys'],
+            job(rooms, scope_items=dict(entered, **extra)),
+            table({source: dict(rename, **change)}),
+        )
+        for label, note, source, change, extra in (
+            ('typed', 'typed and not entered', 'odor_treatment', {}, {}),
+            (
+                'typed-entered',
+                'typed and entered',
+                'odor_treatment',
+                {},
+                {'constructor': {'quantity': '2'}},
+            ),
+            ('count-days', 'counted by days and not entered', 'desiccant_dehumidifier', {}, {}),
+        )
+    ]
+
+
 def v2_cases():
     return (
         _policy_cases()
@@ -689,5 +716,6 @@ def v2_cases():
         + _bracket_cases()
         + _room_once_cases()
         + _scope_cases()
+        + _prototype_key_cases()
         + seeded_v2()
     )

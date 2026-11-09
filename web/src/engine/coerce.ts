@@ -3,6 +3,7 @@
 
 import { Dec } from './decimal';
 import { JFloat, JInt, type JVal, pyFloat } from './json';
+import { PY_SPACE, asciiDigits, chars } from './pystr';
 
 export class Invalid extends Error {
   constructor(message: string) {
@@ -17,18 +18,11 @@ function no(label: string): never {
 
 const RUST_SPACE =
   '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
-const PY_SPACE = `${RUST_SPACE}\\x1c-\\x1f`;
 const RUST_TRIM = new RegExp(`^[${RUST_SPACE}]+|[${RUST_SPACE}]+$`, 'g');
-const PY_SPACE_CHAR = new RegExp(`[${PY_SPACE}]`, 'g');
-const DIGIT = /\p{Nd}/u;
+const PY_SPACE_CHAR = new RegExp(`[${PY_SPACE}]`, 'gu');
 const DECIMAL_TEXT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 const INT_TEXT = /^([+-]?\d+(?:_\d+)*)(?:\.0+)?$/;
 const I64 = 2 ** 63;
-
-/** Code points, the unit of pydantic's min_length and max_length on strings. */
-export function chars(value: string): number {
-  return Array.from(value).length;
-}
 
 export function toStr(value: JVal | undefined, label: string, min = 0, max = Infinity): string {
   if (typeof value !== 'string') no(label);
@@ -95,18 +89,6 @@ export function toFloat(value: JVal | undefined, label: string): number {
   } else no(label);
   if (!Number.isFinite(n)) no(label);
   return n;
-}
-
-function asciiDigits(text: string): string {
-  let out = '';
-  for (const char of text) {
-    if (DIGIT.test(char) && char > '\u007f') {
-      let start = char.codePointAt(0) ?? 0;
-      while (DIGIT.test(String.fromCodePoint(start - 1))) start -= 1;
-      out += String(((char.codePointAt(0) ?? 0) - start) % 10);
-    } else out += char;
-  }
-  return out;
 }
 
 /** Decimal places after trailing zeros are dropped, as pydantic's decimal_places counts them. */
@@ -220,9 +202,4 @@ export function toDateTime(value: JVal | undefined, label: string): string {
   }
   const time = `${hour}:${minute}:${second}${Number(micro) ? `.${micro}` : ''}`;
   return `${year}-${month}-${day}T${time}${offset}`;
-}
-
-/** str.isprintable(): no control, format, surrogate, private, unassigned or separator characters but space. */
-export function printable(text: string): boolean {
-  return !/[\p{C}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u.test(text);
 }

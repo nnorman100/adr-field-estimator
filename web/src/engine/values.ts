@@ -1,6 +1,7 @@
 // Shared conversions. Money stays on Dec; a float is only the Python JSON number.
 
-import { Dec, HUNDRED, ONE, ZERO } from './decimal';
+import { Dec, ZERO } from './decimal';
+import { pySplit } from './pystr';
 import { JFloat, JInt, type JObj, type JVal, decFromFloat, jfloat, jint } from './json';
 
 export function isObj(value: JVal | undefined): value is JObj {
@@ -19,10 +20,6 @@ export function has(obj: JObj, key: string): boolean {
 
 export function truthy(value: Dec): boolean {
   return !value.isZero();
-}
-
-export function sub(left: Dec, right: Dec): Dec {
-  return left.add(right.neg());
 }
 
 export function decInt(value: number): Dec {
@@ -58,27 +55,11 @@ export function fixedText(value: Dec, places: number): string {
 }
 
 export function collapse(value: string): string {
-  return value.split(/\s+/).filter(Boolean).join(' ').toLowerCase();
+  return pySplit(value).join(' ').toLowerCase();
 }
 
 export function oneLine(value: string): string {
-  return value.split(/\s+/).filter(Boolean).join(' ');
-}
-
-export function jf(value: number): JFloat {
-  return jfloat(value);
-}
-
-export function ji(value: number): JInt {
-  return jint(value);
-}
-
-export function percentOf(value: Dec): Dec {
-  return value.div(HUNDRED);
-}
-
-export function onePlus(value: Dec): Dec {
-  return ONE.add(value);
+  return pySplit(value).join(' ');
 }
 
 export type PriceLine = {

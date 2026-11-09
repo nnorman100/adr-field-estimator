@@ -2,7 +2,7 @@
 
 import { Buffer } from 'node:buffer';
 
-import { JInt, canonical, jfloat, sha256, type JObj, type JVal } from './json';
+import { JInt, canonical, dict, jfloat, sha256, type JObj, type JVal } from './json';
 import { checkOverrides, distinctRooms, dumpInspection, validateInspection, type Inspection } from './inspection';
 import { pinAndBasis, type JobPin } from './pin';
 import { linesToJ, priceScopeV1, proposalRange, v1Buckets, V1 } from './price-v1';
@@ -37,7 +37,7 @@ function strings(value: JVal | undefined): string[] {
 
 function ratesOf(value: JVal | undefined): Record<string, string> | null {
   if (!isObj(value)) return null;
-  const rates: Record<string, string> = {};
+  const rates = dict<string>();
   for (const [key, item] of Object.entries(value)) {
     if (typeof item !== 'string') throw new Error('rates');
     rates[key] = item;

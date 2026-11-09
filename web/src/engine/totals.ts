@@ -17,7 +17,6 @@ import {
   type Band,
   type Item,
   type Policy,
-  type Table,
 } from './table';
 import { commas, decFloat, numberText, type PriceLine } from './values';
 import type { JobPin } from './pin';
@@ -516,7 +515,3 @@ export function priceAndRange(data: Inspection, pin: JobPin): Priced {
   };
 }
 
-export function tableOf(pin: JobPin): Table | null {
-  if (!pin.items || !pin.policy) return null;
-  return { items: pin.items, policy: pin.policy };
-}

@@ -2,7 +2,7 @@
 
 import { Dec, HUNDRED, ONE, ZERO, money, maxDec, minDec, sumDec } from './decimal';
 import type { JObj } from './json';
-import { commas, decFloat, decInt, truthy } from './values';
+import { collapse, commas, decFloat, decInt, truthy } from './values';
 import type { Inspection, Room } from './inspection';
 import { fieldDec } from './inspection';
 import {
@@ -33,7 +33,7 @@ function bucketOf(group: string, code: string): string {
 }
 
 function roomKey(name: string): string {
-  return name.split(/\s+/).filter(Boolean).join(' ').toLowerCase();
+  return collapse(name);
 }
 
 function orZero(value: Dec | null): Dec {
