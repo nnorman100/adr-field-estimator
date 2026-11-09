@@ -352,7 +352,7 @@ Firebase session; closing the original destroyed that private context. A real in
 Chrome test with synthetic localStorage reproduced the isolation and passed when the tab
 was opened by the original private page. The verifier now uses that method, caches the
 Firebase token only in memory before handoff, and retains the original until test-page
-authentication is confirmed. Test: node tests/test_manual_handoff.js (passed). No synthetic
+authentication is confirmed. No synthetic
 release workflow or production deployment has run yet. Blank drafts automatically created
 during earlier private sign-ins were not deleted without tracked provenance.
 
