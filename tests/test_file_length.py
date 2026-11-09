@@ -81,3 +81,32 @@ def test_allowlist_has_no_unknown_shape():
     data = json.loads((ROOT / 'scripts' / 'file_length_allowlist.json').read_text(encoding='utf-8'))
     assert data['limit'] == 1000
     assert data['files'] == sorted(set(data['files']))
+
+
+def test_over_limit_web_typescript_file_fails(tmp_path):
+    for name in ('web/src/big.ts', 'web/src/big.tsx', 'web/next.config.mts'):
+        write(tmp_path, name, 1001)
+    errors, _, _ = check_file_length.check(tmp_path, limit=1000, allowlist=set())
+    assert len(errors) == 3
+    for name in ('web/src/big.ts', 'web/src/big.tsx', 'web/next.config.mts'):
+        assert any(name in m for m in errors)
+
+
+def test_over_limit_web_javascript_and_config_files_fail(tmp_path):
+    for name in ('web/eslint.config.mjs', 'web/tsconfig.json', 'web/env.example'):
+        write(tmp_path, name, 1001)
+    errors, _, _ = check_file_length.check(tmp_path, limit=1000, allowlist=set())
+    assert len(errors) == 3
+
+
+def test_web_lockfile_and_non_web_json_are_not_counted(tmp_path):
+    write(tmp_path, 'web/package-lock.json', 5000)
+    write(tmp_path, 'web/node_modules/pkg/index.ts', 5000)
+    write(tmp_path, 'package-lock.json', 5000)
+    write(tmp_path, 'docs/data.json', 5000)
+    assert check_file_length.check(tmp_path, limit=1000, allowlist=set()) == ([], [], [])
+
+
+def test_web_files_at_the_limit_pass(tmp_path):
+    write(tmp_path, 'web/src/at_limit.ts', 1000)
+    assert check_file_length.check(tmp_path, limit=1000, allowlist=set()) == ([], [], [])

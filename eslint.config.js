@@ -14,6 +14,7 @@ module.exports = [
       'test-results/**',
       'playwright-report/**',
       'review-artifacts/**',
+      'web/**', // the TypeScript app has its own ESLint config and CI job
     ],
   },
   js.configs.recommended,
@@ -39,7 +40,11 @@ module.exports = [
     languageOptions: { sourceType: 'module', globals: { ...globals.browser } },
   },
   {
-    files: ['tests/test_required_docs.js', 'tests/test_ai_inventory.js'],
+    files: [
+      'tests/test_required_docs.js',
+      'tests/test_ai_inventory.js',
+      'tests/test_terraform_plan_check.js',
+    ],
     languageOptions: { sourceType: 'module' },
   },
   {

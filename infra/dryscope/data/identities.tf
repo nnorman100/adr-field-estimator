@@ -1,0 +1,123 @@
+# Runtime accounts: one per service per environment, so a test service can never
+# reach live data. Grants are scoped to this environment's own resources.
+resource "google_service_account" "runtime" {
+  for_each = {
+    api     = "DryScope ${var.environment} web and API runtime"
+    live    = "DryScope ${var.environment} Live relay runtime"
+    migrate = "DryScope ${var.environment} schema migrator"
+  }
+
+  project      = var.project_id
+  account_id   = local.n.service_account_ids[each.key]
+  display_name = each.value
+
+  depends_on = [google_project_service.apis]
+}
+
+# Deploy account: updates this environment's Cloud Run services and pushes its
+# images. It holds no data access.
+resource "google_service_account" "deploy" {
+  project      = var.project_id
+  account_id   = local.n.service_account_ids["deploy"]
+  display_name = "DryScope ${var.environment} deploy"
+
+  depends_on = [google_project_service.apis]
+}
+
+# Connect to this environment's SQL instance and nothing else.
+resource "google_project_iam_member" "sql_client" {
+  for_each = toset(["api", "live", "migrate"])
+
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${local.n.service_account_emails[each.key]}"
+
+  condition {
+    title       = "dryscope-${var.environment}-sql-only"
+    description = "Only the ${var.environment} DryScope instance."
+    expression  = local.sql_condition
+  }
+
+  depends_on = [google_service_account.runtime]
+}
+
+resource "google_project_iam_member" "sql_login" {
+  for_each = toset(["api", "live", "migrate"])
+
+  project = var.project_id
+  role    = "roles/cloudsql.instanceUser"
+  member  = "serviceAccount:${local.n.service_account_emails[each.key]}"
+
+  condition {
+    title       = "dryscope-${var.environment}-sql-login-only"
+    description = "IAM database login on the ${var.environment} DryScope instance only."
+    expression  = local.sql_condition
+  }
+
+  depends_on = [google_service_account.runtime]
+}
+
+# Read and write this environment's named Firestore database only. The relay
+# keeps Live checkpoints there; the migrator does not touch Firestore.
+resource "google_project_iam_member" "firestore_user" {
+  for_each = toset(["api", "live"])
+
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${local.n.service_account_emails[each.key]}"
+
+  condition {
+    title       = "dryscope-${var.environment}-firestore-only"
+    description = "Only the dryscope-field-${var.environment} database."
+    expression  = local.fs_condition
+  }
+
+  depends_on = [google_service_account.runtime]
+}
+
+# Gemini calls need one permission. roles/aiplatform.user also holds
+# aiplatform.customJobs.create, which runs code as the project's Vertex AI
+# service agent (storage read, write and delete) and is therefore a path from a
+# test service to live data. This role is predict-only; add a permission only
+# after naming the real operation that needs it. Vertex AI cannot be scoped to
+# one environment, so the role is project-level and the owner reviews it.
+resource "google_project_iam_custom_role" "gemini_caller" {
+  project     = var.project_id
+  role_id     = "dryscopeGemini${title(var.environment)}"
+  title       = "DryScope ${var.environment} Gemini caller"
+  description = "Call Gemini models for DryScope ${var.environment}. No jobs, no tuning, no deletes."
+  permissions = ["aiplatform.endpoints.predict"]
+}
+
+resource "google_project_iam_member" "gemini_caller" {
+  for_each = toset(["api", "live"])
+
+  project = var.project_id
+  role    = "projects/${var.project_id}/roles/${google_project_iam_custom_role.gemini_caller.role_id}"
+  member  = "serviceAccount:${local.n.service_account_emails[each.key]}"
+
+  depends_on = [google_service_account.runtime]
+}
+
+# The deploy account may act as the two services' runtime accounts, no others.
+resource "google_service_account_iam_member" "deploy_acts_as" {
+  for_each = toset(["api", "live"])
+
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.n.service_account_emails[each.key]}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.n.service_account_emails["deploy"]}"
+
+  depends_on = [google_service_account.runtime, google_service_account.deploy]
+}
+
+# Keyless GitHub Actions: only after the owner creates the pool and passes its
+# principalSet. Nothing is bound until then.
+resource "google_service_account_iam_member" "deploy_workload_identity" {
+  count = var.workload_identity_principal_set == "" ? 0 : 1
+
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.n.service_account_emails["deploy"]}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = var.workload_identity_principal_set
+
+  depends_on = [google_service_account.deploy]
+}
