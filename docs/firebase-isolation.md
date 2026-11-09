@@ -146,7 +146,15 @@ It stops with a message, and the owner releases that commit by hand, when:
   [Turning a feature on or off](#turning-a-feature-on-or-off).
 
 A commit that is already serving, or older than what is serving, is skipped without error, so a manual
-release made in parallel is never overwritten. Each run's job summary is the release record; see
+release made in parallel is never overwritten. So is a commit whose changes since the serving commit touch
+no file the legacy app is built from: `backend/`, `public/`, the root `index.html`, `firebase.json`,
+`.firebaserc`, `firestore.rules`, `firestore.indexes.json`, the root `package.json` and lockfile, and the
+release scripts listed in `LEGACY_FILES` (`scripts/auto_deploy_helpers.py`). A DryScope rebuild merge
+(`web/`, `infra/`, docs, tests, workflows) therefore exits cleanly with the logged reason `No file the
+legacy app is built from changed ...` and deploys nothing; the next merge that does change a listed file
+releases everything merged since. A check-only run still runs every refusal check and notes that a real run
+would skip. The rules and index check above runs first, so a rules or index change still stops for a hand
+release. Add a path to the list if the legacy build or release starts reading it. Each run's job summary is the release record; see
 [RELEASES.md](../RELEASES.md). Stale tags accumulate on old revisions at 0% traffic; Cloud Run
 allows 1000 tags per service, so clear old ones occasionally with `gcloud run services update-traffic
 --remove-tags`.
