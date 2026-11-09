@@ -182,6 +182,9 @@ describe('identity tables (migration 0002)', () => {
     await expect(actor(a, 'tenant-b', 'person-b')).rejects.toMatchObject(
       refusedBy(FOREIGN_KEY_VIOLATION, 'actors_company_tenant_fkey'),
     );
+    await expect(
+      sql`INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${a}, NULL, 'u0', 'u0@example.test')`,
+    ).rejects.toMatchObject({ code: '23502', column_name: 'auth_tenant_id' });
     const person = await actor(a, 'tenant-a', 'person-a');
     await expect(
       sql`UPDATE actors SET auth_tenant_id = 'tenant-b' WHERE id = ${person}`,
@@ -207,6 +210,14 @@ describe('identity tables (migration 0002)', () => {
           VALUES (${a}, 'tenant-a', 'u1', ' u1@example.test')`,
     ).rejects.toMatchObject(refusedBy(CHECK_VIOLATION, 'actors_email_check'));
     await expect(actor(a, 'tenant-a', 'u1 ')).rejects.toMatchObject(refusedBy(CHECK_VIOLATION, 'actors_uid_check'));
+    for (const displayName of [' Ada', 'Ada ', '']) {
+      await expect(
+        sql`INSERT INTO actors (company_id, auth_tenant_id, uid, email, display_name)
+            VALUES (${a}, 'tenant-a', 'u2', 'u2@example.test', ${displayName})`,
+      ).rejects.toMatchObject(refusedBy(CHECK_VIOLATION, 'actors_display_name_check'));
+    }
+    await sql`INSERT INTO actors (company_id, auth_tenant_id, uid, email, display_name)
+              VALUES (${a}, 'tenant-a', 'u2', 'u2@example.test', 'Ada Lovelace')`;
     await expect(actor(null, ' operators', 'operator-1')).rejects.toMatchObject(
       refusedBy(CHECK_VIOLATION, 'actors_auth_tenant_id_check'),
     );

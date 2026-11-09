@@ -43,7 +43,7 @@ CREATE TABLE actors (
   uid text NOT NULL CHECK (uid <> '' AND uid = btrim(uid)),
   -- Last verified email seen at sign-in, for display and invitation matching only.
   email text NOT NULL CHECK (email <> '' AND email = lower(btrim(email))),
-  display_name text CHECK (char_length(display_name) <= 200),
+  display_name text CHECK (display_name = btrim(display_name) AND char_length(display_name) BETWEEN 1 AND 200),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT actors_tenant_uid_key UNIQUE (auth_tenant_id, uid),
