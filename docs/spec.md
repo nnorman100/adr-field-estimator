@@ -262,7 +262,8 @@ In the rebuild, the Live voice walkthrough is the default way to capture a job, 
 leads with it. Manual scope entry, offline voice notes and photos stay available as fallbacks
 whenever Live cannot run: no signal, AI switched off, or a company or user without Live.
 
-Target acceptance check (**not built**):
+Target acceptance checks (**not built**):
 
+- A new job opens on the Live voice walkthrough, not on manual scope entry.
 - When Live is unavailable, the technician can still complete the job through manual scope entry,
   offline voice notes and photos.
