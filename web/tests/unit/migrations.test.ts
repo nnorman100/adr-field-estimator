@@ -25,10 +25,10 @@ const ledger = `CREATE TABLE migration_ledger (
 `;
 
 describe('migration files', () => {
-  it('loads the shipped foundation migration and nothing else', async () => {
+  it('loads the shipped migrations in order and nothing else', async () => {
     const files = await readMigrations(migrationsDirectory);
-    expect(files.map((file) => file.id)).toEqual(['0001_foundation']);
-    expect(files[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(files.map((file) => file.id)).toEqual(['0001_foundation', '0002_identity']);
+    for (const file of files) expect(file.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('refuses a gap before the numbers are contiguous from 0001', async () => {
