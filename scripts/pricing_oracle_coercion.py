@@ -260,6 +260,13 @@ IDENTITY = {
 }
 OVERRIDE = {'measured': '2', 'entered': '2', 'reason': 'Counted again'}
 
+# A float string trimmed of padding keeps no underscores (pydantic-core), unpadded ones may.
+PADDED_UNDERSCORE = [
+    *('1_0', '1_0.5', '2_e1', '0_.5', '1.2_3', '9_0.500E-1', '1_e5', '_1', '1_'),
+    *(' 1_0', '1_0 ', ' 1_0 ', '\t1_0', '\n1_0\n', '\u00a01_0', '\u20031_0', '\x1c1_0'),
+    *(' 1_0.5', '1.2_3 ', ' 2_e1', ' 10 ', ' 1.5 ', '\u00a010\u00a0'),
+]
+
 # (target id, model, template, path, probe values)
 TARGETS = [
     ('inspection-int', 'inspection', {}, ['air_movers'], NUMBERS),
@@ -398,6 +405,13 @@ TARGETS = [
     ('canonical-bytes', 'canonical', {'value': None}, ['value'], CANONICAL),
     ('canonical-json-text', 'json_text', {'text': ''}, ['text'], JSON_TEXT),
     ('json-text-grammar', 'json_text', {'text': ''}, ['text'], JSON_GRAMMAR),
+    (
+        'float-padded-underscore',
+        'inspection',
+        {'rooms': [ROOM]},
+        ['rooms', 0, 'finished_sf'],
+        PADDED_UNDERSCORE,
+    ),
 ]
 
 

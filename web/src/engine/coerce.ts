@@ -83,6 +83,8 @@ export function toFloat(value: JVal | undefined, label: string): number {
   else if (typeof value === 'string') {
     const text = value.replace(RUST_TRIM, '');
     if (text.startsWith('_') || text.endsWith('_') || text.includes('__')) no(label);
+    // pydantic-core only accepts underscores in a float string that needed no trimming.
+    if (text !== value && text.includes('_')) no(label);
     const plain = text.replaceAll('_', '');
     if (!DECIMAL_TEXT.test(plain)) no(label);
     n = Number(plain);
