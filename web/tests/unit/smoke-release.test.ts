@@ -102,6 +102,8 @@ describe('smoke arguments', () => {
     [['--url', 'https://x.run.app', '--env', 'test']],
     [args('https://x.run.app', 'abc')],
     [args('https://x.run.app', commit, 'prod')],
+    [args('https://x.run.app', commit, 'live')],
+    [args('http://127.0.0.1:8080', commit, 'local')],
   ])('refuses %j', (argv) => {
     expect(() => parseArgs(argv)).toThrow();
   });

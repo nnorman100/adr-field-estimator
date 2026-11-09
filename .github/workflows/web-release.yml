@@ -165,7 +165,8 @@ jobs:
           service_account: ${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}
           project_id: dryscope
       # Cloud SQL Auth Proxy, pinned by version and checksum, with IAM database login: no password.
-      - if: steps.ledger.outputs.present == 'true'
+      - id: proxy
+        if: steps.ledger.outputs.present == 'true'
         working-directory: ${{ runner.temp }}
         run: |
           curl -fsSL -o cloud-sql-proxy "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/$PROXY_VERSION/cloud-sql-proxy.linux.amd64"
@@ -179,7 +180,8 @@ jobs:
           cat proxy.log
           echo "::error::The Cloud SQL Auth Proxy did not start. Check the migrator's Cloud SQL client and instance user roles."
           exit 1
-      - if: steps.ledger.outputs.present == 'true'
+      - id: migrations
+        if: steps.ledger.outputs.present == 'true'
         env:
           APP_ENV: test
           # IAM database user: the account email without .gserviceaccount.com; the proxy logs in.
@@ -206,7 +208,8 @@ jobs:
         with:
           ref: ${{ env.COMMIT }}
           persist-credentials: false
-          sparse-checkout: web/scripts
+          # The whole of web/, so web/package.json ("type": "module") governs the smoke script.
+          sparse-checkout: web
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
@@ -259,10 +262,11 @@ jobs:
           url=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(status.url)')
           node web/scripts/smoke-release.ts --url "$url" --commit "$COMMIT" --env test
           echo "Serving: \`$REVISION\` at 100% for $COMMIT" >> "$GITHUB_STEP_SUMMARY"
-      # Traffic moved (or the move itself failed): put the remembered traffic back. Before the
+      # The move ran (it succeeded, failed, or was cancelled midway and may have landed): put the
+      # remembered traffic back; restoring a split that never changed is harmless. Before the
       # move, nothing changed for users and there is nothing to undo.
       - name: Roll back traffic
-        if: (failure() || cancelled()) && (steps.promote.outcome == 'success' || steps.promote.outcome == 'failure')
+        if: (failure() || cancelled()) && (steps.promote.outcome == 'success' || steps.promote.outcome == 'failure' || steps.promote.outcome == 'cancelled')
         env:
           PREVIOUS: ${{ steps.before.outputs.previous }}
         run: |

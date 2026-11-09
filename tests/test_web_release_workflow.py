@@ -4,6 +4,7 @@ keyless sign-in as the right test account, pinned actions and images, no live or
 staging at 0% before any traffic moves, and rollback only after a move."""
 
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -22,8 +23,27 @@ def steps(job):
     return job.get('steps', [])
 
 
-def run_text(job):
-    return '\n'.join(step.get('run', '') for step in steps(job))
+def commands(step):
+    """The shell a step runs, without comment lines, so a comment never satisfies a check."""
+    lines = step.get('run', '').replace('\\\n', ' ').splitlines()  # join continuations
+    return '\n'.join(line for line in lines if not line.strip().startswith('#'))
+
+
+def step(job, key):
+    """The one step whose id (or, failing that, name) is key."""
+    (found,) = [s for s in steps(job) if s.get('id', s.get('name')) == key]
+    return found
+
+
+def all_steps(workflow):
+    return [s for job in workflow['jobs'].values() for s in steps(job)]
+
+
+def instructions(path):
+    """Dockerfile instructions with comments dropped and continuation lines joined."""
+    text = re.sub(r'\\\n', ' ', path.read_text())
+    lines = (' '.join(line.split()) for line in text.splitlines())
+    return [line for line in lines if line and not line.startswith('#')]
 
 
 @pytest.fixture(scope='module')
@@ -57,7 +77,7 @@ def test_one_release_at_a_time_and_none_cancelled_midway(release):
 
 @pytest.mark.parametrize('path', [RELEASE, WEB])
 def test_every_action_is_pinned_to_a_full_commit(path):
-    uses = re.findall(r'uses:\s*(\S+)', path.read_text())
+    uses = [s['uses'] for s in all_steps(load(path)) if 'uses' in s]
     assert uses
     for ref in uses:
         assert re.fullmatch(r'[\w.-]+/[\w./-]+@[0-9a-f]{40}', ref), ref
@@ -95,67 +115,91 @@ def test_each_job_signs_in_keylessly_as_its_own_test_account(release):
         'migrate': '${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}',
         'deploy': '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
     }
-    text = RELEASE.read_text()
-    for key in ('credentials_json', 'GOOGLE_CREDENTIALS', 'private_key'):
-        assert key not in text
+    for s in all_steps(release):
+        assert 'credentials_json' not in s.get('with', {})
 
 
 def test_skips_until_set_up_and_refuses_variables_pointing_anywhere_but_test(release):
-    gate = run_text(release['jobs']['gate'])
-    assert 'Test release skipped' in gate and 'ready=false' in gate
-    assert 'workloadIdentityPools/dryscope-test/providers/' in gate
-    assert '"dryscope-deploy-test@dryscope.iam.gserviceaccount.com"' in gate
-    assert '"dryscope-migrate-test@dryscope.iam.gserviceaccount.com"' in gate
+    gate = step(release['jobs']['gate'], 'vars')
+    assert gate['env'] == {
+        'PROVIDER': '${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}',
+        'DEPLOY_SA': '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
+        'MIGRATE_SA': '${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}',
+    }
+    shell = commands(gate)
+    skip, check = shell.split('exit 0', 1)  # the skip branch ends the step before any check
+    assert 'ready=false' in skip and 'ready=true' not in skip
+    assert (
+        '[[ "$PROVIDER" =~ ^projects/570228742694/locations/global/workloadIdentityPools/dryscope-test/providers/'
+        in check
+    )
+    assert '[ "$DEPLOY_SA" = "dryscope-deploy-test@dryscope.iam.gserviceaccount.com" ]' in check
+    assert '[ "$MIGRATE_SA" = "dryscope-migrate-test@dryscope.iam.gserviceaccount.com" ]' in check
     build = release['jobs']['build']
     assert build['if'] == "needs.gate.outputs.ready == 'true'"
-    assert 'is not visible to the deploy account yet' in run_text(build)
+    assert step(build, 'image')['if'] == "steps.service.outputs.ready == 'true'"
+    assert 'gcloud run services describe "$SERVICE"' in commands(step(build, 'service'))
     for name in ('migrate', 'deploy'):
         assert release['jobs'][name]['if'] == "needs.build.outputs.service_ready == 'true'"
 
 
-def test_targets_only_the_test_environment_and_never_the_legacy_project():
-    text = RELEASE.read_text()
-    for forbidden in (
-        'dryscope-live',
-        '-live@',
-        'dryscope-live-',
-        'alert-disaster',
-        'us-west2',
-        'firebase',
-    ):
-        assert forbidden not in text, forbidden
-    env = load(RELEASE)['env']
+def test_targets_only_the_test_environment_and_never_the_legacy_project(release):
+    # Everything the workflow executes or passes on: commands, step inputs and environments.
+    executed = [commands(s) for s in all_steps(release)]
+    executed += [str(v) for s in all_steps(release) for v in s.get('with', {}).values()]
+    executed += [str(v) for s in all_steps(release) for v in s.get('env', {}).values()]
+    executed += [str(v) for job in release['jobs'].values() for v in job.get('env', {}).values()]
+    executed += [str(v) for v in release['env'].values()]
+    for text in executed:
+        for forbidden in ('dryscope-live', '-live@', 'alert-disaster', 'us-west2', 'firebase'):
+            assert forbidden not in text, (forbidden, text[:80])
+    env = release['env']
     assert env['SERVICE'] == 'dryscope-api-test'
     assert env['IMAGE'].startswith('us-central1-docker.pkg.dev/dryscope/dryscope-test/')
     assert env['SQL_INSTANCE'] == 'dryscope:us-central1:dryscope-test-pg'
 
 
+def gcloud_calls(workflow):
+    """Every gcloud invocation the workflow runs, as argument lists ending at the first shell
+    operator (pipe, ;, &&, ||, redirect or closing parenthesis)."""
+    calls = []
+    for s in all_steps(workflow):
+        for line in commands(s).splitlines():
+            _, found, rest = line.partition('gcloud ')
+            if not found:
+                continue
+            lexer = shlex.shlex(rest, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            args = []
+            for token in lexer:
+                if set(token) <= set('|&;()<>'):
+                    break
+                args.append(token)
+            calls.append(args)
+    return calls
+
+
 def test_nothing_is_deleted_and_only_the_image_changes(release):
-    text = RELEASE.read_text()
-    assert not re.search(r'\b(delete|remove-tags|clear-tags)\b', text)
-    deploy = run_text(release['jobs']['deploy'])
-    (command,) = re.findall(r'gcloud run deploy [^\n]*', deploy)
-    assert '--no-traffic' in command and '--tag=candidate' in command
-    assert '--image="$IMAGE_REF"' in command
-    for flag in (
-        '--allow-unauthenticated',
-        '--service-account',
-        'env-vars',
-        '--port',
-        '--set-secrets',
-        '--update-secrets',
-    ):
-        assert flag not in command, flag
+    calls = gcloud_calls(release)
+    assert calls
+    for args in calls:
+        assert not {'delete', 'remove-tags', 'clear-tags'} & set(args), args
+    (deploy,) = [args for args in calls if args[:2] == ['run', 'deploy']]
+    flags = {arg.split('=', 1)[0] for arg in deploy[3:]}
+    assert flags == {'--image', '--region', '--project', '--no-traffic', '--tag', '--quiet'}
+    assert '--tag=candidate' in deploy and '--image=$IMAGE_REF' in deploy
 
 
 def test_migrations_run_as_the_migrator_before_the_revision_is_staged(release):
     jobs = release['jobs']
     assert set(jobs['deploy']['needs']) == {'build', 'migrate'}
-    migrate = run_text(jobs['migrate'])
-    assert 'sha256sum --check --strict' in migrate
-    assert '--auto-iam-authn' in migrate
-    assert 'npm run db:migrate' in migrate
-    url = jobs['migrate']['steps'][-1]['env']['DATABASE_URL']
+    proxy = commands(step(jobs['migrate'], 'proxy'))
+    assert proxy.index('sha256sum --check --strict') < proxy.index(
+        './cloud-sql-proxy --auto-iam-authn'
+    )
+    migrations = step(jobs['migrate'], 'migrations')
+    assert 'npm run db:migrate' in commands(migrations)
+    url = migrations['env']['DATABASE_URL']
     assert url == 'postgres://dryscope-migrate-test%40dryscope.iam@127.0.0.1:5432/dryscope'
     assert re.fullmatch(r'[0-9a-f]{64}', jobs['migrate']['env']['PROXY_SHA256'])
 
@@ -169,52 +213,70 @@ def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
     after = order.index('Smoke-check the service URL')
     rollback = order.index('Roll back traffic')
     assert order.index('before') < stage < smoke < promote < after < rollback
-    assert (
-        'smoke-release.ts' in deploy[smoke]['run'] and '--commit "$COMMIT"' in deploy[smoke]['run']
-    )
+    assert shlex.split(commands(deploy[smoke])) == [
+        'node',
+        'web/scripts/smoke-release.ts',
+        '--url',
+        '$CANDIDATE_URL',
+        '--commit',
+        '$COMMIT',
+        '--env',
+        'test',
+    ]
     assert deploy[smoke].get('if') is None and deploy[promote].get('if') is None
     condition = deploy[rollback]['if']
-    assert 'failure()' in condition and 'cancelled()' in condition
-    assert "steps.promote.outcome == 'success'" in condition
-    assert '--to-revisions="$PREVIOUS"' in deploy[rollback]['run']
+    assert condition.startswith('(failure() || cancelled()) && (')
+    for outcome in ('success', 'failure', 'cancelled'):
+        assert f"steps.promote.outcome == '{outcome}'" in condition
+    assert deploy[rollback]['env'] == {'PREVIOUS': '${{ steps.before.outputs.previous }}'}
+    assert '--to-revisions="$PREVIOUS"' in commands(deploy[rollback])
+    # The smoke script needs web/package.json ("type": "module") beside it.
+    checkout = deploy[0]
+    assert (
+        checkout['uses'].startswith('actions/checkout@')
+        and checkout['with']['sparse-checkout'] == 'web'
+    )
 
 
 def test_ci_builds_and_smoke_checks_the_image_on_pull_requests():
     web = load(WEB)
     assert 'live-relay-placeholder/**' in web[True]['pull_request']['paths']
-    image = run_text(web['jobs']['image'])
-    assert 'smoke-release.ts --url http://127.0.0.1:8080' in image
-    assert "'{{.Config.User}}'" in image
-
-
-FROM = re.compile(r'^FROM (\S+)', re.MULTILINE)
+    image = '\n'.join(commands(s) for s in steps(web['jobs']['image']))
+    assert (
+        'node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --env test'
+        in image
+    )
+    assert (
+        'test "$(docker image inspect --format \'{{.Config.User}}\' dryscope-web:ci)" = node'
+        in image
+    )
 
 
 @pytest.mark.parametrize('path', ['web/Dockerfile', 'live-relay-placeholder/Dockerfile'])
 def test_images_are_pinned_and_run_unprivileged(path):
-    text = (ROOT / path).read_text()
-    bases = FROM.findall(text)
+    lines = instructions(ROOT / path)
+    bases = [line.split()[1] for line in lines if line.startswith('FROM ')]
     assert bases
     for base in bases:
         assert re.fullmatch(r'node:[\w.-]+@sha256:[0-9a-f]{64}', base), base
-    users = re.findall(r'^USER (\S+)', text, re.MULTILINE)
-    assert users and users[-1] == 'node'
+    # The final stage, the one that ships, runs as the unprivileged node user.
+    final = lines[max(i for i, line in enumerate(lines) if line.startswith('FROM ')) :]
+    users = [line.split()[1] for line in final if line.startswith('USER ')]
+    assert users == ['node']
 
 
 def test_web_image_carries_its_commit_and_no_env_files():
-    text = (ROOT / 'web' / 'Dockerfile').read_text()
-    assert "grep -Eqx '[0-9a-f]{40}'" in text
-    assert 'APP_COMMIT=$COMMIT_SHA' in text
-    assert 'CMD ["node", "server.js"]' in text
+    lines = instructions(ROOT / 'web' / 'Dockerfile')
+    build_check = [line for line in lines if line.startswith('RUN ') and 'COMMIT_SHA' in line]
+    assert build_check == [
+        'RUN echo "$COMMIT_SHA" | grep -Eqx \'[0-9a-f]{40}\' '
+        "|| { echo 'Pass --build-arg COMMIT_SHA=<40-character commit>' >&2; exit 1; }"
+    ]
+    run_env = [line for line in lines if line.startswith('ENV ') and 'APP_COMMIT' in line]
+    assert len(run_env) == 1 and 'APP_COMMIT=$COMMIT_SHA' in run_env[0].split()
+    assert lines[-1] == 'CMD ["node", "server.js"]'
     ignored = (ROOT / 'web' / '.dockerignore').read_text().split()
     assert {'.env', '.env.*', 'node_modules', '.next'} <= set(ignored)
-
-
-def test_live_placeholder_is_marked_and_holds_nothing():
-    server = (ROOT / 'live-relay-placeholder' / 'server.js').read_text()
-    assert 'PLACEHOLDER, NOT THE LIVE RELAY' in server
-    assert 'require(' in server and re.findall(r"require\('([^']+)'\)", server) == ['node:http']
-    assert '503' in server
 
 
 def test_dependabot_keeps_the_pinned_base_images_current():

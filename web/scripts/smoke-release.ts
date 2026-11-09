@@ -1,17 +1,20 @@
-// Release smoke check for one staged revision of the rebuilt app. The release workflow runs it
-// against the revision's own tagged URL while the revision has 0% of traffic, and the image job in
-// the Web app workflow runs it against a local container. Traffic moves only if it passes.
+// Release smoke check for one staged revision of the rebuilt app in the TEST environment. The
+// release workflow runs it against the revision's own tagged URL while the revision has 0% of
+// traffic, and the image job in the Web app workflow runs it against a local container. Traffic
+// moves only if it passes.
 //
-//   node scripts/smoke-release.ts --url <base URL> --commit <40-character commit> --env <test|live>
+//   node scripts/smoke-release.ts --url <base URL> --commit <40-character commit> --env test
 //
-// It needs no installed packages (plain Node with type stripping), sends no credentials and prints
-// only status codes and the health fields it checks.
+// Test only: its signed-out probes include a POST, so it must never run against live. Live checks
+// arrive with the test-to-live release and must be read-only. It needs no installed packages (plain
+// Node with type stripping), sends no credentials and prints only status codes and the health
+// fields it checks.
 import { pathToFileURL } from 'node:url';
 
 export type SmokeOptions = {
   baseUrl: string;
   commit: string;
-  env: 'local' | 'test' | 'live';
+  env: 'test';
   fetch?: typeof fetch;
   attempts?: number;
   delayMs?: number;
@@ -42,11 +45,8 @@ export function parseArgs(argv: string[]): SmokeOptions {
   }
   const commit = value('commit');
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('--commit must be a 40-character commit hash');
-  const env = value('env');
-  if (env !== 'local' && env !== 'test' && env !== 'live') {
-    throw new Error('--env must be local, test or live');
-  }
-  return { baseUrl, commit, env };
+  if (value('env') !== 'test') throw new Error('--env must be test (live checks are not built yet)');
+  return { baseUrl, commit, env: 'test' };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
