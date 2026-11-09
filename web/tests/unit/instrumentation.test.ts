@@ -29,9 +29,19 @@ describe('server start', () => {
     expect(String(logged.mock.calls[0]?.[0])).not.toMatch(/secret-value/);
   });
 
-  it('starts with a valid APP_ENV', () => {
+  it('starts with a valid APP_ENV and no database URL', () => {
     vi.stubEnv('APP_ENV', 'test');
+    vi.stubEnv('DATABASE_URL', undefined);
     register();
     expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('stops on an invalid DATABASE_URL without echoing it', () => {
+    vi.stubEnv('APP_ENV', 'test');
+    vi.stubEnv('DATABASE_URL', 'mysql://super-secret-db-password@db.example/app');
+    register();
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(String(logged.mock.calls[0]?.[0])).toMatch(/DATABASE_URL/);
+    expect(String(logged.mock.calls[0]?.[0])).not.toMatch(/super-secret-db-password/);
   });
 });
