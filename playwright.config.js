@@ -13,7 +13,10 @@ module.exports = defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { browserName: 'chromium', launchOptions: { args: ['--ignore-certificate-errors'] } },
+      use: {
+        browserName: 'chromium',
+        launchOptions: { args: ['--ignore-certificate-errors', '--disable-dev-shm-usage'] },
+      },
     },
     { name: 'webkit', use: { browserName: 'webkit' } },
   ],

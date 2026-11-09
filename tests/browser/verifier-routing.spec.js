@@ -99,7 +99,9 @@ test('a worker-controlled private window answers for a new tab until the verifie
   // The verifier's exact shape: an externally reachable Chrome, connectOverCDP, the existing
   // context, and a popup opened by the signed-in page (scripts/manual_chrome.js sameContextPage).
   const base = origin(production);
-  const launched = await chromium.launch({ args: ['--remote-debugging-port=9344'] });
+  const launched = await chromium.launch({
+    args: ['--remote-debugging-port=9344', '--disable-dev-shm-usage'],
+  });
   const browser = await chromium.connectOverCDP('http://127.0.0.1:9344');
   try {
     const context = browser.contexts()[0];
