@@ -1,0 +1,316 @@
+{
+  "expected": {
+    "documents": {
+      "adr_estimate": {
+        "customer_name": "Casey Customer",
+        "date": "11-06-2026",
+        "disclaimers": ["Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log.", "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.", "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."],
+        "findings": ["The home was built in 2009. Therefore, no lead or asbestos testing is required prior to the start of work."],
+        "lead_notice_required": false,
+        "property_address": "100 Oracle Lane, Testville",
+        "proposed_cost": 73704.6,
+        "proposed_cost_low": 51573.05,
+        "recommendations": ["Per IICRC and EPA protocols, Oracle Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.", "Room 1: category 2 finished/drywall/trim demolition", "Axial air movers", "Commercial LGR dehumidifiers", "Content manipulation / additional labor", "Additional work, not in Oracle Restoration price sheet: Seeded extra task, 1.5 h at $60.00/h, approved by Olive Owner on 2026-10-25.", "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."]
+      },
+      "ai_suggestions": [
+        "Check the subfloor."
+      ],
+      "ai_summary": "Reviewed the inspection.",
+      "company_identity": {
+        "address": "1 Synthetic Way, Testville",
+        "company_id": "oracle-co",
+        "email": "office@example.invalid",
+        "license": "000001",
+        "logo_data_url": "",
+        "name": "Oracle Restoration",
+        "phone": "555-0100",
+        "signoff": "Pat Example",
+        "version": 1,
+        "water_heater_notice": ""
+      },
+      "company_setup_missing": [],
+      "compliance_notes": [
+        "The home was built in 2009. Therefore, no lead or asbestos testing is required prior to the start of work.",
+        "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.",
+        "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+        "Estimate is valid for 30 days from date of inspection."
+      ],
+      "iicrc_defense_letter": "Oracle Restoration \u00b7 1 Synthetic Way, Testville \u00b7 555-0100 \u00b7 CSLB #000001\n\nTO: Insurance Claims Examiner / Adjuster\n\nRE: Remediation scope for 100 Oracle Lane, Testville\nCustomer: Casey Customer\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.\n\nThe home was built in 2009. Therefore, no lead or asbestos testing is required prior to the start of work.\n\nScope:\nPer IICRC and EPA protocols, Oracle Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.\nRoom 1: category 2 finished/drywall/trim demolition\nAxial air movers\nCommercial LGR dehumidifiers\nContent manipulation / additional labor\nAdditional work, not in Oracle Restoration price sheet: Seeded extra task, 1.5 h at $60.00/h, approved by Olive Owner on 2026-10-25.\nIf technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.\n\nNOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.\nIf the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.\nEstimate is valid for 30 days from date of inspection.\n\nItemized charges at base rates: $51,573.05. Customer estimate range: $51,573.05 to $73,704.60. The range applies the estimating sheet labor/material allowance to the priced scope; approved additional work is added at its approved amount to both ends.\n\nSincerely,\nPat Example\nOracle Restoration",
+      "pending_extras": 0,
+      "photo_audit_log": [],
+      "price_basis": {
+        "calculation_version": "adr-residential-v1",
+        "company_id": "oracle-co",
+        "content_sha256": "d1fae5c4ef3f637d0f33cf408ecd3cb7c8a5b0e95239ddfe8d671895a36cd895",
+        "priced_at": "2026-11-01T17:00:00Z",
+        "rates": {"additional_work_hourly": "128.53", "after_hours_job_charge": "57.34", "air_mover_daily": "498.49", "air_scrubber_daily": "358.83", "dehumidifier_daily": "116.46", "demo_cat1_finished": "86.75", "demo_cat1_unfinished": "55.84", "demo_cat2_finished": "53.62", "demo_cat2_unfinished": "91.37", "demo_cat3_finished": "37.20", "demo_cat3_unfinished": "69.30", "dump_truck_load": "479.74", "emergency_call": "468.63", "equipment_decontamination": "219.71", "haul_pickup_load": "469.55", "hepa_filter": "417.76", "matterport_scan": "42.84", "monitoring_hourly": "19.52", "power_distribution": "336.05", "sheet_labor_hourly": "294.70", "wood_floor_daily": "390.11"},
+        "sequence": 1,
+        "version_id": "v-83e1c7c32b64"
+      },
+      "schema_version": 3,
+      "signable": true,
+      "unpriced_work": [],
+      "xactimate_scope": [
+        {"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 2.0, "total": 937.26, "unit": "EA", "unit_price": 468.63, "waste_percent": 0.0},
+        {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 258.64, "unit": "HR", "unit_price": 19.52, "waste_percent": 0.0},
+        {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 3.0, "total": 1408.65, "unit": "load", "unit_price": 469.55, "waste_percent": 0.0},
+        {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1.0, "total": 358.83, "unit": "day", "unit_price": 358.83, "waste_percent": 0.0},
+        {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1.0, "total": 417.76, "unit": "EA", "unit_price": 417.76, "waste_percent": 0.0},
+        {"code": "ADR-DEMO", "description": "Room 1: category 2 finished/drywall/trim demolition", "quantity": 820.0, "total": 43968.4, "unit": "SF", "unit_price": 53.62, "waste_percent": 0.0},
+        {"code": "ADR-FAN", "description": "Axial air movers", "quantity": 7.0, "total": 3489.43, "unit": "unit-day", "unit_price": 498.49, "waste_percent": 0.0},
+        {"code": "ADR-DEHU", "description": "Commercial LGR dehumidifiers", "quantity": 3.0, "total": 349.38, "unit": "unit-day", "unit_price": 116.46, "waste_percent": 0.0},
+        {"code": "ADR-LABOR", "description": "Content manipulation / additional labor", "quantity": 1.0, "total": 294.7, "unit": "HR", "unit_price": 294.7, "waste_percent": 0.0},
+        {"code": "ADR-EXTRA", "description": "Additional work, not in Oracle Restoration price sheet: Seeded extra task, 1.5 h at $60.00/h, approved by Olive Owner on 2026-10-25.", "quantity": 1.5, "total": 90.0, "unit": "HR", "unit_price": 60.0, "waste_percent": 0.0}
+      ],
+      "xactimate_total": 51573.05
+    },
+    "normalized_inspection": {
+      "address": "100 Oracle Lane, Testville",
+      "air_movers": 7,
+      "air_scrubbers": 1,
+      "assistant_transcript": "",
+      "dehumidifiers": 3,
+      "drying_days": 1,
+      "dump_truck_loads": 0,
+      "emergency_calls": 2,
+      "equipment_decon": 0,
+      "extras": [
+        {"approval": {"accepted_at": "2026-10-25T12:00:00Z", "accepted_by_name": "Olive Owner", "accepted_by_uid": "owner-uid", "company_id": "oracle-co", "company_version": 1, "price_content_sha256": "", "price_version_id": "", "rate": "60.00", "total": "90.00"}, "description": "Seeded extra task", "hours": "1.5", "id": "c31c4b1f081d2be508c197c080dded0e", "origin": "manual", "unpriced_item": ""}
+      ],
+      "granite_removal": false,
+      "has_crawl_space": false,
+      "haul_loads": 3,
+      "hepa_filters": 1,
+      "is_after_hours": false,
+      "labor_hours": 1.0,
+      "matterport_scans": 0,
+      "monitoring_hours": 13.25,
+      "package_price": null,
+      "power_distribution": 0,
+      "rooms": [
+        {"category": 2, "custom_cabinetry": true, "finished_sf": 820.0, "name": "Room 1", "unfinished_sf": 0.0, "waste_percent": 0.0}
+      ],
+      "scope_confirmed": true,
+      "technician_notes": "",
+      "technician_transcript": "",
+      "water_heater_loss": false,
+      "wood_floor_days": 7,
+      "wood_floor_systems": 0,
+      "work_performed": false,
+      "year_built": 2009
+    },
+    "pin": {
+      "calculation_version": "adr-residential-v1",
+      "company_id": "oracle-co",
+      "content_sha256": "d1fae5c4ef3f637d0f33cf408ecd3cb7c8a5b0e95239ddfe8d671895a36cd895",
+      "inspection_id": "ADR-INS-9f7ccba37b06dd47aef9927a8953db58",
+      "pin_version": 1,
+      "priced_at": "2026-11-01T17:00:00Z",
+      "rates": {
+        "additional_work_hourly": "128.53",
+        "after_hours_job_charge": "57.34",
+        "air_mover_daily": "498.49",
+        "air_scrubber_daily": "358.83",
+        "dehumidifier_daily": "116.46",
+        "demo_cat1_finished": "86.75",
+        "demo_cat1_unfinished": "55.84",
+        "demo_cat2_finished": "53.62",
+        "demo_cat2_unfinished": "91.37",
+        "demo_cat3_finished": "37.20",
+        "demo_cat3_unfinished": "69.30",
+        "dump_truck_load": "479.74",
+        "emergency_call": "468.63",
+        "equipment_decontamination": "219.71",
+        "haul_pickup_load": "469.55",
+        "hepa_filter": "417.76",
+        "matterport_scan": "42.84",
+        "monitoring_hourly": "19.52",
+        "power_distribution": "336.05",
+        "sheet_labor_hourly": "294.70",
+        "wood_floor_daily": "390.11"
+      },
+      "reason": "first_price",
+      "sequence": 1,
+      "version_id": "v-83e1c7c32b64"
+    },
+    "price_basis": {
+      "calculation_version": "adr-residential-v1",
+      "company_id": "oracle-co",
+      "content_sha256": "d1fae5c4ef3f637d0f33cf408ecd3cb7c8a5b0e95239ddfe8d671895a36cd895",
+      "priced_at": "2026-11-01T17:00:00Z",
+      "rates": {
+        "additional_work_hourly": "128.53",
+        "after_hours_job_charge": "57.34",
+        "air_mover_daily": "498.49",
+        "air_scrubber_daily": "358.83",
+        "dehumidifier_daily": "116.46",
+        "demo_cat1_finished": "86.75",
+        "demo_cat1_unfinished": "55.84",
+        "demo_cat2_finished": "53.62",
+        "demo_cat2_unfinished": "91.37",
+        "demo_cat3_finished": "37.20",
+        "demo_cat3_unfinished": "69.30",
+        "dump_truck_load": "479.74",
+        "emergency_call": "468.63",
+        "equipment_decontamination": "219.71",
+        "haul_pickup_load": "469.55",
+        "hepa_filter": "417.76",
+        "matterport_scan": "42.84",
+        "monitoring_hourly": "19.52",
+        "power_distribution": "336.05",
+        "sheet_labor_hourly": "294.70",
+        "wood_floor_daily": "390.11"
+      },
+      "sequence": 1,
+      "version_id": "v-83e1c7c32b64"
+    },
+    "pricing": {
+      "buckets": {
+        "affected_sf": "820.0",
+        "equipment": "3838.81",
+        "job": "3471.14",
+        "labor_material": "44263.10"
+      },
+      "calculation_version": "adr-residential-v1",
+      "high": "73704.60",
+      "itemized_total": 51573.05,
+      "lines": [
+        {"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 2.0, "total": 937.26, "unit": "EA", "unit_price": 468.63, "waste_percent": 0.0},
+        {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 258.64, "unit": "HR", "unit_price": 19.52, "waste_percent": 0.0},
+        {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 3.0, "total": 1408.65, "unit": "load", "unit_price": 469.55, "waste_percent": 0.0},
+        {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1.0, "total": 358.83, "unit": "day", "unit_price": 358.83, "waste_percent": 0.0},
+        {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1.0, "total": 417.76, "unit": "EA", "unit_price": 417.76, "waste_percent": 0.0},
+        {"code": "ADR-DEMO", "description": "Room 1: category 2 finished/drywall/trim demolition", "quantity": 820.0, "total": 43968.4, "unit": "SF", "unit_price": 53.62, "waste_percent": 0.0},
+        {"code": "ADR-FAN", "description": "Axial air movers", "quantity": 7.0, "total": 3489.43, "unit": "unit-day", "unit_price": 498.49, "waste_percent": 0.0},
+        {"code": "ADR-DEHU", "description": "Commercial LGR dehumidifiers", "quantity": 3.0, "total": 349.38, "unit": "unit-day", "unit_price": 116.46, "waste_percent": 0.0},
+        {"code": "ADR-LABOR", "description": "Content manipulation / additional labor", "quantity": 1.0, "total": 294.7, "unit": "HR", "unit_price": 294.7, "waste_percent": 0.0},
+        {"code": "ADR-EXTRA", "description": "Seeded extra task", "quantity": 1.5, "total": 90.0, "unit": "HR", "unit_price": 60.0, "waste_percent": 0.0}
+      ],
+      "low": "51573.05",
+      "totals": null
+    },
+    "proposal": {
+      "byte_length": 8784,
+      "canonical_bytes_base64": "eyJkYXRhIjp7ImFkZHJlc3MiOiIxMDAgT3JhY2xlIExhbmUsIFRlc3R2aWxsZSIsImFpcl9tb3ZlcnMiOjcsImFpcl9zY3J1YmJlcnMiOjEsImFzc2lzdGFudF90cmFuc2NyaXB0IjoiIiwiZGVodW1pZGlmaWVycyI6MywiZHJ5aW5nX2RheXMiOjEsImR1bXBfdHJ1Y2tfbG9hZHMiOjAsImVtZXJnZW5jeV9jYWxscyI6MiwiZXF1aXBtZW50X2RlY29uIjowLCJleHRyYXMiOlt7ImFwcHJvdmFsIjp7ImFjY2VwdGVkX2F0IjoiMjAyNi0xMC0yNVQxMjowMDowMFoiLCJhY2NlcHRlZF9ieV9uYW1lIjoiT2xpdmUgT3duZXIiLCJhY2NlcHRlZF9ieV91aWQiOiJvd25lci11aWQiLCJjb21wYW55X2lkIjoib3JhY2xlLWNvIiwiY29tcGFueV92ZXJzaW9uIjoxLCJwcmljZV9jb250ZW50X3NoYTI1NiI6IiIsInByaWNlX3ZlcnNpb25faWQiOiIiLCJyYXRlIjoiNjAuMDAiLCJ0b3RhbCI6IjkwLjAwIn0sImRlc2NyaXB0aW9uIjoiU2VlZGVkIGV4dHJhIHRhc2siLCJob3VycyI6IjEuNSIsImlkIjoiYzMxYzRiMWYwODFkMmJlNTA4YzE5N2MwODBkZGVkMGUiLCJvcmlnaW4iOiJtYW51YWwiLCJ1bnByaWNlZF9pdGVtIjoiIn1dLCJncmFuaXRlX3JlbW92YWwiOmZhbHNlLCJoYXNfY3Jhd2xfc3BhY2UiOmZhbHNlLCJoYXVsX2xvYWRzIjozLCJoZXBhX2ZpbHRlcnMiOjEsImlzX2FmdGVyX2hvdXJzIjpmYWxzZSwibGFib3JfaG91cnMiOjEuMCwibWF0dGVycG9ydF9zY2FucyI6MCwibW9uaXRvcmluZ19ob3VycyI6MTMuMjUsInBhY2thZ2VfcHJpY2UiOm51bGwsInBvd2VyX2Rpc3RyaWJ1dGlvbiI6MCwicm9vbXMiOlt7ImNhdGVnb3J5IjoyLCJjdXN0b21fY2FiaW5ldHJ5Ijp0cnVlLCJmaW5pc2hlZF9zZiI6ODIwLjAsIm5hbWUiOiJSb29tIDEiLCJ1bmZpbmlzaGVkX3NmIjowLjAsIndhc3RlX3BlcmNlbnQiOjAuMH1dLCJzY29wZV9jb25maXJtZWQiOnRydWUsInRlY2huaWNpYW5fbm90ZXMiOiIiLCJ0ZWNobmljaWFuX3RyYW5zY3JpcHQiOiIiLCJ3YXRlcl9oZWF0ZXJfbG9zcyI6ZmFsc2UsIndvb2RfZmxvb3JfZGF5cyI6Nywid29vZF9mbG9vcl9zeXN0ZW1zIjowLCJ3b3JrX3BlcmZvcm1lZCI6ZmFsc2UsInllYXJfYnVpbHQiOjIwMDl9LCJkb2N1bWVudHMiOnsiYWRyX2VzdGltYXRlIjp7ImN1c3RvbWVyX25hbWUiOiJDYXNleSBDdXN0b21lciIsImRhdGUiOiIxMS0wNi0yMDI2IiwiZGlzY2xhaW1lcnMiOlsiUGhvdG9zIHRha2VuIGR1cmluZyB0aGUgaW5zcGVjdGlvbiBhcmUgc3RhbXBlZCB3aXRoIHRoZSBsb2NhdGlvbiByZXBvcnRlZCBieSB0aGUgdGVjaG5pY2lhbidzIHBob25lLCB3aGVuIHRoZSB0ZWNobmljaWFuIGFsbG93cyBpdCwgYW5kIHRoYXQgbG9jYXRpb24gaXMgcGFydCBvZiB0aGUgcGhvdG8gbG9nLiIsIldoZW4gdGhlIGpvYiBhZGRyZXNzIGlzIGVudGVyZWQsIHRoZSB0eXBlZCBhZGRyZXNzIGlzIHNlbnQgdG8gR29vZ2xlIE1hcHMgdG8gc3VnZ2VzdCBtYXRjaGluZyBhZGRyZXNzZXMsIGFuZCB0aGUgc2VsZWN0ZWQgbG9jYXRpb24gaXMgc2F2ZWQgd2l0aCB0aGUgam9iLiIsIk5PVEU6IFRoaXMgZXN0aW1hdGUgZG9lcyBOT1QgaW5jbHVkZSByZWNvbnN0cnVjdGlvbiBhZnRlciByZW1lZGlhdGlvbi4gRGVtb2xpdGlvbiBpcyBhIGhpZ2hseSB1bnByZWRpY3RhYmxlIHByb2NlZHVyZS4gQXMgc3VjaCwgYW55IGNvbGxhdGVyYWwgZGFtYWdlIHJlc3VsdGluZyBmcm9tIHRoZSBkZW1vbGl0aW9uIHByZXNjcmliZWQgaGVyZWluIHdpbGwgTk9UIGJlIHRoZSByZXNwb25zaWJpbGl0eSBvZiBPcmFjbGUgUmVzdG9yYXRpb24uIFRoaXMgZXN0aW1hdGUgZG9lcyBub3QgaW5jbHVkZSB0ZXN0aW5nIG9mIGFueSBraW5kLiIsIklmIHRoZSB3b3JrIHByb2NlZWRzIHRocm91Z2ggYW4gaW5zdXJhbmNlIGNsYWltLCB3ZSB3aWxsIHJlcHJpY2UgdGhlIGVzdGltYXRlIGFjY29yZGluZyB0byBpbmR1c3RyeSBzdGFuZGFyZHMgdXNpbmcgWGFjdGltYXRlLiIsIkVzdGltYXRlIGlzIHZhbGlkIGZvciAzMCBkYXlzIGZyb20gZGF0ZSBvZiBpbnNwZWN0aW9uLiJdLCJmaW5kaW5ncyI6WyJUaGUgaG9tZSB3YXMgYnVpbHQgaW4gMjAwOS4gVGhlcmVmb3JlLCBubyBsZWFkIG9yIGFzYmVzdG9zIHRlc3RpbmcgaXMgcmVxdWlyZWQgcHJpb3IgdG8gdGhlIHN0YXJ0IG9mIHdvcmsuIl0sImxlYWRfbm90aWNlX3JlcXVpcmVkIjpmYWxzZSwicHJvcGVydHlfYWRkcmVzcyI6IjEwMCBPcmFjbGUgTGFuZSwgVGVzdHZpbGxlIiwicHJvcG9zZWRfY29zdCI6NzM3MDQuNiwicHJvcG9zZWRfY29zdF9sb3ciOjUxNTczLjA1LCJyZWNvbW1lbmRhdGlvbnMiOlsiUGVyIElJQ1JDIGFuZCBFUEEgcHJvdG9jb2xzLCBPcmFjbGUgUmVzdG9yYXRpb24gdGVjaG5pY2lhbnMgd2lsbCBkb24gYXBwcm9wcmlhdGUgcGVyc29uYWwgcHJvdGVjdGl2ZSBlcXVpcG1lbnQgZHVyaW5nIG1pdGlnYXRpb24vcmVtZWRpYXRpb24gc2VydmljZXMuIFRoZSB0ZWNobmljaWFucyB3aWxsIHNldCBjb250YWlubWVudHMgYXMgbmVlZGVkLiIsIlJvb20gMTogY2F0ZWdvcnkgMiBmaW5pc2hlZC9kcnl3YWxsL3RyaW0gZGVtb2xpdGlvbiIsIkF4aWFsIGFpciBtb3ZlcnMiLCJDb21tZXJjaWFsIExHUiBkZWh1bWlkaWZpZXJzIiwiQ29udGVudCBtYW5pcHVsYXRpb24gLyBhZGRpdGlvbmFsIGxhYm9yIiwiQWRkaXRpb25hbCB3b3JrLCBub3QgaW4gT3JhY2xlIFJlc3RvcmF0aW9uIHByaWNlIHNoZWV0OiBTZWVkZWQgZXh0cmEgdGFzaywgMS41IGggYXQgJDYwLjAwL2gsIGFwcHJvdmVkIGJ5IE9saXZlIE93bmVyIG9uIDIwMjYtMTAtMjUuIiwiSWYgdGVjaG5pY2lhbnMgZW5jb3VudGVyIGFkZGl0aW9uYWwgYWZmZWN0ZWQgYnVpbGRpbmcgbWF0ZXJpYWxzIGJleW9uZCB0aGUgcXVhbnRpdGllcyBwcmV2aW91c2x5IGRlc2NyaWJlZCwgdGhlIHByb2plY3QgbWFuYWdlciB3aWxsIGNvbnRhY3QgdGhlIHByb3BlcnR5IG93bmVyIHRvIGRpc2N1c3MgYW55IGFkZGl0aW9uYWwgY291cnNlIG9mIGFjdGlvbiBuZWNlc3NhcnkgYW5kIHRoZSBhc3NvY2lhdGVkIGNvc3QuIl19LCJhaV9zdWdnZXN0aW9ucyI6WyJDaGVjayB0aGUgc3ViZmxvb3IuIl0sImFpX3N1bW1hcnkiOiJSZXZpZXdlZCB0aGUgaW5zcGVjdGlvbi4iLCJjb21wYW55X2lkZW50aXR5Ijp7ImFkZHJlc3MiOiIxIFN5bnRoZXRpYyBXYXksIFRlc3R2aWxsZSIsImNvbXBhbnlfaWQiOiJvcmFjbGUtY28iLCJlbWFpbCI6Im9mZmljZUBleGFtcGxlLmludmFsaWQiLCJsaWNlbnNlIjoiMDAwMDAxIiwibG9nb19kYXRhX3VybCI6IiIsIm5hbWUiOiJPcmFjbGUgUmVzdG9yYXRpb24iLCJwaG9uZSI6IjU1NS0wMTAwIiwic2lnbm9mZiI6IlBhdCBFeGFtcGxlIiwidmVyc2lvbiI6MSwid2F0ZXJfaGVhdGVyX25vdGljZSI6IiJ9LCJjb21wYW55X3NldHVwX21pc3NpbmciOltdLCJjb21wbGlhbmNlX25vdGVzIjpbIlRoZSBob21lIHdhcyBidWlsdCBpbiAyMDA5LiBUaGVyZWZvcmUsIG5vIGxlYWQgb3IgYXNiZXN0b3MgdGVzdGluZyBpcyByZXF1aXJlZCBwcmlvciB0byB0aGUgc3RhcnQgb2Ygd29yay4iLCJOT1RFOiBUaGlzIGVzdGltYXRlIGRvZXMgTk9UIGluY2x1ZGUgcmVjb25zdHJ1Y3Rpb24gYWZ0ZXIgcmVtZWRpYXRpb24uIERlbW9saXRpb24gaXMgYSBoaWdobHkgdW5wcmVkaWN0YWJsZSBwcm9jZWR1cmUuIEFzIHN1Y2gsIGFueSBjb2xsYXRlcmFsIGRhbWFnZSByZXN1bHRpbmcgZnJvbSB0aGUgZGVtb2xpdGlvbiBwcmVzY3JpYmVkIGhlcmVpbiB3aWxsIE5PVCBiZSB0aGUgcmVzcG9uc2liaWxpdHkgb2YgT3JhY2xlIFJlc3RvcmF0aW9uLiBUaGlzIGVzdGltYXRlIGRvZXMgbm90IGluY2x1ZGUgdGVzdGluZyBvZiBhbnkga2luZC4iLCJJZiB0aGUgd29yayBwcm9jZWVkcyB0aHJvdWdoIGFuIGluc3VyYW5jZSBjbGFpbSwgd2Ugd2lsbCByZXByaWNlIHRoZSBlc3RpbWF0ZSBhY2NvcmRpbmcgdG8gaW5kdXN0cnkgc3RhbmRhcmRzIHVzaW5nIFhhY3RpbWF0ZS4iLCJFc3RpbWF0ZSBpcyB2YWxpZCBmb3IgMzAgZGF5cyBmcm9tIGRhdGUgb2YgaW5zcGVjdGlvbi4iXSwiaWljcmNfZGVmZW5zZV9sZXR0ZXIiOiJPcmFjbGUgUmVzdG9yYXRpb24gXHUwMGI3IDEgU3ludGhldGljIFdheSwgVGVzdHZpbGxlIFx1MDBiNyA1NTUtMDEwMCBcdTAwYjcgQ1NMQiAjMDAwMDAxXG5cblRPOiBJbnN1cmFuY2UgQ2xhaW1zIEV4YW1pbmVyIC8gQWRqdXN0ZXJcblxuUkU6IFJlbWVkaWF0aW9uIHNjb3BlIGZvciAxMDAgT3JhY2xlIExhbmUsIFRlc3R2aWxsZVxuQ3VzdG9tZXI6IENhc2V5IEN1c3RvbWVyXG5cblRoaXMgc2NvcGUgZGVzY3JpYmVzIHByb3Bvc2VkIHdvcms7IGNvbXBsZXRpb24gaGFzIG5vdCBiZWVuIHJlY29yZGVkLlxuXG5UaGUgc2NvcGUgaXMgcHJlcGFyZWQgd2l0aCByZWZlcmVuY2UgdG8gSUlDUkMgUzUwMC9TNTIwIHJlc3RvcmF0aW9uIHByYWN0aWNlcy4gUHJvamVjdC1zcGVjaWZpYyBjb25kaXRpb25zIGFuZCBldmlkZW5jZSBhcmUgcmVjb3JkZWQgYmVsb3c7IG5vIHVuc3VwcG9ydGVkIHNlY3Rpb24gY2l0YXRpb24gb3IgY29tcGxldGlvbiBjbGFpbSBpcyBtYWRlLlxuXG5UaGUgaG9tZSB3YXMgYnVpbHQgaW4gMjAwOS4gVGhlcmVmb3JlLCBubyBsZWFkIG9yIGFzYmVzdG9zIHRlc3RpbmcgaXMgcmVxdWlyZWQgcHJpb3IgdG8gdGhlIHN0YXJ0IG9mIHdvcmsuXG5cblNjb3BlOlxuUGVyIElJQ1JDIGFuZCBFUEEgcHJvdG9jb2xzLCBPcmFjbGUgUmVzdG9yYXRpb24gdGVjaG5pY2lhbnMgd2lsbCBkb24gYXBwcm9wcmlhdGUgcGVyc29uYWwgcHJvdGVjdGl2ZSBlcXVpcG1lbnQgZHVyaW5nIG1pdGlnYXRpb24vcmVtZWRpYXRpb24gc2VydmljZXMuIFRoZSB0ZWNobmljaWFucyB3aWxsIHNldCBjb250YWlubWVudHMgYXMgbmVlZGVkLlxuUm9vbSAxOiBjYXRlZ29yeSAyIGZpbmlzaGVkL2RyeXdhbGwvdHJpbSBkZW1vbGl0aW9uXG5BeGlhbCBhaXIgbW92ZXJzXG5Db21tZXJjaWFsIExHUiBkZWh1bWlkaWZpZXJzXG5Db250ZW50IG1hbmlwdWxhdGlvbiAvIGFkZGl0aW9uYWwgbGFib3JcbkFkZGl0aW9uYWwgd29yaywgbm90IGluIE9yYWNsZSBSZXN0b3JhdGlvbiBwcmljZSBzaGVldDogU2VlZGVkIGV4dHJhIHRhc2ssIDEuNSBoIGF0ICQ2MC4wMC9oLCBhcHByb3ZlZCBieSBPbGl2ZSBPd25lciBvbiAyMDI2LTEwLTI1LlxuSWYgdGVjaG5pY2lhbnMgZW5jb3VudGVyIGFkZGl0aW9uYWwgYWZmZWN0ZWQgYnVpbGRpbmcgbWF0ZXJpYWxzIGJleW9uZCB0aGUgcXVhbnRpdGllcyBwcmV2aW91c2x5IGRlc2NyaWJlZCwgdGhlIHByb2plY3QgbWFuYWdlciB3aWxsIGNvbnRhY3QgdGhlIHByb3BlcnR5IG93bmVyIHRvIGRpc2N1c3MgYW55IGFkZGl0aW9uYWwgY291cnNlIG9mIGFjdGlvbiBuZWNlc3NhcnkgYW5kIHRoZSBhc3NvY2lhdGVkIGNvc3QuXG5cbk5PVEU6IFRoaXMgZXN0aW1hdGUgZG9lcyBOT1QgaW5jbHVkZSByZWNvbnN0cnVjdGlvbiBhZnRlciByZW1lZGlhdGlvbi4gRGVtb2xpdGlvbiBpcyBhIGhpZ2hseSB1bnByZWRpY3RhYmxlIHByb2NlZHVyZS4gQXMgc3VjaCwgYW55IGNvbGxhdGVyYWwgZGFtYWdlIHJlc3VsdGluZyBmcm9tIHRoZSBkZW1vbGl0aW9uIHByZXNjcmliZWQgaGVyZWluIHdpbGwgTk9UIGJlIHRoZSByZXNwb25zaWJpbGl0eSBvZiBPcmFjbGUgUmVzdG9yYXRpb24uIFRoaXMgZXN0aW1hdGUgZG9lcyBub3QgaW5jbHVkZSB0ZXN0aW5nIG9mIGFueSBraW5kLlxuSWYgdGhlIHdvcmsgcHJvY2VlZHMgdGhyb3VnaCBhbiBpbnN1cmFuY2UgY2xhaW0sIHdlIHdpbGwgcmVwcmljZSB0aGUgZXN0aW1hdGUgYWNjb3JkaW5nIHRvIGluZHVzdHJ5IHN0YW5kYXJkcyB1c2luZyBYYWN0aW1hdGUuXG5Fc3RpbWF0ZSBpcyB2YWxpZCBmb3IgMzAgZGF5cyBmcm9tIGRhdGUgb2YgaW5zcGVjdGlvbi5cblxuSXRlbWl6ZWQgY2hhcmdlcyBhdCBiYXNlIHJhdGVzOiAkNTEsNTczLjA1LiBDdXN0b21lciBlc3RpbWF0ZSByYW5nZTogJDUxLDU3My4wNSB0byAkNzMsNzA0LjYwLiBUaGUgcmFuZ2UgYXBwbGllcyB0aGUgZXN0aW1hdGluZyBzaGVldCBsYWJvci9tYXRlcmlhbCBhbGxvd2FuY2UgdG8gdGhlIHByaWNlZCBzY29wZTsgYXBwcm92ZWQgYWRkaXRpb25hbCB3b3JrIGlzIGFkZGVkIGF0IGl0cyBhcHByb3ZlZCBhbW91bnQgdG8gYm90aCBlbmRzLlxuXG5TaW5jZXJlbHksXG5QYXQgRXhhbXBsZVxuT3JhY2xlIFJlc3RvcmF0aW9uIiwicGVuZGluZ19leHRyYXMiOjAsInBob3RvX2F1ZGl0X2xvZyI6W10sInByaWNlX2Jhc2lzIjp7ImNhbGN1bGF0aW9uX3ZlcnNpb24iOiJhZHItcmVzaWRlbnRpYWwtdjEiLCJjb21wYW55X2lkIjoib3JhY2xlLWNvIiwiY29udGVudF9zaGEyNTYiOiJkMWZhZTVjNGVmM2Y2MzdkMGYzM2NmNDA4ZWNkM2NiN2M4YTViMGU5NTIzOWRkZmU4ZDY3MTg5NWEzNmNkODk1IiwicHJpY2VkX2F0IjoiMjAyNi0xMS0wMVQxNzowMDowMFoiLCJyYXRlcyI6eyJhZGRpdGlvbmFsX3dvcmtfaG91cmx5IjoiMTI4LjUzIiwiYWZ0ZXJfaG91cnNfam9iX2NoYXJnZSI6IjU3LjM0IiwiYWlyX21vdmVyX2RhaWx5IjoiNDk4LjQ5IiwiYWlyX3NjcnViYmVyX2RhaWx5IjoiMzU4LjgzIiwiZGVodW1pZGlmaWVyX2RhaWx5IjoiMTE2LjQ2IiwiZGVtb19jYXQxX2ZpbmlzaGVkIjoiODYuNzUiLCJkZW1vX2NhdDFfdW5maW5pc2hlZCI6IjU1Ljg0IiwiZGVtb19jYXQyX2ZpbmlzaGVkIjoiNTMuNjIiLCJkZW1vX2NhdDJfdW5maW5pc2hlZCI6IjkxLjM3IiwiZGVtb19jYXQzX2ZpbmlzaGVkIjoiMzcuMjAiLCJkZW1vX2NhdDNfdW5maW5pc2hlZCI6IjY5LjMwIiwiZHVtcF90cnVja19sb2FkIjoiNDc5Ljc0IiwiZW1lcmdlbmN5X2NhbGwiOiI0NjguNjMiLCJlcXVpcG1lbnRfZGVjb250YW1pbmF0aW9uIjoiMjE5LjcxIiwiaGF1bF9waWNrdXBfbG9hZCI6IjQ2OS41NSIsImhlcGFfZmlsdGVyIjoiNDE3Ljc2IiwibWF0dGVycG9ydF9zY2FuIjoiNDIuODQiLCJtb25pdG9yaW5nX2hvdXJseSI6IjE5LjUyIiwicG93ZXJfZGlzdHJpYnV0aW9uIjoiMzM2LjA1Iiwic2hlZXRfbGFib3JfaG91cmx5IjoiMjk0LjcwIiwid29vZF9mbG9vcl9kYWlseSI6IjM5MC4xMSJ9LCJzZXF1ZW5jZSI6MSwidmVyc2lvbl9pZCI6InYtODNlMWM3YzMyYjY0In0sInNjaGVtYV92ZXJzaW9uIjozLCJzaWduYWJsZSI6dHJ1ZSwidW5wcmljZWRfd29yayI6W10sInhhY3RpbWF0ZV9zY29wZSI6W3siY29kZSI6IkFEUi1UUklQIiwiZGVzY3JpcHRpb24iOiJFbWVyZ2VuY3kgY2FsbCAvIHRyaXAgY2hhcmdlIiwicXVhbnRpdHkiOjIuMCwidG90YWwiOjkzNy4yNiwidW5pdCI6IkVBIiwidW5pdF9wcmljZSI6NDY4LjYzLCJ3YXN0ZV9wZXJjZW50IjowLjB9LHsiY29kZSI6IkFEUi1NT04iLCJkZXNjcmlwdGlvbiI6IkVxdWlwbWVudCBtb25pdG9yaW5nIiwicXVhbnRpdHkiOjEzLjI1LCJ0b3RhbCI6MjU4LjY0LCJ1bml0IjoiSFIiLCJ1bml0X3ByaWNlIjoxOS41Miwid2FzdGVfcGVyY2VudCI6MC4wfSx7ImNvZGUiOiJBRFItSEFVTCIsImRlc2NyaXB0aW9uIjoiSGF1bCBkZWJyaXMgJiBkaXNwb3NhbCIsInF1YW50aXR5IjozLjAsInRvdGFsIjoxNDA4LjY1LCJ1bml0IjoibG9hZCIsInVuaXRfcHJpY2UiOjQ2OS41NSwid2FzdGVfcGVyY2VudCI6MC4wfSx7ImNvZGUiOiJBRFItU0NSVUIiLCJkZXNjcmlwdGlvbiI6IkFpciBzY3J1YmJlciBkYWlseSByZW50YWwiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6MzU4LjgzLCJ1bml0IjoiZGF5IiwidW5pdF9wcmljZSI6MzU4LjgzLCJ3YXN0ZV9wZXJjZW50IjowLjB9LHsiY29kZSI6IkFEUi1IRVBBIiwiZGVzY3JpcHRpb24iOiJIRVBBIHJlcGxhY2VtZW50IGZpbHRlciIsInF1YW50aXR5IjoxLjAsInRvdGFsIjo0MTcuNzYsInVuaXQiOiJFQSIsInVuaXRfcHJpY2UiOjQxNy43Niwid2FzdGVfcGVyY2VudCI6MC4wfSx7ImNvZGUiOiJBRFItREVNTyIsImRlc2NyaXB0aW9uIjoiUm9vbSAxOiBjYXRlZ29yeSAyIGZpbmlzaGVkL2RyeXdhbGwvdHJpbSBkZW1vbGl0aW9uIiwicXVhbnRpdHkiOjgyMC4wLCJ0b3RhbCI6NDM5NjguNCwidW5pdCI6IlNGIiwidW5pdF9wcmljZSI6NTMuNjIsIndhc3RlX3BlcmNlbnQiOjAuMH0seyJjb2RlIjoiQURSLUZBTiIsImRlc2NyaXB0aW9uIjoiQXhpYWwgYWlyIG1vdmVycyIsInF1YW50aXR5Ijo3LjAsInRvdGFsIjozNDg5LjQzLCJ1bml0IjoidW5pdC1kYXkiLCJ1bml0X3ByaWNlIjo0OTguNDksIndhc3RlX3BlcmNlbnQiOjAuMH0seyJjb2RlIjoiQURSLURFSFUiLCJkZXNjcmlwdGlvbiI6IkNvbW1lcmNpYWwgTEdSIGRlaHVtaWRpZmllcnMiLCJxdWFudGl0eSI6My4wLCJ0b3RhbCI6MzQ5LjM4LCJ1bml0IjoidW5pdC1kYXkiLCJ1bml0X3ByaWNlIjoxMTYuNDYsIndhc3RlX3BlcmNlbnQiOjAuMH0seyJjb2RlIjoiQURSLUxBQk9SIiwiZGVzY3JpcHRpb24iOiJDb250ZW50IG1hbmlwdWxhdGlvbiAvIGFkZGl0aW9uYWwgbGFib3IiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6Mjk0LjcsInVuaXQiOiJIUiIsInVuaXRfcHJpY2UiOjI5NC43LCJ3YXN0ZV9wZXJjZW50IjowLjB9LHsiY29kZSI6IkFEUi1FWFRSQSIsImRlc2NyaXB0aW9uIjoiQWRkaXRpb25hbCB3b3JrLCBub3QgaW4gT3JhY2xlIFJlc3RvcmF0aW9uIHByaWNlIHNoZWV0OiBTZWVkZWQgZXh0cmEgdGFzaywgMS41IGggYXQgJDYwLjAwL2gsIGFwcHJvdmVkIGJ5IE9saXZlIE93bmVyIG9uIDIwMjYtMTAtMjUuIiwicXVhbnRpdHkiOjEuNSwidG90YWwiOjkwLjAsInVuaXQiOiJIUiIsInVuaXRfcHJpY2UiOjYwLjAsIndhc3RlX3BlcmNlbnQiOjAuMH1dLCJ4YWN0aW1hdGVfdG90YWwiOjUxNTczLjA1fSwicGhvdG9zIjpbXSwicmV2aXNpb24iOjN9",
+      "sha256": "d23254340f20638b4ee0043383f03723e22252156d10b20e42a01d7769f7aafa"
+    },
+    "signing": {
+      "link_payload": {
+        "auth_id": "ADR-AUTH-link-110249ac92d8e8f3022a373a579d9240",
+        "consent_version": "homeowner-link-v1",
+        "documents_confirmed": true,
+        "expected_revision": 3,
+        "inspection_id": "ADR-INS-9f7ccba37b06dd47aef9927a8953db58",
+        "proposal_hash": "d23254340f20638b4ee0043383f03723e22252156d10b20e42a01d7769f7aafa",
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "signer_name": "Casey Customer",
+        "signer_role": "owner"
+      },
+      "link_sha256": "2ca366e9a6a35dcf68d9a182d3ad828a6a69bc24cdfbc5834e84f1895a8cf99e",
+      "onsite_payload": {
+        "auth_id": "ADR-AUTH-oracle-6da61ddc81bb",
+        "documents_confirmed": true,
+        "expected_revision": 3,
+        "inspection_id": "ADR-INS-9f7ccba37b06dd47aef9927a8953db58",
+        "proposal_hash": "d23254340f20638b4ee0043383f03723e22252156d10b20e42a01d7769f7aafa",
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+      },
+      "onsite_sha256": "be3936f8b61540c9aa7a62b3d89d27ce3b47a1a20cf6c12cbb78508aebc9ca5b"
+    },
+    "warnings": {
+      "advisory": [],
+      "engine": []
+    }
+  },
+  "id": "v1-seeded-09",
+  "input": {
+    "ai": {
+      "suggestions": [
+        "Check the subfloor."
+      ],
+      "summary": "Reviewed the inspection.",
+      "unpriced_work": []
+    },
+    "calculation": "adr-residential-v1",
+    "claim": null,
+    "company_id": "oracle-co",
+    "customer_name": "Casey Customer",
+    "data": {
+      "address": "100 Oracle Lane, Testville",
+      "air_movers": 7,
+      "dehumidifiers": 3,
+      "drying_days": 1,
+      "emergency_calls": 2,
+      "extras": [
+        {"approval": {"accepted_at": "2026-10-25T12:00:00Z", "accepted_by_name": "Olive Owner", "accepted_by_uid": "owner-uid", "company_id": "oracle-co", "company_version": 1, "rate": "60.00", "total": "90.00"}, "description": "Seeded extra task", "hours": "1.5", "id": "c31c4b1f081d2be508c197c080dded0e", "origin": "manual", "unpriced_item": ""}
+      ],
+      "haul_loads": 3,
+      "is_after_hours": false,
+      "labor_hours": 1,
+      "matterport_scans": 0,
+      "monitoring_hours": 13.25,
+      "rooms": [
+        {"category": 2, "custom_cabinetry": true, "finished_sf": 820, "name": "Room 1", "unfinished_sf": 0, "waste_percent": 0}
+      ],
+      "scope_confirmed": true,
+      "wood_floor_systems": 0,
+      "year_built": 2009
+    },
+    "history": null,
+    "identity": {
+      "address": "1 Synthetic Way, Testville",
+      "company_id": "oracle-co",
+      "email": "office@example.invalid",
+      "license": "000001",
+      "name": "Oracle Restoration",
+      "phone": "555-0100",
+      "signoff": "Pat Example",
+      "version": 1
+    },
+    "inspection_id": "ADR-INS-9f7ccba37b06dd47aef9927a8953db58",
+    "photos": [],
+    "rates": {
+      "additional_work_hourly": "128.53",
+      "after_hours_job_charge": "57.34",
+      "air_mover_daily": "498.49",
+      "air_scrubber_daily": "358.83",
+      "dehumidifier_daily": "116.46",
+      "demo_cat1_finished": "86.75",
+      "demo_cat1_unfinished": "55.84",
+      "demo_cat2_finished": "53.62",
+      "demo_cat2_unfinished": "91.37",
+      "demo_cat3_finished": "37.20",
+      "demo_cat3_unfinished": "69.30",
+      "dump_truck_load": "479.74",
+      "emergency_call": "468.63",
+      "equipment_decontamination": "219.71",
+      "haul_pickup_load": "469.55",
+      "hepa_filter": "417.76",
+      "matterport_scan": "42.84",
+      "monitoring_hourly": "19.52",
+      "power_distribution": "336.05",
+      "sheet_labor_hourly": "294.70",
+      "wood_floor_daily": "390.11"
+    },
+    "revision": 3,
+    "sequence": 1,
+    "signing": {
+      "auth_id": "ADR-AUTH-oracle-6da61ddc81bb",
+      "link": {
+        "consent_version": "homeowner-link-v1",
+        "documents_reviewed": true,
+        "electronic_consent": true,
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "signer_name": "Casey Customer",
+        "signer_role": "owner"
+      },
+      "link_key": "110249ac92d8e8f3022a373a579d9240713fbcc1a66aaeab9898d79dc0acab5b",
+      "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    },
+    "version_id": "v-83e1c7c32b64"
+  },
+  "tags": [
+    "seeded"
+  ],
+  "title": "Seeded v1 job 9 (seed 19780101)"
+}
