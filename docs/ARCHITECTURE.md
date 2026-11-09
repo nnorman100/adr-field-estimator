@@ -79,7 +79,7 @@ checks are read-only). Every row is a **Gap** today; the stage is the one that c
 
 Still **[open]** (owner gates in the rebuild plan, section 10): the Google Cloud organization (R1),
 the Live and voice-note screening exception (R2), image screening location and Preview status
-(R3), live Cloud SQL HA vs zonal and recovery targets (R4; the `test` tier is settled, see `docs/DECISIONS.md`), per-company AI ceilings (R5), and identity enrollment and recovery timing (R7). R6 (classification and retention of existing data) no longer applies, because no existing data migrates.
+(R3), live Cloud SQL HA vs zonal and recovery targets (R4; the `test` tier is settled, see `docs/DECISIONS.md`), and per-company AI ceilings (R5). R6 (classification and retention of existing data) and R7's old-to-new account mapping no longer apply, because no existing data or accounts migrate; the rest of R7 is decided by the accepted S3 plan: the second step is required at first sign-in (no grace period), and a lost authenticator is reset by the platform operator after confirming identity, logged, with re-enrolment (no backup codes).
 
 ## Testing layers
 

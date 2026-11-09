@@ -64,10 +64,9 @@ Owner actions (from `docs/STATUS.md`, recheck there):
    owner script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo (Phase 0 item 2).
 3. Invitation check to a Google and an Outlook address (Phase 0 item 3).
-4. Before a second company subscribes: isolated test resources (databases, identities and release
-   targets) inside `alert-disaster-field-2026`, and Resend email with a company sending domain
-   (D-007). D-006's separate test project is superseded by the rebuild plan, which keeps test
-   resources in the existing project.
+4. Before a second company subscribes: the rebuild's isolated `test` resources (databases,
+   identities and release targets) in project `dryscope`, never in `alert-disaster-field-2026`
+   (D-006 Nov 9 note, D-012), and Resend email with a company sending domain (D-007).
 5. Decide which flag-off features to switch on, one reviewed pull request at a time, each with a
    phone check.
 6. Photo originals (#223) are built but not released or phone-checked.
