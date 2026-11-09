@@ -46,12 +46,7 @@ module.exports = defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: {
-        browserName: 'chromium',
-        launchOptions: {
-          args: ['--ignore-certificate-errors', '--no-sandbox', '--disable-dev-shm-usage'],
-        },
-      },
+      use: { browserName: 'chromium', launchOptions: { args: ['--ignore-certificate-errors'] } },
     },
     { name: 'webkit', use: { browserName: 'webkit' } },
   ],

@@ -13,13 +13,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: { baseURL: `http://localhost:${port}`, trace: 'retain-on-failure' },
   projects: [
-    {
-      name: 'chromium',
-      use: {
-        browserName: 'chromium',
-        launchOptions: { args: ['--no-sandbox', '--disable-dev-shm-usage'] },
-      },
-    },
+    { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'webkit', use: { browserName: 'webkit' } },
   ],
   webServer: {
