@@ -20,7 +20,7 @@
 const fs = require('node:fs');
 const readline = require('node:readline');
 
-const PROJECT = 'alert-disaster-field-2026';
+const PROJECT = 'dryscope';
 const REGION = 'us-central1';
 const SERVICES = ['api', 'live'];
 const RUNTIME = ['api', 'live', 'migrate'];
@@ -122,7 +122,7 @@ function expectedPlan(root, env) {
         service_account_id: `projects/${PROJECT}/serviceAccounts/dryscope-${k}-${env}@${PROJECT}.iam.gserviceaccount.com`,
       };
     }
-    const bucket = `${PROJECT}-dryscope-evidence-${env}`;
+    const bucket = `${PROJECT}-evidence-${env}`;
     grants['google_storage_bucket_iam_member.api_create'] = {
       role: 'roles/storage.objectCreator',
       member: sa('api'),

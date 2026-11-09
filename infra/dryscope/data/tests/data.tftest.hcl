@@ -167,7 +167,7 @@ run "only_reviewed_roles_are_granted" {
   command = plan
 
   assert {
-    condition     = alltrue([for m in google_project_iam_member.sql_client : m.role == "roles/cloudsql.client"]) && alltrue([for m in google_project_iam_member.sql_login : m.role == "roles/cloudsql.instanceUser"]) && alltrue([for m in google_project_iam_member.firestore_user : m.role == "roles/datastore.user"]) && alltrue([for m in google_project_iam_member.gemini_caller : m.role == "projects/alert-disaster-field-2026/roles/dryscopeGemini${title(var.environment)}"])
+    condition     = alltrue([for m in google_project_iam_member.sql_client : m.role == "roles/cloudsql.client"]) && alltrue([for m in google_project_iam_member.sql_login : m.role == "roles/cloudsql.instanceUser"]) && alltrue([for m in google_project_iam_member.firestore_user : m.role == "roles/datastore.user"]) && alltrue([for m in google_project_iam_member.gemini_caller : m.role == "projects/dryscope/roles/dryscopeGemini${title(var.environment)}"])
     error_message = "Project-level grants are limited to SQL connect and login, Firestore user and the predict-only Gemini caller role."
   }
   assert {
@@ -232,6 +232,16 @@ run "wrong_project_is_refused" {
 
   variables {
     project_id = "mitigation-project"
+  }
+
+  expect_failures = [var.project_id]
+}
+
+run "legacy_project_is_refused" {
+  command = plan
+
+  variables {
+    project_id = "alert-disaster-field-2026"
   }
 
   expect_failures = [var.project_id]

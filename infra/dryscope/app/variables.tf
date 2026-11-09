@@ -3,8 +3,8 @@ variable "project_id" {
   description = "The dedicated DryScope project. No other project is accepted."
 
   validation {
-    condition     = var.project_id == "alert-disaster-field-2026"
-    error_message = "This root only manages project alert-disaster-field-2026."
+    condition     = var.project_id == "dryscope"
+    error_message = "This root only manages project dryscope."
   }
 }
 
@@ -33,8 +33,8 @@ variable "api_image" {
   description = "Next.js app image, pinned by digest, from this environment's own repository (dryscope-<environment>). Used when the service is first created; later releases go through gcloud and Terraform ignores the image."
 
   validation {
-    condition     = can(regex("^us-central1-docker\\.pkg\\.dev/alert-disaster-field-2026/dryscope-${var.environment}/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$", var.api_image))
-    error_message = "api_image must be a digest-pinned image in this environment's own us-central1 repository, dryscope-<environment>."
+    condition     = can(regex("^us-central1-docker\\.pkg\\.dev/dryscope/dryscope-${var.environment}/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$", var.api_image))
+    error_message = "api_image must be a digest-pinned image in this environment's own us-central1 repository, dryscope/dryscope-<environment>."
   }
 }
 
@@ -43,8 +43,8 @@ variable "live_image" {
   description = "Node Live relay image, pinned by digest, from this environment's own repository. Used when the service is first created; later releases go through gcloud and Terraform ignores the image."
 
   validation {
-    condition     = can(regex("^us-central1-docker\\.pkg\\.dev/alert-disaster-field-2026/dryscope-${var.environment}/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$", var.live_image))
-    error_message = "live_image must be a digest-pinned image in this environment's own us-central1 repository, dryscope-<environment>."
+    condition     = can(regex("^us-central1-docker\\.pkg\\.dev/dryscope/dryscope-${var.environment}/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$", var.live_image))
+    error_message = "live_image must be a digest-pinned image in this environment's own us-central1 repository, dryscope/dryscope-<environment>."
   }
 }
 

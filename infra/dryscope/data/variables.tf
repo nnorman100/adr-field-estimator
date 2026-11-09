@@ -3,8 +3,8 @@ variable "project_id" {
   description = "The dedicated DryScope project. No other project is accepted."
 
   validation {
-    condition     = var.project_id == "alert-disaster-field-2026"
-    error_message = "This root only manages project alert-disaster-field-2026."
+    condition     = var.project_id == "dryscope"
+    error_message = "This root only manages project dryscope."
   }
 }
 

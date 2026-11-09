@@ -47,25 +47,27 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 `web/` holds the new TypeScript app beside the current one: Next.js (App Router, TypeScript strict), Tailwind v4 (Safari 16.4+, the iOS baseline) with shadcn/ui, Zod at the sample `POST /api/echo` route, `GET /api/health`, a typed config module (`web/src/lib/config.ts`) checked once at server start by `web/src/instrumentation.ts`, so the server refuses to start with missing or invalid environment, Vitest unit tests and a Playwright smoke test in Chromium and WebKit. It has its own `package.json`, ESLint config (`max-lines` 1,000) and CI workflow (`.github/workflows/web.yml`, time-limited jobs). It has no product screens, auth or database, is not built into the Python service, and changes no hosting or deploy. The Python backend and `public/` app are untouched. Run commands are in `README.md`.
 
 ## Environments
-There is **one** production project and no separate dev project documented. Releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed. See `docs/RUNBOOK.md`. Test resources (databases, identities and release targets) are to be isolated inside `alert-disaster-field-2026`; D-006's separate test project is superseded (`docs/DECISIONS.md`).
+The current Python app runs in `alert-disaster-field-2026`, where releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed (`docs/RUNBOOK.md`). The TypeScript rebuild is a clean start in dedicated Google Cloud project `dryscope` (project number `570228742694`), with separate `test` and `live` resources in `us-central1` defined in `infra/dryscope/`; `alert-disaster-field-2026` stays running unchanged until the rebuilt app is live.
 
 ## Destination (accepted, not built yet)
 Source: the rebuild plan (`dry-standard-replan` report, sections 3, 7 and 8) under the Technology
-Standard Stack. Everything stays in `alert-disaster-field-2026`; test and live get separate
-resources there. Every row is a **Gap** today; the stage is the one that closes it. Service and
-database names are proposals.
+Standard Stack, updated by the owner's decision to build the clean-start rebuild in dedicated
+project `dryscope` (`570228742694`), with no data migration from `alert-disaster-field-2026`.
+Test and live get separate resources in `dryscope` (`us-central1`); throwaway test data stays in CI
+and the `test` environment's smoke-test company, with no hidden test company on `live` (`live`
+checks are read-only). Every row is a **Gap** today; the stage is the one that closes it.
 
 | Area | Today | Destination | Status | Closes in |
 |---|---|---|---|---|
 | Frontend | static JavaScript in `public/`, no build | TypeScript Next.js with React, Tailwind and shadcn/ui, on Cloud Run (`dryscope-api`) | Gap (S2 skeleton present in `web/`, no screens yet) | S2 shell, S5 workflows, S6 offline |
 | Business backend | Python on Cloud Run | Next.js TypeScript server routes with Zod at every boundary | Gap (S2 skeleton present: health and a Zod sample route in `web/`) | S2 skeleton, S5 |
 | Live relay | Python WebSocket route in the main service | separate Node Cloud Run relay (`dryscope-live`) using the Google Gen AI TypeScript SDK | Gap | S7 |
-| Region | service, `(default)` Firestore and evidence in `us-west2`; Live in `us-central1` | active app and data in `us-central1`; `(default)` stays in `us-west2` as the legacy source | Gap | S2 provisioning, S8 cutover |
+| Region | service, `(default)` Firestore and evidence in `us-west2`; Live in `us-central1` | active app and data in project `dryscope`, region `us-central1`; `alert-disaster-field-2026` stays in `us-west2` until cutover | Gap | S2 provisioning, S8 cutover |
 | Official data | Firestore `(default)` | Cloud SQL Postgres with row-level security; drafts in a named central Firestore field database; submission is one-way Firestore to Postgres | Gap | S3 schema, S5 submit and sign, S8 cutover |
 | Schema changes | none; one-off scripts | numbered Drizzle migrations, additive, run before traffic | Gap | S2 |
 | Identity | Firebase Auth plus private memberships | Identity Platform with a tenant per company and TOTP for privileged users | Gap | S3, S8 identity mapping |
 | Pricing and documents | Python Decimal (`claims.py`, `pricing_v2.py`) | TypeScript calculator with zero byte or hash differences, proved by an A/B harness | Gap | S4 |
-| Infrastructure and release | scripts and `.github/workflows/deploy.yml` | Terraform (separate data and app roots) through Actions OIDC, test then live; App Lifecycle Manager after launch | Partly: roots written in `infra/dryscope/`, not applied | S2 apply and release controller, S11 |
+| Infrastructure and release | scripts and `.github/workflows/deploy.yml` | Terraform (separate data and app roots) in project `dryscope` through Actions OIDC, test then live; App Lifecycle Manager after launch | Partly: roots written in `infra/dryscope/` for project `dryscope`, not applied | S2 apply and release controller, S11 |
 | Tests | pytest, `node:test`, Playwright | new tests in Vitest (the required-docs test is the first); old suites convert by area without weakening | Gap | S1 onward |
 
 Still **[open]** (owner gates in the rebuild plan, section 10): the Google Cloud organization (R1),

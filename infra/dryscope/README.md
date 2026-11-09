@@ -1,6 +1,6 @@
 # DryScope Terraform
 
-Infrastructure for the rebuilt DryScope in project `alert-disaster-field-2026`, region `us-central1`. Written and checked offline. **Nothing here has been applied.** The owner reviews and applies it (steps in [docs/RUNBOOK.md](../../docs/RUNBOOK.md#apply-the-central-terraform)).
+Infrastructure for the rebuilt DryScope in dedicated project `dryscope` (project number `570228742694`), region `us-central1`. Written and checked offline. **Nothing here has been applied.** The owner reviews and applies it (steps in [docs/RUNBOOK.md](../../docs/RUNBOOK.md#apply-the-central-terraform)).
 
 ```
 infra/dryscope/
@@ -11,11 +11,11 @@ infra/dryscope/
   scripts/check.sh offline checks (format, validate, mocked tests)
 ```
 
-Each root has `envs/test.tfvars`, `envs/live.tfvars` and a matching `envs/backend-<env>.hcl`, so test and live never share state. Apply `data` before `app`; the app root derives data names from the shared naming module and does not read the data root's state.
+Each root has `envs/test.tfvars`, `envs/live.tfvars` and a matching `envs/backend-<env>.hcl` (bucket `dryscope-tfstate`), so test and live never share state. Apply `data` before `app`; the app root derives data names from the shared naming module and does not read the data root's state.
 
 ## What it will not do
 
-- Touch anything in `us-west2`: the legacy Cloud Run service, the `(default)` Firestore database, the old evidence bucket, `adr-runtime` and `adr-builder`, or other apps in the project. The roots refuse any other project or region at plan time.
+- Touch the legacy `alert-disaster-field-2026` project or anything in `us-west2`: the legacy Cloud Run service, the `(default)` Firestore database, the old `alert-disaster-field-2026-evidence` bucket, or `adr-runtime` and `adr-builder`. The legacy app keeps serving unchanged until cutover; these roots refuse any project other than `dryscope` and any region other than `us-central1` at plan time.
 - Destroy anything through Terraform. Cloud SQL, the Firestore database, the bucket, secrets, the image repository and Cloud Run services all set `prevent_destroy`, and SQL databases, SQL users and Firestore set `deletion_policy = "ABANDON"`. There is no variable to switch protection off. Only Cloud SQL (`deletion_protection_enabled`) and Firestore (`delete_protection_state`) also carry Google-side protection; Cloud Run's `deletion_protection` and every `prevent_destroy` stop Terraform only, not a direct API delete. Against that, no account created here can delete a Cloud Run service or revision: the deploy account holds the custom role `dryscopeDeploy<Env>` (Cloud Run reads plus `run.services.update`, no delete) instead of `roles/run.developer`, and the evidence roles carry no object delete.
 - Hold a secret. Secrets are created empty, by name. No password user exists; the database is reached with IAM database authentication.
 - Replace existing IAM. Only additive `*_iam_member` resources, from a short list of roles.
