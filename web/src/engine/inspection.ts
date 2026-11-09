@@ -1,7 +1,7 @@
 // InspectionData validation and the inspection_payload dump. Types match pydantic's JSON dump.
 
 import { Dec, ZERO } from './decimal';
-import { JFloat, JInt, type JObj, type JVal, jfloat, jint } from './json';
+import { JFloat, JInt, type JObj, type JVal, jfloat, jint, pyFloat } from './json';
 import { collapse, decFloat, decInt, has, isObj, oneLine, orZero } from './values';
 
 export class Reject extends Error {
@@ -256,7 +256,7 @@ function readDec(
   let text: string;
   if (typeof value === 'string') text = value.trim();
   else if (value instanceof JInt) text = Object.is(value.value, -0) ? '0' : String(value.value);
-  else if (value instanceof JFloat) text = value.token ?? String(value.value);
+  else if (value instanceof JFloat) text = pyFloat(value.value);
   else bad('decimal');
   let amount: Dec;
   try {
@@ -370,6 +370,34 @@ function readOverride(value: JVal): QuantityOverride {
   return { measured, entered, reason };
 }
 
+function daysIn(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+export function validDate(year: number, month: number, day: number): boolean {
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month);
+}
+
+function readInstant(value: JVal | undefined): string {
+  if (typeof value !== 'string') bad('approval time');
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if (!match) bad('approval time');
+  const [, year, month, day, hour, minute, second, fraction, zone] = match;
+  if (!validDate(Number(year), Number(month), Number(day))) bad('approval time');
+  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) bad('approval time');
+  const micro = (fraction ?? '').padEnd(6, '0');
+  let offset = '';
+  if (zone !== undefined) {
+    const hours = Number(zone.slice(1, 3));
+    const minutes = Number(zone.slice(4, 6));
+    if (zone !== 'Z' && (hours > 23 || minutes > 59)) bad('approval time');
+    offset = zone === 'Z' || (hours === 0 && minutes === 0) ? 'Z' : zone;
+  }
+  const time = `${hour}:${minute}:${second}${Number(micro) ? `.${micro}` : ''}`;
+  return `${year}-${month}-${day}T${time}${offset}`;
+}
+
 function readApproval(value: JVal): Approval {
   const raw = obj(value, 'approval');
   const allowed = new Set([
@@ -389,11 +417,10 @@ function readApproval(value: JVal): Approval {
   }
   const uid = raw.accepted_by_uid;
   const name = raw.accepted_by_name;
-  const at = raw.accepted_at;
+  const at = readInstant(raw.accepted_at);
   const company = raw.company_id;
   if (typeof uid !== 'string' || uid.length < 1 || uid.length > 128) bad('approval uid');
   if (typeof name !== 'string' || name.length < 1 || name.length > 150) bad('approval name');
-  if (typeof at !== 'string' || at.length < 1) bad('approval time');
   if (typeof company !== 'string') bad('approval company');
   const version = raw.price_version_id;
   const hash = raw.price_content_sha256;

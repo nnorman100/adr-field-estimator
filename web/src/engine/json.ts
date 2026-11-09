@@ -16,11 +16,9 @@ export class JInt {
 export class JFloat {
   readonly kind = 'float' as const;
   readonly value: number;
-  readonly token: string | undefined;
 
-  constructor(value: number, token?: string) {
+  constructor(value: number) {
     this.value = value;
-    this.token = token;
   }
 }
 
@@ -162,7 +160,7 @@ export function canonical(value: JVal): string {
   if (value === false) return 'false';
   if (typeof value === 'string') return escapeString(value);
   if (value instanceof JInt) return String(value.value);
-  if (value instanceof JFloat) return value.token ?? pyFloat(value.value);
+  if (value instanceof JFloat) return pyFloat(value.value);
   if (Array.isArray(value)) return `[${value.map((item) => canonical(item)).join(',')}]`;
   const keys = Object.keys(value).sort(compareKeys);
   return `{${keys.map((key) => `${escapeString(key)}:${canonical(value[key] as JVal)}`).join(',')}}`;
@@ -327,6 +325,6 @@ class Parser {
     if (token === '-' || token === '') throw new Error('Expected number');
     const value = Number(token);
     if (!isFloat) return new JInt(Object.is(value, -0) ? 0 : value);
-    return new JFloat(value, token);
+    return new JFloat(value);
   }
 }

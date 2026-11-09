@@ -3,7 +3,7 @@
 import { Dec, HUNDRED, money, percentText } from './decimal';
 import type { JObj, JVal } from './json';
 import { JFloat, JInt, jfloat, jint, pyFloat } from './json';
-import type { Inspection } from './inspection';
+import { validDate, type Inspection } from './inspection';
 import { letterParagraph, equipmentSizing } from './sizing';
 import { V2 } from './table';
 import { aiNote, plain, technicianStatement } from './text';
@@ -112,8 +112,10 @@ function claimDate(value: JVal | undefined): string {
   const text = claimLine(value, 10);
   if (!text) return '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) fail('claim date');
-  const [year, month, day] = text.split('-').map((part) => Number(part));
-  const loss = new Date(year ?? 0, (month ?? 1) - 1, day ?? 1);
+  const [year, month, day] = text.split('-').map((part) => Number(part)) as [number, number, number];
+  if (!validDate(year, month, day)) fail('claim date');
+  const loss = new Date(2000, 0, 1);
+  loss.setFullYear(year, month - 1, day);
   const today = new Date();
   const limit = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   if (loss > limit) fail('claim date');
@@ -171,48 +173,78 @@ function aiOf(value: JVal): { summary: string; suggestions: string[]; unpriced: 
   };
 }
 
-function numberOf(value: JVal | undefined, label: string): JVal {
-  if (value instanceof JInt || value instanceof JFloat) return value;
-  if (typeof value === 'number') return jfloat(value);
-  fail(label);
+function floatOf(value: JVal | undefined, min: number, max: number): JFloat {
+  if (!(value instanceof JInt || value instanceof JFloat)) fail('photo');
+  if (!(value.value >= min && value.value <= max)) fail('photo');
+  return jfloat(value.value);
+}
+
+function intOf(value: JVal | undefined): JInt {
+  if (!(value instanceof JInt || value instanceof JFloat) || !Number.isInteger(value.value)) fail('photo');
+  return jint(Object.is(value.value, -0) ? 0 : value.value);
+}
+
+function keysIn(value: JObj, allowed: string[]): void {
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) fail('photo');
 }
 
 function locationOf(value: JVal): JObj {
-  if (!isObj(value)) fail('location');
+  if (!isObj(value)) fail('photo');
+  keysIn(value, ['source', 'latitude', 'longitude', 'accuracy_m']);
   const source = value.source;
-  if (source !== 'device' && source !== 'not_available' && source !== 'not_shared') fail('location');
+  if (source !== 'device' && source !== 'not_available' && source !== 'not_shared') fail('photo');
   const present = (key: string) => has(value, key) && value[key] != null;
   if (source === 'device') {
-    if (!present('latitude') || !present('longitude') || !present('accuracy_m')) fail('location');
+    if (!present('latitude') || !present('longitude') || !present('accuracy_m')) fail('photo');
     return {
-      accuracy_m: numberOf(value.accuracy_m, 'location'),
-      latitude: numberOf(value.latitude, 'location'),
-      longitude: numberOf(value.longitude, 'location'),
+      accuracy_m: floatOf(value.accuracy_m, 0, 1000000),
+      latitude: floatOf(value.latitude, -90, 90),
+      longitude: floatOf(value.longitude, -180, 180),
       source,
     };
   }
-  if (present('latitude') || present('longitude') || present('accuracy_m')) fail('location');
+  if (present('latitude') || present('longitude') || present('accuracy_m')) fail('photo');
   return { source };
 }
 
-function photoLog(photos: JVal[]): JObj[] {
-  return photos.map((photo) => {
-    if (!isObj(photo)) fail('photo');
-    const status = photo.ocr_status;
-    if (status !== 'pending' && status !== 'verified' && status !== 'no_meter' && status !== 'failed') fail('photo');
-    if (typeof photo.id !== 'string' || typeof photo.room !== 'string' || typeof photo.captured_at !== 'string') fail('photo');
-    const row: JObj = {
-      captured_at: photo.captured_at,
-      height: numberOf(photo.height, 'photo'),
-      id: photo.id,
-      ocr_status: status,
-      room: photo.room,
-      width: numberOf(photo.width, 'photo'),
-    };
-    if (photo.ocr != null) row.ocr = photo.ocr;
-    if (photo.location != null) row.location = locationOf(photo.location);
-    return row;
-  });
+function ocrText(value: JVal | undefined, max: number): string {
+  if (typeof value !== 'string' || value.length > max) fail('photo');
+  return value;
+}
+
+function ocrOf(value: JVal): JObj {
+  if (!isObj(value)) fail('photo');
+  keysIn(value, ['meter_detected', 'meter_type', 'value', 'classification', 'notes']);
+  if (typeof value.meter_detected !== 'boolean') fail('photo');
+  return {
+    classification: ocrText(value.classification, 100),
+    meter_detected: value.meter_detected,
+    meter_type: ocrText(value.meter_type, 100),
+    notes: ocrText(value.notes, 1000),
+    value: ocrText(value.value, 100),
+  };
+}
+
+type PhotoRow = { row: JObj; room: string; status: string; ocr: JObj | null };
+
+function photoOf(photo: JVal): PhotoRow {
+  if (!isObj(photo)) fail('photo');
+  const status = photo.ocr_status;
+  if (status !== 'pending' && status !== 'verified' && status !== 'no_meter' && status !== 'failed') fail('photo');
+  if (typeof photo.id !== 'string' || typeof photo.room !== 'string' || typeof photo.captured_at !== 'string') fail('photo');
+  const ocr = photo.ocr == null ? null : ocrOf(photo.ocr);
+  if (status === 'verified' && ocr === null) fail('photo');
+  const row: JObj = {
+    captured_at: photo.captured_at,
+    height: intOf(photo.height),
+    id: photo.id,
+    ocr_status: status,
+    room: photo.room,
+    width: intOf(photo.width),
+  };
+  if (ocr) row.ocr = ocr;
+  if (photo.location != null) row.location = locationOf(photo.location);
+  return { row, room: photo.room, status, ocr };
 }
 
 function endFloats(end: End): JObj {
@@ -353,6 +385,7 @@ export function makeDocuments(input: {
   pin: JobPin | null;
 }): JObj {
   const ai = aiOf(input.ai);
+  const photos = input.photos.map((photo) => photoOf(photo));
   const identity = identityOf(input.identity);
   const claim = claimOf(input.claim);
   const data = input.data;
@@ -434,13 +467,11 @@ export function makeDocuments(input: {
   if (data.technicianNotes.trim()) observations.push(`Technician observations: ${data.technicianNotes.trim()}`);
   const statement = technicianStatement(data.technicianTranscript);
   if (statement) observations.push(`Technician walkthrough statement: ${statement}`);
-  input.photos.forEach((photo, index) => {
-    if (!isObj(photo)) return;
-    const room = typeof photo.room === 'string' ? photo.room : '';
-    if (photo.ocr_status === 'verified' && isObj(photo.ocr)) {
-      observations.push(`Photo ${index + 1} (${room}) \u2014 ${String(photo.ocr.meter_type)}: ${String(photo.ocr.value)}`);
+  photos.forEach((photo, index) => {
+    if (photo.status === 'verified' && photo.ocr) {
+      observations.push(`Photo ${index + 1} (${photo.room}) \u2014 ${String(photo.ocr.meter_type)}: ${String(photo.ocr.value)}`);
     } else {
-      observations.push(`Photo ${index + 1} (${room}) \u2014 supporting photo; no verified meter reading.`);
+      observations.push(`Photo ${index + 1} (${photo.room}) \u2014 supporting photo; no verified meter reading.`);
     }
   });
   const recommendations = [
@@ -493,9 +524,9 @@ export function makeDocuments(input: {
     compliance_notes: [age, ...clauses],
     iicrc_defense_letter: letter,
     pending_extras: jint(pending),
-    photo_audit_log: photoLog(input.photos),
+    photo_audit_log: photos.map((photo) => photo.row),
     schema_version: jint(3),
-    signable: setup.length === 0 && data.scopeConfirmed && worked && unpriced.length === 0 && pending === 0 && !input.photos.some((photo) => isObj(photo) && photo.ocr_status === 'pending'),
+    signable: setup.length === 0 && data.scopeConfirmed && worked && unpriced.length === 0 && pending === 0 && !photos.some((photo) => photo.status === 'pending'),
     unpriced_work: unpriced.map((text) => plain(text)),
     xactimate_scope: items.map((item) => documentLine(item, Boolean(estimate))),
     xactimate_total: jfloat(total),
