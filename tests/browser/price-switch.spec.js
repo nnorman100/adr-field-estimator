@@ -366,14 +366,12 @@ test.describe('without a service worker', () => {
     await unpinnedJob(page, context);
     await page.evaluate(() => {
       const original = dbAction;
-      window.deleteStarted = false;
+      window.heldDeletes = [];
       window.dbAction = (mode, fn) => {
-        if (mode === 'readwrite' && fn.toString().includes('store.delete')) {
-          window.deleteStarted = true;
+        if (mode === 'readwrite' && fn.toString().includes('store.delete') && window.heldDeletes)
           return new Promise((resolve, reject) => {
-            window.releaseDelete = () => original(mode, fn).then(resolve, reject);
+            window.heldDeletes.push(() => original(mode, fn).then(resolve, reject));
           });
-        }
         return original(mode, fn);
       };
     });
@@ -387,13 +385,17 @@ test.describe('without a service worker', () => {
     await page.evaluate(() => {
       window.refusal = ScopeItems.loadCompany();
     });
-    await expect.poll(() => page.evaluate(() => window.deleteStarted)).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.heldDeletes.length > 0)).toBe(true);
     expect(await priceRowCached(page)).toBe(true);
     await context.setOffline(true);
     await page.evaluate(() => ScopeItems.sessionChanged());
     const status = page.locator('#v2ScopeStatus');
     await expect(status).toContainText("You don't have access to your company's price list");
-    await page.evaluate(() => window.releaseDelete());
+    await page.evaluate(() => {
+      const held = window.heldDeletes;
+      window.heldDeletes = null;
+      held.forEach((release) => release());
+    });
     await page.evaluate(() => window.refusal);
     await context.setOffline(false);
   });
