@@ -258,12 +258,15 @@ field ownership.
 
 Source: owner decision of 2026-11-09 ("I want live voice as the default option").
 
-In the rebuild, the Live voice walkthrough is the default way to capture a job, and the job editor
-leads with it. Manual scope entry, offline voice notes and photos stay available as fallbacks
-whenever Live cannot run: no signal, AI switched off, or a company or user without Live.
+In the rebuild, the Live voice walkthrough is the default way to capture a job: a blank job started
+by an owner or estimator opens on it. Office intake and a signed job copied to a draft still open on
+Check scope, as sections 2 and 6.2 require. Manual scope entry, offline voice notes and photos stay
+available as fallbacks whenever Live cannot run: no signal, AI switched off, or a company or user
+without Live.
 
 Target acceptance checks (**not built**):
 
-- A new job opens on the Live voice walkthrough, not on manual scope entry.
+- A blank job started by an owner or estimator opens on the Live voice walkthrough, not on manual
+  scope entry; office intake and a copied draft open on Check scope.
 - When Live is unavailable, the technician can still complete the job through manual scope entry,
   offline voice notes and photos.
