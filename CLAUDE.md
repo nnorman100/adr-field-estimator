@@ -18,7 +18,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Set up (fresh machine or cloud session):
   `python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt` · `npm ci` · `npx playwright install chromium webkit`
 - Firestore emulator tests (needs Java 21+; `demo-` project only, never a real one):
-  `npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"`
+  `npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator*.py -q -p no:cacheprovider"`
 - Python tests: `python -m pytest tests -q -p no:cacheprovider`
 - JS tests: `npm test`
 - Browser tests: `npm run test:browser` (Playwright; run for lifecycle/UI changes)

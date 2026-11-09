@@ -1,0 +1,1051 @@
+{
+ "resource_changes": [
+  {
+   "address": "google_artifact_registry_repository.images",
+   "type": "google_artifact_registry_repository",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "cleanup_policies": [],
+     "cleanup_policy_dry_run": null,
+     "description": "DryScope live images, deployed by digest.",
+     "docker_config": [
+      {
+       "immutable_tags": true
+      }
+     ],
+     "format": "DOCKER",
+     "kms_key_name": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "location": "us-central1",
+     "maven_config": [],
+     "mode": null,
+     "project": "alert-disaster-field-2026",
+     "remote_repository_config": [],
+     "repository_id": "dryscope-live",
+     "timeouts": null,
+     "virtual_repository_config": [],
+     "vulnerability_scanning_config": []
+    }
+   }
+  },
+  {
+   "address": "google_artifact_registry_repository_iam_member.deploy_write",
+   "type": "google_artifact_registry_repository_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "repository": "dryscope-live",
+     "role": "roles/artifactregistry.writer"
+    }
+   }
+  },
+  {
+   "address": "google_firestore_database.field",
+   "type": "google_firestore_database",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "app_engine_integration_mode": "DISABLED",
+     "cmek_config": [],
+     "concurrency_mode": "PESSIMISTIC",
+     "delete_protection_state": "DELETE_PROTECTION_ENABLED",
+     "deletion_policy": "ABANDON",
+     "location_id": "us-central1",
+     "name": "dryscope-field-live",
+     "point_in_time_recovery_enablement": "POINT_IN_TIME_RECOVERY_ENABLED",
+     "project": "alert-disaster-field-2026",
+     "tags": null,
+     "timeouts": null,
+     "type": "FIRESTORE_NATIVE"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_custom_role.gemini_caller",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "description": "Call Gemini models for DryScope live. No jobs, no tuning, no deletes.",
+     "permissions": [
+      "aiplatform.endpoints.predict"
+     ],
+     "project": "alert-disaster-field-2026",
+     "role_id": "dryscopeGeminiLive",
+     "stage": null,
+     "title": "DryScope live Gemini caller"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.firestore_user[\"api\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "Only the dryscope-field-live database.",
+       "expression": "resource.name == 'projects/alert-disaster-field-2026/databases/dryscope-field-live'",
+       "title": "dryscope-live-firestore-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/datastore.user"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.firestore_user[\"live\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "Only the dryscope-field-live database.",
+       "expression": "resource.name == 'projects/alert-disaster-field-2026/databases/dryscope-field-live'",
+       "title": "dryscope-live-firestore-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-live-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/datastore.user"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.gemini_caller[\"api\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "projects/alert-disaster-field-2026/roles/dryscopeGeminiLive"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.gemini_caller[\"live\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-live-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "projects/alert-disaster-field-2026/roles/dryscopeGeminiLive"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.sql_client[\"api\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "Only the live DryScope instance.",
+       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/alert-disaster-field-2026/instances/dryscope-live-pg'",
+       "title": "dryscope-live-sql-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/cloudsql.client"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.sql_client[\"live\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "Only the live DryScope instance.",
+       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/alert-disaster-field-2026/instances/dryscope-live-pg'",
+       "title": "dryscope-live-sql-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-live-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/cloudsql.client"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.sql_client[\"migrate\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "Only the live DryScope instance.",
+       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/alert-disaster-field-2026/instances/dryscope-live-pg'",
+       "title": "dryscope-live-sql-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-migrate-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/cloudsql.client"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.sql_login[\"api\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "IAM database login on the live DryScope instance only.",
+       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/alert-disaster-field-2026/instances/dryscope-live-pg'",
+       "title": "dryscope-live-sql-login-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/cloudsql.instanceUser"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.sql_login[\"live\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "IAM database login on the live DryScope instance only.",
+       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/alert-disaster-field-2026/instances/dryscope-live-pg'",
+       "title": "dryscope-live-sql-login-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-live-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/cloudsql.instanceUser"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.sql_login[\"migrate\"]",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [
+      {
+       "description": "IAM database login on the live DryScope instance only.",
+       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/alert-disaster-field-2026/instances/dryscope-live-pg'",
+       "title": "dryscope-live-sql-login-only"
+      }
+     ],
+     "member": "serviceAccount:dryscope-migrate-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/cloudsql.instanceUser"
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"aiplatform.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "aiplatform.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"artifactregistry.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "artifactregistry.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"cloudresourcemanager.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "cloudresourcemanager.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"firestore.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "firestore.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"iam.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "iam.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"secretmanager.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "secretmanager.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"sqladmin.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "sqladmin.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"storage.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "alert-disaster-field-2026",
+     "service": "storage.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret.app[\"link-signing-key\"]",
+   "type": "google_secret_manager_secret",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "deletion_protection": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "project": "alert-disaster-field-2026",
+     "replication": [
+      {
+       "auto": [],
+       "user_managed": [
+        {
+         "replicas": [
+          {
+           "customer_managed_encryption": [],
+           "location": "us-central1"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "rotation": [],
+     "secret_id": "dryscope-live-link-signing-key",
+     "tags": null,
+     "timeouts": null,
+     "topics": [],
+     "ttl": null,
+     "version_aliases": null,
+     "version_destroy_ttl": null
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret.app[\"maps-api-key\"]",
+   "type": "google_secret_manager_secret",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "deletion_protection": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "project": "alert-disaster-field-2026",
+     "replication": [
+      {
+       "auto": [],
+       "user_managed": [
+        {
+         "replicas": [
+          {
+           "customer_managed_encryption": [],
+           "location": "us-central1"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "rotation": [],
+     "secret_id": "dryscope-live-maps-api-key",
+     "tags": null,
+     "timeouts": null,
+     "topics": [],
+     "ttl": null,
+     "version_aliases": null,
+     "version_destroy_ttl": null
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret.app[\"resend-api-key\"]",
+   "type": "google_secret_manager_secret",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "deletion_protection": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "project": "alert-disaster-field-2026",
+     "replication": [
+      {
+       "auto": [],
+       "user_managed": [
+        {
+         "replicas": [
+          {
+           "customer_managed_encryption": [],
+           "location": "us-central1"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "rotation": [],
+     "secret_id": "dryscope-live-resend-api-key",
+     "tags": null,
+     "timeouts": null,
+     "topics": [],
+     "ttl": null,
+     "version_aliases": null,
+     "version_destroy_ttl": null
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret.app[\"stripe-secret-key\"]",
+   "type": "google_secret_manager_secret",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "deletion_protection": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "project": "alert-disaster-field-2026",
+     "replication": [
+      {
+       "auto": [],
+       "user_managed": [
+        {
+         "replicas": [
+          {
+           "customer_managed_encryption": [],
+           "location": "us-central1"
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "rotation": [],
+     "secret_id": "dryscope-live-stripe-secret-key",
+     "tags": null,
+     "timeouts": null,
+     "topics": [],
+     "ttl": null,
+     "version_aliases": null,
+     "version_destroy_ttl": null
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret_iam_member.accessor[\"link-signing-key/api\"]",
+   "type": "google_secret_manager_secret_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/secretmanager.secretAccessor",
+     "secret_id": "dryscope-live-link-signing-key"
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret_iam_member.accessor[\"link-signing-key/live\"]",
+   "type": "google_secret_manager_secret_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-live-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/secretmanager.secretAccessor",
+     "secret_id": "dryscope-live-link-signing-key"
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret_iam_member.accessor[\"maps-api-key/api\"]",
+   "type": "google_secret_manager_secret_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/secretmanager.secretAccessor",
+     "secret_id": "dryscope-live-maps-api-key"
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret_iam_member.accessor[\"resend-api-key/api\"]",
+   "type": "google_secret_manager_secret_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/secretmanager.secretAccessor",
+     "secret_id": "dryscope-live-resend-api-key"
+    }
+   }
+  },
+  {
+   "address": "google_secret_manager_secret_iam_member.accessor[\"stripe-secret-key/api\"]",
+   "type": "google_secret_manager_secret_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "project": "alert-disaster-field-2026",
+     "role": "roles/secretmanager.secretAccessor",
+     "secret_id": "dryscope-live-stripe-secret-key"
+    }
+   }
+  },
+  {
+   "address": "google_service_account.deploy",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-deploy-live",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope live deploy",
+     "project": "alert-disaster-field-2026",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account.runtime[\"api\"]",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-api-live",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope live web and API runtime",
+     "project": "alert-disaster-field-2026",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account.runtime[\"live\"]",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-live-live",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope live Live relay runtime",
+     "project": "alert-disaster-field-2026",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account.runtime[\"migrate\"]",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-migrate-live",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope live schema migrator",
+     "project": "alert-disaster-field-2026",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account_iam_member.deploy_acts_as[\"api\"]",
+   "type": "google_service_account_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-deploy-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "role": "roles/iam.serviceAccountUser",
+     "service_account_id": "projects/alert-disaster-field-2026/serviceAccounts/dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com"
+    }
+   }
+  },
+  {
+   "address": "google_service_account_iam_member.deploy_acts_as[\"live\"]",
+   "type": "google_service_account_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-deploy-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "role": "roles/iam.serviceAccountUser",
+     "service_account_id": "projects/alert-disaster-field-2026/serviceAccounts/dryscope-live-live@alert-disaster-field-2026.iam.gserviceaccount.com"
+    }
+   }
+  },
+  {
+   "address": "google_sql_database.app",
+   "type": "google_sql_database",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "deletion_policy": "ABANDON",
+     "instance": "dryscope-live-pg",
+     "name": "dryscope",
+     "project": "alert-disaster-field-2026",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_sql_database_instance.main",
+   "type": "google_sql_database_instance",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "backupdr_backup": null,
+     "clone": [],
+     "database_version": "POSTGRES_16",
+     "deletion_protection": true,
+     "final_backup_description": null,
+     "include_replicas_for_major_version_upgrade": null,
+     "name": "dryscope-live-pg",
+     "point_in_time_restore_context": [],
+     "project": "alert-disaster-field-2026",
+     "region": "us-central1",
+     "replica_configuration": [],
+     "replication_cluster": [],
+     "restore_backup_context": [],
+     "root_password": null,
+     "root_password_wo": null,
+     "root_password_wo_version": null,
+     "settings": [
+      {
+       "activation_policy": null,
+       "active_directory_config": [],
+       "advanced_machine_features": [],
+       "auto_upgrade_enabled": null,
+       "availability_type": "ZONAL",
+       "backup_configuration": [
+        {
+         "backup_retention_settings": [
+          {
+           "retained_backups": 14,
+           "retention_unit": "COUNT"
+          }
+         ],
+         "binary_log_enabled": null,
+         "enabled": true,
+         "location": "us-central1",
+         "point_in_time_recovery_enabled": true,
+         "start_time": "09:00",
+         "transaction_log_retention_days": 7
+        }
+       ],
+       "collation": null,
+       "connection_pool_config": [],
+       "data_cache_config": [],
+       "database_flags": [
+        {
+         "name": "cloudsql.iam_authentication",
+         "value": "on"
+        }
+       ],
+       "deletion_protection_enabled": true,
+       "deny_maintenance_period": [],
+       "disk_autoresize": true,
+       "disk_autoresize_limit": null,
+       "disk_size": 20,
+       "disk_type": "PD_SSD",
+       "edition": "ENTERPRISE",
+       "enable_dataplex_integration": null,
+       "enable_google_ml_integration": null,
+       "entraid_config": [],
+       "final_backup_config": [],
+       "insights_config": [
+        {
+         "enhanced_query_insights_enabled": null,
+         "query_insights_enabled": true,
+         "record_application_tags": null,
+         "record_client_address": null
+        }
+       ],
+       "ip_configuration": [
+        {
+         "allocated_ip_range": null,
+         "authorized_networks": [],
+         "custom_subject_alternative_names": null,
+         "enable_private_path_for_google_cloud_services": null,
+         "ipv4_enabled": true,
+         "private_network": null,
+         "psc_config": [],
+         "server_ca_pool": null,
+         "server_certificate_rotation_mode": null,
+         "ssl_mode": "ENCRYPTED_ONLY"
+        }
+       ],
+       "location_preference": [],
+       "maintenance_window": [
+        {
+         "day": 7,
+         "hour": 10,
+         "update_track": "stable"
+        }
+       ],
+       "password_validation_policy": [],
+       "pricing_plan": null,
+       "read_pool_auto_scale_config": [],
+       "retain_backups_on_delete": null,
+       "sql_server_audit_config": [],
+       "tier": "db-custom-1-3840",
+       "time_zone": null,
+       "user_labels": {
+        "app": "dryscope",
+        "environment": "live",
+        "managed_by": "terraform"
+       }
+      }
+     ],
+     "switch_transaction_logs_to_cloud_storage_enabled": null,
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_sql_user.iam[\"api\"]",
+   "type": "google_sql_user",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "database_roles": null,
+     "deletion_policy": "ABANDON",
+     "instance": "dryscope-live-pg",
+     "name": "dryscope-api-live@alert-disaster-field-2026.iam",
+     "password": null,
+     "password_policy": [],
+     "password_wo": null,
+     "password_wo_version": null,
+     "project": "alert-disaster-field-2026",
+     "timeouts": null,
+     "type": "CLOUD_IAM_SERVICE_ACCOUNT"
+    }
+   }
+  },
+  {
+   "address": "google_sql_user.iam[\"live\"]",
+   "type": "google_sql_user",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "database_roles": null,
+     "deletion_policy": "ABANDON",
+     "instance": "dryscope-live-pg",
+     "name": "dryscope-live-live@alert-disaster-field-2026.iam",
+     "password": null,
+     "password_policy": [],
+     "password_wo": null,
+     "password_wo_version": null,
+     "project": "alert-disaster-field-2026",
+     "timeouts": null,
+     "type": "CLOUD_IAM_SERVICE_ACCOUNT"
+    }
+   }
+  },
+  {
+   "address": "google_sql_user.iam[\"migrate\"]",
+   "type": "google_sql_user",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "database_roles": null,
+     "deletion_policy": "ABANDON",
+     "instance": "dryscope-live-pg",
+     "name": "dryscope-migrate-live@alert-disaster-field-2026.iam",
+     "password": null,
+     "password_policy": [],
+     "password_wo": null,
+     "password_wo_version": null,
+     "project": "alert-disaster-field-2026",
+     "timeouts": null,
+     "type": "CLOUD_IAM_SERVICE_ACCOUNT"
+    }
+   }
+  },
+  {
+   "address": "google_storage_bucket.evidence",
+   "type": "google_storage_bucket",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "autoclass": [],
+     "cors": [],
+     "custom_placement_config": [],
+     "default_event_based_hold": null,
+     "enable_object_retention": null,
+     "encryption": [],
+     "force_destroy": false,
+     "hierarchical_namespace": [],
+     "ip_filter": [],
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "lifecycle_rule": [],
+     "location": "US-CENTRAL1",
+     "logging": [],
+     "name": "alert-disaster-field-2026-dryscope-evidence-live",
+     "project": "alert-disaster-field-2026",
+     "public_access_prevention": "enforced",
+     "requester_pays": null,
+     "retention_policy": [],
+     "soft_delete_policy": [
+      {
+       "retention_duration_seconds": 2592000
+      }
+     ],
+     "storage_class": "STANDARD",
+     "timeouts": null,
+     "uniform_bucket_level_access": true,
+     "versioning": [
+      {
+       "enabled": true
+      }
+     ],
+     "website": []
+    }
+   }
+  },
+  {
+   "address": "google_storage_bucket_iam_member.api_create",
+   "type": "google_storage_bucket_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "bucket": "alert-disaster-field-2026-dryscope-evidence-live",
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "role": "roles/storage.objectCreator",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_storage_bucket_iam_member.api_view",
+   "type": "google_storage_bucket_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "bucket": "alert-disaster-field-2026-dryscope-evidence-live",
+     "condition": [],
+     "member": "serviceAccount:dryscope-api-live@alert-disaster-field-2026.iam.gserviceaccount.com",
+     "role": "roles/storage.objectViewer",
+     "timeouts": null
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,372 @@
+{
+  "expected": {
+    "documents": {
+      "adr_estimate": {
+        "customer_name": "Casey Customer",
+        "date": "11-06-2026",
+        "disclaimers": ["Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log.", "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.", "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."],
+        "estimate_mode": "range",
+        "findings": ["The home was built in 2019. Therefore, no lead or asbestos testing is required prior to the start of work."],
+        "lead_notice_required": false,
+        "property_address": "100 Oracle Lane, Testville",
+        "proposed_cost": 7106.83,
+        "proposed_cost_low": 5939.65,
+        "recommendations": ["Per IICRC and EPA protocols, Oracle Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.", "Space 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 0 through 500 sq ft)", "Space 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 500 through 1,000 sq ft)", "Space 1: Antimicrobial application", "Air mover", "LGR dehumidifier", "Air scrubber (HEPA)", "HEPA filter replacement", "Technician labor", "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."]
+      },
+      "ai_suggestions": [
+        "Check the subfloor."
+      ],
+      "ai_summary": "Reviewed the inspection.",
+      "company_identity": {
+        "address": "1 Synthetic Way, Testville",
+        "company_id": "oracle-co",
+        "email": "office@example.invalid",
+        "license": "000001",
+        "logo_data_url": "",
+        "name": "Oracle Restoration",
+        "phone": "555-0100",
+        "signoff": "Pat Example",
+        "version": 1,
+        "water_heater_notice": ""
+      },
+      "company_setup_missing": [],
+      "compliance_notes": [
+        "The home was built in 2019. Therefore, no lead or asbestos testing is required prior to the start of work.",
+        "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.",
+        "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+        "Estimate is valid for 30 days from date of inspection."
+      ],
+      "estimate": {
+        "after_hours_label": "After-hours adjustment",
+        "after_hours_percent": "50",
+        "explanation": "The high end adds a tiered cushion to area-priced labor and materials, highest-priced square feet first: 50% over 0 through 500 sq ft; 30% over 500 through 1,000 sq ft; 10% over 1,000 sq ft; and 50% on labor hours.",
+        "high": {"after_hours": 0.0, "minimum_charge": 0.0, "overhead_profit": 1184.47, "subtotal": 5922.36, "tax": 0.0, "total": 7106.83},
+        "low": {"after_hours": 0.0, "minimum_charge": 0.0, "overhead_profit": 989.94, "subtotal": 4949.71, "tax": 0.0, "total": 5939.65},
+        "mode": "range",
+        "overhead_profit_percent": "20",
+        "sales_tax_percent": "0",
+        "show_line_breakdown": false
+      },
+      "iicrc_defense_letter": "Oracle Restoration \u00b7 1 Synthetic Way, Testville \u00b7 555-0100 \u00b7 CSLB #000001\n\nTO: Insurance Claims Examiner / Adjuster\n\nRE: Remediation scope for 100 Oracle Lane, Testville\nCustomer: Casey Customer\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.\n\nThe home was built in 2019. Therefore, no lead or asbestos testing is required prior to the start of work.\n\nScope:\nPer IICRC and EPA protocols, Oracle Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.\nSpace 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 0 through 500 sq ft)\nSpace 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 500 through 1,000 sq ft)\nSpace 1: Antimicrobial application\nAir mover\nLGR dehumidifier\nAir scrubber (HEPA)\nHEPA filter replacement\nTechnician labor\nIf technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.\n\nNOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.\nIf the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.\nEstimate is valid for 30 days from date of inspection.\n\nItemized total: $5,939.65. Customer estimate range: $5,939.65 to $7,106.83. The high end adds a tiered cushion to area-priced labor and materials, highest-priced square feet first: 50% over 0 through 500 sq ft; 30% over 500 through 1,000 sq ft; 10% over 1,000 sq ft; and 50% on labor hours.\n\nSincerely,\nPat Example\nOracle Restoration",
+      "pending_extras": 0,
+      "photo_audit_log": [],
+      "price_basis": {
+        "calculation_version": "dryscope-v2",
+        "company_id": "oracle-co",
+        "content_sha256": "e317f0aa187838475fa3efdaf364b33d88cd0059f1fa70388dd74c775ef967b2",
+        "item_count": 29,
+        "policy": {"after_hours": {"label": "After-hours adjustment", "multiplier": "1.500"}, "area_basis": "demolition_with_waste", "cabinetry": {"multiplier": "1.500", "scope": "all_cat3"}, "category_multipliers": {"1": "1.000", "2": "1.100", "3": "1.333"}, "estimate_mode": "range", "minimum_job_charge": "250", "overhead_profit_percent": "20", "range": {"beyond_percent": "6.45", "brackets": [{"percent": "50", "up_to_sf": 500}, {"percent": "30", "up_to_sf": 1000}, {"percent": "10", "up_to_sf": null}], "first_percent": "6.95", "first_sf": 1}, "sales_tax": {"enabled": true, "percent": "0"}, "show_line_breakdown": false},
+        "price_brackets": {"demo_cat1_wall": [{"unit_price": "3.00", "up_to_sf": 500}, {"unit_price": "2.50", "up_to_sf": 1000}, {"unit_price": "2.00", "up_to_sf": null}]},
+        "priced_at": "2026-11-01T17:00:00Z",
+        "sequence": 1,
+        "version_id": "v-2c8a1fab432c"
+      },
+      "schema_version": 3,
+      "signable": true,
+      "unpriced_work": [],
+      "xactimate_scope": [
+        {"code": "SERVICE-CALL", "description": "Emergency service call", "quantity": 1.0, "total": 94.89, "unit": "each", "unit_price": 94.89, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "MONITORING-VISIT", "description": "Drying monitoring (per hour)", "quantity": 13.25, "total": 662.5, "unit": "hour", "unit_price": 50.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "SETUP-DOCUMENTAT", "description": "Project setup and moisture documentation", "quantity": 1.0, "total": 395.73, "unit": "each", "unit_price": 395.73, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "DEBRIS-HAUL", "description": "Debris haul and disposal", "quantity": 1.0, "total": 120.0, "unit": "load", "unit_price": 120.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"bracket_mode": "tiered", "code": "DEMO-CAT1-WALL", "description": "Space 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 0 through 500 sq ft)", "price_bracket": {"unit_price": "3.00", "up_to_sf": 500}, "quantity": 500.0, "total": 1500.0, "unit": "sf", "unit_price": 3.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"bracket_mode": "tiered", "code": "DEMO-CAT1-WALL", "description": "Space 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 500 through 1,000 sq ft)", "price_bracket": {"unit_price": "2.50", "up_to_sf": 1000}, "quantity": 84.12, "total": 210.3, "unit": "sf", "unit_price": 2.5, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "ANTIMICROBIAL", "description": "Space 1: Antimicrobial application", "quantity": 1326.0, "total": 671.29, "unit": "sf", "unit_price": 0.45, "waste_percent": 12.5, "xactimate_code": ""},
+        {"code": "AIR-MOVER", "description": "Air mover", "quantity": 21.0, "total": 630.0, "unit": "unit_day", "unit_price": 30.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "LGR-DEHUMIDIFIER", "description": "LGR dehumidifier", "quantity": 3.0, "total": 300.0, "unit": "unit_day", "unit_price": 100.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "AIR-SCRUBBER", "description": "Air scrubber (HEPA)", "quantity": 1.0, "total": 75.0, "unit": "day", "unit_price": 75.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "HEPA-FILTER", "description": "HEPA filter replacement", "quantity": 1.0, "total": 180.0, "unit": "each", "unit_price": 180.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"code": "TECHNICIAN-LABOR", "description": "Technician labor", "quantity": 2.0, "total": 110.0, "unit": "hour", "unit_price": 55.0, "waste_percent": 0.0, "xactimate_code": ""}
+      ],
+      "xactimate_total": 5939.65
+    },
+    "normalized_inspection": {
+      "address": "100 Oracle Lane, Testville",
+      "air_movers": 7,
+      "air_scrubbers": 1,
+      "assistant_transcript": "",
+      "dehumidifiers": 1,
+      "drying_days": 3,
+      "dump_truck_loads": 0,
+      "emergency_calls": 1,
+      "equipment_decon": 0,
+      "granite_removal": false,
+      "has_crawl_space": false,
+      "haul_loads": 1,
+      "hepa_filters": 1,
+      "is_after_hours": false,
+      "labor_hours": 2.0,
+      "matterport_scans": 0,
+      "monitoring_hours": 13.25,
+      "package_price": null,
+      "power_distribution": 0,
+      "rooms": [
+        {"category": 1, "custom_cabinetry": false, "finished_sf": 584.12, "floor_sf": 1326.0, "name": "Space 1", "unfinished_sf": 740.0, "waste_percent": 0.0}
+      ],
+      "scope_confirmed": true,
+      "technician_notes": "",
+      "technician_transcript": "",
+      "water_heater_loss": false,
+      "wood_floor_days": 7,
+      "wood_floor_systems": 0,
+      "work_performed": false,
+      "year_built": 2019
+    },
+    "pin": {
+      "calculation_version": "dryscope-v2",
+      "company_id": "oracle-co",
+      "content_sha256": "e317f0aa187838475fa3efdaf364b33d88cd0059f1fa70388dd74c775ef967b2",
+      "inspection_id": "ADR-INS-1000fe662771d8cd7bdad614c92bb47b",
+      "items": [
+        {"allow_zero": false, "categories": [], "code": "SERVICE-CALL", "customer_description": "", "default_quantity": "1", "enabled": true, "group": "job_charges", "item_id": "service_call", "name": "Emergency service call", "quantity_source": "field:emergency_calls", "sort_order": 0, "taxable": true, "unit": "each", "unit_price": "94.89", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "MONITORING-VISIT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "monitoring_visit", "name": "Drying monitoring (per hour)", "quantity_source": "field:monitoring_hours", "sort_order": 1, "taxable": false, "unit": "hour", "unit_price": "50.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "SETUP-DOCUMENTAT", "customer_description": "", "default_quantity": "1", "enabled": true, "group": "job_charges", "item_id": "setup_documentation", "name": "Project setup and moisture documentation", "quantity_source": "typed", "sort_order": 2, "taxable": true, "unit": "each", "unit_price": "395.73", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "DEBRIS-HAUL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "debris_haul", "name": "Debris haul and disposal", "quantity_source": "field:haul_loads", "sort_order": 3, "taxable": false, "unit": "load", "unit_price": "120.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "AFTER-HOURS-CHAR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "after_hours_charge", "name": "After-hours response charge", "quantity_source": "after_hours", "sort_order": 4, "taxable": true, "unit": "each", "unit_price": "416.19", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [2, 3], "code": "CONTAINMENT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "containment", "name": "Containment setup (plastic, zipper, tape)", "quantity_source": "typed", "sort_order": 5, "taxable": false, "unit": "each", "unit_price": "126.86", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [1], "code": "DEMO-CAT1-WALL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "demo_cat1_wall", "name": "Category 1 drywall, insulation and trim removal", "price_brackets": [{"unit_price": "3.00", "up_to_sf": 500}, {"unit_price": "2.50", "up_to_sf": 1000}, {"unit_price": "2.00", "up_to_sf": null}], "quantity_source": "room:demolition:finished", "sort_order": 1, "taxable": false, "unit": "sf", "unit_price": "2.20", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [2], "code": "DEMO-CAT2-FLOOR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "demo_cat2_floor", "name": "Category 2 flooring and subfloor removal", "quantity_source": "room:demolition:unfinished", "sort_order": 2, "taxable": true, "unit": "sf", "unit_price": "12.69", "waste_percent": "5", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [2], "code": "DEMO-CAT2-WALL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "demo_cat2_wall", "name": "Category 2 drywall, insulation and trim removal", "quantity_source": "room:demolition:finished", "sort_order": 3, "taxable": false, "unit": "sf", "unit_price": "2.90", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "BASEBOARD-REMOVA", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "baseboard_removal", "name": "Baseboard removal", "quantity_source": "typed", "sort_order": 6, "taxable": false, "unit": "lf", "unit_price": "1.75", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "ANTIMICROBIAL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "treatment", "item_id": "antimicrobial", "name": "Antimicrobial application", "quantity_source": "room:wet_floor", "sort_order": 0, "taxable": false, "unit": "sf", "unit_price": "0.45", "waste_percent": "12.5", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [3], "code": "HEPA-VACUUM", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "treatment", "item_id": "hepa_vacuum", "name": "HEPA vacuuming", "quantity_source": "room:floor", "sort_order": 1, "taxable": false, "unit": "sf", "unit_price": "4.54", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "ODOR-TREATMENT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "treatment", "item_id": "odor_treatment", "name": "Odor treatment", "quantity_source": "typed", "sort_order": 3, "taxable": false, "unit": "each", "unit_price": "181.90", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "AIR-MOVER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "air_mover", "name": "Air mover", "quantity_source": "count_days:air_movers*drying_days", "sort_order": 0, "taxable": false, "unit": "unit_day", "unit_price": "30.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "LGR-DEHUMIDIFIER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "lgr_dehumidifier", "name": "LGR dehumidifier", "quantity_source": "count_days:dehumidifiers*drying_days", "sort_order": 1, "taxable": false, "unit": "unit_day", "unit_price": "100.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "AIR-SCRUBBER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "air_scrubber", "name": "Air scrubber (HEPA)", "quantity_source": "field:air_scrubbers", "sort_order": 2, "taxable": false, "unit": "day", "unit_price": "75.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "HEPA-FILTER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "hepa_filter", "name": "HEPA filter replacement", "quantity_source": "field:hepa_filters", "sort_order": 3, "taxable": false, "unit": "each", "unit_price": "180.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "FLOOR-DRYING-SYS", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "floor_drying_system", "name": "Hardwood floor drying system", "quantity_source": "count_days:wood_floor_systems*wood_floor_days", "sort_order": 4, "taxable": false, "unit": "unit_day", "unit_price": "220.05", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "DESICCANT-DEHUMI", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "desiccant_dehumidifier", "name": "Desiccant dehumidifier", "quantity_source": "typed_count_days", "sort_order": 5, "taxable": false, "unit": "unit_day", "unit_price": "165.53", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "HEATER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "heater", "name": "Supplemental heater", "quantity_source": "typed_count_days", "sort_order": 6, "taxable": false, "unit": "unit_day", "unit_price": "60.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "TECHNICIAN-LABOR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "labor", "item_id": "technician_labor", "name": "Technician labor", "quantity_source": "field:labor_hours", "sort_order": 0, "taxable": false, "unit": "hour", "unit_price": "55.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "SUPERVISOR-LABOR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "labor", "item_id": "supervisor_labor", "name": "Supervisor or project manager", "quantity_source": "typed", "sort_order": 1, "taxable": true, "unit": "hour", "unit_price": "395.21", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "CONTENT-MANIPULA", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "labor", "item_id": "content_manipulation", "name": "Content manipulation and pack-out", "quantity_source": "typed", "sort_order": 2, "taxable": false, "unit": "hour", "unit_price": "50.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "SCAN-3D", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "scan_3d", "name": "3D scan or floor plan capture", "quantity_source": "field:matterport_scans", "sort_order": 0, "taxable": false, "unit": "each", "unit_price": "406.22", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "DUMP-TRUCK-LOAD", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "dump_truck_load", "name": "Dump truck load", "quantity_source": "field:dump_truck_loads", "sort_order": 1, "taxable": true, "unit": "each", "unit_price": "16.26", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "EQUIPMENT-DECONT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "equipment_decontamination", "name": "Equipment decontamination", "quantity_source": "field:equipment_decon", "sort_order": 2, "taxable": true, "unit": "each", "unit_price": "154.87", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "TEMPORARY-POWER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "temporary_power", "name": "Temporary power distribution", "quantity_source": "field:power_distribution", "sort_order": 3, "taxable": true, "unit": "each", "unit_price": "255.17", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "TESTING-COORDINA", "customer_description": "", "default_quantity": "0", "enabled": false, "group": "optional_services", "item_id": "testing_coordination", "name": "Third-party lead and asbestos testing coordination", "quantity_source": "typed", "sort_order": 5, "taxable": false, "unit": "each", "unit_price": "100.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "ADDITIONAL-WORK", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "extras", "item_id": "additional_work", "name": "Additional work (owner approved)", "quantity_source": "typed", "sort_order": 0, "taxable": false, "unit": "hour", "unit_price": "55.00", "waste_percent": "0", "xactimate_code": ""}
+      ],
+      "pin_version": 1,
+      "policy": {
+        "after_hours": {"label": "After-hours adjustment", "multiplier": "1.500"},
+        "area_basis": "demolition_with_waste",
+        "cabinetry": {"multiplier": "1.500", "scope": "all_cat3"},
+        "category_multipliers": {"1": "1.000", "2": "1.100", "3": "1.333"},
+        "estimate_mode": "range",
+        "minimum_job_charge": "250",
+        "overhead_profit_percent": "20",
+        "range": {"beyond_percent": "6.45", "brackets": [{"percent": "50", "up_to_sf": 500}, {"percent": "30", "up_to_sf": 1000}, {"percent": "10", "up_to_sf": null}], "first_percent": "6.95", "first_sf": 1},
+        "sales_tax": {"enabled": true, "percent": "0"},
+        "show_line_breakdown": false
+      },
+      "priced_at": "2026-11-01T17:00:00Z",
+      "reason": "first_price",
+      "sequence": 1,
+      "version_id": "v-2c8a1fab432c"
+    },
+    "price_basis": {
+      "calculation_version": "dryscope-v2",
+      "company_id": "oracle-co",
+      "content_sha256": "e317f0aa187838475fa3efdaf364b33d88cd0059f1fa70388dd74c775ef967b2",
+      "item_count": 29,
+      "policy": {
+        "after_hours": {"label": "After-hours adjustment", "multiplier": "1.500"},
+        "area_basis": "demolition_with_waste",
+        "cabinetry": {"multiplier": "1.500", "scope": "all_cat3"},
+        "category_multipliers": {"1": "1.000", "2": "1.100", "3": "1.333"},
+        "estimate_mode": "range",
+        "minimum_job_charge": "250",
+        "overhead_profit_percent": "20",
+        "range": {"beyond_percent": "6.45", "brackets": [{"percent": "50", "up_to_sf": 500}, {"percent": "30", "up_to_sf": 1000}, {"percent": "10", "up_to_sf": null}], "first_percent": "6.95", "first_sf": 1},
+        "sales_tax": {"enabled": true, "percent": "0"},
+        "show_line_breakdown": false
+      },
+      "price_brackets": {
+        "demo_cat1_wall": [{"unit_price": "3.00", "up_to_sf": 500}, {"unit_price": "2.50", "up_to_sf": 1000}, {"unit_price": "2.00", "up_to_sf": null}]
+      },
+      "priced_at": "2026-11-01T17:00:00Z",
+      "sequence": 1,
+      "version_id": "v-2c8a1fab432c"
+    },
+    "pricing": {
+      "buckets": {
+        "equipment": "1185.0",
+        "fixed": "1273.12",
+        "labor_material": "2491.59",
+        "taxed_equipment": "0",
+        "taxed_fixed": "490.62",
+        "taxed_labor_material": "0"
+      },
+      "calculation_version": "dryscope-v2",
+      "high": "7106.83",
+      "itemized_total": 5939.65,
+      "lines": [
+        {"area": null, "bucket": "fixed", "code": "SERVICE-CALL", "description": "Emergency service call", "group": "job_charges", "item_id": "service_call", "quantity": 1.0, "room": null, "taxable": true, "total": 94.89, "unit": "each", "unit_price": 94.89, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "fixed", "code": "MONITORING-VISIT", "description": "Drying monitoring (per hour)", "group": "job_charges", "item_id": "monitoring_visit", "quantity": 13.25, "room": null, "taxable": false, "total": 662.5, "unit": "hour", "unit_price": 50.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "fixed", "code": "SETUP-DOCUMENTAT", "description": "Project setup and moisture documentation", "group": "job_charges", "item_id": "setup_documentation", "quantity": 1.0, "room": null, "taxable": true, "total": 395.73, "unit": "each", "unit_price": 395.73, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "fixed", "code": "DEBRIS-HAUL", "description": "Debris haul and disposal", "group": "job_charges", "item_id": "debris_haul", "quantity": 1.0, "room": null, "taxable": false, "total": 120.0, "unit": "load", "unit_price": 120.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": 500.0, "bracket_mode": "tiered", "bucket": "labor_material", "code": "DEMO-CAT1-WALL", "description": "Space 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 0 through 500 sq ft)", "group": "demolition", "item_id": "demo_cat1_wall", "price_bracket": {"unit_price": "3.00", "up_to_sf": 500}, "quantity": 500.0, "room": "Space 1", "taxable": false, "total": 1500.0, "unit": "sf", "unit_price": 3.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": 84.12, "bracket_mode": "tiered", "bucket": "labor_material", "code": "DEMO-CAT1-WALL", "description": "Space 1: Category 1 drywall, insulation and trim removal (tiered bracket: over 500 through 1,000 sq ft)", "group": "demolition", "item_id": "demo_cat1_wall", "price_bracket": {"unit_price": "2.50", "up_to_sf": 1000}, "quantity": 84.12, "room": "Space 1", "taxable": false, "total": 210.3, "unit": "sf", "unit_price": 2.5, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": 1326.0, "bucket": "labor_material", "code": "ANTIMICROBIAL", "description": "Space 1: Antimicrobial application", "group": "treatment", "item_id": "antimicrobial", "quantity": 1326.0, "room": "Space 1", "taxable": false, "total": 671.29, "unit": "sf", "unit_price": 0.45, "waste_percent": 12.5, "xactimate_code": ""},
+        {"area": null, "bucket": "equipment", "code": "AIR-MOVER", "description": "Air mover", "group": "drying_equipment", "item_id": "air_mover", "quantity": 21.0, "room": null, "taxable": false, "total": 630.0, "unit": "unit_day", "unit_price": 30.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "equipment", "code": "LGR-DEHUMIDIFIER", "description": "LGR dehumidifier", "group": "drying_equipment", "item_id": "lgr_dehumidifier", "quantity": 3.0, "room": null, "taxable": false, "total": 300.0, "unit": "unit_day", "unit_price": 100.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "equipment", "code": "AIR-SCRUBBER", "description": "Air scrubber (HEPA)", "group": "drying_equipment", "item_id": "air_scrubber", "quantity": 1.0, "room": null, "taxable": false, "total": 75.0, "unit": "day", "unit_price": 75.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "equipment", "code": "HEPA-FILTER", "description": "HEPA filter replacement", "group": "drying_equipment", "item_id": "hepa_filter", "quantity": 1.0, "room": null, "taxable": false, "total": 180.0, "unit": "each", "unit_price": 180.0, "waste_percent": 0.0, "xactimate_code": ""},
+        {"area": null, "bucket": "labor_material", "code": "TECHNICIAN-LABOR", "description": "Technician labor", "group": "labor", "item_id": "technician_labor", "quantity": 2.0, "room": null, "taxable": false, "total": 110.0, "unit": "hour", "unit_price": 55.0, "waste_percent": 0.0, "xactimate_code": ""}
+      ],
+      "low": "5939.65",
+      "totals": {
+        "after_hours_label": "After-hours adjustment",
+        "explanation": "The low amount is the itemized total. The high end adds a tiered cushion to area-priced labor and materials, highest-priced square feet first: 50% over 0 through 500 sq ft; 30% over 500 through 1,000 sq ft; 10% over 1,000 sq ft; and 50% on labor hours. Job charges, drying equipment and approved additional work are the same in both amounts. Both amounts include overhead and profit at 20%.",
+        "high": {"after_hours": "0.00", "minimum_charge": "0", "overhead_profit": "1184.47", "subtotal": "5922.36", "tax": "0.00", "total": "7106.83"},
+        "labor_material_high": "3464.24",
+        "labor_material_low": "2491.59",
+        "low": {"after_hours": "0.00", "minimum_charge": "0", "overhead_profit": "989.94", "subtotal": "4949.71", "tax": "0.00", "total": "5939.65"},
+        "minimum_charge_label": "Minimum job charge",
+        "mode": "range",
+        "range_explanation": "The high end adds a tiered cushion to area-priced labor and materials, highest-priced square feet first: 50% over 0 through 500 sq ft; 30% over 500 through 1,000 sq ft; 10% over 1,000 sq ft; and 50% on labor hours.",
+        "uncertainty": null
+      }
+    },
+    "proposal": {
+      "byte_length": 10102,
+      "canonical_bytes_base64": "eyJkYXRhIjp7ImFkZHJlc3MiOiIxMDAgT3JhY2xlIExhbmUsIFRlc3R2aWxsZSIsImFpcl9tb3ZlcnMiOjcsImFpcl9zY3J1YmJlcnMiOjEsImFzc2lzdGFudF90cmFuc2NyaXB0IjoiIiwiZGVodW1pZGlmaWVycyI6MSwiZHJ5aW5nX2RheXMiOjMsImR1bXBfdHJ1Y2tfbG9hZHMiOjAsImVtZXJnZW5jeV9jYWxscyI6MSwiZXF1aXBtZW50X2RlY29uIjowLCJncmFuaXRlX3JlbW92YWwiOmZhbHNlLCJoYXNfY3Jhd2xfc3BhY2UiOmZhbHNlLCJoYXVsX2xvYWRzIjoxLCJoZXBhX2ZpbHRlcnMiOjEsImlzX2FmdGVyX2hvdXJzIjpmYWxzZSwibGFib3JfaG91cnMiOjIuMCwibWF0dGVycG9ydF9zY2FucyI6MCwibW9uaXRvcmluZ19ob3VycyI6MTMuMjUsInBhY2thZ2VfcHJpY2UiOm51bGwsInBvd2VyX2Rpc3RyaWJ1dGlvbiI6MCwicm9vbXMiOlt7ImNhdGVnb3J5IjoxLCJjdXN0b21fY2FiaW5ldHJ5IjpmYWxzZSwiZmluaXNoZWRfc2YiOjU4NC4xMiwiZmxvb3Jfc2YiOjEzMjYuMCwibmFtZSI6IlNwYWNlIDEiLCJ1bmZpbmlzaGVkX3NmIjo3NDAuMCwid2FzdGVfcGVyY2VudCI6MC4wfV0sInNjb3BlX2NvbmZpcm1lZCI6dHJ1ZSwidGVjaG5pY2lhbl9ub3RlcyI6IiIsInRlY2huaWNpYW5fdHJhbnNjcmlwdCI6IiIsIndhdGVyX2hlYXRlcl9sb3NzIjpmYWxzZSwid29vZF9mbG9vcl9kYXlzIjo3LCJ3b29kX2Zsb29yX3N5c3RlbXMiOjAsIndvcmtfcGVyZm9ybWVkIjpmYWxzZSwieWVhcl9idWlsdCI6MjAxOX0sImRvY3VtZW50cyI6eyJhZHJfZXN0aW1hdGUiOnsiY3VzdG9tZXJfbmFtZSI6IkNhc2V5IEN1c3RvbWVyIiwiZGF0ZSI6IjExLTA2LTIwMjYiLCJkaXNjbGFpbWVycyI6WyJQaG90b3MgdGFrZW4gZHVyaW5nIHRoZSBpbnNwZWN0aW9uIGFyZSBzdGFtcGVkIHdpdGggdGhlIGxvY2F0aW9uIHJlcG9ydGVkIGJ5IHRoZSB0ZWNobmljaWFuJ3MgcGhvbmUsIHdoZW4gdGhlIHRlY2huaWNpYW4gYWxsb3dzIGl0LCBhbmQgdGhhdCBsb2NhdGlvbiBpcyBwYXJ0IG9mIHRoZSBwaG90byBsb2cuIiwiV2hlbiB0aGUgam9iIGFkZHJlc3MgaXMgZW50ZXJlZCwgdGhlIHR5cGVkIGFkZHJlc3MgaXMgc2VudCB0byBHb29nbGUgTWFwcyB0byBzdWdnZXN0IG1hdGNoaW5nIGFkZHJlc3NlcywgYW5kIHRoZSBzZWxlY3RlZCBsb2NhdGlvbiBpcyBzYXZlZCB3aXRoIHRoZSBqb2IuIiwiTk9URTogVGhpcyBlc3RpbWF0ZSBkb2VzIE5PVCBpbmNsdWRlIHJlY29uc3RydWN0aW9uIGFmdGVyIHJlbWVkaWF0aW9uLiBEZW1vbGl0aW9uIGlzIGEgaGlnaGx5IHVucHJlZGljdGFibGUgcHJvY2VkdXJlLiBBcyBzdWNoLCBhbnkgY29sbGF0ZXJhbCBkYW1hZ2UgcmVzdWx0aW5nIGZyb20gdGhlIGRlbW9saXRpb24gcHJlc2NyaWJlZCBoZXJlaW4gd2lsbCBOT1QgYmUgdGhlIHJlc3BvbnNpYmlsaXR5IG9mIE9yYWNsZSBSZXN0b3JhdGlvbi4gVGhpcyBlc3RpbWF0ZSBkb2VzIG5vdCBpbmNsdWRlIHRlc3Rpbmcgb2YgYW55IGtpbmQuIiwiSWYgdGhlIHdvcmsgcHJvY2VlZHMgdGhyb3VnaCBhbiBpbnN1cmFuY2UgY2xhaW0sIHdlIHdpbGwgcmVwcmljZSB0aGUgZXN0aW1hdGUgYWNjb3JkaW5nIHRvIGluZHVzdHJ5IHN0YW5kYXJkcyB1c2luZyBYYWN0aW1hdGUuIiwiRXN0aW1hdGUgaXMgdmFsaWQgZm9yIDMwIGRheXMgZnJvbSBkYXRlIG9mIGluc3BlY3Rpb24uIl0sImVzdGltYXRlX21vZGUiOiJyYW5nZSIsImZpbmRpbmdzIjpbIlRoZSBob21lIHdhcyBidWlsdCBpbiAyMDE5LiBUaGVyZWZvcmUsIG5vIGxlYWQgb3IgYXNiZXN0b3MgdGVzdGluZyBpcyByZXF1aXJlZCBwcmlvciB0byB0aGUgc3RhcnQgb2Ygd29yay4iXSwibGVhZF9ub3RpY2VfcmVxdWlyZWQiOmZhbHNlLCJwcm9wZXJ0eV9hZGRyZXNzIjoiMTAwIE9yYWNsZSBMYW5lLCBUZXN0dmlsbGUiLCJwcm9wb3NlZF9jb3N0Ijo3MTA2LjgzLCJwcm9wb3NlZF9jb3N0X2xvdyI6NTkzOS42NSwicmVjb21tZW5kYXRpb25zIjpbIlBlciBJSUNSQyBhbmQgRVBBIHByb3RvY29scywgT3JhY2xlIFJlc3RvcmF0aW9uIHRlY2huaWNpYW5zIHdpbGwgZG9uIGFwcHJvcHJpYXRlIHBlcnNvbmFsIHByb3RlY3RpdmUgZXF1aXBtZW50IGR1cmluZyBtaXRpZ2F0aW9uL3JlbWVkaWF0aW9uIHNlcnZpY2VzLiBUaGUgdGVjaG5pY2lhbnMgd2lsbCBzZXQgY29udGFpbm1lbnRzIGFzIG5lZWRlZC4iLCJTcGFjZSAxOiBDYXRlZ29yeSAxIGRyeXdhbGwsIGluc3VsYXRpb24gYW5kIHRyaW0gcmVtb3ZhbCAodGllcmVkIGJyYWNrZXQ6IG92ZXIgMCB0aHJvdWdoIDUwMCBzcSBmdCkiLCJTcGFjZSAxOiBDYXRlZ29yeSAxIGRyeXdhbGwsIGluc3VsYXRpb24gYW5kIHRyaW0gcmVtb3ZhbCAodGllcmVkIGJyYWNrZXQ6IG92ZXIgNTAwIHRocm91Z2ggMSwwMDAgc3EgZnQpIiwiU3BhY2UgMTogQW50aW1pY3JvYmlhbCBhcHBsaWNhdGlvbiIsIkFpciBtb3ZlciIsIkxHUiBkZWh1bWlkaWZpZXIiLCJBaXIgc2NydWJiZXIgKEhFUEEpIiwiSEVQQSBmaWx0ZXIgcmVwbGFjZW1lbnQiLCJUZWNobmljaWFuIGxhYm9yIiwiSWYgdGVjaG5pY2lhbnMgZW5jb3VudGVyIGFkZGl0aW9uYWwgYWZmZWN0ZWQgYnVpbGRpbmcgbWF0ZXJpYWxzIGJleW9uZCB0aGUgcXVhbnRpdGllcyBwcmV2aW91c2x5IGRlc2NyaWJlZCwgdGhlIHByb2plY3QgbWFuYWdlciB3aWxsIGNvbnRhY3QgdGhlIHByb3BlcnR5IG93bmVyIHRvIGRpc2N1c3MgYW55IGFkZGl0aW9uYWwgY291cnNlIG9mIGFjdGlvbiBuZWNlc3NhcnkgYW5kIHRoZSBhc3NvY2lhdGVkIGNvc3QuIl19LCJhaV9zdWdnZXN0aW9ucyI6WyJDaGVjayB0aGUgc3ViZmxvb3IuIl0sImFpX3N1bW1hcnkiOiJSZXZpZXdlZCB0aGUgaW5zcGVjdGlvbi4iLCJjb21wYW55X2lkZW50aXR5Ijp7ImFkZHJlc3MiOiIxIFN5bnRoZXRpYyBXYXksIFRlc3R2aWxsZSIsImNvbXBhbnlfaWQiOiJvcmFjbGUtY28iLCJlbWFpbCI6Im9mZmljZUBleGFtcGxlLmludmFsaWQiLCJsaWNlbnNlIjoiMDAwMDAxIiwibG9nb19kYXRhX3VybCI6IiIsIm5hbWUiOiJPcmFjbGUgUmVzdG9yYXRpb24iLCJwaG9uZSI6IjU1NS0wMTAwIiwic2lnbm9mZiI6IlBhdCBFeGFtcGxlIiwidmVyc2lvbiI6MSwid2F0ZXJfaGVhdGVyX25vdGljZSI6IiJ9LCJjb21wYW55X3NldHVwX21pc3NpbmciOltdLCJjb21wbGlhbmNlX25vdGVzIjpbIlRoZSBob21lIHdhcyBidWlsdCBpbiAyMDE5LiBUaGVyZWZvcmUsIG5vIGxlYWQgb3IgYXNiZXN0b3MgdGVzdGluZyBpcyByZXF1aXJlZCBwcmlvciB0byB0aGUgc3RhcnQgb2Ygd29yay4iLCJOT1RFOiBUaGlzIGVzdGltYXRlIGRvZXMgTk9UIGluY2x1ZGUgcmVjb25zdHJ1Y3Rpb24gYWZ0ZXIgcmVtZWRpYXRpb24uIERlbW9saXRpb24gaXMgYSBoaWdobHkgdW5wcmVkaWN0YWJsZSBwcm9jZWR1cmUuIEFzIHN1Y2gsIGFueSBjb2xsYXRlcmFsIGRhbWFnZSByZXN1bHRpbmcgZnJvbSB0aGUgZGVtb2xpdGlvbiBwcmVzY3JpYmVkIGhlcmVpbiB3aWxsIE5PVCBiZSB0aGUgcmVzcG9uc2liaWxpdHkgb2YgT3JhY2xlIFJlc3RvcmF0aW9uLiBUaGlzIGVzdGltYXRlIGRvZXMgbm90IGluY2x1ZGUgdGVzdGluZyBvZiBhbnkga2luZC4iLCJJZiB0aGUgd29yayBwcm9jZWVkcyB0aHJvdWdoIGFuIGluc3VyYW5jZSBjbGFpbSwgd2Ugd2lsbCByZXByaWNlIHRoZSBlc3RpbWF0ZSBhY2NvcmRpbmcgdG8gaW5kdXN0cnkgc3RhbmRhcmRzIHVzaW5nIFhhY3RpbWF0ZS4iLCJFc3RpbWF0ZSBpcyB2YWxpZCBmb3IgMzAgZGF5cyBmcm9tIGRhdGUgb2YgaW5zcGVjdGlvbi4iXSwiZXN0aW1hdGUiOnsiYWZ0ZXJfaG91cnNfbGFiZWwiOiJBZnRlci1ob3VycyBhZGp1c3RtZW50IiwiYWZ0ZXJfaG91cnNfcGVyY2VudCI6IjUwIiwiZXhwbGFuYXRpb24iOiJUaGUgaGlnaCBlbmQgYWRkcyBhIHRpZXJlZCBjdXNoaW9uIHRvIGFyZWEtcHJpY2VkIGxhYm9yIGFuZCBtYXRlcmlhbHMsIGhpZ2hlc3QtcHJpY2VkIHNxdWFyZSBmZWV0IGZpcnN0OiA1MCUgb3ZlciAwIHRocm91Z2ggNTAwIHNxIGZ0OyAzMCUgb3ZlciA1MDAgdGhyb3VnaCAxLDAwMCBzcSBmdDsgMTAlIG92ZXIgMSwwMDAgc3EgZnQ7IGFuZCA1MCUgb24gbGFib3IgaG91cnMuIiwiaGlnaCI6eyJhZnRlcl9ob3VycyI6MC4wLCJtaW5pbXVtX2NoYXJnZSI6MC4wLCJvdmVyaGVhZF9wcm9maXQiOjExODQuNDcsInN1YnRvdGFsIjo1OTIyLjM2LCJ0YXgiOjAuMCwidG90YWwiOjcxMDYuODN9LCJsb3ciOnsiYWZ0ZXJfaG91cnMiOjAuMCwibWluaW11bV9jaGFyZ2UiOjAuMCwib3ZlcmhlYWRfcHJvZml0Ijo5ODkuOTQsInN1YnRvdGFsIjo0OTQ5LjcxLCJ0YXgiOjAuMCwidG90YWwiOjU5MzkuNjV9LCJtb2RlIjoicmFuZ2UiLCJvdmVyaGVhZF9wcm9maXRfcGVyY2VudCI6IjIwIiwic2FsZXNfdGF4X3BlcmNlbnQiOiIwIiwic2hvd19saW5lX2JyZWFrZG93biI6ZmFsc2V9LCJpaWNyY19kZWZlbnNlX2xldHRlciI6Ik9yYWNsZSBSZXN0b3JhdGlvbiBcdTAwYjcgMSBTeW50aGV0aWMgV2F5LCBUZXN0dmlsbGUgXHUwMGI3IDU1NS0wMTAwIFx1MDBiNyBDU0xCICMwMDAwMDFcblxuVE86IEluc3VyYW5jZSBDbGFpbXMgRXhhbWluZXIgLyBBZGp1c3RlclxuXG5SRTogUmVtZWRpYXRpb24gc2NvcGUgZm9yIDEwMCBPcmFjbGUgTGFuZSwgVGVzdHZpbGxlXG5DdXN0b21lcjogQ2FzZXkgQ3VzdG9tZXJcblxuVGhpcyBzY29wZSBkZXNjcmliZXMgcHJvcG9zZWQgd29yazsgY29tcGxldGlvbiBoYXMgbm90IGJlZW4gcmVjb3JkZWQuXG5cblRoZSBzY29wZSBpcyBwcmVwYXJlZCB3aXRoIHJlZmVyZW5jZSB0byBJSUNSQyBTNTAwL1M1MjAgcmVzdG9yYXRpb24gcHJhY3RpY2VzLiBQcm9qZWN0LXNwZWNpZmljIGNvbmRpdGlvbnMgYW5kIGV2aWRlbmNlIGFyZSByZWNvcmRlZCBiZWxvdzsgbm8gdW5zdXBwb3J0ZWQgc2VjdGlvbiBjaXRhdGlvbiBvciBjb21wbGV0aW9uIGNsYWltIGlzIG1hZGUuXG5cblRoZSBob21lIHdhcyBidWlsdCBpbiAyMDE5LiBUaGVyZWZvcmUsIG5vIGxlYWQgb3IgYXNiZXN0b3MgdGVzdGluZyBpcyByZXF1aXJlZCBwcmlvciB0byB0aGUgc3RhcnQgb2Ygd29yay5cblxuU2NvcGU6XG5QZXIgSUlDUkMgYW5kIEVQQSBwcm90b2NvbHMsIE9yYWNsZSBSZXN0b3JhdGlvbiB0ZWNobmljaWFucyB3aWxsIGRvbiBhcHByb3ByaWF0ZSBwZXJzb25hbCBwcm90ZWN0aXZlIGVxdWlwbWVudCBkdXJpbmcgbWl0aWdhdGlvbi9yZW1lZGlhdGlvbiBzZXJ2aWNlcy4gVGhlIHRlY2huaWNpYW5zIHdpbGwgc2V0IGNvbnRhaW5tZW50cyBhcyBuZWVkZWQuXG5TcGFjZSAxOiBDYXRlZ29yeSAxIGRyeXdhbGwsIGluc3VsYXRpb24gYW5kIHRyaW0gcmVtb3ZhbCAodGllcmVkIGJyYWNrZXQ6IG92ZXIgMCB0aHJvdWdoIDUwMCBzcSBmdClcblNwYWNlIDE6IENhdGVnb3J5IDEgZHJ5d2FsbCwgaW5zdWxhdGlvbiBhbmQgdHJpbSByZW1vdmFsICh0aWVyZWQgYnJhY2tldDogb3ZlciA1MDAgdGhyb3VnaCAxLDAwMCBzcSBmdClcblNwYWNlIDE6IEFudGltaWNyb2JpYWwgYXBwbGljYXRpb25cbkFpciBtb3ZlclxuTEdSIGRlaHVtaWRpZmllclxuQWlyIHNjcnViYmVyIChIRVBBKVxuSEVQQSBmaWx0ZXIgcmVwbGFjZW1lbnRcblRlY2huaWNpYW4gbGFib3JcbklmIHRlY2huaWNpYW5zIGVuY291bnRlciBhZGRpdGlvbmFsIGFmZmVjdGVkIGJ1aWxkaW5nIG1hdGVyaWFscyBiZXlvbmQgdGhlIHF1YW50aXRpZXMgcHJldmlvdXNseSBkZXNjcmliZWQsIHRoZSBwcm9qZWN0IG1hbmFnZXIgd2lsbCBjb250YWN0IHRoZSBwcm9wZXJ0eSBvd25lciB0byBkaXNjdXNzIGFueSBhZGRpdGlvbmFsIGNvdXJzZSBvZiBhY3Rpb24gbmVjZXNzYXJ5IGFuZCB0aGUgYXNzb2NpYXRlZCBjb3N0LlxuXG5OT1RFOiBUaGlzIGVzdGltYXRlIGRvZXMgTk9UIGluY2x1ZGUgcmVjb25zdHJ1Y3Rpb24gYWZ0ZXIgcmVtZWRpYXRpb24uIERlbW9saXRpb24gaXMgYSBoaWdobHkgdW5wcmVkaWN0YWJsZSBwcm9jZWR1cmUuIEFzIHN1Y2gsIGFueSBjb2xsYXRlcmFsIGRhbWFnZSByZXN1bHRpbmcgZnJvbSB0aGUgZGVtb2xpdGlvbiBwcmVzY3JpYmVkIGhlcmVpbiB3aWxsIE5PVCBiZSB0aGUgcmVzcG9uc2liaWxpdHkgb2YgT3JhY2xlIFJlc3RvcmF0aW9uLiBUaGlzIGVzdGltYXRlIGRvZXMgbm90IGluY2x1ZGUgdGVzdGluZyBvZiBhbnkga2luZC5cbklmIHRoZSB3b3JrIHByb2NlZWRzIHRocm91Z2ggYW4gaW5zdXJhbmNlIGNsYWltLCB3ZSB3aWxsIHJlcHJpY2UgdGhlIGVzdGltYXRlIGFjY29yZGluZyB0byBpbmR1c3RyeSBzdGFuZGFyZHMgdXNpbmcgWGFjdGltYXRlLlxuRXN0aW1hdGUgaXMgdmFsaWQgZm9yIDMwIGRheXMgZnJvbSBkYXRlIG9mIGluc3BlY3Rpb24uXG5cbkl0ZW1pemVkIHRvdGFsOiAkNSw5MzkuNjUuIEN1c3RvbWVyIGVzdGltYXRlIHJhbmdlOiAkNSw5MzkuNjUgdG8gJDcsMTA2LjgzLiBUaGUgaGlnaCBlbmQgYWRkcyBhIHRpZXJlZCBjdXNoaW9uIHRvIGFyZWEtcHJpY2VkIGxhYm9yIGFuZCBtYXRlcmlhbHMsIGhpZ2hlc3QtcHJpY2VkIHNxdWFyZSBmZWV0IGZpcnN0OiA1MCUgb3ZlciAwIHRocm91Z2ggNTAwIHNxIGZ0OyAzMCUgb3ZlciA1MDAgdGhyb3VnaCAxLDAwMCBzcSBmdDsgMTAlIG92ZXIgMSwwMDAgc3EgZnQ7IGFuZCA1MCUgb24gbGFib3IgaG91cnMuXG5cblNpbmNlcmVseSxcblBhdCBFeGFtcGxlXG5PcmFjbGUgUmVzdG9yYXRpb24iLCJwZW5kaW5nX2V4dHJhcyI6MCwicGhvdG9fYXVkaXRfbG9nIjpbXSwicHJpY2VfYmFzaXMiOnsiY2FsY3VsYXRpb25fdmVyc2lvbiI6ImRyeXNjb3BlLXYyIiwiY29tcGFueV9pZCI6Im9yYWNsZS1jbyIsImNvbnRlbnRfc2hhMjU2IjoiZTMxN2YwYWExODc4Mzg0NzVmYTNlZmRhZjM2NGIzM2Q4OGNkMDA1OWYxZmE3MDM4OGRkNzRjNzc1ZWY5NjdiMiIsIml0ZW1fY291bnQiOjI5LCJwb2xpY3kiOnsiYWZ0ZXJfaG91cnMiOnsibGFiZWwiOiJBZnRlci1ob3VycyBhZGp1c3RtZW50IiwibXVsdGlwbGllciI6IjEuNTAwIn0sImFyZWFfYmFzaXMiOiJkZW1vbGl0aW9uX3dpdGhfd2FzdGUiLCJjYWJpbmV0cnkiOnsibXVsdGlwbGllciI6IjEuNTAwIiwic2NvcGUiOiJhbGxfY2F0MyJ9LCJjYXRlZ29yeV9tdWx0aXBsaWVycyI6eyIxIjoiMS4wMDAiLCIyIjoiMS4xMDAiLCIzIjoiMS4zMzMifSwiZXN0aW1hdGVfbW9kZSI6InJhbmdlIiwibWluaW11bV9qb2JfY2hhcmdlIjoiMjUwIiwib3ZlcmhlYWRfcHJvZml0X3BlcmNlbnQiOiIyMCIsInJhbmdlIjp7ImJleW9uZF9wZXJjZW50IjoiNi40NSIsImJyYWNrZXRzIjpbeyJwZXJjZW50IjoiNTAiLCJ1cF90b19zZiI6NTAwfSx7InBlcmNlbnQiOiIzMCIsInVwX3RvX3NmIjoxMDAwfSx7InBlcmNlbnQiOiIxMCIsInVwX3RvX3NmIjpudWxsfV0sImZpcnN0X3BlcmNlbnQiOiI2Ljk1IiwiZmlyc3Rfc2YiOjF9LCJzYWxlc190YXgiOnsiZW5hYmxlZCI6dHJ1ZSwicGVyY2VudCI6IjAifSwic2hvd19saW5lX2JyZWFrZG93biI6ZmFsc2V9LCJwcmljZV9icmFja2V0cyI6eyJkZW1vX2NhdDFfd2FsbCI6W3sidW5pdF9wcmljZSI6IjMuMDAiLCJ1cF90b19zZiI6NTAwfSx7InVuaXRfcHJpY2UiOiIyLjUwIiwidXBfdG9fc2YiOjEwMDB9LHsidW5pdF9wcmljZSI6IjIuMDAiLCJ1cF90b19zZiI6bnVsbH1dfSwicHJpY2VkX2F0IjoiMjAyNi0xMS0wMVQxNzowMDowMFoiLCJzZXF1ZW5jZSI6MSwidmVyc2lvbl9pZCI6InYtMmM4YTFmYWI0MzJjIn0sInNjaGVtYV92ZXJzaW9uIjozLCJzaWduYWJsZSI6dHJ1ZSwidW5wcmljZWRfd29yayI6W10sInhhY3RpbWF0ZV9zY29wZSI6W3siY29kZSI6IlNFUlZJQ0UtQ0FMTCIsImRlc2NyaXB0aW9uIjoiRW1lcmdlbmN5IHNlcnZpY2UgY2FsbCIsInF1YW50aXR5IjoxLjAsInRvdGFsIjo5NC44OSwidW5pdCI6ImVhY2giLCJ1bml0X3ByaWNlIjo5NC44OSwid2FzdGVfcGVyY2VudCI6MC4wLCJ4YWN0aW1hdGVfY29kZSI6IiJ9LHsiY29kZSI6Ik1PTklUT1JJTkctVklTSVQiLCJkZXNjcmlwdGlvbiI6IkRyeWluZyBtb25pdG9yaW5nIChwZXIgaG91cikiLCJxdWFudGl0eSI6MTMuMjUsInRvdGFsIjo2NjIuNSwidW5pdCI6ImhvdXIiLCJ1bml0X3ByaWNlIjo1MC4wLCJ3YXN0ZV9wZXJjZW50IjowLjAsInhhY3RpbWF0ZV9jb2RlIjoiIn0seyJjb2RlIjoiU0VUVVAtRE9DVU1FTlRBVCIsImRlc2NyaXB0aW9uIjoiUHJvamVjdCBzZXR1cCBhbmQgbW9pc3R1cmUgZG9jdW1lbnRhdGlvbiIsInF1YW50aXR5IjoxLjAsInRvdGFsIjozOTUuNzMsInVuaXQiOiJlYWNoIiwidW5pdF9wcmljZSI6Mzk1LjczLCJ3YXN0ZV9wZXJjZW50IjowLjAsInhhY3RpbWF0ZV9jb2RlIjoiIn0seyJjb2RlIjoiREVCUklTLUhBVUwiLCJkZXNjcmlwdGlvbiI6IkRlYnJpcyBoYXVsIGFuZCBkaXNwb3NhbCIsInF1YW50aXR5IjoxLjAsInRvdGFsIjoxMjAuMCwidW5pdCI6ImxvYWQiLCJ1bml0X3ByaWNlIjoxMjAuMCwid2FzdGVfcGVyY2VudCI6MC4wLCJ4YWN0aW1hdGVfY29kZSI6IiJ9LHsiYnJhY2tldF9tb2RlIjoidGllcmVkIiwiY29kZSI6IkRFTU8tQ0FUMS1XQUxMIiwiZGVzY3JpcHRpb24iOiJTcGFjZSAxOiBDYXRlZ29yeSAxIGRyeXdhbGwsIGluc3VsYXRpb24gYW5kIHRyaW0gcmVtb3ZhbCAodGllcmVkIGJyYWNrZXQ6IG92ZXIgMCB0aHJvdWdoIDUwMCBzcSBmdCkiLCJwcmljZV9icmFja2V0Ijp7InVuaXRfcHJpY2UiOiIzLjAwIiwidXBfdG9fc2YiOjUwMH0sInF1YW50aXR5Ijo1MDAuMCwidG90YWwiOjE1MDAuMCwidW5pdCI6InNmIiwidW5pdF9wcmljZSI6My4wLCJ3YXN0ZV9wZXJjZW50IjowLjAsInhhY3RpbWF0ZV9jb2RlIjoiIn0seyJicmFja2V0X21vZGUiOiJ0aWVyZWQiLCJjb2RlIjoiREVNTy1DQVQxLVdBTEwiLCJkZXNjcmlwdGlvbiI6IlNwYWNlIDE6IENhdGVnb3J5IDEgZHJ5d2FsbCwgaW5zdWxhdGlvbiBhbmQgdHJpbSByZW1vdmFsICh0aWVyZWQgYnJhY2tldDogb3ZlciA1MDAgdGhyb3VnaCAxLDAwMCBzcSBmdCkiLCJwcmljZV9icmFja2V0Ijp7InVuaXRfcHJpY2UiOiIyLjUwIiwidXBfdG9fc2YiOjEwMDB9LCJxdWFudGl0eSI6ODQuMTIsInRvdGFsIjoyMTAuMywidW5pdCI6InNmIiwidW5pdF9wcmljZSI6Mi41LCJ3YXN0ZV9wZXJjZW50IjowLjAsInhhY3RpbWF0ZV9jb2RlIjoiIn0seyJjb2RlIjoiQU5USU1JQ1JPQklBTCIsImRlc2NyaXB0aW9uIjoiU3BhY2UgMTogQW50aW1pY3JvYmlhbCBhcHBsaWNhdGlvbiIsInF1YW50aXR5IjoxMzI2LjAsInRvdGFsIjo2NzEuMjksInVuaXQiOiJzZiIsInVuaXRfcHJpY2UiOjAuNDUsIndhc3RlX3BlcmNlbnQiOjEyLjUsInhhY3RpbWF0ZV9jb2RlIjoiIn0seyJjb2RlIjoiQUlSLU1PVkVSIiwiZGVzY3JpcHRpb24iOiJBaXIgbW92ZXIiLCJxdWFudGl0eSI6MjEuMCwidG90YWwiOjYzMC4wLCJ1bml0IjoidW5pdF9kYXkiLCJ1bml0X3ByaWNlIjozMC4wLCJ3YXN0ZV9wZXJjZW50IjowLjAsInhhY3RpbWF0ZV9jb2RlIjoiIn0seyJjb2RlIjoiTEdSLURFSFVNSURJRklFUiIsImRlc2NyaXB0aW9uIjoiTEdSIGRlaHVtaWRpZmllciIsInF1YW50aXR5IjozLjAsInRvdGFsIjozMDAuMCwidW5pdCI6InVuaXRfZGF5IiwidW5pdF9wcmljZSI6MTAwLjAsIndhc3RlX3BlcmNlbnQiOjAuMCwieGFjdGltYXRlX2NvZGUiOiIifSx7ImNvZGUiOiJBSVItU0NSVUJCRVIiLCJkZXNjcmlwdGlvbiI6IkFpciBzY3J1YmJlciAoSEVQQSkiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6NzUuMCwidW5pdCI6ImRheSIsInVuaXRfcHJpY2UiOjc1LjAsIndhc3RlX3BlcmNlbnQiOjAuMCwieGFjdGltYXRlX2NvZGUiOiIifSx7ImNvZGUiOiJIRVBBLUZJTFRFUiIsImRlc2NyaXB0aW9uIjoiSEVQQSBmaWx0ZXIgcmVwbGFjZW1lbnQiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6MTgwLjAsInVuaXQiOiJlYWNoIiwidW5pdF9wcmljZSI6MTgwLjAsIndhc3RlX3BlcmNlbnQiOjAuMCwieGFjdGltYXRlX2NvZGUiOiIifSx7ImNvZGUiOiJURUNITklDSUFOLUxBQk9SIiwiZGVzY3JpcHRpb24iOiJUZWNobmljaWFuIGxhYm9yIiwicXVhbnRpdHkiOjIuMCwidG90YWwiOjExMC4wLCJ1bml0IjoiaG91ciIsInVuaXRfcHJpY2UiOjU1LjAsIndhc3RlX3BlcmNlbnQiOjAuMCwieGFjdGltYXRlX2NvZGUiOiIifV0sInhhY3RpbWF0ZV90b3RhbCI6NTkzOS42NX0sInBob3RvcyI6W10sInJldmlzaW9uIjozfQ==",
+      "sha256": "e770d2d39a78a07cb627635cbe676fd39e92c7d3dde6db0755178d03c5d09317"
+    },
+    "signing": {
+      "link_payload": {
+        "auth_id": "ADR-AUTH-link-4ef5ff695dd658d0b6c022134733f0b5",
+        "consent_version": "homeowner-link-v1",
+        "documents_confirmed": true,
+        "expected_revision": 3,
+        "inspection_id": "ADR-INS-1000fe662771d8cd7bdad614c92bb47b",
+        "proposal_hash": "e770d2d39a78a07cb627635cbe676fd39e92c7d3dde6db0755178d03c5d09317",
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "signer_name": "Casey Customer",
+        "signer_role": "owner"
+      },
+      "link_sha256": "fead37cb047fef25487a7e78a05b8572f189ca420b49e352d8d56af7bfe4d32d",
+      "onsite_payload": {
+        "auth_id": "ADR-AUTH-oracle-b678de9a120a",
+        "documents_confirmed": true,
+        "expected_revision": 3,
+        "inspection_id": "ADR-INS-1000fe662771d8cd7bdad614c92bb47b",
+        "proposal_hash": "e770d2d39a78a07cb627635cbe676fd39e92c7d3dde6db0755178d03c5d09317",
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+      },
+      "onsite_sha256": "86e5fc15af59ec3036bf031d8bcf123f28335efd772168b1ba9edaf4c9373547"
+    },
+    "warnings": {
+      "advisory": [],
+      "engine": []
+    }
+  },
+  "id": "v2-seeded-11",
+  "input": {
+    "ai": {
+      "suggestions": [
+        "Check the subfloor."
+      ],
+      "summary": "Reviewed the inspection.",
+      "unpriced_work": []
+    },
+    "calculation": "dryscope-v2",
+    "claim": null,
+    "company_id": "oracle-co",
+    "customer_name": "Casey Customer",
+    "data": {
+      "address": "100 Oracle Lane, Testville",
+      "air_movers": 7,
+      "dehumidifiers": 1,
+      "drying_days": 3,
+      "is_after_hours": false,
+      "labor_hours": 2,
+      "rooms": [
+        {"category": 1, "custom_cabinetry": false, "finished_sf": 584.12, "floor_sf": 1326, "name": "Space 1", "unfinished_sf": 740, "waste_percent": 0}
+      ],
+      "scope_confirmed": true,
+      "year_built": 2019
+    },
+    "history": null,
+    "identity": {
+      "address": "1 Synthetic Way, Testville",
+      "company_id": "oracle-co",
+      "email": "office@example.invalid",
+      "license": "000001",
+      "name": "Oracle Restoration",
+      "phone": "555-0100",
+      "signoff": "Pat Example",
+      "version": 1
+    },
+    "inspection_id": "ADR-INS-1000fe662771d8cd7bdad614c92bb47b",
+    "photos": [],
+    "revision": 3,
+    "sequence": 1,
+    "signing": {
+      "auth_id": "ADR-AUTH-oracle-b678de9a120a",
+      "link": {
+        "consent_version": "homeowner-link-v1",
+        "documents_reviewed": true,
+        "electronic_consent": true,
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "signer_name": "Casey Customer",
+        "signer_role": "owner"
+      },
+      "link_key": "4ef5ff695dd658d0b6c022134733f0b59ea92c5e23f3f03f368fb9a7898cef0d",
+      "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    },
+    "table": {
+      "items": [
+        {"allow_zero": false, "categories": [], "code": "SERVICE-CALL", "customer_description": "", "default_quantity": "1", "enabled": true, "group": "job_charges", "item_id": "service_call", "name": "Emergency service call", "quantity_source": "field:emergency_calls", "sort_order": 0, "taxable": true, "unit": "each", "unit_price": "94.89", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "MONITORING-VISIT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "monitoring_visit", "name": "Drying monitoring (per hour)", "quantity_source": "field:monitoring_hours", "sort_order": 1, "taxable": false, "unit": "hour", "unit_price": "50.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "SETUP-DOCUMENTAT", "customer_description": "", "default_quantity": "1", "enabled": true, "group": "job_charges", "item_id": "setup_documentation", "name": "Project setup and moisture documentation", "quantity_source": "typed", "sort_order": 2, "taxable": true, "unit": "each", "unit_price": "395.73", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "DEBRIS-HAUL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "debris_haul", "name": "Debris haul and disposal", "quantity_source": "field:haul_loads", "sort_order": 3, "taxable": false, "unit": "load", "unit_price": "120.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "AFTER-HOURS-CHAR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "after_hours_charge", "name": "After-hours response charge", "quantity_source": "after_hours", "sort_order": 4, "taxable": true, "unit": "each", "unit_price": "416.19", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [2, 3], "code": "CONTAINMENT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "job_charges", "item_id": "containment", "name": "Containment setup (plastic, zipper, tape)", "quantity_source": "typed", "sort_order": 5, "taxable": false, "unit": "each", "unit_price": "126.86", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [1], "code": "DEMO-CAT1-WALL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "demo_cat1_wall", "name": "Category 1 drywall, insulation and trim removal", "price_brackets": [{"unit_price": "3.00", "up_to_sf": 500}, {"unit_price": "2.50", "up_to_sf": 1000}, {"unit_price": "2.00", "up_to_sf": null}], "quantity_source": "room:demolition:finished", "sort_order": 1, "taxable": false, "unit": "sf", "unit_price": "2.20", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [2], "code": "DEMO-CAT2-FLOOR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "demo_cat2_floor", "name": "Category 2 flooring and subfloor removal", "quantity_source": "room:demolition:unfinished", "sort_order": 2, "taxable": true, "unit": "sf", "unit_price": "12.69", "waste_percent": "5", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [2], "code": "DEMO-CAT2-WALL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "demo_cat2_wall", "name": "Category 2 drywall, insulation and trim removal", "quantity_source": "room:demolition:finished", "sort_order": 3, "taxable": false, "unit": "sf", "unit_price": "2.90", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "BASEBOARD-REMOVA", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "demolition", "item_id": "baseboard_removal", "name": "Baseboard removal", "quantity_source": "typed", "sort_order": 6, "taxable": false, "unit": "lf", "unit_price": "1.75", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "ANTIMICROBIAL", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "treatment", "item_id": "antimicrobial", "name": "Antimicrobial application", "quantity_source": "room:wet_floor", "sort_order": 0, "taxable": false, "unit": "sf", "unit_price": "0.45", "waste_percent": "12.5", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [3], "code": "HEPA-VACUUM", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "treatment", "item_id": "hepa_vacuum", "name": "HEPA vacuuming", "quantity_source": "room:floor", "sort_order": 1, "taxable": false, "unit": "sf", "unit_price": "4.54", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "ODOR-TREATMENT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "treatment", "item_id": "odor_treatment", "name": "Odor treatment", "quantity_source": "typed", "sort_order": 3, "taxable": false, "unit": "each", "unit_price": "181.90", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "AIR-MOVER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "air_mover", "name": "Air mover", "quantity_source": "count_days:air_movers*drying_days", "sort_order": 0, "taxable": false, "unit": "unit_day", "unit_price": "30.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "LGR-DEHUMIDIFIER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "lgr_dehumidifier", "name": "LGR dehumidifier", "quantity_source": "count_days:dehumidifiers*drying_days", "sort_order": 1, "taxable": false, "unit": "unit_day", "unit_price": "100.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "AIR-SCRUBBER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "air_scrubber", "name": "Air scrubber (HEPA)", "quantity_source": "field:air_scrubbers", "sort_order": 2, "taxable": false, "unit": "day", "unit_price": "75.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "HEPA-FILTER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "hepa_filter", "name": "HEPA filter replacement", "quantity_source": "field:hepa_filters", "sort_order": 3, "taxable": false, "unit": "each", "unit_price": "180.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "FLOOR-DRYING-SYS", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "floor_drying_system", "name": "Hardwood floor drying system", "quantity_source": "count_days:wood_floor_systems*wood_floor_days", "sort_order": 4, "taxable": false, "unit": "unit_day", "unit_price": "220.05", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "DESICCANT-DEHUMI", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "desiccant_dehumidifier", "name": "Desiccant dehumidifier", "quantity_source": "typed_count_days", "sort_order": 5, "taxable": false, "unit": "unit_day", "unit_price": "165.53", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "HEATER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "drying_equipment", "item_id": "heater", "name": "Supplemental heater", "quantity_source": "typed_count_days", "sort_order": 6, "taxable": false, "unit": "unit_day", "unit_price": "60.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "TECHNICIAN-LABOR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "labor", "item_id": "technician_labor", "name": "Technician labor", "quantity_source": "field:labor_hours", "sort_order": 0, "taxable": false, "unit": "hour", "unit_price": "55.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "SUPERVISOR-LABOR", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "labor", "item_id": "supervisor_labor", "name": "Supervisor or project manager", "quantity_source": "typed", "sort_order": 1, "taxable": true, "unit": "hour", "unit_price": "395.21", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "CONTENT-MANIPULA", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "labor", "item_id": "content_manipulation", "name": "Content manipulation and pack-out", "quantity_source": "typed", "sort_order": 2, "taxable": false, "unit": "hour", "unit_price": "50.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "SCAN-3D", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "scan_3d", "name": "3D scan or floor plan capture", "quantity_source": "field:matterport_scans", "sort_order": 0, "taxable": false, "unit": "each", "unit_price": "406.22", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "DUMP-TRUCK-LOAD", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "dump_truck_load", "name": "Dump truck load", "quantity_source": "field:dump_truck_loads", "sort_order": 1, "taxable": true, "unit": "each", "unit_price": "16.26", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "EQUIPMENT-DECONT", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "equipment_decontamination", "name": "Equipment decontamination", "quantity_source": "field:equipment_decon", "sort_order": 2, "taxable": true, "unit": "each", "unit_price": "154.87", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "TEMPORARY-POWER", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "optional_services", "item_id": "temporary_power", "name": "Temporary power distribution", "quantity_source": "field:power_distribution", "sort_order": 3, "taxable": true, "unit": "each", "unit_price": "255.17", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "TESTING-COORDINA", "customer_description": "", "default_quantity": "0", "enabled": false, "group": "optional_services", "item_id": "testing_coordination", "name": "Third-party lead and asbestos testing coordination", "quantity_source": "typed", "sort_order": 5, "taxable": false, "unit": "each", "unit_price": "100.00", "waste_percent": "0", "xactimate_code": ""},
+        {"allow_zero": false, "categories": [], "code": "ADDITIONAL-WORK", "customer_description": "", "default_quantity": "0", "enabled": true, "group": "extras", "item_id": "additional_work", "name": "Additional work (owner approved)", "quantity_source": "typed", "sort_order": 0, "taxable": false, "unit": "hour", "unit_price": "55.00", "waste_percent": "0", "xactimate_code": ""}
+      ],
+      "policy": {
+        "after_hours": {"label": "After-hours adjustment", "multiplier": "1.500"},
+        "area_basis": "demolition_with_waste",
+        "cabinetry": {"multiplier": "1.500", "scope": "all_cat3"},
+        "category_multipliers": {"1": "1.000", "2": "1.100", "3": "1.333"},
+        "estimate_mode": "range",
+        "minimum_job_charge": "250",
+        "overhead_profit_percent": "20",
+        "range": {"beyond_percent": "6.45", "brackets": [{"percent": "50", "up_to_sf": 500}, {"percent": "30", "up_to_sf": 1000}, {"percent": "10", "up_to_sf": null}], "first_percent": "6.95", "first_sf": 1},
+        "sales_tax": {"enabled": true, "percent": "0"},
+        "show_line_breakdown": false
+      }
+    },
+    "version_id": "v-2c8a1fab432c"
+  },
+  "tags": [
+    "seeded",
+    "v2"
+  ],
+  "title": "Seeded v2 job 11 (seed 19780102)"
+}

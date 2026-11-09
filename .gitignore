@@ -44,3 +44,10 @@ backend/SOURCE_COMMIT
 
 # Local review evidence (screenshots, traces, logs); attach to a GitHub Release instead of committing
 review-artifacts/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
