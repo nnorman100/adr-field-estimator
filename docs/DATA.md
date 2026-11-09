@@ -141,3 +141,36 @@ failed upload, and, once that flag is on, the retention sweep.
 There is no customer data export or deletion endpoint. Record retention (#229) is merged with its
 sweep off; turning deletion on is owner-only (`HANDOFF.md`). The standard's company export and
 deletion are not built yet; update this file when they are.
+
+## Rebuilt app Postgres (not deployed)
+
+The TypeScript app in `web/` keeps a Postgres schema beside the Firestore data above. Nothing in
+that schema is applied to Cloud SQL. An agent does not create the instance, run Terraform or change
+IAM. The owner applies infrastructure. There is no earlier Postgres schema to backfill, and the
+Firestore records in this file are unchanged.
+
+The schema is a numbered ledger. Files in `web/migrations` are named `0001_name.sql`,
+`0002_name.sql`, and so on. `npm run db:migrate` applies each missing file in order, inside its own
+transaction, and records the file id and a SHA-256 of its bytes in `migration_ledger`. A second run
+applies nothing. A changed file that was already applied stops the run. A gap in the numbers stops
+the run before anything new is written. Migrations run before a new version of the rebuilt app
+takes traffic. The first migration creates `migration_ledger` and an empty `companies` table (`id`
+uuid, `created_at` timestamptz). Those two tables hold no personal data. Sign-in, permissions,
+prices, signed documents and row-level security are later work, and these tables have no row-level
+security yet.
+
+Migrations are additive. Change the schema by add, then switch, then remove:
+
+1. Add the new table or column in a migration, and ship the app still able to read the old shape.
+2. Switch readers and writers to the new shape only after that migration has been applied.
+3. Remove the old shape in a later migration only after a fresh backup of that database and an
+   explicit owner approval.
+
+The migrator does not parse SQL for removals. The additive rule is enforced by the owner approving
+every migration that removes a table, column or rows, after the backup, and later by a
+least-privilege migration role. Each file runs with its ledger row in one transaction; a file that
+ends that transaction with its own `COMMIT` or `ROLLBACK` fails and is not recorded. Do not roll
+the database backward to make an older image start. Fix forward on the same data. The operator
+steps are in
+[RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
+migrator name the migration and omit the database URL.
