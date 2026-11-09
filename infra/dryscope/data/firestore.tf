@@ -1,5 +1,5 @@
-# A separate named database in us-central1. The (default) database cannot leave
-# us-west2, stays the legacy source, and is never referenced here.
+# A separate named database in us-central1. The legacy (default) database in
+# alert-disaster-field-2026 stays in us-west2 and is never referenced here.
 resource "google_firestore_database" "field" {
   project                           = var.project_id
   name                              = local.n.firestore_database_id

@@ -3,8 +3,8 @@ variable "project_id" {
   description = "The dedicated DryScope project. No other project is accepted."
 
   validation {
-    condition     = var.project_id == "alert-disaster-field-2026"
-    error_message = "This root only manages project alert-disaster-field-2026."
+    condition     = var.project_id == "dryscope"
+    error_message = "This root only manages project dryscope."
   }
 }
 
@@ -36,11 +36,15 @@ variable "sql_database_version" {
 
 variable "sql_tier" {
   type        = string
-  description = "Dedicated-core tier. Both environments use a dedicated zonal instance; shared-core tiers have no SQL SLA."
+  description = "Cloud SQL tier: shared-core db-f1-micro in test (~$10/month, no uptime guarantee, fine for test); dedicated-core db-custom-... in live."
 
   validation {
-    condition     = startswith(var.sql_tier, "db-custom-")
-    error_message = "sql_tier must be a dedicated-core tier (db-custom-...). Shared-core tiers are not accepted in either environment."
+    condition = (
+      !contains(["test", "live"], var.environment) ||
+      (var.environment == "test" && var.sql_tier == "db-f1-micro") ||
+      (var.environment == "live" && startswith(var.sql_tier, "db-custom-"))
+    )
+    error_message = "sql_tier must be db-f1-micro in test and a dedicated-core tier (db-custom-...) in live."
   }
 }
 

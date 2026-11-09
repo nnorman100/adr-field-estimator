@@ -1,4 +1,4 @@
-project_id  = "alert-disaster-field-2026"
+project_id  = "dryscope"
 region      = "us-central1"
 environment = "test"
 
