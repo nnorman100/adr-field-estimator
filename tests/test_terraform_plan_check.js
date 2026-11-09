@@ -526,3 +526,84 @@ describe.each(['data', 'app'])('destroy guards, %s root', (root) => {
     expect(short.stderr).toContain(PROTECTED[root][0]);
   });
 });
+
+// Terraform 1.17 prints no teardown refusal, so the check also reads the configuration itself.
+describe.each(['data', 'app'])('destroy guards read from the configuration, %s root', (root) => {
+  const { checkConfig, readGuards } = require(GUARDS);
+  const real = path.join(ROOT, 'infra', 'dryscope', root);
+  const copyWith = (edit) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tf-config-'));
+    for (const f of fs.readdirSync(real).filter((n) => n.endsWith('.tf')))
+      fs.writeFileSync(path.join(dir, f), edit(f, fs.readFileSync(path.join(real, f), 'utf8')));
+    return dir;
+  };
+
+  test('the real configuration has every guard', () => {
+    expect(checkConfig(real, root)).toEqual([]);
+  });
+
+  test.each([
+    ['removed', (t) => t.replace(/^\s*prevent_destroy = true\n/gm, '')],
+    ['false', (t) => t.replace(/prevent_destroy = true/g, 'prevent_destroy = false')],
+    ['commented out', (t) => t.replace(/prevent_destroy = true/g, '# prevent_destroy = true')],
+    ['in a string', (t) => t.replace(/prevent_destroy = true/g, 'x = "prevent_destroy = true"')],
+  ])('a guard that is %s is named', (_name, edit) => {
+    const dir = copyWith((_f, text) => edit(text));
+    const problems = checkConfig(dir, root);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(problems).toHaveLength(PROTECTED[root].length);
+    expect(problems[0]).toContain('missing or false');
+  });
+
+  test('removing the guard from one resource names only that resource', () => {
+    const files = fs
+      .readdirSync(real)
+      .filter(
+        (n) =>
+          n.endsWith('.tf') &&
+          fs.readFileSync(path.join(real, n), 'utf8').includes('prevent_destroy'),
+      );
+    const dir = copyWith((f, text) =>
+      f === files[0] ? text.replace(/^\s*prevent_destroy = true\n/m, '') : text,
+    );
+    const problems = checkConfig(dir, root);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.length).toBeLessThan(PROTECTED[root].length + 1);
+    expect(readGuards(real).size).toBeGreaterThan(0);
+  });
+
+  test('a guard in a nested block does not count', () => {
+    const dir = copyWith((_f, text) =>
+      text.replace(
+        /lifecycle \{\n(\s*)prevent_destroy = true/g,
+        'lifecycle {\n$1other { prevent_destroy = true }',
+      ),
+    );
+    const problems = checkConfig(dir, root);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(problems).toHaveLength(PROTECTED[root].length);
+  });
+
+  test('a stream with no refusals passes with the configuration (Terraform 1.17) but not alone', () => {
+    const { checkGuards } = require(GUARDS);
+    const lines = REQUIRED_RUNS[root].map((name) => finished(name, 'pass'));
+    expect(checkGuards(lines, root, { refusalsOptional: true })).toEqual([]);
+    expect(checkGuards(lines, root)).toHaveLength(PROTECTED[root].length);
+  });
+
+  test('a partial set of refusals is still refused even when refusals are optional', () => {
+    const { checkGuards } = require(GUARDS);
+    const lines = [
+      ...REQUIRED_RUNS[root].map((name) => finished(name, 'pass')),
+      JSON.stringify({
+        diagnostic: {
+          summary: 'Instance cannot be destroyed',
+          detail: `Resource ${PROTECTED[root][0]} has lifecycle.prevent_destroy set, but`,
+        },
+      }),
+    ];
+    const expected = PROTECTED[root].length - 1;
+    expect(checkGuards(lines, root, { refusalsOptional: true })).toHaveLength(expected);
+  });
+});
