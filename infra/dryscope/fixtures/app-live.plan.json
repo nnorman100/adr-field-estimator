@@ -1,0 +1,907 @@
+{
+ "resource_changes": [
+  {
+   "address": "google_cloud_run_v2_service.svc[\"api\"]",
+   "type": "google_cloud_run_v2_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "binary_authorization": [],
+     "build_config": [],
+     "client": null,
+     "client_version": null,
+     "custom_audiences": null,
+     "default_uri_disabled": null,
+     "deletion_protection": true,
+     "description": null,
+     "iap_enabled": null,
+     "ingress": "INGRESS_TRAFFIC_ALL",
+     "invoker_iam_disabled": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "multi_region_settings": [],
+     "name": "dryscope-api-live",
+     "project": "dryscope",
+     "scaling": [],
+     "tags": null,
+     "template": [
+      {
+       "annotations": null,
+       "containers": [
+        {
+         "args": null,
+         "base_image_uri": null,
+         "command": null,
+         "depends_on": null,
+         "env": [
+          {
+           "name": "APP_ENVIRONMENT",
+           "value": "live",
+           "value_source": []
+          },
+          {
+           "name": "EVIDENCE_BUCKET",
+           "value": "dryscope-evidence-live",
+           "value_source": []
+          },
+          {
+           "name": "FIRESTORE_DATABASE_ID",
+           "value": "dryscope-field-live",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_PROJECT",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "LINK_SIGNING_KEY",
+           "value": null,
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-live-link-signing-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "MAPS_API_KEY",
+           "value": null,
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-live-maps-api-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "RESEND_API_KEY",
+           "value": null,
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-live-resend-api-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "SQL_CONNECTION_NAME",
+           "value": "dryscope:us-central1:dryscope-live-pg",
+           "value_source": []
+          },
+          {
+           "name": "SQL_DATABASE_NAME",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "STRIPE_SECRET_KEY",
+           "value": null,
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-live-stripe-secret-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          }
+         ],
+         "image": "us-central1-docker.pkg.dev/dryscope/dryscope-live/web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+         "liveness_probe": [],
+         "name": null,
+         "ports": [
+          {
+           "container_port": 8080
+          }
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "cpu_idle": true,
+           "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+           },
+           "startup_cpu_boost": true
+          }
+         ],
+         "sandbox_launcher": null,
+         "startup_probe": [],
+         "volume_mounts": [
+          {
+           "mount_path": "/cloudsql",
+           "name": "cloudsql",
+           "sub_path": null
+          }
+         ],
+         "working_dir": null
+        }
+       ],
+       "encryption_key": null,
+       "execution_environment": null,
+       "gpu_zonal_redundancy_disabled": null,
+       "health_check_disabled": null,
+       "labels": null,
+       "max_instance_request_concurrency": 40,
+       "node_selector": [],
+       "revision": null,
+       "sandboxes": [],
+       "scaling": [
+        {
+         "max_instance_count": 10,
+         "min_instance_count": 1
+        }
+       ],
+       "service_account": "dryscope-api-live@dryscope.iam.gserviceaccount.com",
+       "session_affinity": false,
+       "timeout": "300s",
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            "dryscope:us-central1:dryscope-live-pg"
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "name": "cloudsql",
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "timeouts": null,
+     "traffic": []
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service.svc[\"live\"]",
+   "type": "google_cloud_run_v2_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "binary_authorization": [],
+     "build_config": [],
+     "client": null,
+     "client_version": null,
+     "custom_audiences": null,
+     "default_uri_disabled": null,
+     "deletion_protection": true,
+     "description": null,
+     "iap_enabled": null,
+     "ingress": "INGRESS_TRAFFIC_ALL",
+     "invoker_iam_disabled": null,
+     "labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     },
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "multi_region_settings": [],
+     "name": "dryscope-live-live",
+     "project": "dryscope",
+     "scaling": [],
+     "tags": null,
+     "template": [
+      {
+       "annotations": null,
+       "containers": [
+        {
+         "args": null,
+         "base_image_uri": null,
+         "command": null,
+         "depends_on": null,
+         "env": [
+          {
+           "name": "APP_ENVIRONMENT",
+           "value": "live",
+           "value_source": []
+          },
+          {
+           "name": "EVIDENCE_BUCKET",
+           "value": "dryscope-evidence-live",
+           "value_source": []
+          },
+          {
+           "name": "FIRESTORE_DATABASE_ID",
+           "value": "dryscope-field-live",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_LOCATION",
+           "value": "us-central1",
+           "value_source": []
+          },
+          {
+           "name": "GOOGLE_CLOUD_PROJECT",
+           "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "LINK_SIGNING_KEY",
+           "value": null,
+           "value_source": [
+            {
+             "secret_key_ref": [
+              {
+               "secret": "dryscope-live-link-signing-key",
+               "version": "latest"
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "name": "SQL_CONNECTION_NAME",
+           "value": "dryscope:us-central1:dryscope-live-pg",
+           "value_source": []
+          },
+          {
+           "name": "SQL_DATABASE_NAME",
+           "value": "dryscope",
+           "value_source": []
+          }
+         ],
+         "image": "us-central1-docker.pkg.dev/dryscope/dryscope-live/live@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+         "liveness_probe": [],
+         "name": null,
+         "ports": [
+          {
+           "container_port": 8080
+          }
+         ],
+         "readiness_probe": [],
+         "resources": [
+          {
+           "cpu_idle": false,
+           "limits": {
+            "cpu": "1",
+            "memory": "1Gi"
+           },
+           "startup_cpu_boost": true
+          }
+         ],
+         "sandbox_launcher": null,
+         "startup_probe": [],
+         "volume_mounts": [
+          {
+           "mount_path": "/cloudsql",
+           "name": "cloudsql",
+           "sub_path": null
+          }
+         ],
+         "working_dir": null
+        }
+       ],
+       "encryption_key": null,
+       "execution_environment": null,
+       "gpu_zonal_redundancy_disabled": null,
+       "health_check_disabled": null,
+       "labels": null,
+       "max_instance_request_concurrency": 10,
+       "node_selector": [],
+       "revision": null,
+       "sandboxes": [],
+       "scaling": [
+        {
+         "max_instance_count": 10,
+         "min_instance_count": 1
+        }
+       ],
+       "service_account": "dryscope-live-live@dryscope.iam.gserviceaccount.com",
+       "session_affinity": true,
+       "timeout": "3600s",
+       "volumes": [
+        {
+         "cloud_sql_instance": [
+          {
+           "instances": [
+            "dryscope:us-central1:dryscope-live-pg"
+           ]
+          }
+         ],
+         "empty_dir": [],
+         "gcs": [],
+         "name": "cloudsql",
+         "nfs": [],
+         "secret": []
+        }
+       ],
+       "vpc_access": []
+      }
+     ],
+     "timeouts": null,
+     "traffic": []
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.deploy[\"api\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-live@dryscope.iam.gserviceaccount.com",
+     "name": "dryscope-api-live",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployLive"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.deploy[\"live\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-live@dryscope.iam.gserviceaccount.com",
+     "name": "dryscope-live-live",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeDeployLive"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.public[\"api\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "dryscope-api-live",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_service_iam_member.public[\"live\"]",
+   "type": "google_cloud_run_v2_service_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "location": "us-central1",
+     "member": "allUsers",
+     "name": "dryscope-live-live",
+     "project": "dryscope",
+     "role": "roles/run.invoker"
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.api_down[0]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "REDUCE_COUNT_FALSE",
+           "group_by_fields": [
+            "resource.label.*"
+           ],
+           "per_series_aligner": "ALIGN_NEXT_OLDER"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": null,
+         "duration": "60s",
+         "evaluation_missing_data": null,
+         "forecast_options": [],
+         "threshold_value": 1,
+         "trigger": []
+        }
+       ],
+       "display_name": "Health check fails from at least two regions"
+      }
+     ],
+     "display_name": "DryScope live: health check failing",
+     "documentation": [],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.api_latency",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": "REDUCE_MAX",
+           "group_by_fields": null,
+           "per_series_aligner": "ALIGN_PERCENTILE_95"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": null,
+         "duration": "600s",
+         "evaluation_missing_data": null,
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-api-live\" AND metric.type = \"run.googleapis.com/request_latencies\"",
+         "forecast_options": [],
+         "threshold_value": 5000,
+         "trigger": []
+        }
+       ],
+       "display_name": "p95 request latency above 5000 ms for 10 minutes"
+      }
+     ],
+     "display_name": "DryScope live: web app slow",
+     "documentation": [],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.server_errors[\"api\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "600s",
+           "cross_series_reducer": "REDUCE_SUM",
+           "group_by_fields": null,
+           "per_series_aligner": "ALIGN_SUM"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": null,
+         "duration": "0s",
+         "evaluation_missing_data": null,
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-api-live\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+         "forecast_options": [],
+         "threshold_value": 5,
+         "trigger": []
+        }
+       ],
+       "display_name": "More than 5 responses with a 5xx status in 10 minutes"
+      }
+     ],
+     "display_name": "DryScope live: dryscope-api-live server errors",
+     "documentation": [
+      {
+       "content": "Open the service in Cloud Run (us-central1) and read its latest revision logs. Roll traffic back if this began with a deploy.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": null
+      }
+     ],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.server_errors[\"live\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "600s",
+           "cross_series_reducer": "REDUCE_SUM",
+           "group_by_fields": null,
+           "per_series_aligner": "ALIGN_SUM"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": null,
+         "duration": "0s",
+         "evaluation_missing_data": null,
+         "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"dryscope-live-live\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+         "forecast_options": [],
+         "threshold_value": 5,
+         "trigger": []
+        }
+       ],
+       "display_name": "More than 5 responses with a 5xx status in 10 minutes"
+      }
+     ],
+     "display_name": "DryScope live: dryscope-live-live server errors",
+     "documentation": [
+      {
+       "content": "Open the service in Cloud Run (us-central1) and read its latest revision logs. Roll traffic back if this began with a deploy.",
+       "links": [],
+       "mime_type": "text/markdown",
+       "subject": null
+      }
+     ],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.sql[\"cpu\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": null,
+           "group_by_fields": null,
+           "per_series_aligner": "ALIGN_MEAN"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": null,
+         "duration": "900s",
+         "evaluation_missing_data": null,
+         "filter": "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"dryscope:dryscope-live-pg\" AND metric.type = \"cloudsql.googleapis.com/database/cpu/utilization\"",
+         "forecast_options": [],
+         "threshold_value": 0.8,
+         "trigger": []
+        }
+       ],
+       "display_name": "CPU above 80% for 15 minutes"
+      }
+     ],
+     "display_name": "DryScope live: database cpu",
+     "documentation": [],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_alert_policy.sql[\"disk\"]",
+   "type": "google_monitoring_alert_policy",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "alert_strategy": [],
+     "combiner": "OR",
+     "conditions": [
+      {
+       "condition_absent": [],
+       "condition_matched_log": [],
+       "condition_monitoring_query_language": [],
+       "condition_prometheus_query_language": [],
+       "condition_sql": [],
+       "condition_threshold": [
+        {
+         "aggregations": [
+          {
+           "alignment_period": "300s",
+           "cross_series_reducer": null,
+           "group_by_fields": null,
+           "per_series_aligner": "ALIGN_MEAN"
+          }
+         ],
+         "comparison": "COMPARISON_GT",
+         "denominator_aggregations": [],
+         "denominator_filter": null,
+         "duration": "300s",
+         "evaluation_missing_data": null,
+         "filter": "resource.type = \"cloudsql_database\" AND resource.labels.database_id = \"dryscope:dryscope-live-pg\" AND metric.type = \"cloudsql.googleapis.com/database/disk/utilization\"",
+         "forecast_options": [],
+         "threshold_value": 0.85,
+         "trigger": []
+        }
+       ],
+       "display_name": "disk above 85% full"
+      }
+     ],
+     "display_name": "DryScope live: database disk",
+     "documentation": [],
+     "enabled": null,
+     "notification_channels": [
+      null
+     ],
+     "project": "dryscope",
+     "severity": null,
+     "timeouts": null,
+     "user_labels": {
+      "app": "dryscope",
+      "environment": "live",
+      "managed_by": "terraform"
+     }
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_notification_channel.email",
+   "type": "google_monitoring_notification_channel",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "description": null,
+     "display_name": "DryScope live alerts",
+     "enabled": null,
+     "force_delete": null,
+     "labels": {
+      "email_address": "redacted"
+     },
+     "project": "dryscope",
+     "sensitive_labels": [],
+     "timeouts": null,
+     "type": "email",
+     "user_labels": null
+    }
+   }
+  },
+  {
+   "address": "google_monitoring_uptime_check_config.api_health[0]",
+   "type": "google_monitoring_uptime_check_config",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "content_matchers": [],
+     "display_name": "DryScope live: web app health",
+     "http_check": [
+      {
+       "accepted_response_status_codes": [],
+       "auth_info": [],
+       "body": null,
+       "content_type": null,
+       "custom_content_type": null,
+       "mask_headers": null,
+       "path": "/api/health",
+       "ping_config": [],
+       "port": 443,
+       "request_method": "GET",
+       "service_agent_authentication": [],
+       "use_ssl": true,
+       "validate_ssl": true
+      }
+     ],
+     "log_check_failures": null,
+     "monitored_resource": [
+      {
+       "labels": {
+        "project_id": "dryscope"
+       },
+       "type": "uptime_url"
+      }
+     ],
+     "period": "300s",
+     "project": "dryscope",
+     "resource_group": [],
+     "selected_regions": null,
+     "synthetic_monitor": [],
+     "tcp_check": [],
+     "timeout": "10s",
+     "timeouts": null,
+     "user_labels": null
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_custom_role.deploy",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "description": "Deploy revisions and move traffic on the DryScope live Cloud Run services. No delete.",
+     "permissions": [
+      "run.configurations.get",
+      "run.configurations.list",
+      "run.operations.get",
+      "run.operations.list",
+      "run.revisions.get",
+      "run.revisions.list",
+      "run.routes.get",
+      "run.routes.list",
+      "run.services.get",
+      "run.services.list",
+      "run.services.update"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeDeployLive",
+     "stage": null,
+     "title": "DryScope live deploy"
+    }
+   }
+  }
+ ]
+}

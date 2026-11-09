@@ -2,14 +2,20 @@
 #
 # The two roots keep separate state, so they cannot read each other's outputs.
 # Both call this module instead, which keeps every name identical in both places.
-# Every name carries the environment, and none collides with the legacy us-west2
-# resources (Cloud Run `alert-disaster-field-estimator`, bucket
-# `alert-disaster-field-2026-evidence`, the `(default)` Firestore database, or the
-# `adr-runtime` and `adr-builder` accounts).
+# Every name carries the environment, in dedicated project `dryscope`, and none
+# collides with the legacy `alert-disaster-field-2026` us-west2 resources (Cloud
+# Run `alert-disaster-field-estimator`, bucket `alert-disaster-field-2026-evidence`,
+# the `(default)` Firestore database, or the `adr-runtime` and `adr-builder`
+# accounts).
 
 variable "project_id" {
   type        = string
   description = "Project that holds every DryScope resource."
+
+  validation {
+    condition     = var.project_id == "dryscope"
+    error_message = "This module only names resources in project dryscope."
+  }
 }
 
 variable "environment" {
@@ -56,12 +62,12 @@ output "sql_database_name" {
 }
 
 output "firestore_database_id" {
-  description = "Named database; the legacy default database stays where it is as the source."
+  description = "Named database for field drafts; the legacy default database in alert-disaster-field-2026 is never touched."
   value       = "dryscope-field-${local.env}"
 }
 
 output "evidence_bucket" {
-  value = "${var.project_id}-dryscope-evidence-${local.env}"
+  value = "${var.project_id}-evidence-${local.env}"
 }
 
 output "artifact_repository" {

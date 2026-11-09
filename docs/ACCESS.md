@@ -1,6 +1,6 @@
 # Access matrix
 
-Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dictionary in `backend/workspaces.py`, enforced by `job_access` and the route checks. Some routes test the caller's *role* (owner) instead of a capability key; those are listed under "Checks by role" below. `can()` in `public/workspaces.js` only hides buttons. Prose detail: `docs/company-workspaces.md`. If this file and the code disagree, the code wins; fix this file in the same PR.
+Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dictionary in `backend/workspaces.py`, enforced by `job_access` and the route checks. Some routes test the caller's *role* (owner) instead of a capability key; those are listed under "Checks by role" below. `can()` in `public/workspaces.js` only hides buttons. Prose detail: `docs/company-workspaces.md`. If this file and the code disagree, the code wins; fix this file in the same PR. The rebuilt app's TypeScript port of this table is `web/src/lib/access/`; `web/tests/unit/access.test.ts` reads the table below and fails when the port differs from it, so change both in the same PR.
 
 ## Principles
 1. Identity = verified Firebase ID token (Google or password sign-in, email verified). Public sign-up stays **disabled**.
@@ -58,6 +58,6 @@ Not a company role and not a membership. Can create/suspend/reactivate companies
 - **Server-only**: Cloud Run runtime service account `adr-runtime@…`; background jobs (vault backup, monitoring).
 
 ## Rules for adding a feature
-- Add a capability key to `CAPABILITIES` in `backend/workspaces.py`, check it on the server route, mirror it in `can()` in `public/workspaces.js`, and add a row to the table above. Test owner, estimator, office, superadmin support, and a different company's user.
+- Add a capability key to `CAPABILITIES` in `backend/workspaces.py`, check it on the server route, mirror it in `can()` in `public/workspaces.js` and in `web/src/lib/access/roles.ts`, and add a row to the table above. Test owner, estimator, office, superadmin support, and a different company's user.
 - Refuse before reading when the caller lacks the role, so refusals cannot probe other companies.
 - Audit anything superadmins do.

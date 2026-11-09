@@ -21,11 +21,48 @@ defaults:
     working-directory: web
 
 jobs:
+  # Throwaway Postgres, then migrations from empty. `check` below fails when this job does,
+  # so the existing web check cannot pass without it.
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dryscope
+          POSTGRES_PASSWORD: dryscope
+          POSTGRES_DB: dryscope
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dryscope -d dryscope"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgres://dryscope:dryscope@127.0.0.1:5432/dryscope
+      DRYSCOPE_DISPOSABLE_DATABASE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run test:db
+
   check:
+    needs: database
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require the database job
+        run: test "${{ needs.database.result }}" = "success"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
