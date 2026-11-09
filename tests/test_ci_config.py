@@ -108,3 +108,12 @@ def test_python_job_installs_node():
     jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'ci.yml'))
     uses = [step.get('uses', '') for step in jobs['python']['steps']]
     assert any(use.startswith('actions/setup-node@') for use in uses)
+
+
+def test_codeql_sets_up_node_before_init():
+    """CodeQL's JavaScript/TypeScript extractor needs node; the self-hosted container has none."""
+    jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'codeql.yml'))
+    uses = [step.get('uses', '') for step in jobs['analyze']['steps']]
+    node = [i for i, use in enumerate(uses) if use.startswith('actions/setup-node@')]
+    init = [i for i, use in enumerate(uses) if use.startswith('github/codeql-action/init@')]
+    assert node and init and node[0] < init[0]
