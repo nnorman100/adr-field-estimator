@@ -173,11 +173,11 @@ operator), `company_feature_flags` (a missing row means off; only an operator ch
 and `access_projection_outbox` (actors whose Firestore access record must follow a committed
 membership change). Rows that refer to another company row carry `company_id` in a composite key,
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
-another company. `actors.email`,
-`actors.display_name` and `invitations.email` are personal data. Emails are stored lowercase and
-tenant ids, uids, emails and display names without surrounding spaces, so one person is one stored
-key. Nothing writes these tables yet, and they have no row-level security yet; the runtime role and
-row-level security come in `0003`. Prices and signed documents are later work.
+another company. `actors.email`, `actors.display_name` and `invitations.email` are personal data.
+Emails are stored lowercase and tenant ids, uids, emails and display names without surrounding
+spaces, so one person is one stored key. Nothing writes these tables yet, and they have no
+row-level security yet; the runtime role and row-level security come in `0003`. Prices and signed
+documents are later work.
 
 Migrations are additive. Change the schema by add, then switch, then remove:
 
