@@ -672,6 +672,174 @@ def _v1_rejection_cases():
     ]
 
 
+def _scan(key, kind, asset_id, scanned_at, room_name='Kitchen'):
+    return dict(
+        id=_hex('scan:' + key), kind=kind, asset_id=asset_id, room=room_name, scanned_at=scanned_at
+    )
+
+
+def _segment(sequence, speaker, text, **values):
+    return dict(speaker=speaker, connection_id='conn-1', sequence=sequence, text=text, **values)
+
+
+def _v1_record_cases():
+    """Address coordinates, Live capture metadata and equipment scans: validated and stored with
+    the inspection, never priced."""
+    rooms = [room('Kitchen', 1, finished_sf=40)]
+    address = '100 Oracle Lane, Testville'
+    capture = dict(
+        capture_id=_hex('capture:oracle'),
+        segments=[
+            _segment(1, 'technician', 'Water under the sink.'),
+            _segment(2, 'assistant', 'Noted.', finished=True),
+            _segment(3, 'technician', '\u00c9tag\u00e8re wet \U0001f4a7', finished=False),
+        ],
+    )
+    scans = [
+        _scan('a', 'air_mover', 'AM-001', '2026-10-15T12:00:00+00:00'),
+        _scan('b', 'dehumidifier', 'DH.2/B', '2026-10-15T05:00:00.5-07:00'),
+        _scan('c', 'air_scrubber', 'AS-3', '2026-10-15 12:00:00z'),
+        _scan('d', 'air_mover', 'AM-002', '2026-10-15'),
+        _scan('e', 'air_mover', 'AM-003', '2026-10-15T17:30:00+0530'),
+        _scan('f', 'air_mover', 'AM-004', '2026-10-15T12:00:00,1234567Z'),
+        _scan('g', 'air_mover', 'AM-005', '2026-10-15T12:00Z'),
+        _scan('h', 'air_mover', 'AM-006', '2026-10-15T12:00:00.000000-00:00'),
+    ]
+
+    def accepted(case_id, title, tags, **values):
+        return case(case_id, title, ['inspection_record', *tags], job(rooms, **values))
+
+    def rejected(case_id, title, tags, **values):
+        return case(case_id, title, ['rejection', 'inspection_record', *tags], job(rooms, **values))
+
+    return [
+        accepted(
+            'v1-coordinates-integer',
+            'Integer address coordinates are stored as floats beside the address',
+            ['coordinates'],
+            coordinates=dict(latitude=35, longitude=-119, address=address),
+        ),
+        accepted(
+            'v1-coordinates-bounds',
+            'Coordinates on the latitude and longitude bounds are accepted',
+            ['coordinates'],
+            coordinates=dict(latitude=-90.0, longitude=180, address='\u00c9' * 500),
+        ),
+        accepted(
+            'v1-coordinates-null',
+            'A cleared coordinates value stays stored as null',
+            ['coordinates', 'null_omitted'],
+            coordinates=None,
+        ),
+        rejected(
+            'v1-reject-coordinates-latitude',
+            'A latitude beyond 90 degrees is rejected',
+            ['coordinates'],
+            coordinates=dict(latitude=90.5, longitude=0, address=address),
+        ),
+        rejected(
+            'v1-reject-coordinates-field',
+            'Coordinates with an unknown field are rejected',
+            ['coordinates'],
+            coordinates=dict(latitude=35.1, longitude=-119.2, address=address, accuracy_m=5),
+        ),
+        rejected(
+            'v1-reject-coordinates-address',
+            'Coordinates need the address they describe',
+            ['coordinates'],
+            coordinates=dict(latitude=35.1, longitude=-119.2, address=''),
+        ),
+        accepted(
+            'v1-capture-metadata',
+            'Live capture metadata is stored with every default and segment field filled in',
+            ['capture_metadata'],
+            capture_metadata=capture,
+        ),
+        accepted(
+            'v1-capture-metadata-full',
+            'Live capture metadata with every field set is stored as given',
+            ['capture_metadata'],
+            capture_metadata=dict(
+                capture,
+                status='truncated',
+                gap_count=1000000,
+                recovery_count=10000,
+                technician_edited=True,
+                segments=[],
+            ),
+        ),
+        accepted(
+            'v1-capture-metadata-null',
+            'A null capture metadata value is left out of the stored record',
+            ['capture_metadata', 'null_omitted'],
+            capture_metadata=None,
+        ),
+        rejected(
+            'v1-reject-capture-id',
+            'A capture id that is not 32 lowercase hex characters is rejected',
+            ['capture_metadata'],
+            capture_metadata=dict(capture, capture_id=capture['capture_id'].upper()),
+        ),
+        rejected(
+            'v1-reject-capture-segment',
+            'A transcript segment from an unknown speaker is rejected',
+            ['capture_metadata'],
+            capture_metadata=dict(capture, segments=[_segment(1, 'homeowner', 'Hello.')]),
+        ),
+        rejected(
+            'v1-reject-capture-sequence',
+            'A transcript segment sequence below 1 is rejected',
+            ['capture_metadata'],
+            capture_metadata=dict(capture, segments=[_segment(0, 'technician', 'Hello.')]),
+        ),
+        accepted(
+            'v1-equipment-scans',
+            'Equipment scans are stored with each scan time in its normalized form',
+            ['equipment_scans', 'timestamps'],
+            equipment_scans=scans,
+        ),
+        accepted(
+            'v1-equipment-scans-empty',
+            'An empty equipment scan list is left out of the stored record',
+            ['equipment_scans', 'null_omitted'],
+            equipment_scans=[],
+        ),
+        rejected(
+            'v1-reject-equipment-scans-null',
+            'A null equipment scan list is rejected',
+            ['equipment_scans'],
+            equipment_scans=None,
+        ),
+        rejected(
+            'v1-reject-equipment-scan-asset',
+            'An asset id outside the printed-tag alphabet is rejected',
+            ['equipment_scans'],
+            equipment_scans=[_scan('x', 'air_mover', 'am-001', '2026-10-15T12:00:00Z')],
+        ),
+        rejected(
+            'v1-reject-equipment-scan-kind',
+            'An unknown equipment kind is rejected',
+            ['equipment_scans'],
+            equipment_scans=[_scan('x', 'heater', 'HT-1', '2026-10-15T12:00:00Z')],
+        ),
+        *(
+            rejected(
+                f'v1-reject-equipment-scan-time-{label}',
+                f'A scan time that is {note} is rejected',
+                ['equipment_scans', 'timestamps'],
+                equipment_scans=[_scan('x', 'air_mover', 'AM-1', value)],
+            )
+            for label, note, value in (
+                ('impossible-date', 'an impossible date', '2026-02-30T12:00:00Z'),
+                ('hour-24', 'hour 24', '2026-10-15T24:00:00Z'),
+                ('hour-offset', 'an offset without minutes', '2026-10-15T12:00:00+07'),
+                ('padded', 'padded with spaces', ' 2026-10-15T12:00:00Z'),
+                ('words', 'not a date', 'yesterday'),
+            )
+        ),
+    ]
+
+
 def _without_calculation(entry):
     del entry['input']['calculation']
     return entry
@@ -749,6 +917,7 @@ def corpus():
         + _v1_extras_cases()
         + _v1_document_cases()
         + _v1_rejection_cases()
+        + _v1_record_cases()
         + seeded_v1()
         + v2_cases()
     )

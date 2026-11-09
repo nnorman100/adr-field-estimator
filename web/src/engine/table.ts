@@ -166,10 +166,8 @@ export function parseSource(text: string): Source {
     if (FIELD_SOURCES.includes(field)) return { kind: 'field', ...empty, field };
   }
   if (text.startsWith('count_days:')) {
-    const [countField, daysField] = text.slice(11).split('*');
-    if (COUNT_DAYS.some(([count, days]) => count === countField && days === daysField)) {
-      return { kind: 'count_days', ...empty, countField: countField ?? null, daysField: daysField ?? null };
-    }
+    const pair = COUNT_DAYS.find(([count, days]) => `${count}*${days}` === text.slice(11));
+    if (pair) return { kind: 'count_days', ...empty, countField: pair[0], daysField: pair[1] };
   }
   throw new Error(`Unknown quantity source "${text}".`);
 }

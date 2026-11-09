@@ -577,6 +577,21 @@ def _scope_cases():
             job(MIXED),
             table({'service_call': {'unit_price': '0.00'}}),
         ),
+        *(
+            v2(
+                f'v2-reject-count-days-{label}',
+                f'A count-days quantity source {note} is not a valid table',
+                ['rejection', 'quantity_source'],
+                job(MIXED, air_movers=2, drying_days=3),
+                table({'air_mover': {'quantity_source': source}}),
+            )
+            for label, note, source in (
+                ('extra-factor', 'with a third factor', 'count_days:air_movers*drying_days*2'),
+                ('no-days', 'without its days field', 'count_days:air_movers'),
+                ('swapped', 'with its fields swapped', 'count_days:drying_days*air_movers'),
+                ('empty-days', 'with an empty days field', 'count_days:air_movers*'),
+            )
+        ),
     ]
 
 

@@ -104,6 +104,9 @@ export type Inspection = {
   scopeItems: Record<string, ScopeEntry> | null;
   quantityOverrides: Record<string, QuantityOverride> | null;
   seededFromVersion: string | null;
+  coordinates: JObj | null;
+  captureMetadata: JObj | null;
+  equipmentScans: JObj[];
   /** Keys present on this record. After the save dump, defaults count as set. */
   present: Set<string>;
 };
@@ -379,23 +382,105 @@ export function validDate(year: number, month: number, day: number): boolean {
   return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month);
 }
 
-function readInstant(value: JVal | undefined): string {
-  if (typeof value !== 'string') bad('approval time');
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
-  if (!match) bad('approval time');
-  const [, year, month, day, hour, minute, second, fraction, zone] = match;
-  if (!validDate(Number(year), Number(month), Number(day))) bad('approval time');
-  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) bad('approval time');
-  const micro = (fraction ?? '').padEnd(6, '0');
+function readDateTime(value: JVal | undefined, label: string): string {
+  if (typeof value !== 'string') bad(label);
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})(?:[Tt _](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?([Zz]|[+-]\d{2}:?\d{2})?)?$/.exec(value);
+  if (!match) bad(label);
+  const [, year, month, day, hour = '00', minute = '00', second = '00', fraction = '', zone] = match;
+  if (!validDate(Number(year), Number(month), Number(day))) bad(label);
+  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) bad(label);
+  const micro = fraction.slice(0, 6).padEnd(6, '0');
   let offset = '';
   if (zone !== undefined) {
-    const hours = Number(zone.slice(1, 3));
-    const minutes = Number(zone.slice(4, 6));
-    if (zone !== 'Z' && (hours > 23 || minutes > 59)) bad('approval time');
-    offset = zone === 'Z' || (hours === 0 && minutes === 0) ? 'Z' : zone;
+    const hours = zone.length > 1 ? zone.slice(1, 3) : '00';
+    const minutes = zone.length > 1 ? zone.slice(-2) : '00';
+    if (Number(hours) > 23 || Number(minutes) > 59) bad(label);
+    offset = Number(hours) === 0 && Number(minutes) === 0 ? 'Z' : `${zone[0]}${hours}:${minutes}`;
   }
   const time = `${hour}:${minute}:${second}${Number(micro) ? `.${micro}` : ''}`;
   return `${year}-${month}-${day}T${time}${offset}`;
+}
+
+function chars(value: string): number {
+  return [...value].length;
+}
+
+function readString(value: JVal | undefined, min: number, max: number, label: string): string {
+  if (typeof value !== 'string' || chars(value) < min || chars(value) > max) bad(label);
+  return value;
+}
+
+function readPattern(value: JVal | undefined, pattern: RegExp, label: string): string {
+  if (typeof value !== 'string' || !pattern.test(value)) bad(label);
+  return value;
+}
+
+function readChoice(value: JVal | undefined, choices: string[], fallback: string | undefined, label: string): string {
+  if (value === undefined && fallback !== undefined) return fallback;
+  if (typeof value !== 'string' || !choices.includes(value)) bad(label);
+  return value;
+}
+
+function required(raw: JObj, keys: string[], label: string): void {
+  for (const key of keys) if (!has(raw, key)) bad(label);
+}
+
+const HEX_ID = /^[a-f0-9]{32}$/;
+
+function readCoordinates(value: JVal): JObj {
+  const raw = obj(value, 'coordinates');
+  keysOf(raw, new Set(['latitude', 'longitude', 'address']), 'coordinates');
+  required(raw, ['latitude', 'longitude', 'address'], 'coordinates');
+  return {
+    address: readString(raw.address, 1, 500, 'coordinates'),
+    latitude: jfloat(readFloat(raw.latitude, 0, -90, 90, false)),
+    longitude: jfloat(readFloat(raw.longitude, 0, -180, 180, false)),
+  };
+}
+
+function readSegment(value: JVal): JObj {
+  const raw = obj(value, 'segment');
+  keysOf(raw, new Set(['speaker', 'connection_id', 'sequence', 'text', 'finished']), 'segment');
+  required(raw, ['speaker', 'connection_id', 'sequence', 'text'], 'segment');
+  return {
+    connection_id: readString(raw.connection_id, 0, 64, 'segment'),
+    finished: optBool(raw.finished),
+    sequence: jint(readInt(raw.sequence, 0, 1, Number.MAX_SAFE_INTEGER)),
+    speaker: readChoice(raw.speaker, ['technician', 'assistant'], undefined, 'segment'),
+    text: readString(raw.text, 0, 80000, 'segment'),
+  };
+}
+
+function readCapture(value: JVal): JObj {
+  const raw = obj(value, 'capture');
+  const allowed = ['capture_id', 'status', 'gap_count', 'recovery_count', 'technician_edited', 'segments'];
+  keysOf(raw, new Set(allowed), 'capture');
+  required(raw, ['capture_id'], 'capture');
+  const segments = raw.segments === undefined ? [] : raw.segments;
+  if (!Array.isArray(segments) || segments.length > 2000) bad('capture');
+  return {
+    capture_id: readPattern(raw.capture_id, HEX_ID, 'capture'),
+    gap_count: jint(readInt(raw.gap_count, 0, 0, 1000000)),
+    recovery_count: jint(readInt(raw.recovery_count, 0, 0, 10000)),
+    segments: segments.map((segment) => readSegment(segment)),
+    status: readChoice(raw.status, ['recording', 'complete', 'incomplete', 'truncated'], 'recording', 'capture'),
+    technician_edited: readBool(raw.technician_edited, false),
+  };
+}
+
+function readScan(value: JVal): JObj {
+  const raw = obj(value, 'scan');
+  const allowed = ['id', 'kind', 'asset_id', 'room', 'scanned_at'];
+  keysOf(raw, new Set(allowed), 'scan');
+  required(raw, allowed, 'scan');
+  return {
+    asset_id: readPattern(raw.asset_id, /^[A-Z0-9][A-Z0-9._/-]{0,31}$/, 'scan'),
+    id: readPattern(raw.id, HEX_ID, 'scan'),
+    kind: readChoice(raw.kind, ['air_mover', 'dehumidifier', 'air_scrubber'], undefined, 'scan'),
+    room: readString(raw.room, 1, 100, 'scan'),
+    scanned_at: readDateTime(raw.scanned_at, 'scan'),
+  };
 }
 
 function readApproval(value: JVal): Approval {
@@ -417,7 +502,7 @@ function readApproval(value: JVal): Approval {
   }
   const uid = raw.accepted_by_uid;
   const name = raw.accepted_by_name;
-  const at = readInstant(raw.accepted_at);
+  const at = readDateTime(raw.accepted_at, 'approval time');
   const company = raw.company_id;
   if (typeof uid !== 'string' || uid.length < 1 || uid.length > 128) bad('approval uid');
   if (typeof name !== 'string' || name.length < 1 || name.length > 150) bad('approval name');
@@ -469,11 +554,8 @@ function readYear(value: JVal | undefined): number | null {
 export function validateInspection(value: JVal): Inspection {
   const raw = obj(value, 'inspection');
   keysOf(raw, DATA_KEYS, 'inspection');
-  if (has(raw, 'coordinates') && raw.coordinates !== null) bad('coordinates');
-  if (has(raw, 'capture_metadata') && raw.capture_metadata !== null) bad('capture');
-  if (has(raw, 'equipment_scans') && !(Array.isArray(raw.equipment_scans) && raw.equipment_scans.length === 0)) {
-    if (has(raw, 'equipment_scans')) bad('scans');
-  }
+  const scansRaw = raw.equipment_scans === undefined ? [] : raw.equipment_scans;
+  if (!Array.isArray(scansRaw) || scansRaw.length > 200) bad('scans');
   const roomsRaw = raw.rooms === undefined ? [] : raw.rooms;
   if (!Array.isArray(roomsRaw) || roomsRaw.length > 30) bad('rooms');
   const extrasRaw = raw.extras === undefined ? [] : raw.extras;
@@ -543,6 +625,10 @@ export function validateInspection(value: JVal): Inspection {
     scopeItems: scope,
     quantityOverrides: overrides,
     seededFromVersion: typeof seeded === 'string' ? seeded : null,
+    coordinates: raw.coordinates === undefined || raw.coordinates === null ? null : readCoordinates(raw.coordinates),
+    captureMetadata:
+      raw.capture_metadata === undefined || raw.capture_metadata === null ? null : readCapture(raw.capture_metadata),
+    equipmentScans: scansRaw.map((scan) => readScan(scan)),
     present: new Set(Object.keys(raw)),
   };
 }
@@ -614,7 +700,10 @@ export function dumpInspection(data: Inspection): JObj {
     work_performed: data.workPerformed,
     year_built: data.yearBuilt === null ? null : jint(data.yearBuilt),
   };
-  if (data.present.has('coordinates')) out.coordinates = null;
+  if (data.coordinates) out.coordinates = data.coordinates;
+  else if (data.present.has('coordinates')) out.coordinates = null;
+  if (data.captureMetadata) out.capture_metadata = data.captureMetadata;
+  if (data.equipmentScans.length > 0) out.equipment_scans = data.equipmentScans;
   if (data.dehumidifierPpd !== null) out.dehumidifier_ppd = jint(data.dehumidifierPpd);
   if (data.extras.length > 0 || data.extrasSet) {
     out.extras = data.extras.map((extra) => ({
