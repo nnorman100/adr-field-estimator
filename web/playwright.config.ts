@@ -15,7 +15,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { browserName: 'chromium', launchOptions: { args: ['--disable-dev-shm-usage'] } },
+      use: {
+        browserName: 'chromium',
+        launchOptions: { args: ['--no-sandbox', '--disable-dev-shm-usage'] },
+      },
     },
     { name: 'webkit', use: { browserName: 'webkit' } },
   ],

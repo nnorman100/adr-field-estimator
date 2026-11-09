@@ -100,7 +100,7 @@ test('a worker-controlled private window answers for a new tab until the verifie
   // context, and a popup opened by the signed-in page (scripts/manual_chrome.js sameContextPage).
   const base = origin(production);
   const launched = await chromium.launch({
-    args: ['--remote-debugging-port=9344', '--disable-dev-shm-usage'],
+    args: ['--remote-debugging-port=9344', '--no-sandbox', '--disable-dev-shm-usage'],
   });
   const browser = await chromium.connectOverCDP('http://127.0.0.1:9344');
   try {

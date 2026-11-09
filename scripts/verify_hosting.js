@@ -208,7 +208,7 @@ const localShell = fs.readFileSync('public/app.html', 'utf8'),
   assert.equal((await fetch(base + '/api/inspections')).status, 401);
   const config = await (await fetch(base + '/__/firebase/init.json')).json();
   assert.equal(config.projectId, 'alert-disaster-field-2026');
-  const browser = await chromium.launch({ args: ['--disable-dev-shm-usage'] });
+  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
