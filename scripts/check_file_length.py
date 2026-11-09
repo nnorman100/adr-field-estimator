@@ -14,7 +14,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = ROOT / 'scripts' / 'file_length_allowlist.json'
-CODE_SUFFIXES = ('.py', '.js', '.mjs', '.cjs', '.css', '.md')
+CODE_SUFFIXES = ('.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts', '.css', '.md')
+# The TypeScript app in web/ has its own ESLint job that is not a required check, and root
+# ESLint ignores web/, so this script is the required check for everything under web/: its
+# JavaScript and TypeScript, plus its config JSON and env.example (but not the lockfile).
+WEB_PREFIX = 'web/'
+WEB_CONFIG_FILES = ('web/env.example',)
+WEB_EXCLUDED = ('web/package-lock.json', 'web/node_modules/', 'web/.next/')
 BASELINES = ROOT / 'scripts' / 'file_length_baselines.json'
 EXCLUDED_PREFIXES = ('public/vendor/', 'node_modules/')
 LINE_BREAK = re.compile(r'\r\n|[\r\n  ]')
@@ -32,6 +38,15 @@ def count_lines(text):
 def load_allowlist(path=ALLOWLIST):
     data = json.loads(Path(path).read_text(encoding='utf-8'))
     return int(data['limit']), set(data['files'])
+
+
+def is_web_config(name):
+    return name.startswith(WEB_PREFIX) and (name.endswith('.json') or name in WEB_CONFIG_FILES)
+
+
+def owned_by_eslint(name):
+    """Root ESLint's max-lines covers JavaScript outside web/; web/ is checked here."""
+    return name.endswith(('.js', '.mjs', '.cjs')) and not name.startswith(WEB_PREFIX)
 
 
 def tracked_code_files(root=ROOT):
@@ -57,8 +72,9 @@ def tracked_code_files(root=ROOT):
     return sorted(
         n
         for n in names
-        if n.endswith(CODE_SUFFIXES)
+        if (n.endswith(CODE_SUFFIXES) or is_web_config(n))
         and not n.startswith(EXCLUDED_PREFIXES)
+        and not n.startswith(WEB_EXCLUDED)
         and (Path(root) / n).is_file()
     )
 
@@ -88,7 +104,7 @@ def check(root=ROOT, limit=None, allowlist=None, baselines=None):
                 f'scripts/file_length_baselines.json from {baselines[name]} to {lines}.'
             )
             continue
-        if lines <= limit or (name.endswith(('.js', '.mjs', '.cjs')) and name not in baselines):
+        if lines <= limit or (owned_by_eslint(name) and name not in baselines):
             continue
         if name in allowlist:
             warnings.append(
