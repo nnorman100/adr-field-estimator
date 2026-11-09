@@ -69,7 +69,7 @@ It estimates water and mold losses only; fire, smoke and other loss types are ou
 It is not a native iOS or Android app.
 It is not ADR's public website; `alertdisaster.com` stays separate.
 
-A change aligns when it makes one water or mold inspection faster, more complete or more defensible, or carries the signed result to the homeowner, crew, adjuster or drying schedule, while keeping workbook prices on the server and AI-suggested prices labeled.
+A change aligns when it makes one water or mold inspection faster, more complete or more defensible, or carries the signed result to the homeowner, crew, adjuster or drying schedule, while keeping workbook prices on the server.
 A change aligns when it closes a gap between what the app claims and what it can prove, with a test or a device observation to show it.
 A change should be resisted when it lets a model override a workbook price, changes a signed agreement's scope or prices, shows one company another company's jobs or identifiable prices, or weakens the dedicated-project boundary.
 A change should be resisted when it ties the app to one phone platform, extends it beyond water and mold losses, or claims device, provider or production behavior that nobody has observed.

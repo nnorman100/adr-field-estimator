@@ -169,12 +169,12 @@ on each, from the 2026-11-09 review, in plain words:
   blank CSV or XLSX template from the Prices page, fills it in, imports it and publishes it
   (`docs/STATUS.md`, price editor row). The remaining new-company setup changes are in 6.1.
 - **AI-suggested prices:** not now.
-- **Crew calendar and reminders:** possibly helpful, later.
+- **Crew calendar and reminders:** could be helpful, later.
 - **Homeowner photo upload through the link:** good in the right context, later. The conditions
   are **[open]**.
-- **Recipient texting:** later.
+- **Recipient texting:** could be good down the road, later.
 - **Support role:** undecided. **[open]**
-- **Owner-visible access log:** wanted, later.
+- **Owner-visible access log:** could be beneficial, later.
 
 No decision yet on these three, still listed as not built: per-visit reading dispatch,
 walkthrough recording stored with the signed agreement, and anonymized cross-company price
@@ -258,15 +258,12 @@ field ownership.
 
 Source: owner decision of 2026-11-09 ("I want live voice as the default option").
 
-In the rebuild, the Live voice walkthrough is the default way to capture a job: a blank job started
-by an owner or estimator opens on it. Office intake and a signed job copied to a draft still open on
-Check scope, as sections 2 and 6.2 require. Manual scope entry, offline voice notes and photos stay
-available as fallbacks whenever Live cannot run: no signal, AI switched off, or a company or user
-without Live.
+In the rebuild, the Live voice walkthrough is the default way for field staff (owners and
+estimators) to capture a job, with manual scope entry, offline voice notes and photos as fallbacks
+whenever Live cannot run (for example, no signal).
 
 Target acceptance checks (**not built**):
 
-- A blank job started by an owner or estimator opens on the Live voice walkthrough, not on manual
-  scope entry; office intake and a copied draft open on Check scope.
-- When Live is unavailable, the technician can still complete the job through manual scope entry,
-  offline voice notes and photos.
+- A blank job started by field staff opens on the Live voice walkthrough, not on manual scope entry.
+- When Live cannot run (for example, no signal), field staff can still complete the job through
+  manual scope entry, offline voice notes and photos.
