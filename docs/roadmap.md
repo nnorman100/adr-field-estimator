@@ -19,7 +19,7 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Code pointers:** this file names functions, not line numbers, because lines drift. Search for the function.
 
 ## Context
-Nate wants one product, **DryScope**, built on the live field estimator (`nnorman100/adr-field-estimator`, local `C:\Users\nnorm\adr-field-estimator`). The Next.js app `nnorman100/Dryscope` (AI Studio build, Firebase `dryscope-d6f72`) is only a source of features. Its features are rebuilt in the field estimator's own style, not its look (PRs #115 and #117). "DryScope" is the name inside the app only: no repo rename and no domain (Nate, Oct 24). The current app's Firebase project stays `alert-disaster-field-2026`; the TypeScript rebuild is a clean start in project `dryscope` (D-012).
+Nate wants one product, **DryScope**, built on the live field estimator (`nnorman100/adr-field-estimator`, local `C:\Users\nnorm\adr-field-estimator`). The Next.js app `nnorman100/Dryscope` (AI Studio build, Firebase `dryscope-d6f72`) is only a source of features. Its features are rebuilt in the field estimator's own style, not its look (PRs #115 and #117). "DryScope" is the name inside the app only: no repo rename and no domain for the organization or email (Nate, Oct 24); the rebuild's go-live stage (S8) covers the product's domain and web address. The current app's Firebase project stays `alert-disaster-field-2026`; the TypeScript rebuild is a clean start in project `dryscope` (D-012).
 
 Goal: finish the Dryscope ports Nate picked, then build the first missing VISION.md piece he chose, **delivery after signing**.
 
