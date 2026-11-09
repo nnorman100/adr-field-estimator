@@ -168,3 +168,25 @@ describe('photo log', () => {
     );
   });
 });
+
+describe('room quantity overrides', () => {
+  function quantities(input: JObj): string[] {
+    const result = evaluate(input);
+    expect(result.rejected).toBeNull();
+    const lines = (result.pricing as JObj).lines as JObj[];
+    return lines.map((line) => `${String(line.item_id)}=${canonical(line.quantity as JVal)}`);
+  }
+
+  it('prices a cleared wet floor as the whole floor', () => {
+    const plain = fixture('v2-area-basis-wet_floor').input;
+    const cleared = fixture('v2-area-basis-wet_floor').input;
+    delete at(plain, 'data', 'rooms', 0).wet_floor_sf;
+    delete at(cleared, 'data', 'rooms', 0).wet_floor_sf;
+    at(cleared, 'data').quantity_overrides = parseJson(
+      '{"Kitchen:wet_floor_sf":{"measured":"120","entered":"0","reason":"Whole floor wet"}}',
+    );
+    const priced = quantities(cleared);
+    expect(priced).toContain('antimicrobial=160.0');
+    expect(priced).toEqual(quantities(plain));
+  });
+});

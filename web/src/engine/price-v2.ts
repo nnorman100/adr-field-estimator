@@ -59,15 +59,19 @@ export function overrides(data: Inspection, warnings: EngineWarning[]): { job: M
   return { job, rooms };
 }
 
-function readRoom(room: Room, field: string, rooms: Map<string, Dec>): Dec | null {
-  const entered = rooms.get(`${roomKey(room.name)}:${field}`);
-  if (entered) return entered;
-  if (field === 'unfinished_sf') return decFloat(room.unfinishedSf);
-  if (field === 'finished_sf') return decFloat(room.finishedSf);
-  if (field === 'waste_percent') return decFloat(room.wastePercent);
-  if (field === 'floor_sf') return room.floorSf === null ? null : decFloat(room.floorSf);
-  if (field === 'wet_floor_sf') return room.wetFloorSf === null ? null : decFloat(room.wetFloorSf);
+function roomValue(room: Room, field: string): number | null {
+  if (field === 'unfinished_sf') return room.unfinishedSf;
+  if (field === 'finished_sf') return room.finishedSf;
+  if (field === 'waste_percent') return room.wastePercent;
+  if (field === 'floor_sf') return room.floorSf;
+  if (field === 'wet_floor_sf') return room.wetFloorSf;
   return null;
+}
+
+function readRoom(room: Room, field: string, rooms: Map<string, Dec>): Dec | null {
+  const value = roomValue(room, field);
+  if (value === null) return null;
+  return rooms.get(`${roomKey(room.name)}:${field}`) ?? decFloat(value);
 }
 
 function wetFloor(room: Room, rooms: Map<string, Dec>): Dec {
