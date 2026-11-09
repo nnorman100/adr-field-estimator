@@ -24,28 +24,36 @@ jobs:
   # Throwaway Postgres, then migrations from empty. `check` below fails when this job does,
   # so the existing web check cannot pass without it.
   database:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: dryscope
-          POSTGRES_PASSWORD: dryscope
-          POSTGRES_DB: dryscope
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U dryscope -d dryscope"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
     env:
       APP_ENV: test
       DATABASE_URL: postgres://dryscope:dryscope@127.0.0.1:5432/dryscope
       DRYSCOPE_DISPOSABLE_DATABASE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # PostgreSQL 16 runs inside the job: the self-hosted runner's container has no Docker for a
+      # service container. GitHub's Ubuntu image already has PostgreSQL 16 installed (not running).
+      - name: Start a throwaway PostgreSQL 16
+        working-directory: .
+        run: |
+          pgbin=/usr/lib/postgresql/16/bin
+          if [ ! -x "$pgbin/initdb" ]; then
+            # Keep the package from creating and starting its own cluster on port 5432.
+            sudo mkdir -p /etc/postgresql-common
+            echo 'create_main_cluster = false' | sudo tee /etc/postgresql-common/createcluster.conf > /dev/null
+            sudo apt-get update -q
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+              -o Dpkg::Options::=--force-confold postgresql-16
+          fi
+          pgdata="$RUNNER_TEMP/postgres"
+          printf '%s\n' dryscope > "$RUNNER_TEMP/postgres-password"
+          "$pgbin/initdb" -D "$pgdata" -U dryscope --pwfile="$RUNNER_TEMP/postgres-password" \
+            --auth=scram-sha-256 --encoding=UTF8 --no-locale --no-sync --no-instructions
+          "$pgbin/pg_ctl" -D "$pgdata" -l "$RUNNER_TEMP/postgres.log" -w -t 30 start \
+            -o "-c listen_addresses=127.0.0.1 -c port=5432 -c unix_socket_directories=$pgdata"
+          PGPASSWORD=dryscope "$pgbin/createdb" -h 127.0.0.1 -p 5432 -U dryscope dryscope
+          "$pgbin/pg_isready" -h 127.0.0.1 -p 5432 -U dryscope -d dryscope
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
@@ -57,7 +65,7 @@ jobs:
   check:
     needs: database
     if: always() && !cancelled()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,7 +85,7 @@ jobs:
           APP_ENV: test
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

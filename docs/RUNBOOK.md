@@ -25,6 +25,16 @@ Follow the recipe at the top of `RELEASES.md` and `docs/SHIP-CHECKLIST.md`. A ha
 
 `.no-mistakes.yaml` sets the repo-level no-mistakes gate rules: protected paths (workflow files, `CLAUDE.md`, `AGENTS.md`, `scripts/test-guard.mjs` and `.github/test-guard.json`, which automatic fixes must leave for a person) and two review auto-fix rounds. The reviewer agent is a global-only setting. Protected paths take effect once this file is on `master`.
 
+## CI runners
+
+Every job in `.github/workflows/` (CI, Web app, Test guard, CodeQL and Deploy) runs on `${{ vars.CI_RUNNER || 'dryscope-linux' }}`. With the repository variable `CI_RUNNER` unset, jobs go to the self-hosted pool `dryscope-linux`: [runner-up](https://github.com/kunchenguid/runner-up) on the build server, as systemd service `runner-up` (setup in `/root/.config/runner-up/config.json`). It has two Docker places (2 cores, 6 GB each), starts one fresh `ghcr.io/actions/actions-runner` container per job, and refuses jobs from fork pull requests. `runner-up status` shows each place and the waiting jobs.
+
+The job container is leaner than GitHub's Ubuntu image: it has no Docker daemon (so no `services:` containers) and no Node, Java or `gh`. Each job installs what it needs (setup-node, setup-java, Playwright's `install-deps` through `sudo apt-get`, PostgreSQL 16 from apt in the web `database` job, a pinned `gh` in Deploy), and each install step is skipped or harmless on GitHub's image.
+
+**Switch to GitHub-hosted runners:** set the repository variable `CI_RUNNER` to `ubuntu-latest` (Settings > Secrets and variables > Actions > Variables, or `gh variable set CI_RUNNER --body ubuntu-latest --repo nnorman100/adr-field-estimator`). Only runs that start afterwards use it; re-run any job still waiting for `dryscope-linux`. GitHub-hosted jobs use paid Actions minutes, and while the Actions budget stop is on they fail to start. **Switch back:** `gh variable delete CI_RUNNER --repo nnorman100/adr-field-estimator`.
+
+**Stop runner-up** (on the build server): `sudo systemctl stop runner-up` stops the coordinator; jobs already running finish in their containers, and new jobs wait on GitHub for a `dryscope-linux` runner, so set `CI_RUNNER` first if CI should keep running. `sudo systemctl disable --now runner-up` keeps it off after a reboot. To end running jobs as well, `docker ps --filter label=runner-up.place` lists their containers; remove them with `docker rm -f <name>`. **Start it again:** `sudo systemctl enable --now runner-up`, then check `runner-up status`.
+
 ## Switch a company to its own price table
 
 The company's owner does this in the app, with `PRICE_BOOKS_ENABLED` on. It cannot be undone.
