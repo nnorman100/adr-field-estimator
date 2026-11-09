@@ -121,7 +121,7 @@ Steps, each its own PR:
 
 Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox's plus-addresses, then do one real ADR job with Nate.
 
-**Later, not in this plan:** texting through Twilio or Telnyx with US business (10DLC) registration; letting homeowners upload photos through the link; the remaining VISION pieces (company workbook upload, drying schedule, automatic deploys).
+**Later, not in this plan:** texting through Twilio or Telnyx with US business (10DLC) registration; letting homeowners upload photos through the link; the remaining VISION pieces (arbitrary company workbook upload, drying schedule, automatic deploys).
 
 ## Timeline and later decisions
 - **Rough size (guesses, updated after each phase):** Phase 0 about 1 day. Phase 1 is 4 PRs plus follow-ups over 3–5 days. Phase 2 is 6 PRs over about 1–2 weeks.
