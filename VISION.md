@@ -8,11 +8,11 @@ It owns exactly one thing: the path from one water or mold loss inspection to a 
 ## Prices come from the company's sheet
 
 Each company prices from its own estimating workbook; ADR's is the `Residential Estimate Tool` sheet, traced cell by cell in `docs/adr-pricing-source.md`.
-A subscribing company uploads its own workbook, and the server turns it into that company's price book with the same cell-traced formulas; until it does, it cannot price an estimate (arbitrary workbook upload is not built; a fixed-template company price editor is built behind the default-off `PRICE_BOOKS_ENABLED` flag, and without that flag only ADR can price an estimate, per `docs/pricing-source.md`).
+A subscribing company enters its own prices in a pricing template the owner fills in, and the server turns it into that company's price book; until it does, it cannot price an estimate. ADR's Excel workbook is never used for another company, and arbitrary workbook upload is not built (a fixed-template company price editor is built behind the default-off `PRICE_BOOKS_ENABLED` flag, and without that flag only ADR can price an estimate, per `docs/pricing-source.md`).
 When a workbook and convention disagree, the company owner decides and the code mirrors the sheet, as ADR did with its after-hours labor rate.
 The server computes every workbook-priced line in Decimal; a model never overrides a workbook total or removes required wording.
 Each company sets its state, and the server inserts that state's mandatory notices, which the subscribing company maintains; ADR's California notices stay exact.
-Work the workbook does not cover may carry a model-suggested price, labeled AI-suggested; every suggested price needs the technician's explicit acceptance (model-suggested prices are not built; today's manual, owner-approved path is described in [priced additional work](docs/priced-extras.md)).
+Work the workbook does not cover is priced by hand through the manual, owner-approved path in [priced additional work](docs/priced-extras.md); the owner does not want AI-suggested prices for now, and none are built.
 
 ## AI does the typing; the technician attests
 

@@ -1,8 +1,9 @@
 # Feature spec (current behaviour)
 
-> **DRAFT FOR OWNER REVIEW.** This describes what DryScope does today, written from the code and
-> tests at the time of writing. It invents no feature. The owner approves it before it becomes the
-> baseline for the rebuild. Items marked **[open]** are gaps found while writing it, not features.
+> **Approved baseline.** The owner reviewed and approved this spec on 2026-11-09 as the baseline
+> for the rebuild: sections 1, 2 and 6 as written, section 5 as amended. It describes what DryScope
+> does today, written from the code and tests, and invents no feature. Items marked **[open]** are
+> gaps or undecided points, not features.
 > Section 6, "Target (accepted, not built yet)", is kept apart: it lists owner-accepted decisions
 > the rebuild must deliver, each citing its source, and none of it describes today's app.
 > Feature state (built, on, phone-checked) is in [STATUS.md](STATUS.md); who may do what is in
@@ -159,10 +160,21 @@ Firestore.
 
 ## 5. Not built (from VISION.md)
 
-Company workbook upload; AI-suggested prices; crew calendar and reminders; per-visit reading
-dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed
-agreement; recipient texting; anonymized cross-company price comparison; a support role and an
-owner-visible access log.
+None of these is built. The owner's stance on each, from the 2026-11-09 review, in plain words:
+
+- **Company workbook upload:** never ADR's Excel workbook. Instead, a pricing template that each
+  owner fills in with their own prices. Wanted, not built; it fits the new-company setup in 6.1.
+- **AI-suggested prices:** not now.
+- **Crew calendar and reminders:** possibly helpful, later.
+- **Homeowner photo upload through the link:** good in the right context, later. The conditions
+  are **[open]**.
+- **Recipient texting:** later.
+- **Support role:** undecided. **[open]**
+- **Owner-visible access log:** wanted, later.
+
+No decision yet on these three, still listed as not built: per-visit reading dispatch,
+walkthrough recording stored with the signed agreement, and anonymized cross-company price
+comparison.
 
 ## 6. Target (accepted, not built yet)
 
