@@ -68,6 +68,18 @@ describe('migration files', () => {
     expect(findDestructiveSql("SELECT 'unterminated DROP")).toBe('DROP');
   });
 
+  it('decodes escaped line breaks before blanking comments inside a block that runs it', () => {
+    expect(findDestructiveSql("DO E'BEGIN -- cleanup\\nDELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO E'BEGIN -- cleanup\\012DELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO E'BEGIN -- cleanup\\x0aDELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO E'BEGIN -- cleanup\\u000aDELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO U&'BEGIN -- cleanup\\000ADELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO U&'BEGIN -- cleanup!+00000ADELETE FROM companies; END' UESCAPE '!';")).toBe(
+      'DELETE FROM',
+    );
+    expect(findDestructiveSql("DO E'BEGIN /* x */ DELETE\\tFROM companies; END';")).toBe('DELETE FROM');
+  });
+
   it('reads nested block comments the way Postgres does', () => {
     expect(findDestructiveSql('/* outer /* inner */ DROP still a comment */ SELECT 1;')).toBeNull();
     expect(findDestructiveSql('/* outer /* inner */ */ DROP TABLE companies;')).toBe('DROP');

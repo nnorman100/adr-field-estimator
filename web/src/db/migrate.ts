@@ -84,10 +84,53 @@ function endOfBlockComment(sql: string, start: number): number {
   return sql.length;
 }
 
-function unescapeEString(body: string): string {
-  return body.replace(/\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/g, (_, c) =>
-    c === "'" ? "'" : ' ',
+const E_STRING_ESCAPES: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+const UESCAPE_CLAUSE = /^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*UESCAPE(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*'([^'])'/i;
+
+function codePoint(value: number): string {
+  return value <= 0x10ffff ? String.fromCodePoint(value) : ' ';
+}
+
+function decodeEString(body: string): string {
+  return body.replace(
+    /''|\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/g,
+    (_, escape: string | undefined) => {
+      if (escape === undefined) return "'";
+      const simple = E_STRING_ESCAPES[escape];
+      if (simple) return simple;
+      if (/^[0-7]/.test(escape)) return codePoint(parseInt(escape, 8));
+      if (escape.length > 1) return codePoint(parseInt(escape.slice(1), 16));
+      return escape;
+    },
   );
+}
+
+function decodeUnicodeString(body: string, escape: string): string {
+  let out = '';
+  let i = 0;
+  while (i < body.length) {
+    if (body.startsWith("''", i)) {
+      out += "'";
+      i += 2;
+      continue;
+    }
+    if (body[i] === escape) {
+      if (body[i + 1] === escape) {
+        out += escape;
+        i += 2;
+        continue;
+      }
+      const hex = /^(?:\+([0-9a-fA-F]{6})|([0-9a-fA-F]{4}))/.exec(body.slice(i + 1));
+      if (hex) {
+        out += codePoint(parseInt(hex[1] ?? hex[2] ?? '', 16));
+        i += 1 + hex[0].length;
+        continue;
+      }
+    }
+    out += body[i];
+    i += 1;
+  }
+  return out;
 }
 
 // Comments may discuss the removal rule, so they are blanked the way Postgres reads them. String
@@ -135,8 +178,14 @@ function stripSqlComments(sql: string): string {
       while (end < sql.length && IDENTIFIER_PART.test(sql[end] ?? '')) end += 1;
       if (end === i + 1 && (ch === 'e' || ch === 'E') && sql[end] === "'") {
         const close = endOfQuoted(sql, end, "'", true);
-        const body = unescapeEString(sql.slice(end + 1, close - 1)).replaceAll("''", "'");
-        out += ` ${stripSqlComments(body)} `;
+        out += ` ${stripSqlComments(decodeEString(sql.slice(end + 1, close - 1)))} `;
+        i = close;
+        continue;
+      }
+      if (end === i + 1 && (ch === 'u' || ch === 'U') && sql.startsWith("&'", end)) {
+        const close = endOfQuoted(sql, end + 1, "'", false);
+        const escape = UESCAPE_CLAUSE.exec(sql.slice(close))?.[1] ?? '\\';
+        out += ` ${stripSqlComments(decodeUnicodeString(sql.slice(end + 2, close - 1), escape))} `;
         i = close;
         continue;
       }
