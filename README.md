@@ -120,7 +120,19 @@ python -m ruff format . ; python -m ruff check .   # Python format and lint
 npm run format ; npm run lint                      # JavaScript/CSS format and lint (npm run format:check in CI)
 ```
 
-A single `.py`, `.js`, `.css` or `.md` file may have up to 1,000 lines. `npm run lint` fails a new file over the limit (ESLint `max-lines` for JavaScript, `scripts/check_file_length.py` for the rest) and only warns for the files listed in `scripts/file_length_allowlist.json`, which were already over it; it also lists any of them that have dropped under, so their entry can be removed. Each listed file also has a no-growth ceiling in `scripts/file_length_baselines.json`: the check fails if the file grows past it, and fails if the file shrinks until you lower the ceiling to the new length. Split those files during planned work, and never add a file to either list.
+The new TypeScript app skeleton lives in `web/` (Next.js, Tailwind v4, shadcn/ui, Zod, Vitest, Playwright; nothing deployed). It has its own lockfile, ESLint config and CI workflow (`.github/workflows/web.yml`); the root commands above do not cover it:
+
+```bash
+cd web
+npm ci
+cp env.example .env.local        # APP_ENV is required; the app refuses to start without it
+npm run dev                      # http://localhost:3100, health at /api/health
+npm run typecheck ; npm run lint ; npm test
+npx playwright install chromium webkit
+npm run test:e2e                 # smoke test against the dev server
+```
+
+A single `.py`, `.js`, `.css` or `.md` file may have up to 1,000 lines. `npm run lint` fails a new file over the limit (ESLint `max-lines` for JavaScript, `scripts/check_file_length.py` for the rest) and only warns for the files listed in `scripts/file_length_allowlist.json`, which were already over it; it also lists any of them that have dropped under, so their entry can be removed. Each listed file also has a no-growth ceiling in `scripts/file_length_baselines.json`: the check fails if the file grows past it, and fails if the file shrinks until you lower the ceiling to the new length. Split those files during planned work, and never add a file to either list. Under `web/` the same script (the required `node` job, since root ESLint ignores `web/`) also counts `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.mjs` and `.cjs` files, `web/**/*.json` and `web/env.example`, but not `web/package-lock.json`.
 
 `npm run lint` also runs the required-docs check (`scripts/check_required_docs.js`, tested by `tests/test_required_docs.js`), which fails when any of `README.md`, `CLAUDE.md`, `AGENTS.md`, `HANDOFF.md`, `docs/spec.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/DATA.md`, `docs/RUNBOOK.md` or `docs/AI.md` is missing or empty. `HANDOFF.md` records what is live and the open items; `docs/spec.md` (a draft for owner review) lists every role and screen with acceptance checks; `docs/DATA.md` and `docs/AI.md` cover personal data and AI features.
 
