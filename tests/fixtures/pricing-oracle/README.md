@@ -13,6 +13,14 @@ unexplained differences before it prices any live estimate. Nothing here is cust
   backend commit and tree that produced the answers, and the Python version, dependency lock hash
   (`backend/requirements.txt`), pydantic versions and decimal context used.
 
+- `coercion/<target>.json`: scalar coercion probes. Each file names a reference `model`, a valid
+  `template`, the `path` of one field and a list of `probes`: a tricky JSON value set into that
+  field (numbers, numeric and boolean strings, decimals with exponents or trailing zeros, dates,
+  Unicode text and whitespace), whether the Python model accepted it (pydantic lax mode, as the
+  backend reads it) and the value it dumped at the path. A port must accept and reject the same
+  values and dump the same value. They are built by `scripts/pricing_oracle_coercion.py` and are
+  not listed in `manifest.json`.
+
 The existing `tests/golden/v1-documents.json` is separate and unchanged.
 
 ### Input
@@ -75,7 +83,8 @@ serializer before comparing.
 
 `python -m pytest tests/test_pricing_oracle.py -q -p no:cacheprovider` re-runs every stored input
 through the current code and fails on the first differing byte, naming the JSON path. The same
-check runs as `python scripts/pricing_oracle.py --check`. A failure means the code changed what
+check runs as `python scripts/pricing_oracle.py --check`, which also rebuilds every `coercion/`
+file and reports any missing, unexpected or differing one. A failure means the code changed what
 it produces for a pinned input: fix the code. The environment fields in `manifest.json` are
 provenance; the check compares answers, not interpreter versions.
 
@@ -90,7 +99,8 @@ python scripts/pricing_oracle.py --write
 ```
 
 The corpus is built by `scripts/pricing_oracle_cases.py` and `scripts/pricing_oracle_cases_v2.py`
-(named boundaries plus seeded jobs with fixed seeds). The generator refuses to write while
+(named boundaries plus seeded jobs with fixed seeds); the coercion probes by
+`scripts/pricing_oracle_coercion.py`. The generator refuses to write while
 `backend/` has uncommitted changes, and records the backend commit and tree it ran on.
 
 **A new candidate must never regenerate its own answers.** A port or rewrite reads each `input`,
