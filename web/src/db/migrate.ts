@@ -46,190 +46,6 @@ function asMigrationError(error: unknown, databaseUrl: string): MigrationError {
   return new MigrationError(redactDatabaseMessage(message, databaseUrl));
 }
 
-const IDENTIFIER_START = /[A-Za-z_\u0080-\uffff]/;
-const IDENTIFIER_PART = /[A-Za-z0-9_$\u0080-\uffff]/;
-const DOLLAR_TAG = /^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/;
-
-function endOfQuoted(sql: string, start: number, quote: string, backslash: boolean): number {
-  let i = start + 1;
-  while (i < sql.length) {
-    const ch = sql[i];
-    if (backslash && ch === '\\') {
-      i += 2;
-    } else if (ch === quote) {
-      if (sql[i + 1] !== quote) return i + 1;
-      i += 2;
-    } else {
-      i += 1;
-    }
-  }
-  return sql.length + 1;
-}
-
-function endOfBlockComment(sql: string, start: number): number {
-  let depth = 0;
-  let i = start;
-  while (i < sql.length) {
-    if (sql.startsWith('/*', i)) {
-      depth += 1;
-      i += 2;
-    } else if (sql.startsWith('*/', i)) {
-      depth -= 1;
-      i += 2;
-      if (depth === 0) return i;
-    } else {
-      i += 1;
-    }
-  }
-  return sql.length;
-}
-
-const E_STRING_ESCAPES: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
-const SQL_SPACE = /[ \t\n\r\f\v]/;
-const TRANSACTION_CONTROL =
-  /(?:^|;)\s*(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION)\b/i;
-
-function asciiOrSpace(value: number): string {
-  return value < 0x80 ? String.fromCharCode(value) : ' ';
-}
-
-function skipSpaceAndComments(sql: string, start: number): number {
-  let i = start;
-  while (i < sql.length) {
-    if (SQL_SPACE.test(sql[i] ?? '')) {
-      i += 1;
-    } else if (sql.startsWith('--', i)) {
-      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') i += 1;
-    } else if (sql.startsWith('/*', i)) {
-      i = endOfBlockComment(sql, i);
-    } else {
-      break;
-    }
-  }
-  return i;
-}
-
-function uescapeCharacter(sql: string, afterString: number): string {
-  let i = skipSpaceAndComments(sql, afterString);
-  if (!/^UESCAPE$/i.test(sql.slice(i, i + 7)) || IDENTIFIER_PART.test(sql[i + 7] ?? '')) return '\\';
-  i = skipSpaceAndComments(sql, i + 7);
-  return sql[i] === "'" && sql[i + 2] === "'" ? (sql[i + 1] ?? '\\') : '\\';
-}
-
-function decodeEString(body: string): string {
-  return body.replace(
-    /''|\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[\s\S])/g,
-    (_, escape: string | undefined) => {
-      if (escape === undefined) return "'";
-      const simple = E_STRING_ESCAPES[escape];
-      if (simple) return simple;
-      if (/^[0-7]/.test(escape)) return asciiOrSpace(parseInt(escape, 8) & 0xff);
-      if (escape.length > 1) return asciiOrSpace(parseInt(escape.slice(1), 16));
-      return escape;
-    },
-  );
-}
-
-function decodeUnicodeString(body: string, escape: string): string {
-  let out = '';
-  let i = 0;
-  while (i < body.length) {
-    if (body.startsWith("''", i)) {
-      out += "'";
-      i += 2;
-      continue;
-    }
-    if (body[i] === escape) {
-      if (body[i + 1] === escape) {
-        out += escape;
-        i += 2;
-        continue;
-      }
-      const hex = /^(?:\+([0-9a-fA-F]{6})|([0-9a-fA-F]{4}))/.exec(body.slice(i + 1));
-      if (hex) {
-        out += asciiOrSpace(parseInt(hex[1] ?? hex[2] ?? '', 16));
-        i += 1 + hex[0].length;
-        continue;
-      }
-    }
-    out += body[i];
-    i += 1;
-  }
-  return out;
-}
-
-// Reads SQL the way the Postgres lexer does: whitespace and comments become one space. With
-// inlineBodies, string and dollar-quoted bodies are decoded and read the same way, because DO
-// blocks and EXECUTE run that text; without it they become one space, leaving the top-level
-// statements. Identifier text stays as written.
-function screenSql(sql: string, inlineBodies: boolean): string {
-  const body = (text: string) => (inlineBodies ? ` ${screenSql(text, true)} ` : ' ');
-  let out = '';
-  let i = 0;
-  while (i < sql.length) {
-    const ch = sql[i] ?? '';
-    let end: number;
-    const next = skipSpaceAndComments(sql, i);
-    if (next > i) {
-      out += ' ';
-      i = next;
-      continue;
-    }
-    if (ch === "'") {
-      end = endOfQuoted(sql, i, ch, false);
-      out += body(sql.slice(i + 1, end - 1).replaceAll("''", "'"));
-      i = end;
-      continue;
-    } else if (ch === '"') {
-      end = endOfQuoted(sql, i, ch, false);
-    } else if (ch === '$') {
-      const tag = DOLLAR_TAG.exec(sql.slice(i))?.[0];
-      if (tag) {
-        const close = sql.indexOf(tag, i + tag.length);
-        out += body(sql.slice(i + tag.length, close === -1 ? sql.length : close));
-        i = close === -1 ? sql.length : close + tag.length;
-        continue;
-      } else {
-        end = i + 1;
-        while (end < sql.length && /[0-9]/.test(sql[end] ?? '')) end += 1;
-      }
-    } else if (IDENTIFIER_START.test(ch)) {
-      end = i + 1;
-      while (end < sql.length && IDENTIFIER_PART.test(sql[end] ?? '')) end += 1;
-      if (end === i + 1 && (ch === 'e' || ch === 'E') && sql[end] === "'") {
-        const close = endOfQuoted(sql, end, "'", true);
-        out += body(decodeEString(sql.slice(end + 1, close - 1)));
-        i = close;
-        continue;
-      }
-      if (end === i + 1 && (ch === 'u' || ch === 'U') && sql.startsWith("&'", end)) {
-        const close = endOfQuoted(sql, end + 1, "'", false);
-        out += body(decodeUnicodeString(sql.slice(end + 2, close - 1), uescapeCharacter(sql, close)));
-        i = close;
-        continue;
-      }
-    } else {
-      end = i + 1;
-    }
-    out += sql.slice(i, end);
-    i = end;
-  }
-  return out;
-}
-
-export function findDestructiveSql(sql: string): string | null {
-  const code = screenSql(sql, true);
-  if (/\bDROP\b/i.test(code)) return 'DROP';
-  if (/\bTRUNCATE\b/i.test(code)) return 'TRUNCATE';
-  if (/\bDELETE\s+FROM\b/i.test(code)) return 'DELETE FROM';
-  return null;
-}
-
-export function findTransactionControl(sql: string): string | null {
-  const found = TRANSACTION_CONTROL.exec(screenSql(sql, false))?.[1];
-  return found ? found.toUpperCase().replace(/\s+/g, ' ') : null;
-}
-
 function assertSequence(files: MigrationFile[]): void {
   if (files.length === 0) throw new MigrationError('No migration files found');
   for (const [index, file] of files.entries()) {
@@ -260,14 +76,6 @@ export async function readMigrations(directory: string): Promise<MigrationFile[]
       throw new MigrationError(`Migration ${filename} is not UTF-8`);
     }
     if (sql.trim().length === 0) throw new MigrationError(`Migration ${filename} is empty`);
-    const destructive = findDestructiveSql(sql);
-    if (destructive) {
-      throw new MigrationError(`Migration ${filename} contains ${destructive}, which this ledger refuses`);
-    }
-    const control = findTransactionControl(sql);
-    if (control) {
-      throw new MigrationError(`Migration ${filename} contains ${control}; the runner owns each file's transaction`);
-    }
     files.push({
       id: filename.slice(0, -'.sql'.length),
       number: Number(match[1]),
@@ -314,11 +122,17 @@ async function applyNext(
   databaseUrl: string,
 ): Promise<string | null> {
   return sql.begin(async (tx) => {
-    await tx`SELECT pg_advisory_xact_lock(${LOCK_KEY}::bigint)`;
+    const [lock] = await tx<{ xid: string }[]>`
+      SELECT pg_advisory_xact_lock(${LOCK_KEY}::bigint), pg_current_xact_id()::text AS xid
+    `;
     const [file] = assertHistory(files, await appliedChecksums(tx));
     if (!file) return null;
     try {
       await tx.unsafe(file.sql);
+      const [after] = await tx<{ xid: string }[]>`SELECT pg_current_xact_id()::text AS xid`;
+      if (after?.xid !== lock?.xid) {
+        throw new MigrationError('it ended the runner\'s transaction; leave BEGIN, COMMIT and ROLLBACK to the runner');
+      }
       await tx`
         INSERT INTO migration_ledger (id, checksum)
         VALUES (${file.id}, ${file.checksum})
@@ -332,8 +146,9 @@ async function applyNext(
 }
 
 // Applies each missing file in order, in its own locked transaction that rereads the ledger first,
-// and records the SHA-256 of the file bytes. A second run applies nothing. A gap, a destructive
-// statement or a changed file that was already applied stops the run before anything new is written.
+// and records the SHA-256 of the file bytes. A second run applies nothing. A gap or a changed file
+// that was already applied stops the run before anything new is written. A file that ends the
+// runner's transaction itself fails and is not recorded.
 export async function applyMigrations(
   databaseUrl: string,
   directory: string,

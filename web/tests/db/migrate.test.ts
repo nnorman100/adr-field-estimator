@@ -100,20 +100,40 @@ describe('numbered migration ledger', () => {
     expect(again).toEqual(appliedAt);
   });
 
-  it('refuses a gap and a destructive file without writing', async () => {
+  it('refuses a gap without writing', async () => {
     const foundation = (await readMigrations(migrationsDirectory))[0]?.sql ?? '';
     const gap = await tempMigrations({
       '0001_foundation.sql': foundation,
       '0003_gap.sql': 'CREATE TABLE skipped (id integer);\n',
     });
-    const destructive = await tempMigrations({ '0001_bad.sql': 'DROP TABLE companies;\n' });
     try {
       await expect(applyMigrations(disposable.databaseUrl, gap)).rejects.toThrow(/out of order/);
-      await expect(applyMigrations(disposable.databaseUrl, destructive)).rejects.toThrow(/DROP/);
       expect(await tableNames()).toEqual([]);
     } finally {
       await rm(gap, { recursive: true, force: true });
-      await rm(destructive, { recursive: true, force: true });
+    }
+  });
+
+  it('does not record a file that ends the runner transaction', async () => {
+    const foundation = (await readMigrations(migrationsDirectory))[0]?.sql ?? '';
+    for (const ending of ['ROLLBACK', 'COMMIT']) {
+      await emptyDiscardDatabase(disposable.databaseUrl);
+      const dir = await tempMigrations({
+        '0001_foundation.sql': foundation,
+        '0002_ends.sql': `CREATE TABLE example (id integer);\n${ending};\n`,
+      });
+      try {
+        await expect(applyMigrations(disposable.databaseUrl, dir)).rejects.toThrow(
+          /0002_ends\.sql failed: it ended the runner's transaction/,
+        );
+        const ids = await withSql(async (sql) => {
+          const rows = await sql<{ id: string }[]>`SELECT id FROM migration_ledger ORDER BY id`;
+          return rows.map((row) => row.id);
+        });
+        expect(ids).toEqual(['0001_foundation']);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     }
   });
 

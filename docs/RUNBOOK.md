@@ -106,7 +106,7 @@ Schema changes follow add, then switch, then remove:
 2. Switch readers and writers to the new shape only after that migration has been applied.
 3. Remove the old shape in a later migration only after a fresh backup of that database and an explicit owner approval.
 
-The migrator refuses `DROP`, `TRUNCATE` and `DELETE FROM` anywhere outside a comment, including inside strings and dollar-quoted bodies, because `DO` blocks and `EXECUTE` run that text. It also refuses a file that runs its own `BEGIN`, `COMMIT`, `END`, `ROLLBACK` or `ABORT`, because the runner owns each file's transaction. A removal is a deliberate change to that guard, with the backup and the owner's approval, not a quiet edit. Do not roll the database backward to make an older image start. Fix forward on the same data. The same rule is the data contract in [DATA.md](DATA.md#rebuilt-app-postgres-not-deployed).
+The migrator does not parse SQL for removals: a migration that removes a table, column or rows needs the fresh backup and the owner's explicit approval before it merges, and a later least-privilege migration role will back that up. Each file runs with its ledger row in one transaction; a file that ends that transaction with its own `COMMIT` or `ROLLBACK` fails and is not recorded. Do not roll the database backward to make an older image start. Fix forward on the same data. The same rule is the data contract in [DATA.md](DATA.md#rebuilt-app-postgres-not-deployed).
 
 ## Common problems
 
