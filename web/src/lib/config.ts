@@ -30,12 +30,36 @@ const schema = z.object({
     .string()
     .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })
     .optional(),
+  // Cloud SQL on Cloud Run, set by infra/dryscope/app/cloud_run.tf: the instance mounted under
+  // /cloudsql, the database, and this service's IAM database user (its account email without
+  // .gserviceaccount.com). All three or none, and never together with DATABASE_URL.
+  SQL_CONNECTION_NAME: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*:[a-z0-9-]+:[a-z][a-z0-9-]*$/, {
+      error: 'SQL_CONNECTION_NAME must be project:region:instance',
+    })
+    .optional(),
+  SQL_DATABASE_NAME: z
+    .string()
+    .regex(/^[a-z_][a-z0-9_]*$/, { error: 'SQL_DATABASE_NAME must be a database name' })
+    .optional(),
+  SQL_IAM_USER: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*@[a-z][a-z0-9-]*\.iam$/, {
+      error: 'SQL_IAM_USER must be a service account IAM database user (name@project.iam)',
+    })
+    .optional(),
 });
+
+const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
+
+export type CloudSqlConfig = { connectionName: string; database: string; user: string };
 
 export type AppConfig = {
   appEnv: z.infer<typeof schema>['APP_ENV'];
   databaseUrl: string | null;
   commit?: string;
+  cloudSql?: CloudSqlConfig;
 };
 
 export class ConfigError extends Error {
@@ -51,7 +75,23 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     // Only variable names and messages are reported, never the values.
     throw new ConfigError(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
-  const config = { appEnv: result.data.APP_ENV, databaseUrl: result.data.DATABASE_URL ?? null };
-  const commit = result.data.APP_COMMIT;
-  return commit === undefined ? config : { ...config, commit };
+  const data = result.data;
+  const config: AppConfig = { appEnv: data.APP_ENV, databaseUrl: data.DATABASE_URL ?? null };
+  if (data.APP_COMMIT !== undefined) config.commit = data.APP_COMMIT;
+
+  const missing = SQL_KEYS.filter((key) => data[key] === undefined);
+  if (missing.length < SQL_KEYS.length) {
+    if (missing.length > 0) {
+      throw new ConfigError(missing.map((key) => `${key}: required with the other SQL_* settings`));
+    }
+    if (config.databaseUrl !== null) {
+      throw new ConfigError(['DATABASE_URL: set DATABASE_URL or the SQL_* settings, not both']);
+    }
+    config.cloudSql = {
+      connectionName: data.SQL_CONNECTION_NAME!,
+      database: data.SQL_DATABASE_NAME!,
+      user: data.SQL_IAM_USER!,
+    };
+  }
+  return config;
 }

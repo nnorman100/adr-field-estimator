@@ -120,6 +120,11 @@
            "value_source": []
           },
           {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-api-live@dryscope.iam",
+           "value_source": []
+          },
+          {
            "name": "STRIPE_SECRET_KEY",
            "value": null,
            "value_source": [
@@ -296,6 +301,11 @@
           {
            "name": "SQL_DATABASE_NAME",
            "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-live-live@dryscope.iam",
            "value_source": []
           }
          ],

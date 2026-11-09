@@ -256,3 +256,18 @@ run "both_services_receive_the_environment_name_the_app_reads" {
     error_message = "Each service must set APP_ENV to its environment."
   }
 }
+
+# The app logs in to Cloud SQL as its own account's IAM database user over the /cloudsql socket
+# (web/src/db/client.ts); the user name must match the one the data root created.
+run "each_service_names_its_own_iam_database_user" {
+  command = plan
+
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : contains([for e in s.template[0].containers[0].env : e.value if e.name == "SQL_IAM_USER"], "dryscope-${k}-${var.environment}@dryscope.iam")])
+    error_message = "Each service must log in as its own dryscope-<service>-<env>@dryscope.iam database user."
+  }
+  assert {
+    condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : contains([for e in s.template[0].containers[0].env : e.value if e.name == "SQL_CONNECTION_NAME"], "dryscope:us-central1:dryscope-${var.environment}-pg")])
+    error_message = "Each service must point at its own environment's instance."
+  }
+}
