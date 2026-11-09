@@ -3,8 +3,10 @@
 keyless sign-in as the right test account, pinned actions and images, no live or legacy target,
 staging at 0% before any traffic moves, and rollback only after a move."""
 
+import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,84 @@ def instructions(path):
     text = re.sub(r'\\\n', ' ', path.read_text())
     lines = (' '.join(line.split()) for line in text.splitlines())
     return [line for line in lines if line and not line.startswith('#')]
+
+
+def stages(path):
+    """Build stages by name (or index): each a list of (instruction, argument) pairs."""
+    found = {}
+    for line in instructions(path):
+        op, _, arg = line.partition(' ')
+        if op == 'FROM':
+            words = arg.split()
+            name = words[2] if len(words) == 3 and words[1].upper() == 'AS' else str(len(found))
+            current = found[name] = []
+        current.append((op, arg))
+    return found
+
+
+SHA = 'a' * 40
+GOOD_PROVIDER = (
+    'projects/570228742694/locations/global/workloadIdentityPools/dryscope-test/providers/github'
+)
+
+
+class Shell:
+    """Runs a step's shell the way Actions does (bash -eo pipefail), with fake commands that log
+    their arguments and then run a given body."""
+
+    def __init__(self, tmp_path):
+        self.tmp = tmp_path
+        self.bin = tmp_path / 'bin'
+        self.bin.mkdir()
+        self.log = tmp_path / 'calls.log'
+        self.output = tmp_path / 'output'
+        self.summary = tmp_path / 'summary'
+
+    def fake(self, name, body='exit 0'):
+        path = self.bin / name
+        path.write_text(
+            '#!/bin/bash\n'
+            f"{{ printf '%s' {name}; printf '\\x1f%s' \"$@\"; printf '\\n'; }} >> '{self.log}'\n"
+            f'{body}\n'
+        )
+        path.chmod(0o755)
+
+    def run(
+        self,
+        script,
+        env=None,
+        cwd=None,
+        interpreter=('bash', '--noprofile', '--norc', '-eo', 'pipefail'),
+    ):
+        full = {
+            'PATH': f'{self.bin}:{os.environ["PATH"]}',
+            'HOME': str(self.tmp),
+            'GITHUB_OUTPUT': str(self.output),
+            'GITHUB_STEP_SUMMARY': str(self.summary),
+            **(env or {}),
+        }
+        return subprocess.run(
+            [*interpreter, '-c', script],
+            env=full,
+            cwd=cwd or self.tmp,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def calls(self, name=None):
+        lines = self.log.read_text().splitlines() if self.log.exists() else []
+        found = [line.split('\x1f') for line in lines]
+        return [args[1:] for args in found if name is None or args[0] == name]
+
+    def outputs(self):
+        lines = self.output.read_text().splitlines() if self.output.exists() else []
+        return dict(line.split('=', 1) for line in lines)
+
+
+@pytest.fixture
+def shell(tmp_path):
+    return Shell(tmp_path)
 
 
 @pytest.fixture(scope='module')
@@ -119,41 +199,93 @@ def test_each_job_signs_in_keylessly_as_its_own_test_account(release):
         assert 'credentials_json' not in s.get('with', {})
 
 
-def test_skips_until_set_up_and_refuses_variables_pointing_anywhere_but_test(release):
+def test_gate_reads_the_test_variables_and_later_jobs_wait_for_it(release):
     gate = step(release['jobs']['gate'], 'vars')
     assert gate['env'] == {
         'PROVIDER': '${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}',
         'DEPLOY_SA': '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
         'MIGRATE_SA': '${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}',
     }
-    shell = commands(gate)
-    skip, check = shell.split('exit 0', 1)  # the skip branch ends the step before any check
-    assert 'ready=false' in skip and 'ready=true' not in skip
-    assert (
-        '[[ "$PROVIDER" =~ ^projects/570228742694/locations/global/workloadIdentityPools/dryscope-test/providers/'
-        in check
-    )
-    assert '[ "$DEPLOY_SA" = "dryscope-deploy-test@dryscope.iam.gserviceaccount.com" ]' in check
-    assert '[ "$MIGRATE_SA" = "dryscope-migrate-test@dryscope.iam.gserviceaccount.com" ]' in check
     build = release['jobs']['build']
     assert build['if'] == "needs.gate.outputs.ready == 'true'"
     assert step(build, 'image')['if'] == "steps.service.outputs.ready == 'true'"
-    assert 'gcloud run services describe "$SERVICE"' in commands(step(build, 'service'))
     for name in ('migrate', 'deploy'):
         assert release['jobs'][name]['if'] == "needs.build.outputs.service_ready == 'true'"
 
 
+GOOD_VARS = {
+    'PROVIDER': GOOD_PROVIDER,
+    'DEPLOY_SA': 'dryscope-deploy-test@dryscope.iam.gserviceaccount.com',
+    'MIGRATE_SA': 'dryscope-migrate-test@dryscope.iam.gserviceaccount.com',
+}
+
+
+@pytest.mark.parametrize(
+    'unset', [('PROVIDER', 'DEPLOY_SA', 'MIGRATE_SA'), ('PROVIDER',), ('MIGRATE_SA',)]
+)
+def test_gate_skips_while_any_variable_is_unset(release, shell, unset):
+    given = {**GOOD_VARS, **{name: '' for name in unset}}
+    result = shell.run(step(release['jobs']['gate'], 'vars')['run'], given)
+    assert result.returncode == 0, result.stderr
+    assert shell.outputs() == {'ready': 'false'}
+
+
+def test_gate_is_ready_with_the_test_variables(release, shell):
+    result = shell.run(step(release['jobs']['gate'], 'vars')['run'], GOOD_VARS)
+    assert result.returncode == 0, result.stderr
+    assert shell.outputs() == {'ready': 'true'}
+
+
+@pytest.mark.parametrize(
+    'wrong',
+    [
+        {'PROVIDER': GOOD_PROVIDER.replace('dryscope-test', 'dryscope-live')},
+        {'PROVIDER': GOOD_PROVIDER.replace('570228742694', '123456789012')},
+        {'PROVIDER': GOOD_PROVIDER + '/../other'},
+        {'DEPLOY_SA': 'dryscope-deploy-live@dryscope.iam.gserviceaccount.com'},
+        {'DEPLOY_SA': 'dryscope-migrate-test@dryscope.iam.gserviceaccount.com'},
+        {'MIGRATE_SA': 'dryscope-migrate-live@dryscope.iam.gserviceaccount.com'},
+        {'MIGRATE_SA': 'adr-runtime@alert-disaster-field-2026.iam.gserviceaccount.com'},
+    ],
+)
+def test_gate_fails_on_variables_pointing_anywhere_but_test(release, shell, wrong):
+    result = shell.run(step(release['jobs']['gate'], 'vars')['run'], {**GOOD_VARS, **wrong})
+    assert result.returncode != 0
+    assert shell.outputs().get('ready') != 'true'
+
+
+@pytest.mark.parametrize('visible', [True, False])
+def test_build_skips_until_the_deploy_account_sees_the_test_service(release, shell, visible):
+    shell.fake('gcloud', 'exit 0' if visible else 'exit 1')
+    result = shell.run(step(release['jobs']['build'], 'service')['run'], release['env'])
+    assert result.returncode == 0, result.stderr
+    assert shell.outputs() == {'ready': 'true' if visible else 'false'}
+    (describe,) = shell.calls('gcloud')
+    assert describe[:4] == ['run', 'services', 'describe', 'dryscope-api-test']
+    assert {'--region=us-central1', '--project=dryscope'} <= set(describe)
+
+
 def test_targets_only_the_test_environment_and_never_the_legacy_project(release):
-    # Everything the workflow executes or passes on: commands, step inputs and environments.
-    executed = [commands(s) for s in all_steps(release)]
-    executed += [str(v) for s in all_steps(release) for v in s.get('with', {}).values()]
-    executed += [str(v) for s in all_steps(release) for v in s.get('env', {}).values()]
-    executed += [str(v) for job in release['jobs'].values() for v in job.get('env', {}).values()]
-    executed += [str(v) for v in release['env'].values()]
-    for text in executed:
+    # Every value the workflow passes on: step inputs and environments.
+    given = [str(v) for s in all_steps(release) for v in s.get('with', {}).values()]
+    given += [str(v) for s in all_steps(release) for v in s.get('env', {}).values()]
+    given += [str(v) for job in release['jobs'].values() for v in job.get('env', {}).values()]
+    given += [str(v) for v in release['env'].values()]
+    for text in given:
         for forbidden in ('dryscope-live', '-live@', 'alert-disaster', 'us-west2', 'firebase'):
             assert forbidden not in text, (forbidden, text[:80])
+    # Every gcloud call reaches the test service through the workflow's own settings.
+    for args in gcloud_calls(release):
+        for flag, value in (('--project', '$PROJECT'), ('--region', '$REGION')):
+            values = [arg.split('=', 1)[1] for arg in args if arg.split('=', 1)[0] == flag]
+            assert values in ([], [value]), args
+            if args[0] == 'run':
+                assert values == [value], args
+        if args[0] == 'run':
+            assert [arg for arg in args if not arg.startswith('-')][-1] == '$SERVICE', args
     env = release['env']
+    assert env['PROJECT'] == 'dryscope'
+    assert env['REGION'] == 'us-central1'
     assert env['SERVICE'] == 'dryscope-api-test'
     assert env['IMAGE'].startswith('us-central1-docker.pkg.dev/dryscope/dryscope-test/')
     assert env['SQL_INSTANCE'] == 'dryscope:us-central1:dryscope-test-pg'
@@ -193,15 +325,37 @@ def test_nothing_is_deleted_and_only_the_image_changes(release):
 def test_migrations_run_as_the_migrator_before_the_revision_is_staged(release):
     jobs = release['jobs']
     assert set(jobs['deploy']['needs']) == {'build', 'migrate'}
-    proxy = commands(step(jobs['migrate'], 'proxy'))
-    assert proxy.index('sha256sum --check --strict') < proxy.index(
-        './cloud-sql-proxy --auto-iam-authn'
-    )
     migrations = step(jobs['migrate'], 'migrations')
-    assert 'npm run db:migrate' in commands(migrations)
     url = migrations['env']['DATABASE_URL']
     assert url == 'postgres://dryscope-migrate-test%40dryscope.iam@127.0.0.1:5432/dryscope'
     assert re.fullmatch(r'[0-9a-f]{64}', jobs['migrate']['env']['PROXY_SHA256'])
+
+
+def test_a_proxy_download_that_fails_its_checksum_never_runs(release, shell):
+    job = release['jobs']['migrate']
+    ran = shell.tmp / 'proxy-ran'
+    shell.fake(
+        'curl',
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+        f'printf \'#!/bin/sh\\ntouch {ran}\\n\' > "$out"',
+    )
+    result = shell.run(step(job, 'proxy')['run'], {**release['env'], **job['env']})
+    assert result.returncode != 0
+    assert not ran.exists()
+    (download,) = shell.calls('curl')
+    assert download[-1] == (
+        'https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/'
+        f'{job["env"]["PROXY_VERSION"]}/cloud-sql-proxy.linux.amd64'
+    )
+
+
+@pytest.mark.parametrize('passes', [True, False])
+def test_the_migration_step_runs_the_ledger_and_fails_with_it(release, shell, passes):
+    migrations = step(release['jobs']['migrate'], 'migrations')
+    shell.fake('npm', 'exit 0' if passes else 'exit 1')
+    result = shell.run(migrations['run'], migrations['env'])
+    assert (result.returncode == 0) is passes
+    assert shell.calls('npm') == [['run', 'db:migrate']]
 
 
 def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
@@ -229,7 +383,6 @@ def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
     for outcome in ('success', 'failure', 'cancelled'):
         assert f"steps.promote.outcome == '{outcome}'" in condition
     assert deploy[rollback]['env'] == {'PREVIOUS': '${{ steps.before.outputs.previous }}'}
-    assert '--to-revisions="$PREVIOUS"' in commands(deploy[rollback])
     # The smoke script needs web/package.json ("type": "module") beside it.
     checkout = deploy[0]
     assert (
@@ -238,18 +391,68 @@ def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
     )
 
 
-def test_ci_builds_and_smoke_checks_the_image_on_pull_requests():
+def test_rollback_restores_the_remembered_traffic_split(release, shell):
+    rollback = step(release['jobs']['deploy'], 'Roll back traffic')
+    shell.fake('gcloud')
+    previous = 'dryscope-api-test-00007-abc=90,dryscope-api-test-00006-xyz=10'
+    result = shell.run(rollback['run'], {**release['env'], 'PREVIOUS': previous})
+    assert result.returncode == 0, result.stderr
+    (move,) = shell.calls('gcloud')
+    assert move[:4] == ['run', 'services', 'update-traffic', 'dryscope-api-test']
+    assert set(move[4:]) == {
+        f'--to-revisions={previous}',
+        '--region=us-central1',
+        '--project=dryscope',
+        '--quiet',
+    }
+
+
+DOCKER = """case "$1 $2 $4" in
+  'image inspect {{.Config.User}}') echo "$FAKE_USER" ;;
+esac"""
+
+
+def image_smoke_step():
     web = load(WEB)
     assert 'live-relay-placeholder/**' in web[True]['pull_request']['paths']
-    image = '\n'.join(commands(s) for s in steps(web['jobs']['image']))
-    assert (
-        'node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --env test'
-        in image
-    )
-    assert (
-        'test "$(docker image inspect --format \'{{.Config.User}}\' dryscope-web:ci)" = node'
-        in image
-    )
+    return step(web['jobs']['image'], 'Run as on Cloud Run and smoke-check')
+
+
+def test_ci_smoke_checks_the_image_as_test_on_pull_requests(shell):
+    shell.fake('docker', DOCKER)
+    shell.fake('node')
+    result = shell.run(image_smoke_step()['run'], {'GITHUB_SHA': SHA, 'FAKE_USER': 'node'})
+    assert result.returncode == 0, result.stderr
+    (smoke,) = shell.calls('node')
+    assert smoke == [
+        'scripts/smoke-release.ts',
+        '--url',
+        'http://127.0.0.1:8080',
+        '--commit',
+        SHA,
+        '--env',
+        'test',
+    ]
+    (started,) = [args for args in shell.calls('docker') if args[0] == 'run']
+    assert started[-1] == 'dryscope-web:ci'
+    assert '127.0.0.1:8080:8080' in started and 'APP_ENV=test' in started
+
+
+def test_ci_refuses_an_image_that_runs_as_root(shell):
+    shell.fake('docker', DOCKER)
+    shell.fake('node')
+    result = shell.run(image_smoke_step()['run'], {'GITHUB_SHA': SHA, 'FAKE_USER': 'root'})
+    assert result.returncode != 0
+    assert shell.calls('node') == []
+    assert [args for args in shell.calls('docker') if args[0] == 'run'] == []
+
+
+def test_ci_fails_and_shows_the_logs_when_the_smoke_check_fails(shell):
+    shell.fake('docker', DOCKER)
+    shell.fake('node', 'exit 1')
+    result = shell.run(image_smoke_step()['run'], {'GITHUB_SHA': SHA, 'FAKE_USER': 'node'})
+    assert result.returncode != 0
+    assert ['logs', 'web'] in shell.calls('docker')
 
 
 @pytest.mark.parametrize('path', ['web/Dockerfile', 'live-relay-placeholder/Dockerfile'])
@@ -265,16 +468,42 @@ def test_images_are_pinned_and_run_unprivileged(path):
     assert users == ['node']
 
 
+def build_runs(shell, commit):
+    """Run the build stage's RUN commands in order with sh, as docker build does, until one fails."""
+    shell.fake('npm')
+    build = stages(ROOT / 'web' / 'Dockerfile')['build']
+    args = set()
+    for op, arg in build:
+        if op == 'ARG':
+            args.add(arg.split('=', 1)[0])
+        if op == 'RUN':
+            env = {'COMMIT_SHA': commit} if 'COMMIT_SHA' in args else {}
+            if shell.run(arg, env, interpreter=('sh',)).returncode != 0:
+                return False
+    return True
+
+
+def test_web_image_builds_only_with_a_full_commit(shell):
+    assert build_runs(shell, SHA)
+    assert ['run', 'build'] in shell.calls('npm')
+
+
+@pytest.mark.parametrize('commit', ['', 'main', SHA[:7], SHA.upper(), SHA + 'a'])
+def test_web_image_refuses_to_build_without_a_full_commit(shell, commit):
+    assert not build_runs(shell, commit)
+    assert ['run', 'build'] not in shell.calls('npm')
+
+
 def test_web_image_carries_its_commit_and_no_env_files():
-    lines = instructions(ROOT / 'web' / 'Dockerfile')
-    build_check = [line for line in lines if line.startswith('RUN ') and 'COMMIT_SHA' in line]
-    assert build_check == [
-        'RUN echo "$COMMIT_SHA" | grep -Eqx \'[0-9a-f]{40}\' '
-        "|| { echo 'Pass --build-arg COMMIT_SHA=<40-character commit>' >&2; exit 1; }"
-    ]
-    run_env = [line for line in lines if line.startswith('ENV ') and 'APP_COMMIT' in line]
-    assert len(run_env) == 1 and 'APP_COMMIT=$COMMIT_SHA' in run_env[0].split()
-    assert lines[-1] == 'CMD ["node", "server.js"]'
+    run = stages(ROOT / 'web' / 'Dockerfile')['run']
+    assert ('ARG', 'COMMIT_SHA') in run
+    env = {}
+    for op, arg in run:
+        if op == 'ENV':
+            env.update(pair.split('=', 1) for pair in shlex.split(arg))
+    assert env['APP_COMMIT'] == '$COMMIT_SHA'
+    assert run.index(('ARG', 'COMMIT_SHA')) < [op for op, _ in run].index('ENV')
+    assert run[-1] == ('CMD', '["node", "server.js"]')
     ignored = (ROOT / 'web' / '.dockerignore').read_text().split()
     assert {'.env', '.env.*', 'node_modules', '.next'} <= set(ignored)
 
