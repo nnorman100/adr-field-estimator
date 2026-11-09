@@ -43,6 +43,9 @@ Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 - Private collections: `_companies`, `_memberships`, `_platform_admins`, `_invitations`, `_invite_keys`, `_admin_events` (also the support audit log), `_company_retention`, `_retention_state`, `_company_limits`, `_workspace_jobs`, `_workspace_authorizations`, plus others listed in `docs/company-workspaces.md`.
 - Drafts autosave to a per-user IndexedDB queue and sync when online; conflicts return 409 and keep local work.
 
+### S2 app skeleton (present, not deployed)
+`web/` holds the new TypeScript app beside the current one: Next.js (App Router, TypeScript strict), Tailwind v4 (Safari 16.4+, the iOS baseline) with shadcn/ui, Zod at the sample `POST /api/echo` route, `GET /api/health`, a typed config module (`web/src/lib/config.ts`) checked once at server start by `web/src/instrumentation.ts`, so the server refuses to start with missing or invalid environment, Vitest unit tests and a Playwright smoke test in Chromium and WebKit. It has its own `package.json`, ESLint config (`max-lines` 1,000) and CI workflow (`.github/workflows/web.yml`, time-limited jobs). It has no product screens, auth or database, is not built into the Python service, and changes no hosting or deploy. The Python backend and `public/` app are untouched. Run commands are in `README.md`.
+
 ## Environments
 There is **one** production project and no separate dev project documented. Releases are staged on a tagged Cloud Run revision at 0% traffic, checked, then promoted, then Hosting is deployed. See `docs/RUNBOOK.md`. Test resources (databases, identities and release targets) are to be isolated inside `alert-disaster-field-2026`; D-006's separate test project is superseded (`docs/DECISIONS.md`).
 
@@ -54,8 +57,8 @@ database names are proposals.
 
 | Area | Today | Destination | Status | Closes in |
 |---|---|---|---|---|
-| Frontend | static JavaScript in `public/`, no build | TypeScript Next.js with React, Tailwind and shadcn/ui, on Cloud Run (`dryscope-api`) | Gap | S2 shell, S5 workflows, S6 offline |
-| Business backend | Python on Cloud Run | Next.js TypeScript server routes with Zod at every boundary | Gap | S2 skeleton, S5 |
+| Frontend | static JavaScript in `public/`, no build | TypeScript Next.js with React, Tailwind and shadcn/ui, on Cloud Run (`dryscope-api`) | Gap (S2 skeleton present in `web/`, no screens yet) | S2 shell, S5 workflows, S6 offline |
+| Business backend | Python on Cloud Run | Next.js TypeScript server routes with Zod at every boundary | Gap (S2 skeleton present: health and a Zod sample route in `web/`) | S2 skeleton, S5 |
 | Live relay | Python WebSocket route in the main service | separate Node Cloud Run relay (`dryscope-live`) using the Google Gen AI TypeScript SDK | Gap | S7 |
 | Region | service, `(default)` Firestore and evidence in `us-west2`; Live in `us-central1` | active app and data in `us-central1`; `(default)` stays in `us-west2` as the legacy source | Gap | S2 provisioning, S8 cutover |
 | Official data | Firestore `(default)` | Cloud SQL Postgres with row-level security; drafts in a named central Firestore field database; submission is one-way Firestore to Postgres | Gap | S3 schema, S5 submit and sign, S8 cutover |
