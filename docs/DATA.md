@@ -165,11 +165,15 @@ before `0002` is kept and named "Unnamed company". New tables: `actors` (a signe
 by `(auth_tenant_id, uid)`, never matched by email alone; an actor of a company carries that
 company's `auth_tenant_id`), `memberships` (owner, estimator or office; one active owner per company
 and one active membership per actor), `invitations` (pending, accepted or cancelled; expiry is
-`expires_at`), `platform_admins`, `audit_events` (ids and counts only in `details`),
-`company_feature_flags` (a missing row means off) and `access_projection_outbox` (actors whose
-Firestore access record must follow a committed membership change). Rows that refer to another
-company row carry `company_id` in a composite key, so a membership, accepted invitation or outbox
-row can never point at an actor or invitation of another company. `actors.email`,
+`expires_at`), `auth_tenants` (every sign-in tenant, each either a company's tenant or an
+operator-only tenant, never both), `platform_admins` (operators are actors with no company, signed
+in through an operator tenant, per owner decision D6), `audit_events` (ids and counts only in
+`details`; `actor_id` is a member of the event's company and `operator_actor_id` a platform
+operator), `company_feature_flags` (a missing row means off; only an operator changes one, per D12)
+and `access_projection_outbox` (actors whose Firestore access record must follow a committed
+membership change). Rows that refer to another company row carry `company_id` in a composite key,
+so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
+another company. `actors.email`,
 `actors.display_name` and `invitations.email` are personal data. Emails are stored lowercase and
 tenant ids, uids, emails and display names without surrounding spaces, so one person is one stored
 key. Nothing writes these tables yet, and they have no row-level security yet; the runtime role and

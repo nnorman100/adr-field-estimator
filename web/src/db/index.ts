@@ -4,6 +4,7 @@ export {
   accessProjectionOutbox,
   actors,
   auditEvents,
+  authTenants,
   companies,
   companyFeatureFlags,
   invitations,

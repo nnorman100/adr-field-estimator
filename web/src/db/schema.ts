@@ -27,12 +27,23 @@ export type Role = (typeof roles)[number];
 export const companyStatuses = ['active', 'suspended', 'archived'] as const;
 export const membershipStatuses = ['active', 'disabled'] as const;
 export const invitationStatuses = ['pending', 'accepted', 'cancelled'] as const;
+export const tenantKinds = ['company', 'operator'] as const;
 
 export const migrationLedger = pgTable('migration_ledger', {
   id: text('id').primaryKey(),
   checksum: text('checksum').notNull(),
   appliedAt: timestamp('applied_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
+
+export const authTenants = pgTable(
+  'auth_tenants',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind', { enum: tenantKinds }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique('auth_tenants_id_kind_key').on(t.id, t.kind)],
+);
 
 export const companies = pgTable(
   'companies',
@@ -43,9 +54,17 @@ export const companies = pgTable(
     signInSlug: text('sign_in_slug').unique('companies_sign_in_slug_key'),
     status: text('status', { enum: companyStatuses }).notNull().default('active'),
     authTenantId: text('auth_tenant_id').unique('companies_auth_tenant_id_key'),
+    authTenantKind: text('auth_tenant_kind', { enum: tenantKinds }).generatedAlwaysAs(sql`'company'`),
     updatedAt: updatedAt(),
   },
-  (t) => [unique('companies_id_auth_tenant_id_key').on(t.id, t.authTenantId)],
+  (t) => [
+    unique('companies_id_auth_tenant_id_key').on(t.id, t.authTenantId),
+    foreignKey({
+      name: 'companies_auth_tenant_fkey',
+      columns: [t.authTenantId, t.authTenantKind],
+      foreignColumns: [authTenants.id, authTenants.kind],
+    }),
+  ],
 );
 
 export const actors = pgTable(
@@ -59,14 +78,24 @@ export const actors = pgTable(
     displayName: text('display_name'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // 'operator' when the actor has no company, so it must sign in through an operator tenant.
+    authTenantKind: text('auth_tenant_kind', { enum: tenantKinds }).generatedAlwaysAs(
+      sql`CASE WHEN company_id IS NULL THEN 'operator' ELSE 'company' END`,
+    ),
   },
   (t) => [
     unique('actors_tenant_uid_key').on(t.authTenantId, t.uid),
     unique('actors_company_id_id_key').on(t.companyId, t.id),
+    unique('actors_id_auth_tenant_kind_key').on(t.id, t.authTenantKind),
     foreignKey({
       name: 'actors_company_tenant_fkey',
       columns: [t.companyId, t.authTenantId],
       foreignColumns: [companies.id, companies.authTenantId],
+    }),
+    foreignKey({
+      name: 'actors_tenant_kind_fkey',
+      columns: [t.authTenantId, t.authTenantKind],
+      foreignColumns: [authTenants.id, authTenants.kind],
     }),
   ],
 );
@@ -82,7 +111,8 @@ export const invitations = pgTable(
     role: text('role', { enum: roles }).notNull(),
     status: text('status', { enum: invitationStatuses }).notNull().default('pending'),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
-    createdByActorId: uuid('created_by_actor_id').references((): AnyPgColumn => actors.id),
+    createdByActorId: uuid('created_by_actor_id'),
+    createdByOperatorId: uuid('created_by_operator_id').references((): AnyPgColumn => platformAdmins.actorId),
     acceptedByActorId: uuid('accepted_by_actor_id'),
     acceptedAt: optionalTime('accepted_at'),
     cancelledAt: optionalTime('cancelled_at'),
@@ -92,6 +122,11 @@ export const invitations = pgTable(
   },
   (t) => [
     unique('invitations_company_id_id_key').on(t.companyId, t.id),
+    foreignKey({
+      name: 'invitations_created_by_fkey',
+      columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
     foreignKey({
       name: 'invitations_accepted_by_fkey',
       columns: [t.companyId, t.acceptedByActorId],
@@ -139,24 +174,47 @@ export const memberships = pgTable(
   ],
 );
 
-export const platformAdmins = pgTable('platform_admins', {
-  actorId: uuid('actor_id')
-    .primaryKey()
-    .references(() => actors.id),
-  status: text('status', { enum: membershipStatuses }).notNull().default('active'),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+// Platform operators: actors with no company, in an operator tenant.
+export const platformAdmins = pgTable(
+  'platform_admins',
+  {
+    actorId: uuid('actor_id').primaryKey(),
+    actorKind: text('actor_kind', { enum: tenantKinds }).generatedAlwaysAs(sql`'operator'`),
+    status: text('status', { enum: membershipStatuses }).notNull().default('active'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'platform_admins_actor_fkey',
+      columns: [t.actorId, t.actorKind],
+      foreignColumns: [actors.id, actors.authTenantKind],
+    }),
+  ],
+);
 
-export const auditEvents = pgTable('audit_events', {
-  id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
-  companyId: uuid('company_id').references(() => companies.id),
-  actorId: uuid('actor_id').references(() => actors.id),
-  action: text('action').notNull(),
-  target: text('target'),
-  details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
-  createdAt: createdAt(),
-});
+// actorId is a member of companyId; operatorActorId is a platform operator; both empty for system
+// events.
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid('company_id').references(() => companies.id),
+    actorId: uuid('actor_id'),
+    operatorActorId: uuid('operator_actor_id').references(() => platformAdmins.actorId),
+    action: text('action').notNull(),
+    target: text('target'),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'audit_events_actor_fkey',
+      columns: [t.companyId, t.actorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
 
 export const companyFeatureFlags = pgTable(
   'company_feature_flags',
@@ -166,7 +224,7 @@ export const companyFeatureFlags = pgTable(
       .references(() => companies.id),
     flag: text('flag').notNull(),
     enabled: boolean('enabled').notNull().default(false),
-    updatedByActorId: uuid('updated_by_actor_id').references(() => actors.id),
+    updatedByOperatorId: uuid('updated_by_operator_id').references(() => platformAdmins.actorId),
     updatedAt: updatedAt(),
   },
   (t) => [primaryKey({ columns: [t.companyId, t.flag] })],
@@ -197,6 +255,7 @@ export const accessProjectionOutbox = pgTable(
 
 export const schema = {
   migrationLedger,
+  authTenants,
   companies,
   actors,
   invitations,

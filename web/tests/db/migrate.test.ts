@@ -20,6 +20,7 @@ const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
   'audit_events',
+  'auth_tenants',
   'companies',
   'company_feature_flags',
   'invitations',
@@ -89,6 +90,7 @@ describe('numbered migration ledger', () => {
       { column_name: 'sign_in_slug', data_type: 'text' },
       { column_name: 'status', data_type: 'text' },
       { column_name: 'auth_tenant_id', data_type: 'text' },
+      { column_name: 'auth_tenant_kind', data_type: 'text' },
       { column_name: 'updated_at', data_type: 'timestamp with time zone' },
     ]);
 

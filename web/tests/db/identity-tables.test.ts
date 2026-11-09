@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
 import { applyMigrations, migrationsDirectory } from '@/db/migrate';
-import { actors, companies, memberships, schema } from '@/db/schema';
+import { actors, authTenants, companies, memberships, schema } from '@/db/schema';
 import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
 
 const UNIQUE_VIOLATION = '23505';
@@ -30,11 +30,14 @@ beforeEach(async () => {
   sql = postgres(disposable.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
 });
 
+// Every test database knows one operator-only tenant, named 'operators'.
 async function migrateAll(): Promise<void> {
   await applyMigrations(disposable.databaseUrl, migrationsDirectory);
+  await sql`INSERT INTO auth_tenants (id, kind) VALUES ('operators', 'operator')`;
 }
 
 async function company(tenant: string): Promise<string> {
+  await sql`INSERT INTO auth_tenants (id, kind) VALUES (${tenant}, 'company')`;
   const [row] = await sql<{ id: string }[]>`
     INSERT INTO companies (name, sign_in_slug, auth_tenant_id)
     VALUES (${`Company ${tenant}`}, ${tenant}, ${tenant})
@@ -189,6 +192,7 @@ describe('identity tables (migration 0002)', () => {
     await expect(
       sql`UPDATE actors SET auth_tenant_id = 'tenant-b' WHERE id = ${person}`,
     ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'actors_company_tenant_fkey'));
+    await sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-c', 'company')`;
     await expect(
       sql`UPDATE companies SET auth_tenant_id = 'tenant-c' WHERE id = ${a}`,
     ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'actors_company_tenant_fkey'));
@@ -268,6 +272,92 @@ describe('identity tables (migration 0002)', () => {
     ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'access_projection_outbox_actor_fkey'));
   });
 
+  it('keeps platform operators to company-less actors in an operator tenant', async () => {
+    await migrateAll();
+    const a = await company('tenant-a');
+    const member = await actor(a, 'tenant-a', 'member-a');
+    const operator = await actor(null, 'operators', 'operator-1');
+
+    await sql`INSERT INTO platform_admins (actor_id) VALUES (${operator})`;
+    await expect(sql`INSERT INTO platform_admins (actor_id) VALUES (${member})`).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'platform_admins_actor_fkey'),
+    );
+    // A company-less actor cannot sign in through a company's tenant, nor a member through the
+    // operator tenant, and one tenant id cannot be both kinds.
+    await expect(actor(null, 'tenant-a', 'operator-2')).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'actors_tenant_kind_fkey'),
+    );
+    await expect(actor(null, 'unregistered', 'operator-3')).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'actors_tenant_kind_fkey'),
+    );
+    await expect(
+      sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-a', 'operator')`,
+    ).rejects.toMatchObject(refusedBy(UNIQUE_VIOLATION, 'auth_tenants_pkey'));
+    await expect(
+      sql`INSERT INTO companies (name, auth_tenant_id) VALUES ('Operators Inc', 'operators')`,
+    ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'companies_auth_tenant_fkey'));
+    // An operator cannot later be moved into a company.
+    await expect(
+      sql`UPDATE actors SET company_id = ${a}, auth_tenant_id = 'tenant-a' WHERE id = ${operator}`,
+    ).rejects.toMatchObject({ code: FOREIGN_KEY_VIOLATION });
+  });
+
+  it("keeps a company's audit events and invitations to its own members or an operator", async () => {
+    await migrateAll();
+    const a = await company('tenant-a');
+    const b = await company('tenant-b');
+    const memberOfA = await actor(a, 'tenant-a', 'member-a');
+    const memberOfB = await actor(b, 'tenant-b', 'member-b');
+    const operator = await actor(null, 'operators', 'operator-1');
+    await sql`INSERT INTO platform_admins (actor_id) VALUES (${operator})`;
+    const CHECK_VIOLATION = '23514';
+
+    const audit = (companyId: string | null, actorId: string | null, operatorId: string | null) => sql`
+      INSERT INTO audit_events (company_id, actor_id, operator_actor_id, action)
+      VALUES (${companyId}, ${actorId}, ${operatorId}, 'member_access')
+    `;
+    await audit(a, memberOfA, null);
+    await audit(a, null, operator);
+    await audit(null, null, operator);
+    await audit(a, null, null);
+    await expect(audit(a, memberOfB, null)).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'audit_events_actor_fkey'),
+    );
+    await expect(audit(a, operator, null)).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'audit_events_actor_fkey'),
+    );
+    await expect(audit(null, memberOfB, null)).rejects.toMatchObject(
+      refusedBy(CHECK_VIOLATION, 'audit_events_member_has_company_check'),
+    );
+    await expect(audit(a, null, memberOfA)).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'audit_events_operator_actor_id_fkey'),
+    );
+    await expect(audit(a, memberOfA, operator)).rejects.toMatchObject(
+      refusedBy(CHECK_VIOLATION, 'audit_events_one_actor_check'),
+    );
+
+    const invite = (creator: string | null, operatorId: string | null) => sql`
+      INSERT INTO invitations (company_id, email, role, expires_at, created_by_actor_id, created_by_operator_id)
+      VALUES (${a}, ${`${Math.random()}@example.test`}, 'estimator', now() + interval '7 days', ${creator}, ${operatorId})
+    `;
+    await invite(memberOfA, null);
+    await invite(null, operator);
+    await expect(invite(memberOfB, null)).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'invitations_created_by_fkey'),
+    );
+    await expect(invite(null, memberOfA)).rejects.toMatchObject(
+      refusedBy(FOREIGN_KEY_VIOLATION, 'invitations_created_by_operator_id_fkey'),
+    );
+
+    // Only a platform operator changes a company's feature flags.
+    await sql`INSERT INTO company_feature_flags (company_id, flag, enabled, updated_by_operator_id)
+              VALUES (${a}, 'drying_watch', true, ${operator})`;
+    await expect(
+      sql`INSERT INTO company_feature_flags (company_id, flag, enabled, updated_by_operator_id)
+          VALUES (${a}, 'readiness', true, ${memberOfA})`,
+    ).rejects.toMatchObject(refusedBy(FOREIGN_KEY_VIOLATION, 'company_feature_flags_updated_by_operator_id_fkey'));
+  });
+
   it('matches the typed schema to the tables the migrations create', async () => {
     await migrateAll();
     const rows = await sql<{ table_name: string; column_name: string; is_nullable: 'YES' | 'NO' }[]>`
@@ -288,6 +378,7 @@ describe('identity tables (migration 0002)', () => {
     // The typed view writes and reads the new tables.
     const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: disposable.databaseUrl });
     try {
+      await handle.db.insert(authTenants).values({ id: 'typed', kind: 'company' });
       const [created] = await handle.db.insert(companies).values({ name: 'Typed', authTenantId: 'typed' }).returning();
       const [person] = await handle.db
         .insert(actors)
@@ -298,6 +389,8 @@ describe('identity tables (migration 0002)', () => {
         .values({ companyId: created!.id, actorId: person!.id, role: 'owner' })
         .returning();
       expect(created?.status).toBe('active');
+      expect(created?.authTenantKind).toBe('company');
+      expect(person?.authTenantKind).toBe('company');
       expect(member?.status).toBe('active');
     } finally {
       await handle.close();
