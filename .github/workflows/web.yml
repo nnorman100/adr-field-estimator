@@ -28,32 +28,22 @@ jobs:
     timeout-minutes: 10
     env:
       APP_ENV: test
-      DATABASE_URL: postgres://dryscope:dryscope@127.0.0.1:5432/dryscope
-      DRYSCOPE_DISPOSABLE_DATABASE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # PostgreSQL 16 runs inside the job: the self-hosted runner's container has no Docker for a
-      # service container. GitHub's Ubuntu image already has PostgreSQL 16 installed (not running).
-      - name: Start a throwaway PostgreSQL 16
-        working-directory: .
+      # npm run test:db starts its own throwaway PostgreSQL 16: the postgres:16 image when a Docker
+      # daemon answers (GitHub's Ubuntu image), otherwise initdb/pg_ctl from
+      # /usr/lib/postgresql/16/bin. The self-hosted runner's container has neither, so only there
+      # this installs the Ubuntu postgresql-16 package, without creating or starting a cluster.
+      - name: Install PostgreSQL 16 when there is no Docker daemon
         run: |
-          pgbin=/usr/lib/postgresql/16/bin
-          if [ ! -x "$pgbin/initdb" ]; then
-            # Keep the package from creating and starting its own cluster on port 5432.
+          if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
+            [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
             sudo mkdir -p /etc/postgresql-common
             echo 'create_main_cluster = false' | sudo tee /etc/postgresql-common/createcluster.conf > /dev/null
             sudo apt-get update -q
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
               -o Dpkg::Options::=--force-confold postgresql-16
           fi
-          pgdata="$RUNNER_TEMP/postgres"
-          printf '%s\n' dryscope > "$RUNNER_TEMP/postgres-password"
-          "$pgbin/initdb" -D "$pgdata" -U dryscope --pwfile="$RUNNER_TEMP/postgres-password" \
-            --auth=scram-sha-256 --encoding=UTF8 --no-locale --no-sync --no-instructions
-          "$pgbin/pg_ctl" -D "$pgdata" -l "$RUNNER_TEMP/postgres.log" -w -t 30 start \
-            -o "-c listen_addresses=127.0.0.1 -c port=5432 -c unix_socket_directories=$pgdata"
-          PGPASSWORD=dryscope "$pgbin/createdb" -h 127.0.0.1 -p 5432 -U dryscope dryscope
-          "$pgbin/pg_isready" -h 127.0.0.1 -p 5432 -U dryscope -d dryscope
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
