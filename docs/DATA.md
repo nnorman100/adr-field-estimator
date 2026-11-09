@@ -166,8 +166,8 @@ Migrations are additive. Change the schema by add, then switch, then remove:
 3. Remove the old shape in a later migration only after a fresh backup of that database and an
    explicit owner approval.
 
-The migrator refuses `DROP`, `TRUNCATE` and `DELETE FROM`, so a removal is a deliberate change to
-that guard plus the backup and the approval. Do not roll the database backward to make an older
-image start. Fix forward on the same data. The operator steps are in
+The migrator refuses `DROP`, `TRUNCATE` and `DELETE FROM` anywhere outside a comment, strings
+included, so a removal is a deliberate change to that guard plus the backup and the approval. Do
+not roll the database backward to make an older image start. Fix forward on the same data. The operator steps are in
 [RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
 migrator name the migration and omit the database URL.

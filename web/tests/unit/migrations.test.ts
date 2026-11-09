@@ -45,6 +45,25 @@ describe('migration files', () => {
     expect(files.map((file) => file.id)).toEqual(['0001_note']);
   });
 
+  it('refuses a statement that follows a comment marker inside a string', () => {
+    expect(findDestructiveSql("COMMENT ON TABLE companies IS '--'; DROP TABLE companies;")).toBe('DROP');
+    expect(findDestructiveSql("SELECT '/*'; DROP TABLE companies; SELECT '*/';")).toBe('DROP');
+    expect(findDestructiveSql("SELECT E'\\' -- '; DROP TABLE companies;")).toBe('DROP');
+    expect(findDestructiveSql('SELECT $q$ -- $q$; DROP TABLE companies;')).toBe('DROP');
+    expect(findDestructiveSql('CREATE TABLE "a--b" (id integer); DROP TABLE companies;')).toBe('DROP');
+    expect(findDestructiveSql("SELECT 1 AS x$y$; SELECT '$y$ -- '; DROP TABLE companies;")).toBe('DROP');
+  });
+
+  it('refuses a destructive statement inside a block that runs it', () => {
+    expect(findDestructiveSql('DO $$ BEGIN DROP TABLE companies; END $$;')).toBe('DROP');
+    expect(findDestructiveSql("DO 'BEGIN EXECUTE ''TRUNCATE companies''; END';")).toBe('TRUNCATE');
+  });
+
+  it('reads nested block comments the way Postgres does', () => {
+    expect(findDestructiveSql('/* outer /* inner */ DROP still a comment */ SELECT 1;')).toBeNull();
+    expect(findDestructiveSql('/* outer /* inner */ */ DROP TABLE companies;')).toBe('DROP');
+  });
+
   it('refuses a destructive statement', async () => {
     const dir = await writeMigrations({ '0001_bad.sql': 'DROP TABLE companies;\n' });
     await expect(readMigrations(dir)).rejects.toThrow(/DROP/);

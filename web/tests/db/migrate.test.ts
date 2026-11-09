@@ -173,6 +173,25 @@ describe('numbered migration ledger', () => {
     expect(count).toBe('1');
   });
 
+  it('keeps a second applier waiting when a migration drops its session locks', async () => {
+    const foundation = (await readMigrations(migrationsDirectory))[0]?.sql ?? '';
+    const dir = await tempMigrations({
+      '0001_foundation.sql': foundation,
+      '0002_slow.sql':
+        'SELECT pg_advisory_unlock_all();\nSELECT pg_sleep(1);\nCREATE TABLE second_step (id integer);\n',
+    });
+    try {
+      const [first, second] = await Promise.all([
+        applyMigrations(disposable.databaseUrl, dir),
+        applyMigrations(disposable.databaseUrl, dir),
+      ]);
+      expect([...first.applied, ...second.applied].sort()).toEqual(['0001_foundation', '0002_slow']);
+      expect(await tableNames()).toEqual(['companies', 'migration_ledger', 'second_step']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('creates a separate throwaway database from an external URL', async () => {
     const second = await startDisposablePostgres({
       APP_ENV: 'test',
@@ -188,6 +207,25 @@ describe('numbered migration ledger', () => {
     } finally {
       await sql.end({ timeout: 5 });
       await second.stop();
+    }
+  });
+
+  it('reads APP_ENV and DATABASE_URL from .env.local in the working directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dryscope-cli-'));
+    try {
+      await writeFile(join(dir, '.env.local'), `APP_ENV=local\nDATABASE_URL=${disposable.databaseUrl}\n`);
+      const env = { ...process.env };
+      delete env.APP_ENV;
+      delete env.DATABASE_URL;
+      const { stdout } = await exec(join(webRoot, 'node_modules/.bin/tsx'), [join(webRoot, 'src/db/cli.ts')], {
+        cwd: dir,
+        timeout: 30_000,
+        env,
+      });
+      expect(stdout).toMatch(/applied 0001_foundation/);
+      expect(await tableNames()).toEqual(['companies', 'migration_ledger']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

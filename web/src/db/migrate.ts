@@ -4,8 +4,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 
-// Session lock so two starters cannot apply the same file. max: 1 keeps the lock, the
-// migration and the unlock on the same connection.
+// Taken inside every migration transaction, so it is held for exactly the work it guards and
+// never outlives or depends on one connection.
 const LOCK_KEY = 814257001;
 const FILE_NAME = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 
@@ -46,9 +46,87 @@ function asMigrationError(error: unknown, databaseUrl: string): MigrationError {
   return new MigrationError(redactDatabaseMessage(message, databaseUrl));
 }
 
-// Comments may discuss the removal rule. The statement scan sees the SQL that would run.
+const IDENTIFIER_START = /[A-Za-z_\u0080-\uffff]/;
+const IDENTIFIER_PART = /[A-Za-z0-9_$\u0080-\uffff]/;
+const DOLLAR_TAG = /^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/;
+
+function endOfQuoted(sql: string, start: number, quote: string, backslash: boolean): number {
+  let i = start + 1;
+  while (i < sql.length) {
+    const ch = sql[i];
+    if (backslash && ch === '\\') {
+      i += 2;
+    } else if (ch === quote) {
+      if (sql[i + 1] !== quote) return i + 1;
+      i += 2;
+    } else {
+      i += 1;
+    }
+  }
+  return sql.length;
+}
+
+function endOfBlockComment(sql: string, start: number): number {
+  let depth = 0;
+  let i = start;
+  while (i < sql.length) {
+    if (sql.startsWith('/*', i)) {
+      depth += 1;
+      i += 2;
+    } else if (sql.startsWith('*/', i)) {
+      depth -= 1;
+      i += 2;
+      if (depth === 0) return i;
+    } else {
+      i += 1;
+    }
+  }
+  return sql.length;
+}
+
+// Comments may discuss the removal rule, so they are blanked the way Postgres reads them. String,
+// identifier and dollar-quoted text stays in the scan, because DO blocks and EXECUTE run it.
 function stripSqlComments(sql: string): string {
-  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+  let out = '';
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i] ?? '';
+    let end: number;
+    if (sql.startsWith('--', i)) {
+      const newline = sql.indexOf('\n', i);
+      i = newline === -1 ? sql.length : newline;
+      out += ' ';
+      continue;
+    }
+    if (sql.startsWith('/*', i)) {
+      i = endOfBlockComment(sql, i);
+      out += ' ';
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      end = endOfQuoted(sql, i, ch, false);
+    } else if (ch === '$') {
+      const tag = DOLLAR_TAG.exec(sql.slice(i))?.[0];
+      if (tag) {
+        const close = sql.indexOf(tag, i + tag.length);
+        end = close === -1 ? sql.length : close + tag.length;
+      } else {
+        end = i + 1;
+        while (end < sql.length && /[0-9]/.test(sql[end] ?? '')) end += 1;
+      }
+    } else if (IDENTIFIER_START.test(ch)) {
+      end = i + 1;
+      while (end < sql.length && IDENTIFIER_PART.test(sql[end] ?? '')) end += 1;
+      if (end === i + 1 && (ch === 'e' || ch === 'E') && sql[end] === "'") {
+        end = endOfQuoted(sql, end, "'", true);
+      }
+    } else {
+      end = i + 1;
+    }
+    out += sql.slice(i, end);
+    i = end;
+  }
+  return out;
 }
 
 export function findDestructiveSql(sql: string): string | null {
@@ -106,7 +184,7 @@ export async function readMigrations(directory: string): Promise<MigrationFile[]
   return files;
 }
 
-async function appliedChecksums(sql: postgres.Sql): Promise<Map<string, string>> {
+async function appliedChecksums(sql: postgres.TransactionSql): Promise<Map<string, string>> {
   const found = await sql<{ name: string | null }[]>`
     SELECT to_regclass('public.migration_ledger') AS name
   `;
@@ -133,34 +211,32 @@ function assertHistory(files: MigrationFile[], applied: Map<string, string>): Mi
   return files.slice(recorded.length);
 }
 
-async function applyLocked(
+async function applyNext(
   sql: postgres.Sql,
   files: MigrationFile[],
   databaseUrl: string,
-): Promise<{ applied: string[] }> {
-  const pending = assertHistory(files, await appliedChecksums(sql));
-  const applied: string[] = [];
-  for (const file of pending) {
+): Promise<string | null> {
+  return sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(${LOCK_KEY}::bigint)`;
+    const [file] = assertHistory(files, await appliedChecksums(tx));
+    if (!file) return null;
     try {
-      await sql.begin(async (tx) => {
-        await tx.unsafe(file.sql);
-        await tx`
-          INSERT INTO migration_ledger (id, checksum)
-          VALUES (${file.id}, ${file.checksum})
-        `;
-      });
+      await tx.unsafe(file.sql);
+      await tx`
+        INSERT INTO migration_ledger (id, checksum)
+        VALUES (${file.id}, ${file.checksum})
+      `;
     } catch (error) {
       const cause = asMigrationError(error, databaseUrl);
       throw new MigrationError(`Migration ${file.filename} failed: ${cause.message}`);
     }
-    applied.push(file.id);
-  }
-  return { applied };
+    return file.id;
+  });
 }
 
-// Applies each missing file in order, in its own transaction, and records the SHA-256 of the
-// file bytes. A second run applies nothing. A gap, a destructive statement or a changed file
-// that was already applied stops the run before anything new is written.
+// Applies each missing file in order, in its own locked transaction that rereads the ledger first,
+// and records the SHA-256 of the file bytes. A second run applies nothing. A gap, a destructive
+// statement or a changed file that was already applied stops the run before anything new is written.
 export async function applyMigrations(
   databaseUrl: string,
   directory: string,
@@ -174,11 +250,11 @@ export async function applyMigrations(
     connection: { application_name: 'dryscope-migrate' },
   });
   try {
-    await sql`SELECT pg_advisory_lock(${LOCK_KEY}::bigint)`;
-    try {
-      return await applyLocked(sql, files, databaseUrl);
-    } finally {
-      await sql`SELECT pg_advisory_unlock(${LOCK_KEY}::bigint)`.catch(() => {});
+    const applied: string[] = [];
+    for (;;) {
+      const id = await applyNext(sql, files, databaseUrl);
+      if (!id) return { applied };
+      applied.push(id);
     }
   } catch (error) {
     throw asMigrationError(error, databaseUrl);

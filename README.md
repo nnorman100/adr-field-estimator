@@ -129,7 +129,7 @@ cp env.example .env.local        # APP_ENV is required; the app refuses to start
 npm run dev                      # http://localhost:3100, health at /api/health
 npm run typecheck ; npm run lint ; npm test
 npm run test:db                  # migrations from an empty throwaway Postgres (Docker or local PostgreSQL 16)
-npm run db:migrate               # apply web/migrations; requires DATABASE_URL
+npm run db:migrate               # apply web/migrations; needs APP_ENV and DATABASE_URL (env or .env.local)
 npx playwright install chromium webkit
 npm run test:e2e                 # smoke test against the dev server
 ```
