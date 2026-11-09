@@ -160,10 +160,14 @@ Firestore.
 
 ## 5. Not built (from VISION.md)
 
-None of these is built. The owner's stance on each, from the 2026-11-09 review, in plain words:
+None of these is built, except the owner-filled pricing template noted below. The owner's stance
+on each, from the 2026-11-09 review, in plain words:
 
 - **Company workbook upload:** never ADR's Excel workbook. Instead, a pricing template that each
-  owner fills in with their own prices. Wanted, not built; it fits the new-company setup in 6.1.
+  owner fills in with their own prices. Arbitrary workbook upload is not built. The fixed
+  template is built but switched off: with `PRICE_BOOKS_ENABLED` on, a company owner downloads a
+  blank CSV or XLSX template from the Prices page, fills it in, imports it and publishes it
+  (`docs/STATUS.md`, price editor row). The remaining new-company setup changes are in 6.1.
 - **AI-suggested prices:** not now.
 - **Crew calendar and reminders:** possibly helpful, later.
 - **Homeowner photo upload through the link:** good in the right context, later. The conditions
