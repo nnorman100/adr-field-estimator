@@ -154,8 +154,9 @@ release scripts listed in `LEGACY_FILES` (`scripts/auto_deploy_helpers.py`). A D
 legacy app is built from changed ...` and deploys nothing; the next merge that does change a listed file
 releases everything merged since. A check-only run still runs every refusal check and notes that a real run
 would skip. The rules and index check above runs first, so a rules or index change still stops for a hand
-release. Add a path to the list if the legacy build or release starts reading it. Each run's job summary is the release record; see
-[RELEASES.md](../RELEASES.md). Stale tags accumulate on old revisions at 0% traffic; Cloud Run
+release. Add a path to the list if the legacy build or release starts reading it.
+
+Each run's job summary is the release record; see [RELEASES.md](../RELEASES.md). Stale tags accumulate on old revisions at 0% traffic; Cloud Run
 allows 1000 tags per service, so clear old ones occasionally with `gcloud run services update-traffic
 --remove-tags`.
 
