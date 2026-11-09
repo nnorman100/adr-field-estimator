@@ -24,9 +24,11 @@ resource "google_service_account" "deploy" {
   depends_on = [google_project_service.apis]
 }
 
-# Connect to this environment's SQL instance and nothing else.
+# Connect to this environment's SQL instance and nothing else. Only the web app
+# and the migrator: the Live relay gets no SQL access until a named table needs a
+# narrower role.
 resource "google_project_iam_member" "sql_client" {
-  for_each = toset(["api", "live", "migrate"])
+  for_each = toset(["api", "migrate"])
 
   project = var.project_id
   role    = "roles/cloudsql.client"
@@ -42,7 +44,7 @@ resource "google_project_iam_member" "sql_client" {
 }
 
 resource "google_project_iam_member" "sql_login" {
-  for_each = toset(["api", "live", "migrate"])
+  for_each = toset(["api", "migrate"])
 
   project = var.project_id
   role    = "roles/cloudsql.instanceUser"
@@ -57,10 +59,11 @@ resource "google_project_iam_member" "sql_login" {
   depends_on = [google_service_account.runtime]
 }
 
-# Read and write this environment's named Firestore database only. The relay
-# keeps Live checkpoints there; the migrator does not touch Firestore.
+# Read and write this environment's named Firestore database only, for the web
+# app. roles/datastore.user includes delete, so the Live relay gets no Firestore
+# access until a named need; the migrator does not touch Firestore.
 resource "google_project_iam_member" "firestore_user" {
-  for_each = toset(["api", "live"])
+  for_each = toset(["api"])
 
   project = var.project_id
   role    = "roles/datastore.user"
@@ -68,7 +71,7 @@ resource "google_project_iam_member" "firestore_user" {
 
   condition {
     title       = "dryscope-${var.environment}-firestore-only"
-    description = "Only the dryscope-field-${var.environment} database."
+    description = "The dryscope-field-${var.environment} database and its documents only."
     expression  = local.fs_condition
   }
 
