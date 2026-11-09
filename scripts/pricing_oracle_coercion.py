@@ -199,6 +199,18 @@ JSON_TEXT = [
     *('18446744073709551617', '123456789012345678901234567890', '100', '100.0', '0.1'),
     *('[1e2, 1E+2, 1e-1, 9007199254740993]', '{"b": 1E2, "a": 9007199254740993}'),
 ]
+JSON_GRAMMAR = [
+    *('01', '-01', '00', '1.', '.5', '-.0', '2.e2', '{"h":2.e1}', '1e', '1e+', '1E-', '-', '+1'),
+    *('0x10', '1x', '1 2', '-0e0', '0e+00', '1.5e-0', '[1e2,  1E2]', '-Infinity', '[NaN]'),
+    *('NaN', 'Infinity', 'nan', 'True', 'nul', 'truex', 'Infinityx', '', ' ', ' 1 ', '\t\n\r1\r\n'),
+    *('\u00a01', '\u20281', '\ufeff1', '\x0b1', '\x0c1', '[1,]', '{"a":1,}', '{a:1}', "{'a':1}"),
+    *('[01]', '[]', '{}', '[ ]', '{ }', '{"a":1,"a":2}', '{"a" : 1 , "b":[ 1 , 2 ] }', '[1 2]'),
+    *('"\\x41"', '"\\u007gKitchen"', '"\\u12ZZ"', '"\\uD800\\uDC0g"', '"\\uD800\\u0041"'),
+    *('"\\uD800"', '"\\uDC00\\uD800"', '"\\uD83D\\uDCA7"', '"\\ud83d\\udca7x"', '"\\u00e9"'),
+    *('"a\nb"', '"a\tb"', '"a\x1fb"', '"a\x7fb"', '"a\u2028b"', '"\u00e9"', '"\\a"', '"\\v"'),
+    *('"\\/"', '"\\\'"', '"\\"', '"abc', '"\\u00"', '"\\U0041"', '"\\b\\f\\n\\r\\t\\"\\\\"'),
+    *('1' * 4300, '1' * 4301, '-' + '1' * 4300, '-' + '1' * 4301, '1' * 4301 + '.0'),
+]
 
 ROOM = {'name': 'Kitchen'}
 EXTRA = {'id': HEX, 'description': 'Detach dishwasher', 'hours': '1.25'}
@@ -385,6 +397,7 @@ TARGETS = [
     ('unicode-statement', 'statement', {'text': ''}, ['text'], TRANSCRIPTS),
     ('canonical-bytes', 'canonical', {'value': None}, ['value'], CANONICAL),
     ('canonical-json-text', 'json_text', {'text': ''}, ['text'], JSON_TEXT),
+    ('json-text-grammar', 'json_text', {'text': ''}, ['text'], JSON_GRAMMAR),
 ]
 
 

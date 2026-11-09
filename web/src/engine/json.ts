@@ -147,9 +147,31 @@ export function parseJson(text: string): JVal {
   const parser = new Parser(text);
   const value = parser.parseValue();
   parser.skip();
-  if (!parser.done()) throw new Error('Trailing JSON');
+  if (!parser.done()) throw new Error('Extra data');
   return value;
 }
+
+const SPACE = new Set([' ', '\t', '\n', '\r']);
+const ESCAPES: Record<string, string> = {
+  '"': '"',
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+};
+const NUMBER = /-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?/y;
+const CONSTANTS: Array<[string, JVal]> = [
+  ['true', true],
+  ['false', false],
+  ['null', null],
+  ['NaN', new JFloat(Number.NaN)],
+  ['Infinity', new JFloat(Number.POSITIVE_INFINITY)],
+  ['-Infinity', new JFloat(Number.NEGATIVE_INFINITY)],
+];
+const MAX_INT_DIGITS = 4300;
 
 class Parser {
   private index = 0;
@@ -164,7 +186,7 @@ class Parser {
   }
 
   skip(): void {
-    while (this.index < this.text.length && /\s/.test(this.text[this.index] ?? '')) this.index += 1;
+    while (SPACE.has(this.text[this.index] ?? '')) this.index += 1;
   }
 
   parseValue(): JVal {
@@ -173,8 +195,12 @@ class Parser {
     if (char === '{') return this.parseObject();
     if (char === '[') return this.parseArray();
     if (char === '"') return this.parseString();
-    if (char === 't' || char === 'f') return this.parseBoolean();
-    if (char === 'n') return this.parseNull();
+    for (const [word, value] of CONSTANTS) {
+      if (this.text.startsWith(word, this.index)) {
+        this.index += word.length;
+        return value;
+      }
+    }
     return this.parseNumber();
   }
 
@@ -188,6 +214,7 @@ class Parser {
     }
     for (;;) {
       this.skip();
+      if (this.text[this.index] !== '"') throw new Error('Expecting property name');
       const key = this.parseString();
       this.skip();
       if (this.text[this.index] !== ':') throw new Error('Expected colon');
@@ -219,85 +246,58 @@ class Parser {
     }
   }
 
+  private hex(): number {
+    const digits = this.text.slice(this.index, this.index + 4);
+    if (!/^[0-9a-fA-F]{4}$/.test(digits)) throw new Error('Invalid \\uXXXX escape');
+    this.index += 4;
+    return Number.parseInt(digits, 16);
+  }
+
   private parseString(): string {
     this.index += 1;
     let out = '';
     while (this.index < this.text.length) {
       const char = this.text[this.index] ?? '';
-      if (char === '"') {
-        this.index += 1;
-        return out;
-      }
-      if (char === '\\') {
-        const escaped = this.text[this.index + 1] ?? '';
-        this.index += 2;
-        if (escaped === 'u') {
-          const hex = this.text.slice(this.index, this.index + 4);
-          this.index += 4;
-          let code = Number.parseInt(hex, 16);
-          if (code >= 0xd800 && code <= 0xdbff) {
-            const next = this.text.slice(this.index, this.index + 6);
-            if (next.startsWith('\\u')) {
-              const low = Number.parseInt(next.slice(2), 16);
-              if (low >= 0xdc00 && low <= 0xdfff) {
-                this.index += 6;
-                code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
-              }
-            }
-          }
-          out += String.fromCodePoint(code);
-        } else if (escaped === 'b') out += '\b';
-        else if (escaped === 'f') out += '\f';
-        else if (escaped === 'n') out += '\n';
-        else if (escaped === 'r') out += '\r';
-        else if (escaped === 't') out += '\t';
-        else out += escaped;
-      } else {
+      this.index += 1;
+      if (char === '"') return out;
+      if (char < ' ') throw new Error('Invalid control character');
+      if (char !== '\\') {
         out += char;
-        this.index += 1;
+        continue;
       }
+      const escaped = this.text[this.index] ?? '';
+      this.index += 1;
+      if (escaped !== 'u') {
+        const decoded = ESCAPES[escaped];
+        if (decoded === undefined) throw new Error('Invalid \\escape');
+        out += decoded;
+        continue;
+      }
+      let code = this.hex();
+      if (code >= 0xd800 && code <= 0xdbff && this.text.startsWith('\\u', this.index)) {
+        const mark = this.index;
+        this.index += 2;
+        const low = this.hex();
+        if (low >= 0xdc00 && low <= 0xdfff)
+          code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+        else this.index = mark;
+      }
+      out += String.fromCodePoint(code);
     }
     throw new Error('Unterminated string');
   }
 
-  private parseBoolean(): boolean {
-    if (this.text.startsWith('true', this.index)) {
-      this.index += 4;
-      return true;
-    }
-    if (this.text.startsWith('false', this.index)) {
-      this.index += 5;
-      return false;
-    }
-    throw new Error('Expected boolean');
-  }
-
-  private parseNull(): null {
-    if (!this.text.startsWith('null', this.index)) throw new Error('Expected null');
-    this.index += 4;
-    return null;
-  }
-
   private parseNumber(): JNum {
-    const start = this.index;
-    if (this.text[this.index] === '-') this.index += 1;
-    while (/\d/.test(this.text[this.index] ?? '')) this.index += 1;
-    let isFloat = false;
-    if (this.text[this.index] === '.') {
-      isFloat = true;
-      this.index += 1;
-      while (/\d/.test(this.text[this.index] ?? '')) this.index += 1;
+    NUMBER.lastIndex = this.index;
+    const match = NUMBER.exec(this.text);
+    if (!match) throw new Error('Expecting value');
+    const token = match[0];
+    this.index += token.length;
+    if (match[1] === undefined && match[2] === undefined) {
+      if (token.replace('-', '').length > MAX_INT_DIGITS)
+        throw new Error('Exceeds the limit for integer string conversion');
+      return new JInt(BigInt(token));
     }
-    if (this.text[this.index] === 'e' || this.text[this.index] === 'E') {
-      isFloat = true;
-      this.index += 1;
-      if (this.text[this.index] === '+' || this.text[this.index] === '-') this.index += 1;
-      while (/\d/.test(this.text[this.index] ?? '')) this.index += 1;
-    }
-    const token = this.text.slice(start, this.index);
-    if (token === '-' || token === '') throw new Error('Expected number');
-    const value = Number(token);
-    if (!isFloat) return new JInt(BigInt(token));
-    return new JFloat(value);
+    return new JFloat(Number(token));
   }
 }

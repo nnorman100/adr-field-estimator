@@ -21,8 +21,10 @@ unexplained differences before it prices any live estimate. Nothing here is cust
   values and dump the same value. `canonical-bytes.json` instead records the exact canonical text
   (`json.dumps` with sorted keys) of tricky strings, keys and floats, such as U+007F and
   shortest-float ties, and `canonical-json-text.json` the canonical text of JSON source text read
-  back (exponent spellings, integers above 2^53 and out-of-range floats). They are built by
-  `scripts/pricing_oracle_coercion.py` and are not listed in `manifest.json`.
+  back (exponent spellings, integers above 2^53 and out-of-range floats), and
+  `json-text-grammar.json` which JSON texts `json.loads` accepts or refuses (leading zeros, bare
+  fractions and exponents, whitespace, escapes, control characters and the integer digit limit).
+  They are built by `scripts/pricing_oracle_coercion.py` and are not listed in `manifest.json`.
 
 The existing `tests/golden/v1-documents.json` is separate and unchanged.
 
