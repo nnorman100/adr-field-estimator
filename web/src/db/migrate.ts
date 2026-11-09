@@ -85,10 +85,35 @@ function endOfBlockComment(sql: string, start: number): number {
 }
 
 const E_STRING_ESCAPES: Record<string, string> = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
-const UESCAPE_CLAUSE = /^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*UESCAPE(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*'([^'])'/i;
+const SQL_SPACE = /[ \t\n\r\f\v]/;
+const TRANSACTION_CONTROL =
+  /(?:^|;)\s*(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION)\b/i;
 
-function codePoint(value: number): string {
-  return value <= 0x10ffff ? String.fromCodePoint(value) : ' ';
+function asciiOrSpace(value: number): string {
+  return value < 0x80 ? String.fromCharCode(value) : ' ';
+}
+
+function skipSpaceAndComments(sql: string, start: number): number {
+  let i = start;
+  while (i < sql.length) {
+    if (SQL_SPACE.test(sql[i] ?? '')) {
+      i += 1;
+    } else if (sql.startsWith('--', i)) {
+      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') i += 1;
+    } else if (sql.startsWith('/*', i)) {
+      i = endOfBlockComment(sql, i);
+    } else {
+      break;
+    }
+  }
+  return i;
+}
+
+function uescapeCharacter(sql: string, afterString: number): string {
+  let i = skipSpaceAndComments(sql, afterString);
+  if (!/^UESCAPE$/i.test(sql.slice(i, i + 7)) || IDENTIFIER_PART.test(sql[i + 7] ?? '')) return '\\';
+  i = skipSpaceAndComments(sql, i + 7);
+  return sql[i] === "'" && sql[i + 2] === "'" ? (sql[i + 1] ?? '\\') : '\\';
 }
 
 function decodeEString(body: string): string {
@@ -98,8 +123,8 @@ function decodeEString(body: string): string {
       if (escape === undefined) return "'";
       const simple = E_STRING_ESCAPES[escape];
       if (simple) return simple;
-      if (/^[0-7]/.test(escape)) return codePoint(parseInt(escape, 8));
-      if (escape.length > 1) return codePoint(parseInt(escape.slice(1), 16));
+      if (/^[0-7]/.test(escape)) return asciiOrSpace(parseInt(escape, 8) & 0xff);
+      if (escape.length > 1) return asciiOrSpace(parseInt(escape.slice(1), 16));
       return escape;
     },
   );
@@ -122,7 +147,7 @@ function decodeUnicodeString(body: string, escape: string): string {
       }
       const hex = /^(?:\+([0-9a-fA-F]{6})|([0-9a-fA-F]{4}))/.exec(body.slice(i + 1));
       if (hex) {
-        out += codePoint(parseInt(hex[1] ?? hex[2] ?? '', 16));
+        out += asciiOrSpace(parseInt(hex[1] ?? hex[2] ?? '', 16));
         i += 1 + hex[0].length;
         continue;
       }
@@ -133,29 +158,26 @@ function decodeUnicodeString(body: string, escape: string): string {
   return out;
 }
 
-// Comments may discuss the removal rule, so they are blanked the way Postgres reads them. String
-// and dollar-quoted bodies stay in the scan with their own comments blanked, because DO blocks and
-// EXECUTE run that text. Identifier text stays as written.
-function stripSqlComments(sql: string): string {
+// Reads SQL the way the Postgres lexer does: whitespace and comments become one space. With
+// inlineBodies, string and dollar-quoted bodies are decoded and read the same way, because DO
+// blocks and EXECUTE run that text; without it they become one space, leaving the top-level
+// statements. Identifier text stays as written.
+function screenSql(sql: string, inlineBodies: boolean): string {
+  const body = (text: string) => (inlineBodies ? ` ${screenSql(text, true)} ` : ' ');
   let out = '';
   let i = 0;
   while (i < sql.length) {
     const ch = sql[i] ?? '';
     let end: number;
-    if (sql.startsWith('--', i)) {
-      const newline = sql.indexOf('\n', i);
-      i = newline === -1 ? sql.length : newline;
+    const next = skipSpaceAndComments(sql, i);
+    if (next > i) {
       out += ' ';
-      continue;
-    }
-    if (sql.startsWith('/*', i)) {
-      i = endOfBlockComment(sql, i);
-      out += ' ';
+      i = next;
       continue;
     }
     if (ch === "'") {
       end = endOfQuoted(sql, i, ch, false);
-      out += ` ${stripSqlComments(sql.slice(i + 1, end - 1).replaceAll("''", "'"))} `;
+      out += body(sql.slice(i + 1, end - 1).replaceAll("''", "'"));
       i = end;
       continue;
     } else if (ch === '"') {
@@ -164,10 +186,8 @@ function stripSqlComments(sql: string): string {
       const tag = DOLLAR_TAG.exec(sql.slice(i))?.[0];
       if (tag) {
         const close = sql.indexOf(tag, i + tag.length);
-        end = close === -1 ? sql.length : close + tag.length;
-        const body = sql.slice(i + tag.length, close === -1 ? sql.length : close);
-        out += ` ${stripSqlComments(body)} `;
-        i = end;
+        out += body(sql.slice(i + tag.length, close === -1 ? sql.length : close));
+        i = close === -1 ? sql.length : close + tag.length;
         continue;
       } else {
         end = i + 1;
@@ -178,14 +198,13 @@ function stripSqlComments(sql: string): string {
       while (end < sql.length && IDENTIFIER_PART.test(sql[end] ?? '')) end += 1;
       if (end === i + 1 && (ch === 'e' || ch === 'E') && sql[end] === "'") {
         const close = endOfQuoted(sql, end, "'", true);
-        out += ` ${stripSqlComments(decodeEString(sql.slice(end + 1, close - 1)))} `;
+        out += body(decodeEString(sql.slice(end + 1, close - 1)));
         i = close;
         continue;
       }
       if (end === i + 1 && (ch === 'u' || ch === 'U') && sql.startsWith("&'", end)) {
         const close = endOfQuoted(sql, end + 1, "'", false);
-        const escape = UESCAPE_CLAUSE.exec(sql.slice(close))?.[1] ?? '\\';
-        out += ` ${stripSqlComments(decodeUnicodeString(sql.slice(end + 2, close - 1), escape))} `;
+        out += body(decodeUnicodeString(sql.slice(end + 2, close - 1), uescapeCharacter(sql, close)));
         i = close;
         continue;
       }
@@ -199,11 +218,16 @@ function stripSqlComments(sql: string): string {
 }
 
 export function findDestructiveSql(sql: string): string | null {
-  const code = stripSqlComments(sql);
+  const code = screenSql(sql, true);
   if (/\bDROP\b/i.test(code)) return 'DROP';
   if (/\bTRUNCATE\b/i.test(code)) return 'TRUNCATE';
   if (/\bDELETE\s+FROM\b/i.test(code)) return 'DELETE FROM';
   return null;
+}
+
+export function findTransactionControl(sql: string): string | null {
+  const found = TRANSACTION_CONTROL.exec(screenSql(sql, false))?.[1];
+  return found ? found.toUpperCase().replace(/\s+/g, ' ') : null;
 }
 
 function assertSequence(files: MigrationFile[]): void {
@@ -239,6 +263,10 @@ export async function readMigrations(directory: string): Promise<MigrationFile[]
     const destructive = findDestructiveSql(sql);
     if (destructive) {
       throw new MigrationError(`Migration ${filename} contains ${destructive}, which this ledger refuses`);
+    }
+    const control = findTransactionControl(sql);
+    if (control) {
+      throw new MigrationError(`Migration ${filename} contains ${control}; the runner owns each file's transaction`);
     }
     files.push({
       id: filename.slice(0, -'.sql'.length),

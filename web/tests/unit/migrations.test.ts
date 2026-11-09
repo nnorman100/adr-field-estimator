@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   findDestructiveSql,
+  findTransactionControl,
   migrationsDirectory,
   readMigrations,
   redactDatabaseMessage,
@@ -78,6 +79,30 @@ describe('migration files', () => {
       'DELETE FROM',
     );
     expect(findDestructiveSql("DO E'BEGIN /* x */ DELETE\\tFROM companies; END';")).toBe('DELETE FROM');
+  });
+
+  it('ends line comments and decodes escapes the way the Postgres lexer does', () => {
+    expect(findDestructiveSql("DO E'BEGIN -- cleanup\\rDELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql("DO E'BEGIN -- cleanup\\412DELETE FROM companies; END';")).toBe('DELETE FROM');
+    expect(findDestructiveSql('DO $$ BEGIN -- cleanup\rDELETE FROM companies; END $$;')).toBe('DELETE FROM');
+    expect(findDestructiveSql("SELECT 1; -- note\rDROP TABLE companies;")).toBe('DROP');
+    expect(
+      findDestructiveSql("DO U&'BEGIN --x!000ADELETE FROM companies; END' /*a/*b*/c*/ UESCAPE '!';"),
+    ).toBe('DELETE FROM');
+  });
+
+  it('refuses a file that ends or opens a transaction itself', async () => {
+    expect(findTransactionControl('CREATE TABLE example (id integer); ROLLBACK;')).toBe('ROLLBACK');
+    expect(findTransactionControl('CREATE TABLE example (id integer);\nCOMMIT;\nSELECT 1/0;')).toBe('COMMIT');
+    expect(findTransactionControl('BEGIN;\nCREATE TABLE example (id integer);')).toBe('BEGIN');
+    expect(findTransactionControl('/* x */ START  TRANSACTION;')).toBe('START TRANSACTION');
+    expect(findTransactionControl('SELECT 1; -- note\rEND;')).toBe('END');
+    expect(findTransactionControl('SELECT 1; ABORT;')).toBe('ABORT');
+    expect(
+      findTransactionControl("DO $$ BEGIN PERFORM 1; END $$; CREATE TABLE commit_log (id integer); SELECT 'COMMIT';"),
+    ).toBeNull();
+    const dir = await writeMigrations({ '0001_rollback.sql': `${ledger}ROLLBACK;\n` });
+    await expect(readMigrations(dir)).rejects.toThrow(/0001_rollback\.sql contains ROLLBACK/);
   });
 
   it('reads nested block comments the way Postgres does', () => {
