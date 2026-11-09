@@ -53,7 +53,7 @@ Company workbook upload; AI-suggested prices; crew calendar and reminders; per-v
 2. ADR company profile and logo — Phase 0 item 2.
 3. Invitation check to a Google and an Outlook address — Phase 0 item 3.
 4. Local SMTP timeout test on Windows — Phase 0 item 6.
-5. Before onboarding a second company: add isolated test resources inside `alert-disaster-field-2026` (D-006's separate test project is superseded) and switch email to Resend with a company sending domain (D-007).
+5. Before onboarding a second company: for the current app, add isolated test resources (D-006; the rebuild's `test` environment is in project `dryscope`, see `docs/DECISIONS.md`) and switch email to Resend with a company sending domain (D-007).
 6. Decide which flag-off features to switch on, one at a time, each as one reviewed PR with a phone check (`docs/firebase-isolation.md#turning-a-feature-on-or-off`).
 
 ## Next steps for an agent
