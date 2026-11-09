@@ -392,6 +392,7 @@
   let company = null; // the company's current table; from_cache marks the copy kept on the phone
   let companyTrouble = '',
     companyTroubleKey = ''; // message and the company key it belongs to
+  const refusedKeys = new Set(); // tables the server refused, until it serves them again
   const jobs = new Map(); // inspection id -> { pricing }
   let rendered = null; // the form and table the screen was last built for
   let renderedRows = null; // the item rows it was last built with
@@ -464,12 +465,8 @@
     const t = jobs.get(id)?.pricing || (companyOnTable() && currentTable());
     return t ? { pricing: isV2Table(t) ? pricingCopy(t) : { ...t } } : {};
   }
-  function seed(id, row) {
-    jobs.set(id, { pricing: row?.pricing || null });
-  }
-  function forget() {
-    jobs.clear();
-  }
+  const seed = (id, row) => void jobs.set(id, { pricing: row?.pricing || null });
+  const forget = () => jobs.clear();
   const cacheKey = () => 'prices:' + state.user.uid + ':' + state.session.company_id;
   async function loadCompany() {
     const mine = ++companySeq;
@@ -487,6 +484,7 @@
       if (mine !== companySeq) return;
       company = null;
       companyTrouble = companyTroubleKey = '';
+      refusedKeys.delete(key);
       if (view.calculation_version === V2) {
         company = {
           key,
@@ -513,13 +511,14 @@
         if (message !== companyTrouble) say(message, 'error');
         companyTrouble = message;
         companyTroubleKey = key;
+        if (refused) refusedKeys.add(key);
         if (refused) await dbAction('readwrite', (store) => store.delete(key)).catch(() => {});
         return;
       }
       const row = await dbAction('readonly', (store) => store.get(key)).catch(() => null);
       if (mine !== companySeq) return;
-      if (companyTrouble === PRICES_REFUSED && companyTroubleKey === key) company = null;
-      else company = row?.prices?.table ? { ...row.prices, from_cache: true } : null;
+      const kept = row?.prices?.table && !refusedKeys.has(key);
+      company = kept ? { ...row.prices, from_cache: true } : null;
       if (company || companyTroubleKey !== key) companyTrouble = companyTroubleKey = '';
     }
   }

@@ -429,6 +429,42 @@ test.describe('without a service worker', () => {
     await context.setOffline(false);
   });
 
+  test('an offline load serves no refused price list after a later server error replaced the access-denied message', async ({
+    page,
+    context,
+  }) => {
+    await switched(page);
+    await expect.poll(() => priceRowCached(page)).toBe(true);
+    await unpinnedJob(page, context);
+    await page.evaluate(() => {
+      const original = dbAction;
+      window.dbAction = (mode, fn) =>
+        mode === 'readwrite' && fn.toString().includes('store.delete')
+          ? Promise.reject(Error('price cache delete failed'))
+          : original(mode, fn);
+    });
+    let answer = 401;
+    await page.route('**/api/companies/*/prices', (route) =>
+      route.fulfill({
+        status: answer,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Not available.' }),
+      }),
+    );
+    const status = page.locator('#v2ScopeStatus');
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("You don't have access to your company's price list");
+    answer = 503;
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("Your company's price list could not load");
+    expect(await priceRowCached(page)).toBe(true);
+    await context.setOffline(true);
+    await page.evaluate(() => ScopeItems.sessionChanged());
+    await expect(status).toContainText("Your company's price list could not load");
+    await expect(status).not.toContainText('Prices as of');
+    await context.setOffline(false);
+  });
+
   for (const [status, text] of [
     [401, "You don't have access to your company's price list"],
     [503, "Your company's price list could not load"],
