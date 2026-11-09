@@ -95,8 +95,133 @@ def test_ci_browser_job_gates_steps_on_legacy_scope():
     assert steps[0]['uses'].startswith('actions/checkout@')
     assert steps[0]['with']['fetch-depth'] == 0
     assert steps[1]['id'] == 'scope'
+    assert 'if' not in steps[1]
+
+
+_EXPR_TOKEN = re.compile(r"(\|\||&&|==|!=|!|\(|\))|'((?:[^']|'')*)'|([A-Za-z_][\w.-]*)")
+_STATUS_FUNCTIONS = {'always', 'success', 'failure', 'cancelled'}
+
+
+def evaluate_step_condition(condition, scope_outputs, job_failed):
+    """Evaluate a GitHub Actions step `if:` for the expression subset this workflow uses."""
+    expr = condition.strip()
+    if expr.startswith('${{') and expr.endswith('}}'):
+        expr = expr[3:-2].strip()
+    tokens, pos = [], 0
+    while pos < len(expr):
+        if expr[pos].isspace():
+            pos += 1
+            continue
+        match = _EXPR_TOKEN.match(expr, pos)
+        assert match, f'unsupported expression syntax in {condition!r}'
+        op, string, ident = match.groups()
+        if op:
+            tokens.append(('op', op))
+        elif string is not None:
+            tokens.append(('str', string.replace("''", "'")))
+        else:
+            tokens.append(('id', ident))
+        pos = match.end()
+
+    context = {'steps': {'scope': {'outputs': scope_outputs}}}
+    called = set()
+    index = 0
+
+    def peek():
+        return tokens[index] if index < len(tokens) else (None, None)
+
+    def take(expected=None):
+        nonlocal index
+        token = peek()
+        assert token != (None, None), f'unexpected end of {condition!r}'
+        assert expected is None or token == expected, f'expected {expected} in {condition!r}'
+        index += 1
+        return token
+
+    def truthy(value):
+        return value not in (None, False, '', 0)
+
+    def equal(left, right):
+        left, right = ('' if left is None else left), ('' if right is None else right)
+        if isinstance(left, str) and isinstance(right, str):
+            return left.casefold() == right.casefold()
+        return left == right
+
+    def parse_or():
+        value = parse_and()
+        while peek() == ('op', '||'):
+            take()
+            right = parse_and()
+            value = value if truthy(value) else right
+        return value
+
+    def parse_and():
+        value = parse_compare()
+        while peek() == ('op', '&&'):
+            take()
+            right = parse_compare()
+            value = right if truthy(value) else value
+        return value
+
+    def parse_compare():
+        value = parse_unary()
+        while peek() in (('op', '=='), ('op', '!=')):
+            negate = take()[1] == '!='
+            value = equal(value, parse_unary()) != negate
+        return value
+
+    def parse_unary():
+        if peek() == ('op', '!'):
+            take()
+            return not truthy(parse_unary())
+        return parse_primary()
+
+    def parse_primary():
+        kind, value = take()
+        if (kind, value) == ('op', '('):
+            inner = parse_or()
+            take(('op', ')'))
+            return inner
+        if kind == 'str':
+            return value
+        assert kind == 'id', f'unexpected token {value!r} in {condition!r}'
+        if peek() == ('op', '('):
+            take()
+            take(('op', ')'))
+            assert value in _STATUS_FUNCTIONS, f'unsupported function {value}() in {condition!r}'
+            called.add(value)
+            return {
+                'always': True,
+                'success': not job_failed,
+                'failure': job_failed,
+                'cancelled': False,
+            }[value]
+        if value in ('true', 'false', 'null'):
+            return {'true': True, 'false': False, 'null': None}[value]
+        resolved = context
+        for part in value.split('.'):
+            resolved = resolved.get(part) if isinstance(resolved, dict) else None
+        return resolved
+
+    result = truthy(parse_or())
+    assert index == len(tokens), f'trailing tokens in {condition!r}'
+    if not called:
+        result = result and not job_failed
+    return result
+
+
+@pytest.mark.parametrize(
+    'scope_outputs', [{'run': 'true'}, {'run': 'false'}, {}], ids=['run', 'skip', 'missing']
+)
+@pytest.mark.parametrize('job_failed', [False, True], ids=['job-ok', 'job-failed'])
+def test_ci_browser_steps_run_only_when_scope_selects_suite(scope_outputs, job_failed):
+    steps = load_ci_workflow()['jobs']['browser']['steps']
+    in_scope = scope_outputs.get('run') == 'true'
     for step in steps[2:]:
-        assert "steps.scope.outputs.run == 'true'" in step.get('if', '')
+        uploads_results = step.get('uses', '').startswith('actions/upload-artifact@')
+        expected = in_scope and (uploads_results or not job_failed)
+        runs = evaluate_step_condition(step.get('if', 'success()'), scope_outputs, job_failed)
+        assert runs == expected, step.get('name') or step.get('uses') or step.get('run')
 
 
 def run_browser_scope_step(repo, event_name, base_sha, github_output):
