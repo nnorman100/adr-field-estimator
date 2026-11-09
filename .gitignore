@@ -1,7 +1,5 @@
 # Dependencies
 node_modules/
-# Drizzle Kit drafts. The applied source is web/migrations.
-web/drizzle/
 venv/
 .venv/
 .venv-repair/
