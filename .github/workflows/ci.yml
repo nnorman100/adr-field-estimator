@@ -55,7 +55,7 @@ jobs:
       # The demo- project ID keeps everything offline.
       - run: >-
           npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-adr-emulator
-          "python -m pytest tests/test_firestore_emulator.py -q -p no:cacheprovider"
+          "python -m pytest tests/test_firestore_emulator*.py -q -p no:cacheprovider"
 
   node:
     runs-on: ubuntu-latest
