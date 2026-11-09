@@ -6,6 +6,5 @@
   "public/app.js": 6597,
   "public/prices.js": 2159,
   "public/scope-items.js": 1056,
-  "public/workspaces.js": 2268,
-  "tests/test_firestore_emulator.py": 1571
+  "public/workspaces.js": 2268
 }
