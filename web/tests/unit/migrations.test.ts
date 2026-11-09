@@ -33,8 +33,6 @@ describe('migration files', () => {
   it('loads the shipped foundation migration and nothing else', async () => {
     const files = await readMigrations(migrationsDirectory);
     expect(files.map((file) => file.id)).toEqual(['0001_foundation']);
-    expect(files[0]?.sql).toMatch(/CREATE TABLE migration_ledger/);
-    expect(files[0]?.sql).toMatch(/CREATE TABLE companies/);
     expect(files[0]?.checksum).toMatch(/^[a-f0-9]{64}$/);
     expect(findDestructiveSql(files[0]?.sql ?? '')).toBeNull();
   });

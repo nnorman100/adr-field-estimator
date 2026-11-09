@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -191,16 +192,30 @@ describe('numbered migration ledger', () => {
   });
 
   it('logs applied ids from the config URL and not the password', async () => {
-    const password = 'super-secret-db-password';
-    const url = new URL(disposable.databaseUrl);
-    url.password = password;
-    const { stdout, stderr } = await exec('npx', ['tsx', 'src/db/cli.ts'], {
-      cwd: webRoot,
-      timeout: 30_000,
-      env: { ...process.env, APP_ENV: 'test', DATABASE_URL: url.toString() },
+    const role = `dryscope_cli_${randomBytes(8).toString('hex')}`;
+    const password = `secret-${randomBytes(16).toString('hex')}`;
+    await withSql(async (sql) => {
+      await sql.unsafe(`CREATE ROLE "${role}" LOGIN PASSWORD '${password}'`);
+      await sql.unsafe(`GRANT ALL ON DATABASE "${disposable.databaseName}" TO "${role}"`);
+      await sql.unsafe(`GRANT ALL ON SCHEMA public TO "${role}"`);
     });
-    expect(stdout).toMatch(/0001_foundation/);
-    expect(`${stdout}\n${stderr}`).not.toContain(password);
-    expect(`${stdout}\n${stderr}`).not.toContain(encodeURIComponent(password));
+    try {
+      const url = new URL(disposable.databaseUrl);
+      url.username = role;
+      url.password = password;
+      const { stdout, stderr } = await exec('npx', ['tsx', 'src/db/cli.ts'], {
+        cwd: webRoot,
+        timeout: 30_000,
+        env: { ...process.env, APP_ENV: 'test', DATABASE_URL: url.toString() },
+      });
+      expect(stdout).toMatch(/applied 0001_foundation/);
+      expect(`${stdout}\n${stderr}`).not.toContain(password);
+      expect(await tableNames()).toEqual(['companies', 'migration_ledger']);
+    } finally {
+      await withSql(async (sql) => {
+        await sql.unsafe(`DROP OWNED BY "${role}"`);
+        await sql.unsafe(`DROP ROLE "${role}"`);
+      });
+    }
   });
 });
