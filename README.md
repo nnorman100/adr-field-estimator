@@ -159,7 +159,7 @@ npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "
 
 The `demo-` project ID keeps the emulator and client offline; never point these tests at a real project.
 
-The browser suite serves production code with fake cloud adapters over temporary local TLS. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
+The browser suite serves production code with fake cloud adapters over temporary local TLS. The required `browser` job in `.github/workflows/ci.yml` reports on every pull request and `master` push but runs the Playwright steps only when legacy app or browser-suite files changed (the path list is in that job's "Check whether legacy browser files changed" step); it runs the full suite when the PR base or push `before` commit is unavailable. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
 
 Use [the operating guide](docs/firebase-isolation.md) for production deployment and rollback. Never run a blanket Firebase deploy. Deploy the compatible backend first, then only `hosting:alert-disaster` in the dedicated project.
 
