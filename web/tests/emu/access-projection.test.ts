@@ -66,11 +66,11 @@ describe('access records written by the server, checked by the rules', () => {
     // Before any grant there is no header and no record.
     expect(await updateDoc(caller, draft, { field: { notes: 'too early' } })).toBe(403);
 
-    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() + 7 * DAY) });
+    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() + 7 * DAY), version: 1 });
     expect(await getDoc(caller, draft)).toBe(200);
     expect(await updateDoc(caller, draft, { field: { notes: 'wet carpet, dry wall' } })).toBe(200);
 
-    await store.remove(company, member.uid);
+    await store.remove(company, member.uid, 2);
     expect((await db.doc(`companies/${company}/access/${member.uid}`).get()).exists).toBe(false);
     // A write the phone queued while offline reaches the server after the removal, still with a
     // valid sign-in token. The rules read the record at that moment and refuse it.
@@ -87,28 +87,31 @@ describe('access records written by the server, checked by the rules', () => {
     const draft = `companies/${company}/drafts/d1`;
     await serverSet(draft, { fieldOwnerUid: member.uid, state: 'editing', field: {} });
 
-    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() - 1000) });
+    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() - 1000), version: 1 });
     expect(await updateDoc({ idToken: member.idToken }, draft, { field: { notes: 'expired' } })).toBe(403);
 
     // A user of another tenant, even with a record written under this company, fails the tenant check.
-    await store.grant({ companyId: company, authTenantId: tenant, uid: outsider.uid, role: 'owner', expiresAt: new Date(Date.now() + DAY) });
+    await store.grant({ companyId: company, authTenantId: tenant, uid: outsider.uid, role: 'owner', expiresAt: new Date(Date.now() + DAY), version: 1 });
     expect(await getDoc({ idToken: outsider.idToken }, draft)).toBe(403);
   });
 
-  it('a client cannot write or remove its own access record', async () => {
+  it('a client cannot write or remove its own access record, or read or change its version', async () => {
     const tenant = await createTenant('projection-d');
     const company = randomUUID();
     const member = await estimator(tenant);
-    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY) });
+    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY), version: 1 });
     const record = `companies/${company}/access/${member.uid}`;
     expect(await updateDoc({ idToken: member.idToken }, record, { role: 'owner' })).toBe(403);
     expect((await db.doc(record).get()).data()?.role).toBe('estimator');
+    const version = `companies/${company}/accessVersions/${member.uid}`;
+    expect(await getDoc({ idToken: member.idToken }, version)).toBe(403);
+    expect(await updateDoc({ idToken: member.idToken }, version, { version: 0 })).toBe(403);
+    expect((await db.doc(version).get()).data()).toEqual({ version: 1 });
   });
 });
 
-describe('a store write that lands late', () => {
-  // A Firestore client whose transactions pause after their reads, just before they commit: a
-  // write the outbox gave up on that is still on its way.
+describe('two decisions on their way at once', () => {
+  // A Firestore client whose transactions pause after their reads, just before they commit.
   function pausedBeforeCommit(gate: Promise<void>, paused: () => void): Firestore {
     return new Proxy(db, {
       get(target, property) {
@@ -127,11 +130,11 @@ describe('a store write that lands late', () => {
     });
   }
 
-  it('cannot bring back a record once its removal has succeeded', async () => {
+  it('cannot both pass the version check: the later removal is the last word', async () => {
     const company = randomUUID();
     const uid = `uid-${randomUUID().slice(0, 8)}`;
     const record = db.doc(`companies/${company}/access/${uid}`);
-    await store.grant({ companyId: company, authTenantId: 't', uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY) });
+    await store.grant({ companyId: company, authTenantId: 't', uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY), version: 1 });
 
     let release!: () => void;
     let reachedCommit!: () => void;
@@ -139,28 +142,28 @@ describe('a store write that lands late', () => {
     const atCommit = new Promise<void>((resolve) => (reachedCommit = resolve));
     const late = firestoreAccessStore(pausedBeforeCommit(gate, reachedCommit));
 
-    // A renewal reads the record, then stalls before its commit.
+    // A renewal has read version 1 and stalls before its commit; a later removal starts meanwhile.
     const renewal = late
-      .grant({ companyId: company, authTenantId: 't', uid, role: 'estimator', expiresAt: new Date(Date.now() + 2 * DAY) })
+      .grant({ companyId: company, authTenantId: 't', uid, role: 'estimator', expiresAt: new Date(Date.now() + 2 * DAY), version: 2 })
       .then(
         () => 'committed' as const,
         () => 'refused' as const,
       );
     await atCommit;
-
-    // Meanwhile the member is removed. While the stalled write can still land, the removal does
-    // not succeed: Firestore holds it, then refuses it, and the outbox keeps its row waiting.
-    const firstRemoval = await store.remove(company, uid).then(
+    const removal = store.remove(company, uid, 3).then(
       () => 'removed' as const,
       () => 'refused' as const,
     );
     release();
-    expect(firstRemoval).toBe('refused');
     expect(['committed', 'refused']).toContain(await renewal);
+    // A removal refused while the renewal held the record is tried again by the outbox.
+    if ((await removal) === 'refused') await store.remove(company, uid, 4);
+    expect((await record.get()).exists).toBe(false);
 
-    // The outbox's next try removes it, and nothing still on its way can undo that.
-    await store.remove(company, uid);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // And the renewal, arriving again later, cannot bring it back.
+    await expect(
+      store.grant({ companyId: company, authTenantId: 't', uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY), version: 2 }),
+    ).rejects.toMatchObject({ code: 'stale_decision' });
     expect((await record.get()).exists).toBe(false);
   });
 });

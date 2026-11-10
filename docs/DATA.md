@@ -292,10 +292,19 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
 - Removal: the sign-in check reads the membership in Postgres, so the server refuses a removed
   member from the moment the change commits, before the record is removed. The record's removal is
   done only once a read shows it gone.
-- A failed or timed-out write (10 seconds) leaves the rows waiting with a back-off (30 seconds,
-  doubling, at most an hour) and a fixed error code; a crash at any point leaves them waiting, due
-  now. The next run repairs either. Each Firestore write is a single-attempt transaction that reads
-  the record first, so a write a run gave up on cannot land after a later removal succeeded.
+- A run holds the actor's lock until its Firestore write has settled; it never stops waiting for a
+  write it started, so a slow Firestore holds that request and its database connection until it
+  answers. A failed write leaves the rows waiting with a back-off (30 seconds, doubling, at most an
+  hour) and a fixed error code; a crash at any point leaves them waiting, due now. The next run
+  repairs either.
+- Each write carries a version, the id of the run's Postgres transaction, taken under the lock, so
+  a later decision always has a higher one. The server keeps the last applied version in
+  `companies/{companyId}/accessVersions/{uid}`, which no rule names (clients can neither read nor
+  write it) and which stays after a removal deletes the access record. Each Firestore write is a
+  transaction that refuses a decision older than that version (`stale_decision`; the rows wait and
+  are tried again), so even a write that lands after its run lost the lock (its database session
+  ended) can neither bring back a removed record nor remove a newer grant, and a refused write is
+  never marked done.
 - A record works for 7 days from when it was written (`ACCESS_TTL_MS`). `GET /api/me` renews it once
   it is more than a day old (`RENEW_AFTER_MS`), so a member who keeps using the app keeps working,
   even offline for several days, and one who stops loses access within 7 days of their last write.

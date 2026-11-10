@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '@/db/client';
 import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { withCompany } from '@/db/tenant';
@@ -177,6 +177,22 @@ function deferred() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => (release = resolve));
   return { promise, release };
+}
+
+// Ends the database session holding an actor's projection lock, as a dropped connection or a
+// restarted server would, and waits until the lock is free.
+async function dropLockHolder() {
+  const held = () => admin<{ pid: number }[]>`
+    SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = ${0x5312}
+  `;
+  const holders = await held();
+  expect(holders).toHaveLength(1);
+  await admin`SELECT pg_terminate_backend(${holders[0]!.pid})`;
+  const deadline = Date.now() + 10_000;
+  while ((await held()).length > 0) {
+    if (Date.now() > deadline) throw new Error('the lock was never released');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 function verifiedAs(tenant: string, uid: string) {
@@ -424,15 +440,32 @@ describe('access projection outbox (S3-12)', () => {
     expect((await outbox()).every((row) => row.processed)).toBe(true);
   });
 
-  it('gives up on a store call that passes its deadline, and the row waits', async () => {
+  it('holds the actor until its store call settles, however long that takes', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const started = deferred();
+    const finish = deferred();
     const slow: AccessStore = {
-      grant: () => new Promise(() => {}),
-      remove: () => new Promise(() => {}),
+      async grant() {
+        started.release();
+        await finish.promise;
+        throw new Error('unavailable');
+      },
+      async remove() {},
     };
     await enqueue(seed.a, seed.ownerA);
-    expect(await projectActor(worker.db, slow, seed.a, seed.ownerA, { deadlineMs: 200 })).toBe('failed');
-    expect((await outbox())[0]).toMatchObject({ processed: false, last_error_code: 'store_timeout' });
+    let settled = false;
+    const run = projectActor(worker.db, slow, seed.a, seed.ownerA).finally(() => {
+      settled = true;
+    });
+    await started.promise;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(settled).toBe(false);
+    // Meanwhile no other run takes the actor.
+    expect(await renewAccess(handle.db, memoryStore(), { companyId: seed.a, actorId: seed.ownerA })).toBe('busy');
+
+    finish.release();
+    expect(await run).toBe('failed');
+    expect((await outbox())[0]).toMatchObject({ processed: false, last_error_code: 'store_failed' });
     errors.mockRestore();
   });
 
@@ -518,6 +551,77 @@ describe('access projection outbox (S3-12)', () => {
       expect(inner.records.has(key(seed.a, 'estimator-a'))).toBe(false);
       expect((await outbox()).every((row) => row.processed)).toBe(true);
     });
+
+    describe('when a run loses its lock while its write is on the way', () => {
+      // The first run uses its own pool, whose session is ended while its store call waits.
+      let lost: ReturnType<typeof openDatabase>;
+      beforeEach(() => {
+        lost = openDatabase({ APP_ENV: 'test', DATABASE_URL: urlAs(API_USER, apiPassword) });
+      });
+      afterEach(async () => {
+        await lost.close();
+      });
+
+      function heldUntil(inner: AccessStore, finish: Promise<void>, started: () => void): AccessStore {
+        return {
+          async grant(grant) {
+            started();
+            await finish;
+            await inner.grant(grant);
+          },
+          async remove(companyId, uid, version) {
+            started();
+            await finish;
+            await inner.remove(companyId, uid, version);
+          },
+        };
+      }
+
+      it('a grant that lands after a later removal is refused, and the record stays gone', async () => {
+        const inner = memoryStore();
+        const started = deferred();
+        const finish = deferred();
+        await enqueue(seed.a, seed.estimatorA);
+        const first = projectActor(lost.db, heldUntil(inner, finish.promise, started.release), seed.a, seed.estimatorA);
+        await started.promise;
+
+        await setMembership(seed.a, seed.estimatorA, { status: 'disabled' });
+        await dropLockHolder();
+        expect(await projectActor(worker.db, inner, seed.a, seed.estimatorA)).toBe('removed');
+        expect((await outbox()).every((row) => row.processed)).toBe(true);
+
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        finish.release();
+        expect(await first).toBe('failed');
+        errors.mockRestore();
+        expect(inner.records.has(key(seed.a, 'estimator-a'))).toBe(false);
+        expect((await outbox()).every((row) => row.processed)).toBe(true);
+      });
+
+      it('a removal that lands after a later grant is refused, and renewal can trust the grant', async () => {
+        const inner = memoryStore();
+        await enqueue(seed.a, seed.estimatorA);
+        await runAccessProjection(worker.db, inner);
+        const started = deferred();
+        const finish = deferred();
+        await setMembership(seed.a, seed.estimatorA, { status: 'disabled' });
+        const first = projectActor(lost.db, heldUntil(inner, finish.promise, started.release), seed.a, seed.estimatorA);
+        await started.promise;
+
+        await setMembership(seed.a, seed.estimatorA, { status: 'active' });
+        await dropLockHolder();
+        expect(await projectActor(worker.db, inner, seed.a, seed.estimatorA)).toBe('granted');
+
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        finish.release();
+        expect(await first).toBe('failed');
+        errors.mockRestore();
+        expect(inner.records.get(key(seed.a, 'estimator-a'))?.role).toBe('estimator');
+        // The processed grant is the record Firestore holds, so renewal is right to skip it.
+        expect(await renewAccess(handle.db, inner, { companyId: seed.a, actorId: seed.estimatorA })).toBe('current');
+        expect(inner.records.has(key(seed.a, 'estimator-a'))).toBe(true);
+      });
+    });
   });
 
   it('removes the records of a company that is no longer active', async () => {
@@ -558,6 +662,25 @@ describe('access projection outbox (S3-12)', () => {
       expect(store.records.get(key(seed.a, 'estimator-a'))!.expiresAt.getTime()).toBeLessThanOrEqual(
         Date.now() + ACCESS_TTL_MS,
       );
+    });
+
+    it('does not count a write the store refused as stale as written', async () => {
+      const store = memoryStore();
+      const member = { companyId: seed.a, actorId: seed.estimatorA };
+      // The store already holds a newer decision than this run's.
+      store.versions.set(key(seed.a, 'estimator-a'), Number.MAX_SAFE_INTEGER);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(await renewAccess(handle.db, store, member)).toBe('failed');
+      expect(await outbox()).toEqual([
+        expect.objectContaining({ processed: false, attempts: 1, last_error_code: 'stale_decision' }),
+      ]);
+      expect(store.records.size).toBe(0);
+
+      // After the back-off the next use tries the write again instead of treating it as current.
+      await backOffPassed();
+      expect(await renewAccess(handle.db, store, member)).toBe('failed');
+      expect((await outbox())[0]).toMatchObject({ processed: false, attempts: 2 });
+      errors.mockRestore();
     });
 
     it('stays in its own company', async () => {

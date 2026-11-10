@@ -13,10 +13,14 @@ import { AccessStoreError, type AccessStore } from './store';
 //   (web/src/lib/auth/identity.ts), so a disabled member is refused from the moment it commits.
 //   Removing the Firestore record follows, and its rows are marked done only after the store has
 //   read the record back as gone.
-// - One actor is handled under a transaction-scoped advisory lock, held until its rows are marked
-//   done, so two runs cannot interleave one actor's writes. The Firestore writes themselves are
-//   single-attempt transactions that read the record first (firestore.ts), so a write this run gave
-//   up on at its deadline cannot land after a later removal has succeeded.
+// - One actor is handled under a transaction-scoped advisory lock, held until its store call has
+//   settled and its rows are marked done, so two runs cannot interleave one actor's writes. A run
+//   never stops waiting for a store call it started.
+// - Each decision carries a version: the id of its Postgres transaction, assigned under the lock.
+//   Transaction ids only grow, and the next run takes the lock only after this transaction ends, so
+//   a later decision always has a higher version. The store refuses a decision older than the one
+//   it holds (store.ts), so if the lock is lost anyway (the session dies while a write is on its
+//   way), the late write can neither bring back a removed record nor remove a newer grant.
 // - If anything fails, the transaction rolls back, the rows stay waiting with a back-off, and the
 //   next run repairs them. A crash anywhere leaves the same state.
 //
@@ -30,9 +34,6 @@ import { AccessStoreError, type AccessStore } from './store';
 export const ACCESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const RENEW_AFTER_MS = 24 * 60 * 60 * 1000;
 
-// Each store call must finish within this time, or the actor's rows wait for the next run.
-export const STORE_DEADLINE_MS = 10_000;
-
 // pg_advisory_xact_lock(int, int) keys do not overlap single-bigint keys (the migration runner's
 // lock), and this fixed first key keeps them apart from any later two-key lock.
 const LOCK_NAMESPACE = 0x5312;
@@ -42,7 +43,6 @@ const MAX_BACKOFF_SECONDS = 3600;
 export type ProjectionOptions = {
   // The clock that sets expiresAt; tests move it.
   now?: () => Date;
-  deadlineMs?: number;
 };
 
 export type ActorOutcome = 'granted' | 'removed' | 'busy' | 'nothing_due' | 'failed';
@@ -94,22 +94,19 @@ async function targetFor(tx: CompanyTransaction, companyId: string, actorId: str
 }
 
 export class ProjectionError extends Error {
-  constructor(readonly code: 'actor_not_found' | 'store_timeout') {
+  constructor(readonly code: 'actor_not_found' | 'version_out_of_range') {
     super(`Access projection failed: ${code}`);
     this.name = 'ProjectionError';
   }
 }
 
-async function withinDeadline<T>(work: Promise<T>, deadlineMs: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new ProjectionError('store_timeout')), deadlineMs);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
+// This transaction's id. pg_current_xact_id is a 64-bit counter that never wraps; in practice it
+// stays far below 2^53, so it fits a Firestore integer and a JavaScript number exactly.
+async function decisionVersion(tx: CompanyTransaction): Promise<number> {
+  const [row] = rows<{ version: string }>(await tx.execute(sql`SELECT pg_current_xact_id()::text AS version`));
+  const version = Number(row?.version);
+  if (!Number.isSafeInteger(version)) throw new ProjectionError('version_out_of_range');
+  return version;
 }
 
 // A fixed code for the outbox row; never the error's text, which can quote ids or credentials.
@@ -125,7 +122,7 @@ export async function projectActor(
   store: AccessStore,
   companyId: string,
   actorId: string,
-  { wait = true, now = () => new Date(), deadlineMs = STORE_DEADLINE_MS }: ProjectionOptions & { wait?: boolean } = {},
+  { wait = true, now = () => new Date() }: ProjectionOptions & { wait?: boolean } = {},
 ): Promise<ActorOutcome> {
   companyId = uuid(companyId, 'companyId');
   actorId = uuid(actorId, 'actorId');
@@ -159,14 +156,19 @@ export async function projectActor(
       // Read after the lock and the claim: a change committed after this read leaves a new row,
       // which the next run handles once this one lets go of the actor.
       const target = await targetFor(tx, companyId, actorId);
+      const version = await decisionVersion(tx);
       if (target.kind === 'grant') {
         const expiresAt = new Date(now().getTime() + ACCESS_TTL_MS);
-        await withinDeadline(
-          store.grant({ companyId, authTenantId: target.authTenantId, uid: target.uid, role: target.role, expiresAt }),
-          deadlineMs,
-        );
+        await store.grant({
+          companyId,
+          authTenantId: target.authTenantId,
+          uid: target.uid,
+          role: target.role,
+          expiresAt,
+          version,
+        });
       } else {
-        await withinDeadline(store.remove(companyId, target.uid), deadlineMs);
+        await store.remove(companyId, target.uid, version);
       }
 
       await tx.execute(sql`
