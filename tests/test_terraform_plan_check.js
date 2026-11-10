@@ -344,6 +344,30 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     expect(withBinding(`${pool}/attribute.repository_owner/nnorman100`)).toHaveLength(1);
   });
 
+  test('the migrator may take the same scoped principal set, on its own account only', () => {
+    const address = 'google_service_account_iam_member.migrate_workload_identity[0]';
+    const pool = `principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/dryscope-${environment}`;
+    const withBinding = (account, member = `${pool}/attribute.repository_id/42`) => {
+      const changed = plan();
+      changed.push({
+        address,
+        type: 'google_service_account_iam_member',
+        change: {
+          actions: ['create'],
+          after: {
+            role: 'roles/iam.workloadIdentityUser',
+            member,
+            service_account_id: `projects/dryscope/serviceAccounts/dryscope-${account}-${environment}@dryscope.iam.gserviceaccount.com`,
+          },
+        },
+      });
+      return check(changed, 'data', environment);
+    };
+    expect(withBinding('migrate')).toEqual([]);
+    expect(withBinding('api')).toHaveLength(1);
+    expect(withBinding('migrate', `${pool}/*`)).toHaveLength(1);
+  });
+
   test('a pool shared between environments or the other environment’s pool is refused', () => {
     const address = 'google_service_account_iam_member.deploy_workload_identity[0]';
     const other = environment === 'test' ? 'live' : 'test';

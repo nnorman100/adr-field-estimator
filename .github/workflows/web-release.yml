@@ -1,0 +1,307 @@
+name: Web release (test)
+
+# Releases the rebuilt app (web/) to the TEST environment in project dryscope after the Web app
+# workflow passes on master: build the image and push it by digest, run the numbered migrations as
+# the migrator, stage a 0% revision of dryscope-api-test, smoke-check it on its own tagged URL, then
+# move all traffic to it, putting the previous traffic back if anything after that fails. Live is
+# not released from here. Keyless: workload identity federation from the dryscope-test pool, one
+# account per job (deploy for images and Cloud Run, migrate for the database). It skips with a
+# notice until the owner has finished docs/RUNBOOK.md, "Release the rebuilt app to test"; before the
+# owner's first app-root apply it only pushes the first images and prints their digests. Images are
+# assembled without Docker (web/scripts/build-image.sh, crane), because the runner has no daemon.
+# Nothing here deletes a service, revision, image or database object.
+on:
+  workflow_run:
+    workflows: [Web app]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions: {}
+
+# One release at a time; a newer merge waits instead of interleaving traffic moves.
+concurrency:
+  group: web-release-test
+  cancel-in-progress: false
+
+env:
+  PROJECT: dryscope
+  REGION: us-central1
+  SERVICE: dryscope-api-test
+  IMAGE: us-central1-docker.pkg.dev/dryscope/dryscope-test/web
+  PLACEHOLDER_IMAGE: us-central1-docker.pkg.dev/dryscope/dryscope-test/live-placeholder
+  SQL_INSTANCE: dryscope:us-central1:dryscope-test-pg
+  # Release the commit Web app tested, not whatever master has moved to since.
+  COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  gate:
+    # Only a successful push run of Web app on master in this repository, or a manual run on master.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'master' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 2
+    outputs:
+      ready: ${{ steps.vars.outputs.ready }}
+    steps:
+      - id: vars
+        env:
+          PROVIDER: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          DEPLOY_SA: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
+          MIGRATE_SA: ${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}
+        run: |
+          # Unset (setup unfinished, or the owner paused releases by deleting one) is a skip.
+          if [ -z "$PROVIDER" ] || [ -z "$DEPLOY_SA" ] || [ -z "$MIGRATE_SA" ]; then
+            echo "::notice title=Test release skipped::Releases to test are off: DRYSCOPE_TEST_WIF_PROVIDER, DRYSCOPE_TEST_DEPLOY_SA and DRYSCOPE_TEST_MIGRATE_SA must all be set (docs/RUNBOOK.md, Release the rebuilt app to test)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Set but wrong is an error, never a skip: this workflow may only reach test.
+          bad=0
+          [[ "$PROVIDER" =~ ^projects/570228742694/locations/global/workloadIdentityPools/dryscope-test/providers/[a-z0-9-]{4,32}$ ]] \
+            || { echo "::error::DRYSCOPE_TEST_WIF_PROVIDER must be a provider in the dryscope-test pool of project 570228742694."; bad=1; }
+          [ "$DEPLOY_SA" = "dryscope-deploy-test@dryscope.iam.gserviceaccount.com" ] \
+            || { echo "::error::DRYSCOPE_TEST_DEPLOY_SA must be dryscope-deploy-test@dryscope.iam.gserviceaccount.com."; bad=1; }
+          [ "$MIGRATE_SA" = "dryscope-migrate-test@dryscope.iam.gserviceaccount.com" ] \
+            || { echo "::error::DRYSCOPE_TEST_MIGRATE_SA must be dryscope-migrate-test@dryscope.iam.gserviceaccount.com."; bad=1; }
+          [ "$bad" = 0 ] || exit 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 25
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      service_ready: ${{ steps.service.outputs.ready }}
+      image: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
+          project_id: dryscope
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # The deploy account can see the service only after the owner's first app-root apply. Until
+      # then this run only pushes the first images, whose digests that apply needs.
+      - id: service
+        run: |
+          if gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(metadata.name)' >/dev/null 2>&1; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Test release skipped::$SERVICE is not visible to the deploy account yet. This run pushes the first images only; the owner applies the app root with their digests (docs/RUNBOOK.md, Release the rebuilt app to test, part D)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      # No Docker daemon on the runner: crane assembles and pushes the images (owner decision 2026-11-10).
+      - name: Install crane and sign in to the registry
+        run: |
+          web/scripts/install-crane.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          gcloud auth print-access-token | "$RUNNER_TEMP/bin/crane" auth login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+      # Tags are immutable in this repository, so a rerun reuses the image already pushed for this
+      # commit instead of failing on the tag.
+      - id: image
+        run: |
+          if digest=$(crane digest "$IMAGE:$COMMIT" 2>/dev/null); then
+            echo "Reusing the image already pushed for $COMMIT"
+          else
+            web/scripts/build-image.sh web --commit "$COMMIT" --tag "$IMAGE:$COMMIT"
+            digest=$(crane digest "$IMAGE:$COMMIT")
+          fi
+          ref="$IMAGE@$digest"
+          [[ "$ref" =~ ^us-central1-docker\.pkg\.dev/dryscope/dryscope-test/web@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::Unexpected image reference: $ref"; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Image (api_image): \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
+      # Before the first app-root apply only: the Live relay placeholder image it also needs (stage S7
+      # replaces the placeholder; after the apply, releases change only the web app's image).
+      - id: placeholder
+        if: steps.service.outputs.ready != 'true'
+        run: |
+          if digest=$(crane digest "$PLACEHOLDER_IMAGE:$COMMIT" 2>/dev/null); then
+            echo "Reusing the placeholder already pushed for $COMMIT"
+          else
+            web/scripts/build-image.sh live-placeholder --tag "$PLACEHOLDER_IMAGE:$COMMIT"
+            digest=$(crane digest "$PLACEHOLDER_IMAGE:$COMMIT")
+          fi
+          ref="$PLACEHOLDER_IMAGE@$digest"
+          [[ "$ref" =~ ^us-central1-docker\.pkg\.dev/dryscope/dryscope-test/live-placeholder@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::Unexpected placeholder reference: $ref"; exit 1; }
+          echo "Live relay placeholder (live_image): \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
+
+  migrate:
+    needs: build
+    if: needs.build.outputs.service_ready == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 10
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: web
+    env:
+      PROXY_VERSION: v2.26.3
+      PROXY_SHA256: 5533a05cdbf12f8a0cb46db34c775847a496e181d47f863284d3d02b0fad49fa
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+      - id: ledger
+        run: |
+          if compgen -G 'migrations/*.sql' >/dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=No migrations::web/migrations holds no numbered migrations at this commit; nothing to apply."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.ledger.outputs.present == 'true'
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: steps.ledger.outputs.present == 'true'
+        run: npm ci
+      # Signs in as the migrator itself: the deploy account has no route to the database.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        if: steps.ledger.outputs.present == 'true'
+        with:
+          workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          service_account: ${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}
+          project_id: dryscope
+      # Cloud SQL Auth Proxy, pinned by version and checksum, with IAM database login: no password.
+      - id: proxy
+        if: steps.ledger.outputs.present == 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL -o cloud-sql-proxy "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/$PROXY_VERSION/cloud-sql-proxy.linux.amd64"
+          echo "$PROXY_SHA256  cloud-sql-proxy" | sha256sum --check --strict
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --auto-iam-authn --address=127.0.0.1 --port=5432 --run-connection-test "$SQL_INSTANCE" > proxy.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat proxy.log
+          echo "::error::The Cloud SQL Auth Proxy did not start. Check the migrator's Cloud SQL client and instance user roles."
+          exit 1
+      - id: migrations
+        if: steps.ledger.outputs.present == 'true'
+        env:
+          APP_ENV: test
+          # IAM database user: the account email without .gserviceaccount.com; the proxy logs in.
+          DATABASE_URL: postgres://dryscope-migrate-test%40dryscope.iam@127.0.0.1:5432/dryscope
+        run: |
+          if ! npm run db:migrate; then
+            echo "::error::Migrations failed before any traffic moved. If this is the first run, check the owner's database bootstrap grants (docs/RUNBOOK.md step 5)."
+            exit 1
+          fi
+
+  deploy:
+    needs: [build, migrate]
+    if: needs.build.outputs.service_ready == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 15
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_REF: ${{ needs.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+          # The whole of web/, so web/package.json ("type": "module") governs the smoke script.
+          sparse-checkout: web
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
+          project_id: dryscope
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # The self-hosted job container is leaner than GitHub's image (docs/RUNBOOK.md, "CI runners").
+      - name: Install jq when missing
+        run: command -v jq >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }
+      # Remember who serves now, so a failure after the traffic move can put it back exactly.
+      - id: before
+        run: |
+          previous=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json \
+            | jq -r '[.status.traffic[] | select((.percent // 0) > 0) | "\(.revisionName)=\(.percent)"] | join(",")')
+          [ -n "$previous" ] || { echo "::error::Could not read the current traffic of $SERVICE."; exit 1; }
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "Serving before: \`$previous\`" >> "$GITHUB_STEP_SUMMARY"
+      # Only the image changes. Service account, environment, secrets, port and access stay as the
+      # app root set them, so the owner's next plan shows no drift.
+      - id: stage
+        run: |
+          if ! gcloud run deploy "$SERVICE" --image="$IMAGE_REF" --region="$REGION" --project="$PROJECT" --no-traffic --tag=candidate --quiet; then
+            echo "::error::The new revision did not become ready; traffic did not move. Check its logs, and that every dryscope-test-* secret has a version (docs/RUNBOOK.md step 4)."
+            exit 1
+          fi
+          state=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json)
+          revision=$(jq -r '.status.traffic[] | select(.tag == "candidate") | .revisionName' <<<"$state")
+          url=$(jq -r '.status.traffic[] | select(.tag == "candidate") | .url' <<<"$state")
+          image=$(jq -r '.spec.template.spec.containers[0].image' <<<"$state")
+          ready=$(jq -r '.status.latestReadyRevisionName' <<<"$state")
+          # The candidate tag must sit on the ready revision this run just created, running this image.
+          [ "$image" = "$IMAGE_REF" ] && [ "$revision" = "$ready" ] && [[ "$url" == https://* ]] \
+            || { echo "::error::Staged revision check failed: candidate=$revision ready=$ready image=$image."; exit 1; }
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Staged at 0%: \`$revision\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Smoke-check the staged revision
+        env:
+          CANDIDATE_URL: ${{ steps.stage.outputs.url }}
+        run: node web/scripts/smoke-release.ts --url "$CANDIDATE_URL" --commit "$COMMIT" --env test
+      - id: promote
+        env:
+          REVISION: ${{ steps.stage.outputs.revision }}
+        run: |
+          gcloud run services update-traffic "$SERVICE" --to-revisions="$REVISION=100" --region="$REGION" --project="$PROJECT" --quiet
+      - name: Smoke-check the service URL
+        env:
+          REVISION: ${{ steps.stage.outputs.revision }}
+        run: |
+          url=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(status.url)')
+          node web/scripts/smoke-release.ts --url "$url" --commit "$COMMIT" --env test
+          echo "Serving: \`$REVISION\` at 100% for $COMMIT" >> "$GITHUB_STEP_SUMMARY"
+      # The move ran (it succeeded, failed, or was cancelled midway and may have landed): put the
+      # remembered traffic back; restoring a split that never changed is harmless. Before the
+      # move, nothing changed for users and there is nothing to undo.
+      - name: Roll back traffic
+        if: (failure() || cancelled()) && (steps.promote.outcome == 'success' || steps.promote.outcome == 'failure' || steps.promote.outcome == 'cancelled')
+        env:
+          PREVIOUS: ${{ steps.before.outputs.previous }}
+        run: |
+          gcloud run services update-traffic "$SERVICE" --to-revisions="$PREVIOUS" --region="$REGION" --project="$PROJECT" --quiet
+          echo "Rolled back to \`$PREVIOUS\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Release failed after the traffic move; traffic is back on $PREVIOUS."

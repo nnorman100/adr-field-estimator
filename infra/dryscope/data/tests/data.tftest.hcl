@@ -447,3 +447,37 @@ run "a_repository_scoped_principal_set_is_accepted_and_bound_to_deploy_only" {
     error_message = "The binding is workload identity user, nothing broader."
   }
 }
+
+run "the_migrator_is_bound_only_when_a_pool_is_supplied" {
+  command = plan
+
+  assert {
+    condition     = length(google_service_account_iam_member.migrate_workload_identity) == 0
+    error_message = "No migrator workload identity binding until the owner supplies a pool."
+  }
+}
+
+run "the_migrator_takes_the_same_scoped_principal_set" {
+  command = plan
+
+  variables {
+    workload_identity_principal_set = "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/dryscope-${var.environment}/attribute.repository_id/987654321"
+  }
+
+  assert {
+    condition     = length(google_service_account_iam_member.migrate_workload_identity) == 1
+    error_message = "A scoped principal set binds the migrator exactly once."
+  }
+  assert {
+    condition     = google_service_account_iam_member.migrate_workload_identity[0].role == "roles/iam.workloadIdentityUser"
+    error_message = "The migrator binding is workload identity user, nothing broader."
+  }
+  assert {
+    condition     = google_service_account_iam_member.migrate_workload_identity[0].service_account_id == "projects/dryscope/serviceAccounts/dryscope-migrate-${var.environment}@dryscope.iam.gserviceaccount.com"
+    error_message = "The binding is on this environment's migrator and no other account."
+  }
+  assert {
+    condition     = google_service_account_iam_member.migrate_workload_identity[0].member == var.workload_identity_principal_set
+    error_message = "The migrator takes the same repository-scoped principal set as the deploy account."
+  }
+}
