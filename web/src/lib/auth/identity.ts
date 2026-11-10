@@ -1,4 +1,5 @@
 import { capabilitiesFor, type Capability, type Role } from '@/lib/access';
+import { accessFlags, flagsFromRows, type CompanyFlags, type FlagRow } from '@/lib/flags';
 import { sessionRefusal, type RouteSessionRule, type SessionClaims } from './policy';
 
 // Who is calling, decided only from the verified sign-in token: tenant, then company, then the
@@ -32,6 +33,8 @@ export type MemberRecord = {
   actor: { id: string; displayName: string | null } | null;
   // The actor's active membership, else its most recent disabled one, else null.
   membership: { role: Role; status: 'active' | 'disabled' } | null;
+  // The company's stored feature switches (company_feature_flags); no row means off.
+  flags: readonly FlagRow[];
 };
 
 export type IdentityDirectory = {
@@ -49,6 +52,8 @@ export type Identity = {
   tenant: string;
   role: Role;
   capabilities: readonly Capability[];
+  // The company's switches; every known flag is present, off unless the company turned it on.
+  flags: CompanyFlags;
 };
 
 // Why a request was refused. The code goes back to the browser; nothing else does.
@@ -96,9 +101,6 @@ export function bearerToken(request: Request): string {
   return token;
 }
 
-// Price books stay off until per-company switches exist (S3-11).
-const FLAGS = Object.freeze({ priceBooks: false });
-
 export type ResolveOptions = {
   // What the route declared about the session rules; none means the strictest member route.
   route?: RouteSessionRule;
@@ -139,6 +141,8 @@ export async function resolveIdentity(
   const refused = sessionRefusal(record.membership.role, token, options.route ?? {}, now);
   if (refused) throw new IdentityRefusal(refused);
 
+  const flags = flagsFromRows(record.flags);
+
   return {
     companyId,
     companyName: record.company.name,
@@ -147,6 +151,7 @@ export async function resolveIdentity(
     uid: token.uid,
     tenant,
     role: record.membership.role,
-    capabilities: capabilitiesFor(record.membership.role, FLAGS),
+    capabilities: capabilitiesFor(record.membership.role, accessFlags(flags)),
+    flags,
   };
 }
