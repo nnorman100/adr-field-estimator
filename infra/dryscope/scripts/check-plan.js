@@ -24,9 +24,9 @@
 // previous reviewed condition to the current one (the provider cannot change an IAM member's
 // condition in place). A third covers an app root that is already applied: a Cloud Run service
 // may change in place only by adding or setting a NEW_SETTINGS variable, to the value in the
-// table, with every other attribute unchanged. A fourth covers a Cloud SQL instance already applied with
-// a regional backup location: it may change in place, and only to the US multi-region (`us`), with
-// every other attribute unchanged. Nothing else may be deleted, replaced or updated.
+// table, with every other attribute unchanged. A fourth covers a Cloud SQL instance already applied
+// with a regional backup location: it may change in place, and only to the US multi-region (`us`),
+// with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
 const fs = require('node:fs');
 const readline = require('node:readline');
 
