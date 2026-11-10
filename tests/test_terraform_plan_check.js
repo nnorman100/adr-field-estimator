@@ -24,7 +24,7 @@ import { describe, expect, test } from 'vitest';
 const require = createRequire(import.meta.url);
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-plan.js');
-const { checkPlan } = require(SCRIPT);
+const { checkPlan, expectedPlan } = require(SCRIPT);
 const GUARDS = path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check-guards.js');
 const { checkGuards, PROTECTED, REQUIRED_RUNS } = require(GUARDS);
 
@@ -137,7 +137,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
   test('a wider database condition is refused', () => {
     for (const address of [
       'google_project_iam_member.sql_client["api"]',
-      'google_project_iam_member.firestore_user["live"]',
+      'google_project_iam_member.firestore_user["api"]',
     ]) {
       const problems = edit(address, (after) => {
         after.condition[0].expression += ' || true';
@@ -159,7 +159,7 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
   test('another environment’s database in the condition is refused', () => {
     const other = environment === 'test' ? 'live' : 'test';
     const problems = edit('google_project_iam_member.firestore_user["api"]', (after) => {
-      after.condition[0].expression = after.condition[0].expression.replace(
+      after.condition[0].expression = after.condition[0].expression.replaceAll(
         `dryscope-field-${environment}`,
         `dryscope-field-${other}`,
       );
@@ -331,6 +331,232 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     }
   });
 });
+
+// The Firestore grant's IAM condition, evaluated the way IAM would for the one expression shape
+// the table allows. Any other shape throws, so a rewritten condition must update this too.
+function firestoreConditionAllows(expression, resourceName) {
+  const shape = /^resource\.name == '([^']+)' \|\| resource\.name\.startsWith\('([^']+)'\)$/;
+  const match = shape.exec(expression);
+  if (!match) throw new Error(`unexpected Firestore condition shape: ${expression}`);
+  const [, exact, prefix] = match;
+  return resourceName === exact || resourceName.startsWith(prefix);
+}
+
+describe.each(['test', 'live'])(
+  'data root, %s: Live relay access and Firestore condition',
+  (environment) => {
+    const other = environment === 'test' ? 'live' : 'test';
+    const database = (env) => `projects/dryscope/databases/dryscope-field-${env}`;
+    const planned = () =>
+      find(load('data', environment), 'google_project_iam_member.firestore_user["api"]').change
+        .after.condition[0].expression;
+
+    test('the planned condition allows the database and document operations in it', () => {
+      const expression = planned();
+      for (const name of [
+        database(environment),
+        `${database(environment)}/documents/companies/c1`,
+        `${database(environment)}/documents/companies/c1/jobs/j1/rooms/r1`,
+      ]) {
+        expect(firestoreConditionAllows(expression, name), name).toBe(true);
+      }
+    });
+
+    test('the planned condition refuses the other environment and sibling databases', () => {
+      const expression = planned();
+      for (const name of [
+        database(other),
+        `${database(other)}/documents/companies/c1`,
+        `${database(environment)}2`,
+        `${database(environment)}-restore/documents/companies/c1`,
+        'projects/dryscope/databases/(default)',
+        `projects/alert-disaster-field-2026/databases/dryscope-field-${environment}`,
+      ]) {
+        expect(firestoreConditionAllows(expression, name), name).toBe(false);
+      }
+    });
+
+    test('the earlier exact-match condition would have refused a document operation', () => {
+      const exact = `resource.name == '${database(environment)}'`;
+      const name = `${database(environment)}/documents/companies/c1`;
+      expect(name === database(environment)).toBe(false);
+      expect(planned()).not.toBe(exact);
+      expect(firestoreConditionAllows(planned(), name)).toBe(true);
+    });
+
+    test('the table gives the Live relay no SQL or Firestore grant', () => {
+      const live = `serviceAccount:dryscope-live-${environment}@dryscope.iam.gserviceaccount.com`;
+      const roles = Object.values(expectedPlan('data', environment).grants)
+        .filter((g) => g.member === live)
+        .map((g) => g.role);
+      expect(roles).not.toContain('roles/cloudsql.client');
+      expect(roles).not.toContain('roles/cloudsql.instanceUser');
+      expect(roles).not.toContain('roles/datastore.user');
+      const plan = load('data', environment);
+      for (const address of [
+        'google_project_iam_member.sql_client["live"]',
+        'google_project_iam_member.sql_login["live"]',
+        'google_project_iam_member.firestore_user["live"]',
+      ]) {
+        expect(find(plan, address)).toBeUndefined();
+      }
+    });
+
+    test('re-creating a Live relay data grant is refused', () => {
+      const changed = load('data', environment);
+      const api = find(changed, 'google_project_iam_member.firestore_user["api"]');
+      changed.push({
+        address: 'google_project_iam_member.firestore_user["live"]',
+        type: 'google_project_iam_member',
+        change: {
+          actions: ['create'],
+          after: {
+            ...api.change.after,
+            member: `serviceAccount:dryscope-live-${environment}@dryscope.iam.gserviceaccount.com`,
+          },
+        },
+      });
+      expect(check(changed, 'data', environment)).toEqual([
+        'google_project_iam_member.firestore_user["live"]: not in the expected data inventory',
+      ]);
+    });
+  },
+);
+
+// Re-applying the data root to an environment the earlier table was applied to (test): the plan
+// may only remove the Live relay's three data grants and replace the web app's Firestore grant
+// to move it to the new condition. Everything else stays a no-op.
+describe.each(['test', 'live'])(
+  'data root, %s: re-apply over the earlier grants',
+  (environment) => {
+    const sa = (k) =>
+      `serviceAccount:dryscope-${k}-${environment}@dryscope.iam.gserviceaccount.com`;
+    const database = `projects/dryscope/databases/dryscope-field-${environment}`;
+    const sqlCondition = `resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/dryscope/instances/dryscope-${environment}-pg'`;
+    const oldFs = `resource.name == '${database}'`;
+    const FS_API = 'google_project_iam_member.firestore_user["api"]';
+    const removal = (address, role, member, expression) => ({
+      address,
+      type: 'google_project_iam_member',
+      change: {
+        actions: ['delete'],
+        before: { project: 'dryscope', role, member, condition: [{ expression }] },
+        after: null,
+      },
+    });
+    const reapply = () => {
+      const plan = load('data', environment).map((rc) => ({
+        ...rc,
+        change: { ...rc.change, actions: ['no-op'], before: rc.change.after },
+      }));
+      const fs = find(plan, FS_API);
+      fs.change.actions = ['delete', 'create'];
+      fs.change.before = { ...fs.change.after, condition: [{ expression: oldFs }] };
+      plan.push(
+        removal(
+          'google_project_iam_member.sql_client["live"]',
+          'roles/cloudsql.client',
+          sa('live'),
+          sqlCondition,
+        ),
+        removal(
+          'google_project_iam_member.sql_login["live"]',
+          'roles/cloudsql.instanceUser',
+          sa('live'),
+          sqlCondition,
+        ),
+        removal(
+          'google_project_iam_member.firestore_user["live"]',
+          'roles/datastore.user',
+          sa('live'),
+          oldFs,
+        ),
+      );
+      return plan;
+    };
+
+    test('removing the Live relay grants and re-conditioning the web app grant passes', () => {
+      expect(check(reapply(), 'data', environment)).toEqual([]);
+    });
+
+    test('the replacement order create-then-delete passes too', () => {
+      const plan = reapply();
+      find(plan, FS_API).change.actions = ['create', 'delete'];
+      expect(check(plan, 'data', environment)).toEqual([]);
+    });
+
+    test('removing a retired address that holds a different grant is refused', () => {
+      const plan = reapply();
+      find(plan, 'google_project_iam_member.sql_client["live"]').change.before.member = sa('api');
+      const problems = check(plan, 'data', environment);
+      expect(problems.some((p) => p.includes('sql_client["live"]: plan would delete'))).toBe(true);
+    });
+
+    test('replacing a retired grant instead of removing it is refused', () => {
+      const plan = reapply();
+      const rc = find(plan, 'google_project_iam_member.firestore_user["live"]');
+      rc.change.actions = ['delete', 'create'];
+      rc.change.after = { ...rc.change.before, condition: [{ expression: oldFs }] };
+      expect(check(plan, 'data', environment).length).toBeGreaterThan(0);
+    });
+
+    test('removing a current grant is refused', () => {
+      const plan = reapply();
+      const sql = find(plan, 'google_project_iam_member.sql_client["api"]');
+      sql.change.actions = ['delete'];
+      sql.change.after = null;
+      const fs = find(plan, FS_API);
+      fs.change.actions = ['delete'];
+      fs.change.after = null;
+      const problems = check(plan, 'data', environment);
+      expect(problems).toContain(
+        'google_project_iam_member.sql_client["api"]: plan would delete or replace it (delete)',
+      );
+      expect(problems).toContain(`${FS_API}: plan would delete or replace it (delete)`);
+    });
+
+    test('replacing the Firestore grant from any condition but the earlier one is refused', () => {
+      const plan = reapply();
+      find(plan, FS_API).change.before.condition = [{ expression: 'true' }];
+      expect(check(plan, 'data', environment)).toEqual([
+        `${FS_API}: plan would delete or replace it (delete, create)`,
+      ]);
+    });
+
+    test('a replacement that changes the member or widens the new condition is refused', () => {
+      const member = reapply();
+      find(member, FS_API).change.before.member = sa('live');
+      expect(check(member, 'data', environment)).toEqual([
+        `${FS_API}: plan would delete or replace it (delete, create)`,
+      ]);
+      const wider = reapply();
+      find(wider, FS_API).change.after.condition[0].expression += ' || true';
+      const problems = check(wider, 'data', environment);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(`${FS_API}: condition is`);
+    });
+
+    test('replacing any other grant or resource is still refused', () => {
+      for (const address of [
+        'google_project_iam_member.sql_client["api"]',
+        'google_storage_bucket.evidence',
+        'google_firestore_database.field',
+      ]) {
+        const plan = reapply();
+        find(plan, address).change.actions = ['delete', 'create'];
+        expect(check(plan, 'data', environment)).toEqual([
+          `${address}: plan would delete or replace it (delete, create)`,
+        ]);
+      }
+    });
+
+    test('the app root has no retired or re-conditioned grants', () => {
+      const want = expectedPlan('app', environment);
+      expect(want.retired).toEqual({});
+      expect(want.reconditioned).toEqual({});
+    });
+  },
+);
 
 describe.each(['test', 'live'])('app root, %s: services and deploy role', (environment) => {
   const plan = () => load('app', environment);

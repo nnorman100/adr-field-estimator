@@ -16,7 +16,12 @@ locals {
   # Resource names used in IAM conditions, so each runtime account reaches only
   # its own environment's database and instance.
   sql_condition = "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/${var.project_id}/instances/${local.n.sql_instance_name}'"
-  fs_condition  = "resource.name == 'projects/${var.project_id}/databases/${local.n.firestore_database_id}'"
+
+  # The database itself, or any name under it (its documents), and nothing else.
+  # The trailing slash keeps a sibling such as dryscope-field-test2 or a restored
+  # copy outside the grant, and the other environment's database never matches.
+  fs_database  = "projects/${var.project_id}/databases/${local.n.firestore_database_id}"
+  fs_condition = "resource.name == '${local.fs_database}' || resource.name.startsWith('${local.fs_database}/')"
 }
 
 # Enabling an API that is already on changes nothing. Destroying this root never
