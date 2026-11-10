@@ -131,7 +131,10 @@ function fakeVerifier(): TokenVerifier {
       const token = read(idToken);
       if (token.tenant !== tenant) throw new IdentityRefusal('invalid_token');
       if (token.revoked) throw new IdentityRefusal('sign_in_revoked');
-      return { tenant: token.tenant, uid: token.uid, emailVerified: token.emailVerified };
+      // Signed in a minute ago with an authenticator app, so an owner meets the session rules
+      // (tests/unit/session-policy.test.ts covers them).
+      const authTime = Math.floor(Date.now() / 1000) - 60;
+      return { tenant: token.tenant, uid: token.uid, emailVerified: token.emailVerified, authTime, secondFactor: 'totp' };
     },
   };
 }
