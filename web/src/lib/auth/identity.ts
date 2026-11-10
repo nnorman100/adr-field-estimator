@@ -1,4 +1,5 @@
 import { capabilitiesFor, type Capability, type Role } from '@/lib/access';
+import { sessionRefusal, type RouteSessionRule, type SessionClaims } from './policy';
 
 // Who is calling, decided only from the verified sign-in token: tenant, then company, then the
 // actor and membership. A company id in a URL, header or body is never read here, so it cannot
@@ -12,11 +13,14 @@ export type VerifiedToken = {
   emailVerified: boolean;
 };
 
+// The revocation-checked token also carries what the second-step and session rules read.
+export type SessionToken = VerifiedToken & SessionClaims;
+
 export type TokenVerifier = {
   // Checks the token without the revocation call.
   verify(idToken: string): Promise<VerifiedToken>;
   // Checks it again on that tenant, including revocation and a disabled account.
-  verifyNotRevoked(idToken: string, tenant: string): Promise<VerifiedToken>;
+  verifyNotRevoked(idToken: string, tenant: string): Promise<SessionToken>;
 };
 
 export type CompanyStatus = 'active' | 'suspended' | 'archived';
@@ -59,6 +63,10 @@ export const REFUSALS = {
   not_a_member: 403,
   member_disabled: 403,
   company_inactive: 403,
+  // The role needs an authenticator-app second step and this sign-in did not use one (policy.ts).
+  second_step_required: 403,
+  // The sign-in is older than the role allows, or than a sensitive route allows (policy.ts).
+  sign_in_again: 401,
 } as const;
 export type RefusalCode = keyof typeof REFUSALS;
 
@@ -91,10 +99,20 @@ export function bearerToken(request: Request): string {
 // Price books stay off until per-company switches exist (S3-11).
 const FLAGS = Object.freeze({ priceBooks: false });
 
+export type ResolveOptions = {
+  // What the route declared about the session rules; none means the strictest member route.
+  route?: RouteSessionRule;
+  // The time in seconds since the epoch; tests pass a fixed one.
+  now?: () => number;
+};
+
+const nowInSeconds = () => Math.floor(Date.now() / 1000);
+
 export async function resolveIdentity(
   request: Request,
   verifier: TokenVerifier,
   directory: IdentityDirectory,
+  options: ResolveOptions = {},
 ): Promise<Identity> {
   const idToken = bearerToken(request);
 
@@ -115,6 +133,11 @@ export async function resolveIdentity(
   if (record.company.status !== 'active') throw new IdentityRefusal('company_inactive');
   if (!record.actor || !record.membership) throw new IdentityRefusal('not_a_member');
   if (record.membership.status !== 'active') throw new IdentityRefusal('member_disabled');
+
+  // The second step and the sign-in age, for this role and this route.
+  const now = (options.now ?? nowInSeconds)();
+  const refused = sessionRefusal(record.membership.role, token, options.route ?? {}, now);
+  if (refused) throw new IdentityRefusal(refused);
 
   return {
     companyId,
