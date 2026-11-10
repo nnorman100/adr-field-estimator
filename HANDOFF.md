@@ -64,10 +64,9 @@ Owner actions (from `docs/STATUS.md`, recheck there):
    owner script in `docs/phone-acceptance.md`.
 2. ADR company profile and logo (Phase 0 item 2).
 3. Invitation check to a Google and an Outlook address (Phase 0 item 3).
-4. Before a second company subscribes: isolated test resources (databases, identities and release
-   targets) inside `alert-disaster-field-2026`, and Resend email with a company sending domain
-   (D-007). D-006's separate test project is superseded by the rebuild plan, which keeps test
-   resources in the existing project.
+4. Before a second company subscribes: the rebuild's isolated `test` resources (databases,
+   identities and release targets) in project `dryscope`, never in `alert-disaster-field-2026`
+   (D-006 Nov 9 note, D-012), and Resend email with a company sending domain (D-007).
 5. Decide which flag-off features to switch on, one reviewed pull request at a time, each with a
    phone check.
 6. Photo originals (#223) are built but not released or phone-checked.
@@ -82,11 +81,12 @@ sweep off.
 
 ## Rules that decide what you may do
 
-- Pull requests merge automatically once every check passes and the review is done; high-risk
+- The owner approves every merge: agents ask before merging any PR and nothing merges
+  automatically (D-009, kept on Nov 9, 2026; D-012 in `docs/DECISIONS.md`). High-risk
   work needs two separate independent reviews on top of the pipeline review, from models that did not write the code. Deploys run to test first, then live. Still owner-only:
   anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets,
   Firebase Auth settings); turning on deletion or new pricing; and production steps the owner
-  runs. This supersedes D-009 (`docs/DECISIONS.md`).
+  runs.
 - Never run a blanket `firebase deploy`; only `firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026`
   after the backend is deployed.
 - Never weaken a test, eval fixture, threshold or workflow; the Test guard blocks it.

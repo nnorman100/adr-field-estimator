@@ -17,6 +17,12 @@
 // The table is deliberately written out here: adding a resource or a grant means changing it
 // in the same review. `prevent_destroy` is not in plan JSON, so it cannot be checked here; the
 // refusal of every delete action is what stands behind it.
+//
+// Two named exceptions cover an environment that an earlier version of this table was already
+// applied to (test): RETIRED grants may appear only as a plain delete of exactly that grant, and
+// RECONDITIONED grants only as a replacement that keeps role and member and moves from the
+// previous reviewed condition to the current one (the provider cannot change an IAM member's
+// condition in place). Nothing else may be deleted, replaced or updated.
 const fs = require('node:fs');
 const readline = require('node:readline');
 
@@ -24,6 +30,12 @@ const PROJECT = 'dryscope';
 const REGION = 'us-central1';
 const SERVICES = ['api', 'live'];
 const RUNTIME = ['api', 'live', 'migrate'];
+// Cloud SQL connect and login: the web app and the migrator. The Live relay holds no SQL
+// access until a named table needs a narrower role.
+const SQL_USERS = ['api', 'migrate'];
+// roles/datastore.user includes delete, so only the web app holds it; the Live relay gets no
+// Firestore access until a named need.
+const FIRESTORE_USERS = ['api'];
 
 const APIS = [
   'aiplatform.googleapis.com',
@@ -71,8 +83,12 @@ function expectedPlan(root, env) {
   const sa = (k) => `serviceAccount:dryscope-${k}-${env}@${PROJECT}.iam.gserviceaccount.com`;
   const sqlName = `projects/${PROJECT}/instances/dryscope-${env}-pg`;
   const sqlCondition = `resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == '${sqlName}'`;
-  const fsCondition = `resource.name == 'projects/${PROJECT}/databases/dryscope-field-${env}'`;
+  const fsDatabase = `projects/${PROJECT}/databases/dryscope-field-${env}`;
+  // The database or any name under it (its documents); the slash keeps sibling databases out.
+  const fsCondition = `resource.name == '${fsDatabase}' || resource.name.startsWith('${fsDatabase}/')`;
   const grants = {}; // address -> {role, member, condition, ...fields}
+  const retired = {}; // address -> {role, member}: may only be deleted
+  const reconditioned = {}; // address -> previous condition it may be replaced from
   const others = []; // [address, optional?]
   const attrs = {}; // address -> {path: expected}
   const lists = {}; // address -> {path: expected set}
@@ -92,7 +108,7 @@ function expectedPlan(root, env) {
       others.push(`google_secret_manager_secret.app["${s}"]`);
     }
 
-    for (const k of RUNTIME) {
+    for (const k of SQL_USERS) {
       grants[`google_project_iam_member.sql_client["${k}"]`] = {
         role: 'roles/cloudsql.client',
         member: sa(k),
@@ -104,12 +120,26 @@ function expectedPlan(root, env) {
         condition: sqlCondition,
       };
     }
+    for (const k of FIRESTORE_USERS) {
+      const address = `google_project_iam_member.firestore_user["${k}"]`;
+      grants[address] = { role: 'roles/datastore.user', member: sa(k), condition: fsCondition };
+      // The first table matched the database name exactly.
+      reconditioned[address] = `resource.name == '${fsDatabase}'`;
+    }
+    // The first table also gave the Live relay SQL and Firestore access.
+    retired['google_project_iam_member.sql_client["live"]'] = {
+      role: 'roles/cloudsql.client',
+      member: sa('live'),
+    };
+    retired['google_project_iam_member.sql_login["live"]'] = {
+      role: 'roles/cloudsql.instanceUser',
+      member: sa('live'),
+    };
+    retired['google_project_iam_member.firestore_user["live"]'] = {
+      role: 'roles/datastore.user',
+      member: sa('live'),
+    };
     for (const k of SERVICES) {
-      grants[`google_project_iam_member.firestore_user["${k}"]`] = {
-        role: 'roles/datastore.user',
-        member: sa(k),
-        condition: fsCondition,
-      };
       grants[`google_project_iam_member.gemini_caller["${k}"]`] = {
         role: `projects/${PROJECT}/roles/dryscopeGemini${title(env)}`,
         member: sa(k),
@@ -277,7 +307,7 @@ function expectedPlan(root, env) {
     optional.add('google_billing_budget.monthly[0]');
     others.push('google_billing_budget.monthly[0]');
   }
-  return { grants, others, attrs, lists, absent, optional };
+  return { grants, others, attrs, lists, absent, optional, retired, reconditioned };
 }
 
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -293,9 +323,42 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
   const want = expectedPlan(root, environment);
   const byAddress = new Map(resourceChanges.map((rc) => [rc.address, rc]));
 
+  const conditionOf = (state) => (state?.condition ?? []).map((c) => c.expression);
+  const isReplace = (actions) =>
+    actions.length === 2 && actions.includes('delete') && actions.includes('create');
+  // A retired grant may only be removed, and only if it is exactly the grant the table retired.
+  const retiredDelete = (rc, actions) => {
+    const was = want.retired[rc.address];
+    const before = rc.change?.before;
+    return (
+      was !== undefined &&
+      actions.length === 1 &&
+      actions[0] === 'delete' &&
+      before?.role === was.role &&
+      before?.member === was.member
+    );
+  };
+  // A reconditioned grant may be replaced only from its previous reviewed condition, keeping
+  // role and member; the new condition is checked against the table below like any grant.
+  const reconditionedReplace = (rc, actions) => {
+    const previous = want.reconditioned[rc.address];
+    const { before, after } = rc.change ?? {};
+    return (
+      previous !== undefined &&
+      isReplace(actions) &&
+      before != null &&
+      after != null &&
+      before.role === after.role &&
+      before.member === after.member &&
+      same([previous], conditionOf(before))
+    );
+  };
+
   for (const rc of resourceChanges) {
     const actions = rc.change?.actions ?? [];
-    if (actions.includes('delete')) {
+    if (retiredDelete(rc, actions) || reconditionedReplace(rc, actions)) {
+      // Named, reviewed exception (see the table).
+    } else if (actions.includes('delete')) {
       problems.push(`${rc.address}: plan would delete or replace it (${actions.join(', ')})`);
     } else if (actions.includes('update')) {
       problems.push(`${rc.address}: plan would change it in place; a first apply only creates`);
@@ -307,6 +370,7 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
   const allowed = new Set([...want.others, ...Object.keys(want.grants)]);
   for (const rc of resourceChanges) {
     const after = rc.change?.after;
+    if (retiredDelete(rc, rc.change?.actions ?? [])) continue;
     if (!allowed.has(rc.address)) {
       problems.push(`${rc.address}: not in the expected ${root} inventory`);
     } else if (after && !PROJECTLESS.has(rc.address.split('.')[0]) && after.project !== PROJECT) {
