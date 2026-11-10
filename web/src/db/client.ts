@@ -46,15 +46,29 @@ export function connectionOptions(config: AppConfig, accessToken = createTokenSo
   return { url: config.databaseUrl, options: common };
 }
 
+function connect(config: AppConfig) {
+  const { url, options } = connectionOptions(config);
+  return url === null ? postgres(options) : postgres(url, options);
+}
+
 export function openDatabase(env: Record<string, string | undefined>) {
-  const { url, options } = connectionOptions(parseConfig(env));
-  const sql = url === null ? postgres(options) : postgres(url, options);
+  const sql = connect(parseConfig(env));
   return {
     db: drizzle(sql, { schema }),
     async close() {
       await sql.end({ timeout: 5 });
     },
   };
+}
+
+// Proves the configured database accepts this service's login, over the same connection settings
+// the app uses. One connection per process, opened on first use, so health checks never pile up
+// logins or metadata token requests.
+let probe: ReturnType<typeof postgres> | null = null;
+
+export async function checkDatabase(config: AppConfig): Promise<void> {
+  probe ??= connect(config);
+  await probe`select 1`;
 }
 
 export async function migrateFromConfig(

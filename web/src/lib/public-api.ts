@@ -1,7 +1,7 @@
 // API routes a signed-out caller may use. Everything else under /api refuses without sign-in
 // (src/proxy.ts). Adding a path here makes it public: it must store and reveal nothing private.
 export const publicApiPaths: readonly string[] = [
-  '/api/health', // liveness, environment and build commit only
+  '/api/health', // liveness, environment, build commit and whether the database answers
   '/api/echo', // sample Zod boundary; stores nothing and returns only its validated input
 ];
 
