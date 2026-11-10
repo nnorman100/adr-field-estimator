@@ -55,7 +55,7 @@ jobs:
   # Firebase Auth and Firestore emulators under a demo- project id only (tests/emu/run.ts
   # refuses any other id). `check` below fails when this job does.
   emulators:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
