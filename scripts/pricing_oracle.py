@@ -53,6 +53,7 @@ from backend.sizing import equipment_sizing  # noqa: E402
 
 FIXTURES = ROOT / 'tests' / 'fixtures' / 'pricing-oracle'
 CASES = FIXTURES / 'cases'
+COERCION = FIXTURES / 'coercion'
 MANIFEST = FIXTURES / 'manifest.json'
 FORMAT_VERSION = 1
 # The audit's date line is the only clock the documents read; it is frozen for every case.
@@ -374,6 +375,17 @@ def build_files():
     return files
 
 
+def build_coercion():
+    """Every coercion probe file the probe builder and the current models produce, by file name."""
+    from scripts.pricing_oracle_coercion import coercion_files
+
+    return coercion_files(render)
+
+
+def stored_coercion():
+    return {path.name: path.read_bytes() for path in sorted(COERCION.glob('*.json'))}
+
+
 def _git(*args):
     return subprocess.run(
         ['git', '-C', str(ROOT), *args], check=True, capture_output=True, text=True
@@ -427,11 +439,9 @@ def stored_files():
     return {path.name: path.read_bytes() for path in sorted(CASES.glob('*.json'))}
 
 
-def check():
-    """Problems between the stored oracle and what the current code produces; empty when equal."""
-    expected, actual = stored_files(), build_files()
-    problems = [f'missing case file: {name}' for name in sorted(set(actual) - set(expected))]
-    problems += [f'unexpected case file: {name}' for name in sorted(set(expected) - set(actual))]
+def _differences(expected, actual, kind):
+    problems = [f'missing {kind} file: {name}' for name in sorted(set(actual) - set(expected))]
+    problems += [f'unexpected {kind} file: {name}' for name in sorted(set(expected) - set(actual))]
     for name in sorted(set(expected) & set(actual)):
         if expected[name] != actual[name]:
             offset = next(
@@ -439,6 +449,14 @@ def check():
                 min(len(expected[name]), len(actual[name])),
             )
             problems.append(f'{name}: first differing byte at offset {offset}')
+    return problems
+
+
+def check():
+    """Problems between the stored oracle and what the current code produces; empty when equal."""
+    expected, actual = stored_files(), build_files()
+    problems = _differences(expected, actual, 'case')
+    problems += _differences(stored_coercion(), build_coercion(), 'coercion')
     stored = json.loads(MANIFEST.read_text(encoding='ascii'))
     if stored['corpus_sha256'] != corpus_sha256(expected):
         problems.append('manifest.json corpus_sha256 does not match the stored case files')
@@ -455,6 +473,13 @@ def write():
             path.unlink()
     for name, raw in files.items():
         (CASES / name).write_bytes(raw)
+    probes = build_coercion()
+    COERCION.mkdir(parents=True, exist_ok=True)
+    for path in COERCION.glob('*.json'):
+        if path.name not in probes:
+            path.unlink()
+    for name, raw in probes.items():
+        (COERCION / name).write_bytes(raw)
     # One line per case entry, so the manifest stays short at any corpus size.
     MANIFEST.write_bytes((render(manifest(files), inline=2) + '\n').encode('ascii'))
     too_long = [name for name, raw in files.items() if raw.count(b'\n') > MAX_LINES]
