@@ -1,3 +1,4 @@
+import { parseFlagName, type FlagName } from '@/lib/flags';
 import { IdentityRefusal, resolveIdentity, type Identity } from './identity';
 import type { RouteSessionRule } from './policy';
 import { identityServices, type IdentityServices } from './services';
@@ -6,6 +7,8 @@ import { identityServices, type IdentityServices } from './services';
 //
 //   export const GET = publicRoute(async () => ...);                 // no sign-in
 //   export const GET = memberRoute(async (request, identity) => ...); // a company member
+//   export const GET = requireFlag('price_books', async (request, identity) => ...);
+//                                         // a company member whose company has the flag on
 //
 // A member route also applies the second-step and session rules of policy.ts. Two kinds of route
 // say more, beside their own code:
@@ -16,8 +19,8 @@ import { identityServices, type IdentityServices } from './services';
 //                                                    // has none yet may reach it
 //
 // tests/unit/route-rules.test.ts finds every route file and fails on a handler that is not
-// wrapped, so a route with no rule cannot ship. Later rules (operator, a capability, a feature
-// flag) are added here as further wrappers.
+// wrapped, so a route with no rule cannot ship. Later rules (operator, a capability) are added
+// here as further wrappers.
 
 type RouteContext = { params: Promise<Record<string, string | string[] | undefined>> };
 type Handler = (request: Request, context: RouteContext) => Response | Promise<Response>;
@@ -55,4 +58,20 @@ export function memberRoute(
     }
     return handler(request, identity, context);
   };
+}
+
+// A member route of a switched-off feature. When the caller's company does not have the flag on,
+// the route answers 404 as if it did not exist, and the handler never runs. The flag comes from
+// the company of the verified sign-in, never from the request. An unknown flag name fails when
+// the route module loads, so a misspelt gate cannot ship as a route that is always off.
+export function requireFlag(
+  flag: FlagName,
+  handler: MemberHandler,
+  services: () => IdentityServices = identityServices,
+): Handler {
+  const name = parseFlagName(flag);
+  return memberRoute((request, identity, context) => {
+    if (identity.flags?.[name] !== true) return refusal('not_found', 404);
+    return handler(request, identity, context);
+  }, services);
 }

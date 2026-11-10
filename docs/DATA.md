@@ -172,7 +172,8 @@ and one active membership per actor), `invitations` (pending, accepted or cancel
 operator-only tenant, never both), `platform_admins` (operators are actors with no company, signed
 in through an operator tenant, per owner decision D6), `audit_events` (ids and counts only in
 `details`; `actor_id` is a member of the event's company and `operator_actor_id` a platform
-operator), `company_feature_flags` (a missing row means off; only an operator changes one, per D12)
+operator), `company_feature_flags` (a missing row means off, and so does a name not in `web/src/lib/flags/`;
+only an operator changes one, per D12, and the runtime can only read it until S3-11b adds that path)
 and `access_projection_outbox` (actors whose Firestore access record must follow a committed
 membership change). Rows that refer to another company row carry `company_id` in a composite key,
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
