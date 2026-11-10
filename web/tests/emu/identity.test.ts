@@ -22,7 +22,7 @@ beforeAll(async () => {
   verifier = firebaseTokenVerifier(
     parseIdentityConfig({
       APP_ENV: 'local',
-      FIREBASE_PROJECT_ID: projectId,
+      GOOGLE_CLOUD_PROJECT: projectId,
       FIREBASE_AUTH_EMULATOR_HOST: process.env.FIREBASE_AUTH_EMULATOR_HOST,
     }),
   );

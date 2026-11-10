@@ -291,28 +291,47 @@ describe('firebaseTokenVerifier', () => {
 });
 
 describe('sign-in configuration', () => {
-  it('needs FIREBASE_PROJECT_ID to check a sign-in, but not to boot', () => {
+  it('needs GOOGLE_CLOUD_PROJECT to check a sign-in, but not to boot', () => {
     expect(parseConfig({ APP_ENV: 'test' }).appEnv).toBe('test');
-    expect(() => parseIdentityConfig({ APP_ENV: 'test' })).toThrow(/FIREBASE_PROJECT_ID/);
-    expect(parseIdentityConfig({ APP_ENV: 'live', FIREBASE_PROJECT_ID: 'dryscope' })).toEqual({
+    expect(() => parseIdentityConfig({ APP_ENV: 'test' })).toThrow(/GOOGLE_CLOUD_PROJECT/);
+    expect(parseIdentityConfig({ APP_ENV: 'live', GOOGLE_CLOUD_PROJECT: 'dryscope' })).toEqual({
       appEnv: 'live',
       projectId: 'dryscope',
       authEmulatorHost: null,
     });
-    expect(() => parseConfig({ APP_ENV: 'live', FIREBASE_PROJECT_ID: 'Not A Project' })).toThrow(ConfigError);
+    expect(() => parseConfig({ APP_ENV: 'live', GOOGLE_CLOUD_PROJECT: 'Not A Project' })).toThrow(ConfigError);
+  });
+
+  it('reads the names the Cloud Run Terraform sets (infra/dryscope/app/cloud_run.tf common_env)', () => {
+    // The environment a test or live service starts with: no APP_ENV, no Firebase-specific name.
+    const cloudRun = {
+      APP_ENVIRONMENT: 'test',
+      GOOGLE_CLOUD_PROJECT: 'dryscope',
+      GOOGLE_CLOUD_LOCATION: 'us-central1',
+      FIRESTORE_DATABASE_ID: 'dryscope-field-test',
+      ALLOWED_ORIGINS: 'https://test.example.test',
+    };
+    expect(parseConfig(cloudRun)).toEqual({ appEnv: 'test', databaseUrl: null });
+    expect(parseIdentityConfig(cloudRun)).toEqual({ appEnv: 'test', projectId: 'dryscope', authEmulatorHost: null });
+    expect(parseConfig({ ...cloudRun, APP_ENVIRONMENT: 'live' }).appEnv).toBe('live');
+    // An invalid or contradictory environment name still stops the app, without echoing it.
+    expect(() => parseConfig({ ...cloudRun, APP_ENVIRONMENT: 'staging-secret' })).toThrow(/APP_ENVIRONMENT/);
+    expect(() => parseConfig({ ...cloudRun, APP_ENVIRONMENT: 'staging-secret' })).not.toThrow(/staging-secret/);
+    expect(() => parseConfig({ ...cloudRun, APP_ENV: 'live' })).toThrow(/must match/);
+    expect(parseConfig({ ...cloudRun, APP_ENV: 'test' }).appEnv).toBe('test');
   });
 
   it('allows the Auth emulator only locally, for a demo- project, on a loopback address', () => {
-    const local = { APP_ENV: 'local', FIREBASE_PROJECT_ID: 'demo-dryscope', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399' };
+    const local = { APP_ENV: 'local', GOOGLE_CLOUD_PROJECT: 'demo-dryscope', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399' };
     expect(parseIdentityConfig(local).authEmulatorHost).toBe('127.0.0.1:9399');
     for (const appEnv of ['test', 'live']) {
       expect(() => parseConfig({ ...local, APP_ENV: appEnv })).toThrow(/allowed only when APP_ENV is local/);
     }
-    expect(() => parseConfig({ ...local, FIREBASE_PROJECT_ID: 'dryscope' })).toThrow(/demo-/);
+    expect(() => parseConfig({ ...local, GOOGLE_CLOUD_PROJECT: 'dryscope' })).toThrow(/demo-/);
     expect(() => parseConfig({ ...local, FIREBASE_AUTH_EMULATOR_HOST: 'auth.example.com:9399' })).toThrow(/loopback/);
     // The live app refuses to start rather than trust unsigned tokens.
     expect(() =>
-      parseConfig({ APP_ENV: 'live', FIREBASE_PROJECT_ID: 'dryscope', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399' }),
+      parseConfig({ APP_ENV: 'live', GOOGLE_CLOUD_PROJECT: 'dryscope', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399' }),
     ).toThrow(ConfigError);
   });
 });

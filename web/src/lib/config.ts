@@ -2,9 +2,10 @@ import { z } from 'zod';
 
 // Typed server configuration. Every variable the app reads is declared here. src/instrumentation.ts
 // checks it when the server starts, so an invalid value stops the app with a message that names the
-// variable and never repeats the value. APP_ENV is required. DATABASE_URL is optional until a
-// database command runs, and FIREBASE_PROJECT_ID until a route checks a sign-in; neither has a
-// default. No secrets belong in this file.
+// variable and never repeats the value. APP_ENV is required; the Cloud Run services set it as
+// APP_ENVIRONMENT (infra/dryscope/app/cloud_run.tf), which is read the same way. DATABASE_URL is
+// optional until a database command runs, and GOOGLE_CLOUD_PROJECT until a route checks a sign-in;
+// neither has a default. No secrets belong in this file.
 function isPostgresUrl(value: string): boolean {
   if (value.length === 0 || value.length > 2000 || /\s/.test(value)) return false;
   try {
@@ -33,7 +34,7 @@ function isLoopbackHost(value: string): boolean {
 const schema = z
   .object({
   APP_ENV: z.enum(['local', 'test', 'live'], {
-    error: 'APP_ENV must be one of local, test or live',
+    error: 'APP_ENV (or APP_ENVIRONMENT) must be one of local, test or live',
   }),
   // Optional so the shell can boot before a database is wired. When present it must already be a
   // postgres URL; the message stays fixed so a secret in the value is never echoed.
@@ -41,10 +42,11 @@ const schema = z
     .string()
     .refine(isPostgresUrl, { message: 'DATABASE_URL must be a postgres URL' })
     .optional(),
-  // The Firebase project whose sign-in tokens the server accepts (their audience).
-  FIREBASE_PROJECT_ID: z
+  // The project whose sign-in tokens the server accepts (their audience). Cloud Run gets it from
+  // Terraform; the Firebase CLI sets it for the emulators.
+  GOOGLE_CLOUD_PROJECT: z
     .string()
-    .regex(PROJECT_ID, { message: 'FIREBASE_PROJECT_ID must be a Google Cloud project id' })
+    .regex(PROJECT_ID, { message: 'GOOGLE_CLOUD_PROJECT must be a Google Cloud project id' })
     .optional(),
   // firebase-admin reads this variable itself and then accepts unsigned tokens, so it is allowed
   // only on a developer machine, only for a demo- project, and only on a loopback address.
@@ -62,11 +64,11 @@ const schema = z
         message: 'FIREBASE_AUTH_EMULATOR_HOST is allowed only when APP_ENV is local',
       });
     }
-    if (!env.FIREBASE_PROJECT_ID?.startsWith('demo-')) {
+    if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
       ctx.addIssue({
         code: 'custom',
         path: ['FIREBASE_AUTH_EMULATOR_HOST'],
-        message: 'FIREBASE_AUTH_EMULATOR_HOST needs a FIREBASE_PROJECT_ID starting with demo-',
+        message: 'FIREBASE_AUTH_EMULATOR_HOST needs a GOOGLE_CLOUD_PROJECT starting with demo-',
       });
     }
   });
@@ -83,8 +85,18 @@ export class ConfigError extends Error {
   }
 }
 
+// The environment name under either variable. Both set to different values is refused, so a
+// service cannot run as one environment while its settings say another.
+function withAppEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const { APP_ENV, APP_ENVIRONMENT } = env;
+  if (APP_ENV !== undefined && APP_ENVIRONMENT !== undefined && APP_ENV !== APP_ENVIRONMENT) {
+    throw new ConfigError(['APP_ENV: APP_ENV and APP_ENVIRONMENT must match when both are set']);
+  }
+  return { ...env, APP_ENV: APP_ENV ?? APP_ENVIRONMENT };
+}
+
 function checked(env: Record<string, string | undefined>) {
-  const result = schema.safeParse(env);
+  const result = schema.safeParse(withAppEnv(env));
   if (!result.success) {
     // Only variable names and messages are reported, never the values.
     throw new ConfigError(result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
@@ -104,15 +116,15 @@ export type IdentityConfig = {
 };
 
 // What sign-in checks need. Called when a route first checks a sign-in, so the shell still boots
-// without FIREBASE_PROJECT_ID; a route that needs it then fails closed.
+// without GOOGLE_CLOUD_PROJECT; a route that needs it then fails closed.
 export function parseIdentityConfig(env: Record<string, string | undefined>): IdentityConfig {
   const data = checked(env);
-  if (!data.FIREBASE_PROJECT_ID) {
-    throw new ConfigError(['FIREBASE_PROJECT_ID: FIREBASE_PROJECT_ID is required to check a sign-in']);
+  if (!data.GOOGLE_CLOUD_PROJECT) {
+    throw new ConfigError(['GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to check a sign-in']);
   }
   return {
     appEnv: data.APP_ENV,
-    projectId: data.FIREBASE_PROJECT_ID,
+    projectId: data.GOOGLE_CLOUD_PROJECT,
     authEmulatorHost: data.FIREBASE_AUTH_EMULATOR_HOST ?? null,
   };
 }
