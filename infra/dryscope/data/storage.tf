@@ -27,8 +27,9 @@ resource "google_storage_bucket" "evidence" {
   depends_on = [google_project_service.apis]
 }
 
-# Routine actors may create and read objects. Nobody routine may delete or
-# overwrite: objectCreator and objectViewer carry no delete permission.
+# Routine actors may create and read objects. objectCreator and objectViewer
+# carry no delete permission. Overwrite is refused only because every evidence
+# upload creates with ifGenerationMatch=0 (docs/RUNBOOK.md), not by the role.
 resource "google_storage_bucket_iam_member" "api_create" {
   bucket = google_storage_bucket.evidence.name
   role   = "roles/storage.objectCreator"
