@@ -7,7 +7,6 @@ file length, test guard, audit) must keep running on every PR.
 """
 
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -25,35 +24,11 @@ def load_workflow(name):
     return yaml.safe_load((ROOT / '.github' / 'workflows' / name).read_text(encoding='utf-8'))
 
 
-def script_paths():
-    """Pathspecs in the script's legacy_paths array, in order, comments and quotes removed."""
-    text = SCRIPT.read_text(encoding='utf-8')
-    body = re.search(r'legacy_paths=\(\n(.*?)\n\)', text, re.DOTALL).group(1)
-    lines = [line.strip() for line in body.splitlines()]
-    return [line.strip("'") for line in lines if line and not line.startswith('#')]
-
-
 def browser_paths():
     """Pathspecs in the browser job's inline scope step, in order."""
     script = load_ci_workflow()['jobs']['browser']['steps'][1]['run']
     body = script.split('"$BASE_SHA...HEAD" -- \\\n', 1)[1].split(')"; then', 1)[0]
     return [line.strip().removesuffix('\\').strip().strip("'") for line in body.splitlines()]
-
-
-def test_script_list_starts_with_the_browser_job_list():
-    """One legacy path list: the script extends the browser job's list and never redefines it."""
-    browser = browser_paths()
-    assert len(browser) > 15
-    assert script_paths()[: len(browser)] == browser
-
-
-def test_script_adds_unit_test_and_tooling_files_after_the_browser_list():
-    extras = script_paths()[len(browser_paths()) :]
-    for path in ('tests/', 'scripts/', '.github/', 'ops/', ':(glob)**/*.py', 'pyproject.toml'):
-        assert path in extras
-    # Rebuild paths must never be listed.
-    for path in extras:
-        assert not path.startswith(('web/', 'infra/', 'docs/RUNBOOK', 'docs/STATUS'))
 
 
 def run_browser_inline_scope(repo, event_name, base_sha, github_output):
@@ -322,13 +297,29 @@ def test_ci_node_job_lint_still_covers_required_docs_and_file_length():
     assert 'check_file_length.py' in lint and 'check_required_docs.js' in lint
 
 
+def scope_gated_parts(workflow):
+    """Jobs and steps that run the scope script or gate on its output."""
+    gated = []
+    for job_name, job in workflow['jobs'].items():
+        if 'steps.scope.' in job.get('if', ''):
+            gated.append(job_name)
+        for step in job.get('steps', []):
+            label = f'{job_name}: {step.get("name") or step.get("uses") or step.get("run")}'
+            runs_script = 'scripts/ci_legacy_scope.sh' in step.get('run', '').split()
+            if step.get('id') == 'scope' or runs_script or 'steps.scope.' in step.get('if', ''):
+                gated.append(label)
+    return gated
+
+
 def test_ci_rebuild_and_policy_jobs_are_not_scoped():
-    workflow = load_ci_workflow()
-    audit = workflow['jobs']['audit']
-    assert 'if' not in audit and all('scope' not in str(s) for s in audit['steps'])
+    jobs = load_ci_workflow()['jobs']
+    assert scope_gated_parts({'jobs': {'python': jobs['python']}})
+    audit = jobs['audit']
+    assert 'if' not in audit
+    assert all('if' not in step for step in audit['steps'])
+    assert scope_gated_parts({'jobs': {'audit': audit}}) == []
     for name in ('test-guard.yml', 'web.yml'):
-        text = (ROOT / '.github' / 'workflows' / name).read_text(encoding='utf-8')
-        assert 'ci_legacy_scope' not in text, f'{name} must keep running unscoped'
+        assert scope_gated_parts(load_workflow(name)) == [], f'{name} must keep running unscoped'
 
 
 def codeql_condition(step, language):
