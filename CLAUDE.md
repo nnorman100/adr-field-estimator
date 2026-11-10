@@ -43,6 +43,13 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Add new actions to the role matrix (`can()` in `public/workspaces.js` plus the server check) and update `docs/ACCESS.md`.
 - Update `docs/STATUS.md` if a feature's state changes.
 
+## Technology Standard 2.2 (rules agents need)
+Profile: `docs/ARCHITECTURE.md` (top). Recorded exceptions: `docs/DECISIONS.md` D-013 to D-015. D-016 (owner- or operator-run company sign-in tenants for the pilot) is a decision now written into the standard, not an exception. Stage plans and corrections live in `docs/plans/`.
+- **Migrations:** add first, switch over, remove later. Never rename or drop in one step. Drops or row deletions need a fresh backup and owner approval. Additive migrations apply automatically on the test copy: today from the release workflow's `migrate` job (`.github/workflows/web-release.yml`), moving to a Cloud Run job inside Google (PR #297). Live migrations need the owner until three clean releases. One database-changing job at a time.
+- **Release path** (the rebuilt app in `web/`): every merge to `master` releases to test with smoke tests; live comes later; the urgent-fix workflow and the release manifest are planned, not present yet. See `docs/RUNBOOK.md`.
+- **CI** runs on the self-hosted runner pool. Agents never set or delete `CI_RUNNER` or switch a job to GitHub-hosted runners (the owner has a $0 Actions hard stop); the owner uses that switch only as a fallback after raising the Actions budget above $0, and deletes it afterwards. See `docs/RUNBOOK.md` (CI runners).
+- **New dependency:** give the reason in the PR, check the package is genuine (publisher, downloads, repository), and get reviewer approval.
+
 ## Risk and merging
 The owner approves every merge: agents ask before merging any PR and nothing merges automatically (D-009, kept on Nov 9, 2026; D-012). High-risk work needs two separate independent reviews on top of the pipeline review, from models that did not write the code. Deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
 
