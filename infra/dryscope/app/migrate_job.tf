@@ -95,6 +95,7 @@ resource "google_project_iam_custom_role" "migrate_job" {
     "run.jobs.get",
     "run.jobs.run",
     "run.jobs.update",
+    "run.operations.get",
     "run.tasks.get",
     "run.tasks.list",
   ]

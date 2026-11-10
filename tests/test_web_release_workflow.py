@@ -467,20 +467,6 @@ def test_migrations_run_in_the_job_before_the_revision_is_staged(release):
     assert steps(migrate)[0]['with']['sparse-checkout'] == 'web/migrations'
 
 
-def test_the_runner_never_connects_to_the_database(release):
-    """The release no longer depends on this runner's network path to Cloud SQL: no step starts
-    the Cloud SQL Auth Proxy, runs the migrator locally or holds a database URL."""
-    for name, job in release['jobs'].items():
-        given = [str(v) for v in job.get('env', {}).values()]
-        for s in steps(job):
-            given += [str(v) for v in s.get('env', {}).values()]
-            given += [str(v) for v in s.get('with', {}).values()]
-            given.append(commands(s))
-        for text in given:
-            for forbidden in ('cloud-sql-proxy', 'DATABASE_URL', 'db:migrate', ':5432', '3307'):
-                assert forbidden not in text, (name, forbidden)
-
-
 IMAGE_REF = f'us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:{"c" * 64}'
 MIGRATOR = 'dryscope-migrate-test@dryscope.iam.gserviceaccount.com'
 

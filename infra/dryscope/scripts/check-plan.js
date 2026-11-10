@@ -92,6 +92,7 @@ const MIGRATE_JOB_PERMISSIONS = [
   'run.jobs.get',
   'run.jobs.run',
   'run.jobs.update',
+  'run.operations.get',
   'run.tasks.get',
   'run.tasks.list',
 ];

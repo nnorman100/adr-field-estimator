@@ -411,6 +411,7 @@ run "deploy_account_may_only_update_and_run_the_migration_job" {
       "run.jobs.get",
       "run.jobs.run",
       "run.jobs.update",
+      "run.operations.get",
       "run.tasks.get",
       "run.tasks.list",
     ])
