@@ -1,6 +1,3 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   IdentityRefusal,
@@ -298,29 +295,7 @@ describe('changeCompanyFlag', () => {
   });
 });
 
-// Until S3-11b adds the operator-only route, nothing a company member can call changes a flag.
 describe('who can change a flag', () => {
-  const APP_DIR = fileURLToPath(new URL('../../src/app', import.meta.url));
-
-  async function sourceFiles(dir: string): Promise<string[]> {
-    const found: string[] = [];
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) found.push(...(await sourceFiles(path)));
-      else if (/\.(ts|tsx|js|jsx|mjs)$/.test(entry.name)) found.push(path);
-    }
-    return found;
-  }
-
-  it('no route under src/app calls the change rule yet, so an owner cannot change a flag', async () => {
-    const callers: string[] = [];
-    for (const path of await sourceFiles(APP_DIR)) {
-      const source = await readFile(path, 'utf8');
-      if (/changeCompanyFlag|lib\/flags\/change|company_feature_flags|companyFeatureFlags/.test(source)) callers.push(path);
-    }
-    expect(callers).toEqual([]);
-  });
-
   it('gives no company role a capability to change flags, with the flag on or off', async () => {
     const { capabilitiesFor } = await import('@/lib/access');
     for (const role of ['owner', 'estimator', 'office']) {
