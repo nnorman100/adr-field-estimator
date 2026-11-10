@@ -6,7 +6,8 @@ Infrastructure for the rebuilt DryScope in dedicated project `dryscope` (project
 infra/dryscope/
   modules/naming   one place for every name, account and secret-to-service rule
   data/            Cloud SQL, named Firestore database, evidence bucket, secrets,
-                   image repository, runtime and deploy accounts and their grants
+                   image repository, runtime and deploy accounts and their grants,
+                   sign-in APIs and the unbound sign-in user role
   app/             Cloud Run (web app, Live relay), alerts, uptime check, budget stub
   scripts/check.sh offline checks (format, validate, mocked tests)
 ```
@@ -34,8 +35,9 @@ npx vitest run tests/test_terraform_plan_check.js                  # the plan ch
 - **The deploy account is as powerful as the runtime it deploys.** It may act as the web app and relay accounts and update their services, so any code it ships runs with that environment's data and secrets. GitHub environment protection, the principal set's repository scope and a separate workload identity pool per environment (`dryscope-test`, `dryscope-live`; the variable refuses any other pool) are the real controls; it must never be given `iam.roles.update` on its own custom role.
 - **The web app and migrator can delete rows and documents in their own environment** (`roles/datastore.user` for the web app, SQL grants for both). Point-in-time recovery on both stores is the backstop. The Live relay holds neither: no Cloud SQL connect or login and no Firestore role until a named need. Its Cloud SQL IAM user exists but cannot connect without those roles.
 - **Evidence "no overwrite" is enforced by the upload code, not only the role.** The web app's `roles/storage.objectCreator` carries no delete, but the bucket keeps object versions, so the rule must not rest on how the role is evaluated against an existing name. Every evidence upload must create with a does-not-exist precondition (`ifGenerationMatch=0`) and treat `412 Precondition Failed` as a refused write ([RUNBOOK](../../docs/RUNBOOK.md#apply-the-central-terraform)).
+- **The sign-in user role is bound per tenant, by hand.** `dryscopeIdentity<Env>` holds `firebaseauth.users.get`, `create`, `update` and `sendEmail` only (no delete, no `configs.*`, no `tenants.*`), and Terraform binds it nowhere: test and live share project `dryscope` and so share Identity Platform, and a project binding would let the test web app change live users. The owner binds it on each of the environment's own tenants ([RUNBOOK](../../docs/RUNBOOK.md#sign-in-user-role)). Whether user-management calls honour a tenant-only binding is not proven yet.
 - **Gemini calls need a project-level role.** Vertex AI cannot be scoped to one environment; the custom role holds `aiplatform.endpoints.predict` only.
 
 ## Open owner decisions
 
-Private IP for Cloud SQL (needs a VPC), HA versus zonal for live, the public front door (load balancer and Cloud Armor), which will reintroduce a Cloud Run ingress setting when the owner decides (until then both services take all traffic, `INGRESS_TRAFFIC_ALL`), evidence retention and any lock, creating the per-environment Workload Identity pools for keyless deploys, the billing account for the budget alert, and Cloud Tasks, Model Armor and Identity Platform tenants (not in this change).
+Private IP for Cloud SQL (needs a VPC), HA versus zonal for live, the public front door (load balancer and Cloud Armor), which will reintroduce a Cloud Run ingress setting when the owner decides (until then both services take all traffic, `INGRESS_TRAFFIC_ALL`), evidence retention and any lock, creating the per-environment Workload Identity pools for keyless deploys, the billing account for the budget alert, and Cloud Tasks, Model Armor and Identity Platform tenants and settings (not in Terraform; the owner creates tenants by command). Both services get `ALLOWED_ORIGINS` from `allowed_origins` in `app/envs/<env>.tfvars`, today the web app's deterministic `run.app` address; add the front door there when it is decided.

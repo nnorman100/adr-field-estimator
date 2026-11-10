@@ -48,6 +48,27 @@ variable "live_image" {
   }
 }
 
+variable "allowed_origins" {
+  type        = list(string)
+  description = "Browser origins (https://host, no path, port or wildcard) the web app and the Live relay accept requests and sockets from: this environment's own web app address. Passed to both services as ALLOWED_ORIGINS, comma-separated."
+
+  validation {
+    condition = length(var.allowed_origins) > 0 && alltrue([
+      for o in var.allowed_origins :
+      can(regex("^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", o))
+    ])
+    error_message = "allowed_origins needs at least one origin, each https://host in lower case with no path, port, trailing slash or wildcard."
+  }
+
+  validation {
+    condition = alltrue([
+      for o in var.allowed_origins :
+      !can(regex("dryscope-(api|live)-${var.environment == "test" ? "live" : "test"}-", o))
+    ])
+    error_message = "allowed_origins must not name the other environment's services."
+  }
+}
+
 variable "api_scaling" {
   type = object({
     min_instances = number

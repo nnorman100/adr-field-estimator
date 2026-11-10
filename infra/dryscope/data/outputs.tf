@@ -23,6 +23,11 @@ output "secret_ids" {
   value       = [for s in google_secret_manager_secret.app : s.secret_id]
 }
 
+output "identity_users_role" {
+  description = "Custom role the owner binds on each of this environment's sign-in tenants, never on the project."
+  value       = "projects/${var.project_id}/roles/${google_project_iam_custom_role.identity_users.role_id}"
+}
+
 output "service_account_emails" {
   value = {
     for k, v in merge(google_service_account.runtime, { deploy = google_service_account.deploy }) : k => v.email

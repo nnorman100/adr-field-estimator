@@ -95,6 +95,28 @@
    }
   },
   {
+   "address": "google_project_iam_custom_role.identity_users",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "description": "Read, create and update DryScope live sign-in users and send their emails. Bound per tenant only. No delete, no settings, no tenants.",
+     "permissions": [
+      "firebaseauth.users.create",
+      "firebaseauth.users.get",
+      "firebaseauth.users.sendEmail",
+      "firebaseauth.users.update"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeIdentityLive",
+     "stage": null,
+     "title": "DryScope live sign-in users"
+    }
+   }
+  },
+  {
    "address": "google_project_iam_member.firestore_user[\"api\"]",
    "type": "google_project_iam_member",
    "change": {
@@ -278,6 +300,22 @@
    }
   },
   {
+   "address": "google_project_service.apis[\"firebaserules.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "firebaserules.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_project_service.apis[\"firestore.googleapis.com\"]",
    "type": "google_project_service",
    "change": {
@@ -305,6 +343,22 @@
      "disable_on_destroy": false,
      "project": "dryscope",
      "service": "iam.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"identitytoolkit.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "identitytoolkit.googleapis.com",
      "timeouts": null
     }
    }

@@ -226,6 +226,90 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     expect(problems[0]).toContain('aiplatform.customJobs.create');
   });
 
+  test('the sign-in user role holds exactly users get, create, update and sendEmail', () => {
+    const address = 'google_project_iam_custom_role.identity_users';
+    const role = find(plan(), address).change.after;
+    expect(role.role_id).toBe(`dryscopeIdentity${environment === 'test' ? 'Test' : 'Live'}`);
+    expect([...role.permissions].sort()).toEqual([
+      'firebaseauth.users.create',
+      'firebaseauth.users.get',
+      'firebaseauth.users.sendEmail',
+      'firebaseauth.users.update',
+    ]);
+  });
+
+  test.each([
+    'firebaseauth.users.delete',
+    'firebaseauth.configs.update',
+    'firebaseauth.users.createSession',
+    'identitytoolkit.tenants.create',
+    'identitytoolkit.tenants.setIamPolicy',
+  ])('a sign-in user role that also holds %s is refused', (permission) => {
+    const problems = edit('google_project_iam_custom_role.identity_users', (after) => {
+      after.permissions = [...after.permissions, permission];
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('identity_users: permissions is');
+    expect(problems[0]).toContain(permission);
+  });
+
+  test('a sign-in user role with a permission swapped out is refused', () => {
+    const problems = edit('google_project_iam_custom_role.identity_users', (after) => {
+      after.permissions = after.permissions.map((p) =>
+        p === 'firebaseauth.users.get' ? 'firebaseauth.users.delete' : p,
+      );
+    });
+    expect(problems).toHaveLength(1);
+  });
+
+  test('the sign-in user role under the other environment’s id is refused', () => {
+    const other = environment === 'test' ? 'Live' : 'Test';
+    const problems = edit('google_project_iam_custom_role.identity_users', (after) => {
+      after.role_id = `dryscopeIdentity${other}`;
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('role_id is');
+  });
+
+  test.each([
+    `projects/dryscope/roles/dryscopeIdentity${environment === 'test' ? 'Test' : 'Live'}`,
+    'roles/firebaseauth.admin',
+    'roles/identitytoolkit.admin',
+  ])('a project-level grant of %s is refused (the role is bound per tenant only)', (role) => {
+    const changed = plan();
+    changed.push({
+      address: 'google_project_iam_member.identity_users["api"]',
+      type: 'google_project_iam_member',
+      change: {
+        actions: ['create'],
+        after: {
+          project: 'dryscope',
+          role,
+          member: `serviceAccount:dryscope-api-${environment}@dryscope.iam.gserviceaccount.com`,
+          condition: [],
+        },
+      },
+    });
+    const problems = check(changed, 'data', environment);
+    expect(problems).toEqual([
+      'google_project_iam_member.identity_users["api"]: not in the expected data inventory',
+    ]);
+  });
+
+  test.each(['identitytoolkit.googleapis.com', 'firebaserules.googleapis.com'])(
+    'the plan enables %s, and a plan without it is refused',
+    (api) => {
+      const address = `google_project_service.apis["${api}"]`;
+      expect(find(plan(), address).change.after.service).toBe(api);
+      const problems = check(
+        plan().filter((rc) => rc.address !== address),
+        'data',
+        environment,
+      );
+      expect(problems).toEqual([`${address}: expected in the plan but missing`]);
+    },
+  );
+
   test('a project-wide Vertex AI role in place of the custom role is refused', () => {
     const problems = edit('google_project_iam_member.gemini_caller["api"]', (after) => {
       after.role = 'roles/aiplatform.user';

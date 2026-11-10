@@ -243,6 +243,48 @@ run "gemini_caller_can_only_predict" {
   }
 }
 
+run "sign_in_apis_are_enabled" {
+  command = plan
+
+  assert {
+    condition     = contains(keys(google_project_service.apis), "identitytoolkit.googleapis.com") && contains(keys(google_project_service.apis), "firebaserules.googleapis.com")
+    error_message = "Identity Platform and Firebase Rules must be enabled for sign-in and the field database rules."
+  }
+  assert {
+    condition     = alltrue([for a in google_project_service.apis : a.disable_on_destroy == false])
+    error_message = "Destroying this root never switches an API off."
+  }
+}
+
+run "identity_role_manages_users_only_and_is_never_bound_on_the_project" {
+  command = plan
+
+  assert {
+    condition     = google_project_iam_custom_role.identity_users.role_id == "dryscopeIdentity${title(var.environment)}"
+    error_message = "Each environment has its own sign-in user role."
+  }
+  assert {
+    condition = toset(google_project_iam_custom_role.identity_users.permissions) == toset([
+      "firebaseauth.users.create",
+      "firebaseauth.users.get",
+      "firebaseauth.users.sendEmail",
+      "firebaseauth.users.update",
+    ])
+    error_message = "The sign-in user role holds users get, create, update and sendEmail only: no delete, no settings, no tenants."
+  }
+  assert {
+    condition = alltrue([
+      for m in concat(
+        values(google_project_iam_member.sql_client),
+        values(google_project_iam_member.sql_login),
+        values(google_project_iam_member.firestore_user),
+        values(google_project_iam_member.gemini_caller),
+      ) : !strcontains(m.role, "dryscopeIdentity") && !startswith(m.role, "roles/firebaseauth.") && !startswith(m.role, "roles/identitytoolkit.") && !startswith(m.role, "roles/identityplatform.")
+    ])
+    error_message = "No project-level grant gives sign-in user or settings access; the owner binds the role per tenant."
+  }
+}
+
 run "removing_a_resource_never_drops_data" {
   command = plan
 

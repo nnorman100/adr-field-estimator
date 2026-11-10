@@ -41,8 +41,10 @@ const APIS = [
   'aiplatform.googleapis.com',
   'artifactregistry.googleapis.com',
   'cloudresourcemanager.googleapis.com',
+  'firebaserules.googleapis.com',
   'firestore.googleapis.com',
   'iam.googleapis.com',
+  'identitytoolkit.googleapis.com',
   'secretmanager.googleapis.com',
   'sqladmin.googleapis.com',
   'storage.googleapis.com',
@@ -55,6 +57,15 @@ const SECRET_ACCESS = {
   'maps-api-key': ['api'],
   'link-signing-key': ['api', 'live'],
 };
+
+// Sign-in user management, bound by the owner on this environment's own tenants only (never on
+// the project, so no grant of it may appear here). No users.delete, configs.* or tenants.*.
+const IDENTITY_PERMISSIONS = [
+  'firebaseauth.users.create',
+  'firebaseauth.users.get',
+  'firebaseauth.users.sendEmail',
+  'firebaseauth.users.update',
+];
 
 const DEPLOY_PERMISSIONS = [
   'run.configurations.get',
@@ -104,6 +115,7 @@ function expectedPlan(root, env) {
     others.push('google_firestore_database.field', 'google_storage_bucket.evidence');
     others.push('google_artifact_registry_repository.images');
     others.push('google_project_iam_custom_role.gemini_caller');
+    others.push('google_project_iam_custom_role.identity_users');
     for (const s of Object.keys(SECRET_ACCESS)) {
       others.push(`google_secret_manager_secret.app["${s}"]`);
     }
@@ -260,6 +272,10 @@ function expectedPlan(root, env) {
     };
     attrs['google_project_iam_custom_role.gemini_caller'] = {
       role_id: `dryscopeGemini${title(env)}`,
+    };
+    lists['google_project_iam_custom_role.identity_users'] = { permissions: IDENTITY_PERMISSIONS };
+    attrs['google_project_iam_custom_role.identity_users'] = {
+      role_id: `dryscopeIdentity${title(env)}`,
     };
   } else {
     for (const k of SERVICES) {
