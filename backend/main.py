@@ -988,7 +988,7 @@ async def estimate_assist_table(store, uid, record):
 
 
 @app.get('/api/session')
-async def session_info(staff=Depends(current_staff)):
+async def session_info(staff=Depends(current_staff), jobs=Depends(get_job_store)):
     result = dict(
         uid=staff['uid'],
         email=staff['email'],
@@ -1003,7 +1003,6 @@ async def session_info(staff=Depends(current_staff)):
         price_books_enabled=bool(WORKSPACES_ENABLED and price_books_enabled()),
         retention_enabled=bool(WORKSPACES_ENABLED and retention_enabled()),
     )
-    jobs = get_job_store()
     if WORKSPACES_ENABLED:
         actor = await stored(jobs.workspaces.principal, staff['uid'])
         if actor['password_change_required']:
