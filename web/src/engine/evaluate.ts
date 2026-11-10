@@ -1,4 +1,4 @@
-// One oracle case, in the same order as scripts/pricing_oracle.py. Expected answers stay in the fixtures.
+// One oracle case, in the order the stored fixtures were built (the Python builder is deleted). Expected answers stay in the fixtures.
 
 import { Buffer } from 'node:buffer';
 
