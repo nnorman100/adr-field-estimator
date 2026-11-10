@@ -101,13 +101,19 @@ async def workspace_identity(request: Request):
     # workspaces are off. An afterEach switches them off while the spec's page can still send.
     if not bm.WORKSPACES_ENABLED:
         raise HTTPException(503, 'Company dashboards are not enabled yet.')
+    # The request keeps the store it signed in to, even if the switch lands before its store is chosen.
+    request.state.store = store
     return await identity(request)
+
+
+def current_store(request: Request):
+    return getattr(request.state, 'store', store)
 
 
 bm.app.dependency_overrides[bm.current_identity] = workspace_identity
 bm.app.dependency_overrides[bm.account_identity] = workspace_identity
 bm.app.dependency_overrides[bm.current_staff] = identity
-bm.app.dependency_overrides[bm.get_job_store] = lambda: store
+bm.app.dependency_overrides[bm.get_job_store] = current_store
 bm.get_job_store = lambda: store
 
 
