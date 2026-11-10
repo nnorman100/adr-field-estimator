@@ -300,6 +300,37 @@ describe('request identity against the database', () => {
     expect(await everything()).toBe(before);
   });
 
+  it('reads each company\'s own feature flags: A on leaves B off, and unknown names stay off', async () => {
+    const off = await resolve(signedIn('tenant-a', 'owner-a'));
+    expect(off.flags).toEqual({ price_books: false });
+    expect(off.capabilities).not.toContain('prices_manage');
+
+    await admin`
+      INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES
+        (${seed.a}, 'price_books', true), (${seed.a}, 'retired_feature', true), (${seed.b}, 'price_books', false)
+    `;
+    const owner = await resolve(signedIn('tenant-a', 'owner-a'));
+    expect(owner.flags).toEqual({ price_books: true });
+    expect(owner.capabilities).toEqual(expect.arrayContaining(['prices_read', 'prices_manage']));
+
+    const estimator = await resolve(signedIn('tenant-b', 'owner-a'));
+    expect(estimator.flags).toEqual({ price_books: false });
+    expect(estimator.capabilities).not.toContain('prices_read');
+
+    // The runtime reads only the current company's rows, and cannot change them.
+    const seen = await withCompany(handle.db, seed.b, async (tx) =>
+      (await tx.execute(`SELECT company_id::text AS id FROM company_feature_flags`)) as unknown as { id: string }[],
+    );
+    expect(seen.map((row) => row.id)).toEqual([seed.b]);
+    expect(
+      await errorCode(
+        withCompany(handle.db, seed.b, (tx) =>
+          tx.execute(`UPDATE company_feature_flags SET enabled = true WHERE flag = 'price_books'`),
+        ),
+      ),
+    ).toBe(INSUFFICIENT_PRIVILEGE);
+  });
+
   it('refuses an archived company, whose tenant still resolves', async () => {
     const directory = databaseDirectory(handle.db);
     await admin`UPDATE companies SET status = 'archived' WHERE id = ${seed.a}`;

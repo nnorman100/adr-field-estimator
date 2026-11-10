@@ -86,29 +86,15 @@ contract for the canonical proposal is the decoded bytes of `canonical_bytes_bas
 exactly: never parse and re-serialize them, and never normalize two outputs through one new
 serializer before comparing.
 
-## Checking
+## Status (2026-11-10)
 
-`python -m pytest tests/test_pricing_oracle.py -q -p no:cacheprovider` re-runs every stored input
-through the current code and fails on the first differing byte, naming the JSON path. The same
-check runs as `python scripts/pricing_oracle.py --check`, which also rebuilds every `coercion/`
-file and reports any missing, unexpected or differing one. A failure means the code changed what
-it produces for a pinned input: fix the code. The environment fields in `manifest.json` are
-provenance; the check compares answers, not interpreter versions.
-
-## Regenerating
-
-These files are under the Test guard's protected `tests/fixtures/**`, so any change needs the
-owner's approval label on the pull request. Regenerate only to add owner-approved cases or after
-an owner-approved change to a legacy answer, on a committed backend tree:
-
-```bash
-python scripts/pricing_oracle.py --write
-```
-
-The corpus is built by `scripts/pricing_oracle_cases.py` and `scripts/pricing_oracle_cases_v2.py`
-(named boundaries plus seeded jobs with fixed seeds); the coercion probes by
-`scripts/pricing_oracle_coercion.py`. The generator refuses to write while
-`backend/` has uncommitted changes, and records the backend commit and tree it ran on.
+The owner dropped the requirement that the rebuild match the old app's prices exactly: each owner
+sets their own prices. The Python code that built and checked these files (`scripts/pricing_oracle*.py`
+and `tests/test_pricing_oracle.py`) was deleted, and CI no longer checks them against the Python
+code. The stored files stay because the TypeScript tests in `web/tests/unit/` read them
+(`pricing-oracle.test.ts`, `coercion-oracle.test.ts`) until a later pricing plan replaces those
+tests. Nothing regenerates these files now; the removed code is in git history (the commit before
+the legacy CI retirement) if the owner ever needs it back.
 
 **A new candidate must never regenerate its own answers.** A port or rewrite reads each `input`,
 produces its own outputs, and compares them with `expected` here; it never writes to this folder,

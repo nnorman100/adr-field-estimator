@@ -58,6 +58,7 @@ const directory: IdentityDirectory = {
       company: { id: companyId, name: 'Synthetic company', status: 'active' },
       actor: { id: 'actor-a', displayName: null },
       membership: { role: uid.slice('uid-'.length) as Role, status: 'active' },
+      flags: [],
     };
   },
 };
