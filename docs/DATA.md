@@ -195,7 +195,7 @@ spaces, so one person is one stored key. The team and invitation routes (S3-10,
 `web/src/lib/team/`) write actors, memberships, invitations, audit events and outbox rows, always
 inside `withCompany`; an invitation's record, with its email, stays after it is accepted,
 cancelled or cleared ("clear" only hides it from the team list); nothing in `web/` deletes it yet.
-Nothing else writes these tables yet. Prices and signed documents are later work.
+The access projection (below) marks outbox rows done; nothing else writes these tables yet. Prices and signed documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
 `BYPASSRLS` and no ownership, and grants it to the environment's API database user
@@ -257,7 +257,7 @@ steps are in
 [RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
 migrator name the migration and omit the database URL.
 
-## Rebuilt app field database (rules only, not deployed)
+## Rebuilt app field database (not deployed)
 
 `web/firestore.rules` holds the rules for the rebuilt app's Firestore field database. They are
 checked in the emulator (`web/tests/emu/rules/`) and are not deployed. The server writes the
