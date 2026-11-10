@@ -1,34 +1,39 @@
 version: 2
 updates:
-  # uv regenerates the hash-locked backend/requirements*.txt from the matching .in files.
-  - package-ecosystem: uv
-    directory: /backend
-    schedule:
-      interval: weekly
-    groups:
-      python-minor-patch:
-        update-types: [minor, patch]
-
+  # Weekly on Monday: npm for the TypeScript web app in web/. Minor and patch
+  # updates share one pull request; each major update gets its own pull request.
   - package-ecosystem: npm
-    directory: /
+    directory: /web
     schedule:
       interval: weekly
+      day: monday
     groups:
-      npm-minor-patch:
+      web-npm-minor-patch:
         update-types: [minor, patch]
 
+  # Monthly (Dependabot runs monthly updates on the 1st): Terraform providers and
+  # modules for each stack. All updates for a stack share one pull request.
+  - package-ecosystem: terraform
+    directory: /infra/dryscope/data
+    schedule:
+      interval: monthly
+    groups:
+      terraform-data:
+        patterns: ['*']
+
+  - package-ecosystem: terraform
+    directory: /infra/dryscope/app
+    schedule:
+      interval: monthly
+    groups:
+      terraform-app:
+        patterns: ['*']
+
+  # Monthly: GitHub Actions versions used by .github/workflows.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       actions-minor-patch:
-        update-types: [minor, patch]
-
-  - package-ecosystem: docker
-    directory: /backend
-    schedule:
-      interval: weekly
-    groups:
-      docker-minor-patch:
         update-types: [minor, patch]

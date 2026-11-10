@@ -1,8 +1,8 @@
 """Print the Python minor version of the backend container's base image.
 
 backend/Dockerfile is the single source of truth: CI jobs that install the
-backend requirements run on this version, so a base-image bump (for example a
-Dependabot pull request) is tested on the new version automatically.
+backend requirements run on this version, so a base-image bump is tested on
+the new version automatically.
 """
 
 import re
