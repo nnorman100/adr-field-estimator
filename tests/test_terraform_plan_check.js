@@ -179,6 +179,44 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     expect(broader[0]).toContain('roles/storage.admin');
   });
 
+  test('full resource paths for bucket, secret and repository pass only for the expected name', () => {
+    const fullPaths = {
+      'google_storage_bucket_iam_member.api_create': [
+        'bucket',
+        `b/dryscope-evidence-${environment}`,
+      ],
+      'google_secret_manager_secret_iam_member.accessor["link-signing-key/api"]': [
+        'secret_id',
+        `projects/dryscope/secrets/dryscope-${environment}-link-signing-key`,
+      ],
+      'google_artifact_registry_repository_iam_member.deploy_write': [
+        'repository',
+        `projects/dryscope/locations/us-central1/repositories/dryscope-${environment}`,
+      ],
+    };
+    for (const [address, [field, full]] of Object.entries(fullPaths)) {
+      expect(
+        edit(address, (after) => {
+          after[field] = full;
+        }),
+      ).toEqual([]);
+      const refused = [
+        full.replace('dryscope', 'other-project'),
+        full.replace(`-${environment}`, `-${environment === 'test' ? 'live' : 'test'}`),
+        full.replace('us-central1', 'us-west2'),
+        `${full}-extra`,
+        `x/${full}`,
+      ].filter((wrong) => wrong !== full);
+      for (const wrong of refused) {
+        const problems = edit(address, (after) => {
+          after[field] = wrong;
+        });
+        expect(problems, `${address} ${wrong}`).toHaveLength(1);
+        expect(problems[0]).toContain(`${field} is`);
+      }
+    }
+  });
+
   test('the Gemini caller role may only predict', () => {
     const problems = edit('google_project_iam_custom_role.gemini_caller', (after) => {
       after.permissions = [...after.permissions, 'aiplatform.customJobs.create'];
@@ -831,5 +869,42 @@ describe.each(['data', 'app'])('destroy guards read from the configuration, %s r
     ];
     const expected = PROTECTED[root].length - 1;
     expect(checkGuards(lines, root, { refusalsOptional: true })).toHaveLength(expected);
+  });
+});
+
+describe('check.sh', () => {
+  test('a long terraform version output does not stop the check with a broken pipe (141)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-sh-'));
+    try {
+      // `version` writes far more than a pipe holds, so a `| head -1` would close it early and
+      // kill the writer; every other command fails with 7 so the run stops right after.
+      const fake = path.join(dir, 'terraform');
+      fs.writeFileSync(
+        fake,
+        [
+          '#!/usr/bin/env bash',
+          'if [ "$1" = version ]; then',
+          '  for i in $(seq 1 50000); do echo "Terraform v1.12.2 line $i"; done',
+          '  exit 0',
+          'fi',
+          'exit 7',
+          '',
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        'bash',
+        [path.join(ROOT, 'infra', 'dryscope', 'scripts', 'check.sh')],
+        {
+          env: { ...process.env, TERRAFORM: fake },
+          encoding: 'utf8',
+        },
+      );
+      expect(result.status).toBe(7);
+      expect(result.stdout.split('\n')[0]).toBe('Terraform v1.12.2 line 1');
+      expect(result.stdout).not.toContain('line 2\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
