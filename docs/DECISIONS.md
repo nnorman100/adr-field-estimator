@@ -58,11 +58,11 @@ Reinstated (Nov 9, 2026, owner): see D-012. The Nov 6 supersession no longer app
 
 ### D-010: No default prices; ADR's rates are ADR's alone (Nov 2, 2026)
 
-Status: accepted (owner). ADR's estimating sheet is proprietary to ADR, so it is not a product default. A company without published prices is blocked from pricing with a clear message. ADR's rates are kept as ADR's data and used only for company `adr`, and no rate ships in browser code. Later steps of the owner-pricing plan add owner-defined tables; formulas and `CALCULATION_VERSION` are unchanged here.
+Status: accepted (owner). Superseded in part for the rebuild by D-017 (Nov 10, 2026): no default prices and "no published prices, no estimate" still hold, but no ADR rate book is kept in code. ADR's estimating sheet is proprietary to ADR, so it is not a product default. A company without published prices is blocked from pricing with a clear message. ADR's rates are kept as ADR's data and used only for company `adr`, and no rate ships in browser code. Later steps of the owner-pricing plan add owner-defined tables; formulas and `CALCULATION_VERSION` are unchanged here.
 
 ### D-011: Owner-defined pricing tables; ADR stays on v1 until the owner switches (Nov 3, 2026)
 
-Status: accepted (owner). Every company prices from its own table of items and estimate settings (`dryscope-v2`). A new company starts from the blank starter list; no company but ADR ever sees ADR's rates. A company already on a rate book, ADR included, stays on `adr-residential-v1` until its owner chooses **Switch to v2**, reviews the mapped table and publishes it. There is no way back after publishing. A draft begun before the switch keeps its rate book until the owner applies the new table to that one draft, and signed documents never change. The switch names its three differences for the same job: the high end tapers above 1,000 sq ft instead of stepping, labor hours carry 50% at every size, and the after-hours 20% prints as a line inside the itemized total. `PRICE_BOOKS_ENABLED` is the only flag; turning it on in production is a separate release with the owner's word.
+Status: accepted (owner). Superseded for the rebuild by D-017 (Nov 10, 2026): the rebuilt app has no `adr-residential-v1`, no Switch to v2 and no mapping from the old app. Every company prices from its own table of items and estimate settings (`dryscope-v2`). A new company starts from the blank starter list; no company but ADR ever sees ADR's rates. A company already on a rate book, ADR included, stays on `adr-residential-v1` until its owner chooses **Switch to v2**, reviews the mapped table and publishes it. There is no way back after publishing. A draft begun before the switch keeps its rate book until the owner applies the new table to that one draft, and signed documents never change. The switch names its three differences for the same job: the high end tapers above 1,000 sq ft instead of stepping, labor hours carry 50% at every size, and the after-hours 20% prints as a line inside the itemized total. `PRICE_BOOKS_ENABLED` is the only flag; turning it on in production is a separate release with the owner's word.
 
 ### D-012: Owner approves every merge; clean start in project dryscope (Nov 9, 2026)
 
@@ -94,3 +94,9 @@ Reason: ChatGPT is unavailable for now. The pipeline reviewer is Grok 4.7 until 
 
 Status: accepted (owner, Nov 9, 2026; confirmed Nov 10, 2026). A decision, not an exception: it is now written into Technology Standard 2.2.
 Decision: for the pilot, a company's sign-in tenant is created by a command the owner or an operator runs, not by self-service sign-up. See the S3 plan (decision D4) in `docs/plans/S3.md`.
+
+### D-017: Owners set their own prices; exact match with the old Python prices is no longer required (Nov 10, 2026)
+
+Status: accepted (owner, Nov 10, 2026, "accept all" on the pricing plan). Supersedes D-010 and D-011 for the rebuild (`web/`); the old app is unchanged until it is retired.
+Decision: the rebuilt app does not have to reproduce the old Python engine's numbers or text quirks, and no oracle comparison is required. Every company, ADR included, enters its own prices fresh in the rebuilt app; nothing is exported from the old app or imported from it, and the engine holds no ADR rate book. Still true from D-010: there are no default prices, and a company without published prices cannot price an estimate. Pricing rules, mandatory wording and signed-record immutability are unchanged; the Test guard still protects the replacement tests.
+Detail: `docs/plans/pricing.md` (section 9 lists every answer, Q1 to Q15 and M1 to M10).

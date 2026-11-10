@@ -53,6 +53,7 @@ beforeAll(async () => {
         company: { id: companyId, name: 'Synthetic company', status: 'active' },
         actor: { id: `actor-${companyId.slice(-1)}`, displayName: null },
         membership: { role: roles.get(uid) ?? 'estimator', status: 'active' },
+        flags: [],
       };
     },
   };

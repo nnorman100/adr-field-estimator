@@ -68,7 +68,7 @@ export const CAPABILITIES: readonly Capability[] = Object.freeze([
 ]);
 
 // The company switches that decide which keys exist. The flag is passed in, not read from the
-// environment here, so a caller cannot forget it and per-company switches can supply it later.
+// environment here, so a caller cannot forget it; the company's switches supply it (web/src/lib/flags/).
 export type AccessFlags = { priceBooks: boolean };
 
 export class AccessError extends Error {
