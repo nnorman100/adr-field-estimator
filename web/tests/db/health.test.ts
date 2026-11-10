@@ -19,6 +19,6 @@ describe('health route with a database', () => {
     vi.stubEnv('DATABASE_URL', disposable.databaseUrl);
     const res = await GET();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok', env: 'test' });
+    expect(await res.json()).toEqual({ status: 'ok', env: 'test', database: 'ok' });
   });
 });

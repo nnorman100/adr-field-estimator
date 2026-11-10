@@ -5,6 +5,9 @@
 //
 //   node scripts/smoke-release.ts --url <base URL> --commit <40-character commit> --env test
 //
+// Against Cloud Run, health must report database ok, which the app says only after its own database
+// login worked; the local container in the Web app workflow has no database, so localhost is exempt.
+//
 // Test only: its signed-out probes include a POST, so it must never run against live. Live checks
 // arrive with the test-to-live release and must be read-only. It needs no installed packages (plain
 // Node with type stripping), sends no credentials and prints only status codes and the health
@@ -15,6 +18,7 @@ export type SmokeOptions = {
   baseUrl: string;
   commit: string;
   env: 'test';
+  requireDatabase: boolean;
   fetch?: typeof fetch;
   attempts?: number;
   delayMs?: number;
@@ -46,7 +50,7 @@ export function parseArgs(argv: string[]): SmokeOptions {
   const commit = value('commit');
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('--commit must be a 40-character commit hash');
   if (value('env') !== 'test') throw new Error('--env must be test (live checks are not built yet)');
-  return { baseUrl, commit, env: 'test' };
+  return { baseUrl, commit, env: 'test', requireDatabase: !local };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,7 +92,12 @@ export async function runSmoke(options: SmokeOptions, log: (line: string) => voi
     if (h.commit !== options.commit) {
       failures.push(`health: commit is ${String(h.commit)}, expected ${options.commit}`);
     }
-    log(`health: status=${String(h.status)} env=${String(h.env)} commit=${String(h.commit)}`);
+    if (options.requireDatabase && h.database !== 'ok') {
+      failures.push(`health: database is ${String(h.database)}, expected ok`);
+    }
+    log(
+      `health: status=${String(h.status)} env=${String(h.env)} commit=${String(h.commit)} database=${String(h.database)}`,
+    );
   }
 
   for (const probe of signedOutProbes) {

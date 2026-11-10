@@ -22,12 +22,13 @@ const options = (f: typeof fetch): SmokeOptions => ({
   baseUrl: 'https://candidate---dryscope-api-test-abc-uc.a.run.app',
   commit,
   env: 'test',
+  requireDatabase: true,
   fetch: f,
   attempts: 3,
   delayMs: 0,
 });
 
-const healthy = { status: 200, body: { status: 'ok', env: 'test', commit } };
+const healthy = { status: 200, body: { status: 'ok', env: 'test', commit, database: 'ok' } };
 
 describe('release smoke check', () => {
   it('passes a revision on the right commit that refuses signed-out callers', async () => {
@@ -53,16 +54,26 @@ describe('release smoke check', () => {
 
   it('fails a revision running another commit', async () => {
     const other = 'f'.repeat(40);
-    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit: other } }], 401);
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit: other, database: 'ok' } }], 401);
     expect(await runSmoke(options(fn))).toEqual([`health: commit is ${other}, expected ${commit}`]);
   });
 
   it('fails a revision without a commit or in the wrong environment', async () => {
-    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'live' } }], 401);
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'live', database: 'ok' } }], 401);
     expect(await runSmoke(options(fn))).toEqual([
       'health: env is live, expected test',
       `health: commit is undefined, expected ${commit}`,
     ]);
+  });
+
+  it('fails a Cloud Run revision whose health did not prove its database login', async () => {
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit } }], 401);
+    expect(await runSmoke(options(fn))).toEqual(['health: database is undefined, expected ok']);
+  });
+
+  it('accepts no database only for the local container', async () => {
+    const { fn } = fakeFetch([{ status: 200, body: { status: 'ok', env: 'test', commit } }], 401);
+    expect(await runSmoke({ ...options(fn), requireDatabase: false })).toEqual([]);
   });
 
   it.each([[200], [404], [500]])('fails when a signed-out business route answers %i', async (status) => {
@@ -90,11 +101,15 @@ describe('smoke arguments', () => {
       baseUrl: 'https://candidate---x.a.run.app',
       commit,
       env: 'test',
+      requireDatabase: true,
     });
   });
 
   it('allows plain http only for a local container', () => {
-    expect(parseArgs(args('http://127.0.0.1:8080')).baseUrl).toBe('http://127.0.0.1:8080');
+    expect(parseArgs(args('http://127.0.0.1:8080'))).toMatchObject({
+      baseUrl: 'http://127.0.0.1:8080',
+      requireDatabase: false,
+    });
     expect(() => parseArgs(args('http://candidate---x.a.run.app'))).toThrow(/https/);
   });
 
