@@ -222,4 +222,6 @@ A web scout on 2026-11-10 compared the plan with how the restoration industry pr
 
 ## 12. Corrections
 
-None yet. A pull request that needs this plan to change adds a dated entry here saying what changed and why.
+A pull request that needs this plan to change adds a dated entry here saying what changed and why.
+
+- **2026-11-10, S4-1.** (a) The property "adding square feet or a quantity never lowers the low or high total" is checked with tiered brackets only. Whole-job mode prices a job just above a band boundary lower by design (`docs/sqft-brackets.md`; worked example W10), so it cannot hold there; the other properties run in both modes. (b) Beside `priceEstimate`, S4-1 adds `checkTable(table, acknowledgements)`, the publish check, because a blank price and an unconfirmed zero price are refused at publish, before any job is priced. (c) From `engine-normalization.test.ts`, the claim-date, addressee, photo-log and room-override cases are carried over; the cases that only pin Python's spellings (float versus integer text, a whitespace-only carrier line, approval-time text) are not, per D-017.
