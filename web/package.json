@@ -13,7 +13,8 @@
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:emu": "tsx tests/emu/run.ts",
     "test:e2e": "playwright test",
-    "db:migrate": "tsx src/db/cli.ts"
+    "db:migrate": "tsx src/db/cli.ts",
+    "build:migrate": "node scripts/build-migrate.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "1.5.0",
@@ -35,6 +36,7 @@
     "@types/node": "22.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
     "eslint": "10.14.0",
     "eslint-config-next": "16.4.5",
     "tailwindcss": "4.3.5",

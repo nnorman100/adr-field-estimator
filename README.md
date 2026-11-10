@@ -131,6 +131,7 @@ npm run typecheck ; npm run lint ; npm test
 npm run test:db                  # migrations from an empty throwaway Postgres (Docker or local PostgreSQL 16)
 npm run test:emu                 # Firebase Auth + Firestore emulators (Java 21+); demo- project ids only
 npm run db:migrate               # apply web/migrations; needs APP_ENV and DATABASE_URL (env or .env.local)
+npm run build:migrate -- <dir>   # bundle the migration job (<dir>/migrate.mjs + migrations/); build-image.sh runs it
 npx playwright install chromium webkit
 npm run test:e2e                 # smoke test against the dev server
 ```

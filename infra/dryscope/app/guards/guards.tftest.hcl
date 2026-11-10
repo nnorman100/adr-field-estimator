@@ -21,8 +21,8 @@ run "create_everything" {
 }
 
 # A later release with a different image must not change what Terraform plans: releases go
-# through gcloud, and Terraform ignores the image after the service exists. If the
-# ignore_changes entry for the image is removed, this plan puts the new digest back and fails.
+# through gcloud, and Terraform ignores the image after the services and the migration job exist.
+# If an ignore_changes entry for an image is removed, this plan puts the new digest back and fails.
 run "a_different_image_is_not_planned_after_create" {
   command = plan
 
@@ -38,5 +38,9 @@ run "a_different_image_is_not_planned_after_create" {
   assert {
     condition     = google_cloud_run_v2_service.svc["live"].template[0].containers[0].image == "us-central1-docker.pkg.dev/dryscope/dryscope-test/live@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     error_message = "A new relay image digest was planned: Terraform and the release path would fight over the image."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.template[0].template[0].containers[0].image == "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    error_message = "A new migration job image digest was planned: Terraform and the release path would fight over the image."
   }
 }

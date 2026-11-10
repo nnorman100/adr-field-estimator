@@ -121,9 +121,12 @@ resource "google_project_iam_custom_role" "identity_users" {
   ]
 }
 
-# The deploy account may act as the two services' runtime accounts, no others.
+# The deploy account may act as the two services' runtime accounts and the migrator, no others.
+# Cloud Run checks this on every update: the release sets the new image on the services and on the
+# migration job (app root, migrate_job.tf), which runs as the migrator. The deploy account still
+# holds no database role itself; it reaches the database only through that job.
 resource "google_service_account_iam_member" "deploy_acts_as" {
-  for_each = toset(["api", "live"])
+  for_each = toset(["api", "live", "migrate"])
 
   service_account_id = "projects/${var.project_id}/serviceAccounts/${local.n.service_account_emails[each.key]}"
   role               = "roles/iam.serviceAccountUser"

@@ -1,4 +1,4 @@
-import { migrateFromConfig } from './client';
+import { runMigrationCommand } from './command';
 
 function loadLocalEnv(): void {
   try {
@@ -12,11 +12,8 @@ function loadLocalEnv(): void {
 // exists; variables already set in the environment win. Logs file ids only, never the URL.
 try {
   loadLocalEnv();
-  const result = await migrateFromConfig(process.env);
-  const line =
-    result.applied.length === 0 ? 'migrations: none pending' : `migrations: applied ${result.applied.join(' ')}`;
-  console.log(line);
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'migration failed');
   process.exit(1);
 }
+process.exitCode = await runMigrationCommand(process.env);
