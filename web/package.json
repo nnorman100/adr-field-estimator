@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
+    "test:emu": "tsx tests/emu/run.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx src/db/cli.ts"
   },
