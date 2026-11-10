@@ -47,7 +47,7 @@ describe('accountRoute', () => {
       return tenant === 'tenant-a' ? ID : null;
     },
     async member(companyId) {
-      return { company: { id: companyId, name: 'A', status: 'active' }, actor: null, membership: null };
+      return { company: { id: companyId, name: 'A', status: 'active' }, actor: null, membership: null, flags: [] };
     },
   };
   const verifier = (email: string | null, emailVerified = true): TokenVerifier => ({
