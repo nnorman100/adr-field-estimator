@@ -818,7 +818,7 @@
          ],
          "binary_log_enabled": null,
          "enabled": true,
-         "location": "us-central1",
+         "location": "us",
          "point_in_time_recovery_enabled": true,
          "start_time": "09:00",
          "transaction_log_retention_days": 3

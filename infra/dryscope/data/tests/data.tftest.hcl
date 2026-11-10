@@ -29,6 +29,10 @@ run "cloud_sql_is_protected_dedicated_and_recoverable" {
     error_message = "Point-in-time recovery must be on."
   }
   assert {
+    condition     = google_sql_database_instance.main.settings[0].backup_configuration[0].location == "us"
+    error_message = "Backups must be kept in the US multi-region, not a single region."
+  }
+  assert {
     condition     = google_sql_database_instance.main.settings[0].ip_configuration[0].ssl_mode == "ENCRYPTED_ONLY"
     error_message = "TLS must be required."
   }

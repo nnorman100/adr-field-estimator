@@ -23,9 +23,10 @@ resource "google_sql_database_instance" "main" {
     user_labels                 = local.labels
 
     backup_configuration {
-      enabled                        = true
-      start_time                     = "09:00"
-      location                       = var.region
+      enabled    = true
+      start_time = "09:00"
+      # US multi-region, not var.region: a regional outage must not take the backups with it.
+      location                       = "us"
       point_in_time_recovery_enabled = true
       transaction_log_retention_days = var.sql_pitr_log_days
 

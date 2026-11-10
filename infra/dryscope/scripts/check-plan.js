@@ -24,7 +24,9 @@
 // previous reviewed condition to the current one (the provider cannot change an IAM member's
 // condition in place). A third covers an app root that is already applied: a Cloud Run service
 // may change in place only by adding or setting a NEW_SETTINGS variable, to the value in the
-// table, with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
+// table, with every other attribute unchanged. A fourth covers a Cloud SQL instance already applied with
+// a regional backup location: it may change in place, and only to the US multi-region (`us`), with
+// every other attribute unchanged. Nothing else may be deleted, replaced or updated.
 const fs = require('node:fs');
 const readline = require('node:readline');
 
@@ -226,6 +228,8 @@ function expectedPlan(root, env) {
       'settings.0.edition': 'ENTERPRISE',
       'settings.0.availability_type': 'ZONAL',
       'settings.0.backup_configuration.0.enabled': true,
+      // Backups are kept in the US multi-region so a regional outage cannot take them too.
+      'settings.0.backup_configuration.0.location': 'us',
       'settings.0.backup_configuration.0.point_in_time_recovery_enabled': true,
       'settings.0.ip_configuration.0.ssl_mode': 'ENCRYPTED_ONLY',
       'settings.0.tier': env === 'test' ? 'db-f1-micro' : /^db-custom-/,
@@ -439,12 +443,49 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
     return same(canon(strip(before)), canon(strip(after)));
   };
 
+  // An applied Cloud SQL instance may be updated in place only to move its backups to the US
+  // multi-region. Values the provider recomputes (marked unknown) are dropped from both sides;
+  // every other attribute must be equal, so the update can change nothing else.
+  const backupLocationUpdate = (rc, actions) => {
+    const { before, after, after_unknown: unknown = {} } = rc.change ?? {};
+    if (rc.address !== 'google_sql_database_instance.main') return false;
+    if (actions.length !== 1 || actions[0] !== 'update' || before == null || after == null) {
+      return false;
+    }
+    const LOCATION = ['settings', 0, 'backup_configuration', 0, 'location'];
+    const at = (v, path) => path.reduce((o, k) => o?.[k], v);
+    if (at(after, LOCATION) !== 'us') return false;
+    const scrub = (state, mask) => {
+      if (mask === true) return undefined;
+      if (Array.isArray(state)) {
+        return state.map((v, i) => scrub(v, Array.isArray(mask) ? mask[i] : undefined));
+      }
+      if (state && typeof state === 'object') {
+        return Object.fromEntries(
+          Object.keys(state)
+            .sort()
+            .map((k) => [k, scrub(state[k], mask?.[k])])
+            .filter(([, v]) => v !== undefined),
+        );
+      }
+      return state;
+    };
+    const dropLocation = (state) => {
+      const copy = structuredClone(state);
+      const parent = at(copy, LOCATION.slice(0, -1));
+      if (parent) delete parent.location;
+      return copy;
+    };
+    return same(scrub(dropLocation(before), unknown), scrub(dropLocation(after), unknown));
+  };
+
   for (const rc of resourceChanges) {
     const actions = rc.change?.actions ?? [];
     if (
       retiredDelete(rc, actions) ||
       reconditionedReplace(rc, actions) ||
-      settingsUpdate(rc, actions)
+      settingsUpdate(rc, actions) ||
+      backupLocationUpdate(rc, actions)
     ) {
       // Named, reviewed exception (see the table).
     } else if (actions.includes('delete')) {
