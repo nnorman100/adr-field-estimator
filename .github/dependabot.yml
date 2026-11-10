@@ -1,9 +1,13 @@
 version: 2
 updates:
+  # Major updates for the dependencies listed under each ignore below are held
+  # until a stage plans for them, so they do not sit failing in the merge line.
+  # When another major update sits failing, add its dependency to that entry's
+  # ignore list. All other major updates still open, including security fixes.
+
   # Weekly on Monday: npm for the TypeScript web app in web/. Minor and patch
   # updates share one pull request; each major update gets its own pull request,
-  # except TypeScript, whose major updates are ignored until a stage plans for
-  # them (TypeScript 7).
+  # except TypeScript majors, which are held.
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -17,8 +21,8 @@ updates:
         update-types: ['version-update:semver-major']
 
   # Monthly (Dependabot runs monthly updates on the 1st): Terraform providers and
-  # modules for each stack. All updates for a stack share one pull request. Major
-  # updates of the Google provider are ignored until a stage plans for them (v8).
+  # modules for each stack. All updates for a stack share one pull request,
+  # except Google provider (hashicorp/google) majors, which are held.
   - package-ecosystem: terraform
     directory: /infra/dryscope/data
     schedule:
