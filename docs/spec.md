@@ -1,8 +1,9 @@
 # Feature spec (current behaviour)
 
-> **DRAFT FOR OWNER REVIEW.** This describes what DryScope does today, written from the code and
-> tests at the time of writing. It invents no feature. The owner approves it before it becomes the
-> baseline for the rebuild. Items marked **[open]** are gaps found while writing it, not features.
+> **Approved baseline.** The owner reviewed and approved this spec on 2026-11-09 as the baseline
+> for the rebuild: sections 1, 2 and 6 as written, section 5 as amended. It describes what DryScope
+> does today, written from the code and tests, and invents no feature. Items marked **[open]** are
+> gaps or undecided points, not features.
 > Section 6, "Target (accepted, not built yet)", is kept apart: it lists owner-accepted decisions
 > the rebuild must deliver, each citing its source, and none of it describes today's app.
 > Feature state (built, on, phone-checked) is in [STATUS.md](STATUS.md); who may do what is in
@@ -159,10 +160,25 @@ Firestore.
 
 ## 5. Not built (from VISION.md)
 
-Company workbook upload; AI-suggested prices; crew calendar and reminders; per-visit reading
-dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed
-agreement; recipient texting; anonymized cross-company price comparison; a support role and an
-owner-visible access log.
+None of these is built, except the owner-filled pricing template noted below. The owner's stance
+on each, from the 2026-11-09 review, in plain words:
+
+- **Company workbook upload:** never ADR's Excel workbook. Instead, a pricing template that each
+  owner fills in with their own prices. Arbitrary workbook upload is not built. The fixed
+  template is built but switched off: with `PRICE_BOOKS_ENABLED` on, a company owner downloads a
+  blank CSV or XLSX template from the Prices page, fills it in, imports it and publishes it
+  (`docs/STATUS.md`, price editor row). The remaining new-company setup changes are in 6.1.
+- **AI-suggested prices:** not now.
+- **Crew calendar and reminders:** could be helpful, later.
+- **Homeowner photo upload through the link:** could be good in the right context,
+  later. The conditions are **[open]**.
+- **Recipient texting:** could be good down the road, later.
+- **Support role:** undecided. **[open]**
+- **Owner-visible access log:** could be beneficial, later.
+
+No decision yet on these three, still listed as not built: per-visit reading dispatch,
+walkthrough recording stored with the signed agreement, and anonymized cross-company price
+comparison.
 
 ## 6. Target (accepted, not built yet)
 
@@ -237,3 +253,17 @@ Target acceptance checks (**not built**):
 Still **[open]**: an explicit field-owner transfer (the plan's alternative, preserving pending work
 and an audit), and how today's rule that a company owner or assignee can edit scope maps onto
 field ownership.
+
+### 6.3 Live voice walkthrough as the default
+
+Source: owner decision of 2026-11-09 ("I want live voice as the default option").
+
+In the rebuild, the Live voice walkthrough is the default way for field staff (owners and
+estimators) to capture a job, with manual scope entry, offline voice notes and photos as fallbacks
+whenever Live cannot run (for example, no signal).
+
+Target acceptance checks (**not built**):
+
+- A blank job started by field staff opens on the Live voice walkthrough, not on manual scope entry.
+- When Live cannot run (for example, no signal), field staff can still complete the job through
+  manual scope entry, offline voice notes and photos.

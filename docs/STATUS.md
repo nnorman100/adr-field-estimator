@@ -46,7 +46,7 @@ This file replaces the roadmap's old "Where we are" narrative. Update this table
 | Landing page at `/` | yes | yes | no | |
 
 ## Not built (from VISION.md)
-Company workbook upload; AI-suggested prices; crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
+Arbitrary company workbook upload (ADR's workbook is never used for another company; the owner-filled template is the price editor row above); AI-suggested prices (not wanted for now); crew calendar and reminders; per-visit reading dispatch; homeowner photo upload through the link; walkthrough recording stored with the signed agreement; recipient texting; anonymized cross-company price comparison; support role and owner-visible access log.
 
 ## Open items for the owner
 1. Phone test 2 on a real phone (iPhone if possible) — roadmap Phase 0 item 1; script in `docs/phone-acceptance.md`.
