@@ -2,6 +2,10 @@ project_id  = "dryscope"
 region      = "us-central1"
 environment = "test"
 
+# The web app's deterministic Cloud Run address (SERVICE-PROJECT_NUMBER.REGION.run.app).
+# Add the public front door here when the owner decides it.
+allowed_origins = ["https://dryscope-api-test-570228742694.us-central1.run.app"]
+
 # Scale to zero: test costs nothing while idle.
 api_scaling = {
   min_instances = 0

@@ -43,6 +43,11 @@
          "depends_on": null,
          "env": [
           {
+           "name": "ALLOWED_ORIGINS",
+           "value": "https://dryscope-api-live-570228742694.us-central1.run.app",
+           "value_source": []
+          },
+          {
            "name": "APP_ENV",
            "value": "live",
            "value_source": []
@@ -254,6 +259,11 @@
          "command": null,
          "depends_on": null,
          "env": [
+          {
+           "name": "ALLOWED_ORIGINS",
+           "value": "https://dryscope-api-live-570228742694.us-central1.run.app",
+           "value_source": []
+          },
           {
            "name": "APP_ENV",
            "value": "live",

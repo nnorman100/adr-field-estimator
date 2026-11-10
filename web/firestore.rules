@@ -1,0 +1,79 @@
+rules_version = '2';
+
+// Rules for the rebuilt app's field database (S3-6). Deny by default: a path no rule below names
+// is refused, and so is every create, update or delete a rule does not allow.
+//
+// Server-written records the rules read (the server SDK is not bound by these rules):
+// - companies/{companyId}: the company header. `authTenantId` is the company's sign-in tenant.
+// - companies/{companyId}/access/{uid}: one person's access to that company, written by the
+//   server after a membership change commits in Postgres. `role` is owner, estimator or office;
+//   `expiresAt` is a timestamp, and the record stops working at that time.
+// - companies/{companyId}/drafts/{draftId}: a draft. `fieldOwnerUid` and `state` (editing,
+//   submitting or submitted) are the server's. A client may change only the `field` map.
+//
+// Field-by-field validation inside `field` comes in S5.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function companyPath(companyId) {
+      return /databases/$(database)/documents/companies/$(companyId);
+    }
+
+    function accessPath(companyId) {
+      return /databases/$(database)/documents/companies/$(companyId)/access/$(request.auth.uid);
+    }
+
+    // The token's sign-in tenant is the company's tenant, and the caller has an unexpired
+    // access record in that company.
+    function hasAccess(companyId) {
+      return request.auth != null
+        && request.auth.token.firebase.tenant is string
+        && exists(companyPath(companyId))
+        && get(companyPath(companyId)).data.authTenantId == request.auth.token.firebase.tenant
+        && exists(accessPath(companyId))
+        && get(accessPath(companyId)).data.expiresAt is timestamp
+        && get(accessPath(companyId)).data.expiresAt > request.time;
+    }
+
+    function role(companyId) {
+      return get(accessPath(companyId)).data.role;
+    }
+
+    // Owner and office see every draft of their company; an estimator sees only the drafts they
+    // own in the field.
+    function canRead(companyId, draft) {
+      return hasAccess(companyId)
+        && (role(companyId) in ['owner', 'office'] || draft.fieldOwnerUid == request.auth.uid);
+    }
+
+    // Only the draft's field owner, holding a role that edits scope, while the draft is editing.
+    function canEdit(companyId, draft) {
+      return hasAccess(companyId)
+        && role(companyId) in ['owner', 'estimator']
+        && draft.fieldOwnerUid == request.auth.uid
+        && draft.state == 'editing';
+    }
+
+    function changesOnlyField() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['field']);
+    }
+
+    match /companies/{companyId}/drafts/{draftId} {
+      // Drafts are created and removed by the server only.
+      allow read: if canRead(companyId, resource.data);
+      allow update: if canEdit(companyId, resource.data) && changesOnlyField();
+
+      // Documents nested under a draft follow the draft's owner and state. They hold only
+      // `field`, and are not deleted by a client.
+      match /{collection}/{docId}/{rest=**} {
+        function draft() {
+          return get(/databases/$(database)/documents/companies/$(companyId)/drafts/$(draftId)).data;
+        }
+
+        allow read: if canRead(companyId, draft());
+        allow create: if canEdit(companyId, draft())
+          && request.resource.data.keys().hasOnly(['field']);
+        allow update: if canEdit(companyId, draft()) && changesOnlyField();
+      }
+    }
+  }
+}

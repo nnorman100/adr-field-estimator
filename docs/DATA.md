@@ -214,3 +214,24 @@ the database backward to make an older image start. Fix forward on the same data
 steps are in
 [RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
 migrator name the migration and omit the database URL.
+
+## Rebuilt app field database (rules only, not deployed)
+
+`web/firestore.rules` holds the rules for the rebuilt app's Firestore field database. They are
+checked in the emulator (`web/tests/emu/rules/`) and are not deployed. Nothing writes these records
+yet; the server writes the access records after a membership change commits in Postgres (S3-12).
+The rules deny every path they do not name. They read three server-written records:
+
+| Path | Fields the rules read | Who may change it |
+| --- | --- | --- |
+| `companies/{companyId}` (company header) | `authTenantId`, the company's sign-in tenant | server only |
+| `companies/{companyId}/access/{uid}` (access record) | `role` (owner, estimator or office) and `expiresAt` (a timestamp; the record stops working then) | server only |
+| `companies/{companyId}/drafts/{draftId}` and documents nested under it | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts |
+
+Every read or write needs a token whose `firebase.tenant` is the company's `authTenantId` and an
+unexpired access record for that uid in that company. With both, owner and office read every draft
+of the company and an estimator reads only drafts they own in the field. Only the field owner, as
+owner or estimator, writes, and only the `field` map: of a draft, or of a document nested under it
+(created holding only `field`, never deleted by a client). A draft that is `submitting` or
+`submitted` refuses every client write. What `field` may hold is checked field by field in S5. The
+`field` map will hold job details such as rooms, measurements and notes once S5 defines it.

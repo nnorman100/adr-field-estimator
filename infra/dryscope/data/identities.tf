@@ -102,6 +102,25 @@ resource "google_project_iam_member" "gemini_caller" {
   depends_on = [google_service_account.runtime]
 }
 
+# Sign-in user management for the web app: read, create and update a user and send
+# its sign-in emails. No users.delete, no configs.* (project and tenant settings are
+# shared by test and live and stay owner-run) and no identitytoolkit.tenants.*.
+# Nothing binds this role here, on purpose: a project-level binding would reach
+# every tenant, including live's. The owner binds it on each of this environment's
+# own sign-in tenants (tenants:setIamPolicy), never on the project (RUNBOOK).
+resource "google_project_iam_custom_role" "identity_users" {
+  project     = var.project_id
+  role_id     = "dryscopeIdentity${title(var.environment)}"
+  title       = "DryScope ${var.environment} sign-in users"
+  description = "Read, create and update DryScope ${var.environment} sign-in users and send their emails. Bound per tenant only. No delete, no settings, no tenants."
+  permissions = [
+    "firebaseauth.users.create",
+    "firebaseauth.users.get",
+    "firebaseauth.users.sendEmail",
+    "firebaseauth.users.update",
+  ]
+}
+
 # The deploy account may act as the two services' runtime accounts, no others.
 resource "google_service_account_iam_member" "deploy_acts_as" {
   for_each = toset(["api", "live"])

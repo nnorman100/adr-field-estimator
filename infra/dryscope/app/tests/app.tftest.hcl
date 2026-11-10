@@ -110,6 +110,35 @@ run "data_stays_inside_this_environment" {
   }
 }
 
+run "both_services_get_this_environments_sign_in_settings" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for k, s in google_cloud_run_v2_service.svc : (
+        { for e in s.template[0].containers[0].env : e.name => e.value if length(e.value_source) == 0 }["GOOGLE_CLOUD_PROJECT"] == "dryscope"
+      )
+    ])
+    error_message = "Both services name project dryscope, which holds the sign-in tenants."
+  }
+  assert {
+    condition = alltrue([
+      for k, s in google_cloud_run_v2_service.svc : (
+        { for e in s.template[0].containers[0].env : e.name => e.value if length(e.value_source) == 0 }["FIRESTORE_DATABASE_ID"] == "dryscope-field-${var.environment}"
+      )
+    ])
+    error_message = "Both services name this environment's Firestore database."
+  }
+  assert {
+    condition = alltrue([
+      for k, s in google_cloud_run_v2_service.svc : (
+        { for e in s.template[0].containers[0].env : e.name => e.value if length(e.value_source) == 0 }["ALLOWED_ORIGINS"] == "https://dryscope-api-${var.environment}-570228742694.us-central1.run.app"
+      )
+    ])
+    error_message = "Both services accept browser requests and sockets only from this environment's web app address."
+  }
+}
+
 run "deploy_role_cannot_delete_and_public_access_is_invocation_only" {
   command = plan
 
@@ -270,4 +299,54 @@ run "each_service_names_its_own_iam_database_user" {
     condition     = alltrue([for k, s in google_cloud_run_v2_service.svc : contains([for e in s.template[0].containers[0].env : e.value if e.name == "SQL_CONNECTION_NAME"], "dryscope:us-central1:dryscope-${var.environment}-pg")])
     error_message = "Each service must point at its own environment's instance."
   }
+}
+
+run "plain_http_origin_is_refused" {
+  command = plan
+
+  variables {
+    allowed_origins = ["http://dryscope-api-${var.environment}-570228742694.us-central1.run.app"]
+  }
+
+  expect_failures = [var.allowed_origins]
+}
+
+run "wildcard_origin_is_refused" {
+  command = plan
+
+  variables {
+    allowed_origins = ["https://*.run.app"]
+  }
+
+  expect_failures = [var.allowed_origins]
+}
+
+run "origin_with_a_path_or_trailing_slash_is_refused" {
+  command = plan
+
+  variables {
+    allowed_origins = ["https://dryscope-api-${var.environment}-570228742694.us-central1.run.app/"]
+  }
+
+  expect_failures = [var.allowed_origins]
+}
+
+run "no_origin_is_refused" {
+  command = plan
+
+  variables {
+    allowed_origins = []
+  }
+
+  expect_failures = [var.allowed_origins]
+}
+
+run "the_other_environments_web_app_origin_is_refused" {
+  command = plan
+
+  variables {
+    allowed_origins = ["https://dryscope-api-${var.environment == "test" ? "live" : "test"}-570228742694.us-central1.run.app"]
+  }
+
+  expect_failures = [var.allowed_origins]
 }
