@@ -469,6 +469,80 @@ describe('access projection outbox (S3-12)', () => {
     errors.mockRestore();
   });
 
+  it('reports an actor busy when its lock stays held, and carries on with the rest of the run', async () => {
+    const inner = memoryStore();
+    const started = deferred();
+    const finish = deferred();
+    const held: AccessStore = {
+      async grant(grant) {
+        started.release();
+        await finish.promise;
+        await inner.grant(grant);
+      },
+      remove: inner.remove,
+    };
+    await enqueue(seed.a, seed.estimatorA);
+    const holder = openDatabase({ APP_ENV: 'test', DATABASE_URL: urlAs(API_USER, apiPassword) });
+    try {
+      const first = projectActor(holder.db, held, seed.a, seed.estimatorA);
+      await started.promise;
+      // A newer change of the held actor waits, and so does another member of the same company.
+      await setMembership(seed.a, seed.estimatorA, { role: 'office' });
+      await enqueue(seed.a, seed.ownerA);
+      try {
+        expect(await runAccessProjection(worker.db, inner)).toMatchObject({ busy: 1, granted: 1, failed: 0 });
+        expect(inner.records.get(key(seed.a, 'owner-a'))?.role).toBe('owner');
+      } finally {
+        finish.release();
+      }
+      expect(await first).toBe('granted');
+    } finally {
+      await holder.close();
+    }
+    // The held actor's newer row is still waiting, due now, for the next run.
+    expect(await runAccessProjection(worker.db, inner)).toMatchObject({ granted: 1, busy: 0 });
+    expect(inner.records.get(key(seed.a, 'estimator-a'))?.role).toBe('office');
+  }, 40_000);
+
+  it("a slow write leaves the app's projection connections free for other members", async () => {
+    vi.resetModules();
+    vi.stubEnv('APP_ENV', 'test');
+    vi.stubEnv('DATABASE_URL', urlAs(API_USER, apiPassword));
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'demo-dryscope');
+    vi.stubEnv('FIRESTORE_DATABASE_ID', '(default)');
+    vi.stubEnv('FIRESTORE_EMULATOR_HOST', undefined);
+    try {
+      const { projectionServices } = await import('@/lib/projection/services');
+      const { db } = projectionServices();
+      const inner = memoryStore();
+      const started = deferred();
+      const finish = deferred();
+      const slow: AccessStore = {
+        async grant(grant) {
+          if (grant.uid === 'estimator-a') {
+            started.release();
+            await finish.promise;
+          }
+          await inner.grant(grant);
+        },
+        remove: inner.remove,
+      };
+      const first = renewAccess(db, slow, { companyId: seed.a, actorId: seed.estimatorA });
+      await started.promise;
+      try {
+        const other = renewAccess(db, slow, { companyId: seed.a, actorId: seed.ownerA });
+        const stalled = new Promise<'stalled'>((resolve) => setTimeout(() => resolve('stalled'), 5_000));
+        expect(await Promise.race([other, stalled])).toBe('granted');
+      } finally {
+        finish.release();
+      }
+      expect(await first).toBe('granted');
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
   describe('removing a member', () => {
     it('blocks server access first, before the Firestore record is removed', async () => {
       const store = memoryStore();

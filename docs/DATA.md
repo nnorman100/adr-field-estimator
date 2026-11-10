@@ -294,7 +294,9 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   done only once a read shows it gone.
 - A run holds the actor's lock until its Firestore write has settled; it never stops waiting for a
   write it started, so a slow Firestore holds that request and its database connection until it
-  answers. A failed write leaves the rows waiting with a back-off (30 seconds, doubling, at most an
+  answers. The app keeps four projection connections, so other members' renewals go on meanwhile,
+  and a run that still finds an actor held after the 15-second lock timeout counts it busy and goes
+  on with the rest; its rows stay due for the next run. A failed write leaves the rows waiting with a back-off (30 seconds, doubling, at most an
   hour) and a fixed error code; a crash at any point leaves them waiting, due now. The next run
   repairs either.
 - Each write carries a version, the id of the run's Postgres transaction, taken under the lock, so

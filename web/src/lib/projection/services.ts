@@ -10,11 +10,15 @@ export type ProjectionServices = { db: Database; store: AccessStore };
 
 let services: ProjectionServices | null = null;
 
+// A projection holds its connection until its Firestore write answers, so one slow write must not
+// leave other members' renewals waiting for the only connection.
+export const PROJECTION_CONNECTIONS = 4;
+
 // Built from the checked server configuration the first time a record is written, then reused.
 export function projectionServices(): ProjectionServices {
   if (!services) {
     const config = parseProjectionConfig(process.env);
-    const { db } = openDatabase(process.env);
+    const { db } = openDatabase(process.env, { max: PROJECTION_CONNECTIONS });
     services = { db, store: firestoreAccessStore(firestoreFor(config)) };
   }
   return services;
