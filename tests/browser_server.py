@@ -825,6 +825,9 @@ if __name__ == '__main__':
             host='127.0.0.1',
             port=BROWSER_PORT,
             log_level='warning',
+            # A spec's request context reuses one connection across a slow test; the default 5 s idle
+            # close races the next request and the browser run sees ECONNRESET.
+            timeout_keep_alive=120,
             ssl_keyfile=str(key_path),
             ssl_certfile=str(cert_path),
         )

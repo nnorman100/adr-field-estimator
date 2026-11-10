@@ -106,3 +106,55 @@ print(json.dumps([session.status_code, session.json().get('company_id')]))
     )
     assert served.returncode == 0, served.stderr
     assert json.loads(served.stdout.splitlines()[-1]) == [200, 'adr']
+
+
+def test_the_server_keeps_an_idle_connection_open_for_a_slow_spec():
+    """A spec's request context reuses one connection while its test runs for several seconds.
+    A server that closes it first makes the next request, usually the afterEach reset, fail with
+    ECONNRESET."""
+    root = Path(__file__).resolve().parents[1]
+    served = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            """
+import http.client, json, os, socket, ssl, subprocess, sys, time
+
+port = socket.socket()
+port.bind(('127.0.0.1', 0))
+number = port.getsockname()[1]
+port.close()
+server = subprocess.Popen(
+    [sys.executable, '-B', 'tests/browser_server.py'],
+    env={**os.environ, 'ADR_BROWSER_PORT': str(number)},
+)
+try:
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            connection = http.client.HTTPSConnection('127.0.0.1', number, context=context)
+            connection.request('GET', '/api/health')
+            connection.getresponse().read()
+            break
+        except OSError:
+            assert time.monotonic() < deadline, 'server did not start'
+            time.sleep(0.25)
+    time.sleep(6.5)
+    connection.request('GET', '/api/health')
+    status = connection.getresponse().status
+    connection.close()
+    print(json.dumps(status))
+finally:
+    server.kill()
+    server.wait(10)
+""",
+        ],
+        cwd=root,
+        text=True,
+        capture_output=True,
+    )
+    assert served.returncode == 0, served.stderr
+    assert json.loads(served.stdout.splitlines()[-1]) == 200
