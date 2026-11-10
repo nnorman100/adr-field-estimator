@@ -1,0 +1,37 @@
+{
+  "id": "float-padded-underscore",
+  "model": "inspection",
+  "path": [
+    "rooms",
+    0,
+    "finished_sf"
+  ],
+  "probes": [
+    {"accepted": true, "input": "1_0", "value": 10.0},
+    {"accepted": true, "input": "1_0.5", "value": 10.5},
+    {"accepted": true, "input": "2_e1", "value": 20.0},
+    {"accepted": true, "input": "0_.5", "value": 0.5},
+    {"accepted": true, "input": "1.2_3", "value": 1.23},
+    {"accepted": true, "input": "9_0.500E-1", "value": 9.05},
+    {"accepted": true, "input": "1_e5", "value": 100000.0},
+    {"accepted": false, "input": "_1"},
+    {"accepted": false, "input": "1_"},
+    {"accepted": false, "input": " 1_0"},
+    {"accepted": false, "input": "1_0 "},
+    {"accepted": false, "input": " 1_0 "},
+    {"accepted": false, "input": "\t1_0"},
+    {"accepted": false, "input": "\n1_0\n"},
+    {"accepted": false, "input": "\u00a01_0"},
+    {"accepted": false, "input": "\u20031_0"},
+    {"accepted": false, "input": "\u001c1_0"},
+    {"accepted": false, "input": " 1_0.5"},
+    {"accepted": false, "input": "1.2_3 "},
+    {"accepted": false, "input": " 2_e1"},
+    {"accepted": true, "input": " 10 ", "value": 10.0},
+    {"accepted": true, "input": " 1.5 ", "value": 1.5},
+    {"accepted": true, "input": "\u00a010\u00a0", "value": 10.0}
+  ],
+  "template": {
+    "rooms": [{"name": "Kitchen"}]
+  }
+}

@@ -1,0 +1,303 @@
+{
+  "expected": {
+    "documents": {
+      "adr_estimate": {
+        "customer_name": "Casey Customer",
+        "date": "11-06-2026",
+        "disclaimers": ["Photos taken during the inspection are stamped with the location reported by the technician's phone, when the technician allows it, and that location is part of the photo log.", "When the job address is entered, the typed address is sent to Google Maps to suggest matching addresses, and the selected location is saved with the job.", "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.", "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.", "Estimate is valid for 30 days from date of inspection."],
+        "findings": ["The home was built in 1985. Therefore, no lead or asbestos testing is required prior to the start of work."],
+        "lead_notice_required": false,
+        "property_address": "100 Oracle Lane, Testville",
+        "proposed_cost": 1347.0,
+        "proposed_cost_low": 1291.4,
+        "recommendations": ["Per IICRC and EPA protocols, Oracle Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.", "Kitchen: category 1 finished/drywall/trim demolition", "If technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost."]
+      },
+      "ai_suggestions": [
+        "Check the subfloor."
+      ],
+      "ai_summary": "Reviewed the inspection.",
+      "company_identity": {
+        "address": "1 Synthetic Way, Testville",
+        "company_id": "adr",
+        "email": "office@example.invalid",
+        "license": "000001",
+        "logo_data_url": "",
+        "name": "Oracle Restoration",
+        "phone": "555-0100",
+        "signoff": "Pat Example",
+        "version": 1,
+        "water_heater_notice": ""
+      },
+      "company_setup_missing": [],
+      "compliance_notes": [
+        "The home was built in 1985. Therefore, no lead or asbestos testing is required prior to the start of work.",
+        "NOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.",
+        "If the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.",
+        "Estimate is valid for 30 days from date of inspection."
+      ],
+      "iicrc_defense_letter": "Oracle Restoration \u00b7 1 Synthetic Way, Testville \u00b7 555-0100 \u00b7 CSLB #000001\n\nTO: Insurance Claims Examiner / Adjuster\n\nRE: Remediation scope for 100 Oracle Lane, Testville\nCustomer: Casey Customer\n\nThis scope describes proposed work; completion has not been recorded.\n\nThe scope is prepared with reference to IICRC S500/S520 restoration practices. Project-specific conditions and evidence are recorded below; no unsupported section citation or completion claim is made.\n\nThe home was built in 1985. Therefore, no lead or asbestos testing is required prior to the start of work.\n\nScope:\nPer IICRC and EPA protocols, Oracle Restoration technicians will don appropriate personal protective equipment during mitigation/remediation services. The technicians will set containments as needed.\nKitchen: category 1 finished/drywall/trim demolition\nIf technicians encounter additional affected building materials beyond the quantities previously described, the project manager will contact the property owner to discuss any additional course of action necessary and the associated cost.\n\nNOTE: This estimate does NOT include reconstruction after remediation. Demolition is a highly unpredictable procedure. As such, any collateral damage resulting from the demolition prescribed herein will NOT be the responsibility of Oracle Restoration. This estimate does not include testing of any kind.\nIf the work proceeds through an insurance claim, we will reprice the estimate according to industry standards using Xactimate.\nEstimate is valid for 30 days from date of inspection.\n\nItemized charges at base rates: $1,291.40. Customer estimate range: $1,291.40 to $1,347.00. The range applies the estimating sheet labor/material allowance to the priced scope.\n\nSincerely,\nPat Example\nOracle Restoration",
+      "pending_extras": 0,
+      "photo_audit_log": [],
+      "price_basis": {
+        "calculation_version": "adr-residential-v1",
+        "company_id": "adr",
+        "content_sha256": "e4c41407ed544b53d4cb88ff75024399021a45401699b23a2733a3609063b2b5",
+        "priced_at": "2026-11-01T17:00:00Z",
+        "rates": {"additional_work_hourly": "47.46", "after_hours_job_charge": "200.00", "air_mover_daily": "29.25", "air_scrubber_daily": "74.75", "dehumidifier_daily": "101.25", "demo_cat1_finished": "2.78", "demo_cat1_unfinished": "1.21", "demo_cat2_finished": "2.89", "demo_cat2_unfinished": "1.52", "demo_cat3_finished": "8.39", "demo_cat3_unfinished": "2.48", "dump_truck_load": "286.78", "emergency_call": "133.95", "equipment_decontamination": "27.72", "haul_pickup_load": "159.53", "hepa_filter": "183.12", "matterport_scan": "250.00", "monitoring_hourly": "47.46", "power_distribution": "66.74", "sheet_labor_hourly": "47.46", "wood_floor_daily": "180.00"},
+        "sequence": 1,
+        "version_id": "v-302be68ba506"
+      },
+      "schema_version": 3,
+      "signable": true,
+      "unpriced_work": [],
+      "xactimate_scope": [
+        {"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 1.0, "total": 133.95, "unit": "EA", "unit_price": 133.95, "waste_percent": 0.0},
+        {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 628.85, "unit": "HR", "unit_price": 47.46, "waste_percent": 0.0},
+        {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 1.0, "total": 159.53, "unit": "load", "unit_price": 159.53, "waste_percent": 0.0},
+        {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1.0, "total": 74.75, "unit": "day", "unit_price": 74.75, "waste_percent": 0.0},
+        {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1.0, "total": 183.12, "unit": "EA", "unit_price": 183.12, "waste_percent": 0.0},
+        {"code": "ADR-DEMO", "description": "Kitchen: category 1 finished/drywall/trim demolition", "quantity": 40.0, "total": 111.2, "unit": "SF", "unit_price": 2.78, "waste_percent": 0.0}
+      ],
+      "xactimate_total": 1291.4
+    },
+    "normalized_inspection": {
+      "address": "100 Oracle Lane, Testville",
+      "air_movers": 0,
+      "air_scrubbers": 1,
+      "assistant_transcript": "",
+      "coordinates": {
+        "address": "\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9",
+        "latitude": -90.0,
+        "longitude": 180.0
+      },
+      "dehumidifiers": 0,
+      "drying_days": 3,
+      "dump_truck_loads": 0,
+      "emergency_calls": 1,
+      "equipment_decon": 0,
+      "granite_removal": false,
+      "has_crawl_space": false,
+      "haul_loads": 1,
+      "hepa_filters": 1,
+      "is_after_hours": false,
+      "labor_hours": 0.0,
+      "matterport_scans": 0,
+      "monitoring_hours": 13.25,
+      "package_price": null,
+      "power_distribution": 0,
+      "rooms": [
+        {"category": 1, "custom_cabinetry": false, "finished_sf": 40.0, "name": "Kitchen", "unfinished_sf": 0.0, "waste_percent": 0.0}
+      ],
+      "scope_confirmed": true,
+      "technician_notes": "",
+      "technician_transcript": "",
+      "water_heater_loss": false,
+      "wood_floor_days": 7,
+      "wood_floor_systems": 0,
+      "work_performed": false,
+      "year_built": 1985
+    },
+    "pin": {
+      "calculation_version": "adr-residential-v1",
+      "company_id": "adr",
+      "content_sha256": "e4c41407ed544b53d4cb88ff75024399021a45401699b23a2733a3609063b2b5",
+      "inspection_id": "ADR-INS-724cd1ed4094084ebbe97e5def5c6802",
+      "pin_version": 1,
+      "priced_at": "2026-11-01T17:00:00Z",
+      "rates": {
+        "additional_work_hourly": "47.46",
+        "after_hours_job_charge": "200.00",
+        "air_mover_daily": "29.25",
+        "air_scrubber_daily": "74.75",
+        "dehumidifier_daily": "101.25",
+        "demo_cat1_finished": "2.78",
+        "demo_cat1_unfinished": "1.21",
+        "demo_cat2_finished": "2.89",
+        "demo_cat2_unfinished": "1.52",
+        "demo_cat3_finished": "8.39",
+        "demo_cat3_unfinished": "2.48",
+        "dump_truck_load": "286.78",
+        "emergency_call": "133.95",
+        "equipment_decontamination": "27.72",
+        "haul_pickup_load": "159.53",
+        "hepa_filter": "183.12",
+        "matterport_scan": "250.00",
+        "monitoring_hourly": "47.46",
+        "power_distribution": "66.74",
+        "sheet_labor_hourly": "47.46",
+        "wood_floor_daily": "180.00"
+      },
+      "reason": "first_price",
+      "sequence": 1,
+      "version_id": "v-302be68ba506"
+    },
+    "price_basis": {
+      "calculation_version": "adr-residential-v1",
+      "company_id": "adr",
+      "content_sha256": "e4c41407ed544b53d4cb88ff75024399021a45401699b23a2733a3609063b2b5",
+      "priced_at": "2026-11-01T17:00:00Z",
+      "rates": {
+        "additional_work_hourly": "47.46",
+        "after_hours_job_charge": "200.00",
+        "air_mover_daily": "29.25",
+        "air_scrubber_daily": "74.75",
+        "dehumidifier_daily": "101.25",
+        "demo_cat1_finished": "2.78",
+        "demo_cat1_unfinished": "1.21",
+        "demo_cat2_finished": "2.89",
+        "demo_cat2_unfinished": "1.52",
+        "demo_cat3_finished": "8.39",
+        "demo_cat3_unfinished": "2.48",
+        "dump_truck_load": "286.78",
+        "emergency_call": "133.95",
+        "equipment_decontamination": "27.72",
+        "haul_pickup_load": "159.53",
+        "hepa_filter": "183.12",
+        "matterport_scan": "250.00",
+        "monitoring_hourly": "47.46",
+        "power_distribution": "66.74",
+        "sheet_labor_hourly": "47.46",
+        "wood_floor_daily": "180.00"
+      },
+      "sequence": 1,
+      "version_id": "v-302be68ba506"
+    },
+    "pricing": {
+      "buckets": {
+        "affected_sf": "40.0",
+        "equipment": "0",
+        "job": "1180.20",
+        "labor_material": "111.20"
+      },
+      "calculation_version": "adr-residential-v1",
+      "high": "1347.00",
+      "itemized_total": 1291.4,
+      "lines": [
+        {"code": "ADR-TRIP", "description": "Emergency call / trip charge", "quantity": 1.0, "total": 133.95, "unit": "EA", "unit_price": 133.95, "waste_percent": 0.0},
+        {"code": "ADR-MON", "description": "Equipment monitoring", "quantity": 13.25, "total": 628.85, "unit": "HR", "unit_price": 47.46, "waste_percent": 0.0},
+        {"code": "ADR-HAUL", "description": "Haul debris & disposal", "quantity": 1.0, "total": 159.53, "unit": "load", "unit_price": 159.53, "waste_percent": 0.0},
+        {"code": "ADR-SCRUB", "description": "Air scrubber daily rental", "quantity": 1.0, "total": 74.75, "unit": "day", "unit_price": 74.75, "waste_percent": 0.0},
+        {"code": "ADR-HEPA", "description": "HEPA replacement filter", "quantity": 1.0, "total": 183.12, "unit": "EA", "unit_price": 183.12, "waste_percent": 0.0},
+        {"code": "ADR-DEMO", "description": "Kitchen: category 1 finished/drywall/trim demolition", "quantity": 40.0, "total": 111.2, "unit": "SF", "unit_price": 2.78, "waste_percent": 0.0}
+      ],
+      "low": "1291.40",
+      "totals": null
+    },
+    "proposal": {
+      "byte_length": 10220,
+      "canonical_bytes_base64": "eyJkYXRhIjp7ImFkZHJlc3MiOiIxMDAgT3JhY2xlIExhbmUsIFRlc3R2aWxsZSIsImFpcl9tb3ZlcnMiOjAsImFpcl9zY3J1YmJlcnMiOjEsImFzc2lzdGFudF90cmFuc2NyaXB0IjoiIiwiY29vcmRpbmF0ZXMiOnsiYWRkcmVzcyI6Ilx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOVx1MDBjOSIsImxhdGl0dWRlIjotOTAuMCwibG9uZ2l0dWRlIjoxODAuMH0sImRlaHVtaWRpZmllcnMiOjAsImRyeWluZ19kYXlzIjozLCJkdW1wX3RydWNrX2xvYWRzIjowLCJlbWVyZ2VuY3lfY2FsbHMiOjEsImVxdWlwbWVudF9kZWNvbiI6MCwiZ3Jhbml0ZV9yZW1vdmFsIjpmYWxzZSwiaGFzX2NyYXdsX3NwYWNlIjpmYWxzZSwiaGF1bF9sb2FkcyI6MSwiaGVwYV9maWx0ZXJzIjoxLCJpc19hZnRlcl9ob3VycyI6ZmFsc2UsImxhYm9yX2hvdXJzIjowLjAsIm1hdHRlcnBvcnRfc2NhbnMiOjAsIm1vbml0b3JpbmdfaG91cnMiOjEzLjI1LCJwYWNrYWdlX3ByaWNlIjpudWxsLCJwb3dlcl9kaXN0cmlidXRpb24iOjAsInJvb21zIjpbeyJjYXRlZ29yeSI6MSwiY3VzdG9tX2NhYmluZXRyeSI6ZmFsc2UsImZpbmlzaGVkX3NmIjo0MC4wLCJuYW1lIjoiS2l0Y2hlbiIsInVuZmluaXNoZWRfc2YiOjAuMCwid2FzdGVfcGVyY2VudCI6MC4wfV0sInNjb3BlX2NvbmZpcm1lZCI6dHJ1ZSwidGVjaG5pY2lhbl9ub3RlcyI6IiIsInRlY2huaWNpYW5fdHJhbnNjcmlwdCI6IiIsIndhdGVyX2hlYXRlcl9sb3NzIjpmYWxzZSwid29vZF9mbG9vcl9kYXlzIjo3LCJ3b29kX2Zsb29yX3N5c3RlbXMiOjAsIndvcmtfcGVyZm9ybWVkIjpmYWxzZSwieWVhcl9idWlsdCI6MTk4NX0sImRvY3VtZW50cyI6eyJhZHJfZXN0aW1hdGUiOnsiY3VzdG9tZXJfbmFtZSI6IkNhc2V5IEN1c3RvbWVyIiwiZGF0ZSI6IjExLTA2LTIwMjYiLCJkaXNjbGFpbWVycyI6WyJQaG90b3MgdGFrZW4gZHVyaW5nIHRoZSBpbnNwZWN0aW9uIGFyZSBzdGFtcGVkIHdpdGggdGhlIGxvY2F0aW9uIHJlcG9ydGVkIGJ5IHRoZSB0ZWNobmljaWFuJ3MgcGhvbmUsIHdoZW4gdGhlIHRlY2huaWNpYW4gYWxsb3dzIGl0LCBhbmQgdGhhdCBsb2NhdGlvbiBpcyBwYXJ0IG9mIHRoZSBwaG90byBsb2cuIiwiV2hlbiB0aGUgam9iIGFkZHJlc3MgaXMgZW50ZXJlZCwgdGhlIHR5cGVkIGFkZHJlc3MgaXMgc2VudCB0byBHb29nbGUgTWFwcyB0byBzdWdnZXN0IG1hdGNoaW5nIGFkZHJlc3NlcywgYW5kIHRoZSBzZWxlY3RlZCBsb2NhdGlvbiBpcyBzYXZlZCB3aXRoIHRoZSBqb2IuIiwiTk9URTogVGhpcyBlc3RpbWF0ZSBkb2VzIE5PVCBpbmNsdWRlIHJlY29uc3RydWN0aW9uIGFmdGVyIHJlbWVkaWF0aW9uLiBEZW1vbGl0aW9uIGlzIGEgaGlnaGx5IHVucHJlZGljdGFibGUgcHJvY2VkdXJlLiBBcyBzdWNoLCBhbnkgY29sbGF0ZXJhbCBkYW1hZ2UgcmVzdWx0aW5nIGZyb20gdGhlIGRlbW9saXRpb24gcHJlc2NyaWJlZCBoZXJlaW4gd2lsbCBOT1QgYmUgdGhlIHJlc3BvbnNpYmlsaXR5IG9mIE9yYWNsZSBSZXN0b3JhdGlvbi4gVGhpcyBlc3RpbWF0ZSBkb2VzIG5vdCBpbmNsdWRlIHRlc3Rpbmcgb2YgYW55IGtpbmQuIiwiSWYgdGhlIHdvcmsgcHJvY2VlZHMgdGhyb3VnaCBhbiBpbnN1cmFuY2UgY2xhaW0sIHdlIHdpbGwgcmVwcmljZSB0aGUgZXN0aW1hdGUgYWNjb3JkaW5nIHRvIGluZHVzdHJ5IHN0YW5kYXJkcyB1c2luZyBYYWN0aW1hdGUuIiwiRXN0aW1hdGUgaXMgdmFsaWQgZm9yIDMwIGRheXMgZnJvbSBkYXRlIG9mIGluc3BlY3Rpb24uIl0sImZpbmRpbmdzIjpbIlRoZSBob21lIHdhcyBidWlsdCBpbiAxOTg1LiBUaGVyZWZvcmUsIG5vIGxlYWQgb3IgYXNiZXN0b3MgdGVzdGluZyBpcyByZXF1aXJlZCBwcmlvciB0byB0aGUgc3RhcnQgb2Ygd29yay4iXSwibGVhZF9ub3RpY2VfcmVxdWlyZWQiOmZhbHNlLCJwcm9wZXJ0eV9hZGRyZXNzIjoiMTAwIE9yYWNsZSBMYW5lLCBUZXN0dmlsbGUiLCJwcm9wb3NlZF9jb3N0IjoxMzQ3LjAsInByb3Bvc2VkX2Nvc3RfbG93IjoxMjkxLjQsInJlY29tbWVuZGF0aW9ucyI6WyJQZXIgSUlDUkMgYW5kIEVQQSBwcm90b2NvbHMsIE9yYWNsZSBSZXN0b3JhdGlvbiB0ZWNobmljaWFucyB3aWxsIGRvbiBhcHByb3ByaWF0ZSBwZXJzb25hbCBwcm90ZWN0aXZlIGVxdWlwbWVudCBkdXJpbmcgbWl0aWdhdGlvbi9yZW1lZGlhdGlvbiBzZXJ2aWNlcy4gVGhlIHRlY2huaWNpYW5zIHdpbGwgc2V0IGNvbnRhaW5tZW50cyBhcyBuZWVkZWQuIiwiS2l0Y2hlbjogY2F0ZWdvcnkgMSBmaW5pc2hlZC9kcnl3YWxsL3RyaW0gZGVtb2xpdGlvbiIsIklmIHRlY2huaWNpYW5zIGVuY291bnRlciBhZGRpdGlvbmFsIGFmZmVjdGVkIGJ1aWxkaW5nIG1hdGVyaWFscyBiZXlvbmQgdGhlIHF1YW50aXRpZXMgcHJldmlvdXNseSBkZXNjcmliZWQsIHRoZSBwcm9qZWN0IG1hbmFnZXIgd2lsbCBjb250YWN0IHRoZSBwcm9wZXJ0eSBvd25lciB0byBkaXNjdXNzIGFueSBhZGRpdGlvbmFsIGNvdXJzZSBvZiBhY3Rpb24gbmVjZXNzYXJ5IGFuZCB0aGUgYXNzb2NpYXRlZCBjb3N0LiJdfSwiYWlfc3VnZ2VzdGlvbnMiOlsiQ2hlY2sgdGhlIHN1YmZsb29yLiJdLCJhaV9zdW1tYXJ5IjoiUmV2aWV3ZWQgdGhlIGluc3BlY3Rpb24uIiwiY29tcGFueV9pZGVudGl0eSI6eyJhZGRyZXNzIjoiMSBTeW50aGV0aWMgV2F5LCBUZXN0dmlsbGUiLCJjb21wYW55X2lkIjoiYWRyIiwiZW1haWwiOiJvZmZpY2VAZXhhbXBsZS5pbnZhbGlkIiwibGljZW5zZSI6IjAwMDAwMSIsImxvZ29fZGF0YV91cmwiOiIiLCJuYW1lIjoiT3JhY2xlIFJlc3RvcmF0aW9uIiwicGhvbmUiOiI1NTUtMDEwMCIsInNpZ25vZmYiOiJQYXQgRXhhbXBsZSIsInZlcnNpb24iOjEsIndhdGVyX2hlYXRlcl9ub3RpY2UiOiIifSwiY29tcGFueV9zZXR1cF9taXNzaW5nIjpbXSwiY29tcGxpYW5jZV9ub3RlcyI6WyJUaGUgaG9tZSB3YXMgYnVpbHQgaW4gMTk4NS4gVGhlcmVmb3JlLCBubyBsZWFkIG9yIGFzYmVzdG9zIHRlc3RpbmcgaXMgcmVxdWlyZWQgcHJpb3IgdG8gdGhlIHN0YXJ0IG9mIHdvcmsuIiwiTk9URTogVGhpcyBlc3RpbWF0ZSBkb2VzIE5PVCBpbmNsdWRlIHJlY29uc3RydWN0aW9uIGFmdGVyIHJlbWVkaWF0aW9uLiBEZW1vbGl0aW9uIGlzIGEgaGlnaGx5IHVucHJlZGljdGFibGUgcHJvY2VkdXJlLiBBcyBzdWNoLCBhbnkgY29sbGF0ZXJhbCBkYW1hZ2UgcmVzdWx0aW5nIGZyb20gdGhlIGRlbW9saXRpb24gcHJlc2NyaWJlZCBoZXJlaW4gd2lsbCBOT1QgYmUgdGhlIHJlc3BvbnNpYmlsaXR5IG9mIE9yYWNsZSBSZXN0b3JhdGlvbi4gVGhpcyBlc3RpbWF0ZSBkb2VzIG5vdCBpbmNsdWRlIHRlc3Rpbmcgb2YgYW55IGtpbmQuIiwiSWYgdGhlIHdvcmsgcHJvY2VlZHMgdGhyb3VnaCBhbiBpbnN1cmFuY2UgY2xhaW0sIHdlIHdpbGwgcmVwcmljZSB0aGUgZXN0aW1hdGUgYWNjb3JkaW5nIHRvIGluZHVzdHJ5IHN0YW5kYXJkcyB1c2luZyBYYWN0aW1hdGUuIiwiRXN0aW1hdGUgaXMgdmFsaWQgZm9yIDMwIGRheXMgZnJvbSBkYXRlIG9mIGluc3BlY3Rpb24uIl0sImlpY3JjX2RlZmVuc2VfbGV0dGVyIjoiT3JhY2xlIFJlc3RvcmF0aW9uIFx1MDBiNyAxIFN5bnRoZXRpYyBXYXksIFRlc3R2aWxsZSBcdTAwYjcgNTU1LTAxMDAgXHUwMGI3IENTTEIgIzAwMDAwMVxuXG5UTzogSW5zdXJhbmNlIENsYWltcyBFeGFtaW5lciAvIEFkanVzdGVyXG5cblJFOiBSZW1lZGlhdGlvbiBzY29wZSBmb3IgMTAwIE9yYWNsZSBMYW5lLCBUZXN0dmlsbGVcbkN1c3RvbWVyOiBDYXNleSBDdXN0b21lclxuXG5UaGlzIHNjb3BlIGRlc2NyaWJlcyBwcm9wb3NlZCB3b3JrOyBjb21wbGV0aW9uIGhhcyBub3QgYmVlbiByZWNvcmRlZC5cblxuVGhlIHNjb3BlIGlzIHByZXBhcmVkIHdpdGggcmVmZXJlbmNlIHRvIElJQ1JDIFM1MDAvUzUyMCByZXN0b3JhdGlvbiBwcmFjdGljZXMuIFByb2plY3Qtc3BlY2lmaWMgY29uZGl0aW9ucyBhbmQgZXZpZGVuY2UgYXJlIHJlY29yZGVkIGJlbG93OyBubyB1bnN1cHBvcnRlZCBzZWN0aW9uIGNpdGF0aW9uIG9yIGNvbXBsZXRpb24gY2xhaW0gaXMgbWFkZS5cblxuVGhlIGhvbWUgd2FzIGJ1aWx0IGluIDE5ODUuIFRoZXJlZm9yZSwgbm8gbGVhZCBvciBhc2Jlc3RvcyB0ZXN0aW5nIGlzIHJlcXVpcmVkIHByaW9yIHRvIHRoZSBzdGFydCBvZiB3b3JrLlxuXG5TY29wZTpcblBlciBJSUNSQyBhbmQgRVBBIHByb3RvY29scywgT3JhY2xlIFJlc3RvcmF0aW9uIHRlY2huaWNpYW5zIHdpbGwgZG9uIGFwcHJvcHJpYXRlIHBlcnNvbmFsIHByb3RlY3RpdmUgZXF1aXBtZW50IGR1cmluZyBtaXRpZ2F0aW9uL3JlbWVkaWF0aW9uIHNlcnZpY2VzLiBUaGUgdGVjaG5pY2lhbnMgd2lsbCBzZXQgY29udGFpbm1lbnRzIGFzIG5lZWRlZC5cbktpdGNoZW46IGNhdGVnb3J5IDEgZmluaXNoZWQvZHJ5d2FsbC90cmltIGRlbW9saXRpb25cbklmIHRlY2huaWNpYW5zIGVuY291bnRlciBhZGRpdGlvbmFsIGFmZmVjdGVkIGJ1aWxkaW5nIG1hdGVyaWFscyBiZXlvbmQgdGhlIHF1YW50aXRpZXMgcHJldmlvdXNseSBkZXNjcmliZWQsIHRoZSBwcm9qZWN0IG1hbmFnZXIgd2lsbCBjb250YWN0IHRoZSBwcm9wZXJ0eSBvd25lciB0byBkaXNjdXNzIGFueSBhZGRpdGlvbmFsIGNvdXJzZSBvZiBhY3Rpb24gbmVjZXNzYXJ5IGFuZCB0aGUgYXNzb2NpYXRlZCBjb3N0LlxuXG5OT1RFOiBUaGlzIGVzdGltYXRlIGRvZXMgTk9UIGluY2x1ZGUgcmVjb25zdHJ1Y3Rpb24gYWZ0ZXIgcmVtZWRpYXRpb24uIERlbW9saXRpb24gaXMgYSBoaWdobHkgdW5wcmVkaWN0YWJsZSBwcm9jZWR1cmUuIEFzIHN1Y2gsIGFueSBjb2xsYXRlcmFsIGRhbWFnZSByZXN1bHRpbmcgZnJvbSB0aGUgZGVtb2xpdGlvbiBwcmVzY3JpYmVkIGhlcmVpbiB3aWxsIE5PVCBiZSB0aGUgcmVzcG9uc2liaWxpdHkgb2YgT3JhY2xlIFJlc3RvcmF0aW9uLiBUaGlzIGVzdGltYXRlIGRvZXMgbm90IGluY2x1ZGUgdGVzdGluZyBvZiBhbnkga2luZC5cbklmIHRoZSB3b3JrIHByb2NlZWRzIHRocm91Z2ggYW4gaW5zdXJhbmNlIGNsYWltLCB3ZSB3aWxsIHJlcHJpY2UgdGhlIGVzdGltYXRlIGFjY29yZGluZyB0byBpbmR1c3RyeSBzdGFuZGFyZHMgdXNpbmcgWGFjdGltYXRlLlxuRXN0aW1hdGUgaXMgdmFsaWQgZm9yIDMwIGRheXMgZnJvbSBkYXRlIG9mIGluc3BlY3Rpb24uXG5cbkl0ZW1pemVkIGNoYXJnZXMgYXQgYmFzZSByYXRlczogJDEsMjkxLjQwLiBDdXN0b21lciBlc3RpbWF0ZSByYW5nZTogJDEsMjkxLjQwIHRvICQxLDM0Ny4wMC4gVGhlIHJhbmdlIGFwcGxpZXMgdGhlIGVzdGltYXRpbmcgc2hlZXQgbGFib3IvbWF0ZXJpYWwgYWxsb3dhbmNlIHRvIHRoZSBwcmljZWQgc2NvcGUuXG5cblNpbmNlcmVseSxcblBhdCBFeGFtcGxlXG5PcmFjbGUgUmVzdG9yYXRpb24iLCJwZW5kaW5nX2V4dHJhcyI6MCwicGhvdG9fYXVkaXRfbG9nIjpbXSwicHJpY2VfYmFzaXMiOnsiY2FsY3VsYXRpb25fdmVyc2lvbiI6ImFkci1yZXNpZGVudGlhbC12MSIsImNvbXBhbnlfaWQiOiJhZHIiLCJjb250ZW50X3NoYTI1NiI6ImU0YzQxNDA3ZWQ1NDRiNTNkNGNiODhmZjc1MDI0Mzk5MDIxYTQ1NDAxNjk5YjIzYTI3MzNhMzYwOTA2M2IyYjUiLCJwcmljZWRfYXQiOiIyMDI2LTExLTAxVDE3OjAwOjAwWiIsInJhdGVzIjp7ImFkZGl0aW9uYWxfd29ya19ob3VybHkiOiI0Ny40NiIsImFmdGVyX2hvdXJzX2pvYl9jaGFyZ2UiOiIyMDAuMDAiLCJhaXJfbW92ZXJfZGFpbHkiOiIyOS4yNSIsImFpcl9zY3J1YmJlcl9kYWlseSI6Ijc0Ljc1IiwiZGVodW1pZGlmaWVyX2RhaWx5IjoiMTAxLjI1IiwiZGVtb19jYXQxX2ZpbmlzaGVkIjoiMi43OCIsImRlbW9fY2F0MV91bmZpbmlzaGVkIjoiMS4yMSIsImRlbW9fY2F0Ml9maW5pc2hlZCI6IjIuODkiLCJkZW1vX2NhdDJfdW5maW5pc2hlZCI6IjEuNTIiLCJkZW1vX2NhdDNfZmluaXNoZWQiOiI4LjM5IiwiZGVtb19jYXQzX3VuZmluaXNoZWQiOiIyLjQ4IiwiZHVtcF90cnVja19sb2FkIjoiMjg2Ljc4IiwiZW1lcmdlbmN5X2NhbGwiOiIxMzMuOTUiLCJlcXVpcG1lbnRfZGVjb250YW1pbmF0aW9uIjoiMjcuNzIiLCJoYXVsX3BpY2t1cF9sb2FkIjoiMTU5LjUzIiwiaGVwYV9maWx0ZXIiOiIxODMuMTIiLCJtYXR0ZXJwb3J0X3NjYW4iOiIyNTAuMDAiLCJtb25pdG9yaW5nX2hvdXJseSI6IjQ3LjQ2IiwicG93ZXJfZGlzdHJpYnV0aW9uIjoiNjYuNzQiLCJzaGVldF9sYWJvcl9ob3VybHkiOiI0Ny40NiIsIndvb2RfZmxvb3JfZGFpbHkiOiIxODAuMDAifSwic2VxdWVuY2UiOjEsInZlcnNpb25faWQiOiJ2LTMwMmJlNjhiYTUwNiJ9LCJzY2hlbWFfdmVyc2lvbiI6Mywic2lnbmFibGUiOnRydWUsInVucHJpY2VkX3dvcmsiOltdLCJ4YWN0aW1hdGVfc2NvcGUiOlt7ImNvZGUiOiJBRFItVFJJUCIsImRlc2NyaXB0aW9uIjoiRW1lcmdlbmN5IGNhbGwgLyB0cmlwIGNoYXJnZSIsInF1YW50aXR5IjoxLjAsInRvdGFsIjoxMzMuOTUsInVuaXQiOiJFQSIsInVuaXRfcHJpY2UiOjEzMy45NSwid2FzdGVfcGVyY2VudCI6MC4wfSx7ImNvZGUiOiJBRFItTU9OIiwiZGVzY3JpcHRpb24iOiJFcXVpcG1lbnQgbW9uaXRvcmluZyIsInF1YW50aXR5IjoxMy4yNSwidG90YWwiOjYyOC44NSwidW5pdCI6IkhSIiwidW5pdF9wcmljZSI6NDcuNDYsIndhc3RlX3BlcmNlbnQiOjAuMH0seyJjb2RlIjoiQURSLUhBVUwiLCJkZXNjcmlwdGlvbiI6IkhhdWwgZGVicmlzICYgZGlzcG9zYWwiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6MTU5LjUzLCJ1bml0IjoibG9hZCIsInVuaXRfcHJpY2UiOjE1OS41Mywid2FzdGVfcGVyY2VudCI6MC4wfSx7ImNvZGUiOiJBRFItU0NSVUIiLCJkZXNjcmlwdGlvbiI6IkFpciBzY3J1YmJlciBkYWlseSByZW50YWwiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6NzQuNzUsInVuaXQiOiJkYXkiLCJ1bml0X3ByaWNlIjo3NC43NSwid2FzdGVfcGVyY2VudCI6MC4wfSx7ImNvZGUiOiJBRFItSEVQQSIsImRlc2NyaXB0aW9uIjoiSEVQQSByZXBsYWNlbWVudCBmaWx0ZXIiLCJxdWFudGl0eSI6MS4wLCJ0b3RhbCI6MTgzLjEyLCJ1bml0IjoiRUEiLCJ1bml0X3ByaWNlIjoxODMuMTIsIndhc3RlX3BlcmNlbnQiOjAuMH0seyJjb2RlIjoiQURSLURFTU8iLCJkZXNjcmlwdGlvbiI6IktpdGNoZW46IGNhdGVnb3J5IDEgZmluaXNoZWQvZHJ5d2FsbC90cmltIGRlbW9saXRpb24iLCJxdWFudGl0eSI6NDAuMCwidG90YWwiOjExMS4yLCJ1bml0IjoiU0YiLCJ1bml0X3ByaWNlIjoyLjc4LCJ3YXN0ZV9wZXJjZW50IjowLjB9XSwieGFjdGltYXRlX3RvdGFsIjoxMjkxLjR9LCJwaG90b3MiOltdLCJyZXZpc2lvbiI6M30=",
+      "sha256": "d0ccbef73677cb4d56a253f83a82eb6faa489d3478efb69191c4e14ae7d6277e"
+    },
+    "signing": {
+      "link_payload": {
+        "auth_id": "ADR-AUTH-link-f004d362ed961bb0e18fa43a52d81309",
+        "consent_version": "homeowner-link-v1",
+        "documents_confirmed": true,
+        "expected_revision": 3,
+        "inspection_id": "ADR-INS-724cd1ed4094084ebbe97e5def5c6802",
+        "proposal_hash": "d0ccbef73677cb4d56a253f83a82eb6faa489d3478efb69191c4e14ae7d6277e",
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "signer_name": "Casey Customer",
+        "signer_role": "owner"
+      },
+      "link_sha256": "947274f2dd9dacfc59402de1f8757442d2e5eac1c23af04756671e927ec34928",
+      "onsite_payload": {
+        "auth_id": "ADR-AUTH-oracle-6978f9490fae",
+        "documents_confirmed": true,
+        "expected_revision": 3,
+        "inspection_id": "ADR-INS-724cd1ed4094084ebbe97e5def5c6802",
+        "proposal_hash": "d0ccbef73677cb4d56a253f83a82eb6faa489d3478efb69191c4e14ae7d6277e",
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+      },
+      "onsite_sha256": "936d07632b83c729401755c2b939ba637fca9dc4a996e300de42edd23bc9c578"
+    },
+    "warnings": {
+      "advisory": [],
+      "engine": []
+    }
+  },
+  "id": "v1-coordinates-bounds",
+  "input": {
+    "ai": {
+      "suggestions": [
+        "Check the subfloor."
+      ],
+      "summary": "Reviewed the inspection.",
+      "unpriced_work": []
+    },
+    "calculation": "adr-residential-v1",
+    "claim": null,
+    "company_id": "adr",
+    "customer_name": "Casey Customer",
+    "data": {
+      "address": "100 Oracle Lane, Testville",
+      "coordinates": {
+        "address": "\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9\u00c9",
+        "latitude": -90.0,
+        "longitude": 180
+      },
+      "rooms": [
+        {"category": 1, "finished_sf": 40, "name": "Kitchen"}
+      ],
+      "scope_confirmed": true,
+      "year_built": 1985
+    },
+    "history": null,
+    "identity": {
+      "address": "1 Synthetic Way, Testville",
+      "company_id": "adr",
+      "email": "office@example.invalid",
+      "license": "000001",
+      "name": "Oracle Restoration",
+      "phone": "555-0100",
+      "signoff": "Pat Example",
+      "version": 1
+    },
+    "inspection_id": "ADR-INS-724cd1ed4094084ebbe97e5def5c6802",
+    "photos": [],
+    "rates": {
+      "additional_work_hourly": "47.46",
+      "after_hours_job_charge": "200.00",
+      "air_mover_daily": "29.25",
+      "air_scrubber_daily": "74.75",
+      "dehumidifier_daily": "101.25",
+      "demo_cat1_finished": "2.78",
+      "demo_cat1_unfinished": "1.21",
+      "demo_cat2_finished": "2.89",
+      "demo_cat2_unfinished": "1.52",
+      "demo_cat3_finished": "8.39",
+      "demo_cat3_unfinished": "2.48",
+      "dump_truck_load": "286.78",
+      "emergency_call": "133.95",
+      "equipment_decontamination": "27.72",
+      "haul_pickup_load": "159.53",
+      "hepa_filter": "183.12",
+      "matterport_scan": "250.00",
+      "monitoring_hourly": "47.46",
+      "power_distribution": "66.74",
+      "sheet_labor_hourly": "47.46",
+      "wood_floor_daily": "180.00"
+    },
+    "revision": 3,
+    "sequence": 1,
+    "signing": {
+      "auth_id": "ADR-AUTH-oracle-6978f9490fae",
+      "link": {
+        "consent_version": "homeowner-link-v1",
+        "documents_reviewed": true,
+        "electronic_consent": true,
+        "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "signer_name": "Casey Customer",
+        "signer_role": "owner"
+      },
+      "link_key": "f004d362ed961bb0e18fa43a52d81309bdcc03461055a72bb722642e5c43d45d",
+      "signature_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    },
+    "version_id": "v-302be68ba506"
+  },
+  "tags": [
+    "coordinates",
+    "inspection_record"
+  ],
+  "title": "Coordinates on the latitude and longitude bounds are accepted"
+}
