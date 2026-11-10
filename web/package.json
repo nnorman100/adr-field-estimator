@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",
+    "test:emu": "tsx tests/emu/run.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx src/db/cli.ts"
   },
@@ -28,7 +29,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@tailwindcss/postcss": "4.3.5",
     "@types/node": "22.19.1",
     "@types/react": "19.3.0",

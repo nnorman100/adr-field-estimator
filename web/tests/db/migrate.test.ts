@@ -15,6 +15,19 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHIPPED = ['0001_foundation', '0002_identity'];
+const SHIPPED_TABLES = [
+  'access_projection_outbox',
+  'actors',
+  'audit_events',
+  'auth_tenants',
+  'companies',
+  'company_feature_flags',
+  'invitations',
+  'memberships',
+  'migration_ledger',
+  'platform_admins',
+];
 
 let disposable: DisposablePostgres;
 
@@ -59,8 +72,8 @@ describe('numbered migration ledger', () => {
     expect(await tableNames()).toEqual([]);
     const files = await readMigrations(migrationsDirectory);
     const first = await applyMigrations(disposable.databaseUrl, migrationsDirectory);
-    expect(first.applied).toEqual(['0001_foundation']);
-    expect(await tableNames()).toEqual(['companies', 'migration_ledger']);
+    expect(first.applied).toEqual(SHIPPED);
+    expect(await tableNames()).toEqual(SHIPPED_TABLES);
 
     const columns = await withSql(
       (sql) => sql<{ column_name: string; data_type: string }[]>`
@@ -73,29 +86,37 @@ describe('numbered migration ledger', () => {
     expect(columns).toEqual([
       { column_name: 'id', data_type: 'uuid' },
       { column_name: 'created_at', data_type: 'timestamp with time zone' },
+      { column_name: 'name', data_type: 'text' },
+      { column_name: 'sign_in_slug', data_type: 'text' },
+      { column_name: 'status', data_type: 'text' },
+      { column_name: 'auth_tenant_id', data_type: 'text' },
+      { column_name: 'auth_tenant_kind', data_type: 'text' },
+      { column_name: 'updated_at', data_type: 'timestamp with time zone' },
     ]);
 
     const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: disposable.databaseUrl });
     try {
-      const inserted = await handle.db.insert(companies).values({}).returning();
+      const inserted = await handle.db.insert(companies).values({ name: 'Example' }).returning();
       expect(inserted[0]?.id).toMatch(UUID);
       expect(inserted[0]?.createdAt).toBeInstanceOf(Date);
       const ledger = await handle.db.select().from(migrationLedger);
-      expect(ledger.map((row) => row.id)).toEqual(['0001_foundation']);
-      expect(ledger[0]?.checksum).toBe(files[0]?.checksum);
+      expect(ledger.map((row) => row.id).sort()).toEqual(SHIPPED);
+      for (const file of files) {
+        expect(ledger.find((row) => row.id === file.id)?.checksum).toBe(file.checksum);
+      }
     } finally {
       await handle.close();
     }
 
     const appliedAt = await withSql(async (sql) => {
-      const rows = await sql<{ applied_at: Date }[]>`SELECT applied_at FROM migration_ledger`;
-      return rows[0]?.applied_at ?? null;
+      const rows = await sql<{ applied_at: Date }[]>`SELECT applied_at FROM migration_ledger ORDER BY id`;
+      return rows.map((row) => row.applied_at);
     });
     const second = await applyMigrations(disposable.databaseUrl, migrationsDirectory);
     expect(second.applied).toEqual([]);
     const again = await withSql(async (sql) => {
-      const rows = await sql<{ applied_at: Date }[]>`SELECT applied_at FROM migration_ledger`;
-      return rows[0]?.applied_at ?? null;
+      const rows = await sql<{ applied_at: Date }[]>`SELECT applied_at FROM migration_ledger ORDER BY id`;
+      return rows.map((row) => row.applied_at);
     });
     expect(again).toEqual(appliedAt);
   });
@@ -185,12 +206,12 @@ describe('numbered migration ledger', () => {
       applyMigrations(disposable.databaseUrl, migrationsDirectory),
       applyMigrations(disposable.databaseUrl, migrationsDirectory),
     ]);
-    expect([...first.applied, ...second.applied].sort()).toEqual(['0001_foundation']);
+    expect([...first.applied, ...second.applied].sort()).toEqual(SHIPPED);
     const count = await withSql(async (sql) => {
       const rows = await sql<{ count: string }[]>`SELECT count(*)::text AS count FROM migration_ledger`;
       return rows[0]?.count;
     });
-    expect(count).toBe('1');
+    expect(count).toBe(String(SHIPPED.length));
   });
 
   it('keeps a second applier waiting when a migration drops its session locks', async () => {
@@ -243,7 +264,7 @@ describe('numbered migration ledger', () => {
         env,
       });
       expect(stdout).toMatch(/applied 0001_foundation/);
-      expect(await tableNames()).toEqual(['companies', 'migration_ledger']);
+      expect(await tableNames()).toEqual(SHIPPED_TABLES);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -268,7 +289,7 @@ describe('numbered migration ledger', () => {
       });
       expect(stdout).toMatch(/applied 0001_foundation/);
       expect(`${stdout}\n${stderr}`).not.toContain(password);
-      expect(await tableNames()).toEqual(['companies', 'migration_ledger']);
+      expect(await tableNames()).toEqual(SHIPPED_TABLES);
     } finally {
       await withSql(async (sql) => {
         await sql.unsafe(`DROP OWNED BY "${role}"`);

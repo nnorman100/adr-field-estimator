@@ -13,7 +13,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-"$TF" version | head -1
+# Capture first: `| head -1` closes the pipe early and can exit 141 under pipefail.
+tf_version="$("$TF" version)"
+printf '%s\n' "${tf_version%%$'\n'*}"
 "$TF" fmt -check -recursive "$HERE"
 
 for root in data app; do
