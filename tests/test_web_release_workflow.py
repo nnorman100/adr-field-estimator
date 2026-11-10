@@ -467,6 +467,60 @@ def test_migrations_run_in_the_job_before_the_revision_is_staged(release):
     assert steps(migrate)[0]['with']['sparse-checkout'] == 'web/migrations'
 
 
+SHELL_WORDS = {'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}'}
+DATABASE_SETTINGS = {
+    'DATABASE_URL',
+    'PGHOST',
+    'PGPORT',
+    'PGUSER',
+    'PGPASSWORD',
+    'PGDATABASE',
+    'SQL_CONNECTION_NAME',
+    'SQL_INSTANCE',
+    'INSTANCE_CONNECTION_NAME',
+}
+
+
+def invocations(step):
+    """Each simple command a step runs, as its argument list: split at shell operators, with
+    leading shell keywords and variable assignments dropped, so args[0] is the program run."""
+    found = []
+    for line in commands(step).splitlines():
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        args = []
+        for token in [*lexer, ';']:
+            if set(token) <= set('|&;()<>'):
+                while args and (args[0] in SHELL_WORDS or re.fullmatch(r'\w+=\S*', args[0])):
+                    args.pop(0)
+                if args:
+                    found.append(args)
+                args = []
+            else:
+                args.append(token)
+    return found
+
+
+def test_the_runner_never_connects_to_the_database(release):
+    """The release no longer depends on this runner's network path to Cloud SQL: no step holds a
+    database connection setting, starts a proxy or database client, runs the migrator itself or
+    opens a TCP socket; the only database work is executing the Cloud Run job."""
+    settings = set(release.get('env', {}))
+    for job in release['jobs'].values():
+        settings |= set(job.get('env', {}))
+        for s in steps(job):
+            settings |= set(s.get('env', {}))
+    assert not settings & DATABASE_SETTINGS
+    runs = [args for job in release['jobs'].values() for s in steps(job) for args in invocations(s)]
+    assert runs
+    for args in runs:
+        program = Path(args[0]).name
+        assert program not in {'cloud-sql-proxy', 'psql', 'pg_isready'}, args
+        assert not {'db:migrate', 'migrate.mjs'} & {Path(arg).name for arg in args}, args
+        assert not (program == 'gcloud' and 'sql' in args[1:3]), args
+        assert not any(arg.startswith('/dev/tcp/') for arg in args), args
+
+
 IMAGE_REF = f'us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:{"c" * 64}'
 MIGRATOR = 'dryscope-migrate-test@dryscope.iam.gserviceaccount.com'
 
