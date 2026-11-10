@@ -104,33 +104,12 @@
     "after": {
      "condition": [
       {
-       "description": "Only the dryscope-field-test database.",
-       "expression": "resource.name == 'projects/dryscope/databases/dryscope-field-test'",
+       "description": "The dryscope-field-test database and its documents only.",
+       "expression": "resource.name == 'projects/dryscope/databases/dryscope-field-test' || resource.name.startsWith('projects/dryscope/databases/dryscope-field-test/')",
        "title": "dryscope-test-firestore-only"
       }
      ],
      "member": "serviceAccount:dryscope-api-test@dryscope.iam.gserviceaccount.com",
-     "project": "dryscope",
-     "role": "roles/datastore.user"
-    }
-   }
-  },
-  {
-   "address": "google_project_iam_member.firestore_user[\"live\"]",
-   "type": "google_project_iam_member",
-   "change": {
-    "actions": [
-     "create"
-    ],
-    "after": {
-     "condition": [
-      {
-       "description": "Only the dryscope-field-test database.",
-       "expression": "resource.name == 'projects/dryscope/databases/dryscope-field-test'",
-       "title": "dryscope-test-firestore-only"
-      }
-     ],
-     "member": "serviceAccount:dryscope-live-test@dryscope.iam.gserviceaccount.com",
      "project": "dryscope",
      "role": "roles/datastore.user"
     }
@@ -188,27 +167,6 @@
    }
   },
   {
-   "address": "google_project_iam_member.sql_client[\"live\"]",
-   "type": "google_project_iam_member",
-   "change": {
-    "actions": [
-     "create"
-    ],
-    "after": {
-     "condition": [
-      {
-       "description": "Only the test DryScope instance.",
-       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/dryscope/instances/dryscope-test-pg'",
-       "title": "dryscope-test-sql-only"
-      }
-     ],
-     "member": "serviceAccount:dryscope-live-test@dryscope.iam.gserviceaccount.com",
-     "project": "dryscope",
-     "role": "roles/cloudsql.client"
-    }
-   }
-  },
-  {
    "address": "google_project_iam_member.sql_client[\"migrate\"]",
    "type": "google_project_iam_member",
    "change": {
@@ -245,27 +203,6 @@
       }
      ],
      "member": "serviceAccount:dryscope-api-test@dryscope.iam.gserviceaccount.com",
-     "project": "dryscope",
-     "role": "roles/cloudsql.instanceUser"
-    }
-   }
-  },
-  {
-   "address": "google_project_iam_member.sql_login[\"live\"]",
-   "type": "google_project_iam_member",
-   "change": {
-    "actions": [
-     "create"
-    ],
-    "after": {
-     "condition": [
-      {
-       "description": "IAM database login on the test DryScope instance only.",
-       "expression": "resource.type == 'sqladmin.googleapis.com/Instance' && resource.name == 'projects/dryscope/instances/dryscope-test-pg'",
-       "title": "dryscope-test-sql-login-only"
-      }
-     ],
-     "member": "serviceAccount:dryscope-live-test@dryscope.iam.gserviceaccount.com",
      "project": "dryscope",
      "role": "roles/cloudsql.instanceUser"
     }
