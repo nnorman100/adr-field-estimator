@@ -93,7 +93,10 @@ describe('identity tables (migration 0002)', () => {
       INSERT INTO companies DEFAULT VALUES RETURNING id, created_at
     `;
 
-    expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(['0002_identity']);
+    expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual([
+      '0002_identity',
+      '0003_runtime_role',
+    ]);
 
     const rows = await sql<
       { id: string; created_at: Date; name: string; status: string; sign_in_slug: null; auth_tenant_id: null }[]
