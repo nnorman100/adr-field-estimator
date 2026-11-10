@@ -1,7 +1,8 @@
-"""Guards for the rebuilt app's test release path (.github/workflows/web-release.yml), its image
-(web/Dockerfile) and the Live relay placeholder. Each test names a property the release relies on:
-keyless sign-in as the right test account, pinned actions and images, no live or legacy target,
-staging at 0% before any traffic moves, and rollback only after a move."""
+"""Guards for the rebuilt app's test release path (.github/workflows/web-release.yml), its images
+(assembled without Docker by web/scripts/build-image.sh onto the base pinned in web/Dockerfile) and
+the Live relay placeholder. Each test names a property the release relies on: keyless sign-in as the
+right test account, pinned actions, tools and images, no live or legacy target, staging at 0% before
+any traffic moves, and rollback only after a move."""
 
 import os
 import re
@@ -46,19 +47,6 @@ def instructions(path):
     text = re.sub(r'\\\n', ' ', path.read_text())
     lines = (' '.join(line.split()) for line in text.splitlines())
     return [line for line in lines if line and not line.startswith('#')]
-
-
-def stages(path):
-    """Build stages by name (or index): each a list of (instruction, argument) pairs."""
-    found = {}
-    for line in instructions(path):
-        op, _, arg = line.partition(' ')
-        if op == 'FROM':
-            words = arg.split()
-            name = words[2] if len(words) == 3 and words[1].upper() == 'AS' else str(len(found))
-            current = found[name] = []
-        current.append((op, arg))
-    return found
 
 
 SHA = 'a' * 40
@@ -321,7 +309,10 @@ def test_gate_reads_the_test_variables_and_later_jobs_wait_for_it(release):
     }
     build = release['jobs']['build']
     assert build['if'] == "needs.gate.outputs.ready == 'true'"
-    assert step(build, 'image')['if'] == "steps.service.outputs.ready == 'true'"
+    # The web image is pushed on every ready run (the first app-root apply needs its digest); the
+    # placeholder only until the deploy account can see the service.
+    assert 'if' not in step(build, 'image')
+    assert step(build, 'placeholder')['if'] == "steps.service.outputs.ready != 'true'"
     for name in ('migrate', 'deploy'):
         assert release['jobs'][name]['if'] == "needs.build.outputs.service_ready == 'true'"
 
@@ -541,111 +532,248 @@ def test_rollback_restores_the_remembered_traffic_split(release, shell):
     }
 
 
-DOCKER = """case "$1 $2 $4" in
-  'image inspect {{.Config.User}}') echo "$FAKE_USER" ;;
-esac"""
+# --- Images without a Docker daemon (owner decision 2026-11-10): web/scripts/build-image.sh -------
+
+BASE_PIN = re.compile(r'node:[\w.-]+@sha256:[0-9a-f]{64}')
+FAKE_BUILD = """mkdir -p .next/standalone/node_modules .next/static/chunks
+echo server > .next/standalone/server.js
+echo chunk > .next/static/chunks/main.js"""
 
 
-def image_smoke_step():
-    web = load(WEB)
-    assert 'live-relay-placeholder/**' in web[True]['pull_request']['paths']
-    return step(web['jobs']['image'], 'Run as on Cloud Run and smoke-check')
+def crane_fake(shell):
+    """crane that logs its arguments and keeps a copy of the layer it was asked to append."""
+    keep = shell.tmp / 'appended.tar'
+    shell.fake(
+        'crane',
+        'prev=; for a in "$@"; do [ "$prev" = --append ] && cp "$a" '
+        + f"'{keep}'"
+        + '; prev=$a; done',
+    )
+    return keep
 
 
-def test_ci_smoke_checks_the_image_as_test_on_pull_requests(shell):
-    shell.fake('docker', DOCKER)
-    shell.fake('node')
-    result = shell.run(image_smoke_step()['run'], {'GITHUB_SHA': SHA, 'FAKE_USER': 'node'})
+@pytest.fixture
+def repo(tmp_path):
+    """A copy of the files build-image.sh reads, so the real web/ build output is never touched."""
+    root = tmp_path / 'repo'
+    (root / 'web' / 'scripts').mkdir(parents=True)
+    (root / 'web' / 'node_modules').mkdir()
+    (root / 'live-relay-placeholder').mkdir()
+    for name in (
+        'web/scripts/build-image.sh',
+        'web/Dockerfile',
+        'live-relay-placeholder/server.js',
+    ):
+        (root / name).write_bytes((ROOT / name).read_bytes())
+    (root / 'web/scripts/build-image.sh').chmod(0o755)
+    return root
+
+
+def layer_members(layer):
+    listing = subprocess.run(
+        ['tar', '-tvf', str(layer)], capture_output=True, text=True, check=True
+    )
+    return [line.split() for line in listing.stdout.splitlines()]
+
+
+def test_the_base_image_is_pinned_once_and_nothing_else_is_built_with_docker():
+    lines = instructions(ROOT / 'web' / 'Dockerfile')
+    assert len(lines) == 1 and lines[0].startswith('FROM ')
+    assert BASE_PIN.fullmatch(lines[0].split()[1])
+    assert not (ROOT / 'live-relay-placeholder' / 'Dockerfile').exists()
+    assert not (ROOT / 'web' / '.dockerignore').exists()
+
+
+def test_web_image_appends_one_root_owned_app_layer_onto_the_pinned_base(shell, repo):
+    keep = crane_fake(shell)
+    shell.fake('npm', FAKE_BUILD)
+    stage = shell.tmp / 'stage'
+    script = (
+        f'"{repo}/web/scripts/build-image.sh" web --commit {SHA} --output out.tar --stage "{stage}"'
+    )
+    result = shell.run(script)
     assert result.returncode == 0, result.stderr
-    (smoke,) = shell.calls('node')
-    assert smoke == [
-        'scripts/smoke-release.ts',
-        '--url',
-        'http://127.0.0.1:8080',
-        '--commit',
-        SHA,
-        '--env',
-        'test',
-    ]
-    (started,) = [args for args in shell.calls('docker') if args[0] == 'run']
-    assert started[-1] == 'dryscope-web:ci'
-    assert '127.0.0.1:8080:8080' in started and 'APP_ENV=test' in started
-
-
-def test_ci_refuses_an_image_that_runs_as_root(shell):
-    shell.fake('docker', DOCKER)
-    shell.fake('node')
-    result = shell.run(image_smoke_step()['run'], {'GITHUB_SHA': SHA, 'FAKE_USER': 'root'})
-    assert result.returncode != 0
-    assert shell.calls('node') == []
-    assert [args for args in shell.calls('docker') if args[0] == 'run'] == []
-
-
-def test_ci_fails_and_shows_the_logs_when_the_smoke_check_fails(shell):
-    shell.fake('docker', DOCKER)
-    shell.fake('node', 'exit 1')
-    result = shell.run(image_smoke_step()['run'], {'GITHUB_SHA': SHA, 'FAKE_USER': 'node'})
-    assert result.returncode != 0
-    assert ['logs', 'web'] in shell.calls('docker')
-
-
-@pytest.mark.parametrize('path', ['web/Dockerfile', 'live-relay-placeholder/Dockerfile'])
-def test_images_are_pinned_and_run_unprivileged(path):
-    lines = instructions(ROOT / path)
-    bases = [line.split()[1] for line in lines if line.startswith('FROM ')]
-    assert bases
-    for base in bases:
-        assert re.fullmatch(r'node:[\w.-]+@sha256:[0-9a-f]{64}', base), base
-    # The final stage, the one that ships, runs as the unprivileged node user.
-    final = lines[max(i for i, line in enumerate(lines) if line.startswith('FROM ')) :]
-    users = [line.split()[1] for line in final if line.startswith('USER ')]
-    assert users == ['node']
-
-
-def build_runs(shell, commit):
-    """Run the build stage's RUN commands in order with sh, as docker build does, until one fails."""
-    shell.fake('npm')
-    build = stages(ROOT / 'web' / 'Dockerfile')['build']
-    args = set()
-    for op, arg in build:
-        if op == 'ARG':
-            args.add(arg.split('=', 1)[0])
-        if op == 'RUN':
-            env = {'COMMIT_SHA': commit} if 'COMMIT_SHA' in args else {}
-            if shell.run(arg, env, interpreter=('sh',)).returncode != 0:
-                return False
-    return True
-
-
-def test_web_image_builds_only_with_a_full_commit(shell):
-    assert build_runs(shell, SHA)
-    assert ['run', 'build'] in shell.calls('npm')
+    assert shell.calls('npm') == [['run', 'build']]
+    (mutate,) = shell.calls('crane')
+    base = instructions(ROOT / 'web' / 'Dockerfile')[0].split()[1]
+    assert mutate[:4] == ['mutate', base, '--platform', 'linux/amd64']
+    pairs = dict(zip(mutate[4::2], mutate[5::2]))
+    assert pairs['--user'] == 'node' and pairs['--workdir'] == '/app'
+    assert pairs['--cmd'] == 'node,server.js' and pairs['--output'] == 'out.tar'
+    envs = [mutate[i + 1] for i, arg in enumerate(mutate) if arg == '--env']
+    assert f'APP_COMMIT={SHA}' in envs and 'PORT=8080' in envs and 'NODE_ENV=production' in envs
+    assert not [e for e in envs if e.startswith('APP_ENV=')]
+    members = layer_members(keep)
+    names = {m[-1] for m in members}
+    assert {'app/server.js', 'app/.next/static/chunks/main.js'} <= names
+    for mode, owner, *_ in members:
+        assert owner == '0/0' and 'w' not in mode[4:], (mode, owner)
+    assert (stage / 'app' / 'server.js').read_text() == 'server\n'
 
 
 @pytest.mark.parametrize('commit', ['', 'main', SHA[:7], SHA.upper(), SHA + 'a'])
-def test_web_image_refuses_to_build_without_a_full_commit(shell, commit):
-    assert not build_runs(shell, commit)
-    assert ['run', 'build'] not in shell.calls('npm')
+def test_web_image_refuses_to_build_without_a_full_commit(shell, repo, commit):
+    crane_fake(shell)
+    shell.fake('npm', FAKE_BUILD)
+    script = f'"{repo}/web/scripts/build-image.sh" web --commit "{commit}" --output out.tar'
+    assert shell.run(script).returncode != 0
+    assert shell.calls('npm') == [] and shell.calls('crane') == []
 
 
-def test_web_image_carries_its_commit_and_no_env_files():
-    run = stages(ROOT / 'web' / 'Dockerfile')['run']
-    assert ('ARG', 'COMMIT_SHA') in run
-    env = {}
-    for op, arg in run:
-        if op == 'ENV':
-            env.update(pair.split('=', 1) for pair in shlex.split(arg))
-    assert env['APP_COMMIT'] == '$COMMIT_SHA'
-    assert run.index(('ARG', 'COMMIT_SHA')) < [op for op, _ in run].index('ENV')
-    assert run[-1] == ('CMD', '["node", "server.js"]')
-    ignored = (ROOT / 'web' / '.dockerignore').read_text().split()
-    assert {'.env', '.env.*', 'node_modules', '.next'} <= set(ignored)
+def test_an_unpinned_base_is_refused(shell, repo):
+    crane_fake(shell)
+    (repo / 'web' / 'Dockerfile').write_text('FROM node:24-bookworm-slim\n')
+    script = f'"{repo}/web/scripts/build-image.sh" live-placeholder --output out.tar'
+    assert shell.run(script).returncode != 0
+    assert shell.calls('crane') == []
 
 
-def test_dependabot_keeps_the_pinned_base_images_current():
+def test_placeholder_image_carries_only_the_placeholder_and_no_commit(shell, repo):
+    keep = crane_fake(shell)
+    script = f'"{repo}/web/scripts/build-image.sh" live-placeholder --tag example/live:1'
+    result = shell.run(script)
+    assert result.returncode == 0, result.stderr
+    (mutate,) = shell.calls('crane')
+    assert mutate[-2:] == ['--tag', 'example/live:1']
+    assert not [arg for arg in mutate if arg.startswith('APP_COMMIT=')]
+    assert sorted(m[-1] for m in layer_members(keep)) == ['app/', 'app/server.js']
+
+
+def test_a_crane_download_that_fails_its_checksum_is_never_unpacked(shell):
+    shell.fake(
+        'curl',
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\necho tampered > "$out"',
+    )
+    target = shell.tmp / 'tools'
+    result = shell.run(f'"{ROOT}/web/scripts/install-crane.sh" "{target}"')
+    assert result.returncode != 0
+    assert not (target / 'crane').exists()
+    (download,) = shell.calls('curl')
+    assert re.fullmatch(
+        r'https://github\.com/google/go-containerregistry/releases/download/v\d+\.\d+\.\d+/'
+        r'go-containerregistry_\w+\.tar\.gz',
+        download[-1],
+    )
+
+
+CRANE_REGISTRY = """case $1 in
+  digest) if [ -e "$STATE" ]; then echo sha256:{digest}; else exit 1; fi ;;
+esac""".replace('{digest}', 'b' * 64)
+
+
+@pytest.mark.parametrize('pushed', [True, False])
+def test_release_pushes_the_web_image_once_per_commit_and_hands_on_its_digest(
+    release, shell, tmp_path, pushed
+):
+    image = step(release['jobs']['build'], 'image')
+    state = tmp_path / 'pushed'
+    if pushed:
+        state.touch()
+    shell.fake('crane', CRANE_REGISTRY)
+    scripts = tmp_path / 'web' / 'scripts'
+    scripts.mkdir(parents=True)
+    build = scripts / 'build-image.sh'
+    build.write_text(f'#!/bin/bash\necho "$@" >> "{tmp_path}/built"\ntouch "{state}"\n')
+    build.chmod(0o755)
+    env = {**release['env'], 'COMMIT': SHA, 'STATE': str(state)}
+    result = shell.run(image['run'], env, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    built = tmp_path / 'built'
+    if pushed:
+        assert not built.exists()
+    else:
+        assert built.read_text().split() == [
+            'web',
+            '--commit',
+            SHA,
+            '--tag',
+            f'{release["env"]["IMAGE"]}:{SHA}',
+        ]
+    assert shell.outputs() == {'ref': f'{release["env"]["IMAGE"]}@sha256:{"b" * 64}'}
+
+
+def test_release_refuses_an_unexpected_image_reference(release, shell, tmp_path):
+    shell.fake('crane', 'echo not-a-digest')
+    result = shell.run(
+        step(release['jobs']['build'], 'image')['run'], {**release['env'], 'COMMIT': SHA}
+    )
+    assert result.returncode != 0
+    assert 'ref' not in shell.outputs()
+
+
+IMAGE_STEPS = ('Run as on Cloud Run and smoke-check', 'Refuse to start without APP_ENV')
+
+
+def image_job():
+    web = load(WEB)
+    assert 'live-relay-placeholder/**' in web[True]['pull_request']['paths']
+    return web['jobs']['image']
+
+
+def test_ci_starts_the_image_tree_as_test_and_smoke_checks_it(shell):
+    app = shell.tmp / 'web-stage' / 'app'
+    app.mkdir(parents=True)
+    shell.fake(
+        'node',
+        '[ "$1" = server.js ] && echo "$APP_ENV $APP_COMMIT $NODE_ENV $PORT" > started; exit 0',
+    )
+    result = shell.run(
+        commands(step(image_job(), IMAGE_STEPS[0])),
+        {'GITHUB_SHA': SHA, 'RUNNER_TEMP': str(shell.tmp)},
+    )
+    assert result.returncode == 0, result.stderr
+    smoke = [args for args in shell.calls('node') if args[0] != 'server.js']
+    assert smoke == [
+        [
+            'scripts/smoke-release.ts',
+            '--url',
+            'http://127.0.0.1:8080',
+            '--commit',
+            SHA,
+            '--env',
+            'test',
+        ]
+    ]
+    for _ in range(50):
+        if (app / 'started').exists():
+            break
+        subprocess.run(['sleep', '0.1'], check=True)
+    assert (app / 'started').read_text().split() == ['test', SHA, 'production', '8080']
+
+
+def test_ci_fails_and_shows_the_server_log_when_the_smoke_check_fails(shell):
+    (shell.tmp / 'web-stage' / 'app').mkdir(parents=True)
+    (shell.tmp / 'web.log').write_text('server said no\n')
+    shell.fake('node', '[ "$1" = server.js ] && exit 0; exit 1')
+    script = commands(step(image_job(), IMAGE_STEPS[0])).replace(
+        ' > "$RUNNER_TEMP/web.log"', ' > /dev/null'
+    )
+    result = shell.run(script, {'GITHUB_SHA': SHA, 'RUNNER_TEMP': str(shell.tmp)})
+    assert result.returncode != 0
+    assert 'server said no' in result.stdout
+
+
+@pytest.mark.parametrize('code, passes', [(1, True), (0, False), (124, False)])
+def test_ci_requires_the_server_to_refuse_starting_without_app_env(shell, code, passes):
+    (shell.tmp / 'web-stage' / 'app').mkdir(parents=True)
+    shell.fake('node', f'exit {code}')
+    result = shell.run(commands(step(image_job(), IMAGE_STEPS[1])), {'RUNNER_TEMP': str(shell.tmp)})
+    assert (result.returncode == 0) is passes
+
+
+def test_every_image_job_builds_through_the_script_and_never_calls_docker(release):
+    for job in (image_job(), release['jobs']['build']):
+        for s in steps(job):
+            assert not re.search(r'(^|\s)docker\s', commands(s)), s.get('name', s.get('id'))
+    assert 'scripts/build-image.sh web --commit "$GITHUB_SHA"' in commands(
+        step(image_job(), 'Build the image without Docker')
+    )
+
+
+def test_dependabot_keeps_the_pinned_base_image_current():
     updates = load(ROOT / '.github' / 'dependabot.yml')['updates']
     docker = set()
     for update in updates:
         if update['package-ecosystem'] == 'docker':
             docker.update(update.get('directories') or [update['directory']])
-    assert {'/web', '/live-relay-placeholder'} <= docker
+    assert '/web' in docker

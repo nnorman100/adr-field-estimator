@@ -6,7 +6,9 @@ name: Web release (test)
 # move all traffic to it, putting the previous traffic back if anything after that fails. Live is
 # not released from here. Keyless: workload identity federation from the dryscope-test pool, one
 # account per job (deploy for images and Cloud Run, migrate for the database). It skips with a
-# notice until the owner has finished docs/RUNBOOK.md, "Release the rebuilt app to test".
+# notice until the owner has finished docs/RUNBOOK.md, "Release the rebuilt app to test"; before the
+# owner's first app-root apply it only pushes the first images and prints their digests. Images are
+# assembled without Docker (web/scripts/build-image.sh, crane), because the runner has no daemon.
 # Nothing here deletes a service, revision, image or database object.
 on:
   workflow_run:
@@ -27,6 +29,7 @@ env:
   REGION: us-central1
   SERVICE: dryscope-api-test
   IMAGE: us-central1-docker.pkg.dev/dryscope/dryscope-test/web
+  PLACEHOLDER_IMAGE: us-central1-docker.pkg.dev/dryscope/dryscope-test/live-placeholder
   SQL_INSTANCE: dryscope:us-central1:dryscope-test-pg
   # Release the commit Web app tested, not whatever master has moved to since.
   COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -73,10 +76,8 @@ jobs:
   build:
     needs: gate
     if: needs.gate.outputs.ready == 'true'
-    # Needs a Docker daemon, which the self-hosted pool lacks; stays GitHub-hosted pending the owner's
-    # runner decision (docs/RUNBOOK.md, "CI runners").
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 25
     environment: test
     permissions:
       contents: read
@@ -89,40 +90,65 @@ jobs:
         with:
           ref: ${{ env.COMMIT }}
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
           service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
           project_id: dryscope
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-      # The deploy account can see the service only after the owner's first app-root apply.
+      # The deploy account can see the service only after the owner's first app-root apply. Until
+      # then this run only pushes the first images, whose digests that apply needs.
       - id: service
         run: |
           if gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(metadata.name)' >/dev/null 2>&1; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice title=Test release skipped::$SERVICE is not visible to the deploy account yet. The owner pushes the first images and applies the app root (docs/RUNBOOK.md step 6)."
+            echo "::notice title=Test release skipped::$SERVICE is not visible to the deploy account yet. This run pushes the first images only; the owner applies the app root with their digests (docs/RUNBOOK.md, Release the rebuilt app to test, part D)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
-      # Tags are immutable in this repository, so a rerun reuses the image already pushed for
-      # this commit instead of failing on the tag.
-      - id: image
-        if: steps.service.outputs.ready == 'true'
+      # No Docker daemon on the runner: crane assembles and pushes the images (owner decision 2026-11-10).
+      - name: Install crane and sign in to the registry
         run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-          digest=$(gcloud artifacts docker images describe "$IMAGE:$COMMIT" --format='value(image_summary.digest)' 2>/dev/null || true)
-          if [ -n "$digest" ]; then
+          web/scripts/install-crane.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          gcloud auth print-access-token | "$RUNNER_TEMP/bin/crane" auth login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+      # Tags are immutable in this repository, so a rerun reuses the image already pushed for this
+      # commit instead of failing on the tag.
+      - id: image
+        run: |
+          if digest=$(crane digest "$IMAGE:$COMMIT" 2>/dev/null); then
             echo "Reusing the image already pushed for $COMMIT"
-            ref="$IMAGE@$digest"
           else
-            docker build --build-arg "COMMIT_SHA=$COMMIT" --tag "$IMAGE:$COMMIT" web
-            docker push "$IMAGE:$COMMIT"
-            ref=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:$COMMIT")
+            web/scripts/build-image.sh web --commit "$COMMIT" --tag "$IMAGE:$COMMIT"
+            digest=$(crane digest "$IMAGE:$COMMIT")
           fi
+          ref="$IMAGE@$digest"
           [[ "$ref" =~ ^us-central1-docker\.pkg\.dev/dryscope/dryscope-test/web@sha256:[0-9a-f]{64}$ ]] \
             || { echo "::error::Unexpected image reference: $ref"; exit 1; }
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "Image: \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image (api_image): \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
+      # Before the first app-root apply only: the Live relay placeholder image it also needs (stage S7
+      # replaces the placeholder; after the apply, releases change only the web app's image).
+      - id: placeholder
+        if: steps.service.outputs.ready != 'true'
+        run: |
+          if digest=$(crane digest "$PLACEHOLDER_IMAGE:$COMMIT" 2>/dev/null); then
+            echo "Reusing the placeholder already pushed for $COMMIT"
+          else
+            web/scripts/build-image.sh live-placeholder --tag "$PLACEHOLDER_IMAGE:$COMMIT"
+            digest=$(crane digest "$PLACEHOLDER_IMAGE:$COMMIT")
+          fi
+          ref="$PLACEHOLDER_IMAGE@$digest"
+          [[ "$ref" =~ ^us-central1-docker\.pkg\.dev/dryscope/dryscope-test/live-placeholder@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::Unexpected placeholder reference: $ref"; exit 1; }
+          echo "Live relay placeholder (live_image): \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
 
   migrate:
     needs: build

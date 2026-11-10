@@ -114,7 +114,7 @@ Change `DEFAULT_PRICE_BOOKS` back to `off` in a reviewed PR, then release that c
    - App root: Cloud Run services `dryscope-api-<env>` and `dryscope-live-<env>`; the custom role `dryscopeDeploy<Env>` (`dryscopeDeployTest` or `dryscopeDeployLive`); their `*_iam_member` grants; the `DryScope <env> alerts` email channel and `DryScope <env>: ...` alert policies and uptime check; and the `DryScope <env> monthly` budget when a billing account is given.
 4. `terraform apply test.tfplan`. Cloud SQL takes several minutes. Then add a value to each secret the data root created (`gcloud secrets versions add dryscope-test-<name> --project=dryscope --data-file=-`), never through Terraform or chat.
 5. Owner-run database bootstrap, approved by the owner at apply time. A new IAM database user has no database privileges, so before the first migration the owner connects as a privileged Cloud SQL user (the built-in `postgres` user or another `cloudsqlsuperuser` member, set up out of band through the Cloud SQL Auth Proxy, never through Terraform, its password never in git, chat or state) and grants the migrator only what migrations need: `ALTER ROLE "dryscope-migrate-test@dryscope.iam" CREATEROLE;` (so it can create the non-owner runtime role, which it cannot give `BYPASSRLS`) and `GRANT CREATE ON DATABASE dryscope TO "dryscope-migrate-test@dryscope.iam";` (so it can create the schema it then owns), plus `GRANT USAGE, CREATE ON SCHEMA public TO "dryscope-migrate-test@dryscope.iam";` because Postgres 15 and later no longer let every user create tables in `public`, where `0001_foundation` puts its tables. The exact commands are in [Release the rebuilt app to test](#release-the-rebuilt-app-to-test), part B. Never grant the migrator `cloudsqlsuperuser` or `BYPASSRLS`. Then run the schema migrator as `dryscope-migrate-test` (a numbered migration creates the non-owner runtime role with row-level security forced and grants it table rights; Terraform only creates the IAM database users). The files that exist today are the `web/migrations` ledger in [Postgres migrations for the rebuilt app](#postgres-migrations-for-the-rebuilt-app). `0001_foundation` creates the ledger and an empty companies table; `0002_identity` adds the sign-in and company-separation tables; `0003_runtime_role` creates the runtime role `dryscope_runtime`, forces row-level security on every table and grants the role to `dryscope-api-<env>@dryscope.iam` (`docs/DATA.md`). Terraform creates that IAM database user before the first migration; if it was created after `0003` ran, the API user has no rights until the owner runs `GRANT dryscope_runtime TO "dryscope-api-<env>@dryscope.iam" WITH INHERIT TRUE, SET FALSE;` as the migrator. Check it after the first migration: `SELECT r.rolname, m.inherit_option, m.set_option FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = 'dryscope-api-test@dryscope.iam';` must show one row, `dryscope_runtime`, `t`, `f`.
-6. Build and push the first images into the `dryscope-test` Artifact Registry repository (`us-central1-docker.pkg.dev/dryscope/dryscope-test/...`) by digest, then in `infra/dryscope/app` run `terraform init -reconfigure -backend-config=envs/backend-test.hcl` and plan and apply with `-var-file=envs/test.tfvars -var api_image=<digest ref> -var live_image=<digest ref>` and `TF_VAR_alert_email` set in the shell (the address is never in git). The exact commands, for the `web/Dockerfile` image and the `live-relay-placeholder/` stand-in that stage S7 replaces, are in [Release the rebuilt app to test](#release-the-rebuilt-app-to-test), part C.
+6. Build and push the first images into the `dryscope-test` Artifact Registry repository (`us-central1-docker.pkg.dev/dryscope/dryscope-test/...`) by digest, then in `infra/dryscope/app` run `terraform init -reconfigure -backend-config=envs/backend-test.hcl` and plan and apply with `-var-file=envs/test.tfvars -var api_image=<digest ref> -var live_image=<digest ref>` and `TF_VAR_alert_email` set in the shell (the address is never in git). The release workflow pushes both images (the web app and the `live-relay-placeholder/` stand-in that stage S7 replaces) without Docker and prints their digests; the exact steps are in [Release the rebuilt app to test](#release-the-rebuilt-app-to-test), parts C and D.
 7. Verify with the test identity: it reads only test resources and is refused on live ones. Check an alert test notification, the uptime check (live only), and that test services scale to zero.
 8. Repeat for **live** with `envs/live.tfvars`, only after the test run is clean and the owner approves, including the step 5 bootstrap for `dryscope-migrate-live`. In each root, first run `terraform init -reconfigure -backend-config=envs/backend-live.hcl` so live never writes to test state. The `project_iam_member` lines (conditioned Cloud SQL and Firestore access, and the predict-only `dryscopeGemini<Env>` custom role, which holds `aiplatform.endpoints.predict` and nothing else), the unconditional `allUsers` `roles/run.invoker` binding on both Cloud Run services (the app verifies Firebase sign-in itself) and the `dryscopeDeploy<Env>` custom role bound to the deploy account on both services are IAM changes for the owner to review: confirm each in the plan, and that the custom role's permissions are only Cloud Run reads plus `run.services.update`, with no `run.services.delete` or `run.revisions.delete`.
 9. For keyless deploys (test commands: [Release the rebuilt app to test](#release-the-rebuilt-app-to-test), part A), create a separate GitHub workload identity pool per environment in project `dryscope` (`570228742694`), named `dryscope-test` and `dryscope-live`, never two providers in one pool (the same repository mapping in a shared pool gives both environments the same principal set, so a token the test provider accepts could impersonate the live deploy account). The live pool's provider needs an attribute condition restricting it to the repository owner, the protected branch and the live GitHub environment (`assertion.repository_owner`, `assertion.ref` and `assertion.environment`); the test provider may be looser, because its pool cannot reach live. Then pass `-var workload_identity_principal_set=principalSet://iam.googleapis.com/projects/570228742694/locations/global/workloadIdentityPools/dryscope-<env>/attribute.repository_id/<numeric id>` to the data root, so live is bound only to a principal set from the `dryscope-live` pool. The data root binds that principal set to two accounts: the deploy account (images and Cloud Run) and the migrator (numbered migrations before traffic), so the deploy account never reaches the database. The variable and the plan check refuse any other pool (a shared one or the other environment's), the pool-wide wildcard and anything not scoped to one repository. For the budget alert, pass `-var billing_account_id=...` to the app root.
@@ -141,15 +141,15 @@ The migrator does not parse SQL for removals: a migration that removes a table, 
 
 ## Release the rebuilt app to test
 
-`.github/workflows/web-release.yml` releases `web/` to the **test** environment only, after the Web app workflow passes on `master` (or by hand: `gh workflow run web-release.yml --ref master`). One release runs at a time:
+`.github/workflows/web-release.yml` releases `web/` to the **test** environment only, after the Web app workflow passes on `master` (or by hand: `gh workflow run web-release.yml --ref master`). Every job runs on the switchable CI runner ([CI runners](#ci-runners)), which has no Docker daemon, so images are assembled without Docker: `web/scripts/build-image.sh` builds the Next.js standalone output with npm and appends it as one root-owned `/app` layer onto the base image pinned in `web/Dockerfile`, with [crane](https://github.com/google/go-containerregistry) (`web/scripts/install-crane.sh`, pinned by version and checksum). One release runs at a time:
 
-1. **build** (as `dryscope-deploy-test`): builds `web/Dockerfile` with the commit baked in and pushes `us-central1-docker.pkg.dev/dryscope/dryscope-test/web:<commit>`, then uses it by digest. A rerun of the same commit reuses the pushed image (tags are immutable).
+1. **build** (as `dryscope-deploy-test`): pushes `us-central1-docker.pkg.dev/dryscope/dryscope-test/web:<commit>` with the commit baked in, then uses it by digest. A rerun of the same commit reuses the pushed image (tags are immutable). Until the owner's first app-root apply (part D), it also pushes the Live relay placeholder (`.../live-placeholder:<commit>`, which answers 503 until stage S7) and stops there; the run summary prints both digests.
 2. **migrate** (as `dryscope-migrate-test`): starts the Cloud SQL Auth Proxy (pinned version and checksum, `--auto-iam-authn`, no password) and runs `npm run db:migrate`. Nothing has moved yet if it fails.
 3. **deploy** (as `dryscope-deploy-test`): records the revisions serving now, runs `gcloud run deploy dryscope-api-test --image=<digest> --no-traffic --tag=candidate` (only the image changes, so Terraform sees no drift), checks the tagged URL with `web/scripts/smoke-release.ts` (`/api/health` answers `ok`, `test`, this commit and database `ok`, which it reports only after the revision's own Cloud SQL IAM login succeeded, and answers 503 otherwise; signed-out `GET /api/jobs` and `POST /api/companies` answer 401 or 403), moves 100% of traffic to the new revision, and checks the service URL again. If the move or that last check fails, or the job is cancelled during the move, it puts the recorded traffic back.
 
-Until all three repository variables in part D are set, every run ends with a "Test release skipped" notice and changes nothing. It also skips while the deploy account cannot see `dryscope-api-test` (before part C). A variable that is set but names anything other than the test pool or the test accounts fails the run. **To pause test releases**, delete `DRYSCOPE_TEST_WIF_PROVIDER` (`gh variable delete DRYSCOPE_TEST_WIF_PROVIDER`). **To roll back by hand:** `gcloud run services update-traffic dryscope-api-test --to-revisions=<earlier revision>=100 --region=us-central1 --project=dryscope`. Live has no release workflow yet.
+Until all three repository variables in part C are set, every run ends with a "Test release skipped" notice and changes nothing. Before part D, a run only pushes the first images. A variable that is set but names anything other than the test pool or the test accounts fails the run. **To pause test releases**, delete `DRYSCOPE_TEST_WIF_PROVIDER` (`gh variable delete DRYSCOPE_TEST_WIF_PROVIDER`). **To roll back by hand:** `gcloud run services update-traffic dryscope-api-test --to-revisions=<earlier revision>=100 --region=us-central1 --project=dryscope`. Live has no release workflow yet.
 
-The owner runs parts A to D once, in order, from the repository root on a machine with `gcloud`, `terraform`, `node`, `docker`, `psql` and the [Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/postgres/sql-proxy). Agents never run them. Steps 1 to 4 of [Apply the central Terraform](#apply-the-central-terraform) come first.
+The owner runs parts A to D once, in order, from the repository root on a machine with `gcloud`, `gh`, `terraform`, `node`, `psql` and the [Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/postgres/sql-proxy); no Docker is needed. Agents never run them. Steps 1 to 4 of [Apply the central Terraform](#apply-the-central-terraform) come first.
 
 **A. Workload identity pool and provider for test (step 9).** The provider accepts only this repository (`nnorman100/adr-field-estimator`, id `1413863528`, owner id `201970234`), the `master` branch and the `test` GitHub environment:
 
@@ -194,32 +194,7 @@ GRANT USAGE, CREATE ON SCHEMA public TO "dryscope-migrate-test@dryscope.iam";
 
 Never grant the migrator `cloudsqlsuperuser` or `BYPASSRLS`. The first release's migrate job then applies `web/migrations` as the migrator.
 
-**C. First images and the app root (step 6).** After the pull request that adds `web/Dockerfile` has merged, build from that `master` commit. `--platform=linux/amd64` matters on an Apple-silicon Mac: Cloud Run runs amd64 images.
-
-```bash
-git fetch origin && git checkout --detach origin/master
-COMMIT=$(git rev-parse HEAD)
-REPO=us-central1-docker.pkg.dev/dryscope/dryscope-test
-gcloud auth configure-docker us-central1-docker.pkg.dev
-docker build --platform=linux/amd64 --build-arg COMMIT_SHA="$COMMIT" -t "$REPO/web:$COMMIT" web
-docker build --platform=linux/amd64 -t "$REPO/live-placeholder:$COMMIT" live-relay-placeholder
-docker push "$REPO/web:$COMMIT" && docker push "$REPO/live-placeholder:$COMMIT"
-API_IMAGE=$(docker inspect --format='{{index .RepoDigests 0}}' "$REPO/web:$COMMIT")
-LIVE_IMAGE=$(docker inspect --format='{{index .RepoDigests 0}}' "$REPO/live-placeholder:$COMMIT")
-echo "$API_IMAGE" "$LIVE_IMAGE"   # both must end in @sha256:<64 hex>
-
-cd infra/dryscope/app
-terraform init -reconfigure -backend-config=envs/backend-test.hcl
-export TF_VAR_alert_email='<alert address>'      # never in git
-terraform plan -var-file=envs/test.tfvars -var api_image="$API_IMAGE" -var live_image="$LIVE_IMAGE" -out=test.tfplan
-terraform show -json test.tfplan > test.json && node ../scripts/check-plan.js app test test.json
-terraform apply test.tfplan
-cd ../../..
-```
-
-The apply waits for both services to become ready, which needs a version in every `dryscope-test-*` secret (step 4). `dryscope-live-test` answers 503 until stage S7 ships the real relay. Check: `curl -s "$(gcloud run services describe dryscope-api-test --region=us-central1 --project=dryscope --format='value(status.url)')/api/health"` prints `{"status":"ok","env":"test","commit":"<COMMIT>","database":"ok"}`.
-
-**D. GitHub environment and variables.** Create the `test` environment, limited to `master`, then set the three variables last; the next run releases.
+**C. GitHub environment and variables.** Create the `test` environment, limited to `master`, set the three variables, then start a run. With the app root not yet applied, that run only pushes the first two images and prints their digests in its summary.
 
 ```bash
 gh api -X PUT repos/nnorman100/adr-field-estimator/environments/test --input - <<'EOF'
@@ -232,7 +207,26 @@ gh variable set DRYSCOPE_TEST_MIGRATE_SA --body dryscope-migrate-test@dryscope.i
 gh workflow run web-release.yml --ref master
 ```
 
-After the first release passes, rerun the part C plan with the same variables: it must report no changes, which shows the release changed only what Terraform ignores (image and traffic).
+**D. The app root (step 6).** Copy the two references from that run's summary (`api_image` and `live_image`, each ending in `@sha256:<64 hex>`), apply the app root with them, then start a run again; this one releases.
+
+```bash
+API_IMAGE='us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:<from the run summary>'
+LIVE_IMAGE='us-central1-docker.pkg.dev/dryscope/dryscope-test/live-placeholder@sha256:<from the run summary>'
+cd infra/dryscope/app
+terraform init -reconfigure -backend-config=envs/backend-test.hcl
+export TF_VAR_alert_email='<alert address>'      # never in git
+terraform plan -var-file=envs/test.tfvars -var api_image="$API_IMAGE" -var live_image="$LIVE_IMAGE" -out=test.tfplan
+terraform show -json test.tfplan > test.json && node ../scripts/check-plan.js app test test.json
+terraform apply test.tfplan
+cd ../../..
+gh workflow run web-release.yml --ref master
+```
+
+The apply waits for both services to become ready, which needs a version in every `dryscope-test-*` secret (step 4). `dryscope-live-test` answers 503 until stage S7 ships the real relay. Check: `curl -s "$(gcloud run services describe dryscope-api-test --region=us-central1 --project=dryscope --format='value(status.url)')/api/health"` prints `{"status":"ok","env":"test","commit":"<COMMIT>","database":"ok"}`.
+
+To build an image by hand instead (Linux or macOS, no Docker): `web/scripts/install-crane.sh ~/.local/bin`, `npm ci` in `web/`, `gcloud auth print-access-token | crane auth login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin`, then `web/scripts/build-image.sh web --commit "$(git rev-parse HEAD)" --tag us-central1-docker.pkg.dev/dryscope/dryscope-test/web:$(git rev-parse HEAD)` and `crane digest` that tag. On macOS set `TAR=gtar` (GNU tar). The CI-built images are preferred: the standalone output then comes from the same Linux build as every release.
+
+After the first release passes, rerun the part D plan with the same variables: it must report no changes, which shows the release changed only what Terraform ignores (image and traffic).
 
 ## Common problems
 
