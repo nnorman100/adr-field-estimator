@@ -59,7 +59,7 @@ The frontend stays a static web app with no build step and same-origin vendored 
 
 Every fix lands with a test that fails without it.
 Mock results, real-service checks and physical device observations are recorded separately, and a device behavior stays open until it is observed on a device.
-Every merge that passes CI is deployed automatically: the backend is staged and verified, then promoted, then only `hosting:alert-disaster` is deployed, with automatic rollback on a failed health check (built in `.github/workflows/deploy.yml` and active once the owner completes its one-time setup in `docs/firebase-isolation.md#automatic-deploys`; until then, and for a rules or index change, a release is a hand release the owner runs, per `RELEASES.md`).
+Every merge that passes CI and changes the legacy app is deployed automatically (rebuild merges in `web/`, `infra/` and docs skip the release): the backend is staged and verified, then promoted, then only `hosting:alert-disaster` is deployed, with automatic rollback on a failed health check (built in `.github/workflows/deploy.yml` and active once the owner completes its one-time setup in `docs/firebase-isolation.md#automatic-deploys`; until then, and for a rules or index change, a release is a hand release the owner runs, per `RELEASES.md`).
 Firestore rules, indexes, secret bindings and IAM grants are declared in the repo and applied by the same pipeline, never by hand in the console.
 Each release carries its source commit, and `RELEASES.md` is the one record of what is serving (partly built; today releases made by the stamping scripts carry their commit, but several older `RELEASES.md` rows show `unknown`, per `docs/firebase-isolation.md`).
 
