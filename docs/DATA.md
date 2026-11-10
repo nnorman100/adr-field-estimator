@@ -154,7 +154,9 @@ Firestore records in this file are unchanged.
 
 Cloud SQL backups: automated daily backups and point-in-time recovery are on, and the backups are
 kept in the US multi-region (`us`), not in the instance's region, so a regional outage cannot take
-them too. There is no second-region export or replica. If `us-central1` is lost, the latest backup is
+them too. Only backups taken after that setting is applied are kept in `us`; earlier ones stay in
+`us-central1`, so the owner takes one on-demand backup after the apply and checks its location. There
+is no second-region export or replica. If `us-central1` is lost, the latest backup is
 restored into a new instance in another region ([RUNBOOK.md](RUNBOOK.md#restore-into-another-region)),
 losing at most one day; point-in-time recovery is not available then. A quarterly drill restores into
 a different region once. Firestore stays in its own region with its own point-in-time recovery.
