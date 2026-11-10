@@ -155,9 +155,29 @@ transaction, and records the file id and a SHA-256 of its bytes in `migration_le
 applies nothing. A changed file that was already applied stops the run. A gap in the numbers stops
 the run before anything new is written. Migrations run before a new version of the rebuilt app
 takes traffic. The first migration creates `migration_ledger` and an empty `companies` table (`id`
-uuid, `created_at` timestamptz). Those two tables hold no personal data. Sign-in, permissions,
-prices, signed documents and row-level security are later work, and these tables have no row-level
-security yet.
+uuid, `created_at` timestamptz). Those two tables hold no personal data.
+
+`0002_identity` adds the sign-in and company-separation tables. `companies` gains `name`,
+`sign_in_slug` (the company's sign-in address), `status` (active, suspended, archived) and
+`auth_tenant_id` (unique: one sign-in tenant names one company; the owner decided D3 on 2026-11-09,
+option A, one sign-in tenant per company, which is why the column is unique). A company row made
+before `0002` is kept and named "Unnamed company". New tables: `actors` (a signed-in person, unique
+by `(auth_tenant_id, uid)`, never matched by email alone; an actor of a company carries that
+company's `auth_tenant_id`), `memberships` (owner, estimator or office; one active owner per company
+and one active membership per actor), `invitations` (pending, accepted or cancelled; expiry is
+`expires_at`), `auth_tenants` (every sign-in tenant, each either a company's tenant or an
+operator-only tenant, never both), `platform_admins` (operators are actors with no company, signed
+in through an operator tenant, per owner decision D6), `audit_events` (ids and counts only in
+`details`; `actor_id` is a member of the event's company and `operator_actor_id` a platform
+operator), `company_feature_flags` (a missing row means off; only an operator changes one, per D12)
+and `access_projection_outbox` (actors whose Firestore access record must follow a committed
+membership change). Rows that refer to another company row carry `company_id` in a composite key,
+so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
+another company. `actors.email`, `actors.display_name` and `invitations.email` are personal data.
+Emails are stored lowercase and tenant ids, uids, emails and display names without surrounding
+spaces, so one person is one stored key. Nothing writes these tables yet, and they have no
+row-level security yet; the runtime role and row-level security come in `0003`. Prices and signed
+documents are later work.
 
 Migrations are additive. Change the schema by add, then switch, then remove:
 
