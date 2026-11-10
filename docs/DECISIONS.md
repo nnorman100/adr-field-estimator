@@ -72,3 +72,26 @@ Status: accepted (owner). Standing decisions recorded together:
 - The rebuild is a clean start in project `dryscope` with no data migration from `alert-disaster-field-2026` (D-006, Nov 9 note).
 - Test environment only for now.
 - Live voice is the default capture method.
+
+### D-013: Build server and CI runner on a Hostinger VPS (Nov 10, 2026)
+
+Status: accepted (owner, Nov 10, 2026). Exception to Technology Standard 2.2.
+Reason: the standard puts the build server and CI runner on a Google Cloud VM with no public IP. That needs the company domain and Google Cloud organization, which do not exist yet. Until they do, the build server and CI runner stay on a Hostinger VPS.
+Known effect: this server cannot reach the test Cloud SQL address, so release migrations run inside Google (a Cloud Run job), not from the build server.
+Ends when the company domain and Google Cloud organization exist.
+
+### D-014: DryScope may use more than three agents (Nov 6, 2026)
+
+Status: accepted (owner, Nov 6, 2026). Exception to the standard's limit of three agents.
+Reason: the rebuild is parallel work across many stages. DryScope may use every available agent.
+
+### D-015: Pipeline reviewer is Grok 4.7, then ChatGPT; never the builder's family (Nov 9, 2026)
+
+Status: accepted (owner, Nov 9, 2026). Exception to the standard's choice of pipeline reviewer.
+Reason: ChatGPT is unavailable for now. The pipeline reviewer is Grok 4.7 until ChatGPT returns (planned Nov 13, 2026), then ChatGPT. The reviewer is always a different model family from the builder.
+
+### D-016: Company sign-in tenants are created by an owner- or operator-run command for the pilot (Nov 9, 2026)
+
+Status: accepted (owner, Nov 9, 2026; confirmed Nov 10, 2026). A decision, not an exception: it is now written into Technology Standard 2.2.
+Decision: for the pilot, a company's sign-in tenant is created by a command the owner or an operator runs, not by self-service sign-up. See the S3 plan (decision D4) in `docs/plans/S3.md`.
+
