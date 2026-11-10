@@ -205,6 +205,38 @@ describe('square-foot brackets', () => {
       "Kitchen: demo (whole-job bracket: over 0 through 100 sq ft of the job's total square feet) = 300.00",
     ]);
   });
+
+  it("W23 tiered: each item counts only its own square feet, so another item's area never moves its bands", () => {
+    // Item A, Cat 1 rooms only, flat $0.10 per sq ft. Item B, Cat 3 rooms only, $10.00 per sq ft up to
+    // 100 sq ft, then $1.00. Before: Hall (Cat 1) 0 sq ft, Bath (Cat 3) 100 sq ft. A = 0 x $0.10 = $0.00;
+    // B = 100 x $10.00 = $1,000.00 (band 1 holds all 100). Total $1,000.00.
+    // After: Hall grows to 100 sq ft. A = 100 x $0.10 = $10.00; B still counts only the Bath's 100 sq ft,
+    // so B = $1,000.00. Total $1,010.00. Shared counting would push B's 100 sq ft into the $1.00 band
+    // (100 x $1.00 = $100.00, $900.00 less) and the total would fall by $890.00 to $110.00.
+    const priceList = table([
+      item('a_flat', { categories: [1], unit_price: '0.10' }),
+      item('b_tiered', {
+        categories: [3],
+        unit_price: '',
+        price_brackets: [
+          { up_to_sf: 100, unit_price: '10.00' },
+          { up_to_sf: null, unit_price: '1.00' },
+        ],
+      }),
+    ]);
+    const bath = room('Bath', { category: 3, unfinished_sf: 100 });
+    const before = priced(priceList, job([room('Hall', { unfinished_sf: 0 }), bath]));
+    expect(lineTotals(before)).toEqual([
+      'Bath: b tiered (tiered bracket: over 0 through 100 sq ft) = 1000.00',
+    ]);
+    expect(before.totals.low.total).toBe('1000.00');
+    const after = priced(priceList, job([room('Hall', { unfinished_sf: 100 }), bath]));
+    expect(lineTotals(after)).toEqual([
+      'Hall: a flat = 10.00',
+      'Bath: b tiered (tiered bracket: over 0 through 100 sq ft) = 1000.00',
+    ]);
+    expect(after.totals.low.total).toBe('1010.00');
+  });
 });
 
 describe('the range: cushion and uncertainty', () => {
