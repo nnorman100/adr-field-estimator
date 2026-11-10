@@ -4,8 +4,9 @@ import { z } from 'zod';
 // checks it when the server starts, so an invalid value stops the app with a message that names the
 // variable and never repeats the value. APP_ENV is required; the Cloud Run services set it as
 // APP_ENVIRONMENT (infra/dryscope/app/cloud_run.tf), which is read the same way. DATABASE_URL is
-// optional until a database command runs, and GOOGLE_CLOUD_PROJECT until a route checks a sign-in;
-// neither has a default. No secrets belong in this file.
+// optional until a database command runs, GOOGLE_CLOUD_PROJECT until a route checks a sign-in, and
+// FIRESTORE_DATABASE_ID until an access record is written; none has a default. No secrets belong in
+// this file.
 function isPostgresUrl(value: string): boolean {
   if (value.length === 0 || value.length > 2000 || /\s/.test(value)) return false;
   try {
@@ -19,6 +20,10 @@ function isPostgresUrl(value: string): boolean {
 
 // A Google Cloud project id: 6-30 lowercase letters, digits and hyphens, starting with a letter.
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+
+// A Firestore database id: (default), or 4-63 lowercase letters, digits and hyphens that start
+// with a letter and end with a letter or digit.
+const FIRESTORE_DATABASE = /^(\(default\)|[a-z][a-z0-9-]{2,61}[a-z0-9])$/;
 
 // host:port of a loopback emulator, as the Firebase CLI writes it.
 function isLoopbackHost(value: string): boolean {
@@ -78,22 +83,32 @@ const schema = z
     .string()
     .refine(isLoopbackHost, { message: 'FIREBASE_AUTH_EMULATOR_HOST must be a loopback host:port' })
     .optional(),
+  // The field database the server writes access records to. Cloud Run gets it from Terraform
+  // (infra/dryscope/app); the emulators use (default).
+  FIRESTORE_DATABASE_ID: z
+    .string()
+    .regex(FIRESTORE_DATABASE, { message: 'FIRESTORE_DATABASE_ID must be a Firestore database id' })
+    .optional(),
+  // firebase-admin reads this one itself too and then writes to the emulator with no credentials;
+  // the same limits as the Auth emulator apply.
+  FIRESTORE_EMULATOR_HOST: z
+    .string()
+    .refine(isLoopbackHost, { message: 'FIRESTORE_EMULATOR_HOST must be a loopback host:port' })
+    .optional(),
   })
   .superRefine((env, ctx) => {
-    if (env.FIREBASE_AUTH_EMULATOR_HOST === undefined) return;
-    if (env.APP_ENV !== 'local') {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['FIREBASE_AUTH_EMULATOR_HOST'],
-        message: 'FIREBASE_AUTH_EMULATOR_HOST is allowed only when APP_ENV is local',
-      });
-    }
-    if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['FIREBASE_AUTH_EMULATOR_HOST'],
-        message: 'FIREBASE_AUTH_EMULATOR_HOST needs a GOOGLE_CLOUD_PROJECT starting with demo-',
-      });
+    for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
+      if (env[name] === undefined) continue;
+      if (env.APP_ENV !== 'local') {
+        ctx.addIssue({ code: 'custom', path: [name], message: `${name} is allowed only when APP_ENV is local` });
+      }
+      if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: `${name} needs a GOOGLE_CLOUD_PROJECT starting with demo-`,
+        });
+      }
     }
   });
 
@@ -173,5 +188,32 @@ export function parseIdentityConfig(env: Record<string, string | undefined>): Id
     appEnv: data.APP_ENV,
     projectId: data.GOOGLE_CLOUD_PROJECT,
     authEmulatorHost: data.FIREBASE_AUTH_EMULATOR_HOST ?? null,
+  };
+}
+
+export type ProjectionConfig = {
+  projectId: string;
+  databaseId: string;
+  firestoreEmulatorHost: string | null;
+};
+
+// What writing Firestore access records needs. Called when the first access record is written, so
+// the shell still boots without these; the write then fails closed and its outbox row waits.
+export function parseProjectionConfig(env: Record<string, string | undefined>): ProjectionConfig {
+  const data = checked(env);
+  const problems: string[] = [];
+  if (!data.GOOGLE_CLOUD_PROJECT) {
+    problems.push('GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to write access records');
+  }
+  if (!data.FIRESTORE_DATABASE_ID) {
+    problems.push('FIRESTORE_DATABASE_ID: FIRESTORE_DATABASE_ID is required to write access records');
+  }
+  if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT || !data.FIRESTORE_DATABASE_ID) {
+    throw new ConfigError(problems);
+  }
+  return {
+    projectId: data.GOOGLE_CLOUD_PROJECT,
+    databaseId: data.FIRESTORE_DATABASE_ID,
+    firestoreEmulatorHost: data.FIRESTORE_EMULATOR_HOST ?? null,
   };
 }
