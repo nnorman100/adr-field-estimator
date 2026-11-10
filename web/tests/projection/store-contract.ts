@@ -18,7 +18,7 @@ export function accessStoreContract(name: string, probe: () => StoreProbe, compa
     it('writes the header and the record, and the same grant twice leaves the same records', async () => {
       const { store, record, header } = probe();
       const company = companyId();
-      const grant = { companyId: company, authTenantId: 'tenant-contract', uid: 'uid-1', role: 'estimator' as const, expiresAt: later };
+      const grant = { companyId: company, authTenantId: 'tenant-contract', uid: 'uid-1', role: 'estimator' as const, expiresAt: later, version: 1 };
       await store.grant(grant);
       await store.grant(grant);
       expect(await record(company, 'uid-1')).toEqual({ role: 'estimator', expiresAt: later });
@@ -28,19 +28,19 @@ export function accessStoreContract(name: string, probe: () => StoreProbe, compa
     it('replaces the role and expiry of an existing record', async () => {
       const { store, record } = probe();
       const company = companyId();
-      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-2', role: 'owner', expiresAt: later });
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-2', role: 'owner', expiresAt: later, version: 1 });
       const sooner = new Date(later.getTime() - 60_000);
-      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-2', role: 'office', expiresAt: sooner });
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-2', role: 'office', expiresAt: sooner, version: 2 });
       expect(await record(company, 'uid-2')).toEqual({ role: 'office', expiresAt: sooner });
     });
 
     it('removes a record, and removing one that is gone succeeds', async () => {
       const { store, record } = probe();
       const company = companyId();
-      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-3', role: 'estimator', expiresAt: later });
-      await store.remove(company, 'uid-3');
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-3', role: 'estimator', expiresAt: later, version: 1 });
+      await store.remove(company, 'uid-3', 2);
       expect(await record(company, 'uid-3')).toBeNull();
-      await store.remove(company, 'uid-3');
+      await store.remove(company, 'uid-3', 3);
       expect(await record(company, 'uid-3')).toBeNull();
     });
 
@@ -48,9 +48,9 @@ export function accessStoreContract(name: string, probe: () => StoreProbe, compa
       const { store, record } = probe();
       const a = companyId();
       const b = companyId();
-      await store.grant({ companyId: a, authTenantId: 'ta', uid: 'uid-4', role: 'estimator', expiresAt: later });
-      await store.grant({ companyId: b, authTenantId: 'tb', uid: 'uid-4', role: 'office', expiresAt: later });
-      await store.remove(a, 'uid-4');
+      await store.grant({ companyId: a, authTenantId: 'ta', uid: 'uid-4', role: 'estimator', expiresAt: later, version: 5 });
+      await store.grant({ companyId: b, authTenantId: 'tb', uid: 'uid-4', role: 'office', expiresAt: later, version: 1 });
+      await store.remove(a, 'uid-4', 6);
       expect(await record(a, 'uid-4')).toBeNull();
       expect(await record(b, 'uid-4')).toEqual({ role: 'office', expiresAt: later });
     });
@@ -60,10 +60,39 @@ export function accessStoreContract(name: string, probe: () => StoreProbe, compa
       const company = companyId();
       for (const uid of ['a/b', '.', '..', '__x__', '', 'x'.repeat(129)]) {
         await expect(
-          store.grant({ companyId: company, authTenantId: 't', uid, role: 'owner', expiresAt: later }),
+          store.grant({ companyId: company, authTenantId: 't', uid, role: 'owner', expiresAt: later, version: 1 }),
         ).rejects.toBeInstanceOf(AccessStoreError);
-        await expect(store.remove(company, uid)).rejects.toBeInstanceOf(AccessStoreError);
+        await expect(store.remove(company, uid, 1)).rejects.toBeInstanceOf(AccessStoreError);
       }
+    });
+
+    it('refuses a grant older than the removal it holds, so the record stays gone', async () => {
+      const { store, record } = probe();
+      const company = companyId();
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-5', role: 'estimator', expiresAt: later, version: 10 });
+      await store.remove(company, 'uid-5', 12);
+      // The grant decided before the removal arrives after it.
+      await expect(
+        store.grant({ companyId: company, authTenantId: 't', uid: 'uid-5', role: 'estimator', expiresAt: later, version: 11 }),
+      ).rejects.toEqual(new AccessStoreError('stale_decision'));
+      expect(await record(company, 'uid-5')).toBeNull();
+      // A decision after the removal still grants.
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-5', role: 'office', expiresAt: later, version: 13 });
+      expect(await record(company, 'uid-5')).toEqual({ role: 'office', expiresAt: later });
+    });
+
+    it('refuses a removal older than the grant it holds, so the newer grant stays', async () => {
+      const { store, record } = probe();
+      const company = companyId();
+      await store.grant({ companyId: company, authTenantId: 't', uid: 'uid-6', role: 'estimator', expiresAt: later, version: 20 });
+      // The removal decided before the grant arrives after it.
+      await expect(store.remove(company, 'uid-6', 19)).rejects.toEqual(new AccessStoreError('stale_decision'));
+      expect(await record(company, 'uid-6')).toEqual({ role: 'estimator', expiresAt: later });
+      // An older grant cannot replace it either.
+      await expect(
+        store.grant({ companyId: company, authTenantId: 't', uid: 'uid-6', role: 'owner', expiresAt: later, version: 18 }),
+      ).rejects.toEqual(new AccessStoreError('stale_decision'));
+      expect(await record(company, 'uid-6')).toEqual({ role: 'estimator', expiresAt: later });
     });
   });
 }

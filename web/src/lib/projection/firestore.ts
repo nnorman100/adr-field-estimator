@@ -1,10 +1,10 @@
 import { getApps, initializeApp, type App } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import type { ProjectionConfig } from '@/lib/config';
 import { AccessStoreError, checkedUid, type AccessStore } from './store';
 
 // Access records in the field database, written with the Admin SDK, which the rules do not bind.
-// Only ids, the role and the expiry are written; nothing here is logged.
+// Only ids, the role, the expiry and the decision version are written; nothing here is logged.
 
 function firebaseApp(config: ProjectionConfig): App {
   // firebase-admin reads FIRESTORE_EMULATOR_HOST from the process itself, so the checked config
@@ -23,31 +23,36 @@ export function firestoreFor(config: ProjectionConfig): Firestore {
 export function firestoreAccessStore(db: Firestore): AccessStore {
   const company = (companyId: string) => db.collection('companies').doc(companyId);
   const access = (companyId: string, uid: string) => company(companyId).collection('access').doc(checkedUid(uid));
+  const applied = (companyId: string, uid: string) =>
+    company(companyId).collection('accessVersions').doc(checkedUid(uid));
 
-  // Each write runs as a transaction that reads the access record first and is tried once. Between
-  // that read and the commit, Firestore lets no other write of the record commit: it holds it and
-  // then refuses it. So a removal never succeeds while a grant that read the record earlier (one the
-  // outbox gave up on at its deadline) can still land, and a refused removal stays waiting in the
-  // outbox until it succeeds. maxAttempts 1 stops the SDK re-running a write against newer data.
-  const once = { maxAttempts: 1 };
+  // Each write is a transaction that reads the version last applied for the uid and refuses an
+  // older decision, then writes its own version with the record. Firestore commits no transaction
+  // whose read changed before it committed, so two decisions cannot both pass the check against the
+  // same version, and a re-run (the SDK retries a contended transaction) checks again.
+  async function newest(tx: Transaction, companyId: string, uid: string, version: number): Promise<void> {
+    const stored = (await tx.get(applied(companyId, uid))).get('version');
+    if (typeof stored === 'number' && stored > version) throw new AccessStoreError('stale_decision');
+  }
 
   return {
-    async grant({ companyId, authTenantId, uid, role, expiresAt }) {
-      const record = access(companyId, uid);
+    async grant({ companyId, authTenantId, uid, role, expiresAt, version }) {
       await db.runTransaction(async (tx) => {
-        await tx.get(record);
+        await newest(tx, companyId, uid, version);
         // The header keeps any other server field; the access record is replaced whole.
         tx.set(company(companyId), { authTenantId }, { merge: true });
-        tx.set(record, { role, expiresAt: Timestamp.fromDate(expiresAt) });
-      }, once);
+        tx.set(access(companyId, uid), { role, expiresAt: Timestamp.fromDate(expiresAt) });
+        tx.set(applied(companyId, uid), { version });
+      });
     },
 
-    async remove(companyId, uid) {
+    async remove(companyId, uid, version) {
       const record = access(companyId, uid);
       await db.runTransaction(async (tx) => {
-        const before = await tx.get(record);
-        if (before.exists) tx.delete(record);
-      }, once);
+        await newest(tx, companyId, uid, version);
+        tx.delete(record);
+        tx.set(applied(companyId, uid), { version });
+      });
       const after = await record.get();
       if (after.exists) throw new AccessStoreError('record_still_present');
     },

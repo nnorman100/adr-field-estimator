@@ -15,11 +15,11 @@ const store: AccessStore = {
     writeFileSync(CRASH_MARKER, JSON.stringify({ kind: 'grant', ...grant }));
     return hang();
   },
-  async remove(companyId, uid) {
-    writeFileSync(CRASH_MARKER, JSON.stringify({ kind: 'remove', companyId, uid }));
+  async remove(companyId, uid, version) {
+    writeFileSync(CRASH_MARKER, JSON.stringify({ kind: 'remove', companyId, uid, version }));
     return hang();
   },
 };
 
 const { db } = openDatabase({ APP_ENV: 'test', DATABASE_URL: CRASH_DATABASE_URL });
-await projectActor(db, store, CRASH_COMPANY, CRASH_ACTOR, { deadlineMs: 600_000 });
+await projectActor(db, store, CRASH_COMPANY, CRASH_ACTOR);
