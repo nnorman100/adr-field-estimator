@@ -60,6 +60,26 @@ export async function markEmailVerified(tenantId: string, localId: string): Prom
   await ok(`/v1/projects/${projectId}/tenants/${tenantId}/accounts:update`, { localId, emailVerified: true }, true);
 }
 
+// Enrols a text-message second factor for a signed-in user (the only kind the emulator has) and
+// returns the new ID token, which records that second factor. The code is read from the
+// emulator's own list; nothing is sent.
+export async function enrolTextMessageSecondFactor(tenantId: string, idToken: string, phoneNumber: string): Promise<string> {
+  const started = await ok('/v2/accounts/mfaEnrollment:start', { idToken, tenantId, phoneEnrollmentInfo: { phoneNumber } });
+  const sessionInfo = (started.phoneSessionInfo as { sessionInfo: string }).sessionInfo;
+  const response = await fetch(`http://${env.authHost}/emulator/v1/projects/${projectId}/tenants/${tenantId}/verificationCodes`, {
+    headers: ADMIN,
+  });
+  const { verificationCodes } = (await response.json()) as { verificationCodes: { sessionInfo: string; code: string }[] };
+  const code = verificationCodes.find((entry) => entry.sessionInfo === sessionInfo)?.code;
+  if (!code) throw new Error('Auth emulator listed no code for the enrolment');
+  const finished = await ok('/v2/accounts/mfaEnrollment:finalize', {
+    idToken,
+    tenantId,
+    phoneVerificationInfo: { sessionInfo, code },
+  });
+  return finished.idToken as string;
+}
+
 // The emulator's ID tokens are unsigned; the tests only read their claims.
 export function tokenClaims(idToken: string): Record<string, unknown> {
   const payload = idToken.split('.')[1];

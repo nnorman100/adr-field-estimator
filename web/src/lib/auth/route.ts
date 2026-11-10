@@ -1,10 +1,19 @@
 import { IdentityRefusal, resolveIdentity, type Identity } from './identity';
+import type { RouteSessionRule } from './policy';
 import { identityServices, type IdentityServices } from './services';
 
 // Every API route declares its access rule where it is defined, by wrapping each handler:
 //
 //   export const GET = publicRoute(async () => ...);                 // no sign-in
 //   export const GET = memberRoute(async (request, identity) => ...); // a company member
+//
+// A member route also applies the second-step and session rules of policy.ts. Two kinds of route
+// say more, beside their own code:
+//
+//   memberRoute(handler, { freshSignIn: true })      // changes the team or a second step: the
+//                                                    // sign-in must be under 15 minutes old
+//   memberRoute(handler, { secondStep: 'enrolment' }) // sets up a second step, so an owner who
+//                                                    // has none yet may reach it
 //
 // tests/unit/route-rules.test.ts finds every route file and fails on a handler that is not
 // wrapped, so a route with no rule cannot ship. Later rules (operator, a capability, a feature
@@ -29,13 +38,15 @@ export function publicRoute<H extends Handler>(handler: H): H {
 // token alone; the handler gets it and must take the company from it, never from the request.
 export function memberRoute(
   handler: MemberHandler,
+  rule: RouteSessionRule = {},
   services: () => IdentityServices = identityServices,
 ): Handler {
+  const route = Object.freeze({ ...rule });
   return async (request, context) => {
     let identity: Identity;
     try {
       const { verifier, directory } = services();
-      identity = await resolveIdentity(request, verifier, directory);
+      identity = await resolveIdentity(request, verifier, directory, { route });
     } catch (error) {
       if (error instanceof IdentityRefusal) return refusal(error.code, error.status);
       // Fixed text only: the error may quote the token or the connection string.

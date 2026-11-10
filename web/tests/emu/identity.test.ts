@@ -1,10 +1,20 @@
 import { getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { beforeAll, describe, expect, it } from 'vitest';
+import type { Role } from '@/lib/access';
 import { firebaseTokenVerifier } from '@/lib/auth/firebase';
 import { IdentityRefusal, resolveIdentity, type IdentityDirectory, type TokenVerifier } from '@/lib/auth/identity';
 import { parseIdentityConfig } from '@/lib/config';
-import { call, createTenant, markEmailVerified, projectId, signIn, signUp } from './auth-emulator';
+import {
+  call,
+  createTenant,
+  enrolTextMessageSecondFactor,
+  markEmailVerified,
+  projectId,
+  signIn,
+  signUp,
+  tokenClaims,
+} from './auth-emulator';
 
 // Real sign-in tokens from the Auth emulator, checked by the same firebase-admin code the server
 // runs. The company records are an in-memory stand-in here; tests/db/sign-in-lookup.test.ts reads
@@ -17,6 +27,9 @@ let verifier: TokenVerifier;
 let tenantA: string;
 let tenantB: string;
 let directory: IdentityDirectory;
+// The role of each uid; anyone not listed is an estimator, who needs no second step (D2). An owner
+// needs an authenticator-app second step, which the emulator cannot give (tests/emu/totp.test.ts).
+const roles = new Map<string, Role>();
 
 beforeAll(async () => {
   verifier = firebaseTokenVerifier(
@@ -26,18 +39,20 @@ beforeAll(async () => {
       FIREBASE_AUTH_EMULATOR_HOST: process.env.FIREBASE_AUTH_EMULATOR_HOST,
     }),
   );
-  tenantA = await createTenant('identity-a');
+  tenantA = await createTenant('identity-a', {
+    mfaConfig: { state: 'ENABLED', enabledProviders: ['PHONE_SMS'] },
+  });
   tenantB = await createTenant('identity-b');
   const companies: Record<string, string> = { [tenantA]: COMPANY_A, [tenantB]: COMPANY_B };
   directory = {
     async companyForTenant(tenant) {
       return companies[tenant] ?? null;
     },
-    async member(companyId) {
+    async member(companyId, _tenant, uid) {
       return {
         company: { id: companyId, name: 'Synthetic company', status: 'active' },
         actor: { id: `actor-${companyId.slice(-1)}`, displayName: null },
-        membership: { role: 'owner', status: 'active' },
+        membership: { role: roles.get(uid) ?? 'estimator', status: 'active' },
       };
     },
   };
@@ -128,5 +143,48 @@ describe('sign-in tokens from the Auth emulator', () => {
     // The emulator's tokens are unsigned, so this proves the user lookup on the tenant: the uid
     // does not exist in tenant B.
     expect(await refusalOf(resolveIdentity(bearer(forged), verifier, directory))).toBe('sign_in_revoked');
+  });
+});
+
+describe('second-step and session rules on emulator tokens', () => {
+  it('refuses an owner who signed in without a second step, and accepts an estimator', async () => {
+    const owner = await user(tenantA);
+    roles.set(owner.uid, 'owner');
+    expect(tokenClaims(owner.idToken).auth_time).toEqual(expect.any(Number));
+    expect(await refusalOf(resolveIdentity(bearer(owner.idToken), verifier, directory))).toBe('second_step_required');
+    // Only a route that sets up the second step lets the owner through.
+    const enrolment = { route: { secondStep: 'enrolment' as const } };
+    expect(await resolveIdentity(bearer(owner.idToken), verifier, directory, enrolment)).toMatchObject({ role: 'owner' });
+
+    const estimator = await user(tenantA);
+    expect(await resolveIdentity(bearer(estimator.idToken), verifier, directory)).toMatchObject({ role: 'estimator' });
+  });
+
+  it('does not count a text-message second factor for an owner', async () => {
+    const owner = await user(tenantA);
+    roles.set(owner.uid, 'owner');
+    const withSms = await enrolTextMessageSecondFactor(tenantA, owner.idToken, '+15555550101');
+    // The token really carries the second-factor claim the rule reads; the rule refuses `phone`.
+    expect((tokenClaims(withSms).firebase as Record<string, unknown>).sign_in_second_factor).toBe('phone');
+    expect(await refusalOf(resolveIdentity(bearer(withSms), verifier, directory))).toBe('second_step_required');
+  });
+
+  it("reads the token's sign-in time: an estimator must sign in again after 30 days", async () => {
+    const estimator = await user(tenantA);
+    const authTime = tokenClaims(estimator.idToken).auth_time as number;
+    const at = (seconds: number) => ({ now: () => authTime + seconds });
+    const day = 24 * 60 * 60;
+    expect(await resolveIdentity(bearer(estimator.idToken), verifier, directory, at(30 * day))).toMatchObject({
+      role: 'estimator',
+    });
+    expect(await refusalOf(resolveIdentity(bearer(estimator.idToken), verifier, directory, at(30 * day + 1)))).toBe(
+      'sign_in_again',
+    );
+    // A team or second-step change needs a sign-in in the last 15 minutes.
+    const teamChange = (seconds: number) => ({ ...at(seconds), route: { freshSignIn: true } });
+    expect(await resolveIdentity(bearer(estimator.idToken), verifier, directory, teamChange(15 * 60))).toBeDefined();
+    expect(await refusalOf(resolveIdentity(bearer(estimator.idToken), verifier, directory, teamChange(15 * 60 + 1)))).toBe(
+      'sign_in_again',
+    );
   });
 });
