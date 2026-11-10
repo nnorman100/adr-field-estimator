@@ -42,7 +42,7 @@ jobs:
         github.event.workflow_run.head_branch == 'master' &&
         github.event.workflow_run.head_repository.full_name == github.repository
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 2
     outputs:
       ready: ${{ steps.vars.outputs.ready }}
@@ -73,6 +73,8 @@ jobs:
   build:
     needs: gate
     if: needs.gate.outputs.ready == 'true'
+    # Needs a Docker daemon, which the self-hosted pool lacks; stays GitHub-hosted pending the owner's
+    # runner decision (docs/RUNBOOK.md, "CI runners").
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: test
@@ -125,7 +127,7 @@ jobs:
   migrate:
     needs: build
     if: needs.build.outputs.service_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 10
     environment: test
     permissions:
@@ -196,7 +198,7 @@ jobs:
   deploy:
     needs: [build, migrate]
     if: needs.build.outputs.service_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
     environment: test
     permissions:
@@ -220,6 +222,9 @@ jobs:
           service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
           project_id: dryscope
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # The self-hosted job container is leaner than GitHub's image (docs/RUNBOOK.md, "CI runners").
+      - name: Install jq when missing
+        run: command -v jq >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }
       # Remember who serves now, so a failure after the traffic move can put it back exactly.
       - id: before
         run: |
