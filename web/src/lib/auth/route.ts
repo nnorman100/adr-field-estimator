@@ -67,11 +67,12 @@ export function memberRoute(
 export function requireFlag(
   flag: FlagName,
   handler: MemberHandler,
+  rule: RouteSessionRule = {},
   services: () => IdentityServices = identityServices,
 ): Handler {
   const name = parseFlagName(flag);
   return memberRoute((request, identity, context) => {
     if (identity.flags?.[name] !== true) return refusal('not_found', 404);
     return handler(request, identity, context);
-  }, services);
+  }, rule, services);
 }

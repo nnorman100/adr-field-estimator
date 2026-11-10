@@ -45,7 +45,8 @@ const verifier: TokenVerifier = {
   async verifyNotRevoked(idToken, tenant) {
     const found = await this.verify(idToken);
     if (found.tenant !== tenant) throw new IdentityRefusal('invalid_token');
-    return found;
+    // An authenticator-app sign-in a minute ago, so the owner and session rules (S3-8) pass.
+    return { ...found, authTime: Math.floor(Date.now() / 1000) - 60, secondFactor: 'totp' };
   },
 };
 
@@ -166,7 +167,7 @@ describe('requireFlag', () => {
 
   it('answers 404 without running the handler when the flag is off for the caller company', async () => {
     const handler = vi.fn(() => Response.json({ ok: true }));
-    const GET = requireFlag('price_books', handler, services);
+    const GET = requireFlag('price_books', handler, {}, services);
     const off = await GET(signedIn('tenant-b'), context);
     expect(off.status).toBe(404);
     expect(await off.json()).toEqual({ error: 'not_found' });
@@ -175,21 +176,21 @@ describe('requireFlag', () => {
   });
 
   it('runs the handler with the identity when the flag is on', async () => {
-    const GET = requireFlag('price_books', (_request, identity) => Response.json({ company: identity.companyId }), services);
+    const GET = requireFlag('price_books', (_request, identity) => Response.json({ company: identity.companyId }), {}, services);
     const on = await GET(signedIn('tenant-a'), context);
     expect(on.status).toBe(200);
     expect(await on.json()).toEqual({ company: A });
   });
 
   it('checks the sign-in first, so an unsigned caller gets 401, not 404', async () => {
-    const GET = requireFlag('price_books', () => Response.json({}), services);
+    const GET = requireFlag('price_books', () => Response.json({}), {}, services);
     const res = await GET(new Request('http://localhost/api/feature'), context);
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'missing_token' });
   });
 
   it('refuses an unknown flag when the route is defined', () => {
-    expect(() => requireFlag('not_a_flag' as FlagName, () => Response.json({}), services)).toThrow(FlagRefusal);
+    expect(() => requireFlag('not_a_flag' as FlagName, () => Response.json({}), {}, services)).toThrow(FlagRefusal);
   });
 });
 
