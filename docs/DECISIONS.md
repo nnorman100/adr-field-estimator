@@ -94,4 +94,3 @@ Reason: ChatGPT is unavailable for now. The pipeline reviewer is Grok 4.7 until 
 
 Status: accepted (owner, Nov 9, 2026; confirmed Nov 10, 2026). A decision, not an exception: it is now written into Technology Standard 2.2.
 Decision: for the pilot, a company's sign-in tenant is created by a command the owner or an operator runs, not by self-service sign-up. See the S3 plan (decision D4) in `docs/plans/S3.md`.
-
