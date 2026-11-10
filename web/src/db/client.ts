@@ -48,13 +48,14 @@ export function connectionOptions(config: AppConfig, accessToken = createTokenSo
   return { url: config.databaseUrl, options: common };
 }
 
-function connect(config: AppConfig) {
+function connect(config: AppConfig, max = common.max) {
   const { url, options } = connectionOptions(config);
-  return url === null ? postgres(options) : postgres(url, options);
+  const sized = { ...options, max };
+  return url === null ? postgres(sized) : postgres(url, sized);
 }
 
-export function openDatabase(env: Record<string, string | undefined>) {
-  const sql = connect(parseConfig(env));
+export function openDatabase(env: Record<string, string | undefined>, { max }: { max?: number } = {}) {
+  const sql = connect(parseConfig(env), max);
   return {
     db: drizzle(sql, { schema }),
     async close() {

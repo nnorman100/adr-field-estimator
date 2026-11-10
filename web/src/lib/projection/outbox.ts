@@ -109,6 +109,13 @@ async function decisionVersion(tx: CompanyTransaction): Promise<number> {
   return version;
 }
 
+const LOCK_NOT_AVAILABLE = '55P03';
+
+function lockTimedOut(error: unknown): boolean {
+  const found = error as { code?: string; cause?: { code?: string } } | null;
+  return (found?.code ?? found?.cause?.code) === LOCK_NOT_AVAILABLE;
+}
+
 // A fixed code for the outbox row; never the error's text, which can quote ids or credentials.
 function errorCode(error: unknown): string {
   if (error instanceof ProjectionError || error instanceof AccessStoreError) return error.code;
@@ -116,7 +123,8 @@ function errorCode(error: unknown): string {
 }
 
 // Brings one actor's record in line. `wait` false skips an actor another run holds (the request
-// path); true waits for it (the outbox run).
+// path); true waits for it (the outbox run), and reports it busy if it is still held after the lock
+// timeout, so one actor whose write is slow does not stop the rest of a run.
 export async function projectActor(
   db: Database,
   store: AccessStore,
@@ -179,7 +187,10 @@ export async function projectActor(
       return target.kind === 'grant' ? 'granted' : 'removed';
     });
   } catch (error) {
-    if (claimed.length === 0) throw error;
+    if (claimed.length === 0) {
+      if (lockTimedOut(error)) return 'busy';
+      throw error;
+    }
     // The rows stay waiting; the next run after the back-off tries again.
     const code = errorCode(error);
     console.error('access projection failed', code);
