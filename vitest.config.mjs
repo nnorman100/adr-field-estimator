@@ -7,6 +7,7 @@ export default defineConfig({
       'tests/test_ai_inventory.js',
       'tests/test_terraform_plan_check.js',
       'tests/test_terraform_plan_check_identity.js',
+      'tests/test_terraform_plan_check_migrate_job.js',
     ],
   },
 });

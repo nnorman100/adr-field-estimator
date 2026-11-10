@@ -96,3 +96,10 @@ output "cloud_run_service_names" {
     live = "dryscope-live-${local.env}"
   }
 }
+
+output "cloud_run_job_names" {
+  description = "Cloud Run jobs. The migration job runs numbered migrations as the migrator before a release moves traffic."
+  value = {
+    migrate = "dryscope-migrate-${local.env}"
+  }
+}

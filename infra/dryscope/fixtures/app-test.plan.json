@@ -1,6 +1,140 @@
 {
  "resource_changes": [
   {
+   "address": "google_cloud_run_v2_job.migrate",
+   "type": "google_cloud_run_v2_job",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "annotations": null,
+     "binary_authorization": [],
+     "client": null,
+     "client_version": null,
+     "deletion_protection": true,
+     "labels": {
+      "app": "dryscope",
+      "environment": "test",
+      "managed_by": "terraform"
+     },
+     "launch_stage": "GA",
+     "location": "us-central1",
+     "name": "dryscope-migrate-test",
+     "project": "dryscope",
+     "run_execution_token": null,
+     "start_execution_token": null,
+     "tags": null,
+     "template": [
+      {
+       "annotations": null,
+       "labels": null,
+       "parallelism": 1,
+       "task_count": 1,
+       "template": [
+        {
+         "containers": [
+          {
+           "args": [
+            "migrate.mjs"
+           ],
+           "command": [
+            "node"
+           ],
+           "depends_on": null,
+           "env": [
+            {
+             "name": "APP_ENV",
+             "value": "test",
+             "value_source": []
+            },
+            {
+             "name": "SQL_CONNECTION_NAME",
+             "value": "dryscope:us-central1:dryscope-test-pg",
+             "value_source": []
+            },
+            {
+             "name": "SQL_DATABASE_NAME",
+             "value": "dryscope",
+             "value_source": []
+            },
+            {
+             "name": "SQL_IAM_USER",
+             "value": "dryscope-migrate-test@dryscope.iam",
+             "value_source": []
+            }
+           ],
+           "image": "us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+           "name": null,
+           "ports": [],
+           "resources": [
+            {
+             "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+             }
+            }
+           ],
+           "startup_probe": [],
+           "volume_mounts": [
+            {
+             "mount_path": "/cloudsql",
+             "name": "cloudsql",
+             "sub_path": null
+            }
+           ],
+           "working_dir": null
+          }
+         ],
+         "encryption_key": null,
+         "gpu_zonal_redundancy_disabled": null,
+         "max_retries": 0,
+         "node_selector": [],
+         "service_account": "dryscope-migrate-test@dryscope.iam.gserviceaccount.com",
+         "timeout": "600s",
+         "volumes": [
+          {
+           "cloud_sql_instance": [
+            {
+             "instances": [
+              "dryscope:us-central1:dryscope-test-pg"
+             ]
+            }
+           ],
+           "empty_dir": [],
+           "gcs": [],
+           "name": "cloudsql",
+           "nfs": [],
+           "secret": []
+          }
+         ],
+         "vpc_access": []
+        }
+       ]
+      }
+     ],
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_cloud_run_v2_job_iam_member.deploy",
+   "type": "google_cloud_run_v2_job_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "location": "us-central1",
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "name": "dryscope-migrate-test",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeMigrateJobTest"
+    }
+   }
+  },
+  {
    "address": "google_cloud_run_v2_service.svc[\"api\"]",
    "type": "google_cloud_run_v2_service",
    "change": {
@@ -813,6 +947,32 @@
      "role_id": "dryscopeDeployTest",
      "stage": null,
      "title": "DryScope test deploy"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_custom_role.migrate_job",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "description": "Set the image of the DryScope test migration job, execute it and read its executions. No create, delete or overrides.",
+     "permissions": [
+      "run.executions.get",
+      "run.executions.list",
+      "run.jobs.get",
+      "run.jobs.run",
+      "run.jobs.update",
+      "run.operations.get",
+      "run.tasks.get",
+      "run.tasks.list"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeMigrateJobTest",
+     "stage": null,
+     "title": "DryScope test migration job"
     }
    }
   }

@@ -26,7 +26,14 @@ export type MigrationFile = {
 
 export const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), '../../migrations');
 
-export function redactDatabaseMessage(message: string, databaseUrl: string): string {
+// A database URL, or the Cloud SQL socket login the migration job uses (the password is a function
+// returning a short-lived access token, so it is never held in a setting).
+export type MigrationTarget =
+  | string
+  | { path: string; database: string; username: string; password: () => Promise<string> };
+
+export function redactDatabaseMessage(message: string, databaseUrl: string | null): string {
+  if (databaseUrl === null) return message.replace(/postgres(?:ql)?:\/\/\S+/gi, '[database]');
   let redacted = message.split(databaseUrl).join('[database]');
   try {
     const password = new URL(databaseUrl).password;
@@ -40,7 +47,7 @@ export function redactDatabaseMessage(message: string, databaseUrl: string): str
   return redacted.replace(/postgres(?:ql)?:\/\/\S+/gi, '[database]');
 }
 
-function asMigrationError(error: unknown, databaseUrl: string): MigrationError {
+function asMigrationError(error: unknown, databaseUrl: string | null): MigrationError {
   if (error instanceof MigrationError) return error;
   const message = error instanceof Error ? error.message : 'Unknown database error';
   return new MigrationError(redactDatabaseMessage(message, databaseUrl));
@@ -119,7 +126,7 @@ function assertHistory(files: MigrationFile[], applied: Map<string, string>): Mi
 async function applyNext(
   sql: postgres.Sql,
   files: MigrationFile[],
-  databaseUrl: string,
+  databaseUrl: string | null,
 ): Promise<string | null> {
   return sql.begin(async (tx) => {
     const [lock] = await tx<{ xid: string }[]>`
@@ -150,17 +157,19 @@ async function applyNext(
 // that was already applied stops the run before anything new is written. A file that ends the
 // runner's transaction itself fails and is not recorded.
 export async function applyMigrations(
-  databaseUrl: string,
+  target: MigrationTarget,
   directory: string,
 ): Promise<{ applied: string[] }> {
   const files = await readMigrations(directory);
-  const sql = postgres(databaseUrl, {
+  const options = {
     max: 1,
     connect_timeout: 10,
     query_timeout: 30,
     onnotice: () => {},
     connection: { application_name: 'dryscope-migrate' },
-  });
+  };
+  const databaseUrl = typeof target === 'string' ? target : null;
+  const sql = typeof target === 'string' ? postgres(target, options) : postgres({ ...options, ...target });
   try {
     const applied: string[] = [];
     for (;;) {

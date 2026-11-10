@@ -762,6 +762,21 @@
    }
   },
   {
+   "address": "google_service_account_iam_member.deploy_acts_as[\"migrate\"]",
+   "type": "google_service_account_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "role": "roles/iam.serviceAccountUser",
+     "service_account_id": "projects/dryscope/serviceAccounts/dryscope-migrate-test@dryscope.iam.gserviceaccount.com"
+    }
+   }
+  },
+  {
    "address": "google_sql_database.app",
    "type": "google_sql_database",
    "change": {

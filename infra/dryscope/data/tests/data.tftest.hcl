@@ -179,8 +179,8 @@ run "only_reviewed_roles_are_granted" {
     error_message = "Project-level grants are limited to SQL connect and login, Firestore user and the predict-only Gemini caller role."
   }
   assert {
-    condition     = length(google_service_account_iam_member.deploy_acts_as) == 2 && alltrue([for m in google_service_account_iam_member.deploy_acts_as : m.role == "roles/iam.serviceAccountUser"])
-    error_message = "The deploy account may only act as the two service runtime accounts."
+    condition     = toset(keys(google_service_account_iam_member.deploy_acts_as)) == toset(["api", "live", "migrate"]) && alltrue([for k, m in google_service_account_iam_member.deploy_acts_as : m.role == "roles/iam.serviceAccountUser" && m.member == "serviceAccount:dryscope-deploy-${var.environment}@dryscope.iam.gserviceaccount.com" && m.service_account_id == "projects/dryscope/serviceAccounts/dryscope-${k}-${var.environment}@dryscope.iam.gserviceaccount.com"])
+    error_message = "The deploy account may only act as the two service runtime accounts and the migrator (which the migration job runs as), in its own environment."
   }
   assert {
     condition     = google_artifact_registry_repository_iam_member.deploy_write.role == "roles/artifactregistry.writer" && google_artifact_registry_repository.images.docker_config[0].immutable_tags == true
