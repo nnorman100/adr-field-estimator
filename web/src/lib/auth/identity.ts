@@ -188,7 +188,7 @@ export async function resolveAccount(
   const email = typeof token.email === 'string' ? token.email.trim().toLowerCase() : '';
   // A verified token with no email cannot be matched to an invitation.
   if (email === '') throw new IdentityRefusal('email_unverified');
-  const name = typeof token.name === 'string' && token.name.trim() !== '' ? token.name.trim().slice(0, 200) : null;
+  const name = typeof token.name === 'string' ? Array.from(token.name.trim()).slice(0, 200).join('').trim() || null : null;
   return {
     companyId,
     companyName: record.company.name,

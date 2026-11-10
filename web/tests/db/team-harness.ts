@@ -117,6 +117,7 @@ export type FakeClaims = {
   tenant: string | null;
   uid: string;
   email?: string;
+  name?: string;
   verified?: boolean;
   revoked?: boolean;
   // Seconds before now that the person signed in; a minute by default.
@@ -144,7 +145,7 @@ export function fakeVerifier(): TokenVerifier {
         // An authenticator app by default, so an owner meets the session rules.
         secondFactor: claims.secondFactor === undefined ? 'totp' : claims.secondFactor,
         email: claims.email ?? `${claims.uid}@example.test`,
-        name: null,
+        name: claims.name ?? null,
       };
     },
   };

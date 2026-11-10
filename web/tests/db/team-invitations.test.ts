@@ -184,6 +184,16 @@ describe('reading and accepting', () => {
     expect(((await whoAmI.json()) as { role: string }).role).toBe('estimator');
   });
 
+  it.each([
+    ['a space where the 200-character cut falls', `N${' '.repeat(198)} X`, 'N'],
+    ['an emoji across the 200-character cut', `${'N'.repeat(199)}😀X`, `${'N'.repeat(199)}😀`],
+    ['nothing but spaces', '   ', null],
+  ])('accepts an account whose name has %s, storing a name the actors table allows', async (_case, name, stored) => {
+    const { invitation } = await invited();
+    expect((await acceptAs({ ...invitee(), name }, invitation.id)).status).toBe(201);
+    expect(await h.admin`SELECT display_name FROM actors WHERE uid = 'new-person'`).toEqual([{ display_name: stored }]);
+  });
+
   it('makes one membership when two first acceptances race on two connections', async () => {
     const { invitation } = await invited();
     // The app holds one connection, so two requests never truly overlap there; two handles do.
