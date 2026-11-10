@@ -175,9 +175,26 @@ membership change). Rows that refer to another company row carry `company_id` in
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
 another company. `actors.email`, `actors.display_name` and `invitations.email` are personal data.
 Emails are stored lowercase and tenant ids, uids, emails and display names without surrounding
-spaces, so one person is one stored key. Nothing writes these tables yet, and they have no
-row-level security yet; the runtime role and row-level security come in `0003`. Prices and signed
+spaces, so one person is one stored key. Nothing writes these tables yet. Prices and signed
 documents are later work.
+
+`0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
+`BYPASSRLS` and no ownership, and grants it to the environment's API database user
+(`dryscope-api-<env>@dryscope.iam`) by inheritance only, so that user cannot `SET ROLE`; where no
+such user exists (CI) it grants nothing, and it refuses an API user that is a superuser or bypasses
+row-level security. Every table has row-level security enabled and forced, with a policy. The
+runtime sees and changes a company's rows only inside `withCompany` (`web/src/db/tenant.ts`), which
+sets `app.company_id` for one transaction; outside it, including the `''` a pooled connection keeps
+after such a transaction, every policy matches nothing. Inside it the runtime reads its company,
+the company's sign-in tenant and its feature flags; reads, inserts and updates its actors,
+memberships, invitations and outbox rows; and reads and appends audit events, never updating or
+deleting them. The runtime has no `DELETE` or `TRUNCATE` anywhere, no right on `migration_ledger`,
+and sees no platform operator. Sign-in lookup by tenant before a company is known, platform
+operator access across companies and the outbox worker have no database context yet; each needs a
+later migration. Forced row-level security binds the migrator too: only `migration_ledger` has a
+policy for its owner, so a migration that must change rows turns `FORCE` off and back on inside its
+own transaction (the guard test in `web/tests/db/row-level-security.test.ts` fails a table left
+without forced row-level security or a policy).
 
 Migrations are additive. Change the schema by add, then switch, then remove:
 

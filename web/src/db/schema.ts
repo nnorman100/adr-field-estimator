@@ -16,7 +16,8 @@ import {
 } from 'drizzle-orm/pg-core';
 
 // Typed view of web/migrations. The SQL files are what the ledger applies and hold every check;
-// this module only reads and writes those tables. Row-level security is a later migration.
+// this module only reads and writes those tables. Row-level security (0003) means the app's runtime
+// role sees a company's rows only inside withCompany (./tenant.ts).
 
 const createdAt = () => timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow();
