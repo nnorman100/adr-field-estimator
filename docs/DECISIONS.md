@@ -18,6 +18,8 @@ Status: accepted. Prices come from the company's estimating workbook, calculated
 
 Status: accepted. The Next.js `nnorman100/Dryscope` repo is only a feature source, rebuilt here in this repo's style. No repo rename or domain. Firebase project stays `alert-disaster-field-2026`.
 
+Superseded for the rebuild (Nov 9, 2026, owner): the TypeScript rebuild lives in project `dryscope` (see D-006 and D-012); the current app stays in `alert-disaster-field-2026`.
+
 ### D-003: Static frontend, no build step
 
 Status: accepted. Same-origin vendored dependencies; browser never loads Google scripts (maps go through the backend).
@@ -52,6 +54,8 @@ Status: accepted (owner). Overrides the roadmap's earlier rule that agents may m
 
 Superseded (Nov 6, 2026, owner, per the rebuild plan's settled "test-to-live deployment and ordinary automatic reviewed merges"): pull requests merge automatically once every check passes and the review is done, with two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work; deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs.
 
+Reinstated (Nov 9, 2026, owner): see D-012. The Nov 6 supersession no longer applies; agents ask before merging any PR.
+
 ### D-010: No default prices; ADR's rates are ADR's alone (Nov 2, 2026)
 
 Status: accepted (owner). ADR's estimating sheet is proprietary to ADR, so it is not a product default. A company without published prices is blocked from pricing with a clear message. ADR's rates are kept as ADR's data and used only for company `adr`, and no rate ships in browser code. Later steps of the owner-pricing plan add owner-defined tables; formulas and `CALCULATION_VERSION` are unchanged here.
@@ -59,3 +63,12 @@ Status: accepted (owner). ADR's estimating sheet is proprietary to ADR, so it is
 ### D-011: Owner-defined pricing tables; ADR stays on v1 until the owner switches (Nov 3, 2026)
 
 Status: accepted (owner). Every company prices from its own table of items and estimate settings (`dryscope-v2`). A new company starts from the blank starter list; no company but ADR ever sees ADR's rates. A company already on a rate book, ADR included, stays on `adr-residential-v1` until its owner chooses **Switch to v2**, reviews the mapped table and publishes it. There is no way back after publishing. A draft begun before the switch keeps its rate book until the owner applies the new table to that one draft, and signed documents never change. The switch names its three differences for the same job: the high end tapers above 1,000 sq ft instead of stepping, labor hours carry 50% at every size, and the after-hours 20% prints as a line inside the itemized total. `PRICE_BOOKS_ENABLED` is the only flag; turning it on in production is a separate release with the owner's word.
+
+### D-012: Owner approves every merge; clean start in project dryscope (Nov 9, 2026)
+
+Status: accepted (owner). Standing decisions recorded together:
+
+- The owner kept D-009. The owner approves every merge and there is no automatic merging; the Nov 6 supersession of D-009 no longer applies. Agents ask before merging any PR.
+- The rebuild is a clean start in project `dryscope` with no data migration from `alert-disaster-field-2026` (D-006, Nov 9 note).
+- Test environment only for now.
+- Live voice is the default capture method.
