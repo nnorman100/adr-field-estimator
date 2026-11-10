@@ -71,3 +71,38 @@ print(json.dumps([access.status_code, access.json().get('company_id')]))
     )
     assert served.returncode == 0, served.stderr
     assert json.loads(served.stdout.splitlines()[-1]) == [200, 'adr']
+
+
+def test_a_session_read_keeps_its_store_when_workspaces_switch_off_mid_request():
+    """The switch can land while /api/session waits on its first company lookup."""
+    served = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            """
+import json
+from fastapi.testclient import TestClient
+from tests import browser_server as server
+
+owner = {'Authorization': 'Bearer test-owner-ws-owner'}
+with TestClient(server.bm.app, base_url='https://localhost:8765') as client:
+    client.post('/__test/workspaces', json={'enabled': True})
+    workspaces = server.store.workspaces
+    looked_up = workspaces.principal
+
+    def then_switched_off(uid):
+        actor = looked_up(uid)
+        server.store, server.bm.WORKSPACES_ENABLED = server.legacy_store, False
+        return actor
+
+    workspaces.principal = then_switched_off
+    session = client.get('/api/session', headers=owner)
+print(json.dumps([session.status_code, session.json().get('company_id')]))
+""",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert served.returncode == 0, served.stderr
+    assert json.loads(served.stdout.splitlines()[-1]) == [200, 'adr']
