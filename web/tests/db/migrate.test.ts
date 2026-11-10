@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',

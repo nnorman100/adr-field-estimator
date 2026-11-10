@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
-import { publicApiPaths } from '@/lib/public-api';
+import { memberApiPaths, publicApiPaths } from '@/lib/public-api';
 import { config, proxy } from '@/proxy';
 
 const call = (path: string, method = 'GET') =>
@@ -13,6 +13,12 @@ describe('API sign-in gate', () => {
 
   it('keeps the public list to the two routes that hold nothing private', () => {
     expect([...publicApiPaths].sort()).toEqual(['/api/echo', '/api/health']);
+  });
+
+  it('passes only /api/me on to its own sign-in check', () => {
+    expect([...memberApiPaths]).toEqual(['/api/me']);
+    expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
+    expect(call('/api/me/extra').status).toBe(401);
   });
 
   it.each([['/api/health'], ['/api/echo']])('lets %s through', (path) => {

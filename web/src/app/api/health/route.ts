@@ -1,4 +1,5 @@
 import { checkDatabase } from '@/db/client';
+import { publicRoute } from '@/lib/auth';
 import { parseConfig } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic';
 // image also reports its commit, so the release smoke check can prove which code a revision runs.
 // When a database is configured it must answer this service's login: then health reports
 // database ok, and a revision that cannot reach Postgres answers 503 instead.
-export async function GET() {
+export const GET = publicRoute(async () => {
   const config = parseConfig(process.env);
   const identity = config.commit ? { env: config.appEnv, commit: config.commit } : { env: config.appEnv };
   if (!config.cloudSql && !config.databaseUrl) return Response.json({ status: 'ok', ...identity });
@@ -22,4 +23,4 @@ export async function GET() {
     );
   }
   return Response.json({ status: 'ok', ...identity, database: 'ok' });
-}
+});
