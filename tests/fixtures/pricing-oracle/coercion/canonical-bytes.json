@@ -1,0 +1,43 @@
+{
+  "id": "canonical-bytes",
+  "model": "canonical",
+  "path": [
+    "value"
+  ],
+  "probes": [
+    {"accepted": true, "input": "Wet\u007f wall", "value": "\"Wet\\u007f wall\""},
+    {"accepted": true, "input": "\u007f", "value": "\"\\u007f\""},
+    {"accepted": true, "input": "~", "value": "\"~\""},
+    {"accepted": true, "input": " ", "value": "\" \""},
+    {"accepted": true, "input": "\u0000", "value": "\"\\u0000\""},
+    {"accepted": true, "input": "\u001f", "value": "\"\\u001f\""},
+    {"accepted": true, "input": "\u0080", "value": "\"\\u0080\""},
+    {"accepted": true, "input": "\u2028", "value": "\"\\u2028\""},
+    {"accepted": true, "input": "\ud83d\udca7", "value": "\"\\ud83d\\udca7\""},
+    {"accepted": true, "input": "\"\\/", "value": "\"\\\"\\\\/\""},
+    {"accepted": true, "input": 0.5960464477539062, "value": "0.5960464477539062"},
+    {"accepted": true, "input": 5.960464477539063e-08, "value": "5.960464477539063e-08"},
+    {"accepted": true, "input": 0.30000000000000004, "value": "0.30000000000000004"},
+    {"accepted": true, "input": 1e-05, "value": "1e-05"},
+    {"accepted": true, "input": 0.0001, "value": "0.0001"},
+    {"accepted": true, "input": 1e+16, "value": "1e+16"},
+    {"accepted": true, "input": 1000000000000000.0, "value": "1000000000000000.0"},
+    {"accepted": true, "input": 1e+21, "value": "1e+21"},
+    {"accepted": true, "input": 1e+22, "value": "1e+22"},
+    {"accepted": true, "input": 1.5e-07, "value": "1.5e-07"},
+    {"accepted": true, "input": 5e-324, "value": "5e-324"},
+    {"accepted": true, "input": 1.7976931348623157e+308, "value": "1.7976931348623157e+308"},
+    {"accepted": true, "input": 1.2345678901234568e+17, "value": "1.2345678901234568e+17"},
+    {"accepted": true, "input": 2.5, "value": "2.5"},
+    {"accepted": true, "input": -0.0, "value": "-0.0"},
+    {"accepted": true, "input": 0.0, "value": "0.0"},
+    {"accepted": true, "input": 9007199254740993, "value": "9007199254740993"},
+    {"accepted": true, "input": {"~": 2, "\u007f": 1, "\u0080": 3}, "value": "{\"~\":2,\"\\u007f\":1,\"\\u0080\":3}"},
+    {"accepted": true, "input": ["\u007f", 0.5960464477539062], "value": "[\"\\u007f\",0.5960464477539062]"},
+    {"accepted": true, "input": true, "value": "true"},
+    {"accepted": true, "input": null, "value": "null"}
+  ],
+  "template": {
+    "value": null
+  }
+}

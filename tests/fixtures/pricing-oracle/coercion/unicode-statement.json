@@ -1,0 +1,38 @@
+{
+  "id": "unicode-statement",
+  "model": "statement",
+  "path": [
+    "text"
+  ],
+  "probes": [
+    {"accepted": true, "input": "Okay. Water under sink.", "value": "Water under sink."},
+    {"accepted": true, "input": "OKAY!", "value": ""},
+    {"accepted": true, "input": "o\u212a.", "value": ""},
+    {"accepted": true, "input": "\u017fure.", "value": "\u017fure."},
+    {"accepted": true, "input": "H\u0131.", "value": "H\u0131."},
+    {"accepted": true, "input": "H\u0130.", "value": ""},
+    {"accepted": true, "input": "Hi\u0345.", "value": "Hi\u0345."},
+    {"accepted": true, "input": "Thanks\u2028Moisture high.", "value": "Moisture high."},
+    {"accepted": true, "input": "Hello\u000bWet drywall.", "value": "Wet drywall."},
+    {"accepted": true, "input": "\ufb01ne.", "value": "\ufb01ne."},
+    {"accepted": true, "input": "Great. Great.", "value": ""},
+    {"accepted": true, "input": "  Hello  ", "value": ""},
+    {"accepted": true, "input": "Good morning.\u00a0Wet.", "value": "Wet."},
+    {"accepted": true, "input": "Good morning.\u3000Wet.", "value": "Wet."},
+    {"accepted": true, "input": "Good morning.\ufeffWet.", "value": "Good morning.\ufeffWet."},
+    {"accepted": true, "input": "Bye\u001cWet.", "value": "Wet."},
+    {"accepted": true, "input": "Thank you very much. Wet\u0085Dry.", "value": "Wet\nDry."},
+    {"accepted": true, "input": "ok\u00a0ok", "value": ""},
+    {"accepted": true, "input": "ok\u2003ok.", "value": ""},
+    {"accepted": true, "input": "Um, uh. Wet.", "value": "Wet."},
+    {"accepted": true, "input": "\u1e96mm.", "value": "\u1e96mm."},
+    {"accepted": true, "input": "Gr\u00e9at.", "value": "Gr\u00e9at."},
+    {"accepted": true, "input": "GREAT\u0301.", "value": ""},
+    {"accepted": true, "input": "can I add a photo", "value": ""},
+    {"accepted": true, "input": "Can I add a ph\u00f6to?", "value": "Can I add a ph\u00f6to?"},
+    {"accepted": true, "input": "Stra\u00dfe.", "value": "Stra\u00dfe."}
+  ],
+  "template": {
+    "text": ""
+  }
+}

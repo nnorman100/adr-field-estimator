@@ -13,6 +13,19 @@ unexplained differences before it prices any live estimate. Nothing here is cust
   backend commit and tree that produced the answers, and the Python version, dependency lock hash
   (`backend/requirements.txt`), pydantic versions and decimal context used.
 
+- `coercion/<target>.json`: scalar coercion probes. Each file names a reference `model`, a valid
+  `template`, the `path` of one field and a list of `probes`: a tricky JSON value set into that
+  field (numbers, numeric and boolean strings, decimals with exponents or trailing zeros, dates,
+  Unicode text and whitespace), whether the Python model accepted it (pydantic lax mode, as the
+  backend reads it) and the value it dumped at the path. A port must accept and reject the same
+  values and dump the same value. `canonical-bytes.json` instead records the exact canonical text
+  (`json.dumps` with sorted keys) of tricky strings, keys and floats, such as U+007F and
+  shortest-float ties, and `canonical-json-text.json` the canonical text of JSON source text read
+  back (exponent spellings, integers above 2^53 and out-of-range floats), and
+  `json-text-grammar.json` which JSON texts `json.loads` accepts or refuses (leading zeros, bare
+  fractions and exponents, whitespace, escapes, control characters and the integer digit limit).
+  They are built by `scripts/pricing_oracle_coercion.py` and are not listed in `manifest.json`.
+
 The existing `tests/golden/v1-documents.json` is separate and unchanged.
 
 ### Input
@@ -66,7 +79,9 @@ clock. Every case runs under the `C` locale; the code reads no locale (dates pri
 manifest's `frozen` block records all of these.
 
 Files are ASCII JSON with sorted keys; containers four levels down print on one line so each file
-stays under 1,000 lines. A reader parses them; the layout is not part of the contract. The
+stays under 1,000 lines. A reader parses them; the layout is not part of the contract, but a port
+compares its canonical output to the stored text of each expected value with only the whitespace
+outside strings removed, never to a re-serialization of the parsed value. The
 contract for the canonical proposal is the decoded bytes of `canonical_bytes_base64`, compared
 exactly: never parse and re-serialize them, and never normalize two outputs through one new
 serializer before comparing.
@@ -75,7 +90,8 @@ serializer before comparing.
 
 `python -m pytest tests/test_pricing_oracle.py -q -p no:cacheprovider` re-runs every stored input
 through the current code and fails on the first differing byte, naming the JSON path. The same
-check runs as `python scripts/pricing_oracle.py --check`. A failure means the code changed what
+check runs as `python scripts/pricing_oracle.py --check`, which also rebuilds every `coercion/`
+file and reports any missing, unexpected or differing one. A failure means the code changed what
 it produces for a pinned input: fix the code. The environment fields in `manifest.json` are
 provenance; the check compares answers, not interpreter versions.
 
@@ -90,7 +106,8 @@ python scripts/pricing_oracle.py --write
 ```
 
 The corpus is built by `scripts/pricing_oracle_cases.py` and `scripts/pricing_oracle_cases_v2.py`
-(named boundaries plus seeded jobs with fixed seeds). The generator refuses to write while
+(named boundaries plus seeded jobs with fixed seeds); the coercion probes by
+`scripts/pricing_oracle_coercion.py`. The generator refuses to write while
 `backend/` has uncommitted changes, and records the backend commit and tree it ran on.
 
 **A new candidate must never regenerate its own answers.** A port or rewrite reads each `input`,
