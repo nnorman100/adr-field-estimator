@@ -317,6 +317,19 @@ const same = (want, got) =>
     : JSON.stringify(want) === JSON.stringify(got);
 const empty = (v) => v == null || (Array.isArray(v) && v.length === 0);
 
+// Against existing state the provider returns some IAM member fields as full resource paths
+// instead of the short names a fresh plan holds. Each is accepted only when it resolves to
+// exactly the expected name in PROJECT (and REGION for a repository); any other project,
+// location or name still fails the comparison.
+const FULL_PATHS = {
+  bucket: (name) => `b/${name}`,
+  secret_id: (name) => `projects/${PROJECT}/secrets/${name}`,
+  repository: (name) => `projects/${PROJECT}/locations/${REGION}/repositories/${name}`,
+};
+const sameField = (field, want, got) =>
+  same(want, got) ||
+  (typeof want === 'string' && FULL_PATHS[field] !== undefined && got === FULL_PATHS[field](want));
+
 /** Returns a list of problems; an empty list means the plan matches the table. */
 function checkPlan(resourceChanges, { root, environment, complete = true }) {
   const problems = [];
@@ -397,7 +410,7 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
             `${address}: condition is ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`,
           );
         }
-      } else if (!same(expected, after[field])) {
+      } else if (!sameField(field, expected, after[field])) {
         problems.push(
           `${address}: ${field} is ${JSON.stringify(after[field])}, expected ${expected}`,
         );
