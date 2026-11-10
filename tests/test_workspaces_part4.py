@@ -710,18 +710,23 @@ def test_owner_login_firebase_writes_neither_retry_nor_outlast_their_bound(
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     hits = []
+    # The stalled reply waits until the test is over, then the server is closed and its thread joined.
+    released = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             hits.append(self.path)
-            time.sleep(delay)
+            released.wait(delay)
             body = b'{}'
-            self.send_response(status)
-            self.send_header('Retry-After', '3600')
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header('Retry-After', '3600')
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # The client gave up on the stalled reply, as it should.
 
         def log_message(self, *args):
             pass
@@ -733,6 +738,7 @@ def test_owner_login_firebase_writes_neither_retry_nor_outlast_their_bound(
             pass
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    server.daemon_threads = False  # server_close() then waits for each request thread.
     threading.Thread(target=server.serve_forever, daemon=True).start()
     monkeypatch.setenv('FIREBASE_AUTH_EMULATOR_HOST', '127.0.0.1:%d' % server.server_port)
     monkeypatch.setattr(workspaces, 'LOGIN_HTTP_SECONDS', 0.5)
@@ -746,6 +752,7 @@ def test_owner_login_firebase_writes_neither_retry_nor_outlast_their_bound(
         assert time.monotonic() - started < 2.5
         assert len(hits) == 1
     finally:
+        released.set()
         server.shutdown()
         server.server_close()
         forget_app()

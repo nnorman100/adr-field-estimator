@@ -1,7 +1,7 @@
 """Structured Cloud Logging lines for provider calls and Live sessions carry no customer content."""
 
 from tests.fakes import genai_models
-import asyncio, json, time
+import asyncio, json, threading, time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace as NS
 import pytest
@@ -187,9 +187,22 @@ def test_creation_logs_fields_set_from_empty_default_never_values(context, capsy
     assert '7' not in json.dumps({k: v for k, v in created.items() if k != 'inspection_id'})
 
 
-def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch, capsys):
+@pytest.mark.parametrize('recording', ['prompt', 'held'])
+def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch, capsys, recording):
+    """'held' keeps the spending record of the transcript's message running until the session has
+    ended, as a busy machine can when End follows the transcript at once; the end line still has its
+    usage."""
     store = FakeStore()
     store.create_inspection('owner', ID, InspectionData().model_dump())
+    released = threading.Event()
+    if recording == 'held':
+        observe = bm.LiveSpending.observe
+
+        def held(self, usage):
+            released.wait(10)
+            return observe(self, usage)
+
+        monkeypatch.setattr(bm.LiveSpending, 'observe', held)
 
     class Session:
         def __init__(self):
@@ -231,29 +244,32 @@ def test_live_session_end_logs_duration_outcome_and_usage(monkeypatch, capsys):
     monkeypatch.setattr(
         bm.genai, 'Client', lambda **kw: NS(aio=NS(live=NS(connect=connect), aclose=close))
     )
-    with (
-        TestClient(bm.app) as client,
-        client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
-    ):
-        socket.send_json(
-            dict(
-                type='authenticate',
-                token='secret-id-token',
-                inspection_id=ID,
-                protocol_version=2,
-                capture_id='e' * 32,
+    try:
+        with (
+            TestClient(bm.app) as client,
+            client.websocket_connect('/api/live', headers={'origin': bm.ORIGINS[0]}) as socket,
+        ):
+            socket.send_json(
+                dict(
+                    type='authenticate',
+                    token='secret-id-token',
+                    inspection_id=ID,
+                    protocol_version=2,
+                    capture_id='e' * 32,
+                )
             )
-        )
-        assert socket.receive_json()['type'] == 'ready'
-        socket.send_json({'type': 'audio', 'data': 'AAAAAA=='})
-        while socket.receive_json()['type'] != 'transcript':
-            pass
-        socket.send_json({'type': 'end'})
-        while socket.receive_json()['type'] != 'finished':
-            pass
-        with pytest.raises(WebSocketDisconnect):
-            while True:
-                socket.receive_json()
+            assert socket.receive_json()['type'] == 'ready'
+            socket.send_json({'type': 'audio', 'data': 'AAAAAA=='})
+            while socket.receive_json()['type'] != 'transcript':
+                pass
+            socket.send_json({'type': 'end'})
+            while socket.receive_json()['type'] != 'finished':
+                pass
+            with pytest.raises(WebSocketDisconnect):
+                while True:
+                    socket.receive_json()
+    finally:
+        released.set()
     output = capsys.readouterr().out
     [entry] = [
         json.loads(line)

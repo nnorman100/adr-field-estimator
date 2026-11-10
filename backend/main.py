@@ -2606,6 +2606,8 @@ async def live_walkthrough(socket: WebSocket):
                 nonlocal sequence, pending, outcome, total_tokens
                 while True:
                     async for response in session.receive():
+                        if usage := getattr(response, 'usage_metadata', None):  # before any await
+                            total_tokens = getattr(usage, 'total_token_count', None) or total_tokens
                         update = getattr(response, 'session_resumption_update', None)
                         if update and capture:
                             await stored(
@@ -2619,7 +2621,6 @@ async def live_walkthrough(socket: WebSocket):
                                 getattr(update, 'new_handle', None),
                                 bool(getattr(update, 'resumable', False)),
                             )
-                        usage = getattr(response, 'usage_metadata', None)
                         away = getattr(response, 'go_away', None)
                         content = getattr(response, 'server_content', None)
                         if content:
@@ -2685,7 +2686,6 @@ async def live_walkthrough(socket: WebSocket):
                         # Deliver this message's audio before any spending transaction.
                         if usage:
                             await stored(live_spending.observe, usage)
-                            total_tokens = getattr(usage, 'total_token_count', None) or total_tokens
                             if protocol == 2:
                                 await socket.send_json(
                                     {'type': 'usage', 'total_tokens': total_tokens}

@@ -96,8 +96,16 @@ async def identity(request: Request):
     }
 
 
-bm.app.dependency_overrides[bm.current_identity] = identity
-bm.app.dependency_overrides[bm.account_identity] = identity
+async def workspace_identity(request: Request):
+    # Production's account_identity, which current_identity calls, refuses before any lookup while
+    # workspaces are off. An afterEach switches them off while the spec's page can still send.
+    if not bm.WORKSPACES_ENABLED:
+        raise HTTPException(503, 'Company dashboards are not enabled yet.')
+    return await identity(request)
+
+
+bm.app.dependency_overrides[bm.current_identity] = workspace_identity
+bm.app.dependency_overrides[bm.account_identity] = workspace_identity
 bm.app.dependency_overrides[bm.current_staff] = identity
 bm.app.dependency_overrides[bm.get_job_store] = lambda: store
 bm.get_job_store = lambda: store

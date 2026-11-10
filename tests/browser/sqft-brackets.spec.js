@@ -142,15 +142,32 @@ test('an owner can save and reload blank price brackets before entering prices',
 }) => {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  // WebKit reports a sample request cut off by the reload as a page error, so the reload waits
+  // for the sample the new brackets ask for and until none is in flight.
+  let sampling = 0;
+  const isSample = (sent) => sent.url().endsWith('/prices/calculate');
+  page.on('request', (sent) => isSample(sent) && sampling++);
+  page.on('requestfinished', (sent) => isSample(sent) && sampling--);
+  page.on('requestfailed', (sent) => isSample(sent) && sampling--);
   await start(page);
   const item = page.locator('[data-price-item=demo_cat1_wall]');
   await item.locator('[name=price_demo_cat1_wall]').fill('');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
+  const bracketSample = page.waitForResponse(
+    (answer) =>
+      isSample(answer.request()) &&
+      answer
+        .request()
+        .postDataJSON()
+        .items.some((sent) => sent.item_id === 'demo_cat1_wall' && sent.price_brackets?.length),
+  );
   await item.getByRole('button', { name: 'Add price brackets', exact: true }).click();
   await expect(item.locator('[name=price_brackets_value_0]')).toHaveValue('');
   await expect(item.locator('[name=price_brackets_value_1]')).toHaveValue('');
   await expect(page.locator('#priceSaveStatus')).toContainText('Saved');
   await expect(page.locator('#priceProblems')).toContainText('1 item needs a price');
+  await bracketSample;
+  await expect.poll(() => sampling).toBe(0);
   await start(page);
   await expect(item.locator('[name=price_brackets_value_0]')).toHaveValue('');
   await expect(item.locator('[name=price_brackets_value_1]')).toHaveValue('');
