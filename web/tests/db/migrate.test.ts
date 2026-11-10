@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -274,7 +274,8 @@ describe('numbered migration ledger', () => {
     const role = `dryscope_cli_${randomBytes(8).toString('hex')}`;
     const password = `secret-${randomBytes(16).toString('hex')}`;
     await withSql(async (sql) => {
-      await sql.unsafe(`CREATE ROLE "${role}" LOGIN PASSWORD '${password}'`);
+      // Like the real migrator: CREATEROLE so 0003 can create the runtime role, nothing more.
+      await sql.unsafe(`CREATE ROLE "${role}" LOGIN CREATEROLE PASSWORD '${password}'`);
       await sql.unsafe(`GRANT ALL ON DATABASE "${disposable.databaseName}" TO "${role}"`);
       await sql.unsafe(`GRANT ALL ON SCHEMA public TO "${role}"`);
     });
