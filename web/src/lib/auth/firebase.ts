@@ -72,7 +72,7 @@ function verified(decoded: DecodedIdToken): VerifiedToken {
 
 // The SDK does not check `auth_time` (it only compares it with a revocation time), so its type is
 // checked here and its value by the session rules (policy.ts). `sign_in_second_factor` is present
-// only when the sign-in used a second factor.
+// only when the sign-in used a second factor. The email and name are read for invitations only.
 function withSession(decoded: DecodedIdToken): SessionToken {
   const authTime: unknown = decoded.auth_time;
   const secondFactor: unknown = decoded.firebase?.sign_in_second_factor;
@@ -80,10 +80,12 @@ function withSession(decoded: DecodedIdToken): SessionToken {
     ...verified(decoded),
     authTime: typeof authTime === 'number' ? authTime : null,
     secondFactor: typeof secondFactor === 'string' ? secondFactor : null,
+    email: typeof decoded.email === 'string' ? decoded.email : null,
+    name: typeof decoded.name === 'string' ? decoded.name : null,
   };
 }
 
-function firebaseApp(config: IdentityConfig): App {
+export function firebaseApp(config: IdentityConfig): App {
   // firebase-admin reads FIREBASE_AUTH_EMULATOR_HOST from the process itself, so the checked
   // config must agree with what the SDK will see.
   if ((process.env.FIREBASE_AUTH_EMULATOR_HOST ?? null) !== config.authEmulatorHost) {

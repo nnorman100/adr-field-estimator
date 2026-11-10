@@ -179,8 +179,11 @@ membership change). Rows that refer to another company row carry `company_id` in
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
 another company. `actors.email`, `actors.display_name` and `invitations.email` are personal data.
 Emails are stored lowercase and tenant ids, uids, emails and display names without surrounding
-spaces, so one person is one stored key. Nothing writes these tables yet. Prices and signed
-documents are later work.
+spaces, so one person is one stored key. The team and invitation routes (S3-10,
+`web/src/lib/team/`) write actors, memberships, invitations, audit events and outbox rows, always
+inside `withCompany`; an invitation's record, with its email, stays after it is accepted,
+cancelled or cleared ("clear" only hides it from the team list); nothing in `web/` deletes it yet.
+Nothing else writes these tables yet. Prices and signed documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
 `BYPASSRLS` and no ownership, and grants it to the environment's API database user
