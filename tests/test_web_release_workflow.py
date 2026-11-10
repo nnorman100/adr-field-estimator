@@ -257,6 +257,7 @@ def test_release_runs_only_after_web_app_passes_on_master(release):
         (workflow_run(head_repository={'full_name': 'fork/repo'}), False),
         (dispatch('refs/heads/feature'), False),
         ({'github': {'event_name': 'push', 'ref': 'refs/heads/master'}}, False),
+        ({'github': {**workflow_run()['github'], 'event_name': 'push'}}, False),
     ],
 )
 def test_gate_admits_only_a_passing_master_push_or_a_manual_master_run(release, context, runs):

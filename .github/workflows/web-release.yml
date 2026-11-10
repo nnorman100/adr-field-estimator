@@ -36,6 +36,7 @@ jobs:
     # Only a successful push run of Web app on master in this repository, or a manual run on master.
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (
+        github.event_name == 'workflow_run' &&
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'master' &&
