@@ -1,6 +1,6 @@
 # Destination data ownership and submission
 
-This is the accepted rebuild target, not a description of the current deployment or authority to migrate it. The current Python app uses private Firestore records and a private evidence bucket; see [the legacy inventory](legacy-data-inventory.md). Test and live resources are separate within the dedicated project `alert-disaster-field-2026`: the owner superseded D-006's separate test project ("build everything in these two"), so all test and lab resources stay inside it. Each fact has one authoritative owner; a projection, cache or acknowledgement cannot acquire write authority.
+This is the accepted rebuild target, not a description of the current deployment. The current Python app uses private Firestore records and a private evidence bucket; see [the legacy inventory](legacy-data-inventory.md). The rebuild is a clean start in the dedicated project `dryscope`, with separate `test` and `live` resources there and no data migration from `alert-disaster-field-2026` (D-006, Nov 9, 2026). Each fact has one authoritative owner; a projection, cache or acknowledgement cannot acquire write authority.
 
 | Data | Authoritative owner | Permitted copies and constraints |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ Use a non-owner SQL runtime role without `BYPASSRLS`, forced row-level security,
 
 The new named Firestore field database denies by default and permits only prescribed paths and fields with matching `firebase.tenant`, active company access, field owner and editing state. Old official collections remain denied to clients. Membership grants project only after SQL commit; revocation blocks server access first and is incomplete until the Firestore deny is confirmed. Use short-lived renewable grants and test the stale-access bound. Platform support is separately audited; superadmin status alone does not grant job editing.
 
-Identity Platform tenants require explicit migration and historical actor mapping: bind actors to `(auth_tenant_id, uid)` and never link people solely by email. Test Google/password sign-in, invitations, MFA enrollment and recovery, revoked tokens, single-use links and support access.
+Identity Platform tenants: bind actors to `(auth_tenant_id, uid)` and never link people solely by email. Test Google/password sign-in, invitations, MFA enrollment and recovery, revoked tokens, single-use links and support access.
 
 Firestore persistent cache holds field documents; a separate IndexedDB queue holds photo and voice-note bytes and local operation IDs. Cached bytes cannot be remotely erased: explain trusted-device consent and recovery. Last-write-wins and optimistic display are not server acknowledgement. Photo retries use stable company/job/photo IDs and byte hashes, create-only object preconditions, idempotent metadata registration and a verified receipt before local deletion. Preserve late originals and foreground/reopen retries on iPhone; do not depend on upload after Safari closes.
 

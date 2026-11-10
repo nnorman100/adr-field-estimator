@@ -13,6 +13,52 @@ from scripts.release_stamp import valid_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# What the legacy app (alert-disaster-field-estimator on Cloud Run and hosting:alert-disaster) is
+# built, released and verified from. The automatic release ships only when a merge changed one of
+# these; DryScope rebuild merges (web/, infra/, docs, tests, workflows) never release it. When in
+# doubt a file belongs here: an extra release is cheap, a missed one leaves production stale.
+LEGACY_PREFIXES = (
+    'backend/',  # Cloud Run source, Dockerfile and requirements
+    'public/',  # Hosting content
+)
+LEGACY_FILES = (
+    'index.html',  # root copy of public/index.html
+    'firebase.json',
+    '.firebaserc',
+    'firestore.rules',
+    'firestore.indexes.json',
+    'package.json',  # Hosting verification (Playwright) runs from the root install
+    'package-lock.json',
+    # The release itself: stage, stamp, deploy, verify.
+    'scripts/auto_deploy.py',
+    'scripts/auto_deploy_helpers.py',
+    'scripts/deploy_backend.py',
+    'scripts/release_stamp.py',
+    'scripts/stamp_hosting.py',
+    'scripts/ensure_firestore_ttls.py',
+    'scripts/verify_common.py',
+    'scripts/verify_hosting.js',
+    'scripts/verify_fetch.js',
+    'scripts/run_python.js',
+    'scripts/ci_python_version.py',
+)
+
+
+def is_legacy_input(name):
+    """True for a repository path the legacy app's release is built from."""
+    return name in LEGACY_FILES or name.startswith(LEGACY_PREFIXES)
+
+
+def legacy_skip_reason(names, serving_commit, commit):
+    """Why a release is skipped when none of the changed files feeds the legacy app, else None."""
+    if any(is_legacy_input(name) for name in names):
+        return None
+    return (
+        f'No file the legacy app is built from changed between the serving {serving_commit[:12]} '
+        f'and {commit[:12]} ({len(names)} changed), so this DryScope rebuild merge does not '
+        'release the legacy app.'
+    )
+
 
 class Refused(RuntimeError):
     """The release cannot proceed safely; nothing was promoted by this refusal."""

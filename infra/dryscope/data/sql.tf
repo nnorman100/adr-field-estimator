@@ -75,6 +75,9 @@ resource "google_sql_database" "app" {
 }
 
 # IAM service-account users. Postgres limits names, so the suffix is trimmed.
+# The Live relay's user stays so removing its grants deletes nothing; without
+# roles/cloudsql.client and roles/cloudsql.instanceUser (identities.tf) it cannot
+# connect or log in.
 resource "google_sql_user" "iam" {
   for_each = toset(["api", "live", "migrate"])
 

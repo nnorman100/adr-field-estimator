@@ -12,14 +12,14 @@ The approved plan (Oct 24, 2026) for making this repository the complete DryScop
 - **Next for an agent:** finish and review the in-flight PRs, then prepare the next batched release using the `RELEASES.md` recipe. Each item is one small PR that passes the eight checks below.
 - **Rules that hold:**
   - Read `AGENTS.md` and `VISION.md` first.
-  - Pull requests merge automatically after every check and the review (two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work); deploys run test then live. D-009 in `docs/DECISIONS.md` is superseded (Nov 6); deleting data, irreversible or security/permission changes, turning on deletion or new pricing, and production steps Nate runs stay owner-only.
+  - The owner approves every merge: agents ask before merging any PR and nothing merges automatically (D-009 in `docs/DECISIONS.md`, kept on Nov 9; D-012). High-risk work gets two separate independent reviews on top of the pipeline review, from models that did not write the code; deploys run test then live. Deleting data, irreversible or security/permission changes, turning on deletion or new pricing, and production steps Nate runs stay owner-only.
   - Never run a blanket `firebase deploy`. Deploy only `hosting:alert-disaster`, after the backend.
   - Keep secrets out of the repo, the wiki and Notion.
 - **Shared notes:** LLM Wiki `projects/adr-field-estimator.md`, and the Notion page "ADR Field Estimator (Alert Disaster Restoration field app)" in Second Brain / Notes.
 - **Code pointers:** this file names functions, not line numbers, because lines drift. Search for the function.
 
 ## Context
-Nate wants one product, **DryScope**, built on the live field estimator (`nnorman100/adr-field-estimator`, local `C:\Users\nnorm\adr-field-estimator`). The Next.js app `nnorman100/Dryscope` (AI Studio build, Firebase `dryscope-d6f72`) is only a source of features. Its features are rebuilt in the field estimator's own style, not its look (PRs #115 and #117). "DryScope" is the name inside the app only: no repo rename and no domain (Nate, Oct 24). The Firebase project stays `alert-disaster-field-2026`.
+Nate wants one product, **DryScope**, built on the live field estimator (`nnorman100/adr-field-estimator`, local `C:\Users\nnorm\adr-field-estimator`). The Next.js app `nnorman100/Dryscope` (AI Studio build, Firebase `dryscope-d6f72`) is only a source of features. Its features are rebuilt in the field estimator's own style, not its look (PRs #115 and #117). "DryScope" is the name inside the app only: no repo rename and no domain for the organization or email (Nate, Oct 24); the rebuild's go-live stage (S8) covers the product's domain and web address. The current app's Firebase project stays `alert-disaster-field-2026`; the TypeScript rebuild is a clean start in project `dryscope` (D-012).
 
 Goal: finish the Dryscope ports Nate picked, then build the first missing VISION.md piece he chose, **delivery after signing**.
 
@@ -35,7 +35,7 @@ _History only. For current feature state use `docs/STATUS.md`; for what is servi
 
 ## How every item ships
 - One small PR per item, each with a test that fails without the change (VISION "Proven before it is claimed").
-- Pull requests merge automatically after every check and the review (two separate independent reviews on top of the pipeline review, from models that did not write the code for high-risk work) and deploy test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do"). D-009 is superseded.
+- The owner approves every merge (D-009 kept on Nov 9; D-012); nothing merges automatically. High-risk work gets two separate independent reviews on top of the pipeline review, from models that did not write the code. Merged pull requests deploy test then live; the owner-only exceptions are listed in `HANDOFF.md` ("Rules that decide what you may do").
 - Releases follow the existing `RELEASES.md` recipe: `scripts/deploy_backend.py` stages the backend, then a preview channel, then promotion, then a Hosting deploy (`hosting:alert-disaster` only), then a 15-minute watch. Each release appends its rows to `RELEASES.md`.
 - Batch the releases. Release once after Phase 1. In Phase 2, release steps 1–2 together, then steps 3–6 together.
 
@@ -121,7 +121,7 @@ Steps, each its own PR:
 
 Release steps 1–2 together, then 3–6. Run real-send checks to the test inbox's plus-addresses, then do one real ADR job with Nate.
 
-**Later, not in this plan:** texting through Twilio or Telnyx with US business (10DLC) registration; letting homeowners upload photos through the link; the remaining VISION pieces (company workbook upload, drying schedule, automatic deploys).
+**Later, not in this plan:** texting through Twilio or Telnyx with US business (10DLC) registration; letting homeowners upload photos through the link; the remaining VISION pieces (arbitrary company workbook upload, drying schedule, automatic deploys).
 
 ## Timeline and later decisions
 - **Rough size (guesses, updated after each phase):** Phase 0 about 1 day. Phase 1 is 4 PRs plus follow-ups over 3–5 days. Phase 2 is 6 PRs over about 1–2 weeks.

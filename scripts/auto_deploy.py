@@ -17,7 +17,9 @@ a Firestore TTL policy that is missing, or a repository baseline less permissive
 revision. That last one stops before staging unless --confirm-baseline is given on a hand run or a
 rollback dispatch; the automatic run never gives it, so no merge can turn a serving feature off.
 A candidate that is already serving, or older than what is serving, is skipped without error so
-overlapping runs and manual releases never move production backwards.
+overlapping runs and manual releases never move production backwards. So is a candidate whose changes
+since the serving commit touch no file the legacy app is built from (LEGACY_PREFIXES and LEGACY_FILES
+in auto_deploy_helpers.py): DryScope rebuild merges (web/, infra/, docs) never release it.
 
 The release record goes to the Actions job summary (GITHUB_STEP_SUMMARY), because automation cannot
 commit to protected master; manual releases still append RELEASES.md rows.
@@ -61,6 +63,7 @@ from scripts.auto_deploy_helpers import (
     Runner,
     Record,
     git,
+    legacy_skip_reason,
     version_tags_at,
     next_version,
     plain_commit_line,
@@ -361,7 +364,10 @@ def check_candidate(runner, commit, serving_commit):
         raise Refused(
             f'Serving commit {serving_commit[:12]} is not an ancestor of {commit[:12]}. Release by hand.'
         )
-    names = git(runner, 'diff', '--name-only', f'{serving_commit}..{commit}').stdout.split()
+    # No rename detection, so a file moved out of a legacy directory still shows its old path.
+    names = git(
+        runner, 'diff', '--name-only', '--no-renames', f'{serving_commit}..{commit}'
+    ).stdout.split()
     return names
 
 
@@ -774,6 +780,11 @@ def release(runner, record, commit, tag, check_only=False, confirm_baseline=Fals
     record.set('Rollback pair (serving before)', f'backend `{previous}` at `{serving_commit}`')
     names = check_candidate(runner, commit, serving_commit)
     check_hand_released(names)
+    reason = legacy_skip_reason(names, serving_commit, commit)
+    if reason:
+        if not check_only:
+            raise Skipped(reason)
+        record.note(f'Check only: a real run would skip. {reason}')
     check_ttls(runner)
     serving_summary = spec_summary(serving, service)
     staff_emails = serving_staff_emails(serving_summary)
