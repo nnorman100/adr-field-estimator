@@ -2,16 +2,18 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { type AppConfig, ConfigError, parseConfig } from '../lib/config';
 import { createTokenSource } from './iam-token';
-import { applyMigrations, migrationsDirectory } from './migrate';
+import { applyMigrations, migrationsDirectory, type MigrationTarget } from './migrate';
 import { schema } from './schema';
 
-function requiredDatabaseUrl(env: Record<string, string | undefined>): string {
-  const config = parseConfig(env);
+function requiredDatabaseUrl(config: AppConfig): string {
   if (!config.databaseUrl) {
     throw new ConfigError(['DATABASE_URL: DATABASE_URL is required to open the database']);
   }
   return config.databaseUrl;
 }
+
+// The Unix socket Cloud Run's built-in Cloud SQL connection mounts for an instance.
+const cloudSqlSocket = (connectionName: string) => `/cloudsql/${connectionName}/.s.PGSQL.5432`;
 
 const common = {
   // One connection is enough until a route uses the database. Migrations open their own.
@@ -31,7 +33,7 @@ export function connectionOptions(config: AppConfig, accessToken = createTokenSo
       url: null,
       options: {
         ...common,
-        path: `/cloudsql/${connectionName}/.s.PGSQL.5432`,
+        path: cloudSqlSocket(connectionName),
         database,
         username: user,
         password: accessToken,
@@ -71,9 +73,21 @@ export async function checkDatabase(config: AppConfig): Promise<void> {
   await probe`select 1`;
 }
 
+// DATABASE_URL, or on Cloud Run (the migration job, infra/dryscope/app/migrate_job.tf) the SQL_*
+// settings: the instance socket, logging in as the job's own IAM database user with a fresh access
+// token as the password, exactly as the services do. No password is stored anywhere.
 export async function migrateFromConfig(
   env: Record<string, string | undefined>,
   directory = migrationsDirectory,
+  accessToken = createTokenSource(),
 ): Promise<{ applied: string[] }> {
-  return applyMigrations(requiredDatabaseUrl(env), directory);
+  const config = parseConfig(env);
+  let target: MigrationTarget;
+  if (config.cloudSql) {
+    const { connectionName, database, user } = config.cloudSql;
+    target = { path: cloudSqlSocket(connectionName), database, username: user, password: accessToken };
+  } else {
+    target = requiredDatabaseUrl(config);
+  }
+  return applyMigrations(target, directory);
 }

@@ -84,6 +84,18 @@ const DEPLOY_PERMISSIONS = [
   'run.services.update',
 ];
 
+// The migration job (app root): set its image, execute it, read its executions. No create,
+// delete, run with overrides, cancel or IAM change.
+const MIGRATE_JOB_PERMISSIONS = [
+  'run.executions.get',
+  'run.executions.list',
+  'run.jobs.get',
+  'run.jobs.run',
+  'run.jobs.update',
+  'run.tasks.get',
+  'run.tasks.list',
+];
+
 // Resource types with no project attribute; every other resource must name PROJECT.
 const PROJECTLESS = new Set([
   'google_service_account_iam_member',
@@ -109,6 +121,7 @@ function expectedPlan(root, env) {
   const absent = {}; // address -> [paths that must be empty or missing]
   const optional = new Set();
   const settings = {}; // address -> {NAME: value}: plain env settings checked on every plan
+  const exactEnv = {}; // address -> {container: path, env: {NAME: value}}: the whole env, no secrets
 
   if (root === 'data') {
     for (const a of APIS) others.push(`google_project_service.apis["${a}"]`);
@@ -161,6 +174,10 @@ function expectedPlan(root, env) {
         member: sa(k),
         condition: null,
       };
+    }
+    // The two services' accounts, and the migrator because the release sets the image on the
+    // migration job (app root), which runs as it.
+    for (const k of RUNTIME) {
       grants[`google_service_account_iam_member.deploy_acts_as["${k}"]`] = {
         role: 'roles/iam.serviceAccountUser',
         member: sa('deploy'),
@@ -328,6 +345,49 @@ function expectedPlan(root, env) {
     );
     lists['google_project_iam_custom_role.deploy'] = { permissions: DEPLOY_PERMISSIONS };
     attrs['google_project_iam_custom_role.deploy'] = { role_id: `dryscopeDeploy${title(env)}` };
+
+    // The migration job: the web image by digest from this environment's repository, run as the
+    // migrator over its own instance's socket, with nothing but the migrator's settings.
+    const job = 'google_cloud_run_v2_job.migrate';
+    others.push(job, 'google_project_iam_custom_role.migrate_job');
+    attrs[job] = {
+      name: `dryscope-migrate-${env}`,
+      location: REGION,
+      deletion_protection: true,
+      'template.0.task_count': 1,
+      'template.0.template.0.service_account': `dryscope-migrate-${env}@${PROJECT}.iam.gserviceaccount.com`,
+      'template.0.template.0.max_retries': 0,
+      'template.0.template.0.volumes.0.cloud_sql_instance.0.instances': [
+        `${PROJECT}:${REGION}:dryscope-${env}-pg`,
+      ],
+      'template.0.template.0.containers.0.image': new RegExp(
+        `^${REGION}-docker\\.pkg\\.dev/${PROJECT}/dryscope-${env}/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$`,
+      ),
+      'template.0.template.0.containers.0.command': ['node'],
+      'template.0.template.0.containers.0.args': ['migrate.mjs'],
+    };
+    absent[job] = ['template.0.template.0.containers.1', 'template.0.template.0.volumes.1'];
+    exactEnv[job] = {
+      container: 'template.0.template.0.containers.0',
+      env: {
+        APP_ENV: env,
+        SQL_CONNECTION_NAME: `${PROJECT}:${REGION}:dryscope-${env}-pg`,
+        SQL_DATABASE_NAME: 'dryscope',
+        SQL_IAM_USER: `dryscope-migrate-${env}@${PROJECT}.iam`,
+      },
+    };
+    lists['google_project_iam_custom_role.migrate_job'] = { permissions: MIGRATE_JOB_PERMISSIONS };
+    attrs['google_project_iam_custom_role.migrate_job'] = {
+      role_id: `dryscopeMigrateJob${title(env)}`,
+    };
+    // Only the deploy account, only on this job.
+    grants['google_cloud_run_v2_job_iam_member.deploy'] = {
+      role: `projects/${PROJECT}/roles/dryscopeMigrateJob${title(env)}`,
+      member: sa('deploy'),
+      condition: null,
+      name: `dryscope-migrate-${env}`,
+      location: REGION,
+    };
     // Health probe: live only. Budget: only when a billing account is given.
     if (env === 'live') {
       others.push(
@@ -338,7 +398,18 @@ function expectedPlan(root, env) {
     optional.add('google_billing_budget.monthly[0]');
     others.push('google_billing_budget.monthly[0]');
   }
-  return { grants, others, attrs, lists, absent, optional, retired, reconditioned, settings };
+  return {
+    grants,
+    others,
+    attrs,
+    lists,
+    absent,
+    optional,
+    retired,
+    reconditioned,
+    settings,
+    exactEnv,
+  };
 }
 
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -513,6 +584,26 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
       if (got[name] !== value) {
         problems.push(`${address}: env ${name} is ${JSON.stringify(got[name])}, expected ${value}`);
       }
+    }
+  }
+  for (const [address, { container, env }] of Object.entries(want.exactEnv)) {
+    const after = byAddress.get(address)?.change?.after;
+    if (!after) continue;
+    const entries = get(after, `${container}.env`) ?? [];
+    const got = Object.fromEntries(entries.map((e) => [e.name, e.value]));
+    const secret = entries.filter((e) => !empty(e.value_source)).map((e) => e.name);
+    const sorted = (o) =>
+      Object.keys(o)
+        .sort()
+        .map((k) => [k, o[k]]);
+    if (
+      secret.length ||
+      entries.length !== Object.keys(got).length ||
+      !same(sorted(env), sorted(got))
+    ) {
+      problems.push(
+        `${address}: env is ${JSON.stringify(got)}${secret.length ? ` with secret ${secret.join(', ')}` : ''}, expected exactly ${JSON.stringify(env)}`,
+      );
     }
   }
   for (const [address, paths] of Object.entries(want.absent)) {

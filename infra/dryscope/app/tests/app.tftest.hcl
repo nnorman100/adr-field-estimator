@@ -350,3 +350,74 @@ run "the_other_environments_web_app_origin_is_refused" {
 
   expect_failures = [var.allowed_origins]
 }
+
+# The migration job (migrate_job.tf): the release runs numbered migrations here, inside Google,
+# before traffic moves, so it never depends on the CI runner reaching Cloud SQL.
+run "migration_job_runs_the_web_image_as_the_migrator_on_its_own_instance" {
+  command = plan
+
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.name == "dryscope-migrate-${var.environment}" && google_cloud_run_v2_job.migrate.location == "us-central1"
+    error_message = "The migration job carries the environment and lives in us-central1."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.deletion_protection == true
+    error_message = "Cloud Run deletion protection must be on for the migration job."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.template[0].template[0].service_account == "dryscope-migrate-${var.environment}@dryscope.iam.gserviceaccount.com"
+    error_message = "The migration job runs as this environment's migrator, never as the web app or the deploy account."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.template[0].template[0].containers[0].image == var.api_image
+    error_message = "The migration job starts from the web image the release ships."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.template[0].template[0].containers[0].command == tolist(["node"]) && google_cloud_run_v2_job.migrate.template[0].template[0].containers[0].args == tolist(["migrate.mjs"])
+    error_message = "The migration job starts the bundled migrator (web/src/db/job.ts), not the web server."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.template[0].task_count == 1 && google_cloud_run_v2_job.migrate.template[0].template[0].max_retries == 0
+    error_message = "One task, no retries: a failed migration fails the release instead of running again."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.migrate.template[0].template[0].volumes[0].cloud_sql_instance[0].instances == tolist(["dryscope:us-central1:dryscope-${var.environment}-pg"])
+    error_message = "The migration job connects to this environment's instance only."
+  }
+  assert {
+    condition = (
+      { for e in google_cloud_run_v2_job.migrate.template[0].template[0].containers[0].env : e.name => e.value } == {
+        APP_ENV             = var.environment
+        SQL_CONNECTION_NAME = "dryscope:us-central1:dryscope-${var.environment}-pg"
+        SQL_DATABASE_NAME   = "dryscope"
+        SQL_IAM_USER        = "dryscope-migrate-${var.environment}@dryscope.iam"
+      }
+    )
+    error_message = "The migration job gets exactly its environment, instance, database and the migrator's IAM database user, and no secret."
+  }
+}
+
+run "deploy_account_may_only_update_and_run_the_migration_job" {
+  command = plan
+
+  assert {
+    condition     = google_project_iam_custom_role.migrate_job.role_id == "dryscopeMigrateJob${title(var.environment)}"
+    error_message = "Each environment has its own migration job role."
+  }
+  assert {
+    condition = toset(google_project_iam_custom_role.migrate_job.permissions) == toset([
+      "run.executions.get",
+      "run.executions.list",
+      "run.jobs.get",
+      "run.jobs.run",
+      "run.jobs.update",
+      "run.tasks.get",
+      "run.tasks.list",
+    ])
+    error_message = "The migration job role sets the image, executes and reads executions: no create, delete, overrides, cancel or IAM change."
+  }
+  assert {
+    condition     = google_cloud_run_v2_job_iam_member.deploy.name == "dryscope-migrate-${var.environment}" && google_cloud_run_v2_job_iam_member.deploy.member == "serviceAccount:dryscope-deploy-${var.environment}@dryscope.iam.gserviceaccount.com" && google_cloud_run_v2_job_iam_member.deploy.role == "projects/dryscope/roles/dryscopeMigrateJob${title(var.environment)}"
+    error_message = "Only this environment's deploy account gets the migration job role, on the job only."
+  }
+}
