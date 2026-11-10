@@ -326,7 +326,7 @@ function addressee(claim: JObj): string {
   const carrier = typeof claim.carrier === 'string' ? claim.carrier : '';
   const contact = [claim.adjuster_email, claim.adjuster_phone].filter((value) => typeof value === 'string' && value).join(' \u00b7 ');
   return ['TO: ' + (name ? `${name}, Adjuster` : 'Insurance Claims Examiner / Adjuster'), carrier, contact]
-    .filter((value) => pyStrip(value))
+    .filter((value) => value)
     .join('\n');
 }
 

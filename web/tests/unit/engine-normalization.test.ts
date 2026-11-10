@@ -102,6 +102,25 @@ describe('claim date of loss', () => {
   });
 });
 
+describe('claim addressee', () => {
+  it('keeps a whitespace-only carrier and contact line in the letter', () => {
+    const { input, expected } = fixture('v1-claim-details');
+    const claim = at(input, 'claim');
+    claim.carrier = ' ';
+    claim.adjuster_email = '';
+    claim.adjuster_phone = '\u00a0';
+    const letter = at(expected, 'documents').iicrc_defense_letter as string;
+    const result = evaluate(input);
+    expect(result.rejected).toBeNull();
+    expect(result.documents?.iicrc_defense_letter).toBe(
+      letter.replace(
+        'Example Mutual\nadjuster@example.invalid \u00b7 555-0199\n',
+        ' \n\u00a0\n',
+      ),
+    );
+  });
+});
+
 describe('photo log', () => {
   it('rejects a verified photo without a complete meter reading', () => {
     const bad: JVal[] = [
