@@ -131,6 +131,7 @@ npm run typecheck ; npm run lint ; npm test
 npm run test:db                  # migrations from an empty throwaway Postgres (Docker or local PostgreSQL 16)
 npm run test:emu                 # Firebase Auth + Firestore emulators (Java 21+); demo- project ids only
 npm run db:migrate               # apply web/migrations; needs APP_ENV and DATABASE_URL (env or .env.local)
+npm run build:migrate -- <dir>   # bundle the migration job (<dir>/migrate.mjs + migrations/); build-image.sh runs it
 npx playwright install chromium webkit
 npm run test:e2e                 # smoke test against the dev server
 ```
@@ -146,7 +147,7 @@ uv pip compile requirements.in --universal --python-version 3.11 --generate-hash
 uv pip compile requirements-dev.in --universal --python-version 3.11 --generate-hashes --output-file requirements-dev.txt
 ```
 
-Dependabot (`.github/dependabot.yml`) opens update pull requests for the npm dependencies in `web/` weekly on Monday, with minor and patch updates grouped and each major update in its own pull request. It also opens grouped monthly pull requests for the Terraform stacks in `infra/dryscope/data` and `infra/dryscope/app`, and for the GitHub Actions versions, and weekly on Monday for the digest-pinned Node base image in `web/Dockerfile`, which `web/scripts/build-image.sh` uses for both the web app and the Live relay placeholder images (built without Docker). It does not cover the Python locks or the `backend/` Docker image, which are reference code for the old app.
+Dependabot (`.github/dependabot.yml`) opens update pull requests for the npm dependencies in `web/` weekly on Monday, with minor and patch updates grouped and each major update in its own pull request. It also opens grouped monthly pull requests for the Terraform stacks in `infra/dryscope/data` and `infra/dryscope/app`, and for the GitHub Actions versions, and weekly on Monday for the digest-pinned Node base image in `web/Dockerfile`, which `web/scripts/build-image.sh` uses for both the web app and the Live relay placeholder images (built without Docker). Major updates to TypeScript and the Google Terraform provider (`hashicorp/google`) are ignored until a stage plans for them; when another major update sits failing, add its dependency to the matching ignore list. It does not cover the Python locks or the `backend/` Docker image, which are reference code for the old app.
 
 CI runs the Python jobs on the version in the `backend/Dockerfile` base image (`scripts/ci_python_version.py`). The `audit` job runs `pip-audit` against both hash-locked files and `npm audit --audit-level=high`, and fails on known vulnerabilities. For a false positive or an advisory with no fix, add `--ignore-vuln <ID>` to the `pip-audit` step in `.github/workflows/ci.yml` (for npm, pin a patched version through `overrides` in `package.json`, or lower the failing level in the workflow only as a last resort) with a comment giving the reason and date, and remove it once a fix ships. `tests/test_ci_config.py` fails if `firestore.rules` stops denying all client access. Enable Dependabot security alerts in the GitHub repository settings (Settings > Advanced Security) so advisories also open pull requests between scans.
 

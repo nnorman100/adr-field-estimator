@@ -1,7 +1,8 @@
 """Guards for the rebuilt app's test release path (.github/workflows/web-release.yml), its images
 (assembled without Docker by web/scripts/build-image.sh onto the base pinned in web/Dockerfile) and
 the Live relay placeholder. Each test names a property the release relies on: keyless sign-in as the
-right test account, pinned actions, tools and images, no live or legacy target, staging at 0% before
+right test account, pinned actions, tools and images, no live or legacy target, migrations in the
+Cloud Run job inside Google (never a database connection from the runner), staging at 0% before
 any traffic moves, and rollback only after a move."""
 
 import os
@@ -291,9 +292,11 @@ def test_each_job_signs_in_keylessly_as_its_own_test_account(release):
                 )
                 assert given['project_id'] == 'dryscope'
                 accounts[name] = given['service_account']
+    # The migrate job signs in as the deploy account too: it only sets the migration job's image
+    # and runs it. The job itself runs as the migrator, inside Google.
     assert accounts == {
         'build': '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
-        'migrate': '${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}',
+        'migrate': '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
         'deploy': '${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}',
     }
     for s in all_steps(release):
@@ -378,7 +381,8 @@ def test_targets_only_the_test_environment_and_never_the_legacy_project(release)
     for text in given:
         for forbidden in ('dryscope-live', '-live@', 'alert-disaster', 'us-west2', 'firebase'):
             assert forbidden not in text, (forbidden, text[:80])
-    # Every gcloud call reaches the test service through the workflow's own settings.
+    # Every gcloud call reaches the test service or the test migration job through the workflow's
+    # own settings.
     for args in gcloud_calls(release):
         for flag, value in (('--project', '$PROJECT'), ('--region', '$REGION')):
             values = [arg.split('=', 1)[1] for arg in args if arg.split('=', 1)[0] == flag]
@@ -386,13 +390,14 @@ def test_targets_only_the_test_environment_and_never_the_legacy_project(release)
             if args[0] == 'run':
                 assert values == [value], args
         if args[0] == 'run':
-            assert [arg for arg in args if not arg.startswith('-')][-1] == '$SERVICE', args
+            target = '$JOB' if args[1] == 'jobs' else '$SERVICE'
+            assert [arg for arg in args if not arg.startswith('-')][-1] == target, args
     env = release['env']
     assert env['PROJECT'] == 'dryscope'
     assert env['REGION'] == 'us-central1'
     assert env['SERVICE'] == 'dryscope-api-test'
+    assert env['JOB'] == 'dryscope-migrate-test'
     assert env['IMAGE'].startswith('us-central1-docker.pkg.dev/dryscope/dryscope-test/')
-    assert env['SQL_INSTANCE'] == 'dryscope:us-central1:dryscope-test-pg'
 
 
 def gcloud_calls(workflow):
@@ -424,42 +429,177 @@ def test_nothing_is_deleted_and_only_the_image_changes(release):
     flags = {arg.split('=', 1)[0] for arg in deploy[3:]}
     assert flags == {'--image', '--region', '--project', '--no-traffic', '--tag', '--quiet'}
     assert '--tag=candidate' in deploy and '--image=$IMAGE_REF' in deploy
+    # The migration job: only its image changes, and an execution never overrides its command,
+    # arguments, settings, task count or timeout.
+    (update,) = [args for args in calls if args[:3] == ['run', 'jobs', 'update']]
+    assert {arg.split('=', 1)[0] for arg in update[4:]} == {
+        '--image',
+        '--region',
+        '--project',
+        '--quiet',
+    }
+    assert '--image=$IMAGE_REF' in update
+    (execute,) = [args for args in calls if args[:3] == ['run', 'jobs', 'execute']]
+    assert {arg.split('=', 1)[0] for arg in execute[4:]} == {
+        '--region',
+        '--project',
+        '--wait',
+        '--format',
+    }
+    job_calls = {tuple(args[:3]) for args in calls if args[:2] == ['run', 'jobs']}
+    assert job_calls == {('run', 'jobs', a) for a in ('update', 'describe', 'execute')}
 
 
-def test_migrations_run_as_the_migrator_before_the_revision_is_staged(release):
+def test_migrations_run_in_the_job_before_the_revision_is_staged(release):
     jobs = release['jobs']
     assert set(jobs['deploy']['needs']) == {'build', 'migrate'}
-    migrations = step(jobs['migrate'], 'migrations')
-    url = migrations['env']['DATABASE_URL']
-    assert url == 'postgres://dryscope-migrate-test%40dryscope.iam@127.0.0.1:5432/dryscope'
-    assert re.fullmatch(r'[0-9a-f]{64}', jobs['migrate']['env']['PROXY_SHA256'])
+    migrate = jobs['migrate']
+    assert migrate['needs'] == 'build'
+    assert migrate['env'] == {
+        'IMAGE_REF': '${{ needs.build.outputs.image }}',
+        'MIGRATE_SA': '${{ vars.DRYSCOPE_TEST_MIGRATE_SA }}',
+    }
+    order = [s.get('id') or s.get('uses', '').split('@')[0] for s in steps(migrate)]
+    assert order.index('ledger') < order.index('job') < order.index('migrations')
+    for key in ('job', 'migrations'):
+        assert step(migrate, key)['if'] == "steps.ledger.outputs.present == 'true'"
+    # The ledger check needs the migration files only.
+    assert steps(migrate)[0]['with']['sparse-checkout'] == 'web/migrations'
 
 
-def test_a_proxy_download_that_fails_its_checksum_never_runs(release, shell):
-    job = release['jobs']['migrate']
-    ran = shell.tmp / 'proxy-ran'
-    shell.fake(
-        'curl',
-        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
-        f'printf \'#!/bin/sh\\ntouch {ran}\\n\' > "$out"',
+SHELL_WORDS = {'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}'}
+DATABASE_SETTINGS = {
+    'DATABASE_URL',
+    'PGHOST',
+    'PGPORT',
+    'PGUSER',
+    'PGPASSWORD',
+    'PGDATABASE',
+    'SQL_CONNECTION_NAME',
+    'SQL_INSTANCE',
+    'INSTANCE_CONNECTION_NAME',
+}
+
+
+def invocations(step):
+    """Each simple command a step runs, as its argument list: split at shell operators, with
+    leading shell keywords and variable assignments dropped, so args[0] is the program run."""
+    found = []
+    for line in commands(step).splitlines():
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        args = []
+        for token in [*lexer, ';']:
+            if set(token) <= set('|&;()<>'):
+                while args and (args[0] in SHELL_WORDS or re.fullmatch(r'\w+=\S*', args[0])):
+                    args.pop(0)
+                if args:
+                    found.append(args)
+                args = []
+            else:
+                args.append(token)
+    return found
+
+
+def test_the_runner_never_connects_to_the_database(release):
+    """The release no longer depends on this runner's network path to Cloud SQL: no step holds a
+    database connection setting, starts a proxy or database client, runs the migrator itself or
+    opens a TCP socket; the only database work is executing the Cloud Run job."""
+    settings = set(release.get('env', {}))
+    for job in release['jobs'].values():
+        settings |= set(job.get('env', {}))
+        for s in steps(job):
+            settings |= set(s.get('env', {}))
+    assert not settings & DATABASE_SETTINGS
+    runs = [args for job in release['jobs'].values() for s in steps(job) for args in invocations(s)]
+    assert runs
+    for args in runs:
+        program = Path(args[0]).name
+        assert program not in {'cloud-sql-proxy', 'psql', 'pg_isready'}, args
+        assert not {'db:migrate', 'migrate.mjs'} & {Path(arg).name for arg in args}, args
+        assert not (program == 'gcloud' and 'sql' in args[1:3]), args
+        assert not any(arg.startswith('/dev/tcp/') for arg in args), args
+
+
+IMAGE_REF = f'us-central1-docker.pkg.dev/dryscope/dryscope-test/web@sha256:{"c" * 64}'
+MIGRATOR = 'dryscope-migrate-test@dryscope.iam.gserviceaccount.com'
+
+
+def job_gcloud(update='exit 0', describe=None, execute='exit 0'):
+    """gcloud for the migrate job: `run jobs update`, `describe` and `execute` each run a body."""
+    describe = describe if describe is not None else f'printf "%s\\t%s\\n" {MIGRATOR} "$IMAGE_REF"'
+    return (
+        'case "$3" in\n'
+        f'  update) {update} ;;\n'
+        f'  describe) {describe} ;;\n'
+        f'  execute) {execute} ;;\n'
+        '  *) exit 9 ;;\n'
+        'esac'
     )
-    result = shell.run(step(job, 'proxy')['run'], {**release['env'], **job['env']})
+
+
+def migrate_env(release):
+    return {**release['env'], 'IMAGE_REF': IMAGE_REF, 'MIGRATE_SA': MIGRATOR}
+
+
+def test_the_job_gets_the_release_image_and_is_checked_before_it_runs(release, shell):
+    shell.fake('gcloud', job_gcloud())
+    result = shell.run(step(release['jobs']['migrate'], 'job')['run'], migrate_env(release))
+    assert result.returncode == 0, result.stderr
+    update, describe = shell.calls('gcloud')
+    assert update[:4] == ['run', 'jobs', 'update', 'dryscope-migrate-test']
+    assert set(update[4:]) == {
+        f'--image={IMAGE_REF}',
+        '--region=us-central1',
+        '--project=dryscope',
+        '--quiet',
+    }
+    assert describe[:4] == ['run', 'jobs', 'describe', 'dryscope-migrate-test']
+
+
+def test_a_job_that_cannot_take_the_image_stops_the_release(release, shell):
+    shell.fake('gcloud', job_gcloud(update='exit 1'))
+    result = shell.run(step(release['jobs']['migrate'], 'job')['run'], migrate_env(release))
     assert result.returncode != 0
-    assert not ran.exists()
-    (download,) = shell.calls('curl')
-    assert download[-1] == (
-        'https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/'
-        f'{job["env"]["PROXY_VERSION"]}/cloud-sql-proxy.linux.amd64'
-    )
+    assert [args[2] for args in shell.calls('gcloud')] == ['update']
+    assert 'part D' in result.stdout
+
+
+@pytest.mark.parametrize(
+    'describe',
+    [
+        'printf "%s\\t%s\\n" dryscope-api-test@dryscope.iam.gserviceaccount.com "$IMAGE_REF"',
+        'printf "%s\\t%s\\n" dryscope-migrate-live@dryscope.iam.gserviceaccount.com "$IMAGE_REF"',
+        f'printf "%s\\t%s\\n" {MIGRATOR} other@sha256:{"d" * 64}',
+        'exit 0',
+        'exit 1',
+    ],
+)
+def test_a_job_with_another_account_or_image_never_runs(release, shell, describe):
+    shell.fake('gcloud', job_gcloud(describe=describe))
+    result = shell.run(step(release['jobs']['migrate'], 'job')['run'], migrate_env(release))
+    assert result.returncode != 0
+    assert 'execute' not in [args[2] for args in shell.calls('gcloud')]
 
 
 @pytest.mark.parametrize('passes', [True, False])
-def test_the_migration_step_runs_the_ledger_and_fails_with_it(release, shell, passes):
-    migrations = step(release['jobs']['migrate'], 'migrations')
-    shell.fake('npm', 'exit 0' if passes else 'exit 1')
-    result = shell.run(migrations['run'], migrations['env'])
+def test_the_migration_step_waits_for_the_execution_and_fails_with_it(release, shell, passes):
+    body = 'echo dryscope-migrate-test-abc12' if passes else 'echo failed >&2; exit 1'
+    shell.fake('gcloud', job_gcloud(execute=body))
+    result = shell.run(step(release['jobs']['migrate'], 'migrations')['run'], migrate_env(release))
     assert (result.returncode == 0) is passes
-    assert shell.calls('npm') == [['run', 'db:migrate']]
+    (execute,) = shell.calls('gcloud')
+    assert execute[:4] == ['run', 'jobs', 'execute', 'dryscope-migrate-test']
+    assert set(execute[4:]) == {
+        '--region=us-central1',
+        '--project=dryscope',
+        '--wait',
+        '--format=value(metadata.name)',
+    }
+    if passes:
+        assert 'dryscope-migrate-test-abc12' in shell.summary.read_text()
+    else:
+        assert 'before any traffic moved' in result.stdout
 
 
 def test_smoke_before_traffic_and_rollback_only_after_a_move(release):
@@ -535,7 +675,11 @@ def test_rollback_restores_the_remembered_traffic_split(release, shell):
 # --- Images without a Docker daemon (owner decision 2026-11-10): web/scripts/build-image.sh -------
 
 BASE_PIN = re.compile(r'node:[\w.-]+@sha256:[0-9a-f]{64}')
-FAKE_BUILD = """mkdir -p .next/standalone/node_modules .next/static/chunks
+FAKE_BUILD = """if [ "$2" = --silent ] && [ "$3" = build:migrate ]; then
+  mkdir -p "$5/migrations"; echo job > "$5/migrate.mjs"; echo sql > "$5/migrations/0001_foundation.sql"
+  exit 0
+fi
+mkdir -p .next/standalone/node_modules .next/static/chunks
 echo server > .next/standalone/server.js
 echo chunk > .next/static/chunks/main.js"""
 
@@ -593,7 +737,11 @@ def test_web_image_appends_one_root_owned_app_layer_onto_the_pinned_base(shell, 
     )
     result = shell.run(script)
     assert result.returncode == 0, result.stderr
-    assert shell.calls('npm') == [['run', 'build']]
+    # The Next.js build, then the migration job bundle into the same /app tree.
+    assert shell.calls('npm') == [
+        ['run', 'build'],
+        ['run', '--silent', 'build:migrate', '--', f'{stage}/app'],
+    ]
     (mutate,) = shell.calls('crane')
     base = instructions(ROOT / 'web' / 'Dockerfile')[0].split()[1]
     assert mutate[:4] == ['mutate', base, '--platform', 'linux/amd64']
@@ -605,7 +753,12 @@ def test_web_image_appends_one_root_owned_app_layer_onto_the_pinned_base(shell, 
     assert not [e for e in envs if e.startswith('APP_ENV=')]
     members = layer_members(keep)
     names = {m[-1] for m in members}
-    assert {'app/server.js', 'app/.next/static/chunks/main.js'} <= names
+    assert {
+        'app/server.js',
+        'app/.next/static/chunks/main.js',
+        'app/migrate.mjs',
+        'app/migrations/0001_foundation.sql',
+    } <= names
     for mode, owner, *_ in members:
         assert owner == '0/0' and 'w' not in mode[4:], (mode, owner)
     assert (stage / 'app' / 'server.js').read_text() == 'server\n'

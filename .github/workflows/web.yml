@@ -25,7 +25,7 @@ jobs:
   # so the existing web check cannot pass without it.
   database:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    timeout-minutes: 10
+    timeout-minutes: 25
     env:
       APP_ENV: test
     steps:

@@ -1,7 +1,13 @@
 version: 2
 updates:
+  # Major updates for the dependencies listed under each ignore below are held
+  # until a stage plans for them, so they do not sit failing in the merge line.
+  # When another major update sits failing, add its dependency to that entry's
+  # ignore list. All other major updates still open, including security fixes.
+
   # Weekly on Monday: npm for the TypeScript web app in web/. Minor and patch
-  # updates share one pull request; each major update gets its own pull request.
+  # updates share one pull request; each major update gets its own pull request,
+  # except TypeScript majors, which are held.
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -10,9 +16,13 @@ updates:
     groups:
       web-npm-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   # Monthly (Dependabot runs monthly updates on the 1st): Terraform providers and
-  # modules for each stack. All updates for a stack share one pull request.
+  # modules for each stack. All updates for a stack share one pull request,
+  # except Google provider (hashicorp/google) majors, which are held.
   - package-ecosystem: terraform
     directory: /infra/dryscope/data
     schedule:
@@ -20,6 +30,9 @@ updates:
     groups:
       terraform-data:
         patterns: ['*']
+    ignore:
+      - dependency-name: hashicorp/google
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: terraform
     directory: /infra/dryscope/app
@@ -28,6 +41,9 @@ updates:
     groups:
       terraform-app:
         patterns: ['*']
+    ignore:
+      - dependency-name: hashicorp/google
+        update-types: ['version-update:semver-major']
 
   # Monthly: GitHub Actions versions used by .github/workflows.
   - package-ecosystem: github-actions

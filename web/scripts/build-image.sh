@@ -9,8 +9,11 @@
 #   web/scripts/build-image.sh live-placeholder (--tag <ref> | --output <file>) [--stage <dir>]
 #
 # web builds the Next.js standalone output with npm (run `npm ci` in web/ first) and bakes in the
-# commit, which /api/health reports. live-placeholder is the 503 stand-in in live-relay-placeholder/
-# that the app root needs until stage S7. --tag pushes to a registry; --output writes an image
+# commit, which /api/health reports. It also carries the migration job: /app/migrate.mjs (bundled by
+# scripts/build-migrate.mjs) and the numbered ledger in /app/migrations, which the Cloud Run job
+# starts with `node migrate.mjs` (infra/dryscope/app/migrate_job.tf), so every release migrates
+# with the same image, by digest, that it then deploys. live-placeholder is the 503 stand-in in
+# live-relay-placeholder/ that the app root needs until stage S7. --tag pushes to a registry; --output writes an image
 # tarball instead. --stage keeps the assembled /app tree there (the Web app check runs it with node).
 # Needs crane (web/scripts/install-crane.sh), GNU tar (set TAR=gtar on macOS) and, for web, npm.
 set -euo pipefail
@@ -54,6 +57,7 @@ if [ "$app" = web ]; then
   cp -a "$root/web/.next/standalone/." "$stage/app/"
   mkdir -p "$stage/app/.next"
   cp -a "$root/web/.next/static" "$stage/app/.next/static"
+  (cd "$root/web" && npm run --silent build:migrate -- "$stage/app")
   env+=(--env HOSTNAME=0.0.0.0 --env NEXT_TELEMETRY_DISABLED=1 --env "APP_COMMIT=$commit")
 else
   cp "$root/live-relay-placeholder/server.js" "$stage/app/server.js"
