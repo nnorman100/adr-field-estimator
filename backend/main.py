@@ -1003,20 +1003,21 @@ async def session_info(staff=Depends(current_staff)):
         price_books_enabled=bool(WORKSPACES_ENABLED and price_books_enabled()),
         retention_enabled=bool(WORKSPACES_ENABLED and retention_enabled()),
     )
+    jobs = get_job_store()
     if WORKSPACES_ENABLED:
-        actor = await stored(get_job_store().workspaces.principal, staff['uid'])
+        actor = await stored(jobs.workspaces.principal, staff['uid'])
         if actor['password_change_required']:
             raise HTTPException(403, PASSWORD_CHANGE_REQUIRED)
         result.update(actor)
         result['email_notice'] = actor['role'] == 'owner' and await stored(
-            get_job_store().workspaces.email_notice
+            jobs.workspaces.email_notice
         )
-        result.update(await stored(get_job_store().workspaces.prices.session_view, actor))
+        result.update(await stored(jobs.workspaces.prices.session_view, actor))
     else:
         result.update(prices_set=True, price_display=price_display(adr_rates()))
     if ai_features.enabled('ai_usage'):
         try:
-            result['quota'] = await stored(get_job_store().usage, staff['uid'])
+            result['quota'] = await stored(jobs.usage, staff['uid'])
         except HTTPException:
             result['quota'] = None
     return result
