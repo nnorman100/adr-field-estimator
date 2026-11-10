@@ -25,6 +25,8 @@ locals {
     SQL_CONNECTION_NAME   = local.n.sql_connection_name
     SQL_DATABASE_NAME     = local.n.sql_database_name
     EVIDENCE_BUCKET       = local.n.evidence_bucket
+    # Origins whose browser requests and Live sockets the services accept.
+    ALLOWED_ORIGINS = join(",", var.allowed_origins)
   }
 
   # Secrets each service may read, from the same table the data root grants from.

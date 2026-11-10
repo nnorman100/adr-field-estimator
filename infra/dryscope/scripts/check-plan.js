@@ -22,11 +22,14 @@
 // applied to (test): RETIRED grants may appear only as a plain delete of exactly that grant, and
 // RECONDITIONED grants only as a replacement that keeps role and member and moves from the
 // previous reviewed condition to the current one (the provider cannot change an IAM member's
-// condition in place). Nothing else may be deleted, replaced or updated.
+// condition in place). A third covers an app root that is already applied: a Cloud Run service
+// may change in place only by adding or setting a NEW_SETTINGS variable, to the value in the
+// table, with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
 const fs = require('node:fs');
 const readline = require('node:readline');
 
 const PROJECT = 'dryscope';
+const PROJECT_NUMBER = '570228742694';
 const REGION = 'us-central1';
 const SERVICES = ['api', 'live'];
 const RUNTIME = ['api', 'live', 'migrate'];
@@ -41,8 +44,10 @@ const APIS = [
   'aiplatform.googleapis.com',
   'artifactregistry.googleapis.com',
   'cloudresourcemanager.googleapis.com',
+  'firebaserules.googleapis.com',
   'firestore.googleapis.com',
   'iam.googleapis.com',
+  'identitytoolkit.googleapis.com',
   'secretmanager.googleapis.com',
   'sqladmin.googleapis.com',
   'storage.googleapis.com',
@@ -55,6 +60,15 @@ const SECRET_ACCESS = {
   'maps-api-key': ['api'],
   'link-signing-key': ['api', 'live'],
 };
+
+// Sign-in user management, bound by the owner on this environment's own tenants only (never on
+// the project, so no grant of it may appear here). No users.delete, configs.* or tenants.*.
+const IDENTITY_PERMISSIONS = [
+  'firebaseauth.users.create',
+  'firebaseauth.users.get',
+  'firebaseauth.users.sendEmail',
+  'firebaseauth.users.update',
+];
 
 const DEPLOY_PERMISSIONS = [
   'run.configurations.get',
@@ -94,6 +108,7 @@ function expectedPlan(root, env) {
   const lists = {}; // address -> {path: expected set}
   const absent = {}; // address -> [paths that must be empty or missing]
   const optional = new Set();
+  const settings = {}; // address -> {NAME: value}: plain env settings checked on every plan
 
   if (root === 'data') {
     for (const a of APIS) others.push(`google_project_service.apis["${a}"]`);
@@ -104,6 +119,7 @@ function expectedPlan(root, env) {
     others.push('google_firestore_database.field', 'google_storage_bucket.evidence');
     others.push('google_artifact_registry_repository.images');
     others.push('google_project_iam_custom_role.gemini_caller');
+    others.push('google_project_iam_custom_role.identity_users');
     for (const s of Object.keys(SECRET_ACCESS)) {
       others.push(`google_secret_manager_secret.app["${s}"]`);
     }
@@ -261,6 +277,10 @@ function expectedPlan(root, env) {
     attrs['google_project_iam_custom_role.gemini_caller'] = {
       role_id: `dryscopeGemini${title(env)}`,
     };
+    lists['google_project_iam_custom_role.identity_users'] = { permissions: IDENTITY_PERMISSIONS };
+    attrs['google_project_iam_custom_role.identity_users'] = {
+      role_id: `dryscopeIdentity${title(env)}`,
+    };
   } else {
     for (const k of SERVICES) {
       others.push(`google_cloud_run_v2_service.svc["${k}"]`);
@@ -279,6 +299,10 @@ function expectedPlan(root, env) {
         location: REGION,
       };
       others.push(`google_monitoring_alert_policy.server_errors["${k}"]`);
+      settings[`google_cloud_run_v2_service.svc["${k}"]`] = {
+        // The environment's own web app address (app/envs/<env>.tfvars).
+        ALLOWED_ORIGINS: `https://dryscope-api-${env}-${PROJECT_NUMBER}.${REGION}.run.app`,
+      };
       attrs[`google_cloud_run_v2_service.svc["${k}"]`] = {
         name: `dryscope-${k}-${env}`,
         location: REGION,
@@ -307,7 +331,7 @@ function expectedPlan(root, env) {
     optional.add('google_billing_budget.monthly[0]');
     others.push('google_billing_budget.monthly[0]');
   }
-  return { grants, others, attrs, lists, absent, optional, retired, reconditioned };
+  return { grants, others, attrs, lists, absent, optional, retired, reconditioned, settings };
 }
 
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -316,6 +340,16 @@ const same = (want, got) =>
     ? typeof got === 'string' && want.test(got)
     : JSON.stringify(want) === JSON.stringify(got);
 const empty = (v) => v == null || (Array.isArray(v) && v.length === 0);
+// Plain (not secret) env settings of a Cloud Run service's first container, by name.
+const envOf = (state) => state?.template?.[0]?.containers?.[0]?.env ?? [];
+const plainEnv = (state) =>
+  Object.fromEntries(
+    envOf(state)
+      .filter((e) => empty(e.value_source))
+      .map((e) => [e.name, e.value]),
+  );
+// Settings that an in-place update of an applied Cloud Run service may add or set.
+const NEW_SETTINGS = ['ALLOWED_ORIGINS'];
 
 // Against existing state the provider returns some IAM member fields as full resource paths
 // instead of the short names a fresh plan holds. Each is accepted only when it resolves to
@@ -367,9 +401,44 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
     );
   };
 
+  // An applied Cloud Run service may be updated in place only to add or set NEW_SETTINGS. Apart
+  // from those env entries, the planned state must equal the current one; output-only top-level
+  // fields the provider will recompute (marked unknown) are skipped. Anything unknown inside the
+  // template is not skipped, so such a plan is refused rather than guessed at.
+  const settingsUpdate = (rc, actions) => {
+    const { before, after, after_unknown: unknown = {} } = rc.change ?? {};
+    if (!want.settings[rc.address] || actions.length !== 1 || actions[0] !== 'update') return false;
+    if (before == null || after == null) return false;
+    const strip = (state) => {
+      const copy = structuredClone(state);
+      for (const key of Object.keys(unknown))
+        if (unknown[key] === true && key !== 'template') {
+          delete copy[key];
+        }
+      const container = copy.template?.[0]?.containers?.[0];
+      if (container) container.env = envOf(copy).filter((e) => !NEW_SETTINGS.includes(e.name));
+      return copy;
+    };
+    const canon = (v) =>
+      Array.isArray(v)
+        ? v.map(canon)
+        : v && typeof v === 'object'
+          ? Object.fromEntries(
+              Object.keys(v)
+                .sort()
+                .map((k) => [k, canon(v[k])]),
+            )
+          : v;
+    return same(canon(strip(before)), canon(strip(after)));
+  };
+
   for (const rc of resourceChanges) {
     const actions = rc.change?.actions ?? [];
-    if (retiredDelete(rc, actions) || reconditionedReplace(rc, actions)) {
+    if (
+      retiredDelete(rc, actions) ||
+      reconditionedReplace(rc, actions) ||
+      settingsUpdate(rc, actions)
+    ) {
       // Named, reviewed exception (see the table).
     } else if (actions.includes('delete')) {
       problems.push(`${rc.address}: plan would delete or replace it (${actions.join(', ')})`);
@@ -426,6 +495,16 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
         problems.push(
           `${address}: ${path} is ${JSON.stringify(get(after, path))}, expected ${value}`,
         );
+      }
+    }
+  }
+  for (const [address, expected] of Object.entries(want.settings)) {
+    const after = byAddress.get(address)?.change?.after;
+    if (!after) continue;
+    const got = plainEnv(after);
+    for (const [name, value] of Object.entries(expected)) {
+      if (got[name] !== value) {
+        problems.push(`${address}: env ${name} is ${JSON.stringify(got[name])}, expected ${value}`);
       }
     }
   }

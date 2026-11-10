@@ -44,6 +44,7 @@ module.exports = [
       'tests/test_required_docs.js',
       'tests/test_ai_inventory.js',
       'tests/test_terraform_plan_check.js',
+      'tests/test_terraform_plan_check_identity.js',
     ],
     languageOptions: { sourceType: 'module' },
   },
