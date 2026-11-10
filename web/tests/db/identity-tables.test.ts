@@ -96,6 +96,7 @@ describe('identity tables (migration 0002)', () => {
     expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual([
       '0002_identity',
       '0003_runtime_role',
+      '0004_sign_in_lookup',
     ]);
 
     const rows = await sql<
