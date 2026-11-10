@@ -1,4 +1,4 @@
-"""CI configuration guards: Python version source, legacy browser scope and deny-all Firestore rules."""
+"""CI configuration guards: Python version source, legacy browser scope, deny-all Firestore rules and CI runners."""
 
 import json
 import os
@@ -367,3 +367,48 @@ def test_ci_browser_scope_runs_when_push_base_is_not_ancestor(tmp_path):
     result = run_browser_scope_step(repo, 'push', diverged_sha, output_file)
     assert 'not an ancestor of HEAD; running legacy browser suite' in result.stdout
     assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
+
+
+# The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
+# and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
+# docs/RUNBOOK.md, "CI runners".
+RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}"
+WORKFLOWS = sorted((ROOT / '.github' / 'workflows').glob('*.y*ml'))
+
+
+def workflow_jobs(path):
+    return yaml.safe_load(path.read_text(encoding='utf8'))['jobs'].items()
+
+
+def test_workflows_exist():
+    assert {path.name for path in WORKFLOWS} >= {
+        'ci.yml',
+        'codeql.yml',
+        'deploy.yml',
+        'test-guard.yml',
+        'web.yml',
+    }
+
+
+@pytest.mark.parametrize('path', WORKFLOWS, ids=lambda path: path.name)
+def test_every_job_runs_on_the_switchable_runner(path):
+    for name, job in workflow_jobs(path):
+        assert job.get('runs-on') == RUNNER, f'{path.name} job {name}'
+        # The self-hosted job container has no Docker daemon for service or job containers.
+        assert 'services' not in job and 'container' not in job, f'{path.name} job {name}'
+
+
+def test_python_job_installs_node():
+    """Some Python tests run node and skip without it; the self-hosted container has none."""
+    jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'ci.yml'))
+    uses = [step.get('uses', '') for step in jobs['python']['steps']]
+    assert any(use.startswith('actions/setup-node@') for use in uses)
+
+
+def test_codeql_sets_up_node_before_init():
+    """CodeQL's JavaScript/TypeScript extractor needs node; the self-hosted container has none."""
+    jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'codeql.yml'))
+    uses = [step.get('uses', '') for step in jobs['analyze']['steps']]
+    node = [i for i, use in enumerate(uses) if use.startswith('actions/setup-node@')]
+    init = [i for i, use in enumerate(uses) if use.startswith('github/codeql-action/init@')]
+    assert node and init and node[0] < init[0]
