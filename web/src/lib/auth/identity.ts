@@ -14,8 +14,10 @@ export type VerifiedToken = {
   emailVerified: boolean;
 };
 
-// The revocation-checked token also carries what the second-step and session rules read.
-export type SessionToken = VerifiedToken & SessionClaims;
+// The revocation-checked token also carries what the second-step and session rules read, and the
+// account's email and name, which only invitation matching and a new actor's record use.
+export type AccountClaims = { email?: string | null; name?: string | null };
+export type SessionToken = VerifiedToken & SessionClaims & AccountClaims;
 
 export type TokenVerifier = {
   // Checks the token without the revocation call.
@@ -110,12 +112,10 @@ export type ResolveOptions = {
 
 const nowInSeconds = () => Math.floor(Date.now() / 1000);
 
-export async function resolveIdentity(
-  request: Request,
-  verifier: TokenVerifier,
-  directory: IdentityDirectory,
-  options: ResolveOptions = {},
-): Promise<Identity> {
+// A signed-in account of an active company, whether or not it is a member yet: the token is
+// checked, the company found from its tenant, the token checked again with revocation on that
+// tenant, and a verified email required. Shared by resolveIdentity and resolveAccount.
+async function signedInAccount(request: Request, verifier: TokenVerifier, directory: IdentityDirectory) {
   const idToken = bearerToken(request);
 
   const first = await verifier.verify(idToken);
@@ -133,6 +133,16 @@ export async function resolveIdentity(
   const record = await directory.member(companyId, tenant, token.uid);
   if (!record || record.company.id !== companyId) throw new IdentityRefusal('unknown_tenant');
   if (record.company.status !== 'active') throw new IdentityRefusal('company_inactive');
+  return { companyId, tenant, token, record };
+}
+
+export async function resolveIdentity(
+  request: Request,
+  verifier: TokenVerifier,
+  directory: IdentityDirectory,
+  options: ResolveOptions = {},
+): Promise<Identity> {
+  const { companyId, tenant, token, record } = await signedInAccount(request, verifier, directory);
   if (!record.actor || !record.membership) throw new IdentityRefusal('not_a_member');
   if (record.membership.status !== 'active') throw new IdentityRefusal('member_disabled');
 
@@ -153,5 +163,39 @@ export async function resolveIdentity(
     role: record.membership.role,
     capabilities: capabilitiesFor(record.membership.role, accessFlags(flags)),
     flags,
+  };
+}
+
+// A signed-in account that may not be a member yet: someone opening or accepting an invitation.
+// The session rules depend on the role being accepted, so the caller applies them (sessionRefusal)
+// once it knows that role. The email is the token's verified email, lowercased.
+export type Account = {
+  companyId: string;
+  companyName: string;
+  tenant: string;
+  uid: string;
+  email: string;
+  name: string | null;
+  session: SessionClaims;
+};
+
+export async function resolveAccount(
+  request: Request,
+  verifier: TokenVerifier,
+  directory: IdentityDirectory,
+): Promise<Account> {
+  const { companyId, tenant, token, record } = await signedInAccount(request, verifier, directory);
+  const email = typeof token.email === 'string' ? token.email.trim().toLowerCase() : '';
+  // A verified token with no email cannot be matched to an invitation.
+  if (email === '') throw new IdentityRefusal('email_unverified');
+  const name = typeof token.name === 'string' ? Array.from(token.name.trim()).slice(0, 200).join('').trim() || null : null;
+  return {
+    companyId,
+    companyName: record.company.name,
+    tenant,
+    uid: token.uid,
+    email,
+    name,
+    session: { authTime: token.authTime, secondFactor: token.secondFactor },
   };
 }

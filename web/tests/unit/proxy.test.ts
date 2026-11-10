@@ -15,10 +15,40 @@ describe('API sign-in gate', () => {
     expect([...publicApiPaths].sort()).toEqual(['/api/echo', '/api/health']);
   });
 
-  it('passes only /api/me on to its own sign-in check', () => {
-    expect([...memberApiPaths]).toEqual(['/api/me']);
+  it('passes only the member and invitation routes on to their own sign-in check', () => {
+    expect([...memberApiPaths]).toEqual([
+      '/api/me',
+      '/api/companies/:id/team',
+      '/api/companies/:id/invitations',
+      '/api/companies/:id/invitations/:id/resend',
+      '/api/companies/:id/invitations/:id/cancel',
+      '/api/companies/:id/invitations/:id/clear',
+      '/api/companies/:id/members/:id',
+      '/api/companies/:id/members/:id/disable',
+      '/api/companies/:id/members/:id/enable',
+      '/api/invitations/:id',
+      '/api/invitations/:id/accept',
+    ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);
+  });
+
+  it('matches an id segment to one uuid and nothing else', () => {
+    const id = '0b5a1c1e-7d2f-4c8e-9a6b-3f4e5d6c7b8a';
+    expect(call(`/api/companies/${id}/team`).headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/companies/${id}/members/${id.toUpperCase()}/disable`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    expect(call(`/api/invitations/${id}/accept`, 'POST').headers.get('x-middleware-next')).toBe('1');
+    for (const path of [
+      '/api/companies/current/team',
+      `/api/companies/${id}/team/extra`,
+      `/api/companies/${id}`,
+      `/api/companies/${id}x/team`,
+      `/api/companies/${id}/members/${id}/delete`,
+      `/api/invitations/${id}/accept/`,
+      '/api/invitations/..%2Fme',
+    ]) {
+      expect({ path, status: call(path).status }).toEqual({ path, status: 401 });
+    }
   });
 
   it.each([['/api/health'], ['/api/echo']])('lets %s through', (path) => {
