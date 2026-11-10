@@ -22,7 +22,7 @@ function token(claims: Record<string, unknown>): string {
   return `${part({ alg: 'none' })}.${part(claims)}.`;
 }
 
-type Account = VerifiedToken & { revoked?: boolean; disabled?: boolean };
+type Account = VerifiedToken & { revoked?: boolean; disabled?: boolean; authTime: number | null; secondFactor: string | null };
 
 function fakeVerifier(): TokenVerifier & { calls: string[] } {
   const calls: string[] = [];
@@ -35,6 +35,9 @@ function fakeVerifier(): TokenVerifier & { calls: string[] } {
       emailVerified: claims.email_verified === true,
       revoked: claims.revoked === true,
       disabled: claims.disabled === true,
+      // A real token always carries auth_time; these fakes signed in a minute ago unless told.
+      authTime: 'auth_time' in claims ? (claims.auth_time as number | null) : Math.floor(Date.now() / 1000) - 60,
+      secondFactor: (claims.sign_in_second_factor as string | undefined) ?? null,
     };
   };
   return {
@@ -50,7 +53,8 @@ function fakeVerifier(): TokenVerifier & { calls: string[] } {
       if (account.tenant !== tenant) throw new IdentityRefusal('invalid_token');
       if (account.disabled) throw new IdentityRefusal('account_disabled');
       if (account.revoked) throw new IdentityRefusal('sign_in_revoked');
-      return { uid: account.uid, tenant: account.tenant, emailVerified: account.emailVerified };
+      const { uid, tenant: signedTenant, emailVerified, authTime, secondFactor } = account;
+      return { uid, tenant: signedTenant, emailVerified, authTime, secondFactor };
     },
   };
 }
@@ -179,7 +183,7 @@ describe('memberRoute', () => {
   const services = () => ({ verifier: fakeVerifier(), directory: fakeDirectory() });
 
   it('hands the handler the identity and answers with it', async () => {
-    const GET = memberRoute((_request, identity) => Response.json({ company: identity.companyId }), services);
+    const GET = memberRoute((_request, identity) => Response.json({ company: identity.companyId }), {}, services);
     const res = await GET(request(token(memberB)), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ company: B });
@@ -187,7 +191,7 @@ describe('memberRoute', () => {
 
   it('refuses without calling the handler, with only a code in the body', async () => {
     const handler = vi.fn(() => Response.json({}));
-    const GET = memberRoute(handler, services);
+    const GET = memberRoute(handler, {}, services);
     const res = await GET(request(token({ ...memberA, revoked: true })), { params: Promise.resolve({}) });
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'sign_in_revoked' });
@@ -212,7 +216,7 @@ describe('memberRoute', () => {
       directory: fakeDirectory(),
     });
     const handler = vi.fn(() => Response.json({}));
-    const res = await memberRoute(handler, broken)(request(secretToken), { params: Promise.resolve({}) });
+    const res = await memberRoute(handler, {}, broken)(request(secretToken), { params: Promise.resolve({}) });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'identity_unavailable' });
     expect(handler).not.toHaveBeenCalled();
@@ -223,7 +227,7 @@ describe('memberRoute', () => {
   it('fails closed when the server has no sign-in configuration', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const missing = () => parseIdentityConfig({ APP_ENV: 'test' }) as never;
-    const res = await memberRoute(() => Response.json({}), missing)(request(token(memberA)), {
+    const res = await memberRoute(() => Response.json({}), {}, missing)(request(token(memberA)), {
       params: Promise.resolve({}),
     });
     expect(res.status).toBe(503);
