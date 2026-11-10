@@ -187,7 +187,7 @@ def test_ci_node_job_lint_still_covers_required_docs_and_file_length():
     import json
 
     lint = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['scripts']['lint']
-    assert 'check_file_length.py' in lint and 'check_required_docs.js' in lint
+    assert 'check-file-length.mts' in lint and 'check_required_docs.js' in lint
 
 
 def scope_gated_parts(workflow):
@@ -260,7 +260,7 @@ def test_ci_node_job_keeps_the_rebuild_checks_on_every_pull_request():
         assert command in runs
     assert 'npm test' not in runs, 'the legacy unit tests in npm test are retired from CI'
     lint = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['scripts']['lint']
-    assert 'check_file_length.py' in lint and 'check_required_docs.js' in lint
+    assert 'check-file-length.mts' in lint and 'check_required_docs.js' in lint
 
 
 def test_ci_keeps_node_and_audit_and_nothing_is_scoped():

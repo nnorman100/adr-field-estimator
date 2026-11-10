@@ -43,13 +43,15 @@ The jobs `python` (pytest and ruff), `browser` (Playwright) and `firestore-emula
 
 | Job | What it does now |
 | --- | --- |
-| `node` | `npm ci`, Prettier, `npm run lint` (ESLint, file length, required docs) and the vitest suite, which holds the Terraform plan check. The legacy unit tests in `npm test` no longer run. |
+| `node` | `npm ci`, Prettier, `npm run lint` (ESLint, the file-length check `scripts/check-file-length.mts`, required docs) and the vitest suite, which holds the Terraform plan check and the TypeScript ports of the rebuild's workflow guards (see below). The legacy unit tests in `npm test` no longer run. |
 | `Analyze (python)` in CodeQL | Unchanged: still scans the legacy Python (the pricing code stays in the repo), and still only when a legacy file changed, the diff base is unavailable or on the weekly schedule; otherwise it reports green with the skip reason in its log. |
 | `audit`, `Analyze (javascript-typescript)`, `Test guard`, all of `web.yml` | Unchanged and never scoped. |
 
 The legacy deploy workflow `.github/workflows/deploy.yml` is disabled in GitHub (the file stays).
 
 Only the CodeQL Python analysis uses the scope step, `scripts/ci_legacy_scope.sh`. It lists the legacy files (the old browser list first, then the unit-test and tooling files) and runs the scan when one changed against the base commit. It runs the scan when it cannot tell what changed: no base commit (new branch, force push, scheduled run), a push whose base is not an ancestor, or a failed diff. `tests/test_ci_legacy_scope.py` covers the script and checks the jobs in `ci.yml`. When S8 deletes the legacy app, remove the script and the Python CodeQL leg together.
+
+The Python tests that guard the rebuild or repo-wide rules were ported to TypeScript and run in the `node` job's vitest suite: `tests/test_ci_workflows.ts` (every job on the switchable runner without Docker services or containers, no legacy CI jobs, the `node` job's checks on every pull request, CodeQL's scoping), `tests/test_web_release_workflow.ts` and `tests/test_web_images.ts` (the test release path and its images), and `tests/test_file_length_limit.ts` (the 1,000-line limit). The Python originals (`tests/test_ci_config.py`, `tests/test_ci_legacy_scope.py`, `tests/test_web_release_workflow.py`, `tests/test_file_length*.py`) stay until S8 and run only by hand; change a guarded file and its TypeScript test together.
 
 ## Switch a company to its own price table
 
