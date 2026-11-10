@@ -152,6 +152,18 @@ applies it to live. An agent does not create the instance, run Terraform or chan
 IAM. The owner applies infrastructure. There is no earlier Postgres schema to backfill, and the
 Firestore records in this file are unchanged.
 
+Cloud SQL backups: automated daily backups and point-in-time recovery are on, and the backups are
+kept in the US multi-region (`us`), not in the instance's region, so a regional outage cannot take
+them too. Only backups taken after that setting is applied are kept in `us`; earlier ones stay in
+`us-central1`, so the owner takes one on-demand backup after the apply to check its location, and
+another after the first migrations. There is no second-region export or replica. If `us-central1`
+is lost, the latest backup is restored into a new instance in another region
+([RUNBOOK.md](RUNBOOK.md#restore-into-another-region)), losing at most one day; point-in-time
+recovery is not available then. The restored instance is the data copy only: the app runs in
+`us-central1` and stays down until that region returns, and a second-region app is a decision to
+revisit at launch. A quarterly drill restores into a different region once. Firestore stays in its
+own region with its own point-in-time recovery.
+
 The schema is a numbered ledger. Files in `web/migrations` are named `0001_name.sql`,
 `0002_name.sql`, and so on. `npm run db:migrate` applies each missing file in order, inside its own
 transaction, and records the file id and a SHA-256 of its bytes in `migration_ledger`. A second run
