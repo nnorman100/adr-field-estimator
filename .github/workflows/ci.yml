@@ -13,22 +13,41 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # python is a required check on every PR and push to master, so the job always reports. It
+      # skips its real steps, with a logged reason, when no legacy app, test or tooling file
+      # changed (list and rules: scripts/ci_legacy_scope.sh).
+      - name: Check whether legacy app files changed
+        id: scope
+        env:
+          SUITE: legacy Python tests
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/ci_legacy_scope.sh
       # backend/Dockerfile is the single source of the Python version.
       - id: python
+        if: steps.scope.outputs.run == 'true'
         run: echo "version=$(python3 scripts/ci_python_version.py)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           python-version: ${{ steps.python.outputs.version }}
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       # Some tests run node. GitHub's Ubuntu image has it; the self-hosted runner's container does not.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: lts/*
-      - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
-      - run: python -m pytest tests -q -p no:cacheprovider
-      - run: python -m ruff format --check .
-      - run: python -m ruff check .
+      - if: steps.scope.outputs.run == 'true'
+        run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
+      - if: steps.scope.outputs.run == 'true'
+        run: python -m pytest tests -q -p no:cacheprovider
+      - if: steps.scope.outputs.run == 'true'
+        run: python -m ruff format --check .
+      - if: steps.scope.outputs.run == 'true'
+        run: python -m ruff check .
 
   firestore-emulator:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
@@ -37,27 +56,45 @@ jobs:
       ADR_FIRESTORE_EMULATOR_REQUIRED: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # firestore-emulator is a required check on every PR and push to master, so the job always reports. It
+      # skips its real steps, with a logged reason, when no legacy app, test or tooling file
+      # changed (list and rules: scripts/ci_legacy_scope.sh).
+      - name: Check whether legacy app files changed
+        id: scope
+        env:
+          SUITE: legacy Firestore emulator tests
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/ci_legacy_scope.sh
       # backend/Dockerfile is the single source of the Python version.
       - id: python
+        if: steps.scope.outputs.run == 'true'
         run: echo "version=$(python3 scripts/ci_python_version.py)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           python-version: ${{ steps.python.outputs.version }}
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       # The Firestore emulator runs on Java 21 or later.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           distribution: temurin
           java-version: '21'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: lts/*
-      - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
+      - if: steps.scope.outputs.run == 'true'
+        run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
       # firebase-tools' emulators:exec starts the emulator, sets FIRESTORE_EMULATOR_HOST for the
       # tests and stops it afterwards; it stays out of package.json so other jobs do not install it.
       # The demo- project ID keeps everything offline.
-      - run: >-
+      - if: steps.scope.outputs.run == 'true'
+        run: >-
           npx --yes firebase-tools@15.31.0 emulators:exec --only firestore --project demo-adr-emulator
           "python -m pytest tests/test_firestore_emulator*.py -q -p no:cacheprovider"
 
@@ -65,14 +102,34 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # node is a required check on every PR and push to master, so the job always reports. It
+      # skips its real steps, with a logged reason, when no legacy app, test or tooling file
+      # changed (list and rules: scripts/ci_legacy_scope.sh).
+      - name: Check whether legacy app files changed
+        id: scope
+        env:
+          SUITE: legacy JavaScript tests
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/ci_legacy_scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
           cache: npm
       - run: npm ci
+      # Always on: ESLint and Prettier also cover the rebuild's JavaScript (infra/dryscope/scripts),
+      # and the required-docs and file-length checks apply to every PR, web/ included.
       - run: npm run format:check
       - run: npm run lint
-      - run: npm test
+      # npm test is the legacy unit tests followed by the vitest suite. The vitest suite also holds
+      # the rebuild's Terraform plan check, so it runs on every PR; the legacy tests run only when
+      # the scope step says legacy files changed.
+      - if: steps.scope.outputs.run == 'true'
+        run: npm test
+      - if: steps.scope.outputs.run != 'true'
+        run: npx vitest run
 
   browser:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
