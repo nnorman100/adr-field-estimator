@@ -187,8 +187,42 @@ run "only_reviewed_roles_are_granted" {
     error_message = "The deploy account pushes immutable images and holds no repository admin."
   }
   assert {
-    condition     = length(google_project_iam_member.gemini_caller) == 2 && length(google_project_iam_member.firestore_user) == 2
-    error_message = "The migrator gets neither Gemini nor Firestore access."
+    condition     = length(google_project_iam_member.gemini_caller) == 2 && toset(keys(google_project_iam_member.firestore_user)) == toset(["api"])
+    error_message = "The migrator gets neither Gemini nor Firestore access, and the Live relay gets no Firestore access."
+  }
+}
+
+run "the_live_relay_holds_no_database_access" {
+  command = plan
+
+  assert {
+    condition     = toset(keys(google_project_iam_member.sql_client)) == toset(["api", "migrate"])
+    error_message = "Only the web app and the migrator may connect to Cloud SQL; the Live relay may not."
+  }
+  assert {
+    condition     = toset(keys(google_project_iam_member.sql_login)) == toset(["api", "migrate"])
+    error_message = "Only the web app and the migrator may log in to Cloud SQL; the Live relay may not."
+  }
+  assert {
+    condition     = toset(keys(google_project_iam_member.firestore_user)) == toset(["api"])
+    error_message = "Only the web app holds roles/datastore.user (which includes delete); the Live relay gets none until a named need."
+  }
+  assert {
+    condition     = alltrue([for m in concat(values(google_project_iam_member.sql_client), values(google_project_iam_member.sql_login), values(google_project_iam_member.firestore_user)) : m.member != "serviceAccount:dryscope-live-${var.environment}@dryscope.iam.gserviceaccount.com"])
+    error_message = "No SQL or Firestore grant names the Live relay account."
+  }
+}
+
+run "firestore_condition_covers_this_database_and_its_documents_only" {
+  command = plan
+
+  assert {
+    condition     = google_project_iam_member.firestore_user["api"].condition[0].expression == "resource.name == 'projects/dryscope/databases/dryscope-field-${var.environment}' || resource.name.startsWith('projects/dryscope/databases/dryscope-field-${var.environment}/')"
+    error_message = "Firestore access is the environment's database or a name under it (its documents), with a trailing slash so no sibling database matches."
+  }
+  assert {
+    condition     = !strcontains(google_project_iam_member.firestore_user["api"].condition[0].expression, "dryscope-field-${var.environment == "test" ? "live" : "test"}")
+    error_message = "The condition never names the other environment's database."
   }
 }
 
