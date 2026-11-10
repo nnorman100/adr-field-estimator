@@ -2,7 +2,7 @@
 # Decides whether the legacy app's checks need to run for this change.
 #
 # The old Python app (backend/, public/, tests/ and their tooling) is frozen reference code for
-# the TypeScript rebuild in web/ and infra/dryscope/. Most of its CI jobs are retired (see
+# the TypeScript rebuild in web/ and infra/dryscope/. Its other CI jobs were removed (see
 # docs/RUNBOOK.md, "Legacy CI retired"); the CodeQL Python analysis is the one job that still calls
 # this script right after checkout and skips its real steps, with a logged reason, when nothing the
 # legacy app depends on changed.
@@ -11,7 +11,7 @@
 # GITHUB_OUTPUT. Output: run=true or run=false. When the base commit is unavailable (new branch,
 # force push, scheduled run), the answer is always run=true.
 #
-# The first block of legacy_paths is the list the retired browser job in ci.yml used; the second
+# The first block of legacy_paths is the list the removed browser job in ci.yml used; the second
 # block adds the unit-test and tooling files that the browser suite did not read.
 set -euo pipefail
 

@@ -37,20 +37,19 @@ The job container is leaner than GitHub's Ubuntu image: it has no Docker daemon 
 
 ## Legacy CI retired
 
-The old Python app (`backend/`, `public/`, `tests/` and their tooling) is frozen reference code for the TypeScript rebuild in `web/` and `infra/dryscope/`. Nobody uses it and it is deleted in S8, so as of 2026-11-10 most of its checks no longer run. **Do not change legacy files except through S8**; the old app keeps serving until then, and no check now guards those edits. Master's ruleset still requires every job name below, so each one still reports on every pull request and push to `master`:
+The old Python app (`backend/`, `public/`, `tests/` and their tooling) is frozen reference code for the TypeScript rebuild in `web/` and `infra/dryscope/`. Nobody uses it and it is deleted in S8, so as of 2026-11-10 none of its tests run in CI. **Do not change legacy files except through S8**; the old app keeps serving until then, and no check now guards those edits. Run a legacy suite by hand with the commands in `CLAUDE.md` when a legacy change needs one.
+
+The jobs `python` (pytest and ruff), `browser` (Playwright) and `firestore-emulator` were removed from `.github/workflows/ci.yml` rather than left reporting a fake success. The owner took those three names off the master ruleset's required checks on 2026-11-10 (it now requires `node`, `audit`, `test-guard` and the Web app checks); a required check with no job would block every pull request. The pricing-oracle Python code (`scripts/pricing_oracle*.py`, `tests/test_pricing_oracle.py`) was deleted too: the owner dropped exact price matching with the old app (each owner sets their own prices). The stored answers in `tests/fixtures/pricing-oracle/` and `tests/golden/` stay because the TypeScript tests in `web/tests/unit/` read them until a later pricing plan replaces them.
 
 | Job | What it does now |
 | --- | --- |
-| `python` | Runs only the pricing-oracle tests (`tests/test_pricing_oracle.py`, with `scripts/pricing_oracle*.py` and the stored answers in `tests/fixtures/pricing-oracle/`). They keep the pinned legacy pricing answers honest until S4 is finished. The rest of the Python suite, `ruff format` and `ruff check` no longer run. |
-| `browser` | Reports success at once with `legacy suite retired 2026-11-10; see docs/RUNBOOK.md`. The legacy Playwright suite no longer runs. |
-| `firestore-emulator` | Reports success at once with the same message. The legacy Firestore emulator tests no longer run. |
-| `node` | Runs `npm ci`, Prettier, `npm run lint` (ESLint, file length, required docs) and the vitest suite, which holds the Terraform plan check. The legacy unit tests in `npm test` no longer run. |
-| `Analyze (python)` in CodeQL | Still scans the legacy Python (the pricing code stays in the repo), and still only when a legacy file changed, the diff base is unavailable or on the weekly schedule; otherwise it reports green with the skip reason in its log. |
-| `Analyze (javascript-typescript)`, `audit`, `Test guard`, all of `web.yml` | Never scoped; run everything. |
+| `node` | `npm ci`, Prettier, `npm run lint` (ESLint, file length, required docs) and the vitest suite, which holds the Terraform plan check. The legacy unit tests in `npm test` no longer run. |
+| `Analyze (python)` in CodeQL | Unchanged: still scans the legacy Python (the pricing code stays in the repo), and still only when a legacy file changed, the diff base is unavailable or on the weekly schedule; otherwise it reports green with the skip reason in its log. |
+| `audit`, `Analyze (javascript-typescript)`, `Test guard`, all of `web.yml` | Unchanged and never scoped. |
 
-The legacy deploy workflow `.github/workflows/deploy.yml` is disabled in GitHub (the file stays). To run a retired suite by hand for a legacy change, use the commands in `CLAUDE.md` locally.
+The legacy deploy workflow `.github/workflows/deploy.yml` is disabled in GitHub (the file stays).
 
-Only the CodeQL Python analysis still uses the scope step, `scripts/ci_legacy_scope.sh`. It lists the legacy files (the old browser list first, then the unit-test and tooling files) and runs the scan when one changed against the base commit. It runs the scan when it cannot tell what changed: no base commit (new branch, force push, scheduled run), a push whose base is not an ancestor, or a failed diff. `tests/test_ci_legacy_scope.py` covers the script and checks the retired jobs' shape. When S8 deletes the legacy app, remove the script, the Python CodeQL leg and the oracle test together.
+Only the CodeQL Python analysis uses the scope step, `scripts/ci_legacy_scope.sh`. It lists the legacy files (the old browser list first, then the unit-test and tooling files) and runs the scan when one changed against the base commit. It runs the scan when it cannot tell what changed: no base commit (new branch, force push, scheduled run), a push whose base is not an ancestor, or a failed diff. `tests/test_ci_legacy_scope.py` covers the script and checks the jobs in `ci.yml`. When S8 deletes the legacy app, remove the script and the Python CodeQL leg together.
 
 ## Switch a company to its own price table
 

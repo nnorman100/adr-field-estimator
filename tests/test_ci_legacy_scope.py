@@ -1,8 +1,7 @@
-"""The shared legacy scope script, which only the CodeQL Python analysis still uses, and the retired ci.yml jobs.
+"""The shared legacy scope script, which only the CodeQL Python analysis still uses, and ci.yml.
 
-As of 2026-11-10 the legacy Python suite (apart from the pricing-oracle tests), the legacy
-Playwright browser suite and the legacy Firestore emulator tests are retired from CI. Their job
-names stay because master's ruleset requires them. CodeQL keeps scanning the legacy Python, scoped
+As of 2026-11-10 the legacy Python suite, the legacy Playwright browser suite and the legacy
+Firestore emulator tests are retired from CI and their jobs are removed from ci.yml. CodeQL keeps scanning the legacy Python, scoped
 by scripts/ci_legacy_scope.sh. The DryScope rebuild's checks (web/, infra/dryscope, required docs,
 file length, test guard, audit) must keep running on every PR.
 """
@@ -242,32 +241,14 @@ def test_codeql_still_runs_weekly_and_on_pushes():
     assert triggers['push']['branches'] == ['master']
 
 
-RETIRED_MESSAGE = 'legacy suite retired 2026-11-10; see docs/RUNBOOK.md'
-
-
 def run_commands(job):
     return [step.get('run', '') for step in job['steps']]
 
 
-@pytest.mark.parametrize('job_name', ['browser', 'firestore-emulator'])
-def test_ci_retired_jobs_report_a_quick_success_with_the_reason(job_name):
-    job = load_ci_workflow()['jobs'][job_name]
-    assert 'if' not in job, f'{job_name} is a required check and must report on every PR'
-    assert len(job['steps']) == 1
-    step = job['steps'][0]
-    assert 'uses' not in step and 'if' not in step
-    assert RETIRED_MESSAGE in step['run']
-
-
-def test_ci_python_job_runs_only_the_pricing_oracle_tests():
-    job = load_ci_workflow()['jobs']['python']
-    assert 'if' not in job
-    assert all('if' not in step for step in job['steps'])
-    runs = run_commands(job)
-    assert 'python -m pytest tests/test_pricing_oracle.py -q -p no:cacheprovider' in runs
-    assert [r for r in runs if 'pytest' in r or 'ruff' in r] == [
-        'python -m pytest tests/test_pricing_oracle.py -q -p no:cacheprovider'
-    ]
+@pytest.mark.parametrize('job_name', ['python', 'browser', 'firestore-emulator'])
+def test_ci_has_no_legacy_test_jobs(job_name):
+    """The legacy suites are removed, not faked: the owner drops these names from the ruleset."""
+    assert job_name not in load_ci_workflow()['jobs']
 
 
 def test_ci_node_job_keeps_the_rebuild_checks_on_every_pull_request():
@@ -282,9 +263,9 @@ def test_ci_node_job_keeps_the_rebuild_checks_on_every_pull_request():
     assert 'check_file_length.py' in lint and 'check_required_docs.js' in lint
 
 
-def test_ci_required_job_names_still_report_and_nothing_is_scoped():
+def test_ci_keeps_node_and_audit_and_nothing_is_scoped():
     workflow = load_ci_workflow()
-    assert {'python', 'browser', 'firestore-emulator', 'node', 'audit'} <= set(workflow['jobs'])
+    assert set(workflow['jobs']) == {'node', 'audit'}
     for name in ('ci.yml', 'test-guard.yml', 'web.yml'):
         assert scope_gated_parts(load_workflow(name)) == [], f'{name} must not use the scope step'
     audit = workflow['jobs']['audit']

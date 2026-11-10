@@ -8,37 +8,12 @@ on:
 permissions:
   contents: read
 
-# The legacy app (backend/, public/, tests/ and their tooling) is retired from CI as of 2026-11-10;
-# it is deleted in S8 and nothing changes it until then. Master's ruleset still requires the job
-# names python, browser, firestore-emulator and node, so each stays and reports. python keeps only
-# the pricing-oracle tests, which hold the legacy pricing answers the TypeScript rebuild must match
-# until S4 is finished; browser and firestore-emulator report a quick success. See docs/RUNBOOK.md,
-# "Legacy CI retired".
+# The legacy app's tests (the Python suite, the Playwright browser suite and the Firestore emulator
+# tests) are retired from CI as of 2026-11-10. The legacy app is deleted in S8 and nothing changes
+# it until then, so those jobs (python, browser, firestore-emulator) were removed; the owner takes
+# them off the master ruleset's required checks. node keeps the repo-wide lint, format and vitest
+# checks the rebuild depends on. See docs/RUNBOOK.md, "Legacy CI retired".
 jobs:
-  python:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    steps:
-      # The oracle's manifest check reads git (the pinned backend commit), so keep full history.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      # backend/Dockerfile is the single source of the Python version.
-      - id: python
-        run: echo "version=$(python3 scripts/ci_python_version.py)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: ${{ steps.python.outputs.version }}
-          cache: pip
-          cache-dependency-path: backend/requirements*.txt
-      - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
-      - run: python -m pytest tests/test_pricing_oracle.py -q -p no:cacheprovider
-
-  firestore-emulator:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    steps:
-      - name: Legacy Firestore emulator tests retired
-        run: echo "legacy suite retired 2026-11-10; see docs/RUNBOOK.md"
-
   node:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     steps:
@@ -55,12 +30,6 @@ jobs:
       # The vitest suite holds the rebuild's Terraform plan check. The legacy unit tests that the
       # rest of `npm test` runs are retired from CI.
       - run: npx vitest run
-
-  browser:
-    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
-    steps:
-      - name: Legacy browser suite retired
-        run: echo "legacy suite retired 2026-11-10; see docs/RUNBOOK.md"
 
   audit:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
