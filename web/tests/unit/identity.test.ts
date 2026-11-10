@@ -8,7 +8,9 @@ import {
   type TokenVerifier,
   type VerifiedToken,
 } from '@/lib/auth';
-import { claimedTenant, IdentityUnavailable } from '@/lib/auth/firebase';
+import { getApps } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { claimedTenant, firebaseTokenVerifier, IdentityUnavailable } from '@/lib/auth/firebase';
 import { ConfigError, parseConfig, parseIdentityConfig } from '@/lib/config';
 
 const A = '00000000-0000-4000-8000-00000000000a';
@@ -262,6 +264,29 @@ describe('claimedTenant', () => {
     expect(() => claimedTenant(token({ firebase: { tenant: 7 } }))).toThrow(IdentityRefusal);
     expect(() => claimedTenant(token({ firebase: { tenant: '../other' } }))).toThrow(IdentityRefusal);
     expect(() => claimedTenant('a.%%%.c')).toThrow(IdentityRefusal);
+  });
+});
+
+describe('firebaseTokenVerifier', () => {
+  it('checks the first token on the project, never on a tenant the unverified token claims', async () => {
+    expect(process.env.FIREBASE_AUTH_EMULATOR_HOST).toBeUndefined();
+    const verifier = firebaseTokenVerifier({ appEnv: 'test', projectId: 'dryscope-unit', authEmulatorHost: null });
+    const app = getApps().find((candidate) => candidate.name === 'dryscope-identity-dryscope-unit')!;
+    const auth = getAuth(app);
+    const forTenant = vi.spyOn(auth.tenantManager(), 'authForTenant');
+    const check = vi
+      .spyOn(auth, 'verifyIdToken')
+      .mockResolvedValueOnce({ uid: 'uid-a', email_verified: true, firebase: { tenant: 'tenant-a' } } as never);
+
+    const idToken = token({ firebase: { tenant: 'tenant-forged-1' } });
+    await expect(verifier.verify(idToken)).resolves.toEqual({ uid: 'uid-a', tenant: 'tenant-a', emailVerified: true });
+    expect(check).toHaveBeenCalledWith(idToken, false);
+
+    check.mockRestore();
+    const refused = verifier.verify(token({ firebase: { tenant: 'tenant-forged-2' } }));
+    await expect(refused).rejects.toMatchObject({ code: 'invalid_token' });
+    expect(forTenant).not.toHaveBeenCalled();
+    forTenant.mockRestore();
   });
 });
 

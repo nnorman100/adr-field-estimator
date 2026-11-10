@@ -4,10 +4,11 @@ import type { IdentityConfig } from '@/lib/config';
 import { IdentityRefusal, type TokenVerifier, type VerifiedToken } from './identity';
 
 // Sign-in tokens checked with the Firebase Admin SDK. Identity Platform signs a tenant user's
-// token with the project's keys, so the first check can run on the tenant named in the token: the
-// SDK checks the signature, audience, issuer and expiry, then that the token's tenant is that
-// tenant. The revocation check must run on the tenant too; on the project it cannot find a tenant
-// user (docs.cloud.google.com/identity-platform/docs/multi-tenancy-managing-tenants).
+// token with the project's keys, so the first check runs on the project: the SDK checks the
+// signature, audience, issuer and expiry, with no user lookup, and the tenant it returns is signed.
+// The revocation check must run on the tenant; on the project it cannot find a tenant user
+// (docs.cloud.google.com/identity-platform/docs/multi-tenancy-managing-tenants). It runs only for
+// a tenant the database knows, because the SDK keeps a client for every tenant it is asked for.
 //
 // Error text from the SDK can quote the token, so it is never logged or returned: only a fixed
 // refusal code leaves this file.
@@ -16,7 +17,8 @@ import { IdentityRefusal, type TokenVerifier, type VerifiedToken } from './ident
 const TENANT_ID = /^[A-Za-z0-9-]{1,128}$/;
 
 // The tenant a token claims, read before its signature is checked. It only picks which verifier
-// checks the token; that verifier refuses a token whose signed tenant differs.
+// checks the token; that verifier refuses a token whose signed tenant differs. Outside the
+// emulator it is never used to choose a tenant client before the signature is checked.
 export function claimedTenant(idToken: string): string | null {
   const payload = idToken.split('.')[1];
   if (!payload) throw new IdentityRefusal('invalid_token');
@@ -82,8 +84,13 @@ export function firebaseTokenVerifier(config: IdentityConfig): TokenVerifier {
   const auth = getAuth(firebaseApp(config));
   return {
     async verify(idToken) {
-      const tenant = claimedTenant(idToken);
-      const client = tenant ? auth.tenantManager().authForTenant(tenant) : auth;
+      // The emulator's tokens are unsigned, and against it the SDK always looks the user up, which
+      // on the project cannot find a tenant user; only there does the claimed tenant pick the client.
+      let client: Pick<typeof auth, 'verifyIdToken'> = auth;
+      if (config.authEmulatorHost !== null) {
+        const tenant = claimedTenant(idToken);
+        if (tenant) client = auth.tenantManager().authForTenant(tenant);
+      }
       try {
         return verified(await client.verifyIdToken(idToken, false));
       } catch (error) {
