@@ -179,7 +179,7 @@ membership change). Rows that refer to another company row carry `company_id` in
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
 another company. `actors.email`, `actors.display_name` and `invitations.email` are personal data.
 Emails are stored lowercase and tenant ids, uids, emails and display names without surrounding
-spaces, so one person is one stored key. Nothing writes these tables yet. Prices and signed
+spaces, so one person is one stored key. Only the access projection (below) writes `access_projection_outbox`; nothing writes the other tables yet. Prices and signed
 documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
@@ -242,7 +242,7 @@ steps are in
 [RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
 migrator name the migration and omit the database URL.
 
-## Rebuilt app field database (rules only, not deployed)
+## Rebuilt app field database (not deployed)
 
 `web/firestore.rules` holds the rules for the rebuilt app's Firestore field database. They are
 checked in the emulator (`web/tests/emu/rules/`) and are not deployed. The server writes the
