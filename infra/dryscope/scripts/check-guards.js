@@ -41,7 +41,11 @@ const PROTECTED = {
     'google_secret_manager_secret.app["maps-api-key"]',
     'google_secret_manager_secret.app["link-signing-key"]',
   ],
-  app: ['google_cloud_run_v2_service.svc["api"]', 'google_cloud_run_v2_service.svc["live"]'],
+  app: [
+    'google_cloud_run_v2_service.svc["api"]',
+    'google_cloud_run_v2_service.svc["live"]',
+    'google_cloud_run_v2_job.migrate',
+  ],
 };
 
 /** Replaces comments and string contents with spaces so braces inside them are ignored. */
