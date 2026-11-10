@@ -201,7 +201,7 @@ function verifiedAs(tenant: string, uid: string) {
       return { tenant, uid, emailVerified: true };
     },
     async verifyNotRevoked() {
-      return { tenant, uid, emailVerified: true };
+      return { tenant, uid, emailVerified: true, authTime: Math.floor(Date.now() / 1000) - 60, secondFactor: null };
     },
   };
 }

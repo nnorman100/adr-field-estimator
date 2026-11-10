@@ -74,7 +74,13 @@ describe('renewal on the request path', () => {
             return { uid: 'uid-a', tenant: 'tenant-a', emailVerified: true };
           },
           async verifyNotRevoked() {
-            return { uid: 'uid-a', tenant: 'tenant-a', emailVerified: true };
+            return {
+              uid: 'uid-a',
+              tenant: 'tenant-a',
+              emailVerified: true,
+              authTime: Math.floor(Date.now() / 1000) - 60,
+              secondFactor: null,
+            };
           },
         },
         directory: {
