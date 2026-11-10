@@ -85,7 +85,7 @@ variable "evidence_soft_delete_days" {
 
 variable "workload_identity_principal_set" {
   type        = string
-  description = "Optional principalSet:// string, scoped to one repository, from this environment's own GitHub Actions workload identity pool (dryscope-<environment>), allowed to impersonate the deploy account. Empty until the owner creates the pool."
+  description = "Optional principalSet:// string, scoped to one repository, from this environment's own GitHub Actions workload identity pool (dryscope-<environment>), allowed to impersonate the deploy account (releases) and the migrator (numbered migrations before traffic). Empty until the owner creates the pool."
   default     = ""
 
   validation {

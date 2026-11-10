@@ -12,13 +12,15 @@ locals {
       name    = local.n.cloud_run_service_names["live"]
       image   = var.live_image
       scaling = var.live_scaling
-      # A browser socket must keep reaching the instance holding its Live session.
+      # Best effort only: Cloud Run routes a browser back to the same instance while it can, but
+      # instance shutdown, scaling and CPU limits break that, so a Live session's resume state
+      # must live outside the instance (stage S7).
       affinity = true
     }
   }
 
   common_env = {
-    APP_ENVIRONMENT       = var.environment
+    APP_ENV               = var.environment
     GOOGLE_CLOUD_PROJECT  = var.project_id
     GOOGLE_CLOUD_LOCATION = var.region
     FIRESTORE_DATABASE_ID = local.n.firestore_database_id
@@ -85,6 +87,13 @@ resource "google_cloud_run_v2_service" "svc" {
       volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"
+      }
+
+      # The Postgres user this service logs in as with IAM database authentication: its account
+      # email without .gserviceaccount.com. The app connects over the /cloudsql socket below.
+      env {
+        name  = "SQL_IAM_USER"
+        value = trimsuffix(local.n.service_account_emails[each.key], ".gserviceaccount.com")
       }
 
       dynamic "env" {
