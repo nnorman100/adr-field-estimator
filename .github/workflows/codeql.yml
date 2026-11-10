@@ -28,28 +28,47 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Both Analyze checks are required and always report. The Python leg scans only the legacy
+      # app's Python (scripts/ci_legacy_scope.sh lists every Python file path), so it skips its
+      # real steps, with a logged reason, when no legacy app, test or tooling file changed. The
+      # weekly schedule has no diff base and always scans. The JavaScript/TypeScript leg covers
+      # the rebuild in web/ and always runs.
+      - name: Check whether legacy Python files changed
+        id: scope
+        if: matrix.language == 'python'
+        env:
+          SUITE: CodeQL Python analysis
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/ci_legacy_scope.sh
       # The JavaScript/TypeScript extractor runs node. GitHub's Ubuntu image has it; the
       # self-hosted runner's container does not.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.language != 'python' || steps.scope.outputs.run == 'true'
         with:
           node-version: lts/*
       - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: matrix.language != 'python' || steps.scope.outputs.run == 'true'
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
       # Code scanning is not enabled on this private repository, so results are
       # kept as a SARIF artifact. Switch upload to 'always' once it is enabled.
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: matrix.language != 'python' || steps.scope.outputs.run == 'true'
         with:
           upload: never
           output: codeql-results
       - name: Summarize findings
+        if: matrix.language != 'python' || steps.scope.outputs.run == 'true'
         run: |
           count=$(jq '[.runs[].results[]?] | length' codeql-results/*.sarif)
           echo "CodeQL findings: $count" >> "$GITHUB_STEP_SUMMARY"
           jq -r '.runs[].results[]? | "- \(.ruleId): \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' codeql-results/*.sarif >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (matrix.language != 'python' || steps.scope.outputs.run == 'true')
         with:
           name: codeql-results-${{ matrix.language }}
           path: codeql-results
