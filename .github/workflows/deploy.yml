@@ -51,7 +51,7 @@ jobs:
           github.event.workflow_run.head_repository.full_name == github.repository
         )
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 60
     # One release at a time. A newer merge waits for the running one and replaces any older waiting
     # run; the script skips a commit that is not newer than what is serving.
@@ -98,6 +98,21 @@ jobs:
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           project_id: alert-disaster-field-2026
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # scripts/auto_deploy.py and the publish step run gh. GitHub's Ubuntu image has it; the
+      # self-hosted runner's container does not, so install a pinned, checksum-checked release.
+      - name: Install GitHub CLI
+        env:
+          GH_VERSION: 2.103.2
+          GH_SHA256: 62ccf747115ddc61237efffdde66a3c8f70ba249433dc64f70801089b59c59c8
+        run: |
+          if ! command -v gh > /dev/null; then
+            archive="$RUNNER_TEMP/gh.tar.gz"
+            curl -fsSL --retry 3 -o "$archive" \
+              "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+            echo "${GH_SHA256}  $archive" | sha256sum -c -
+            tar -xzf "$archive" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+          fi
       - name: Release
         if: ${{ !inputs.version }}
         # DEPLOY_ARGS is deliberately unquoted: empty means no argument.
