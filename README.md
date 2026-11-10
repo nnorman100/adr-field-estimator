@@ -120,7 +120,7 @@ python -m ruff format . ; python -m ruff check .   # Python format and lint
 npm run format ; npm run lint                      # JavaScript/CSS format and lint (npm run format:check in CI)
 ```
 
-The new TypeScript app skeleton lives in `web/` (Next.js, Tailwind v4, shadcn/ui, Zod, Vitest, Playwright; not serving users). It has its own lockfile, ESLint config and CI workflow (`.github/workflows/web.yml`); the root commands above do not cover it. Its test-environment release is `.github/workflows/web-release.yml` ([RUNBOOK](docs/RUNBOOK.md#release-the-rebuilt-app-to-test)):
+The new TypeScript app skeleton lives in `web/` (Next.js, Tailwind v4, shadcn/ui, Zod, Vitest, Playwright; not serving users). It has its own lockfile, ESLint config and CI workflow (`.github/workflows/web.yml`); the root commands above do not cover it. Its test-environment release is `.github/workflows/web-release.yml` ([runbook](docs/runbook/test-release.md)):
 
 ```bash
 cd web

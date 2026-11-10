@@ -25,7 +25,7 @@ Status: draft · building · done · Branch: `slice/NN-name` · Risk: Low | Medi
 3. Offline: [what happens with no signal]
 4. Who may use it: [add to `can()` and the server check; test owner, estimator, office, superadmin support, other company]
 5. App update/cache: [`sw.js` precache and shell version]
-6. Help and docs: [Help how-to, README, `docs/company-workspaces.md`, `docs/ACCESS.md`, `docs/STATUS.md`]
+6. Help and docs: [Help how-to, README, `docs/company-workspaces.md`, `docs/ACCESS.md`]
 7. Privacy and logs: [allowlisted fields only]
 8. Phone check by the owner: [what to try]
 

@@ -111,7 +111,7 @@ Agents must preserve the exact standard estimate clauses in `backend/claims.py`,
 
 ## 8. Where to look
 
-- `docs/STATUS.md`: each feature, whether it is built, switched on, and checked on a phone. Update it in the same PR as the change.
+- `docs/STATUS.md` (index) and `docs/status/`: each feature, whether it is built, switched on, and checked on a phone. Do not edit `docs/status/` in feature PRs; status is updated in a batch after merges.
 - `docs/ACCESS.md`: the role and capability table (code source: `CAPABILITIES` in `backend/workspaces.py`).
-- `docs/SECURITY.md`, `docs/RUNBOOK.md`, `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`: security rules, operations and rollback, decisions (including open ones), and structure.
+- `docs/SECURITY.md`, `docs/RUNBOOK.md` (index; one file per topic in `docs/runbook/`), `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`: security rules, operations and rollback, decisions (including open ones), and structure.
 - `specs/_TEMPLATE.md`: the spec template for a new piece of work.

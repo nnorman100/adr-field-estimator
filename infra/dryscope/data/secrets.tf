@@ -1,6 +1,6 @@
 # Secret Manager secrets: names only. No google_secret_manager_secret_version is
 # declared, so no value is ever in configuration or state. The owner adds each
-# value with gcloud (see docs/RUNBOOK.md).
+# value with gcloud (see docs/runbook/terraform-apply.md).
 resource "google_secret_manager_secret" "app" {
   for_each = local.n.secret_access
 

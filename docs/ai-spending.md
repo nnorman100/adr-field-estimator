@@ -7,7 +7,7 @@ settings. Only deliberate private overrides are stored in
 `_company_ai_budgets/{company_id}.monthly_cap_microusd` (integer micro-USD;
 10,000,000 means $10). An existing override wins over the platform default and can
 be raised at launch; no owner editing control is exposed. The runbook explains
-[overrides and reserved holds](RUNBOOK.md#company-ai-allowance-and-reserved-holds).
+[overrides and reserved holds](runbook/ai-allowance.md).
 No migration or cloud configuration change is needed for the default.
 
 The owner's dashboard shows one read-only line, **AI used this month: $X of $10.00**,

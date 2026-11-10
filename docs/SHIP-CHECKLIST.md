@@ -28,4 +28,4 @@ Run `python3 scripts/auto_deploy.py --rollback <YYYY.MM.DD-N>` (or restore traff
 
 ## After (owner)
 - [ ] Phone check of each new screen on a real phone (record separately from automated results)
-- [ ] `docs/STATUS.md` updated
+- [ ] `docs/status/` updated in the batch after merges (not in the feature PR)

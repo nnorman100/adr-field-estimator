@@ -146,7 +146,7 @@ deletion are not built yet; update this file when they are.
 
 The TypeScript app in `web/` keeps a Postgres schema beside the Firestore data above. Nothing in
 that schema is applied to Cloud SQL yet. Once the owner finishes the setup in
-[RUNBOOK.md](RUNBOOK.md#release-the-rebuilt-app-to-test), the test release workflow applies it to
+[the test release runbook](runbook/test-release.md), the test release workflow applies it to
 the test instance only, as `dryscope-migrate-test` from the Cloud Run job of that name, before each new revision takes traffic; nothing
 applies it to live. An agent does not create the instance, run Terraform or change
 IAM. The owner applies infrastructure. There is no earlier Postgres schema to backfill, and the
@@ -224,7 +224,7 @@ least-privilege migration role. Each file runs with its ledger row in one transa
 ends that transaction with its own `COMMIT` or `ROLLBACK` fails and is not recorded. Do not roll
 the database backward to make an older image start. Fix forward on the same data. The operator
 steps are in
-[RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
+[the migrations runbook](runbook/migrations.md). Connection failures from the
 migrator name the migration and omit the database URL.
 
 ## Rebuilt app field database (rules only, not deployed)

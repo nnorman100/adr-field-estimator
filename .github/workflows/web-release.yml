@@ -8,7 +8,7 @@ name: Web release (test)
 # not released from here. Keyless: workload identity federation from the dryscope-test pool, as the
 # deploy account, which can set the image on the services and the job and run the job, but holds
 # no database role and cannot delete. No job connects to Cloud SQL from this runner: it only calls
-# Google APIs over HTTPS. It skips with a notice until the owner has finished docs/RUNBOOK.md,
+# Google APIs over HTTPS. It skips with a notice until the owner has finished docs/runbook/test-release.md,
 # "Release the rebuilt app to test"; before the owner's first app-root apply it only pushes the
 # first images and prints their digests. Images are assembled without Docker
 # (web/scripts/build-image.sh, crane), because the runner has no daemon. Nothing here deletes a
@@ -62,7 +62,7 @@ jobs:
         run: |
           # Unset (setup unfinished, or the owner paused releases by deleting one) is a skip.
           if [ -z "$PROVIDER" ] || [ -z "$DEPLOY_SA" ] || [ -z "$MIGRATE_SA" ]; then
-            echo "::notice title=Test release skipped::Releases to test are off: DRYSCOPE_TEST_WIF_PROVIDER, DRYSCOPE_TEST_DEPLOY_SA and DRYSCOPE_TEST_MIGRATE_SA must all be set (docs/RUNBOOK.md, Release the rebuilt app to test)."
+            echo "::notice title=Test release skipped::Releases to test are off: DRYSCOPE_TEST_WIF_PROVIDER, DRYSCOPE_TEST_DEPLOY_SA and DRYSCOPE_TEST_MIGRATE_SA must all be set (docs/runbook/test-release.md)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -114,7 +114,7 @@ jobs:
           if gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format='value(metadata.name)' >/dev/null 2>&1; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice title=Test release skipped::$SERVICE is not visible to the deploy account yet. This run pushes the first images only; the owner applies the app root with their digests (docs/RUNBOOK.md, Release the rebuilt app to test, part D)."
+            echo "::notice title=Test release skipped::$SERVICE is not visible to the deploy account yet. This run pushes the first images only; the owner applies the app root with their digests (docs/runbook/test-release.md, part D)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
       # No Docker daemon on the runner: crane assembles and pushes the images (owner decision 2026-11-10).
@@ -197,7 +197,7 @@ jobs:
         if: steps.ledger.outputs.present == 'true'
         run: |
           if ! gcloud run jobs update "$JOB" --image="$IMAGE_REF" --region="$REGION" --project="$PROJECT" --quiet; then
-            echo "::error::Could not set the release image on $JOB; nothing ran and traffic did not move. Check that the app root created the job (docs/RUNBOOK.md, Release the rebuilt app to test, part D) and that the data root lets the deploy account act as the migrator (part A)."
+            echo "::error::Could not set the release image on $JOB; nothing ran and traffic did not move. Check that the app root created the job (docs/runbook/test-release.md, part D) and that the data root lets the deploy account act as the migrator (part A)."
             exit 1
           fi
           state=$(gcloud run jobs describe "$JOB" --region="$REGION" --project="$PROJECT" \
@@ -212,7 +212,7 @@ jobs:
         if: steps.ledger.outputs.present == 'true'
         run: |
           if ! execution=$(gcloud run jobs execute "$JOB" --region="$REGION" --project="$PROJECT" --wait --format='value(metadata.name)'); then
-            echo "::error::Migrations failed before any traffic moved. Read the $JOB execution's logs in the Cloud Run console. If this is the first run, check the owner's database bootstrap grants (docs/RUNBOOK.md, Release the rebuilt app to test, part B)."
+            echo "::error::Migrations failed before any traffic moved. Read the $JOB execution's logs in the Cloud Run console. If this is the first run, check the owner's database bootstrap grants (docs/runbook/test-release.md, part B)."
             exit 1
           fi
           echo "Migrations applied by \`$execution\` ($JOB, image \`$IMAGE_REF\`)" >> "$GITHUB_STEP_SUMMARY"
@@ -244,7 +244,7 @@ jobs:
           service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
           project_id: dryscope
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-      # The self-hosted job container is leaner than GitHub's image (docs/RUNBOOK.md, "CI runners").
+      # The self-hosted job container is leaner than GitHub's image (docs/runbook/ci.md, "CI runners").
       - name: Install jq when missing
         run: command -v jq >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }
       # Remember who serves now, so a failure after the traffic move can put it back exactly.
@@ -260,7 +260,7 @@ jobs:
       - id: stage
         run: |
           if ! gcloud run deploy "$SERVICE" --image="$IMAGE_REF" --region="$REGION" --project="$PROJECT" --no-traffic --tag=candidate --quiet; then
-            echo "::error::The new revision did not become ready; traffic did not move. Check its logs, and that every dryscope-test-* secret has a version (docs/RUNBOOK.md step 4)."
+            echo "::error::The new revision did not become ready; traffic did not move. Check its logs, and that every dryscope-test-* secret has a version (docs/runbook/terraform-apply.md step 4)."
             exit 1
           fi
           state=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json)
