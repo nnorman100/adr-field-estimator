@@ -35,22 +35,22 @@ The job container is leaner than GitHub's Ubuntu image: it has no Docker daemon 
 
 **Stop runner-up** (on the build server): `sudo systemctl stop runner-up` stops the coordinator; jobs already running finish in their containers, and new jobs wait on GitHub for a `dryscope-linux` runner, so set `CI_RUNNER` first if CI should keep running. `sudo systemctl disable --now runner-up` keeps it off after a reboot. To end running jobs as well, `docker ps --filter label=runner-up.place` lists their containers; remove them with `docker rm -f <name>`. **Start it again:** `sudo systemctl enable --now runner-up`, then check `runner-up status`.
 
-## Legacy CI scope
+## Legacy CI retired
 
-The old Python app (`backend/`, `public/`, `tests/` and their tooling) is frozen reference code for the TypeScript rebuild in `web/` and `infra/dryscope/`, and its checks are slow (the browser suite alone takes 45 to 60 minutes of a runner slot). Every legacy job stays in `.github/workflows/ci.yml` or `codeql.yml` and still reports on every pull request and push to `master`, so required checks never wait for a status that is not coming. Each one runs a scope step first and, when no legacy file changed, skips its real steps and logs `Skipping <suite>: no legacy app, test or tooling files changed against <sha>`:
+The old Python app (`backend/`, `public/`, `tests/` and their tooling) is frozen reference code for the TypeScript rebuild in `web/` and `infra/dryscope/`. Nobody uses it and it is deleted in S8, so as of 2026-11-10 most of its checks no longer run. **Do not change legacy files except through S8**; the old app keeps serving until then, and no check now guards those edits. Master's ruleset still requires every job name below, so each one still reports on every pull request and push to `master`:
 
-| Job | Runs its real work when | Always runs |
-| --- | --- | --- |
-| `browser` | a file on the browser list changed (its own inline step) | nothing |
-| `python` (pytest, ruff) | a legacy file changed | nothing |
-| `firestore-emulator` | a legacy file changed | nothing |
-| `node` | a legacy file changed: the legacy unit tests in `npm test` | `npm ci`, Prettier, `npm run lint` (ESLint, file length, required docs) and the vitest suite, which holds the Terraform plan check |
-| `Analyze (python)` in CodeQL | a legacy file changed, or on the weekly schedule | nothing |
-| `Analyze (javascript-typescript)`, `audit`, `Test guard`, all of `web.yml` | never scoped | everything |
+| Job | What it does now |
+| --- | --- |
+| `python` | Runs only the pricing-oracle tests (`tests/test_pricing_oracle.py`, with `scripts/pricing_oracle*.py` and the stored answers in `tests/fixtures/pricing-oracle/`). They keep the pinned legacy pricing answers honest until S4 is finished. The rest of the Python suite, `ruff format` and `ruff check` no longer run. |
+| `browser` | Reports success at once with `legacy suite retired 2026-11-10; see docs/RUNBOOK.md`. The legacy Playwright suite no longer runs. |
+| `firestore-emulator` | Reports success at once with the same message. The legacy Firestore emulator tests no longer run. |
+| `node` | Runs `npm ci`, Prettier, `npm run lint` (ESLint, file length, required docs) and the vitest suite, which holds the Terraform plan check. The legacy unit tests in `npm test` no longer run. |
+| `Analyze (python)` in CodeQL | Still scans the legacy Python (the pricing code stays in the repo), and still only when a legacy file changed, the diff base is unavailable or on the weekly schedule; otherwise it reports green with the skip reason in its log. |
+| `Analyze (javascript-typescript)`, `audit`, `Test guard`, all of `web.yml` | Never scoped; run everything. |
 
-The path list lives in two places that must agree: the browser job's inline step in `ci.yml` (added in #264, which the existing tests run) and `scripts/ci_legacy_scope.sh`, used by every other job. The script's list starts with the browser job's list, verbatim, then adds the files only the other suites read: all of `.github/`, `tests/` (except `tests/fixtures/terraform/`), `scripts/`, `ops/`, three docs the tests read (`docs/ai-inventory.md`, `docs/adr-pricing-source.md`, `docs/pricing-source.md`), the lint and format configs, and any `.py` file anywhere. `tests/test_ci_legacy_scope.py` fails if the two lists drift. Editing a workflow therefore runs the Python, emulator, node and CodeQL Python jobs but not the browser job, unless the workflow is `ci.yml`.
+The legacy deploy workflow `.github/workflows/deploy.yml` is disabled in GitHub (the file stays). To run a retired suite by hand for a legacy change, use the commands in `CLAUDE.md` locally.
 
-The scope step runs the full job instead when it cannot tell what changed: no base commit (new branch, force push, scheduled CodeQL run), a push whose base is not an ancestor, or a failed diff. When a rebuild change needs a legacy check (for example a new test that reads `web/`), add its path to both lists and a case to the tests.
+Only the CodeQL Python analysis still uses the scope step, `scripts/ci_legacy_scope.sh`. It lists the legacy files (the old browser list first, then the unit-test and tooling files) and runs the scan when one changed against the base commit. It runs the scan when it cannot tell what changed: no base commit (new branch, force push, scheduled run), a push whose base is not an ancestor, or a failed diff. `tests/test_ci_legacy_scope.py` covers the script and checks the retired jobs' shape. When S8 deletes the legacy app, remove the script, the Python CodeQL leg and the oracle test together.
 
 ## Switch a company to its own price table
 
