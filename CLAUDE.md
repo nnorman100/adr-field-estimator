@@ -43,10 +43,10 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Update `docs/STATUS.md` if a feature's state changes.
 
 ## Technology Standard 2.2 (rules agents need)
-Profile and recorded exceptions: `docs/ARCHITECTURE.md` (top) and `docs/DECISIONS.md` (D-013 to D-016). Stage plans and corrections live in `docs/plans/`.
-- **Migrations:** add first, switch over, remove later. Never rename or drop in one step. Drops or row deletions need a fresh backup and owner approval. Additive migrations apply automatically on the test copy (release migrations run as a Cloud Run job inside Google once that PR lands). Live migrations need the owner until three clean releases. One database-changing job at a time.
-- **Release path:** every merge to `master` releases to test with smoke tests; live comes later; an urgent-fix workflow exists; a release manifest is planned. See `docs/RUNBOOK.md`.
-- **CI** runs on the self-hosted runner pool. Never switch a job to GitHub-hosted runners (the owner has a $0 Actions hard stop).
+Profile: `docs/ARCHITECTURE.md` (top). Recorded exceptions: `docs/DECISIONS.md` D-013 to D-015. D-016 (owner- or operator-run company sign-in tenants for the pilot) is a decision now written into the standard, not an exception. Stage plans and corrections live in `docs/plans/`.
+- **Migrations:** add first, switch over, remove later. Never rename or drop in one step. Drops or row deletions need a fresh backup and owner approval. Additive migrations apply automatically on the test copy: today from the release workflow's `migrate` job (`.github/workflows/web-release.yml`), moving to a Cloud Run job inside Google (PR #297). Live migrations need the owner until three clean releases. One database-changing job at a time.
+- **Release path** (the rebuilt app in `web/`): every merge to `master` releases to test with smoke tests; live comes later; the urgent-fix workflow and the release manifest are planned, not present yet. See `docs/RUNBOOK.md`.
+- **CI** runs on the self-hosted runner pool. Agents never set or delete `CI_RUNNER` or switch a job to GitHub-hosted runners (the owner has a $0 Actions hard stop); the owner uses that switch only as a fallback after raising the Actions budget above $0, and deletes it afterwards. See `docs/RUNBOOK.md` (CI runners).
 - **New dependency:** give the reason in the PR, check the package is genuine (publisher, downloads, repository), and get reviewer approval.
 
 ## Risk and merging

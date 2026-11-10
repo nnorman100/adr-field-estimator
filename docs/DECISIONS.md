@@ -77,7 +77,7 @@ Status: accepted (owner). Standing decisions recorded together:
 
 Status: accepted (owner, Nov 10, 2026). Exception to Technology Standard 2.2.
 Reason: the standard puts the build server and CI runner on a Google Cloud VM with no public IP. That needs the company domain and Google Cloud organization, which do not exist yet. Until they do, the build server and CI runner stay on a Hostinger VPS.
-Known effect: this server cannot reach the test Cloud SQL address, so release migrations run inside Google (a Cloud Run job), not from the build server.
+Known effect: this server cannot reach the test Cloud SQL address, so release migrations are moving inside Google (a Cloud Run job, PR #297). Until that lands, the `migrate` job in `.github/workflows/web-release.yml` runs them from the self-hosted runner through the Cloud SQL Auth Proxy.
 Ends when the company domain and Google Cloud organization exist.
 
 ### D-014: DryScope may use more than three agents (Nov 6, 2026)
