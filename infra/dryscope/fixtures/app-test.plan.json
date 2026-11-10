@@ -48,7 +48,7 @@
            "value_source": []
           },
           {
-           "name": "APP_ENVIRONMENT",
+           "name": "APP_ENV",
            "value": "test",
            "value_source": []
           },
@@ -122,6 +122,11 @@
           {
            "name": "SQL_DATABASE_NAME",
            "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-api-test@dryscope.iam",
            "value_source": []
           },
           {
@@ -260,7 +265,7 @@
            "value_source": []
           },
           {
-           "name": "APP_ENVIRONMENT",
+           "name": "APP_ENV",
            "value": "test",
            "value_source": []
           },
@@ -306,6 +311,11 @@
           {
            "name": "SQL_DATABASE_NAME",
            "value": "dryscope",
+           "value_source": []
+          },
+          {
+           "name": "SQL_IAM_USER",
+           "value": "dryscope-live-test@dryscope.iam",
            "value_source": []
           }
          ],

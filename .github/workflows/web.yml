@@ -5,9 +5,9 @@ name: Web app
 on:
   push:
     branches: [master]
-    paths: ['web/**', '.github/workflows/web.yml']
+    paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
   pull_request:
-    paths: ['web/**', '.github/workflows/web.yml']
+    paths: ['web/**', 'live-relay-placeholder/**', '.github/workflows/web.yml']
 
 permissions:
   contents: read
@@ -117,3 +117,61 @@ jobs:
             web/test-results
             web/playwright-report
           retention-days: 7
+
+  # The production image the release workflow (web-release.yml) ships, assembled without Docker by
+  # web/scripts/build-image.sh: check its configuration, run its /app tree the way the image does and
+  # run the release smoke check against it, so a broken build or start fails here, not at release.
+  image:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # No Docker daemon on the runner: crane assembles the image (owner decision 2026-11-10).
+      - name: Install crane
+        run: |
+          scripts/install-crane.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Refuse a build without the commit
+        run: |
+          if scripts/build-image.sh web --output "$RUNNER_TEMP/nocommit.tar" >/dev/null 2>&1; then
+            echo "::error::The image built without a commit."; exit 1
+          fi
+      - name: Build the image without Docker
+        run: scripts/build-image.sh web --commit "$GITHUB_SHA" --output "$RUNNER_TEMP/web-image.tar" --stage "$RUNNER_TEMP/web-stage"
+      - name: Check the image configuration
+        run: |
+          config=$(tar -xOf "$RUNNER_TEMP/web-image.tar" manifest.json | node scripts/check-image.ts config-path)
+          tar -xOf "$RUNNER_TEMP/web-image.tar" "$config" | node scripts/check-image.ts web --commit "$GITHUB_SHA"
+          echo "image size: $(wc -c < "$RUNNER_TEMP/web-image.tar") bytes"
+      # The same /app tree the image carries, started the way the image starts it (node server.js),
+      # with what Cloud Run adds (APP_ENV) and nothing else from this runner's environment.
+      - name: Run as on Cloud Run and smoke-check
+        run: |
+          (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" NODE_ENV=production PORT=8080 \
+            HOSTNAME=127.0.0.1 APP_ENV=test APP_COMMIT="$GITHUB_SHA" node server.js > "$RUNNER_TEMP/web.log" 2>&1 &)
+          node scripts/smoke-release.ts --url http://127.0.0.1:8080 --commit "$GITHUB_SHA" --env test \
+            || { cat "$RUNNER_TEMP/web.log"; exit 1; }
+      - name: Refuse to start without APP_ENV
+        run: |
+          status=0
+          (cd "$RUNNER_TEMP/web-stage/app" && env -i PATH="$PATH" PORT=8090 timeout 60 node server.js) >/dev/null 2>&1 || status=$?
+          test "$status" = 1
+      - name: Live relay placeholder answers 503
+        run: |
+          scripts/build-image.sh live-placeholder --output "$RUNNER_TEMP/live-image.tar" --stage "$RUNNER_TEMP/live-stage"
+          config=$(tar -xOf "$RUNNER_TEMP/live-image.tar" manifest.json | node scripts/check-image.ts config-path)
+          tar -xOf "$RUNNER_TEMP/live-image.tar" "$config" | node scripts/check-image.ts live-placeholder
+          (cd "$RUNNER_TEMP/live-stage/app" && env -i PATH="$PATH" PORT=8081 node server.js > /dev/null 2>&1 &)
+          for _ in $(seq 1 20); do
+            if node -e "fetch('http://127.0.0.1:8081/').then((r) => process.exit(r.status === 503 ? 0 : 3)).catch(() => process.exit(2))"; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::The placeholder did not answer 503."; exit 1

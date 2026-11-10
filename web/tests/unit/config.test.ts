@@ -27,4 +27,21 @@ describe('parseConfig', () => {
     expect(() => parseConfig(bad)).not.toThrow(/super-secret-db-password/);
     expect(() => parseConfig({ APP_ENV: 'test', DATABASE_URL: '' })).toThrow(/DATABASE_URL/);
   });
+
+  it('carries the build commit when one is set', () => {
+    const commit = 'a'.repeat(40);
+    expect(parseConfig({ APP_ENV: 'test', APP_COMMIT: commit })).toEqual({
+      appEnv: 'test',
+      databaseUrl: null,
+      commit,
+    });
+  });
+
+  it.each([['abc123'], ['A'.repeat(40)], [''], ['secret-value'.padEnd(40, 'x')]])(
+    'refuses a malformed commit %s without echoing it',
+    (value) => {
+      expect(() => parseConfig({ APP_ENV: 'test', APP_COMMIT: value })).toThrow(/APP_COMMIT/);
+      if (value) expect(() => parseConfig({ APP_ENV: 'test', APP_COMMIT: value })).not.toThrow(value);
+    },
+  );
 });
