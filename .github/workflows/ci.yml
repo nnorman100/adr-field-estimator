@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # backend/Dockerfile is the single source of the Python version.
@@ -21,13 +21,17 @@ jobs:
           python-version: ${{ steps.python.outputs.version }}
           cache: pip
           cache-dependency-path: backend/requirements*.txt
+      # Some tests run node. GitHub's Ubuntu image has it; the self-hosted runner's container does not.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
       - run: pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt
       - run: python -m pytest tests -q -p no:cacheprovider
       - run: python -m ruff format --check .
       - run: python -m ruff check .
 
   firestore-emulator:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
     env:
       ADR_FIRESTORE_EMULATOR_REQUIRED: '1'
@@ -58,7 +62,7 @@ jobs:
           "python -m pytest tests/test_firestore_emulator*.py -q -p no:cacheprovider"
 
   node:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -71,7 +75,7 @@ jobs:
       - run: npm test
 
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 90
     env:
       ADR_BROWSER_PORT: '8876'
@@ -194,7 +198,7 @@ jobs:
           retention-days: 14
 
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
