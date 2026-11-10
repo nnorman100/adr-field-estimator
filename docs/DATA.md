@@ -191,7 +191,8 @@ memberships, invitations and outbox rows; and reads and appends audit events, ne
 deleting them. The runtime has no `DELETE` or `TRUNCATE` anywhere, no right on `migration_ledger`,
 and sees no platform operator. Platform operator access across companies and the outbox worker
 have no database context yet; each needs a later migration. Forced row-level security binds the
-migrator too: only `migration_ledger` has a policy for its owner, so a migration that must change
+migrator too: only `migration_ledger` has a policy for its owner (`companies` adds one that only
+`sign_in_company` can use, see below), so a migration that must change
 rows turns `FORCE` off and back on inside its own transaction (the guard test in
 `web/tests/db/row-level-security.test.ts` fails a table left without forced row-level security or a
 policy).
@@ -200,9 +201,10 @@ policy).
 the tenant in its verified sign-in token, so the runtime calls `sign_in_company(tenant)`, which
 returns that company's id or `NULL` (an unknown, empty or operator tenant). It is a `SECURITY
 DEFINER` function owned by the migrator, executable only by `dryscope_runtime`, with a fixed
-`search_path`. It reads `companies` through a `SELECT`-only policy that needs both the table owner
-and the setting `app.sign_in_lookup`, which the function turns on for its one read and clears;
-outside the function the migrator still reads no company row and the runtime still sees none
+`search_path`. It reads `companies` through a `SELECT`-only policy that needs the table owner's
+rights, a session signed in as another role (the runtime calling the function) and the setting
+`app.sign_in_lookup`, which the function turns on for its one read and clears; outside the
+function the migrator still reads no company row, even with that setting on, and the runtime still sees none
 without `withCompany`. The actor, membership and company status are then read inside
 `withCompany` for that company (`web/src/lib/auth/directory.ts`), in read-only transactions.
 

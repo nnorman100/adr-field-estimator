@@ -231,7 +231,7 @@ describe('sign-in lookup (migration 0004)', () => {
     const migrator = connect(MIGRATOR, migratorPassword);
     try {
       // Outside the function the owner reads nothing, as in 0003; the setting alone is not enough
-      // for the runtime either.
+      // for the runtime or the owner.
       expect(await migrator`SELECT id FROM companies`).toHaveLength(0);
       const [inside] = await migrator<{ n: number }[]>`
         SELECT count(*)::int AS n FROM companies WHERE id = sign_in_company('tenant-a')
@@ -240,6 +240,7 @@ describe('sign-in lookup (migration 0004)', () => {
       await api`SELECT set_config('app.sign_in_lookup', 'on', false)`;
       expect(await api`SELECT * FROM companies`).toHaveLength(0);
       await migrator`SELECT set_config('app.sign_in_lookup', 'on', false)`;
+      expect(await migrator`SELECT id FROM companies`).toHaveLength(0);
       expect(await errorCode(migrator`INSERT INTO companies (name) VALUES ('Planted')`)).toBe(INSUFFICIENT_PRIVILEGE);
       expect(await migrator`UPDATE companies SET status = 'active' RETURNING id`).toHaveLength(0);
       expect(await migrator`DELETE FROM companies RETURNING id`).toHaveLength(0);

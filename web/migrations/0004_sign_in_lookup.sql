@@ -7,10 +7,12 @@
 --
 -- The function runs as the table owner (SECURITY DEFINER). Row-level security is forced, so the
 -- owner reads companies only through the SELECT policy below, and only while this function runs:
--- the function sets app.sign_in_lookup around its one read, and the policy needs both that
--- setting and the owner. The runtime is never a member of the owner role, so setting the value
--- itself shows it nothing. Outside the function the owner still reads no company row, as in 0003, and
--- it can never add, change or remove one: the policy is for SELECT only.
+-- the function sets app.sign_in_lookup around its one read, and the policy needs that setting, the
+-- owner's rights and a session that signed in as someone else (the runtime calling the function).
+-- The runtime is never a member of the owner role, so setting the value itself shows it nothing;
+-- the owner signed in as itself fails the last test, so setting it shows the owner nothing either.
+-- Outside the function the owner still reads no company row, as in 0003, and it can never add,
+-- change or remove one: the policy is for SELECT only.
 --
 -- The function returns one company id or NULL, never a row. NULL means "not a company sign-in":
 -- an unknown tenant, an empty one, or an operator tenant (operators have no company). A company
@@ -20,6 +22,7 @@ CREATE POLICY companies_owner_read ON companies
   FOR SELECT TO PUBLIC
   USING (
     current_setting('app.sign_in_lookup', true) = 'on'
+    AND session_user IS DISTINCT FROM current_user
     AND pg_has_role(current_user, (SELECT relowner FROM pg_class WHERE oid = 'public.companies'::regclass), 'USAGE')
   );
 
