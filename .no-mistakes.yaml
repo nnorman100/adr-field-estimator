@@ -17,3 +17,27 @@ protected_paths:
 # which parks every finding for a person). Matches the global setting.
 auto_fix:
   review: 2
+
+# The pipeline's Test step runs only the quick checks (lint, type check, unit
+# tests). GitHub CI is the one full test and the official gate: database,
+# emulator, end-to-end, build, test guard and CodeQL all run there, so they are
+# not run a second time on the build server. Read only from the default-branch
+# copy of this file, so a change here takes effect after it merges.
+commands:
+  # The run worktree starts with tracked files only, so install both packages.
+  prepare: "npm ci --prefer-offline && npm --prefix web ci --prefer-offline"
+  # Same commands as CI's `node` and `web` quick jobs: root lint and vitest,
+  # then web type check, lint and unit tests. No database, emulator, browser or build.
+  test: "npm run lint && npx vitest run && npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test"
+
+test:
+  instructions: |
+    Testing in the pipeline: the quick checks above (lint, type check, unit
+    tests) are the whole local test run. Do not run `npm run test:db`,
+    `npm run test:emu`, `npm run test:e2e`, `npm run test:browser`,
+    `npm run build`, the Firestore emulator suites, or the full pytest run; do
+    not start a database container or Playwright. GitHub CI runs all of those
+    and is the official gate. To validate behaviour the change touches, use the
+    quick checks, add or run a targeted unit test, or use an emulator that is
+    already running. If a change can only be checked by a suite CI runs, say so
+    in the result instead of running it here.
