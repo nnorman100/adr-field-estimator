@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: ${{ matrix.language == 'python' && 0 || 1 }}
+          fetch-depth: 0
       # Both Analyze checks are required and always report. The Python leg scans only the legacy
       # app's Python (scripts/ci_legacy_scope.sh lists every Python file path), so it skips its
       # real steps, with a logged reason, when no legacy app, test or tooling file changed. The

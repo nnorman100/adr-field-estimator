@@ -104,9 +104,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # node is a required check on every PR and push to master, so the job always reports. It
-      # skips its real steps, with a logged reason, when no legacy app, test or tooling file
-      # changed (list and rules: scripts/ci_legacy_scope.sh).
+      # node is a required check on every PR and push to master, so the job always reports. Only
+      # the legacy unit tests (npm test) are skipped, with a logged reason, when no legacy app, test
+      # or tooling file changed (list and rules: scripts/ci_legacy_scope.sh). npm ci, format, lint
+      # (ESLint, file length, required docs) and the vitest suite always run.
       - name: Check whether legacy app files changed
         id: scope
         env:

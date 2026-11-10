@@ -56,6 +56,51 @@ def test_script_adds_unit_test_and_tooling_files_after_the_browser_list():
         assert not path.startswith(('web/', 'infra/', 'docs/RUNBOOK', 'docs/STATUS'))
 
 
+def run_browser_inline_scope(repo, event_name, base_sha, github_output):
+    script = load_ci_workflow()['jobs']['browser']['steps'][1]['run']
+    env = {
+        **os.environ,
+        'EVENT_NAME': event_name,
+        'BASE_SHA': base_sha,
+        'GITHUB_OUTPUT': str(github_output),
+    }
+    return subprocess.run(
+        ['bash', '-euo', 'pipefail', '-c', script],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def example_file(pathspec):
+    """A concrete, non-Python file that a pathspec from the list matches."""
+    if pathspec.startswith(':(glob)'):
+        return pathspec.removeprefix(':(glob)').replace('*', '')
+    return pathspec + 'example.txt' if pathspec.endswith('/') else pathspec
+
+
+@pytest.mark.parametrize('pathspec', browser_paths())
+def test_script_and_browser_step_both_run_for_every_browser_path(tmp_path, pathspec):
+    """Behavioral drift check: whatever the browser step runs for, the shared script runs for."""
+    repo, base_sha = init_scope_repo(tmp_path)
+    commit_files(repo, [example_file(pathspec)])
+    for runner in (run_browser_inline_scope, run_scope):
+        output = tmp_path / f'{runner.__name__}.txt'
+        runner(repo, 'pull_request', base_sha, output)
+        assert output.read_text(encoding='utf-8').strip() == 'run=true', (runner.__name__, pathspec)
+
+
+def test_script_and_browser_step_both_skip_rebuild_paths(tmp_path):
+    repo, base_sha = init_scope_repo(tmp_path)
+    commit_files(repo, ['web/src/a.ts', 'infra/dryscope/app/main.tf', 'docs/RUNBOOK.md'])
+    for runner in (run_browser_inline_scope, run_scope):
+        output = tmp_path / f'{runner.__name__}.txt'
+        runner(repo, 'push', base_sha, output)
+        assert output.read_text(encoding='utf-8').strip() == 'run=false', runner.__name__
+
+
 def run_scope(repo, event_name, base_sha, github_output, suite='legacy checks'):
     env = {
         **os.environ,
@@ -299,7 +344,9 @@ def test_codeql_scopes_only_the_python_analysis(language, scope_outputs):
     assert job['strategy']['matrix']['language'] == ['javascript-typescript', 'python']
     steps = job['steps']
     assert steps[0]['uses'].startswith('actions/checkout@')
-    assert steps[0]['with']['fetch-depth'] == "${{ matrix.language == 'python' && 0 || 1 }}"
+    # A plain 0 (full history) for both legs: an expression such as `&& 0 || 1` would evaluate to 1
+    # because 0 is falsy, giving a shallow clone that lacks the base commit and defeats the skip.
+    assert steps[0]['with']['fetch-depth'] == 0
     check_scope_step(steps[1], 'CodeQL Python analysis')
     assert steps[1]['if'] == "matrix.language == 'python'"
     for step in steps[2:]:
