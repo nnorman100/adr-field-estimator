@@ -1,23 +1,16 @@
 // The stable engine entry: plain JSON in, plain JSON out, money as Decimal strings.
-// Routes and tests call only priceEstimate and checkTable; the files behind them change in S4-3 and S4-4.
+// Routes and tests call only priceEstimate and checkTable; the files behind them change in S4-4.
 
 import { Dec, money } from './decimal';
-import { JFloat, JInt, jfloat, jint, type JObj, type JVal } from './json';
-import {
-  checkOverrides,
-  distinctRooms,
-  dumpInspection,
-  validateInspection,
-  type Inspection,
-} from './inspection';
-import type { JobPin } from './pin';
-import { contentHash, normalizeTable, V2, type Table } from './table';
+import { isObj, type JObj, type Json } from './json';
+import { checkOverrides, distinctRooms, validateInspection, type Inspection } from './inspection';
+import { checkPublishable, contentHash, parseTable, type Table } from './table';
 import { priceAndRange, type End, type Priced } from './totals';
 import { advisoryWarnings } from './warnings';
 import { makeDocuments } from './documents';
-import { decFloat, isObj, type PriceLine } from './values';
+import type { PriceLine } from './values';
 
-export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type { Json };
 
 /** A saved draft to price. `documents` is optional: without it only lines and totals are built. */
 export type EstimateJob = {
@@ -97,29 +90,6 @@ export type Refusal = {
   error: string;
 };
 
-/** Plain JSON to the engine's typed values: a whole number is an integer, any other number a float. */
-function toJ(value: Json | undefined): JVal {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('number');
-    return Number.isInteger(value) ? jint(value) : jfloat(value);
-  }
-  if (typeof value === 'string' || typeof value === 'boolean') return value;
-  if (Array.isArray(value)) return value.map((item) => toJ(item));
-  const out: JObj = Object.create(null) as JObj;
-  for (const [key, item] of Object.entries(value)) out[key] = toJ(item);
-  return out;
-}
-
-function toPlain(value: JVal): Json {
-  if (value instanceof JInt || value instanceof JFloat) return value.value;
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map((item) => toPlain(item));
-  const out: { [key: string]: Json } = {};
-  for (const [key, item] of Object.entries(value)) out[key] = toPlain(item);
-  return out;
-}
-
 function text(value: Dec): string {
   return value.normalize().format('f');
 }
@@ -130,18 +100,18 @@ function cents(value: Dec): string {
 
 function lineOf(line: PriceLine): EstimateLine {
   return {
-    item_id: line.itemId ?? null,
+    item_id: line.itemId,
     code: line.code,
     description: line.description,
-    room: line.room ?? null,
-    group: line.group ?? '',
-    bucket: line.bucket ?? '',
+    room: line.room,
+    group: line.group,
+    bucket: line.bucket,
     unit: line.unit,
-    quantity: text(decFloat(line.quantity)),
-    unit_price: text(decFloat(line.unitPrice)),
-    waste_percent: text(decFloat(line.waste)),
-    total: cents(decFloat(line.total)),
-    taxable: line.taxable === true,
+    quantity: text(line.quantity),
+    unit_price: text(line.unitPrice),
+    waste_percent: text(line.waste),
+    total: cents(line.total),
+    taxable: line.taxable,
     price_bracket: line.priceBracket
       ? { up_to_sf: line.priceBracket.upToSf, unit_price: line.priceBracket.unitPrice }
       : null,
@@ -159,7 +129,7 @@ function endOf(end: End): EstimateEnd {
   };
 }
 
-function strings(value: JVal | undefined): string[] {
+function strings(value: Json | undefined): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
@@ -167,7 +137,7 @@ function strings(value: JVal | undefined): string[] {
 
 function documentsOf(documents: JObj): EstimateDocuments {
   const proposal = isObj(documents.adr_estimate) ? documents.adr_estimate : {};
-  const photos = toPlain(documents.photo_audit_log ?? []);
+  const photos = documents.photo_audit_log ?? [];
   return {
     proposal: {
       customer_name: typeof proposal.customer_name === 'string' ? proposal.customer_name : '',
@@ -182,7 +152,7 @@ function documentsOf(documents: JObj): EstimateDocuments {
       typeof documents.iicrc_defense_letter === 'string' ? documents.iicrc_defense_letter : '',
     compliance_notes: strings(documents.compliance_notes),
     photo_log: Array.isArray(photos) ? photos : [],
-    claim: toPlain(documents.claim ?? null),
+    claim: documents.claim ?? null,
     unpriced_work: strings(documents.unpriced_work),
     signable: documents.signable === true,
   };
@@ -192,13 +162,9 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function acknowledged(raw: JVal): string[] {
-  if (!isObj(raw) || !Array.isArray(raw.items)) return [];
-  return raw.items.flatMap((item) =>
-    isObj(item) && item.allow_zero === true && typeof item.item_id === 'string'
-      ? [item.item_id]
-      : [],
-  );
+/** The items whose zero price the owner confirmed when the table was published. */
+function confirmedZeros(table: Table): string[] {
+  return table.items.filter((item) => item.allow_zero).map((item) => item.item_id);
 }
 
 /** The publish check: a blank price blocks publishing; a zero price needs its item listed in `acknowledgements`. */
@@ -207,23 +173,18 @@ export function checkTable(
   acknowledgements: string[] = [],
 ): { ok: true; table_sha256: string } | { ok: false; error: string } {
   try {
-    return {
-      ok: true,
-      table_sha256: contentHash(normalizeTable(toJ(table), true, acknowledgements)),
-    };
+    const parsed = parseTable(table);
+    checkPublishable(parsed, acknowledgements);
+    return { ok: true, table_sha256: contentHash(parsed) };
   } catch (error) {
     return { ok: false, error: message(error) };
   }
 }
 
-/** Load a saved draft as the server does: validate, check, save, and read the saved copy back. */
+/** Load a saved draft as the server does: validate it, then check room names and overrides. */
 function savedInspection(raw: Json): Inspection {
-  const first = validateInspection(toJ(raw));
-  distinctRooms(first);
-  checkOverrides(first);
-  const dump = dumpInspection(first);
-  const data = validateInspection(dump);
-  data.present = new Set(Object.keys(dump));
+  const data = validateInspection(raw);
+  distinctRooms(data);
   checkOverrides(data);
   return data;
 }
@@ -232,8 +193,8 @@ function savedInspection(raw: Json): Inspection {
 export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal {
   let parsed: Table;
   try {
-    const raw = toJ(table);
-    parsed = normalizeTable(raw, true, acknowledged(raw));
+    parsed = parseTable(table);
+    checkPublishable(parsed, confirmedZeros(parsed));
   } catch (error) {
     return { ok: false, stage: 'table', error: message(error) };
   }
@@ -243,23 +204,15 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
   } catch (error) {
     return { ok: false, stage: 'inspection', error: message(error) };
   }
-  const pin: JobPin = {
-    calculationVersion: V2,
-    rates: null,
-    items: parsed.items,
-    policy: parsed.policy,
-    json: {},
-  };
   let priced: Priced;
   let advisory: JObj[];
   try {
-    priced = priceAndRange(data, pin);
+    priced = priceAndRange(data, parsed);
     advisory = advisoryWarnings(data, parsed, priced, null);
   } catch (error) {
     return { ok: false, stage: 'pricing', error: message(error) };
   }
   const totals = priced.totals;
-  if (!totals) return { ok: false, stage: 'pricing', error: 'no totals' };
   let documents: EstimateDocuments | null = null;
   if (job.documents) {
     const input = job.documents;
@@ -267,14 +220,12 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
       documents = documentsOf(
         makeDocuments({
           data,
-          photos: (input.photos ?? []).map((photo) => toJ(photo)),
-          ai: toJ(input.ai),
-          identity: input.company === undefined ? null : toJ(input.company),
+          photos: input.photos ?? [],
+          ai: input.ai,
+          identity: input.company ?? null,
           customerName: input.customer_name ?? '',
-          claim: input.claim === undefined ? null : toJ(input.claim),
-          rates: null,
-          basis: null,
-          pin,
+          claim: input.claim ?? null,
+          table: parsed,
         }),
       );
     } catch (error) {
@@ -295,10 +246,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
       explanation: totals.explanation,
       range_explanation: totals.rangeExplanation,
     },
-    warnings: {
-      engine: priced.warnings.map((row) => toPlain(row)),
-      advisory: advisory.map((row) => toPlain(row)),
-    },
+    warnings: { engine: priced.warnings, advisory },
     documents,
   };
 }

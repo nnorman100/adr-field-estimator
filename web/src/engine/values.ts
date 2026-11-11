@@ -1,40 +1,14 @@
-// Shared conversions. Money stays on Dec; a float is only the Python JSON number.
+// Shared conversions. Every quantity, price and amount is a Dec; text checks count code points.
 
-import { Dec, ZERO } from './decimal';
-import { pySplit } from './pystr';
-import { JFloat, JInt, type JObj, type JVal, decFromFloat, jfloat, jint } from './json';
+import type { Dec } from './decimal';
+import type { JObj } from './json';
 
-export function isObj(value: JVal | undefined): value is JObj {
-  return (
-    value != null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    !(value instanceof JInt) &&
-    !(value instanceof JFloat)
-  );
-}
-
-export function has(obj: JObj, key: string): boolean {
+export function has(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 export function truthy(value: Dec): boolean {
   return !value.isZero();
-}
-
-export function decInt(value: number): Dec {
-  return Object.is(value, -0) ? ZERO : Dec.fromInt(value);
-}
-
-/** Decimal(str(float)) for a field pydantic stored as a float. */
-export function decFloat(value: number): Dec {
-  return decFromFloat(value);
-}
-
-/** Python `current or 0`: 0, -0 and null become Decimal(0), not Decimal('0.0'). */
-export function orZero(kind: 'int' | 'float', value: number | null): Dec {
-  if (value === null || value === 0 || Object.is(value, -0)) return ZERO;
-  return kind === 'int' ? decInt(value) : decFloat(value);
 }
 
 export function numberText(value: Dec): string {
@@ -46,88 +20,63 @@ export function commas(value: number): string {
   return sign + String(Math.abs(Math.trunc(value))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-export function floatMoney(value: number): string {
-  return decFloat(value).format(',.2f');
+/** Code points, so a length limit counts what a person sees as one character. */
+export function chars(value: string): number {
+  return Array.from(value).length;
 }
 
-export function fixedText(value: Dec, places: number): string {
-  return value.quantize(-places, 'HALF_EVEN').toString();
-}
-
-export function collapse(value: string): string {
-  return pySplit(value).join(' ').toLowerCase();
+/** No control, format, private-use, unassigned or separator characters other than a plain space. */
+export function printable(text: string): boolean {
+  return !/[\p{C}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u.test(text);
 }
 
 export function oneLine(value: string): string {
-  return pySplit(value).join(' ');
+  return value.split(/\s+/u).filter(Boolean).join(' ');
+}
+
+/** The key two room names share when they differ only in spacing or letter case. */
+export function collapse(value: string): string {
+  return oneLine(value).toLowerCase();
 }
 
 export type PriceLine = {
   code: string;
   description: string;
-  quantity: number;
+  quantity: Dec;
   unit: string;
-  unitPrice: number;
-  waste: number;
-  total: number;
-  itemId?: string | null;
-  group?: string;
-  bucket?: string;
-  taxable?: boolean;
-  xactimateCode?: string;
-  room?: string | null;
-  area?: number | null;
+  unitPrice: Dec;
+  waste: Dec;
+  total: Dec;
+  itemId: string | null;
+  group: string;
+  bucket: string;
+  taxable: boolean;
+  xactimateCode: string;
+  room: string | null;
+  /** The square feet a room line prices; null on a job line. */
+  area: Dec | null;
   priceBracket?: { upToSf: number | null; unitPrice: string } | null;
   bracketMode?: string | null;
 };
 
-export function lineToJ(line: PriceLine): JObj {
+/** A line on the itemized claim, money as Decimal strings. */
+export function lineJson(line: PriceLine): JObj {
   const body: JObj = {
     code: line.code,
     description: line.description,
-    quantity: jfloat(line.quantity),
-    total: jfloat(line.total),
+    quantity: line.quantity.normalize().format('f'),
+    total: line.total.format('.2f'),
     unit: line.unit,
-    unit_price: jfloat(line.unitPrice),
-    waste_percent: jfloat(line.waste),
+    unit_price: line.unitPrice.normalize().format('f'),
+    waste_percent: line.waste.normalize().format('f'),
+    xactimate_code: line.xactimateCode,
   };
-  if (line.group === undefined) return body;
-  body.area = line.area == null ? null : jfloat(line.area);
-  body.bucket = line.bucket ?? '';
-  body.group = line.group;
-  body.item_id = line.itemId ?? null;
-  body.room = line.room ?? null;
-  body.taxable = line.taxable ?? false;
-  body.xactimate_code = line.xactimateCode ?? '';
   if (line.priceBracket) {
     body.bracket_mode = line.bracketMode ?? '';
     body.price_bracket = {
       unit_price: line.priceBracket.unitPrice,
-      up_to_sf: line.priceBracket.upToSf === null ? null : jint(line.priceBracket.upToSf),
+      up_to_sf: line.priceBracket.upToSf,
     };
   }
   return body;
-}
-
-export const V2_LINE_KEYS = [
-  'price_bracket',
-  'bracket_mode',
-  'code',
-  'description',
-  'quantity',
-  'unit',
-  'unit_price',
-  'waste_percent',
-  'total',
-  'xactimate_code',
-] as const;
-
-export function documentLine(line: PriceLine, v2: boolean): JObj {
-  const full = lineToJ(line);
-  if (!v2) return full;
-  const out: JObj = {};
-  for (const key of V2_LINE_KEYS) {
-    if (has(full, key)) out[key] = full[key] as JVal;
-  }
-  return out;
 }
