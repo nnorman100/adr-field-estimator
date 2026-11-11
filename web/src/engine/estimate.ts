@@ -4,13 +4,16 @@
 import { Dec, money } from './decimal';
 import { isObj, type JObj, type Json } from './json';
 import { checkOverrides, distinctRooms, validateInspection, type Inspection } from './inspection';
-import { checkPublishable, contentHash, parseTable, type Table } from './table';
+import { checkPublishable, contentHash, effectiveTable, parseTable, type Table } from './table';
 import { priceAndRange, type End, type Priced } from './totals';
 import { advisoryWarnings } from './warnings';
 import { makeDocuments } from './documents';
 import type { PriceLine } from './values';
 
 export type { Json };
+export { suggestEquipment } from './suggestions';
+export type { EquipmentSuggestion } from './suggestions';
+export { suggestedItems } from './table';
 
 /** A saved draft to price. `documents` is optional: without it only lines and totals are built. */
 export type EstimateJob = {
@@ -174,7 +177,7 @@ export function checkTable(
 ): { ok: true; table_sha256: string } | { ok: false; error: string } {
   try {
     const parsed = parseTable(table);
-    checkPublishable(parsed, acknowledgements);
+    checkPublishable(effectiveTable(parsed), acknowledgements);
     return { ok: true, table_sha256: contentHash(parsed) };
   } catch (error) {
     return { ok: false, error: message(error) };
@@ -192,9 +195,11 @@ function savedInspection(raw: Json): Inspection {
 /** Price a saved draft from a published table. The table's zero prices were confirmed when it was published. */
 export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal {
   let parsed: Table;
+  let used: Table;
   try {
     parsed = parseTable(table);
-    checkPublishable(parsed, confirmedZeros(parsed));
+    used = effectiveTable(parsed);
+    checkPublishable(used, confirmedZeros(used));
   } catch (error) {
     return { ok: false, stage: 'table', error: message(error) };
   }
@@ -207,8 +212,8 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
   let priced: Priced;
   let advisory: JObj[];
   try {
-    priced = priceAndRange(data, parsed);
-    advisory = advisoryWarnings(data, parsed, priced, null);
+    priced = priceAndRange(data, used);
+    advisory = advisoryWarnings(data, used, priced, null);
   } catch (error) {
     return { ok: false, stage: 'pricing', error: message(error) };
   }
@@ -225,7 +230,7 @@ export function priceEstimate(table: Json, job: EstimateJob): Estimate | Refusal
           identity: input.company ?? null,
           customerName: input.customer_name ?? '',
           claim: input.claim ?? null,
-          table: parsed,
+          table: used,
         }),
       );
     } catch (error) {

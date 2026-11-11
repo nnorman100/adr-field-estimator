@@ -210,7 +210,7 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
   const largest = [...percents.values()].reduce((best, value) => maxDec(best, value), ZERO);
   const growth = (line: PriceLine): Dec => {
     if (line.bucket !== 'labor_material') return ZERO;
-    if (line.area === null || line.room === null) return largest;
+    if (line.room === null) return largest;
     return percents.get(line.room) ?? largest;
   };
   const high = priceScopeV2(data, items, policy, factors(data, policy), growth).lines;

@@ -5,9 +5,10 @@ import type { JObj } from './json';
 import type { Inspection, Room } from './inspection';
 import { fieldDec } from './inspection';
 import { priceScopeV2 } from './price-v2';
+import { roomTypeOf } from './rooms';
 import { equipmentSizing, type Sizing } from './sizing';
 import { COUNT_DAYS, FIELD_SOURCES, blankPrice, parseSource, type Table } from './table';
-import { categoryOrder, categoryWords, numberText, truthy, type Category } from './values';
+import { OTHER_TYPE, categoryOrder, categoryWords, numberText, truthy, type Category, type PriceLine } from './values';
 import type { Priced } from './totals';
 
 const COMPARABLE_LOW = Dec.parse('2').div(Dec.parse('3'));
@@ -64,6 +65,50 @@ function roomWarnings(data: Inspection, table: Table): JObj[] {
         name,
       ),
     );
+  }
+  return found;
+}
+
+const MISSING_INPUT: Record<string, [string, string]> = {
+  missing_size: ['room_size_missing', "its size (floor area or a size tier) is needed to price its per-room items"],
+  missing_mold_condition: ['mold_condition_missing', 'its mold condition is needed to price its mold items'],
+  missing_affected_area: ['affected_area_missing', 'its affected square feet are needed to price its mold containment'],
+};
+
+/** A room that lacks an input a priced item asks about, named once per room however many items ask. */
+function missingInputWarnings(engine: JObj[]): JObj[] {
+  const seen = new Set<string>();
+  const found: JObj[] = [];
+  for (const row of engine) {
+    const kind = MISSING_INPUT[String(row.code)];
+    if (!kind || typeof row.room !== 'string' || seen.has(`${kind[0]}\u0000${row.room}`)) continue;
+    seen.add(`${kind[0]}\u0000${row.room}`);
+    found.push(warning(kind[0], `${row.room.trim() || 'Unnamed room'}: ${kind[1]}, so those lines are not priced.`, row.room));
+  }
+  return found;
+}
+
+/**
+ * Room types that fall back. Only when "Price varies by room type" is on (the table passed here has
+ * no room-type rows otherwise): a room whose type is not on the price list, or is Other, with a line
+ * of an item that has room-type prices priced from a row without a room type.
+ */
+function roomTypeWarnings(data: Inspection, table: Table, lines: PriceLine[]): JObj[] {
+  const typed = new Set(
+    table.items.filter((item) => item.rows?.some((row) => row.room_type !== undefined)).map((item) => item.item_id),
+  );
+  const fell = new Set(
+    lines
+      .filter((line) => line.itemId !== null && typed.has(line.itemId) && (!line.priceRow || line.priceRow.startsWith('|')))
+      .map((line) => line.room),
+  );
+  const found: JObj[] = [];
+  for (const room of data.rooms) {
+    const known = roomTypeOf(room, table.policy);
+    if ((known !== null && known !== OTHER_TYPE) || !fell.has(room.name)) continue;
+    const name = room.name.trim() || 'Unnamed room';
+    const why = known === null ? 'its room type is not on your price list' : 'its room type is Other';
+    found.push(warning(known === null ? 'room_type_unknown' : 'room_type_other', `${name}: ${why}, so it uses the standard price for items priced by room type.`, name));
   }
   return found;
 }
@@ -139,8 +184,11 @@ function sumArea(data: Inspection, wet: boolean): Dec {
 export function advisoryWarnings(data: Inspection, table: Table | null, priced: Priced | null, history: HistoryRow[] | null): JObj[] {
   const found = sizingWarnings(equipmentSizing(data));
   if (table) {
-    const engine = priceScopeV2(data, table.items, table.policy).warnings;
+    const scoped = priceScopeV2(data, table.items, table.policy);
+    const engine = scoped.warnings;
     found.push(...roomWarnings(data, table));
+    found.push(...missingInputWarnings(engine as JObj[]));
+    found.push(...roomTypeWarnings(data, table, scoped.lines));
     found.push(...quantityWarnings(data, table));
     if (engine.some((row) => row.code === 'unpriced_extras_quantity')) found.push(warning('unpriced_extras', EXTRAS));
   }

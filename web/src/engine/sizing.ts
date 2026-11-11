@@ -43,7 +43,7 @@ export type Sizing = {
   };
 };
 
-function up(value: Dec): number {
+export function up(value: Dec): number {
   return Number(value.toIntegral('CEILING').toString());
 }
 
@@ -59,7 +59,7 @@ function loss(room: Room): string {
   return room.loss ?? (room.category === 3 || room.category === 'mold' ? 'mold' : 'water');
 }
 
-function roomCheck(room: Room): RoomCheck {
+export function roomCheck(room: Room): RoomCheck {
   if (loss(room) === 'mold') return { name: room.name, status: 'not_applicable' };
   const missing: string[] = [];
   if (room.floorSf === null) missing.push('floor area');
