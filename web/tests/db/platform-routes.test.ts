@@ -248,6 +248,18 @@ describe('companies', () => {
     expect(await everything(h.admin)).toBe(before);
   });
 
+  it('still lists and shows a company after it is archived, with its status', async () => {
+    const archived = await call(status, operatorClaims(), { companyId: h.seed.suspended }, { body: { status: 'archived' } });
+    expect(archived.status).toBe(200);
+    const listed = (await (await call(companiesGet, operatorClaims())).json()) as { companies: { id: string; status: string }[] };
+    expect(listed.companies.find((company) => company.id === h.seed.suspended)).toMatchObject({ status: 'archived' });
+    const viewed = await call(supportTeam, operatorClaims(), { companyId: h.seed.suspended });
+    expect(viewed.status).toBe(200);
+    const body = (await viewed.json()) as { company: { id: string; status: string }; team: { view: string } };
+    expect(body.company).toMatchObject({ id: h.seed.suspended, status: 'archived' });
+    expect(body.team.view).toBe('full');
+  });
+
   it('refuses to archive an active company, and an unknown one, writing nothing', async () => {
     const before = await everything(h.admin);
     const refused = await call(status, operatorClaims(), { companyId: h.seed.a }, { body: { status: 'archived' } });
