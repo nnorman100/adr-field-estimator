@@ -1,5 +1,13 @@
 export { openDatabase, migrateFromConfig } from './client';
-export { CompanyContextError, withCompany, type CompanyTransaction, type Database } from './tenant';
+export {
+  CompanyContextError,
+  OperatorContextError,
+  withCompany,
+  withOperator,
+  type CompanyTransaction,
+  type Database,
+  type OperatorContext,
+} from './tenant';
 export { MigrationError, applyMigrations, migrationsDirectory, readMigrations } from './migrate';
 export {
   accessProjectionOutbox,

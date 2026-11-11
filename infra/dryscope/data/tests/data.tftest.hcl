@@ -485,3 +485,33 @@ run "the_migrator_takes_the_same_scoped_principal_set" {
     error_message = "The migrator takes the same repository-scoped principal set as the deploy account."
   }
 }
+
+# The scheduler account (identities.tf) calls the internal job routes and holds no role. The deploy
+# account's Firebase Rules role releases web/firestore.rules: read, create and point only. Both are
+# test only for now; live gets neither until the live wiring. The Cloud Scheduler API is on in both.
+run "scheduler_account_and_rules_release_role_are_test_only" {
+  command = plan
+
+  assert {
+    condition     = contains(keys(google_project_service.apis), "cloudscheduler.googleapis.com")
+    error_message = "The Cloud Scheduler API is on in every environment."
+  }
+  assert {
+    condition     = length(google_service_account.scheduler) == (var.environment == "test" ? 1 : 0) && alltrue([for a in google_service_account.scheduler : a.account_id == "dryscope-scheduler-test"])
+    error_message = "Only test has a scheduler account, dryscope-scheduler-test; live has none yet."
+  }
+  assert {
+    condition = length(google_project_iam_custom_role.rules_release) == (var.environment == "test" ? 1 : 0) && alltrue([for r in google_project_iam_custom_role.rules_release : r.role_id == "dryscopeRulesReleaseTest" && toset(r.permissions) == toset([
+      "firebaserules.releases.create",
+      "firebaserules.releases.get",
+      "firebaserules.releases.update",
+      "firebaserules.rulesets.create",
+      "firebaserules.rulesets.get",
+    ])])
+    error_message = "Only test has the rules release role, and it reads, creates and points releases only: no delete, list, test or getExecutable."
+  }
+  assert {
+    condition     = length(google_project_iam_member.deploy_rules_release) == (var.environment == "test" ? 1 : 0) && alltrue([for g in google_project_iam_member.deploy_rules_release : g.member == "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com" && g.role == "projects/dryscope/roles/dryscopeRulesReleaseTest" && length(g.condition) == 0])
+    error_message = "Only the test deploy account gets the rules release role, with no condition (Firebase Rules evaluates none); live's gets none yet."
+  }
+}

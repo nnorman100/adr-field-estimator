@@ -2,7 +2,9 @@
   "name": "dryscope-web",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev --port 3100",
     "build": "next build",
@@ -14,13 +16,16 @@
     "test:emu": "tsx tests/emu/run.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx src/db/cli.ts",
-    "build:migrate": "node scripts/build-migrate.mjs"
+    "build:migrate": "node scripts/build-migrate.mjs",
+    "platform:create-tenant": "tsx scripts/create-tenant.ts",
+    "platform:add-operator": "tsx scripts/add-operator.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "1.5.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "drizzle-orm": "0.45.4",
+    "firebase": "13.1.0",
     "firebase-admin": "14.5.0",
     "google-auth-library": "11.3.4",
     "lucide-react": "1.70.0",
@@ -32,6 +37,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@playwright/test": "1.65.0",
     "@tailwindcss/postcss": "4.3.5",
     "@types/node": "22.19.1",
