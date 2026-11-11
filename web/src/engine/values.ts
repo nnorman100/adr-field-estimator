@@ -17,6 +17,21 @@ export function categoryOrder(left: Category, right: Category): number {
   return CATEGORIES.indexOf(left) - CATEGORIES.indexOf(right);
 }
 
+/** Room-size tiers, smallest to largest. The owner sets where each ends in square feet. */
+export const SIZE_TIERS = ['s', 'm', 'l', 'xl'] as const;
+export type SizeTier = (typeof SIZE_TIERS)[number];
+
+/** S520 mold condition: 1 normal fungal ecology, 2 settled spores, 3 actual growth. */
+export const MOLD_CONDITIONS = [1, 2, 3] as const;
+export type MoldCondition = (typeof MOLD_CONDITIONS)[number];
+
+/** Containment follows the affected area: up to 10 sq ft, over 10 through 100, over 100. */
+export const AFFECTED_BANDS = ['up_to_10', 'over_10_to_100', 'over_100'] as const;
+export type AffectedBand = (typeof AFFECTED_BANDS)[number];
+
+/** The room type every room has until the estimator picks one; it always exists. */
+export const OTHER_TYPE = 'other';
+
 /** "Cat 3" or "Mold", as a document line names the row that priced it. */
 export function categoryLabel(category: Category): string {
   return isWater(category) ? `Cat ${category}` : 'Mold';
@@ -79,8 +94,8 @@ export type PriceLine = {
   room: string | null;
   /** The square feet a room line prices; null on a job line. */
   area: Dec | null;
-  /** The category row that priced a room line; null or absent when the item's default row did. */
-  priceRow?: Category | null;
+  /** The key of the row that priced a room line (room type and category); null or absent for the default row. */
+  priceRow?: string | null;
   priceBracket?: { upToSf: number | null; unitPrice: string } | null;
   bracketMode?: string | null;
 };

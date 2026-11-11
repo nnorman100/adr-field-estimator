@@ -4,16 +4,17 @@ import { Dec, HUNDRED, ONE, ZERO, money, maxDec, minDec, sumDec } from './decima
 import type { JObj } from './json';
 import {
   categoryLabel,
-  categoryOrder,
   collapse,
   commas,
   isWater,
   truthy,
+  type SizeTier,
   type Category,
   type PriceLine,
 } from './values';
 import type { Inspection, Room } from './inspection';
 import { fieldDec, roomNumber } from './inspection';
+import { affectedBandOf, roomTypeOf, sizeTierOf } from './rooms';
 import {
   BUCKET_OF_GROUP,
   COUNT_DAYS,
@@ -21,6 +22,7 @@ import {
   GROUPS,
   blankPrice,
   parseSource,
+  rowKey,
   type Item,
   type Policy,
   type PriceBand,
@@ -88,6 +90,7 @@ function roomQuantity(room: Room, source: Source, policy: Policy, rooms: Map<str
     return (unfinished ?? ZERO).add(finished ?? ZERO);
   }
   if (source.field === 'wet_floor_sf') return wetFloor(room, rooms);
+  if (source.field === 'each') return ONE;
   return readRoom(room, source.field ?? '', rooms) ?? ZERO;
 }
 
@@ -149,19 +152,35 @@ export function makeLine(
   };
 }
 
-/** The category row that prices a room of this category, or null for the item's default row. */
-function rowFor(item: Item, category: Category): PriceRow | null {
-  return item.rows?.find((row) => row.category === category) ?? null;
+/**
+ * The row that prices a room: the most specific one wins, room type plus category, then room type,
+ * then category; null means the item's default row. A room type the table does not know matches
+ * none of the room-type rows.
+ */
+function rowFor(item: Item, room: Room, type: string | null): PriceRow | null {
+  const find = (roomType: string | null, category: Category | null): PriceRow | null =>
+    item.rows?.find((row) => (row.room_type ?? null) === roomType && (row.category ?? null) === category) ?? null;
+  return (
+    (type !== null && (find(type, room.category) ?? find(type, null))) || find(null, room.category) || null
+  );
+}
+
+/** "Bathroom, Cat 3": what a row that priced a line is called on it. */
+function rowLabel(row: PriceRow, policy: Policy): string {
+  const type = row.room_type === undefined ? null : (policy.room_types.find((t) => t.id === row.room_type)?.name ?? 'Other');
+  return [type, row.category === undefined ? null : categoryLabel(row.category)].filter(Boolean).join(', ');
 }
 
 /**
- * A room line's unit price. A category row is used as set. The default row takes the water-category
+ * A room line's unit price. A row is used as set. The default row takes the water-category
  * multiplier, and the cabinetry multiplier in a custom-cabinetry Cat 3 room; a Mold room takes neither.
- * A bracketed row's unit price is the factor its band prices are multiplied by.
+ * A bracketed row's unit price is the factor its band prices are multiplied by. A per-room item
+ * prices by the room's size tier.
  */
-function roomPrice(item: Item, source: Source, policy: Policy, room: Room, row: PriceRow | null): Dec {
-  if (row) return row.price_brackets ? ONE : Dec.parse(row.unit_price ?? '');
-  let price = item.price_brackets ? ONE : Dec.parse(item.unit_price);
+function roomPrice(item: Item, source: Source, policy: Policy, room: Room, row: PriceRow | null, tier: SizeTier | null): Dec {
+  const tiers = row ? row.tier_prices : item.tier_prices;
+  if (row) return tiers && tier ? Dec.parse(tiers[tier]) : row.price_brackets ? ONE : Dec.parse(row.unit_price ?? '');
+  let price = tiers && tier ? Dec.parse(tiers[tier]) : item.price_brackets ? ONE : Dec.parse(item.unit_price);
   if (!isWater(room.category)) return price;
   const key = String(room.category) as '1' | '2' | '3';
   price = price.mul(Dec.parse(policy.category_multipliers[key]));
@@ -170,6 +189,29 @@ function roomPrice(item: Item, source: Source, policy: Policy, room: Room, row: 
     price = price.mul(Dec.parse(policy.cabinetry.multiplier));
   }
   return price;
+}
+
+/**
+ * Whether an item applies to a room beyond its category filter: a mold item may name the mold
+ * conditions and affected-area bands it covers. A room that lacks the input an item asks about gets
+ * no line, and a warning says which input is missing.
+ */
+function applies(item: Item, room: Room, warnings: EngineWarning[]): boolean {
+  if (item.mold_conditions?.length) {
+    if (room.moldCondition === null) {
+      warnings.push({ code: 'missing_mold_condition', item_id: item.item_id, room: room.name });
+      return false;
+    }
+    if (!item.mold_conditions.includes(room.moldCondition)) return false;
+  }
+  if (item.affected_bands?.length) {
+    if (room.affectedSf === null) {
+      warnings.push({ code: 'missing_affected_area', item_id: item.item_id, room: room.name });
+      return false;
+    }
+    if (!item.affected_bands.includes(affectedBandOf(room.affectedSf))) return false;
+  }
+  return true;
 }
 
 function roomLines(
@@ -184,17 +226,24 @@ function roomLines(
   const label = item.customer_description || item.name;
   for (const room of data.rooms) {
     if (item.categories.length && !item.categories.includes(room.category)) continue;
+    if (!applies(item, room, warnings)) continue;
+    const tier = item.unit === 'room' ? sizeTierOf(room, policy) : null;
+    if (item.unit === 'room' && tier === null) {
+      warnings.push({ code: 'missing_size', item_id: item.item_id, room: room.name });
+      continue;
+    }
     const quantity = roomQuantity(room, source, policy, rooms);
     if (!truthy(quantity)) {
       warnings.push({ code: 'missing_area', item_id: item.item_id, room: room.name });
       continue;
     }
-    const row = rowFor(item, room.category);
-    const price = roomPrice(item, source, policy, room, row);
+    const row = rowFor(item, room, roomTypeOf(room, policy));
+    const price = roomPrice(item, source, policy, room, row, tier);
     const waste = truthy(room.wastePercent) ? room.wastePercent : Dec.parse(item.waste_percent);
-    const where = row ? `${room.name}, ${categoryLabel(row.category)}` : room.name;
-    const line = makeLine(item, `${where}: ${label}`, quantity, price, waste, room.name, quantity);
-    if (row) line.priceRow = row.category;
+    const where = row ? `${room.name}, ${rowLabel(row, policy)}` : room.name;
+    const size = tier ? ` (size ${tier.toUpperCase()})` : '';
+    const line = makeLine(item, `${where}: ${label}${size}`, quantity, price, waste, room.name, item.unit === 'room' ? null : quantity);
+    if (row) line.priceRow = rowKey(row);
     lines.push(line);
   }
   return lines;
@@ -208,9 +257,8 @@ function byRow(item: Item, lines: PriceLine[]): Array<[PriceBand[] | null, Price
   const groups: Array<[PriceBand[] | null, PriceLine[]]> = [
     [item.price_brackets ?? null, lines.filter((line) => !line.priceRow)],
   ];
-  const rows = [...(item.rows ?? [])].sort((left, right) => categoryOrder(left.category, right.category));
-  for (const row of rows) {
-    groups.push([row.price_brackets ?? null, lines.filter((line) => line.priceRow === row.category)]);
+  for (const row of item.rows ?? []) {
+    groups.push([row.price_brackets ?? null, lines.filter((line) => line.priceRow === rowKey(row))]);
   }
   return groups.filter(([, group]) => group.length > 0);
 }

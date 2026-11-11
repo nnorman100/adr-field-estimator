@@ -36,7 +36,54 @@ For each room, the row naming the room's category wins; otherwise the default ro
 
 So an owner who types a Cat 3 price gets exactly that price, even in a custom-cabinetry kitchen. A line priced by a row names it, for example "Kitchen, Cat 3: Drywall removal"; a default-row line reads "Kitchen: Drywall removal".
 
-The schema allows at most one row per category (four in all), only categories the item's filter allows, and rows only on items priced per room (`room:` quantity sources), because a job-level line has no room and so no category. A row's brackets follow the default row's rules: square-foot items only, limits rising, the last band open-ended. A blank row price blocks publishing like any blank price, and a zero row price needs `allow_zero` and the owner's confirmation. Rows are stored in category order (1, 2, 3, Mold), so the order they were written in does not change the content hash, and an empty `rows` list is the same table as none.
+The schema allows at most one row per room type and category, only categories the item's filter allows, and rows only on items priced per room (`room:` quantity sources), because a job-level line has no room and so no category or type. A row's brackets follow the default row's rules: square-foot items only, limits rising, the last band open-ended. A blank row price blocks publishing like any blank price, and a zero row price needs `allow_zero` and the owner's confirmation. Rows are stored in a fixed order (category rows 1, 2, 3, Mold, then each room type's rows by id), so the order they were written in does not change the content hash, and an empty `rows` list is the same table as none.
+
+### Room inputs
+
+Each room carries these inputs, all optional, and the technician confirms them (Live may suggest them):
+
+| Input | Field | Read by |
+| --- | --- | --- |
+| Category | `category` | which items apply, which row prices them (above) |
+| Room type | `room_type_id` | the suggested item list; room-type rows when the setting is on. No type means Other |
+| Size tier | `size_tier` (`s`, `m`, `l`, `xl`) | per-room items. When blank it comes from the floor area and the owner's limits |
+| Water class | `water_class` (1 to 4) | equipment suggestions only. It is not a price axis |
+| Mold condition | `mold_condition` (1, 2 or 3, S520) | which mold items apply |
+| Affected square feet | `affected_sf` | which containment item applies |
+
+### Per-room items and size tiers
+
+An item priced per room has `unit: "room"`, `quantity_source: "room:each"` and `tier_prices` (`s`, `m`, `l`, `xl`) instead of a `unit_price`. It makes one line of quantity 1 for every room the item applies to, priced by that room's size tier, and the line says which: "Kitchen: Contents manipulation (size M)". Tier prices may be blank (a blank blocks publishing) but never fall as the room grows (a larger room never costs less than a smaller one). A category row or room-type row of a per-room item holds its own four prices.
+
+The owner sets where each tier ends in `policy.size_tiers` (`s_up_to_sf`, `m_up_to_sf`, `l_up_to_sf`, rising; XL is everything above). A limit is the largest size in its tier (a 100 sq ft room is S when the S limit is 100). **A new company's limits are blank** (`null`): a table with an enabled per-room item cannot publish until all three are set, and there is no default.
+
+**A room's size is its floor area.** A room has several areas (floor, wet floor, unfinished and finished demolition), and only the floor measures the room itself; the others measure the work in it, so a small room with a lot of demolition stays small. A size the technician confirmed wins. A room with no floor area and no confirmed size gets no line for a per-room item, and the advisory warning says its size is needed. Size tiers never count square feet across rooms, so they are not brackets.
+
+### Mold condition and containment (M8)
+
+A mold item names where it applies with two optional filters, both only on items whose `categories` is `["mold"]`:
+
+- `mold_conditions` (a list of 1, 2, 3): the item applies only to Mold rooms of those conditions. The owner's removal item lists `[3]`, cleaning `[2, 3]`; Condition 1 (normal fungal ecology) gets neither. An item with no `mold_conditions` applies to every condition.
+- `affected_bands`: `up_to_10`, `over_10_to_100`, `over_100` square feet (10 and 100 belong to the lower band). The owner makes one containment item per band. Neither filter changes a unit price; they decide which items exist for the room.
+
+A Mold room that lacks the input a filtered item asks about gets no line for it, and the advisory warning names the room once ("its mold condition is needed to price its mold items"). Clearance testing is just another item without these filters.
+
+### Room types and "Price varies by room type"
+
+`policy.room_types` is the owner's list: up to 30, each `{id, name, suggested_items}`, with unique ids and names. **Other always exists** and is the type of a room with none; the owner may list it to give it a suggested item list. A room type is a label with a suggested item list: choosing it on Check Scope pre-fills that list for the estimator to confirm (`suggestedItems` returns the enabled items in the owner's order) and changes no price.
+
+`policy.room_type_pricing` is **off for a new company**. While it is off, room-type rows are kept in the table (so turning it on again loses nothing) but never used, never block publishing and never warn. When on, a row may name a room type, and a room's line uses the most specific matching row:
+
+1. room type and category,
+2. room type,
+3. category,
+4. the item's default row.
+
+With the setting off the order is category, then default. A room whose type is not in the pinned version (removed since, or from an older phone) prices from the rows without a room type, as if it had no type. Only when the setting is on, an advisory warning says so for a room with an unknown type or a type of Other, when an item that applies to it has room-type prices (it does not warn for an item with none). A row's room type must be one in the list or Other. A room-type row is used as set, like a category row: no multiplier. Brackets count per row, so a room-type row's bands count only the rooms it priced.
+
+### Equipment suggestions
+
+`suggestEquipment(inspection)` (in `estimate.ts`) is a pure function of each room's water class, floor area, ceiling height and wet floor area, and the job's dehumidifier rating: the IICRC S500 air-mover range, and dehumidifier pints per day from room cubic feet divided by the LGR factor for the class, with a unit count when a rating is set. A room missing an input says what it needs; a Mold room is skipped. It prices nothing: the technician confirms or changes the counts on Check Scope, and only the confirmed counts are priced.
 
 ### Brackets count per row
 
@@ -51,11 +98,11 @@ The schema allows at most one row per category (four in all), only categories th
 
 ### What `dryscope-v3` keeps from `dryscope-v2`
 
-Everything else follows the rules described for `dryscope-v2` below, in Decimal: lines (`quantity x price x (1 + waste / 100)`, rounded to the cent half up, once), a room's own waste over the item's, the three buckets, the cushion over the dearest square feet or the uncertainty high end, the after-hours adjustment, the minimum job charge, overhead and profit, sales tax on the taxable share, the single-price mode and the $0.00 guard. A table with no rows, priced for rooms with no Mold category, prices exactly as `dryscope-v2` did. The rebuilt app has no `adr-residential-v1`, no ADR rates in code and no switch from a rate book (D-017). Room types, room-size tiers and per-room items (S4-4b), and per-item after-hours, no-O&P and materials-share flags with per-trade minimums (S4-4c) are not built yet.
+Everything else follows the rules described for `dryscope-v2` below, in Decimal: lines (`quantity x price x (1 + waste / 100)`, rounded to the cent half up, once), a room's own waste over the item's, the three buckets, the cushion over the dearest square feet or the uncertainty high end, the after-hours adjustment, the minimum job charge, overhead and profit, sales tax on the taxable share, the single-price mode and the $0.00 guard. A table with no rows, no per-room items and no mold filters, priced for rooms with no Mold category, prices exactly as `dryscope-v2` did. A per-room line has no square feet, so the cushion treats it like labor hours: it is not a tiered area line, and under the uncertainty method it grows by its own room's hidden-damage percent. The rebuilt app has no `adr-residential-v1`, no ADR rates in code and no switch from a rate book (D-017). Per-item after-hours, no-O&P and materials-share flags with per-trade minimums (S4-4c) are not built yet.
 
 ### Tests
 
-Hand-worked examples, each with its arithmetic in a comment: `web/tests/unit/estimate-worked-examples.test.ts` (quantity, waste, eligibility, multipliers, brackets, range, minimum, overhead and profit, tax, after-hours, publish checks, rounding) and `web/tests/unit/estimate-category-rows.test.ts` (each precedence step, Mold rooms, each bracket mode with rows, row schema rules). `web/tests/unit/estimate-properties.test.ts` scans seeded random tables and jobs, with and without rows and Mold rooms: in tiered mode adding square feet or a quantity never lowers either total; the high is never below the low; each total equals its lines and adjustments; the same table gives the same hash.
+Hand-worked examples, each with its arithmetic in a comment: `web/tests/unit/estimate-worked-examples.test.ts` (quantity, waste, eligibility, multipliers, brackets, range, minimum, overhead and profit, tax, after-hours, publish checks, rounding) and `web/tests/unit/estimate-category-rows.test.ts` (each precedence step, Mold rooms, each bracket mode with rows, row schema rules) and `web/tests/unit/estimate-room-inputs.test.ts` (each size tier and its limits, several areas in one room, each mold condition, each containment band, room-type rows on and off, a removed type, suggested lists, equipment suggestions, schema rules). `web/tests/unit/estimate-properties.test.ts` and `estimate-room-properties.test.ts` scan seeded random tables and jobs, with and without rows, Mold rooms, size tiers, mold filters and room-type rows: in tiered mode adding square feet or a quantity never lowers either total; the high is never below the low; each total equals its lines and adjustments; the same table gives the same hash; room-type rows with the setting off price as a table without them. The scan keeps a room's category, type, mold condition, affected area and confirmed size fixed: changing one of those picks a different row or item, and may legitimately lower a total, as changing a category does.
 
 ## The old app (`backend/`, until S8)
 
