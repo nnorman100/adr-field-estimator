@@ -199,22 +199,30 @@ describe('building images', () => {
     ).toEqual(['app/', 'app/server.js']);
   });
 
-  it('never unpacks a crane download that fails its checksum', () => {
-    const sh = shell();
-    sh.fake(
-      'curl',
-      'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\necho tampered > "$out"',
-    );
-    const target = path.join(sh.tmp, 'tools');
-    const result = sh.run(`"${ROOT}/web/scripts/install-crane.sh" "${target}"`);
-    expect(result.status).not.toBe(0);
-    expect(existsSync(path.join(target, 'crane'))).toBe(false);
-    const calls = sh.calls('curl');
-    expect(calls).toHaveLength(1);
-    expect(calls[0].at(-1)).toMatch(
-      /^https:\/\/github\.com\/google\/go-containerregistry\/releases\/download\/v\d+\.\d+\.\d+\/go-containerregistry_\w+\.tar\.gz$/,
-    );
-  });
+  // Stricter than the Python original: besides a corrupt file, the fake download is also a real
+  // archive holding a crane binary, so only the checksum check can stop it being installed.
+  it.each(['corrupt', 'archive'])(
+    'never unpacks a crane download that fails its checksum (%s)',
+    (kind) => {
+      const sh = shell();
+      const archive = path.join(sh.tmp, 'fake.tar.gz');
+      mkdirSync(path.join(sh.tmp, 'fake'));
+      writeFileSync(path.join(sh.tmp, 'fake', 'crane'), '#!/bin/sh\n');
+      const packed = spawnSync('tar', ['-czf', archive, '-C', path.join(sh.tmp, 'fake'), 'crane']);
+      expect(packed.status).toBe(0);
+      const write = kind === 'corrupt' ? 'echo tampered > "$out"' : `cp '${archive}' "$out"`;
+      sh.fake('curl', `while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n${write}`);
+      const target = path.join(sh.tmp, 'tools');
+      const result = sh.run(`"${ROOT}/web/scripts/install-crane.sh" "${target}"`);
+      expect(result.status).not.toBe(0);
+      expect(existsSync(path.join(target, 'crane'))).toBe(false);
+      const calls = sh.calls('curl');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].at(-1)).toMatch(
+        /^https:\/\/github\.com\/google\/go-containerregistry\/releases\/download\/v\d+\.\d+\.\d+\/go-containerregistry_\w+\.tar\.gz$/,
+      );
+    },
+  );
 });
 
 describe('the release image', () => {
@@ -293,7 +301,7 @@ describe('the Web app image job', () => {
       'production',
       '8080',
     ]);
-  });
+  }, 15_000); // room for the 5 s wait for the background server, as pytest has no time limit
 
   it('fails and shows the server log when the smoke check fails', () => {
     const sh = shell();
