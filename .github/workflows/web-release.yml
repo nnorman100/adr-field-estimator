@@ -3,16 +3,17 @@ name: Web release (test)
 # Releases the rebuilt app (web/) to the TEST environment in project dryscope after the Web app
 # workflow passes on master: build the image and push it by digest, run the numbered migrations in
 # the Cloud Run job dryscope-migrate-test (same image, by digest, running as the migrator inside
-# Google), stage a 0% revision of dryscope-api-test, smoke-check it on its own tagged URL, then
-# move all traffic to it, putting the previous traffic back if anything after that fails. Live is
-# not released from here. Keyless: workload identity federation from the dryscope-test pool, as the
-# deploy account, which can set the image on the services and the job and run the job, but holds
-# no database role and cannot delete. No job connects to Cloud SQL from this runner: it only calls
-# Google APIs over HTTPS. It skips with a notice until the owner has finished docs/runbook/test-release.md,
-# "Release the rebuilt app to test"; before the owner's first app-root apply it only pushes the
-# first images and prints their digests. Images are assembled without Docker
-# (web/scripts/build-image.sh, crane), because the runner has no daemon. Nothing here deletes a
-# service, revision, job, image or database object.
+# Google), release web/firestore.rules to the field database dryscope-field-test when the file
+# changed (web/scripts/release-rules.ts), stage a 0% revision of dryscope-api-test, smoke-check it
+# on its own tagged URL, then move all traffic to it, putting the previous traffic back if anything
+# after that fails. Live is not released from here. Keyless: workload identity federation from the
+# dryscope-test pool, as the deploy account, which can set the image on the services and the job,
+# run the job and release rules, but holds no database role and cannot delete. No job connects to
+# Cloud SQL from this runner: it only calls Google APIs over HTTPS. It skips with a notice until
+# the owner has finished docs/runbook/test-release.md, "Release the rebuilt app to test"; before
+# the owner's first app-root apply it only pushes the first images and prints their digests.
+# Images are assembled without Docker (web/scripts/build-image.sh, crane), because the runner has
+# no daemon. Nothing here deletes a service, revision, job, image, ruleset or database object.
 on:
   workflow_run:
     workflows: [Web app]
@@ -244,6 +245,17 @@ jobs:
           service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
           project_id: dryscope
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      # The field database's browser rules (web/firestore.rules) go to dryscope-field-test only,
+      # through the Firebase Rules API, before any revision or traffic changes: a ruleset that does
+      # not compile, or a refused call, stops the release with nothing to undo. An unchanged file
+      # creates nothing. The access token goes to the script on stdin, never in a setting.
+      - id: rules
+        name: Release the field-database rules
+        run: |
+          if ! gcloud auth print-access-token | node web/scripts/release-rules.ts --env test --file web/firestore.rules; then
+            echo "::error::The field-database rules were not released and traffic did not move. A 403 means the data root's dryscopeRulesReleaseTest grant to the deploy account is not applied yet (docs/runbook/test-release.md, part A)."
+            exit 1
+          fi
       # The self-hosted job container is leaner than GitHub's image (docs/runbook/ci.md, "CI runners").
       - name: Install jq when missing
         run: command -v jq >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq jq; }

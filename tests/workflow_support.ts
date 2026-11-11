@@ -427,7 +427,7 @@ export class Shell {
     writeFileSync(
       file,
       '#!/bin/bash\n' +
-        `{ printf '%s' ${name}; printf '\\x1f%s' "$@"; printf '\\n'; } >> '${this.log}'\n` +
+        `printf -v args '\\x1f%s' "$@"; printf '%s%s\\n' ${name} "$args" >> '${this.log}'\n` +
         `${body}\n`,
     );
     chmodSync(file, 0o755);

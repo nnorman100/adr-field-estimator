@@ -300,6 +300,22 @@
    }
   },
   {
+   "address": "google_project_service.apis[\"cloudscheduler.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "cloudscheduler.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_project_service.apis[\"firebaserules.googleapis.com\"]",
    "type": "google_project_service",
    "change": {

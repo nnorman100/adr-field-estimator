@@ -260,7 +260,8 @@ migrator name the migration and omit the database URL.
 ## Rebuilt app field database (not deployed)
 
 `web/firestore.rules` holds the rules for the rebuilt app's Firestore field database. They are
-checked in the emulator (`web/tests/emu/rules/`) and are not deployed. The server writes the
+checked in the emulator (`web/tests/emu/rules/`); the test release workflow releases them to `dryscope-field-test`
+(`docs/runbook/test-release.md`) and live is still released by the owner. The server writes the
 company header and the access records (`web/src/lib/projection/`, S3-12); drafts are later work.
 The rules deny every path they do not name. They read three server-written records:
 
@@ -341,8 +342,10 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
   `dryscope-<env>-access-projection`, named from `APP_ENV` and `GOOGLE_CLOUD_PROJECT`).
   That pass is what retries every row a projection left waiting, because its write failed or it
-  found the actor busy, removals included. It needs a scheduled trigger: the scheduler account and
-  its Cloud Scheduler job are not created yet (an owner follow-up in Terraform), and until they
-  exist those rows wait, unless a later membership change of the same member projects them. Opening
+  found the actor busy, removals included. Its scheduled trigger in test is the Cloud Scheduler
+  job `dryscope-access-projection-test` (`infra/dryscope/app/scheduler.tf`, every five minutes, as
+  `dryscope-scheduler-test` from the data root); live has no trigger yet (its wiring comes in a
+  later step). Until the owner applies both roots, and in live for now, those rows wait, unless a
+  later membership change of the same member projects them. Opening
   the app does not retry them: a removed member is refused before renewal runs, and renewal leaves a
   row alone while it waits out its back-off.
