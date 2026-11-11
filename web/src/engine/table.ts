@@ -6,10 +6,10 @@ import { z } from 'zod';
 
 import { Dec } from './decimal';
 import { canonical, sha256, type Json } from './json';
-import { chars, printable } from './values';
+import { CATEGORIES, categoryOrder, chars, printable, type Category } from './values';
 
-/** The formulas that price a table today. S4-4a moves the engine to dryscope-v3. */
-export const V2 = 'dryscope-v2';
+/** The formulas that price a table: category rows, Mold, and brackets counted per row. */
+export const ENGINE_VERSION = 'dryscope-v3';
 const MAX_ITEMS = 150;
 const MAX_BRACKETS = 20;
 const MAX_SF = 100000;
@@ -155,6 +155,23 @@ function text(min: number, max: number) {
 
 const limit = z.number().int().min(1).max(MAX_SF).nullable();
 const PRICE_BAND = z.strictObject({ up_to_sf: limit, unit_price: price });
+const CATEGORY = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal('mold')]);
+
+/**
+ * A category row: the price an item charges in rooms of one category, used as set (no multiplier).
+ * It holds one unit price or its own square-foot brackets, like the default row.
+ */
+const ROW = z
+  .strictObject({
+    category: CATEGORY,
+    unit_price: price.optional(),
+    price_brackets: z.array(PRICE_BAND).min(1).max(MAX_BRACKETS).optional(),
+  })
+  .superRefine((row, ctx) => {
+    if ((row.unit_price === undefined) === (row.price_brackets === undefined)) {
+      ctx.addIssue({ code: 'custom', message: 'a row needs a unit_price or price_brackets, not both' });
+    }
+  });
 const CUSHION_BAND = z.strictObject({ up_to_sf: limit, percent });
 
 /** Band limits rise strictly and the last band is open-ended. */
@@ -173,6 +190,12 @@ function checkBands(bands: Array<{ up_to_sf: number | null }>, ctx: z.Refinement
   });
 }
 
+type ParsedRow = {
+  category: Category;
+  unit_price?: string;
+  price_brackets?: Array<{ up_to_sf: number | null; unit_price: string }>;
+};
+
 type ParsedItem = {
   item_id: string;
   code: string;
@@ -185,12 +208,13 @@ type ParsedItem = {
   allow_zero: boolean;
   default_quantity: string;
   waste_percent: string;
-  categories: number[];
+  categories: Category[];
   taxable: boolean;
   xactimate_code: string;
   enabled: boolean;
   sort_order: number;
   price_brackets?: Array<{ up_to_sf: number | null; unit_price: string }>;
+  rows?: ParsedRow[];
 };
 
 type ParsedRange = {
@@ -208,6 +232,48 @@ function isZeroPrice(value: string): boolean {
   return value !== '' && Dec.parse(value).isZero();
 }
 
+function rowPrices(row: { unit_price?: string; price_brackets?: Array<{ unit_price: string }> }): string[] {
+  return row.price_brackets ? row.price_brackets.map((band) => band.unit_price) : [row.unit_price ?? ''];
+}
+
+/**
+ * Category rows price room lines only, one row per category, and only for a category the item's
+ * filter allows. A row's brackets follow the same rules as the default row's.
+ */
+function checkRows(
+  item: { unit: string; categories?: Category[] | null; rows?: Array<z.output<typeof ROW>> },
+  source: Source,
+  ctx: z.RefinementCtx,
+): void {
+  const rows = item.rows ?? [];
+  if (!rows.length) return;
+  if (source.kind !== 'room') {
+    ctx.addIssue({ code: 'custom', path: ['rows'], message: 'category rows need a per-room quantity source' });
+    return;
+  }
+  const filter = item.categories ?? [];
+  const seen = new Set<Category>();
+  rows.forEach((row, index) => {
+    if (seen.has(row.category)) {
+      ctx.addIssue({ code: 'custom', path: ['rows', index, 'category'], message: 'categories repeat' });
+    }
+    seen.add(row.category);
+    if (filter.length && !filter.includes(row.category)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rows', index, 'category'],
+        message: "the item's categories exclude this row",
+      });
+    }
+    if (row.price_brackets) {
+      if (item.unit !== 'sf') {
+        ctx.addIssue({ code: 'custom', path: ['rows', index, 'price_brackets'], message: 'brackets need a sq ft item' });
+      }
+      checkBands(row.price_brackets, ctx, ['rows', String(index), 'price_brackets']);
+    }
+  });
+}
+
 const ITEM = z
   .strictObject({
     item_id: z.string().regex(ITEM_ID, 'must be 2 to 40 lowercase letters, digits or _'),
@@ -221,15 +287,13 @@ const ITEM = z
     allow_zero: z.boolean().default(false),
     default_quantity: decimal({ max: '100000', places: 2 }).default('0'),
     waste_percent: percent.default('0'),
-    categories: z
-      .array(z.union([z.literal(1), z.literal(2), z.literal(3)]))
-      .max(3)
-      .nullish(),
+    categories: z.array(CATEGORY).max(CATEGORIES.length).nullish(),
     taxable: z.boolean().default(false),
     xactimate_code: z.string().trim().regex(XACT, 'not a valid line note').nullish(),
     enabled: z.boolean().default(true),
     sort_order: z.number().int().min(0).max(10000).nullish(),
     price_brackets: z.array(PRICE_BAND).min(1).max(MAX_BRACKETS).optional(),
+    rows: z.array(ROW).max(CATEGORIES.length).optional(),
   })
   .superRefine((item, ctx) => {
     const code = item.code ? item.code : defaultCode(item.item_id);
@@ -251,9 +315,11 @@ const ITEM = z
       }
       checkBands(item.price_brackets, ctx, ['price_brackets']);
     }
+    checkRows(item, source, ctx);
     const zero =
       isZeroPrice(item.unit_price ?? '') ||
-      (item.price_brackets ?? []).some((band) => isZeroPrice(band.unit_price));
+      (item.price_brackets ?? []).some((band) => isZeroPrice(band.unit_price)) ||
+      (item.rows ?? []).some((row) => rowPrices(row).some(isZeroPrice));
     if (zero && !item.allow_zero) {
       ctx.addIssue({ code: 'custom', path: ['unit_price'], message: 'a zero price needs allow_zero' });
     }
@@ -278,13 +344,22 @@ const ITEM = z
       allow_zero: item.allow_zero,
       default_quantity: item.default_quantity,
       waste_percent: item.waste_percent,
-      categories: [...(item.categories ?? [])].sort((a, b) => a - b),
+      categories: [...(item.categories ?? [])].sort(categoryOrder),
       taxable: item.taxable,
       xactimate_code: item.xactimate_code ?? '',
       enabled: item.enabled,
       sort_order: item.sort_order ?? 0,
     };
     if (item.price_brackets) out.price_brackets = item.price_brackets;
+    if (item.rows?.length) {
+      out.rows = [...item.rows]
+        .sort((left, right) => categoryOrder(left.category, right.category))
+        .map((row) =>
+          row.price_brackets
+            ? { category: row.category, price_brackets: row.price_brackets }
+            : { category: row.category, unit_price: row.unit_price ?? '' },
+        );
+    }
     return out;
   });
 
@@ -377,6 +452,7 @@ export type Table = z.output<typeof PriceTableV3>;
 export type Item = Table['items'][number];
 export type Policy = Table['policy'];
 export type PriceBand = z.output<typeof PRICE_BAND>;
+export type PriceRow = ParsedRow;
 export type CushionBand = z.output<typeof CUSHION_BAND>;
 
 /** Parse a table, or throw one readable sentence naming the first problem. */
@@ -388,14 +464,19 @@ export function parseTable(raw: unknown): Table {
   throw new Error(`${where}${issue?.message ?? 'invalid price table'}`);
 }
 
-/** A price not set yet: a blank unit price without brackets, or a blank band. */
+/** A price not set yet: a blank default unit price without brackets, a blank band, or a blank row price. */
 export function blankPrice(item: Item): boolean {
   if (item.unit_price === '' && !item.price_brackets) return true;
-  return (item.price_brackets ?? []).some((band) => band.unit_price === '');
+  if ((item.price_brackets ?? []).some((band) => band.unit_price === '')) return true;
+  return (item.rows ?? []).some((row) => rowPrices(row).includes(''));
 }
 
 function zeroPrice(item: Item): boolean {
-  return isZeroPrice(item.unit_price) || (item.price_brackets ?? []).some((band) => isZeroPrice(band.unit_price));
+  return (
+    isZeroPrice(item.unit_price) ||
+    (item.price_brackets ?? []).some((band) => isZeroPrice(band.unit_price)) ||
+    (item.rows ?? []).some((row) => rowPrices(row).some(isZeroPrice))
+  );
 }
 
 /**

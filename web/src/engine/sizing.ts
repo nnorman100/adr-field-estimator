@@ -56,7 +56,7 @@ function count(amount: number, noun: string): string {
 }
 
 function loss(room: Room): string {
-  return room.loss ?? (room.category === 3 ? 'mold' : 'water');
+  return room.loss ?? (room.category === 3 || room.category === 'mold' ? 'mold' : 'water');
 }
 
 function roomCheck(room: Room): RoomCheck {
