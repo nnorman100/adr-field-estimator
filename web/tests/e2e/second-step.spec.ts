@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import qrcode from 'qrcode-generator';
 import { APP_CODE, SETUP_KEY, fakeSecondStep } from './second-step/fake-totp';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
@@ -57,6 +58,30 @@ function watchMe(page: Page) {
   return answers;
 }
 
+// The dark squares of the QR code on the page, as "column,row" without its quiet zone.
+async function qrModules(page: Page) {
+  const svg = page.getByRole('img', { name: 'QR code for your authenticator app' });
+  const path = (await svg.locator('path').getAttribute('d'))!;
+  const quiet = Math.min(...[...path.matchAll(/M(\d+) /g)].map((match) => Number(match[1])));
+  return [...path.matchAll(/M(\d+) (\d+)h1v1h-1z/g)]
+    .map((match) => `${Number(match[1]) - quiet},${Number(match[2]) - quiet}`)
+    .sort();
+}
+
+// The dark squares of a QR code made from `text`.
+function expectedModules(text: string) {
+  const code = qrcode(0, 'M');
+  code.addData(text);
+  code.make();
+  const modules: string[] = [];
+  for (let row = 0; row < code.getModuleCount(); row += 1) {
+    for (let column = 0; column < code.getModuleCount(); column += 1) {
+      if (code.isDark(row, column)) modules.push(`${column},${row}`);
+    }
+  }
+  return modules.sort();
+}
+
 // Firebase's saved sign-ins on the phone.
 function savedSignIns(page: Page) {
   return page.evaluate(
@@ -93,7 +118,7 @@ test('an owner with no second step can reach only the setup screen', async ({ pa
     'Turn on second step',
     'Sign out',
   ]);
-  await expect(page.getByRole('link')).toHaveText(['Open in my authenticator app']);
+  await expect(page.getByRole('link')).toHaveCount(0);
   await expect(page.getByText('Your second sign-in step was reset.')).toHaveCount(0);
   await expect(signedIn(page)).toHaveCount(0);
   await expectFitsPhone(page);
@@ -118,15 +143,13 @@ test('the QR code and the typed key hold the same setup key', async ({ page }) =
   await expect(setupHeading(page)).toBeVisible();
 
   await expect(page.getByTestId('setup-key')).toHaveText('JBSW Y3DP EHPK 3PXP');
-  const uri = new URL(
-    (await page.getByRole('link', { name: 'Open in my authenticator app' }).getAttribute('href'))!,
-  );
-  expect(uri.protocol).toBe('otpauth:');
-  expect(uri.hostname).toBe('totp');
-  expect(uri.searchParams.get('secret')).toBe(SETUP_KEY);
-  expect(uri.searchParams.get('issuer')).toBe(`DryScope ${A}`);
-  expect(uri.searchParams.get('digits')).toBe('6');
-  // The QR code is drawn from that address: a real picture, wide as the column, not off the screen.
+  // The QR code holds the authenticator-app address for that key, this company and this account.
+  const issuer = encodeURIComponent(`DryScope ${A}`);
+  const address =
+    `otpauth://totp/${issuer}:${encodeURIComponent(mine.ownerA.email)}` +
+    `?secret=${SETUP_KEY}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
+  expect(await qrModules(page)).toEqual(expectedModules(address));
+  // A real picture, wide as the column, not off the screen.
   const box = (await page
     .getByRole('img', { name: 'QR code for your authenticator app' })
     .boundingBox())!;
@@ -406,6 +429,18 @@ test('after a reset the setup screen says so, and only on the phone that had a s
   await expect(signedIn(page)).toHaveCount(0);
   await expectFitsPhone(page);
   await expectAccessible(page);
+
+  // They set it up again, then sign in with the new app's code.
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Turn on second step' }).click();
+  await expect(page.getByRole('main').getByRole('status')).toHaveText(
+    'Your authenticator app is set up. Sign in again and enter its code.',
+  );
+  expect(fake.factors.map((factor) => factor.name)).toEqual(['Authenticator app']);
+  await signIn(page, mine.ownerA.email);
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(signedIn(page)).toBeVisible();
 
   // Another phone has no memory of the old second step, so it shows the plain setup screen.
   const other = await browser.newContext({ viewport: { width: 390, height: 844 } });
