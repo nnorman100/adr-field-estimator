@@ -60,6 +60,7 @@ const TEAM_MESSAGES: Record<TeamErrorCode, string> = {
   invitation_active: 'An invitation that is still open cannot be cleared. Cancel it first.',
   invitation_expired: 'That invitation has expired. Ask the owner to send it again.',
   owner_protected: 'The owner cannot be changed here.',
+  owner_invitation_required: 'This company has no owner yet, so that invitation cannot be cancelled. DryScope support can invite a new owner.',
   company_not_ready: 'This company has no sign-in link yet, so nobody can be invited. Contact DryScope support.',
   conflict: 'Two changes met at the same moment. Try again.',
 };
