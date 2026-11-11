@@ -187,6 +187,35 @@ describe('the cushion grows each labor line by its own band', () => {
   });
 });
 
+describe('the cushion taxes each grown labor line once their tax factors differ', () => {
+  const labor = (changes: Obj) =>
+    item('labor', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '50.00', taxable: true, ...changes });
+  const range: Obj = {
+    estimate_mode: 'range',
+    range: { first_sf: 1000, first_percent: '50', beyond_percent: '0' },
+    sales_tax: { enabled: true, percent: '10' },
+  };
+  const rooms = [room('Kitchen', { unfinished_sf: 2000 })];
+
+  it('W60 a flagged taxable line and an unflagged one, or a reduced materials share, are taxed on their own growth', () => {
+    // As W57, both lines taxable. High: demolition $2,500.00, labor hours $750.00 (flagged, multiplier 1.5).
+    // Tax 10% x ($2,500.00 + $750.00 x 1.5) = $362.50 (not 10% x ($2,000.00 + $750.00) x 3,250 / 2,500 = $357.50).
+    const night = priced(
+      table([item('demo', { unit_price: '1.00', taxable: true }), labor({ after_hours: true })], { ...NIGHT, ...range }),
+      job(rooms, { labor_hours: 10, is_after_hours: true }),
+    );
+    expect(night.totals.high).toMatchObject({ subtotal: '3250.00', after_hours: '375.00', tax: '362.50' });
+    // In working hours with a 40% materials share on the labor: low 10% x ($2,000.00 + $200.00) = $220.00;
+    // high 10% x ($2,500.00 + $750.00 x 40%) = $280.00 (not 10% x $2,200.00 x 3,250 / 2,500 = $286.00).
+    const shared = priced(
+      table([item('demo', { unit_price: '1.00', taxable: true }), labor({ materials_share_percent: '40' })], range),
+      job(rooms, { labor_hours: 10 }),
+    );
+    expect(shared.totals.low.tax).toBe('220.00');
+    expect(shared.totals.high?.tax).toBe('280.00');
+  });
+});
+
 describe('the range explanation reads the lines at both ends', () => {
   it('W58 a taxable exempt rental that only the high end prices shapes the overhead and tax sentences', () => {
     // Uncertainty, no hidden damage or extra days. Demolition $200.00 (not taxable). Air movers entered 0, so no
@@ -217,6 +246,32 @@ describe('the range explanation reads the lines at both ends', () => {
       'Both amounts include overhead and profit at 10%, except on items marked as carrying none.',
     );
     expect(result.totals.explanation).toContain('Sales tax at 10% applies to the materials share of the items marked taxable.');
+  });
+
+  it('W61 a high end replaced by the low end under the job minimum leaves its high-only lines out of the sentences', () => {
+    // As W58 without the exemption, overhead 0, job minimum $1,000.00. Low work $200.00, high $200.00 + $225.00 =
+    // $425.00: both are the $1,000.00 minimum before tax, so the high end is the low end and no tax is charged.
+    // The rental's 40% share is on neither amount, so the sentence does not name a materials share.
+    const result = priced(
+      table([item('demo'), { ...AIR_MOVER, taxable: true, materials_share_percent: '40' }], {
+        estimate_mode: 'range',
+        minimum_job_charge: '1000',
+        sales_tax: { enabled: true, percent: '10' },
+        assist: {
+          drying_days: 3,
+          range_method: 'uncertainty',
+          extra_drying_days: 0,
+          hidden_damage_percent: { '1': '0', '2': '0', '3': '0' },
+        },
+      }),
+      job([room('Kitchen', { unfinished_sf: 100, floor_sf: 100, ceiling_height_ft: 8, water_class: 2 })], {
+        air_movers: 0,
+        drying_days: 3,
+      }),
+    );
+    expect(result.totals.low).toMatchObject({ minimum_charge: '800.00', tax: '0.00', total: '1000.00' });
+    expect(result.totals.high).toEqual(result.totals.low);
+    expect(result.totals.explanation).toContain('Sales tax at 10% applies to the items marked taxable.');
   });
 });
 

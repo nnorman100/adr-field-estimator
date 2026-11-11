@@ -351,25 +351,35 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   };
   const low = end(lowLabor, equipment, addMix(addMix(fixedMix, equipmentMix), laborMix)).end;
   let high: End | null = null;
+  let explained = lines;
   if (policy.estimate_mode === 'range') {
-    // Each labor line grows by its own amount, scaled to the rounded high labor. The cushion taxes the low end's
-    // taxable proportion of the high labor; the uncertainty method taxes each grown line.
-    const laborHigh = scaleMix(
-      mixOf(grown.laborEntries, multiplier, overhead),
-      highLaborAmount,
-      sumDec(grown.laborEntries.map((entry) => entry.amount), ZERO),
-    );
+    // Each labor line grows by its own amount, scaled to the rounded high labor. The uncertainty method taxes each
+    // grown line. The cushion taxes the low end's taxable proportion of the high labor while every taxable labor
+    // line carries the same tax factor, and each grown line, scaled the same way, once they differ.
+    const grownLabor = sumDec(grown.laborEntries.map((entry) => entry.amount), ZERO);
+    const laborHigh = scaleMix(mixOf(grown.laborEntries, multiplier, overhead), highLaborAmount, grownLabor);
+    const taxFactors = labor
+      .filter((line) => line.taxable)
+      .map((line) =>
+        line.materialsShare.mul(line.afterHours ? multiplier : ONE).mul(line.noOverheadProfit ? ONE : ONE.add(overhead)),
+      );
+    const uniform = taxFactors.every((factor) => factor.cmp(taxFactors[0] ?? factor) === 0);
+    const scaled = (value: Dec, amount: Dec, base: Dec): Dec => (base.isZero() ? ZERO : value.mul(amount).div(base));
     const highMix = uncertainEnd
       ? addMix(addMix(fixedMix, mixOf(uncertainEnd.equipmentEntries, multiplier, overhead)), laborHigh)
       : addMix(addMix(fixedMix, equipmentMix), {
           ...laborHigh,
-          taxed: lowLabor.isZero() ? ZERO : laborMix.taxed.mul(highLaborAmount).div(lowLabor),
+          taxed: uniform
+            ? scaled(laborMix.taxed, highLaborAmount, lowLabor)
+            : scaled(laborHigh.taxed, highLaborAmount, grownLabor),
         });
     const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
     // A high end still under the job minimum is the low end unless it charges more before tax: it is not
     // floored on its own, but growth in items billed beyond the minimum still raises it.
     const beforeTax = (value: End): Dec => value.total.sub(value.tax);
-    high = candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0 ? { ...low } : candidate.end;
+    const kept = !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0);
+    high = kept ? candidate.end : { ...low };
+    if (kept && uncertainEnd) explained = [...lines, ...uncertainEnd.equipmentEntries.map((entry) => entry.line)];
   }
   return {
     mode: policy.estimate_mode,
@@ -379,7 +389,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     laborMaterialHigh: highLaborAmount,
     afterHoursLabel: policy.after_hours.label,
     minimumChargeLabel: MINIMUM_CHARGE_LABEL,
-    explanation: explanation(policy, data, uncertainEnd ? [...lines, ...uncertainEnd.equipmentEntries.map((entry) => entry.line)] : lines),
+    explanation: explanation(policy, data, explained),
     rangeExplanation: rangeExplanation(policy, data),
     uncertainty: uncertainEnd ? uncertaintyJson(data, policy) : null,
   };
