@@ -103,9 +103,10 @@ describe('field database rules', () => {
     expect(await createDoc(owner, `${draft(A, 'editing')}/rooms/hall`, { field: { name: 'Hall' } })).toBe(
       200,
     );
+    // Field map v1 (S5a-1) opens only rooms and photos under a draft, nothing deeper.
     expect(
       await createDoc(owner, `${draft(A, 'editing')}/rooms/hall/readings/r1`, { field: { pct: 14 } }),
-    ).toBe(200);
+    ).toBe(403);
     // Control for company B: its own estimator reaches its own draft.
     expect(await getDoc(u('estimatorB').caller, draft(B, 'editing'))).toBe(200);
   });
