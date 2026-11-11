@@ -176,6 +176,8 @@ describe('reading and accepting', () => {
     const memberships = await h.admin`SELECT id, role, status, invitation_id FROM memberships WHERE actor_id = ${actors[0]!.id}`;
     expect(memberships).toEqual([{ id: accepted.membership.membershipId, role: 'estimator', status: 'active', invitation_id: invitation.id }]);
     expect(await h.admin`SELECT actor_id FROM access_projection_outbox`).toEqual([{ actor_id: actors[0]!.id }]);
+    // Projected once, after the first acceptance committed; accepting again queued nothing.
+    expect(h.projected).toEqual([{ companyId: h.seed.a, actorId: actors[0]!.id }]);
     expect((await h.admin`SELECT action FROM audit_events WHERE action = 'invitation_accepted'`).length).toBe(1);
     expect((await h.admin`SELECT status FROM invitations`)[0]).toEqual({ status: 'accepted' });
 
@@ -199,7 +201,11 @@ describe('reading and accepting', () => {
     // The app holds one connection, so two requests never truly overlap there; two handles do.
     const second = openDatabase({ APP_ENV: 'test', DATABASE_URL: h.apiUrl });
     try {
-      const other = teamService(second.db, { ensureAccount: async () => {}, revokeSessions: async () => {} });
+      const other = teamService(
+        second.db,
+        { ensureAccount: async () => {}, revokeSessions: async () => {} },
+        async () => {},
+      );
       const account = {
         companyId: h.seed.a,
         companyName: 'Company company-a',

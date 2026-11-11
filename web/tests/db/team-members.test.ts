@@ -97,6 +97,8 @@ describe('changing a member', () => {
     expect(((await moved.json()) as { member: { role: string } }).member.role).toBe('office');
     expect(await roleOf(h.seed.estimatorA.membership)).toEqual({ role: 'office', status: 'active' });
     expect(await h.admin`SELECT actor_id FROM access_projection_outbox`).toEqual([{ actor_id: h.seed.estimatorA.actor }]);
+    // The change was projected after it committed, before the route answered.
+    expect(h.projected).toEqual([{ companyId: h.seed.a, actorId: h.seed.estimatorA.actor }]);
     const audit = await h.admin`SELECT actor_id, action, target, details FROM audit_events`;
     expect(audit).toEqual([
       { actor_id: h.seed.ownerA.actor, action: 'member_role_changed', target: h.seed.estimatorA.membership, details: { from: 'estimator', to: 'office' } },
@@ -123,6 +125,7 @@ describe('changing a member', () => {
     expect(promote.status).toBe(400);
     expect(await everything(h.admin)).toBe(before);
     expect(h.calls).toEqual([]);
+    expect(h.projected).toEqual([]);
   });
 
   it('disabling revokes the member’s sessions before the call returns, and blocks them at once', async () => {
@@ -138,6 +141,7 @@ describe('changing a member', () => {
     expect(await roleOf(h.seed.estimatorA.membership)).toEqual({ role: 'estimator', status: 'disabled' });
     expect(await (await me(request({ tenant: 'tenant-a', uid: 'estimator-a' }, '/api/me'), params({}))).json()).toEqual({ error: 'member_disabled' });
     expect(await h.admin`SELECT actor_id FROM access_projection_outbox`).toEqual([{ actor_id: h.seed.estimatorA.actor }]);
+    expect(h.projected).toEqual([{ companyId: h.seed.a, actorId: h.seed.estimatorA.actor }]);
 
     // Disabling again changes nothing more.
     expect((await memberRoute(disable, owner(), h.seed.estimatorA.membership)).status).toBe(200);

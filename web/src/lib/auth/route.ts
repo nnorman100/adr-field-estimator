@@ -1,6 +1,7 @@
 import { parseFlagName, type FlagName } from '@/lib/flags';
-import { IdentityRefusal, resolveAccount, resolveIdentity, type Account, type Identity } from './identity';
+import { bearerToken, IdentityRefusal, resolveAccount, resolveIdentity, type Account, type Identity } from './identity';
 import type { RouteSessionRule } from './policy';
+import { serviceCallerServices, type ServiceCallerServices } from './service-caller';
 import { identityServices, type IdentityServices } from './services';
 
 // Every API route declares its access rule where it is defined, by wrapping each handler:
@@ -24,6 +25,11 @@ import { identityServices, type IdentityServices } from './services';
 //
 // The handler gets the verified email and session claims and must apply the session rules for the
 // role it is about to grant (sessionRefusal in policy.ts) before it grants anything.
+//
+// And one is for the platform's scheduled jobs, never a person:
+//
+//   export const POST = serviceRoute('access-projection', async (request) => ...);
+//                                         // the scheduler service account, token minted for this job
 //
 // tests/unit/route-rules.test.ts finds every route file and fails on a handler that is not
 // wrapped, so a route with no rule cannot ship. Later rules (operator, a capability) are added
@@ -102,5 +108,38 @@ export function accountRoute(handler: AccountHandler, services: () => IdentitySe
       return refusalOf(error);
     }
     return handler(request, account, context);
+  };
+}
+
+// Only the environment's scheduler service account (service-caller.ts), with a Google-signed ID
+// token whose audience names this job. Reads no company from the request; the handler works across
+// companies only through the outbox's own company lookups.
+export function serviceRoute(
+  job: string,
+  handler: Handler,
+  services: () => ServiceCallerServices = serviceCallerServices,
+): Handler {
+  return async (request, context) => {
+    let found: ServiceCallerServices;
+    try {
+      found = services();
+    } catch (error) {
+      console.error('service caller check unavailable', error instanceof Error ? error.name : 'unknown');
+      return refusal('service_unavailable', 503);
+    }
+    let token: string;
+    try {
+      token = bearerToken(request);
+    } catch (error) {
+      return refusalOf(error);
+    }
+    let claims;
+    try {
+      claims = await found.verifier.verify(token, found.caller.audienceFor(job));
+    } catch {
+      return refusal('invalid_token', 401);
+    }
+    if (!claims.emailVerified || claims.email !== found.caller.email) return refusal('not_allowed', 403);
+    return handler(request, context);
   };
 }

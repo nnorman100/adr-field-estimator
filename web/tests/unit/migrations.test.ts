@@ -27,7 +27,7 @@ const ledger = `CREATE TABLE migration_ledger (
 describe('migration files', () => {
   it('loads the shipped migrations in order and nothing else', async () => {
     const files = await readMigrations(migrationsDirectory);
-    expect(files.map((file) => file.id)).toEqual(['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup']);
+    expect(files.map((file) => file.id)).toEqual(['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection']);
     for (const file of files) expect(file.checksum).toMatch(/^[a-f0-9]{64}$/);
   });
 
