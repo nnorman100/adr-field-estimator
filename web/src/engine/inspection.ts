@@ -1,10 +1,10 @@
-// InspectionData validation and the inspection_payload dump. Types match pydantic's JSON dump.
+// The saved draft the engine prices (InspectionData). Square feet, hours and quantities are Decs;
+// a field may arrive as a JSON number or a Decimal string. Unknown keys are refused.
 
-import { places, toBool, toChoice, toDateTime, toDecimal, toFloat, toInt, toIntChoice, toPattern, toStr } from './coerce';
-import { chars, printable } from './pystr';
+import { z } from 'zod';
+
 import { Dec, ZERO } from './decimal';
-import { JInt, type JObj, type JVal, dict, jfloat, jint } from './json';
-import { collapse, decFloat, decInt, has, isObj, oneLine, orZero } from './values';
+import { chars, collapse, oneLine, printable } from './values';
 
 export class Reject extends Error {
   constructor(message: string) {
@@ -20,73 +20,37 @@ function bad(message = 'invalid'): never {
 export type Room = {
   name: string;
   category: number;
-  loss: string | null;
-  unfinishedSf: number;
-  finishedSf: number;
+  loss: 'water' | 'mold' | 'both' | null;
+  unfinishedSf: Dec;
+  finishedSf: Dec;
   customCabinetry: boolean;
-  wastePercent: number;
-  floorSf: number | null;
-  wetFloorSf: number | null;
-  ceilingHeightFt: number | null;
+  wastePercent: Dec;
+  floorSf: Dec | null;
+  wetFloorSf: Dec | null;
+  ceilingHeightFt: Dec | null;
   waterClass: number | null;
-  sourceOfLoss: boolean | null;
-  contentsPresent: boolean | null;
-  equipmentPlaced: boolean | null;
-  affectedSurfaces: number | null;
-  wetMaterials: number | null;
 };
 
-export type Approval = {
-  acceptedByUid: string;
-  acceptedByName: string;
-  acceptedAt: string;
-  rate: Dec;
-  total: Dec;
-  companyId: string;
-  companyVersion: JInt;
-  priceVersionId: string;
-  priceContentSha256: string;
-};
+export type Approval = { acceptedByName: string; acceptedAt: string; rate: Dec; total: Dec };
 
-export type Extra = {
-  id: string;
-  description: string;
-  hours: Dec;
-  origin: string;
-  unpricedItem: string;
-  approval: Approval | null;
-};
+export type Extra = { id: string; description: string; hours: Dec; approval: Approval | null };
 
-export type ScopeEntry = {
-  quantity: Dec;
-  count: number;
-  days: number;
-  measured: Dec | null;
-  reason: string | null;
-};
+export type ScopeEntry = { quantity: Dec; count: number; days: number };
 
-export type QuantityOverride = {
-  measured: Dec;
-  entered: Dec;
-  reason: string | null;
-};
+export type QuantityOverride = { measured: Dec; entered: Dec; reason: string | null };
 
 export type Inspection = {
   address: string;
   yearBuilt: number | null;
-  hasCrawlSpace: boolean;
-  graniteRemoval: boolean;
-  waterHeaterLoss: boolean;
-  workPerformed: boolean;
   rooms: Room[];
   airMovers: number;
   dehumidifiers: number;
   dehumidifierPpd: number | null;
   dryingDays: number;
-  laborHours: number;
+  laborHours: Dec;
   isAfterHours: boolean;
   emergencyCalls: number;
-  monitoringHours: number;
+  monitoringHours: Dec;
   haulLoads: number;
   airScrubbers: number;
   hepaFilters: number;
@@ -99,529 +63,292 @@ export type Inspection = {
   packagePrice: string | null;
   technicianNotes: string;
   technicianTranscript: string;
-  assistantTranscript: string;
   scopeConfirmed: boolean;
   extras: Extra[];
-  extrasSet: boolean;
   scopeItems: Record<string, ScopeEntry> | null;
   quantityOverrides: Record<string, QuantityOverride> | null;
-  seededFromVersion: string | null;
-  coordinates: JObj | null;
-  captureMetadata: JObj | null;
-  equipmentScans: JObj[];
-  /** Keys present on this record. After the save dump, defaults count as set. */
-  present: Set<string>;
 };
 
-const ROOM_KEYS = new Set([
-  'name',
-  'category',
-  'loss',
-  'unfinished_sf',
-  'finished_sf',
-  'custom_cabinetry',
-  'waste_percent',
-  'floor_sf',
-  'wet_floor_sf',
-  'ceiling_height_ft',
-  'water_class',
-  'source_of_loss',
-  'contents_present',
-  'equipment_placed',
-  'affected_surfaces',
-  'wet_materials',
-]);
+const PLAIN_DECIMAL = /^-?\d+(?:\.\d+)?$/;
 
-const DATA_KEYS = new Set([
-  'address',
-  'coordinates',
-  'year_built',
-  'has_crawl_space',
-  'granite_removal',
-  'water_heater_loss',
-  'work_performed',
-  'rooms',
-  'air_movers',
-  'dehumidifiers',
-  'dehumidifier_ppd',
-  'drying_days',
-  'labor_hours',
-  'is_after_hours',
-  'emergency_calls',
-  'monitoring_hours',
-  'haul_loads',
-  'air_scrubbers',
-  'hepa_filters',
-  'matterport_scans',
-  'dump_truck_loads',
-  'equipment_decon',
-  'power_distribution',
-  'wood_floor_systems',
-  'wood_floor_days',
-  'package_price',
-  'technician_notes',
-  'technician_transcript',
-  'assistant_transcript',
-  'scope_confirmed',
-  'capture_metadata',
-  'extras',
-  'equipment_scans',
-  'scope_items',
-  'seeded_from_version',
-  'quantity_overrides',
-]);
-
-const JOB_OVERRIDE = new Set([
-  'emergency_calls',
-  'monitoring_hours',
-  'haul_loads',
-  'air_scrubbers',
-  'hepa_filters',
-  'matterport_scans',
-  'dump_truck_loads',
-  'equipment_decon',
-  'power_distribution',
-  'labor_hours',
-  'air_movers',
-  'dehumidifiers',
-  'wood_floor_systems',
-  'drying_days',
-  'wood_floor_days',
-]);
-
-const ROOM_OVERRIDE = new Set(['unfinished_sf', 'finished_sf', 'floor_sf', 'wet_floor_sf']);
-
-function obj(value: JVal, label: string): JObj {
-  if (!isObj(value)) bad(`${label} object`);
-  return value;
+/** A JSON number or a Decimal string, as an exact Dec between `min` and `max`. */
+function amount(min: string, max: string, options: { above?: boolean; places?: number } = {}) {
+  const low = Dec.parse(min);
+  const high = Dec.parse(max);
+  return z.union([z.number(), z.string()]).transform((raw, ctx) => {
+    const text = typeof raw === 'number' ? (Number.isFinite(raw) ? String(raw) : '') : raw.trim();
+    if (typeof raw === 'string' ? !PLAIN_DECIMAL.test(text) : text === '') {
+      ctx.addIssue({ code: 'custom', message: 'must be a number' });
+      return z.NEVER;
+    }
+    const value = Dec.parse(text);
+    const places = value.normalize().exp < 0 ? -value.normalize().exp : 0;
+    const under = options.above ? value.cmp(low) <= 0 : value.cmp(low) < 0;
+    if (under || value.cmp(high) > 0 || places > (options.places ?? 28)) {
+      ctx.addIssue({ code: 'custom', message: `must be from ${min} to ${max}` });
+      return z.NEVER;
+    }
+    return value;
+  });
 }
 
-function keysOf(value: JObj, allowed: Set<string>, label: string): void {
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) bad(`${label} ${key}`);
-  }
-}
+const int = (min: number, max: number) => z.number().int().min(min).max(max);
 
-function between(n: number, min: number, max: number, gt: boolean): boolean {
-  return (gt ? n > min : n >= min) && n <= max;
-}
-
-function readFloat(value: JVal | undefined, fallback: number, min: number, max: number, gt: boolean): number {
-  if (value === undefined) return fallback;
-  const n = toFloat(value, 'float');
-  if (!between(n, min, max, gt)) bad('float range');
-  return n;
-}
-
-function readBig(value: JVal | undefined, min: bigint, max: bigint | null): bigint {
-  const n = toInt(value, 'int');
-  if (n < min || (max !== null && n > max)) bad('int range');
-  return n;
-}
-
-function readInt(value: JVal | undefined, fallback: number, min: number, max: number): number {
-  if (value === undefined) return fallback;
-  return Number(readBig(value, BigInt(min), BigInt(max)));
-}
-
-function readBool(value: JVal | undefined, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  return toBool(value, 'bool');
-}
-
-function readText(value: JVal | undefined, fallback: string, max: number): string {
-  if (value === undefined) return fallback;
-  return toStr(value, 'text', 0, max);
-}
-
-function optText(value: JVal | undefined, max: number): string | null {
-  if (value === undefined || value === null) return null;
-  return toStr(value, 'text', 0, max);
-}
-
-function readDec(value: JVal | undefined, min: Dec, max: Dec, decimals: number, gt: boolean): Dec {
-  const amount = toDecimal(value, 'decimal');
-  if (places(amount) > decimals) bad('decimal places');
-  if (gt ? amount.cmp(min) <= 0 : amount.cmp(min) < 0) bad('decimal range');
-  if (amount.cmp(max) > 0) bad('decimal range');
-  return amount;
-}
-
-function optFloat(value: JVal | undefined, min: number, max: number, gt: boolean): number | null {
-  if (value === undefined || value === null) return null;
-  return readFloat(value, 0, min, max, gt);
-}
-
-function optInt(value: JVal | undefined, min: number, max: number): number | null {
-  if (value === undefined || value === null) return null;
-  return readInt(value, 0, min, max);
-}
-
-function optBool(value: JVal | undefined): boolean | null {
-  if (value === undefined || value === null) return null;
-  return toBool(value, 'bool');
-}
-
-function readRoom(value: JVal): Room {
-  const raw = obj(value, 'room');
-  keysOf(raw, ROOM_KEYS, 'room');
-  return {
-    name: toStr(raw.name, 'room name', 1, 100),
-    category: raw.category === undefined ? 1 : toIntChoice(raw.category, [1, 2, 3], 'category'),
-    loss: raw.loss === undefined || raw.loss === null ? null : toChoice(raw.loss, ['water', 'mold', 'both'], 'loss'),
-    unfinishedSf: readFloat(raw.unfinished_sf, 0, 0, 100000, false),
-    finishedSf: readFloat(raw.finished_sf, 0, 0, 100000, false),
-    customCabinetry: readBool(raw.custom_cabinetry, false),
-    wastePercent: readFloat(raw.waste_percent, 0, 0, 100, false),
-    floorSf: optFloat(raw.floor_sf, 0, 100000, true),
-    wetFloorSf: optFloat(raw.wet_floor_sf, 0, 100000, false),
-    ceilingHeightFt: optFloat(raw.ceiling_height_ft, 0, 60, true),
-    waterClass:
-      raw.water_class === undefined || raw.water_class === null
-        ? null
-        : toIntChoice(raw.water_class, [1, 2, 3, 4], 'water class'),
-    sourceOfLoss: optBool(raw.source_of_loss),
-    contentsPresent: optBool(raw.contents_present),
-    equipmentPlaced: optBool(raw.equipment_placed),
-    affectedSurfaces: optInt(raw.affected_surfaces, 0, 50),
-    wetMaterials: optInt(raw.wet_materials, 0, 50),
-  };
-}
-
-function cleanReason(value: JVal | undefined): string | null {
-  if (value === undefined || value === null) return null;
-  const text = oneLine(toStr(value, 'reason', 3, 300));
-  if (chars(text) < 3 || !printable(text)) bad('reason');
-  return text;
-}
-
-const MAX_QUANTITY = Dec.parse('100000');
-
-function readScope(value: JVal): ScopeEntry {
-  const raw = obj(value, 'scope');
-  const allowed = new Set(['quantity', 'count', 'days', 'measured_quantity', 'override_reason']);
-  keysOf(raw, allowed, 'scope');
-  const quantity = raw.quantity === undefined ? ZERO : readDec(raw.quantity, ZERO, MAX_QUANTITY, 2, false);
-  const measured =
-    raw.measured_quantity === undefined || raw.measured_quantity === null
-      ? null
-      : readDec(raw.measured_quantity, ZERO, MAX_QUANTITY, 2, false);
-  const count = readInt(raw.count, 0, 0, 100);
-  const days = readInt(raw.days, 0, 0, 60);
-  const reason = cleanReason(raw.override_reason);
-  if (measured !== null && measured.cmp(quantity) !== 0 && !reason) bad('scope reason');
-  if (reason !== null && measured === null) bad('scope reason');
-  return { quantity, count, days, measured, reason };
-}
-
-function readOverride(value: JVal): QuantityOverride {
-  const raw = obj(value, 'override');
-  keysOf(raw, new Set(['measured', 'entered', 'reason']), 'override');
-  required(raw, ['measured', 'entered'], 'override');
-  const measured = readDec(raw.measured, ZERO, MAX_QUANTITY, 2, false);
-  const entered = readDec(raw.entered, ZERO, MAX_QUANTITY, 2, false);
-  const reason = cleanReason(raw.reason);
-  if (reason === null && entered.cmp(measured) !== 0) bad('override reason');
-  return { measured, entered, reason };
-}
-
-function required(raw: JObj, keys: string[], label: string): void {
-  for (const key of keys) if (!has(raw, key)) bad(label);
+function text(min: number, max: number) {
+  return z.string().refine((value) => chars(value) >= min && chars(value) <= max, {
+    message: `must be ${min} to ${max} characters`,
+  });
 }
 
 const HEX_ID = /^[a-f0-9]{32}$/;
+const ISO_TIME = z.iso.datetime({ offset: true });
 
-function readCoordinates(value: JVal): JObj {
-  const raw = obj(value, 'coordinates');
-  keysOf(raw, new Set(['latitude', 'longitude', 'address']), 'coordinates');
-  required(raw, ['latitude', 'longitude', 'address'], 'coordinates');
-  return {
-    address: toStr(raw.address, 'coordinates', 1, 500),
-    latitude: jfloat(readFloat(raw.latitude, 0, -90, 90, false)),
-    longitude: jfloat(readFloat(raw.longitude, 0, -180, 180, false)),
-  };
-}
-
-function readSegment(value: JVal): JObj {
-  const raw = obj(value, 'segment');
-  keysOf(raw, new Set(['speaker', 'connection_id', 'sequence', 'text', 'finished']), 'segment');
-  required(raw, ['speaker', 'connection_id', 'sequence', 'text'], 'segment');
-  return {
-    connection_id: toStr(raw.connection_id, 'segment', 0, 64),
-    finished: optBool(raw.finished),
-    sequence: new JInt(readBig(raw.sequence, 1n, null)),
-    speaker: toChoice(raw.speaker, ['technician', 'assistant'], 'segment'),
-    text: toStr(raw.text, 'segment', 0, 80000),
-  };
-}
-
-function readCapture(value: JVal): JObj {
-  const raw = obj(value, 'capture');
-  const allowed = ['capture_id', 'status', 'gap_count', 'recovery_count', 'technician_edited', 'segments'];
-  keysOf(raw, new Set(allowed), 'capture');
-  required(raw, ['capture_id'], 'capture');
-  const segments = raw.segments === undefined ? [] : raw.segments;
-  if (!Array.isArray(segments) || segments.length > 2000) bad('capture');
-  return {
-    capture_id: toPattern(raw.capture_id, HEX_ID, 'capture'),
-    gap_count: jint(readInt(raw.gap_count, 0, 0, 1000000)),
-    recovery_count: jint(readInt(raw.recovery_count, 0, 0, 10000)),
-    segments: segments.map((segment) => readSegment(segment)),
-    status:
-      raw.status === undefined
-        ? 'recording'
-        : toChoice(raw.status, ['recording', 'complete', 'incomplete', 'truncated'], 'capture'),
-    technician_edited: readBool(raw.technician_edited, false),
-  };
-}
-
-function readScan(value: JVal): JObj {
-  const raw = obj(value, 'scan');
-  const allowed = ['id', 'kind', 'asset_id', 'room', 'scanned_at'];
-  keysOf(raw, new Set(allowed), 'scan');
-  required(raw, allowed, 'scan');
-  return {
-    asset_id: toPattern(raw.asset_id, /^[A-Z0-9][A-Z0-9._/-]{0,31}$/, 'scan'),
-    id: toPattern(raw.id, HEX_ID, 'scan'),
-    kind: toChoice(raw.kind, ['air_mover', 'dehumidifier', 'air_scrubber'], 'scan'),
-    room: toStr(raw.room, 'scan', 1, 100),
-    scanned_at: toDateTime(raw.scanned_at, 'scan'),
-  };
-}
-
-function readApproval(value: JVal): Approval {
-  const raw = obj(value, 'approval');
-  const allowed = new Set([
-    'accepted_by_uid',
-    'accepted_by_name',
-    'accepted_at',
-    'rate',
-    'total',
-    'company_id',
-    'company_version',
-    'price_version_id',
-    'price_content_sha256',
-  ]);
-  keysOf(raw, allowed, 'approval');
-  required(raw, ['accepted_by_uid', 'accepted_by_name', 'accepted_at', 'company_id', 'rate', 'total', 'company_version'], 'approval');
-  return {
-    acceptedByUid: toStr(raw.accepted_by_uid, 'approval uid', 1, 128),
-    acceptedByName: toStr(raw.accepted_by_name, 'approval name', 1, 150),
-    acceptedAt: toDateTime(raw.accepted_at, 'approval time'),
-    rate: readDec(raw.rate, ZERO, Dec.parse('10000'), 2, true),
-    total: readDec(raw.total, ZERO, Dec.parse('2000000'), 2, false),
-    companyId: toStr(raw.company_id, 'approval company'),
-    companyVersion: new JInt(readBig(raw.company_version, 1n, null)),
-    priceVersionId: readText(raw.price_version_id, '', Infinity),
-    priceContentSha256: readText(raw.price_content_sha256, '', Infinity),
-  };
-}
-
-function readExtra(value: JVal): Extra {
-  const raw = obj(value, 'extra');
-  keysOf(raw, new Set(['id', 'description', 'hours', 'origin', 'unpriced_item', 'approval']), 'extra');
-  required(raw, ['id', 'description', 'hours'], 'extra');
-  const id = toPattern(raw.id, HEX_ID, 'extra id');
-  const description = oneLine(toStr(raw.description, 'extra description', 1, 300));
-  const hours = readDec(raw.hours, Dec.parse('0.25'), Dec.parse('200'), 2, false);
-  if (raw.origin !== undefined) toChoice(raw.origin, ['manual'], 'extra origin');
-  const unpricedItem = readText(raw.unpriced_item, '', 1000);
-  const approval = raw.approval === undefined || raw.approval === null ? null : readApproval(raw.approval);
-  if (!description || !printable(description)) bad('extra description');
-  return { id, description, hours, origin: 'manual', unpricedItem, approval };
-}
-
-function readYear(value: JVal | undefined): number | null {
-  if (value === undefined || value === null) return null;
-  const year = Number(readBig(value, 1800n, null));
-  if (year > new Date().getFullYear()) bad('year');
-  return year;
-}
-
-export function validateInspection(value: JVal): Inspection {
-  const raw = obj(value, 'inspection');
-  keysOf(raw, DATA_KEYS, 'inspection');
-  const scansRaw = raw.equipment_scans === undefined ? [] : raw.equipment_scans;
-  if (!Array.isArray(scansRaw) || scansRaw.length > 200) bad('scans');
-  const roomsRaw = raw.rooms === undefined ? [] : raw.rooms;
-  if (!Array.isArray(roomsRaw) || roomsRaw.length > 30) bad('rooms');
-  const extrasRaw = raw.extras === undefined ? [] : raw.extras;
-  if (!Array.isArray(extrasRaw) || extrasRaw.length > 30) bad('extras');
-  let scope: Record<string, ScopeEntry> | null = null;
-  if (has(raw, 'scope_items') && raw.scope_items !== null) {
-    if (!isObj(raw.scope_items)) bad('scope');
-    const entries = Object.entries(raw.scope_items);
-    if (entries.length > 150) bad('scope');
-    scope = dict<ScopeEntry>();
-    for (const [key, entry] of entries) {
-      if (!/^[a-z][a-z0-9_]{1,39}$/.test(key)) bad('scope id');
-      scope[key] = readScope(entry as JVal);
-    }
-  }
-  let overrides: Record<string, QuantityOverride> | null = null;
-  if (has(raw, 'quantity_overrides') && raw.quantity_overrides !== null) {
-    if (!isObj(raw.quantity_overrides)) bad('overrides');
-    const entries = Object.entries(raw.quantity_overrides);
-    if (entries.length > 150) bad('overrides');
-    overrides = dict<QuantityOverride>();
-    for (const [key, entry] of entries) {
-      if (chars(key) < 1 || chars(key) > 120) bad('override key');
-      overrides[key] = readOverride(entry as JVal);
-    }
-  }
-  return {
-    address: readText(raw.address, '', 500),
-    yearBuilt: readYear(raw.year_built),
-    hasCrawlSpace: readBool(raw.has_crawl_space, false),
-    graniteRemoval: readBool(raw.granite_removal, false),
-    waterHeaterLoss: readBool(raw.water_heater_loss, false),
-    workPerformed: readBool(raw.work_performed, false),
-    rooms: roomsRaw.map((room) => readRoom(room)),
-    airMovers: readInt(raw.air_movers, 0, 0, 100),
-    dehumidifiers: readInt(raw.dehumidifiers, 0, 0, 100),
-    dehumidifierPpd: optInt(raw.dehumidifier_ppd, 1, 1000),
-    dryingDays: readInt(raw.drying_days, 3, 1, 60),
-    laborHours: readFloat(raw.labor_hours, 0, 0, 500, false),
-    isAfterHours: readBool(raw.is_after_hours, false),
-    emergencyCalls: readInt(raw.emergency_calls, 1, 0, 100),
-    monitoringHours: readFloat(raw.monitoring_hours, 13.25, 0, 500, false),
-    haulLoads: readInt(raw.haul_loads, 1, 0, 100),
-    airScrubbers: readInt(raw.air_scrubbers, 1, 0, 100),
-    hepaFilters: readInt(raw.hepa_filters, 1, 0, 100),
-    matterportScans: readInt(raw.matterport_scans, 0, 0, 100),
-    dumpTruckLoads: readInt(raw.dump_truck_loads, 0, 0, 100),
-    equipmentDecon: readInt(raw.equipment_decon, 0, 0, 100),
-    powerDistribution: readInt(raw.power_distribution, 0, 0, 100),
-    woodFloorSystems: readInt(raw.wood_floor_systems, 0, 0, 100),
-    woodFloorDays: readInt(raw.wood_floor_days, 7, 1, 60),
-    packagePrice: optText(raw.package_price, 30),
-    technicianNotes: readText(raw.technician_notes, '', 40000),
-    technicianTranscript: readText(raw.technician_transcript, '', 80000),
-    assistantTranscript: readText(raw.assistant_transcript, '', 80000),
-    scopeConfirmed: readBool(raw.scope_confirmed, false),
-    extras: extrasRaw.map((extra) => readExtra(extra)),
-    extrasSet: has(raw, 'extras'),
-    scopeItems: scope,
-    quantityOverrides: overrides,
-    seededFromVersion: optText(raw.seeded_from_version, 120),
-    coordinates: raw.coordinates === undefined || raw.coordinates === null ? null : readCoordinates(raw.coordinates),
-    captureMetadata:
-      raw.capture_metadata === undefined || raw.capture_metadata === null ? null : readCapture(raw.capture_metadata),
-    equipmentScans: scansRaw.map((scan) => readScan(scan)),
-    present: new Set(Object.keys(raw)),
-  };
-}
-
-function dumpRoom(room: Room): JObj {
-  const out: JObj = {
-    category: jint(room.category),
-    custom_cabinetry: room.customCabinetry,
-    finished_sf: jfloat(room.finishedSf),
-    name: room.name,
-    unfinished_sf: jfloat(room.unfinishedSf),
-    waste_percent: jfloat(room.wastePercent),
-  };
-  if (room.loss !== null) out.loss = room.loss;
-  if (room.floorSf !== null) out.floor_sf = jfloat(room.floorSf);
-  if (room.wetFloorSf !== null) out.wet_floor_sf = jfloat(room.wetFloorSf);
-  if (room.ceilingHeightFt !== null) out.ceiling_height_ft = jfloat(room.ceilingHeightFt);
-  if (room.waterClass !== null) out.water_class = jint(room.waterClass);
-  if (room.sourceOfLoss !== null) out.source_of_loss = room.sourceOfLoss;
-  if (room.contentsPresent !== null) out.contents_present = room.contentsPresent;
-  if (room.equipmentPlaced !== null) out.equipment_placed = room.equipmentPlaced;
-  if (room.affectedSurfaces !== null) out.affected_surfaces = jint(room.affectedSurfaces);
-  if (room.wetMaterials !== null) out.wet_materials = jint(room.wetMaterials);
+/** A null-prototype copy, so a key such as "constructor" never reads an inherited value. */
+function plainMap<T>(record: Record<string, T>): Record<string, T> {
+  const out = Object.create(null) as Record<string, T>;
+  for (const [key, value] of Object.entries(record)) out[key] = value;
   return out;
 }
 
-function dumpApproval(approval: Approval): JObj {
-  return {
-    accepted_at: approval.acceptedAt,
-    accepted_by_name: approval.acceptedByName,
-    accepted_by_uid: approval.acceptedByUid,
-    company_id: approval.companyId,
-    company_version: approval.companyVersion,
-    price_content_sha256: approval.priceContentSha256,
-    price_version_id: approval.priceVersionId,
-    rate: approval.rate.toString(),
-    total: approval.total.toString(),
-  };
-}
+const reason = text(3, 300)
+  .transform((value) => oneLine(value))
+  .refine((value) => chars(value) >= 3 && printable(value), { message: 'reason' });
 
-export function dumpInspection(data: Inspection): JObj {
-  const out: JObj = {
-    address: data.address,
-    air_movers: jint(data.airMovers),
-    air_scrubbers: jint(data.airScrubbers),
-    assistant_transcript: data.assistantTranscript,
-    dehumidifiers: jint(data.dehumidifiers),
-    drying_days: jint(data.dryingDays),
-    dump_truck_loads: jint(data.dumpTruckLoads),
-    emergency_calls: jint(data.emergencyCalls),
-    equipment_decon: jint(data.equipmentDecon),
-    granite_removal: data.graniteRemoval,
-    has_crawl_space: data.hasCrawlSpace,
-    haul_loads: jint(data.haulLoads),
-    hepa_filters: jint(data.hepaFilters),
-    is_after_hours: data.isAfterHours,
-    labor_hours: jfloat(data.laborHours),
-    matterport_scans: jint(data.matterportScans),
-    monitoring_hours: jfloat(data.monitoringHours),
-    package_price: data.packagePrice,
-    power_distribution: jint(data.powerDistribution),
-    rooms: data.rooms.map((room) => dumpRoom(room)),
-    scope_confirmed: data.scopeConfirmed,
-    technician_notes: data.technicianNotes,
-    technician_transcript: data.technicianTranscript,
-    water_heater_loss: data.waterHeaterLoss,
-    wood_floor_days: jint(data.woodFloorDays),
-    wood_floor_systems: jint(data.woodFloorSystems),
-    work_performed: data.workPerformed,
-    year_built: data.yearBuilt === null ? null : jint(data.yearBuilt),
-  };
-  if (data.coordinates) out.coordinates = data.coordinates;
-  else if (data.present.has('coordinates')) out.coordinates = null;
-  if (data.captureMetadata) out.capture_metadata = data.captureMetadata;
-  if (data.equipmentScans.length > 0) out.equipment_scans = data.equipmentScans;
-  if (data.dehumidifierPpd !== null) out.dehumidifier_ppd = jint(data.dehumidifierPpd);
-  if (data.extras.length > 0 || data.extrasSet) {
-    out.extras = data.extras.map((extra) => ({
-      approval: extra.approval ? dumpApproval(extra.approval) : null,
-      description: extra.description,
-      hours: extra.hours.toString(),
+const quantity = amount('0', '100000', { places: 2 });
+
+const ROOM = z
+  .strictObject({
+    name: text(1, 100),
+    category: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1),
+    loss: z.enum(['water', 'mold', 'both']).nullish(),
+    unfinished_sf: amount('0', '100000').default(ZERO),
+    finished_sf: amount('0', '100000').default(ZERO),
+    custom_cabinetry: z.boolean().default(false),
+    waste_percent: amount('0', '100').default(ZERO),
+    floor_sf: amount('0', '100000', { above: true }).nullish(),
+    wet_floor_sf: amount('0', '100000').nullish(),
+    ceiling_height_ft: amount('0', '60', { above: true }).nullish(),
+    water_class: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).nullish(),
+    source_of_loss: z.boolean().nullish(),
+    contents_present: z.boolean().nullish(),
+    equipment_placed: z.boolean().nullish(),
+    affected_surfaces: int(0, 50).nullish(),
+    wet_materials: int(0, 50).nullish(),
+  })
+  .transform(
+    (room): Room => ({
+      name: room.name,
+      category: room.category,
+      loss: room.loss ?? null,
+      unfinishedSf: room.unfinished_sf,
+      finishedSf: room.finished_sf,
+      customCabinetry: room.custom_cabinetry,
+      wastePercent: room.waste_percent,
+      floorSf: room.floor_sf ?? null,
+      wetFloorSf: room.wet_floor_sf ?? null,
+      ceilingHeightFt: room.ceiling_height_ft ?? null,
+      waterClass: room.water_class ?? null,
+    }),
+  );
+
+const SCOPE = z
+  .strictObject({
+    quantity: quantity.default(ZERO),
+    count: int(0, 100).default(0),
+    days: int(0, 60).default(0),
+    measured_quantity: quantity.nullish(),
+    override_reason: reason.nullish(),
+  })
+  .superRefine((entry, ctx) => {
+    const measured = entry.measured_quantity ?? null;
+    const why = entry.override_reason ?? null;
+    if ((measured !== null && !measured.eq(entry.quantity) && !why) || (why !== null && measured === null)) {
+      ctx.addIssue({ code: 'custom', message: 'a changed quantity needs its measured value and a reason' });
+    }
+  })
+  .transform((entry): ScopeEntry => ({ quantity: entry.quantity, count: entry.count, days: entry.days }));
+
+const OVERRIDE = z
+  .strictObject({ measured: quantity, entered: quantity, reason: reason.nullish() })
+  .superRefine((entry, ctx) => {
+    if (!entry.reason && !entry.entered.eq(entry.measured)) {
+      ctx.addIssue({ code: 'custom', message: 'a changed value needs a reason' });
+    }
+  })
+  .transform((entry): QuantityOverride => ({ ...entry, reason: entry.reason ?? null }));
+
+const APPROVAL = z
+  .strictObject({
+    accepted_by_uid: text(1, 128),
+    accepted_by_name: text(1, 150),
+    accepted_at: ISO_TIME,
+    rate: amount('0', '10000', { above: true, places: 2 }),
+    total: amount('0', '2000000', { places: 2 }),
+    company_id: z.string(),
+    company_version: z.number().int().min(1),
+    price_version_id: z.string().optional(),
+    price_content_sha256: z.string().optional(),
+  })
+  .transform(
+    (approval): Approval => ({
+      acceptedByName: approval.accepted_by_name,
+      acceptedAt: approval.accepted_at,
+      rate: approval.rate,
+      total: approval.total,
+    }),
+  );
+
+const EXTRA = z
+  .strictObject({
+    id: z.string().regex(HEX_ID),
+    description: text(1, 300)
+      .transform((value) => oneLine(value))
+      .refine((value) => value !== '' && printable(value), { message: 'description' }),
+    hours: amount('0.25', '200', { places: 2 }),
+    origin: z.literal('manual').optional(),
+    unpriced_item: text(0, 1000).optional(),
+    approval: APPROVAL.nullish(),
+  })
+  .transform(
+    (extra): Extra => ({
       id: extra.id,
-      origin: extra.origin,
-      unpriced_item: extra.unpricedItem,
-    }));
+      description: extra.description,
+      hours: extra.hours,
+      approval: extra.approval ?? null,
+    }),
+  );
+
+const COORDINATES = z.strictObject({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  address: text(1, 500),
+});
+
+const SEGMENT = z.strictObject({
+  speaker: z.enum(['technician', 'assistant']),
+  connection_id: text(0, 64),
+  sequence: z.number().int().min(1),
+  text: text(0, 80000),
+  finished: z.boolean().nullish(),
+});
+
+const CAPTURE = z.strictObject({
+  capture_id: z.string().regex(HEX_ID),
+  status: z.enum(['recording', 'complete', 'incomplete', 'truncated']).optional(),
+  gap_count: int(0, 1000000).optional(),
+  recovery_count: int(0, 10000).optional(),
+  technician_edited: z.boolean().optional(),
+  segments: z.array(SEGMENT).max(2000).optional(),
+});
+
+const SCAN = z.strictObject({
+  id: z.string().regex(HEX_ID),
+  kind: z.enum(['air_mover', 'dehumidifier', 'air_scrubber']),
+  asset_id: z.string().regex(/^[A-Z0-9][A-Z0-9._/-]{0,31}$/),
+  room: text(1, 100),
+  scanned_at: ISO_TIME,
+});
+
+/** A keyed map of at most `max` entries. Zod skips a "__proto__" key, so it is refused first. */
+function capped<T extends z.ZodType>(value: T, max: number) {
+  return z
+    .custom<unknown>((raw) => !(raw !== null && typeof raw === 'object' && Object.hasOwn(raw, '__proto__')), {
+      message: '"__proto__" is not a valid key',
+    })
+    .pipe(z.record(z.string(), value))
+    .refine((record) => Object.keys(record).length <= max, { message: `at most ${max} entries` })
+    .transform((record) => plainMap(record as Record<string, z.output<T>>));
+}
+
+const YEAR = z
+  .number()
+  .int()
+  .min(1800)
+  .refine((year) => year <= new Date().getFullYear(), { message: 'year built is in the future' });
+
+const INSPECTION = z.strictObject({
+  address: text(0, 500).default(''),
+  coordinates: COORDINATES.nullish(),
+  year_built: YEAR.nullish(),
+  has_crawl_space: z.boolean().optional(),
+  granite_removal: z.boolean().optional(),
+  water_heater_loss: z.boolean().optional(),
+  work_performed: z.boolean().optional(),
+  rooms: z.array(ROOM).max(30).default([]),
+  air_movers: int(0, 100).default(0),
+  dehumidifiers: int(0, 100).default(0),
+  dehumidifier_ppd: int(1, 1000).nullish(),
+  drying_days: int(1, 60).default(3),
+  labor_hours: amount('0', '500').default(ZERO),
+  is_after_hours: z.boolean().default(false),
+  emergency_calls: int(0, 100).default(1),
+  monitoring_hours: amount('0', '500').default(Dec.parse('13.25')),
+  haul_loads: int(0, 100).default(1),
+  air_scrubbers: int(0, 100).default(1),
+  hepa_filters: int(0, 100).default(1),
+  matterport_scans: int(0, 100).default(0),
+  dump_truck_loads: int(0, 100).default(0),
+  equipment_decon: int(0, 100).default(0),
+  power_distribution: int(0, 100).default(0),
+  wood_floor_systems: int(0, 100).default(0),
+  wood_floor_days: int(1, 60).default(7),
+  package_price: text(0, 30).nullish(),
+  technician_notes: text(0, 40000).default(''),
+  technician_transcript: text(0, 80000).default(''),
+  assistant_transcript: text(0, 80000).optional(),
+  scope_confirmed: z.boolean().default(false),
+  capture_metadata: CAPTURE.nullish(),
+  extras: z.array(EXTRA).max(30).default([]),
+  equipment_scans: z.array(SCAN).max(200).optional(),
+  scope_items: capped(SCOPE, 150)
+    .refine((record) => Object.keys(record).every((key) => /^[a-z][a-z0-9_]{1,39}$/.test(key)), {
+      message: 'scope item ids',
+    })
+    .nullish(),
+  seeded_from_version: text(0, 120).nullish(),
+  quantity_overrides: capped(OVERRIDE, 150)
+    .refine((record) => Object.keys(record).every((key) => chars(key) >= 1 && chars(key) <= 120), {
+      message: 'override keys',
+    })
+    .nullish(),
+});
+
+export function validateInspection(value: unknown): Inspection {
+  const result = INSPECTION.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    bad(`${issue?.path.join('.') ?? 'inspection'}: ${issue?.message ?? 'invalid'}`);
   }
-  if (data.scopeItems) {
-    const items = dict<JVal>();
-    for (const [key, entry] of Object.entries(data.scopeItems)) {
-      const row: JObj = {
-        count: jint(entry.count),
-        days: jint(entry.days),
-        quantity: entry.quantity.toString(),
-      };
-      if (entry.measured) row.measured_quantity = entry.measured.toString();
-      if (entry.reason !== null) row.override_reason = entry.reason;
-      items[key] = row;
-    }
-    out.scope_items = items;
-  }
-  if (data.seededFromVersion !== null) out.seeded_from_version = data.seededFromVersion;
-  if (data.quantityOverrides) {
-    const rows = dict<JVal>();
-    for (const [key, entry] of Object.entries(data.quantityOverrides)) {
-      const row: JObj = {
-        entered: entry.entered.toString(),
-        measured: entry.measured.toString(),
-      };
-      if (entry.reason !== null) row.reason = entry.reason;
-      rows[key] = row;
-    }
-    out.quantity_overrides = rows;
-  }
-  return out;
+  const raw = result.data;
+  return {
+    address: raw.address,
+    yearBuilt: raw.year_built ?? null,
+    rooms: raw.rooms,
+    airMovers: raw.air_movers,
+    dehumidifiers: raw.dehumidifiers,
+    dehumidifierPpd: raw.dehumidifier_ppd ?? null,
+    dryingDays: raw.drying_days,
+    laborHours: raw.labor_hours,
+    isAfterHours: raw.is_after_hours,
+    emergencyCalls: raw.emergency_calls,
+    monitoringHours: raw.monitoring_hours,
+    haulLoads: raw.haul_loads,
+    airScrubbers: raw.air_scrubbers,
+    hepaFilters: raw.hepa_filters,
+    matterportScans: raw.matterport_scans,
+    dumpTruckLoads: raw.dump_truck_loads,
+    equipmentDecon: raw.equipment_decon,
+    powerDistribution: raw.power_distribution,
+    woodFloorSystems: raw.wood_floor_systems,
+    woodFloorDays: raw.wood_floor_days,
+    packagePrice: raw.package_price ?? null,
+    technicianNotes: raw.technician_notes,
+    technicianTranscript: raw.technician_transcript,
+    scopeConfirmed: raw.scope_confirmed,
+    extras: raw.extras,
+    scopeItems: raw.scope_items ?? null,
+    quantityOverrides: raw.quantity_overrides ?? null,
+  };
 }
 
 export function distinctRooms(data: Inspection): void {
@@ -633,29 +360,33 @@ export function distinctRooms(data: Inspection): void {
   }
 }
 
-function jobNumber(data: Inspection, field: string): { kind: 'int' | 'float'; value: number | null } {
-  const ints: Record<string, number> = {
-    emergency_calls: data.emergencyCalls,
-    haul_loads: data.haulLoads,
-    air_scrubbers: data.airScrubbers,
-    hepa_filters: data.hepaFilters,
-    matterport_scans: data.matterportScans,
-    dump_truck_loads: data.dumpTruckLoads,
-    equipment_decon: data.equipmentDecon,
-    power_distribution: data.powerDistribution,
-    air_movers: data.airMovers,
-    dehumidifiers: data.dehumidifiers,
-    wood_floor_systems: data.woodFloorSystems,
-    drying_days: data.dryingDays,
-    wood_floor_days: data.woodFloorDays,
-  };
-  if (field in ints) return { kind: 'int', value: ints[field] ?? 0 };
-  if (field === 'monitoring_hours') return { kind: 'float', value: data.monitoringHours };
-  if (field === 'labor_hours') return { kind: 'float', value: data.laborHours };
-  return { kind: 'int', value: null };
+const JOB_INTS = {
+  emergency_calls: 'emergencyCalls',
+  haul_loads: 'haulLoads',
+  air_scrubbers: 'airScrubbers',
+  hepa_filters: 'hepaFilters',
+  matterport_scans: 'matterportScans',
+  dump_truck_loads: 'dumpTruckLoads',
+  equipment_decon: 'equipmentDecon',
+  power_distribution: 'powerDistribution',
+  air_movers: 'airMovers',
+  dehumidifiers: 'dehumidifiers',
+  wood_floor_systems: 'woodFloorSystems',
+  drying_days: 'dryingDays',
+  wood_floor_days: 'woodFloorDays',
+} as const satisfies Record<string, keyof Inspection>;
+
+const ROOM_OVERRIDE = new Set(['unfinished_sf', 'finished_sf', 'floor_sf', 'wet_floor_sf']);
+
+/** A job-level number as a Dec, or null for a field the inspection does not have. */
+function jobNumber(data: Inspection, field: string): Dec | null {
+  if (field === 'monitoring_hours') return data.monitoringHours;
+  if (field === 'labor_hours') return data.laborHours;
+  if (Object.hasOwn(JOB_INTS, field)) return Dec.fromInt(data[JOB_INTS[field as keyof typeof JOB_INTS]]);
+  return null;
 }
 
-function roomNumber(room: Room, field: string): number | null {
+export function roomNumber(room: Room, field: string): Dec | null {
   if (field === 'unfinished_sf') return room.unfinishedSf;
   if (field === 'finished_sf') return room.finishedSf;
   if (field === 'floor_sf') return room.floorSf;
@@ -663,30 +394,23 @@ function roomNumber(room: Room, field: string): number | null {
   return null;
 }
 
+/** Each override names a room field or a job field and still agrees with the saved value. */
 export function checkOverrides(data: Inspection): void {
   for (const [key, override] of Object.entries(data.quantityOverrides ?? {})) {
-    const name = key.slice(0, key.lastIndexOf(':'));
-    const field = key.slice(key.lastIndexOf(':') + 1);
-    const split = key.includes(':');
-    let current: Dec;
-    if (split) {
-      const room = data.rooms.find((item) => item.name === name);
+    const cut = key.lastIndexOf(':');
+    let current: Dec | null;
+    if (cut >= 0) {
+      const room = data.rooms.find((item) => item.name === key.slice(0, cut));
+      const field = key.slice(cut + 1);
       if (!room || !ROOM_OVERRIDE.has(field)) bad(`override ${key}`);
-      current = orZero('float', roomNumber(room, field));
-    } else if (JOB_OVERRIDE.has(key)) {
-      const job = jobNumber(data, key);
-      current = orZero(job.kind, job.value);
-    } else bad(`override ${key}`);
-    if (current.add(override.entered.neg()).abs().cmp(Dec.parse('0.01')) >= 0) bad(`stale ${key}`);
+      current = roomNumber(room, field);
+    } else {
+      current = Object.hasOwn(JOB_INTS, key) || key === 'monitoring_hours' || key === 'labor_hours' ? jobNumber(data, key) : bad(`override ${key}`);
+    }
+    if ((current ?? ZERO).sub(override.entered).abs().cmp(Dec.parse('0.01')) >= 0) bad(`stale ${key}`);
   }
 }
 
 export function fieldDec(data: Inspection, field: string): Dec {
-  const job = jobNumber(data, field);
-  if (job.value === null) return ZERO;
-  return job.kind === 'float' ? decFloat(job.value) : decInt(job.value);
-}
-
-export function jobCount(data: Inspection, field: string): number {
-  return jobNumber(data, field).value ?? 0;
+  return jobNumber(data, field) ?? ZERO;
 }

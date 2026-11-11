@@ -1,7 +1,7 @@
 // IICRC S500 air-mover placement and the LGR dehumidification chart. Counts are advice, not prices.
 
 import { Dec, ZERO, sumDec } from './decimal';
-import { decFloat, numberText } from './values';
+import { numberText } from './values';
 import type { Inspection, Room } from './inspection';
 
 const MOVER_MIN = Dec.fromInt(70);
@@ -16,17 +16,16 @@ export type RoomCheck = {
   status: 'not_applicable' | 'not_available' | 'available';
   missing?: string[];
   problem?: string;
-  floorSf?: number;
-  wetFloorSf?: number;
+  floorSf?: Dec;
+  wetFloorSf?: Dec;
   wetFloorStated?: boolean;
-  ceiling?: number;
+  ceiling?: Dec;
   waterClass?: number;
-  cubicFeet?: number;
+  cubicFeet?: Dec;
   airMin?: number | null;
   airMax?: number | null;
   factor?: number;
-  ppd?: number;
-  exactCubic?: Dec;
+  ppd?: Dec;
 };
 
 export type Sizing = {
@@ -69,12 +68,12 @@ function roomCheck(room: Room): RoomCheck {
   if (missing.length || room.floorSf === null || room.ceilingHeightFt === null || room.waterClass === null) {
     return { name: room.name, status: 'not_available', missing };
   }
-  const floor = decFloat(room.floorSf);
-  const wet = room.wetFloorSf === null ? floor : decFloat(room.wetFloorSf);
+  const floor = room.floorSf;
+  const wet = room.wetFloorSf === null ? floor : room.wetFloorSf;
   if (wet.cmp(floor) > 0) {
     return { name: room.name, status: 'not_available', missing: [], problem: 'the wet floor area is larger than the floor area' };
   }
-  const height = decFloat(room.ceilingHeightFt);
+  const height = room.ceilingHeightFt;
   const cubic = floor.mul(height);
   const factor = LGR[room.waterClass] ?? 40;
   let low: number | null = null;
@@ -86,17 +85,16 @@ function roomCheck(room: Room): RoomCheck {
   return {
     name: room.name,
     status: 'available',
-    floorSf: room.floorSf,
-    wetFloorSf: wet.toNumber(),
+    floorSf: floor,
+    wetFloorSf: wet,
     wetFloorStated: room.wetFloorSf !== null,
-    ceiling: room.ceilingHeightFt,
+    ceiling: height,
     waterClass: room.waterClass,
-    cubicFeet: cubic.toNumber(),
+    cubicFeet: cubic,
     airMin: low,
     airMax: high,
     factor,
-    ppd: tenths(cubic.div(Dec.fromInt(factor))).toNumber(),
-    exactCubic: cubic,
+    ppd: tenths(cubic.div(Dec.fromInt(factor))),
   };
 }
 
@@ -133,7 +131,7 @@ function dehuCheck(entered: number, demand: Dec, rating: number | null): [number
 }
 
 export function roomPpd(check: RoomCheck): Dec {
-  return decFloat(check.cubicFeet ?? 0).div(Dec.fromInt(check.factor ?? 1));
+  return (check.cubicFeet ?? ZERO).div(Dec.fromInt(check.factor ?? 1));
 }
 
 export function equipmentSizing(data: Inspection): Sizing {
@@ -157,7 +155,7 @@ export function equipmentSizing(data: Inspection): Sizing {
   const [units, dehuFlag, dehuReason] = dehuCheck(data.dehumidifiers, demand, data.dehumidifierPpd);
   const basis: Record<string, string> = {};
   if (low !== null) {
-    const wet = sumDec(water.map((room) => decFloat(room.wetFloorSf ?? 0)), ZERO);
+    const wet = sumDec(water.map((room) => room.wetFloorSf ?? ZERO), ZERO);
     basis.air_movers = `IICRC S500 minimum for ${numberText(wet)} sq ft of wet floor across ${count(water.length, 'room')}; the maximum is ${high}.`;
   }
   if (units !== null) {
@@ -189,9 +187,9 @@ export function letterParagraph(sizing: Sizing): string | null {
       lines.push(`${room.name}: mold only; not part of the drying check.`);
       continue;
     }
-    const floor = numberText(decFloat(room.floorSf ?? 0));
-    const wet = numberText(decFloat(room.wetFloorSf ?? 0));
-    const low = decFloat(room.floorSf ?? 0).cmp(SMALL_ROOM) < 0 ? '1 (room under 25 SF)' : `1 + ${wet} ÷ 70`;
+    const floor = numberText(room.floorSf ?? ZERO);
+    const wet = numberText(room.wetFloorSf ?? ZERO);
+    const low = (room.floorSf ?? ZERO).cmp(SMALL_ROOM) < 0 ? '1 (room under 25 SF)' : `1 + ${wet} ÷ 70`;
     const source = room.wetFloorStated ? '' : ' (the whole floor; no smaller wet area entered)';
     const placement =
       room.airMin == null
@@ -200,7 +198,7 @@ export function letterParagraph(sizing: Sizing): string | null {
     const exact = roomPpd(room);
     const equals = tenths(exact).cmp(exact) === 0 ? '=' : '≈';
     lines.push(
-      `${room.name}: ${floor} SF floor × ${numberText(decFloat(room.ceiling ?? 0))} ft ceiling = ${numberText(decFloat(room.cubicFeet ?? 0))} cu ft, water class ${room.waterClass}. ${placement}LGR dehumidification: ${numberText(decFloat(room.cubicFeet ?? 0))} ÷ ${room.factor} ${equals} ${numberText(decFloat(room.ppd ?? 0))} pints/day (AHAM).`,
+      `${room.name}: ${floor} SF floor × ${numberText(room.ceiling ?? ZERO)} ft ceiling = ${numberText(room.cubicFeet ?? ZERO)} cu ft, water class ${room.waterClass}. ${placement}LGR dehumidification: ${numberText(room.cubicFeet ?? ZERO)} ÷ ${room.factor} ${equals} ${numberText(room.ppd ?? ZERO)} pints/day (AHAM).`,
     );
   }
   const rating = sizing.dehu.unitPpd;

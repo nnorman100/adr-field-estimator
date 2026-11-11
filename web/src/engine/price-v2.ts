@@ -2,21 +2,21 @@
 
 import { Dec, HUNDRED, ONE, ZERO, money, maxDec, minDec, sumDec } from './decimal';
 import type { JObj } from './json';
-import { collapse, commas, decFloat, decInt, truthy } from './values';
+import { collapse, commas, truthy, type PriceLine } from './values';
 import type { Inspection, Room } from './inspection';
-import { fieldDec } from './inspection';
+import { fieldDec, roomNumber } from './inspection';
 import {
   BUCKET_OF_GROUP,
   COUNT_DAYS,
   FIELD_SOURCES,
   GROUPS,
-  bracketModeOf,
+  blankPrice,
   parseSource,
   type Item,
   type Policy,
+  type PriceBand,
   type Source,
 } from './table';
-import type { PriceLine } from './values';
 
 const EXTRA = 'EXTRA';
 const EXTRAS = 'extras';
@@ -36,12 +36,10 @@ function roomKey(name: string): string {
   return collapse(name);
 }
 
-function orZero(value: Dec | null): Dec {
-  if (value === null || value.isZero()) return ZERO;
-  return value;
-}
-
-export function overrides(data: Inspection, warnings: EngineWarning[]): { job: Map<string, Dec>; rooms: Map<string, Dec> } {
+export function overrides(
+  data: Inspection,
+  warnings: EngineWarning[],
+): { job: Map<string, Dec>; rooms: Map<string, Dec> } {
   const job = new Map<string, Dec>();
   const rooms = new Map<string, Dec>();
   const names = new Set(data.rooms.map((room) => roomKey(room.name)));
@@ -53,74 +51,65 @@ export function overrides(data: Inspection, warnings: EngineWarning[]): { job: M
     const cut = key.lastIndexOf(':');
     const name = cut >= 0 ? key.slice(0, cut) : '';
     const field = cut >= 0 ? key.slice(cut + 1) : key;
-    if (cut >= 0 && ROOM_FIELDS.has(field) && names.has(roomKey(name))) rooms.set(`${roomKey(name)}:${field}`, override.entered);
-    else warnings.push({ code: 'unknown_quantity_override', key });
+    if (cut >= 0 && ROOM_FIELDS.has(field) && names.has(roomKey(name))) {
+      rooms.set(`${roomKey(name)}:${field}`, override.entered);
+    } else warnings.push({ code: 'unknown_quantity_override', key });
   }
   return { job, rooms };
 }
 
-function roomValue(room: Room, field: string): number | null {
-  if (field === 'unfinished_sf') return room.unfinishedSf;
-  if (field === 'finished_sf') return room.finishedSf;
-  if (field === 'waste_percent') return room.wastePercent;
-  if (field === 'floor_sf') return room.floorSf;
-  if (field === 'wet_floor_sf') return room.wetFloorSf;
-  return null;
-}
-
 function readRoom(room: Room, field: string, rooms: Map<string, Dec>): Dec | null {
-  const value = roomValue(room, field);
+  const value = roomNumber(room, field);
   if (value === null) return null;
-  return rooms.get(`${roomKey(room.name)}:${field}`) ?? decFloat(value);
+  return rooms.get(`${roomKey(room.name)}:${field}`) ?? value;
 }
 
 function wetFloor(room: Room, rooms: Map<string, Dec>): Dec {
   const wet = readRoom(room, 'wet_floor_sf', rooms);
   if (wet !== null) return wet;
-  return orZero(readRoom(room, 'floor_sf', rooms));
+  return readRoom(room, 'floor_sf', rooms) ?? ZERO;
 }
 
-function roomQuantity(room: Room, source: Source, policy: Policy, rooms: Map<string, Dec>): Dec | null {
+function roomQuantity(room: Room, source: Source, policy: Policy, rooms: Map<string, Dec>): Dec {
   if (source.field === 'basis') {
-    if (policy.areaBasis === 'wet_floor') return wetFloor(room, rooms);
+    if (policy.area_basis === 'wet_floor') return wetFloor(room, rooms);
     const unfinished = readRoom(room, 'unfinished_sf', rooms);
     const finished = readRoom(room, 'finished_sf', rooms);
     return (unfinished ?? ZERO).add(finished ?? ZERO);
   }
   if (source.field === 'wet_floor_sf') return wetFloor(room, rooms);
-  return orZero(readRoom(room, source.field ?? '', rooms));
+  return readRoom(room, source.field ?? '', rooms) ?? ZERO;
 }
 
-function jobQuantity(item: Item, source: Source, data: Inspection, job: Map<string, Dec>, numbers: Record<string, Dec>): Dec {
+function jobQuantity(
+  item: Item,
+  source: Source,
+  data: Inspection,
+  job: Map<string, Dec>,
+  numbers: Record<string, Dec>,
+): Dec {
   const read = (...fields: string[]): Dec => {
     let quantity = ONE;
     for (const field of fields) {
-      let value: Dec;
-      if (job.has(field)) value = job.get(field) ?? ZERO;
-      else if (data.present.has(field)) value = fieldDec(data, field);
-      else return Dec.parse(item.defaultQuantity);
-      const factor = numbers[field] ?? value;
-      quantity = quantity.mul(factor);
+      const value = job.get(field) ?? fieldDec(data, field);
+      quantity = quantity.mul(numbers[field] ?? value);
     }
     return quantity;
   };
   if (source.kind === 'field') return read(source.field ?? '');
   if (source.kind === 'count_days') return read(source.countField ?? '', source.daysField ?? '');
   if (source.kind === 'after_hours') return data.isAfterHours ? ONE : ZERO;
-  const entry = data.scopeItems?.[item.itemId];
-  if (source.kind === 'typed') return entry ? entry.quantity : Dec.parse(item.defaultQuantity);
-  if (source.kind === 'typed_count_days') return entry ? decInt(entry.count * entry.days) : ZERO;
+  const entry = data.scopeItems?.[item.item_id];
+  if (source.kind === 'typed') return entry ? entry.quantity : Dec.parse(item.default_quantity);
+  if (source.kind === 'typed_count_days') return entry ? Dec.fromInt(entry.count * entry.days) : ZERO;
   throw new Error(`Unknown quantity source kind: ${source.kind}`);
 }
 
 function unpricedQuantity(item: Item, data: Inspection): boolean {
-  const entry = data.scopeItems?.[item.itemId];
-  return Dec.parse(item.defaultQuantity).cmp(ZERO) > 0 || Boolean(entry && entry.quantity.cmp(ZERO) > 0);
-}
-
-function blank(item: Item): boolean {
-  if (item.unitPrice === '' && !item.priceBrackets) return true;
-  return (item.priceBrackets ?? []).some((band) => band.unitPrice === '');
+  const entry = data.scopeItems?.[item.item_id];
+  return (
+    Dec.parse(item.default_quantity).cmp(ZERO) > 0 || Boolean(entry && entry.quantity.cmp(ZERO) > 0)
+  );
 }
 
 export function makeLine(
@@ -130,96 +119,111 @@ export function makeLine(
   price: Dec,
   waste: Dec,
   room: string | null = null,
-  area: number | null = null,
+  area: Dec | null = null,
 ): PriceLine {
-  const total = money(quantity.mul(price).mul(ONE.add(waste.div(HUNDRED))));
   return {
     code: item.code,
     description,
-    quantity: quantity.toNumber(),
+    quantity,
     unit: item.unit,
-    unitPrice: price.toNumber(),
-    waste: waste.toNumber(),
-    total: total.toNumber(),
-    itemId: item.itemId,
+    unitPrice: price,
+    waste,
+    total: money(quantity.mul(price).mul(ONE.add(waste.div(HUNDRED)))),
+    itemId: item.item_id,
     group: item.group,
     bucket: bucketOf(item.group, item.code),
     taxable: item.taxable,
-    xactimateCode: item.xactimateCode,
+    xactimateCode: item.xactimate_code,
     room,
     area,
   };
 }
 
 function catPrice(item: Item, policy: Policy, category: number): Dec {
-  const base = item.priceBrackets ? ONE : Dec.parse(item.unitPrice);
+  const base = item.price_brackets ? ONE : Dec.parse(item.unit_price);
   const key = String(category) as '1' | '2' | '3';
-  return base.mul(Dec.parse(policy.categoryMultipliers[key]));
+  return base.mul(Dec.parse(policy.category_multipliers[key]));
 }
 
-function roomLines(item: Item, source: Source, data: Inspection, policy: Policy, rooms: Map<string, Dec>, warnings: EngineWarning[]): PriceLine[] {
+function roomLines(
+  item: Item,
+  source: Source,
+  data: Inspection,
+  policy: Policy,
+  rooms: Map<string, Dec>,
+  warnings: EngineWarning[],
+): PriceLine[] {
   const lines: PriceLine[] = [];
-  const label = item.customerDescription || item.name;
+  const label = item.customer_description || item.name;
   for (const room of data.rooms) {
     if (item.categories.length && !item.categories.includes(room.category)) continue;
     const quantity = roomQuantity(room, source, policy, rooms);
-    if (!quantity || !truthy(quantity)) {
-      warnings.push({ code: 'missing_area', item_id: item.itemId, room: room.name });
+    if (!truthy(quantity)) {
+      warnings.push({ code: 'missing_area', item_id: item.item_id, room: room.name });
       continue;
     }
     let price = catPrice(item, policy, room.category);
-    if (room.category === 3 && room.customCabinetry && (source.finish === 'finished' || policy.cabinetry.scope === 'all_cat3')) {
+    const cabinetry = source.finish === 'finished' || policy.cabinetry.scope === 'all_cat3';
+    if (room.category === 3 && room.customCabinetry && cabinetry) {
       price = price.mul(Dec.parse(policy.cabinetry.multiplier));
     }
-    const waste = room.wastePercent > 0 ? decFloat(room.wastePercent) : Dec.parse(item.wastePercent);
-    lines.push(makeLine(item, `${room.name}: ${label}`, quantity, price, waste, room.name, quantity.toNumber()));
+    const waste = truthy(room.wastePercent) ? room.wastePercent : Dec.parse(item.waste_percent);
+    lines.push(makeLine(item, `${room.name}: ${label}`, quantity, price, waste, room.name, quantity));
   }
   return lines;
 }
 
-function bandFor(brackets: NonNullable<Item['priceBrackets']>, area: Dec): (typeof brackets)[number] {
-  const band = brackets.find((row) => row.upToSf === null || area.cmp(Dec.fromInt(row.upToSf)) <= 0);
+function bandFor(brackets: PriceBand[], area: Dec): PriceBand {
+  const band = brackets.find((row) => row.up_to_sf === null || area.cmp(Dec.fromInt(row.up_to_sf)) <= 0);
   if (!band) throw new Error('bracket');
   return band;
 }
 
-function jobSf(data: Inspection, items: Item[], policy: Policy): Dec {
+export function jobSf(data: Inspection, items: Item[], policy: Policy): Dec {
   const { job, rooms } = overrides(data, []);
   const categories = new Set(data.rooms.map((room) => room.category));
   const areas = new Map<number, Dec>();
   let typed = ZERO;
   const demolition = parseSource('room:basis');
-  const demolitionPolicy: Policy = { ...policy, areaBasis: 'demolition' };
+  const demolitionPolicy: Policy = { ...policy, area_basis: 'demolition' };
   for (const item of items) {
-    if (!item.enabled || item.unit !== 'sf' || item.group === EXTRAS || blank(item)) continue;
-    const source = parseSource(item.quantitySource);
+    if (!item.enabled || item.unit !== 'sf' || item.group === EXTRAS || blankPrice(item)) continue;
+    const allowed = item.categories;
+    const source = parseSource(item.quantity_source);
     if (source.kind !== 'room') {
-      if (!item.categories.length || item.categories.some((category) => categories.has(category))) {
+      if (!allowed.length || allowed.some((category) => categories.has(category))) {
         typed = typed.add(jobQuantity(item, source, data, job, {}));
       }
       continue;
     }
     data.rooms.forEach((room, index) => {
-      if (item.categories.length && !item.categories.includes(room.category)) return;
+      if (allowed.length && !allowed.includes(room.category)) return;
       const area =
         source.field === 'finished_sf' || source.field === 'unfinished_sf'
           ? roomQuantity(room, demolition, demolitionPolicy, rooms)
           : roomQuantity(room, source, policy, rooms);
-      areas.set(index, maxDec(areas.get(index) ?? ZERO, area ?? ZERO));
+      areas.set(index, maxDec(areas.get(index) ?? ZERO, area));
     });
   }
   return sumDec([...areas.values()], typed);
 }
 
 function score(line: PriceLine, growth?: (line: PriceLine) => Dec): Dec {
-  const waste = ONE.add(decFloat(line.waste).div(HUNDRED));
+  const waste = ONE.add(line.waste.div(HUNDRED));
   const grown = ONE.add(growth ? growth(line) : ZERO);
-  return decFloat(line.unitPrice).mul(waste).mul(grown);
+  return line.unitPrice.mul(waste).mul(grown);
 }
 
-function bracketLines(item: Item, lines: PriceLine[], policy: Policy, jobArea: Dec | null, growth?: (line: PriceLine) => Dec): PriceLine[] {
-  const brackets = item.priceBrackets ?? [];
-  const whole = bracketModeOf(policy) === 'whole-job';
+function bracketLines(
+  item: Item,
+  lines: PriceLine[],
+  policy: Policy,
+  jobArea: Dec | null,
+  growth?: (line: PriceLine) => Dec,
+): PriceLine[] {
+  const brackets = item.price_brackets ?? [];
+  const mode = policy.bracket_mode;
+  const whole = mode === 'whole-job';
   const selected = whole ? bandFor(brackets, jobArea ?? ZERO) : null;
   let used = ZERO;
   let exact = ZERO;
@@ -227,31 +231,35 @@ function bracketLines(item: Item, lines: PriceLine[], policy: Policy, jobArea: D
   const ordered = [...lines].sort((left, right) => score(right, growth).cmp(score(left, growth)));
   const result: PriceLine[] = [];
   for (const line of ordered) {
-    let remaining = decFloat(line.quantity);
+    let remaining = line.quantity;
     while (truthy(remaining)) {
       const band =
-        selected ?? brackets.find((row) => row.upToSf === null || used.cmp(Dec.fromInt(row.upToSf)) < 0);
-      if (!band || band.unitPrice === undefined) throw new Error('bracket');
-      const limit = band.upToSf === null ? null : Dec.fromInt(band.upToSf);
+        selected ??
+        brackets.find((row) => row.up_to_sf === null || used.cmp(Dec.fromInt(row.up_to_sf)) < 0);
+      if (!band) throw new Error('bracket');
+      const limit = band.up_to_sf === null ? null : Dec.fromInt(band.up_to_sf);
       const take = whole || limit === null ? remaining : minDec(remaining, limit.sub(used));
-      const price = Dec.parse(band.unitPrice).mul(decFloat(line.unitPrice));
-      const waste = ONE.add(decFloat(line.waste).div(HUNDRED));
+      const price = Dec.parse(band.unit_price).mul(line.unitPrice);
+      const waste = ONE.add(line.waste.div(HUNDRED));
       exact = exact.add(take.mul(price).mul(waste));
       const total = money(exact).sub(rounded);
       rounded = rounded.add(total);
       const index = brackets.indexOf(band);
-      const lower = index > 0 ? (brackets[index - 1]?.upToSf ?? 0) : 0;
-      const label = band.upToSf === null ? `over ${commas(lower)} sq ft` : `over ${commas(lower)} through ${commas(band.upToSf)} sq ft`;
+      const lower = index > 0 ? (brackets[index - 1]?.up_to_sf ?? 0) : 0;
+      const label =
+        band.up_to_sf === null
+          ? `over ${commas(lower)} sq ft`
+          : `over ${commas(lower)} through ${commas(band.up_to_sf)} sq ft`;
       const suffix = whole ? " of the job's total square feet)" : ')';
       result.push({
         ...line,
-        quantity: take.toNumber(),
-        area: take.toNumber(),
-        unitPrice: price.toNumber(),
-        total: total.toNumber(),
-        description: `${line.description} (${bracketModeOf(policy)} bracket: ${label}${suffix}`,
-        priceBracket: { upToSf: band.upToSf, unitPrice: band.unitPrice },
-        bracketMode: bracketModeOf(policy),
+        quantity: take,
+        area: take,
+        unitPrice: price,
+        total,
+        description: `${line.description} (${mode} bracket: ${label}${suffix}`,
+        priceBracket: { upToSf: band.up_to_sf, unitPrice: band.unit_price },
+        bracketMode: mode,
       });
       remaining = remaining.sub(take);
       used = used.add(take);
@@ -269,59 +277,64 @@ export function priceScopeV2(
 ): { lines: PriceLine[]; warnings: EngineWarning[] } {
   const warnings: EngineWarning[] = [];
   const { job, rooms } = overrides(data, warnings);
-  const known = new Set(items.map((item) => item.itemId));
+  const known = new Set(items.map((item) => item.item_id));
   for (const key of Object.keys(data.scopeItems ?? {})) {
     if (!known.has(key)) warnings.push({ code: 'unknown_scope_item', item_id: key });
   }
   const categories = new Set(data.rooms.map((room) => room.category));
   const priced: Array<[Item, PriceLine[]]> = [];
   let extrasTaxable = false;
-  const enabled = items.filter((item) => item.enabled).sort((left, right) => {
-    const rank = (RANK.get(left.group) ?? GROUPS.length) - (RANK.get(right.group) ?? GROUPS.length);
-    return rank || left.sortOrder - right.sortOrder;
-  });
+  const enabled = items
+    .filter((item) => item.enabled)
+    .sort((left, right) => {
+      const rank =
+        (RANK.get(left.group) ?? GROUPS.length) - (RANK.get(right.group) ?? GROUPS.length);
+      return rank || left.sort_order - right.sort_order;
+    });
   for (const item of enabled) {
     if (item.group === EXTRAS) {
       extrasTaxable = item.taxable;
-      if (unpricedQuantity(item, data)) warnings.push({ code: 'unpriced_extras_quantity', item_id: item.itemId });
+      if (unpricedQuantity(item, data)) {
+        warnings.push({ code: 'unpriced_extras_quantity', item_id: item.item_id });
+      }
     }
-    if (blank(item)) {
-      warnings.push({ code: 'blank_price_item', item_id: item.itemId });
+    if (blankPrice(item)) {
+      warnings.push({ code: 'blank_price_item', item_id: item.item_id });
       continue;
     }
     if (item.group === EXTRAS) continue;
-    const source = parseSource(item.quantitySource);
+    const source = parseSource(item.quantity_source);
     if (source.kind === 'room') {
       priced.push([item, roomLines(item, source, data, policy, rooms, warnings)]);
       continue;
     }
-    if (item.categories.length && !item.categories.some((category) => categories.has(category))) continue;
+    const allowed = item.categories;
+    if (allowed.length && !allowed.some((category) => categories.has(category))) continue;
     const quantity = jobQuantity(item, source, data, job, numbers);
     if (truthy(quantity)) {
-      const price = item.priceBrackets ? ONE : Dec.parse(item.unitPrice);
-      priced.push([item, [makeLine(item, item.customerDescription || item.name, quantity, price, Dec.parse(item.wastePercent))]]);
+      const price = item.price_brackets ? ONE : Dec.parse(item.unit_price);
+      const label = item.customer_description || item.name;
+      priced.push([item, [makeLine(item, label, quantity, price, Dec.parse(item.waste_percent))]]);
     }
   }
-  const whole = bracketModeOf(policy) === 'whole-job';
-  const area = whole ? jobSf(data, items, policy) : null;
+  const area = policy.bracket_mode === 'whole-job' ? jobSf(data, items, policy) : null;
   const lines: PriceLine[] = [];
   for (const [item, itemLines] of priced) {
-    lines.push(...(item.priceBrackets ? bracketLines(item, itemLines, policy, area, growth) : itemLines));
+    lines.push(...(item.price_brackets ? bracketLines(item, itemLines, policy, area, growth) : itemLines));
   }
   for (const extra of data.extras) {
     if (!extra.approval) continue;
-    const total = money(extra.hours.mul(extra.approval.rate));
     lines.push({
       code: EXTRA,
       itemId: null,
       group: EXTRAS,
       bucket: bucketOf(EXTRAS, EXTRA),
       description: extra.description,
-      quantity: extra.hours.toNumber(),
+      quantity: extra.hours,
       unit: 'hour',
-      unitPrice: extra.approval.rate.toNumber(),
-      waste: 0,
-      total: total.toNumber(),
+      unitPrice: extra.approval.rate,
+      waste: ZERO,
+      total: money(extra.hours.mul(extra.approval.rate)),
       taxable: extrasTaxable,
       xactimateCode: '',
       room: null,
@@ -332,23 +345,14 @@ export function priceScopeV2(
 }
 
 export function exactAmount(line: PriceLine): Dec {
-  return decFloat(line.quantity).mul(decFloat(line.unitPrice)).mul(ONE.add(decFloat(line.waste).div(HUNDRED)));
+  return line.quantity.mul(line.unitPrice).mul(ONE.add(line.waste.div(HUNDRED)));
 }
 
 export function sumBucket(lines: PriceLine[], bucket: string, taxable = false): Dec {
   return sumDec(
-    lines.filter((line) => line.bucket === bucket && (line.taxable || !taxable)).map((line) => decFloat(line.total)),
+    lines
+      .filter((line) => line.bucket === bucket && (line.taxable || !taxable))
+      .map((line) => line.total),
     ZERO,
   );
 }
-
-export function v2Buckets(lines: PriceLine[]): JObj {
-  const out: JObj = {};
-  for (const bucket of ['fixed', 'equipment', 'labor_material']) {
-    out[bucket] = sumBucket(lines, bucket).toString();
-    out[`taxed_${bucket}`] = sumBucket(lines, bucket, true).toString();
-  }
-  return out;
-}
-
-export { jobSf };
