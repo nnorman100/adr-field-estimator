@@ -627,7 +627,6 @@ export type Item = Table['items'][number];
 export type Policy = Table['policy'];
 export type PriceBand = z.output<typeof PRICE_BAND>;
 export type PriceRow = ParsedRow;
-export type RoomType = ParsedRoomType;
 export type CushionBand = z.output<typeof CUSHION_BAND>;
 
 /** Parse a table, or throw one readable sentence naming the first problem. */
@@ -696,14 +695,6 @@ export function effectiveTable(table: Table): Table {
       return kept.length ? { ...rest, rows: kept } : rest;
     }),
   };
-}
-
-/** The owner's room types with Other last when the owner did not list it: it always exists. */
-export function roomTypeList(policy: Policy): RoomType[] {
-  const types = policy.room_types;
-  return types.some((type) => type.id === OTHER_TYPE)
-    ? types
-    : [...types, { id: OTHER_TYPE, name: 'Other', suggested_items: [] }];
 }
 
 /** The enabled items a room type suggests, in the owner's order; empty for Other and unknown types. */
