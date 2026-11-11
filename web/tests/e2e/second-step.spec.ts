@@ -220,6 +220,31 @@ test('after setup, a failed check and Try again still ask the owner to sign in a
   await expect(page.getByText('Your second sign-in step was reset.')).toHaveCount(0);
 });
 
+test('after setup, a reload before the check answers still asks the owner to sign in again', async ({
+  page,
+}) => {
+  await fakeSecondStep(page, { enrolmentTokenCarriesSecondFactor: false });
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.ownerA.email);
+  await expect(setupHeading(page)).toBeVisible();
+
+  await page.route('**/api/me', (route) => route.fulfill({ status: 503, body: '' }), { times: 1 });
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Turn on second step' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'We could not check your sign-in' }),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('status')).toHaveText(
+    'Your authenticator app is set up. Sign in again and enter its code.',
+  );
+  await expect(setupHeading(page)).toHaveCount(0);
+  await expect(page.getByText('Your second sign-in step was reset.')).toHaveCount(0);
+  expect(await savedSignIns(page)).toEqual([]);
+});
+
 test('a wrong code at sign-in shows an error and does not sign in', async ({ page }) => {
   const fake = await fakeSecondStep(page, { factors: ['Authenticator app'] });
   const answers = watchMe(page);
