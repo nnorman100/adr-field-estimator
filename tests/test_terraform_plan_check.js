@@ -242,6 +242,12 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
       'settings.0.backup_configuration.0.point_in_time_recovery_enabled',
       false,
     ],
+    [
+      'google_sql_database_instance.main',
+      'settings.0.backup_configuration.0.location',
+      'us-central1',
+    ],
+    ['google_sql_database_instance.main', 'settings.0.backup_configuration.0.location', 'us-east1'],
     ['google_firestore_database.field', 'delete_protection_state', 'DELETE_PROTECTION_DISABLED'],
     ['google_firestore_database.field', 'deletion_policy', 'DELETE'],
     ['google_storage_bucket.evidence', 'force_destroy', true],
@@ -256,6 +262,57 @@ describe.each(['test', 'live'])('data root, %s: grants and protection', (environ
     });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain(address);
+  });
+
+  // The applied test instance holds a regional backup location; moving it to `us` is an
+  // in-place update, and only that one change is accepted as an update.
+  describe('moving an applied instance to the US backup location', () => {
+    const ADDR = 'google_sql_database_instance.main';
+    const moved = (mutate = () => {}, actions = ['update']) => {
+      const p = structuredClone(plan());
+      const rc = find(p, ADDR);
+      rc.change.actions = actions;
+      rc.change.before = structuredClone(rc.change.after);
+      rc.change.before.settings[0].backup_configuration[0].location = 'us-central1';
+      mutate(rc.change);
+      return check(p, 'data', environment);
+    };
+    test('an in-place update of only the backup location passes', () => {
+      expect(moved()).toEqual([]);
+    });
+    test('a computed settings version changing alongside it passes', () => {
+      expect(
+        moved((c) => {
+          c.before.settings[0].version = 3;
+          c.after.settings[0].version = null;
+          c.after_unknown = { settings: [{ version: true }] };
+        }),
+      ).toEqual([]);
+    });
+    test('a replacement or delete is refused', () => {
+      expect(moved(() => {}, ['delete', 'create'])).toHaveLength(1);
+      expect(moved(() => {}, ['delete'])).not.toEqual([]);
+    });
+    test('another change in the same update is refused', () => {
+      expect(
+        moved((c) => {
+          c.before.settings[0].tier = 'db-g1-small';
+        }),
+      ).not.toEqual([]);
+      expect(
+        moved((c) => {
+          c.before.settings[0].backup_configuration[0].retained = 1;
+          c.before.settings[0].backup_configuration[0].point_in_time_recovery_enabled = false;
+        }),
+      ).not.toEqual([]);
+    });
+    test('an update that leaves the backups in a region is refused', () => {
+      expect(
+        moved((c) => {
+          c.after.settings[0].backup_configuration[0].location = 'us-central1';
+        }),
+      ).not.toEqual([]);
+    });
   });
 
   test('a deleting lifecycle rule or the wrong Cloud SQL tier for the environment is refused', () => {

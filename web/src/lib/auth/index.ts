@@ -2,7 +2,10 @@ export {
   IdentityRefusal,
   REFUSALS,
   bearerToken,
+  resolveAccount,
   resolveIdentity,
+  type Account,
+  type AccountClaims,
   type Identity,
   type IdentityDirectory,
   type MemberRecord,
@@ -21,4 +24,4 @@ export {
   type SessionClaims,
   type SignInHolder,
 } from './policy';
-export { memberRoute, publicRoute } from './route';
+export { accountRoute, memberRoute, publicRoute, requireFlag, serviceRoute } from './route';

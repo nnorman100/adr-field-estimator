@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { actors, companies, memberships } from '@/db/schema';
+import { actors, companies, companyFeatureFlags, memberships } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
 import type { IdentityDirectory, MemberRecord } from './identity';
 
@@ -33,7 +33,7 @@ export function databaseDirectory(db: Database): IdentityDirectory {
           .select({ id: actors.id, displayName: actors.displayName })
           .from(actors)
           .where(and(eq(actors.companyId, companyId), eq(actors.authTenantId, tenant), eq(actors.uid, uid)));
-        if (!actor) return { company, actor: null, membership: null };
+        if (!actor) return { company, actor: null, membership: null, flags: [] };
 
         // At most one membership is active (a unique index); otherwise the newest disabled one.
         const [membership] = await tx
@@ -42,7 +42,12 @@ export function databaseDirectory(db: Database): IdentityDirectory {
           .where(and(eq(memberships.companyId, companyId), eq(memberships.actorId, actor.id)))
           .orderBy(sql`${memberships.status} = 'active' DESC`, desc(memberships.updatedAt))
           .limit(1);
-        return { company, actor, membership: membership ?? null };
+        // The company's switches, under the 0003 read-only policy for the current company.
+        const flags = await tx
+          .select({ flag: companyFeatureFlags.flag, enabled: companyFeatureFlags.enabled })
+          .from(companyFeatureFlags)
+          .where(eq(companyFeatureFlags.companyId, companyId));
+        return { company, actor, membership: membership ?? null, flags };
       });
     },
   };

@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 const APP_DIR = fileURLToPath(new URL('../../src/app', import.meta.url));
 const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-const RULES = new Set(['publicRoute', 'memberRoute']);
+const RULES = new Set(['publicRoute', 'memberRoute', 'accountRoute', 'requireFlag', 'serviceRoute']);
 const ROUTE_FILE = /^route\.(ts|tsx|js|jsx|mjs)$/;
 
 function hasExport(node: ts.Node): boolean {
@@ -99,6 +99,7 @@ describe('route access rules', () => {
       "export const dynamic = 'force-dynamic';",
       'export const GET = publicRoute(() => Response.json({}));',
       'export const POST = memberRoute((_r, identity) => Response.json({ id: identity.companyId }));',
+      "export const PUT = requireFlag('price_books', (_r, identity) => Response.json({ id: identity.companyId }));",
     ].join('\n');
     expect(routeRuleProblems(source)).toEqual([]);
   });

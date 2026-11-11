@@ -66,6 +66,7 @@ function record(companyId: string, overrides: Partial<MemberRecord> = {}): Membe
     company: { id: companyId, name: `Company ${companyId.slice(-1)}`, status: 'active' },
     actor: { id: `actor-${companyId.slice(-1)}`, displayName: 'Synthetic member' },
     membership: { role: 'estimator', status: 'active' },
+    flags: [],
     ...overrides,
   };
 }

@@ -25,6 +25,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Python format/lint: `python -m ruff format . ; python -m ruff check .`
 - JS format/lint: `npm run format ; npm run lint`
 - Keep `index.html` and `public/index.html` identical.
+- CI no longer runs the legacy app's tests (the `python`, `browser` and `firestore-emulator` jobs are removed; `node` runs lint and vitest only; CodeQL still scans Python). Do not change legacy files except through S8 (`docs/runbook/ci.md`, "Legacy CI retired"); the commands above run those suites by hand.
 
 ## Hard rules
 1. **Never weaken, skip, delete or loosen a test, eval fixture, threshold or workflow** to get green. Fix the code. The Test guard check blocks it. Never add or request the `test-change-approved` label.

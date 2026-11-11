@@ -1,4 +1,5 @@
 import { capabilitiesFor, type Capability, type Role } from '@/lib/access';
+import { accessFlags, flagsFromRows, type CompanyFlags, type FlagRow } from '@/lib/flags';
 import { sessionRefusal, type RouteSessionRule, type SessionClaims } from './policy';
 
 // Who is calling, decided only from the verified sign-in token: tenant, then company, then the
@@ -13,8 +14,10 @@ export type VerifiedToken = {
   emailVerified: boolean;
 };
 
-// The revocation-checked token also carries what the second-step and session rules read.
-export type SessionToken = VerifiedToken & SessionClaims;
+// The revocation-checked token also carries what the second-step and session rules read, and the
+// account's email and name, which only invitation matching and a new actor's record use.
+export type AccountClaims = { email?: string | null; name?: string | null };
+export type SessionToken = VerifiedToken & SessionClaims & AccountClaims;
 
 export type TokenVerifier = {
   // Checks the token without the revocation call.
@@ -32,6 +35,8 @@ export type MemberRecord = {
   actor: { id: string; displayName: string | null } | null;
   // The actor's active membership, else its most recent disabled one, else null.
   membership: { role: Role; status: 'active' | 'disabled' } | null;
+  // The company's stored feature switches (company_feature_flags); no row means off.
+  flags: readonly FlagRow[];
 };
 
 export type IdentityDirectory = {
@@ -49,6 +54,8 @@ export type Identity = {
   tenant: string;
   role: Role;
   capabilities: readonly Capability[];
+  // The company's switches; every known flag is present, off unless the company turned it on.
+  flags: CompanyFlags;
 };
 
 // Why a request was refused. The code goes back to the browser; nothing else does.
@@ -96,9 +103,6 @@ export function bearerToken(request: Request): string {
   return token;
 }
 
-// Price books stay off until per-company switches exist (S3-11).
-const FLAGS = Object.freeze({ priceBooks: false });
-
 export type ResolveOptions = {
   // What the route declared about the session rules; none means the strictest member route.
   route?: RouteSessionRule;
@@ -108,12 +112,10 @@ export type ResolveOptions = {
 
 const nowInSeconds = () => Math.floor(Date.now() / 1000);
 
-export async function resolveIdentity(
-  request: Request,
-  verifier: TokenVerifier,
-  directory: IdentityDirectory,
-  options: ResolveOptions = {},
-): Promise<Identity> {
+// A signed-in account of an active company, whether or not it is a member yet: the token is
+// checked, the company found from its tenant, the token checked again with revocation on that
+// tenant, and a verified email required. Shared by resolveIdentity and resolveAccount.
+async function signedInAccount(request: Request, verifier: TokenVerifier, directory: IdentityDirectory) {
   const idToken = bearerToken(request);
 
   const first = await verifier.verify(idToken);
@@ -131,6 +133,16 @@ export async function resolveIdentity(
   const record = await directory.member(companyId, tenant, token.uid);
   if (!record || record.company.id !== companyId) throw new IdentityRefusal('unknown_tenant');
   if (record.company.status !== 'active') throw new IdentityRefusal('company_inactive');
+  return { companyId, tenant, token, record };
+}
+
+export async function resolveIdentity(
+  request: Request,
+  verifier: TokenVerifier,
+  directory: IdentityDirectory,
+  options: ResolveOptions = {},
+): Promise<Identity> {
+  const { companyId, tenant, token, record } = await signedInAccount(request, verifier, directory);
   if (!record.actor || !record.membership) throw new IdentityRefusal('not_a_member');
   if (record.membership.status !== 'active') throw new IdentityRefusal('member_disabled');
 
@@ -138,6 +150,8 @@ export async function resolveIdentity(
   const now = (options.now ?? nowInSeconds)();
   const refused = sessionRefusal(record.membership.role, token, options.route ?? {}, now);
   if (refused) throw new IdentityRefusal(refused);
+
+  const flags = flagsFromRows(record.flags);
 
   return {
     companyId,
@@ -147,6 +161,41 @@ export async function resolveIdentity(
     uid: token.uid,
     tenant,
     role: record.membership.role,
-    capabilities: capabilitiesFor(record.membership.role, FLAGS),
+    capabilities: capabilitiesFor(record.membership.role, accessFlags(flags)),
+    flags,
+  };
+}
+
+// A signed-in account that may not be a member yet: someone opening or accepting an invitation.
+// The session rules depend on the role being accepted, so the caller applies them (sessionRefusal)
+// once it knows that role. The email is the token's verified email, lowercased.
+export type Account = {
+  companyId: string;
+  companyName: string;
+  tenant: string;
+  uid: string;
+  email: string;
+  name: string | null;
+  session: SessionClaims;
+};
+
+export async function resolveAccount(
+  request: Request,
+  verifier: TokenVerifier,
+  directory: IdentityDirectory,
+): Promise<Account> {
+  const { companyId, tenant, token, record } = await signedInAccount(request, verifier, directory);
+  const email = typeof token.email === 'string' ? token.email.trim().toLowerCase() : '';
+  // A verified token with no email cannot be matched to an invitation.
+  if (email === '') throw new IdentityRefusal('email_unverified');
+  const name = typeof token.name === 'string' ? Array.from(token.name.trim()).slice(0, 200).join('').trim() || null : null;
+  return {
+    companyId,
+    companyName: record.company.name,
+    tenant,
+    uid: token.uid,
+    email,
+    name,
+    session: { authTime: token.authTime, secondFactor: token.secondFactor },
   };
 }

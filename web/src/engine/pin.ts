@@ -1,4 +1,4 @@
-// The oracle's first pin: one published version, no grandfathering, priced_at frozen.
+// The first pin: one published version, no grandfathering, priced_at frozen.
 
 import { createHash } from 'node:crypto';
 

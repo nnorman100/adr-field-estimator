@@ -1,4 +1,7 @@
-"""CI configuration guards: Python version source, legacy browser scope, deny-all Firestore rules and CI runners."""
+"""CI configuration guards: Python version source, deny-all Firestore rules and CI runners.
+
+The shared scope-test helpers (load_ci_workflow, evaluate_step_condition, init_scope_repo) are used by
+test_ci_legacy_scope.py."""
 
 import json
 import os
@@ -78,23 +81,6 @@ def test_firestore_rules_deny_all_client_access():
 
 def load_ci_workflow():
     return yaml.safe_load((ROOT / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8'))
-
-
-def test_ci_browser_job_gates_steps_on_legacy_scope():
-    workflow = load_ci_workflow()
-    triggers = workflow.get('on') or workflow.get(True)
-    assert set(triggers) == {'push', 'pull_request'}
-    assert triggers['push']['branches'] == ['master']
-
-    browser = workflow['jobs']['browser']
-    assert 'if' not in browser, 'browser is a required check and must report on every PR'
-    assert browser['timeout-minutes'] == 90
-
-    steps = browser['steps']
-    assert steps[0]['uses'].startswith('actions/checkout@')
-    assert steps[0]['with']['fetch-depth'] == 0
-    assert steps[1]['id'] == 'scope'
-    assert 'if' not in steps[1]
 
 
 _EXPR_TOKEN = re.compile(r"(\|\||&&|==|!=|!|\(|\))|'((?:[^']|'')*)'|([A-Za-z_][\w.-]*)")
@@ -209,39 +195,6 @@ def evaluate_step_condition(condition, scope_outputs, job_failed):
     return result
 
 
-@pytest.mark.parametrize(
-    'scope_outputs', [{'run': 'true'}, {'run': 'false'}, {}], ids=['run', 'skip', 'missing']
-)
-@pytest.mark.parametrize('job_failed', [False, True], ids=['job-ok', 'job-failed'])
-def test_ci_browser_steps_run_only_when_scope_selects_suite(scope_outputs, job_failed):
-    steps = load_ci_workflow()['jobs']['browser']['steps']
-    in_scope = scope_outputs.get('run') == 'true'
-    for step in steps[2:]:
-        uploads_results = step.get('uses', '').startswith('actions/upload-artifact@')
-        expected = in_scope and (uploads_results or not job_failed)
-        runs = evaluate_step_condition(step.get('if', 'success()'), scope_outputs, job_failed)
-        assert runs == expected, step.get('name') or step.get('uses') or step.get('run')
-
-
-def run_browser_scope_step(repo, event_name, base_sha, github_output):
-    workflow = load_ci_workflow()
-    script = workflow['jobs']['browser']['steps'][1]['run']
-    env = {
-        **os.environ,
-        'EVENT_NAME': event_name,
-        'BASE_SHA': base_sha,
-        'GITHUB_OUTPUT': str(github_output),
-    }
-    return subprocess.run(
-        ['bash', '-euo', 'pipefail', '-c', script],
-        cwd=repo,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-
 def init_scope_repo(tmp_path):
     repo = tmp_path / 'repo'
     repo.mkdir()
@@ -258,115 +211,6 @@ def init_scope_repo(tmp_path):
         ['git', 'rev-parse', 'HEAD'], cwd=repo, check=True, capture_output=True, text=True
     ).stdout.strip()
     return repo, base_sha
-
-
-@pytest.mark.parametrize('event_name', ['pull_request', 'push'])
-@pytest.mark.parametrize(
-    'changed_paths',
-    [
-        [
-            'web/src/app/page.tsx',
-            'web/package.json',
-            'web/package-lock.json',
-            'web/playwright.config.ts',
-        ],
-        ['infra/dryscope/app/main.tf', 'tests/fixtures/terraform/app-test.plan.json'],
-        ['docs/RUNBOOK.md', 'README.md', 'RELEASES.md'],
-    ],
-)
-def test_ci_browser_scope_skips_unrelated_changes(tmp_path, event_name, changed_paths):
-    repo, base_sha = init_scope_repo(tmp_path)
-    for rel in changed_paths:
-        target = repo / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text('changed\n', encoding='utf-8')
-    subprocess.run(['git', 'add', '.'], cwd=repo, check=True, capture_output=True)
-    subprocess.run(['git', 'commit', '-m', 'change'], cwd=repo, check=True, capture_output=True)
-
-    output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, event_name, base_sha, output_file)
-    assert 'Skipping legacy browser suite' in result.stdout
-    assert output_file.read_text(encoding='utf-8').strip() == 'run=false'
-
-
-@pytest.mark.parametrize('event_name', ['pull_request', 'push'])
-@pytest.mark.parametrize(
-    'legacy_path',
-    [
-        '.github/workflows/ci.yml',
-        'backend/main.py',
-        'backend/requirements.txt',
-        'public/app.js',
-        'index.html',
-        'tests/browser/walk-first.spec.js',
-        'tests/browser_server.py',
-        'tests/browser-auth.js',
-        'tests/fakes.py',
-        'playwright.config.js',
-        'playwright.isolated.config.js',
-        'package.json',
-        'package-lock.json',
-        'firebase.json',
-        'firestore.rules',
-        'firestore.indexes.json',
-        'scripts/artifact-paths.js',
-        'scripts/ci_python_version.py',
-        'scripts/manual_chrome.js',
-        'scripts/verify_routing.js',
-    ],
-)
-def test_ci_browser_scope_runs_when_legacy_files_change(tmp_path, event_name, legacy_path):
-    repo, base_sha = init_scope_repo(tmp_path)
-    target = repo / legacy_path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text('changed\n', encoding='utf-8')
-    subprocess.run(['git', 'add', '.'], cwd=repo, check=True, capture_output=True)
-    subprocess.run(['git', 'commit', '-m', 'legacy'], cwd=repo, check=True, capture_output=True)
-
-    output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, event_name, base_sha, output_file)
-    assert legacy_path in result.stdout
-    assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
-
-
-@pytest.mark.parametrize(
-    'missing_base',
-    [
-        '',
-        '0000000000000000000000000000000000000000',
-        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-    ],
-)
-def test_ci_browser_scope_runs_when_base_commit_unavailable(tmp_path, missing_base):
-    repo, _ = init_scope_repo(tmp_path)
-    target = repo / 'web' / 'src' / 'index.ts'
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text('changed\n', encoding='utf-8')
-    subprocess.run(['git', 'add', '.'], cwd=repo, check=True, capture_output=True)
-    subprocess.run(['git', 'commit', '-m', 'web only'], cwd=repo, check=True, capture_output=True)
-
-    output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, 'push', missing_base, output_file)
-    assert 'unavailable; running legacy browser suite' in result.stdout
-    assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
-
-
-def test_ci_browser_scope_runs_when_push_base_is_not_ancestor(tmp_path):
-    repo, base_sha = init_scope_repo(tmp_path)
-    target = repo / 'web' / 'src' / 'index.ts'
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text('changed\n', encoding='utf-8')
-    subprocess.run(['git', 'add', '.'], cwd=repo, check=True, capture_output=True)
-    subprocess.run(['git', 'commit', '-m', 'diverged'], cwd=repo, check=True, capture_output=True)
-    diverged_sha = subprocess.run(
-        ['git', 'rev-parse', 'HEAD'], cwd=repo, check=True, capture_output=True, text=True
-    ).stdout.strip()
-    subprocess.run(['git', 'reset', '--hard', base_sha], cwd=repo, check=True, capture_output=True)
-
-    output_file = tmp_path / 'github_output.txt'
-    result = run_browser_scope_step(repo, 'push', diverged_sha, output_file)
-    assert 'not an ancestor of HEAD; running legacy browser suite' in result.stdout
-    assert output_file.read_text(encoding='utf-8').strip() == 'run=true'
 
 
 # The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
@@ -396,13 +240,6 @@ def test_every_job_runs_on_the_switchable_runner(path):
         assert job.get('runs-on') == RUNNER, f'{path.name} job {name}'
         # The self-hosted job container has no Docker daemon for service or job containers.
         assert 'services' not in job and 'container' not in job, f'{path.name} job {name}'
-
-
-def test_python_job_installs_node():
-    """Some Python tests run node and skip without it; the self-hosted container has none."""
-    jobs = dict(workflow_jobs(ROOT / '.github' / 'workflows' / 'ci.yml'))
-    uses = [step.get('uses', '') for step in jobs['python']['steps']]
-    assert any(use.startswith('actions/setup-node@') for use in uses)
 
 
 def test_codeql_sets_up_node_before_init():

@@ -1,11 +1,12 @@
-"""Legacy CI jobs report on every PR but only do their work when legacy app files change.
+"""The shared legacy scope script, which only the CodeQL Python analysis still uses, and ci.yml.
 
-The browser job's own scope step (#264) is covered in test_ci_config.py. This file covers the
-shared script the Python, Firestore emulator, node and CodeQL Python jobs use, and the way those
-jobs gate their steps on it. The DryScope rebuild's checks (web/, infra/dryscope, required docs,
+As of 2026-11-10 the legacy Python suite, the legacy Playwright browser suite and the legacy
+Firestore emulator tests are retired from CI and their jobs are removed from ci.yml. CodeQL keeps scanning the legacy Python, scoped
+by scripts/ci_legacy_scope.sh. The DryScope rebuild's checks (web/, infra/dryscope, required docs,
 file length, test guard, audit) must keep running on every PR.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -22,58 +23,6 @@ SCOPE_RUN = 'bash scripts/ci_legacy_scope.sh'
 
 def load_workflow(name):
     return yaml.safe_load((ROOT / '.github' / 'workflows' / name).read_text(encoding='utf-8'))
-
-
-def browser_paths():
-    """Pathspecs in the browser job's inline scope step, in order."""
-    script = load_ci_workflow()['jobs']['browser']['steps'][1]['run']
-    body = script.split('"$BASE_SHA...HEAD" -- \\\n', 1)[1].split(')"; then', 1)[0]
-    return [line.strip().removesuffix('\\').strip().strip("'") for line in body.splitlines()]
-
-
-def run_browser_inline_scope(repo, event_name, base_sha, github_output):
-    script = load_ci_workflow()['jobs']['browser']['steps'][1]['run']
-    env = {
-        **os.environ,
-        'EVENT_NAME': event_name,
-        'BASE_SHA': base_sha,
-        'GITHUB_OUTPUT': str(github_output),
-    }
-    return subprocess.run(
-        ['bash', '-euo', 'pipefail', '-c', script],
-        cwd=repo,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-
-def example_file(pathspec):
-    """A concrete, non-Python file that a pathspec from the list matches."""
-    if pathspec.startswith(':(glob)'):
-        return pathspec.removeprefix(':(glob)').replace('*', '')
-    return pathspec + 'example.txt' if pathspec.endswith('/') else pathspec
-
-
-@pytest.mark.parametrize('pathspec', browser_paths())
-def test_script_and_browser_step_both_run_for_every_browser_path(tmp_path, pathspec):
-    """Behavioral drift check: whatever the browser step runs for, the shared script runs for."""
-    repo, base_sha = init_scope_repo(tmp_path)
-    commit_files(repo, [example_file(pathspec)])
-    for runner in (run_browser_inline_scope, run_scope):
-        output = tmp_path / f'{runner.__name__}.txt'
-        runner(repo, 'pull_request', base_sha, output)
-        assert output.read_text(encoding='utf-8').strip() == 'run=true', (runner.__name__, pathspec)
-
-
-def test_script_and_browser_step_both_skip_rebuild_paths(tmp_path):
-    repo, base_sha = init_scope_repo(tmp_path)
-    commit_files(repo, ['web/src/a.ts', 'infra/dryscope/app/main.tf', 'docs/RUNBOOK.md'])
-    for runner in (run_browser_inline_scope, run_scope):
-        output = tmp_path / f'{runner.__name__}.txt'
-        runner(repo, 'push', base_sha, output)
-        assert output.read_text(encoding='utf-8').strip() == 'run=false', runner.__name__
 
 
 def run_scope(repo, event_name, base_sha, github_output, suite='legacy checks'):
@@ -223,12 +172,6 @@ def test_scope_runs_when_push_base_is_not_ancestor(tmp_path):
 
 # --- Workflow wiring -------------------------------------------------------------------------
 
-SCOPED_JOBS = {
-    'python': 'legacy Python tests',
-    'firestore-emulator': 'legacy Firestore emulator tests',
-    'node': 'legacy JavaScript tests',
-}
-
 
 def check_scope_step(step, suite=None):
     assert step['id'] == 'scope'
@@ -240,61 +183,11 @@ def check_scope_step(step, suite=None):
         assert step['env']['SUITE'] == suite
 
 
-@pytest.mark.parametrize('job_name,suite', SCOPED_JOBS.items())
-def test_ci_legacy_jobs_always_report_and_run_the_scope_step_first(job_name, suite):
-    job = load_ci_workflow()['jobs'][job_name]
-    assert 'if' not in job, f'{job_name} is a required check and must report on every PR'
-    steps = job['steps']
-    assert steps[0]['uses'].startswith('actions/checkout@')
-    assert steps[0]['with']['fetch-depth'] == 0
-    check_scope_step(steps[1], suite)
-    assert 'if' not in steps[1]
-
-
-@pytest.mark.parametrize('scope_outputs', [{'run': 'true'}, {'run': 'false'}, {}])
-@pytest.mark.parametrize('job_failed', [False, True], ids=['job-ok', 'job-failed'])
-@pytest.mark.parametrize('job_name', ['python', 'firestore-emulator'])
-def test_ci_python_jobs_do_nothing_unless_scope_selects_them(job_name, scope_outputs, job_failed):
-    steps = load_ci_workflow()['jobs'][job_name]['steps']
-    expected = scope_outputs.get('run') == 'true' and not job_failed
-    for step in steps[2:]:
-        label = step.get('name') or step.get('uses') or step.get('run')
-        assert 'if' in step, f'{job_name}: {label} runs without checking the scope'
-        assert evaluate_step_condition(step['if'], scope_outputs, job_failed) == expected, label
-
-
-def test_ci_python_jobs_keep_their_real_work():
-    jobs = load_ci_workflow()['jobs']
-    py_runs = [s.get('run', '') for s in jobs['python']['steps']]
-    assert 'python -m pytest tests -q -p no:cacheprovider' in py_runs
-    assert 'python -m ruff format --check .' in py_runs
-    assert 'python -m ruff check .' in py_runs
-    emulator = ' '.join(s.get('run', '') for s in jobs['firestore-emulator']['steps'])
-    assert 'emulators:exec --only firestore --project demo-adr-emulator' in emulator
-    assert 'tests/test_firestore_emulator*.py' in emulator
-    assert jobs['firestore-emulator']['env']['ADR_FIRESTORE_EMULATOR_REQUIRED'] == '1'
-
-
-@pytest.mark.parametrize('scope_outputs', [{'run': 'true'}, {'run': 'false'}, {}])
-def test_ci_node_job_keeps_rebuild_checks_always_on(scope_outputs):
-    steps = load_ci_workflow()['jobs']['node']['steps']
-    by_run = {s['run']: s for s in steps if 'run' in s}
-    always = ['npm ci', 'npm run format:check', 'npm run lint']
-    for command in always:
-        assert 'if' not in by_run[command], f'{command} must run on every PR'
-    in_scope = scope_outputs.get('run') == 'true'
-    # Legacy unit tests only in scope; otherwise vitest alone, which holds the Terraform plan check.
-    assert evaluate_step_condition(by_run['npm test']['if'], scope_outputs, False) == in_scope
-    assert evaluate_step_condition(by_run['npx vitest run']['if'], scope_outputs, False) == (
-        not in_scope
-    )
-
-
 def test_ci_node_job_lint_still_covers_required_docs_and_file_length():
     import json
 
     lint = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['scripts']['lint']
-    assert 'check_file_length.py' in lint and 'check_required_docs.js' in lint
+    assert 'check-file-length.mts' in lint and 'check_required_docs.js' in lint
 
 
 def scope_gated_parts(workflow):
@@ -309,17 +202,6 @@ def scope_gated_parts(workflow):
             if step.get('id') == 'scope' or runs_script or 'steps.scope.' in step.get('if', ''):
                 gated.append(label)
     return gated
-
-
-def test_ci_rebuild_and_policy_jobs_are_not_scoped():
-    jobs = load_ci_workflow()['jobs']
-    assert scope_gated_parts({'jobs': {'python': jobs['python']}})
-    audit = jobs['audit']
-    assert 'if' not in audit
-    assert all('if' not in step for step in audit['steps'])
-    assert scope_gated_parts({'jobs': {'audit': audit}}) == []
-    for name in ('test-guard.yml', 'web.yml'):
-        assert scope_gated_parts(load_workflow(name)) == [], f'{name} must keep running unscoped'
 
 
 def codeql_condition(step, language):
@@ -357,3 +239,34 @@ def test_codeql_still_runs_weekly_and_on_pushes():
     triggers = triggers.get('on') or triggers.get(True)
     assert triggers['schedule'] == [{'cron': '23 9 * * 1'}]
     assert triggers['push']['branches'] == ['master']
+
+
+def run_commands(job):
+    return [step.get('run', '') for step in job['steps']]
+
+
+@pytest.mark.parametrize('job_name', ['python', 'browser', 'firestore-emulator'])
+def test_ci_has_no_legacy_test_jobs(job_name):
+    """The legacy suites are removed, not faked: the owner drops these names from the ruleset."""
+    assert job_name not in load_ci_workflow()['jobs']
+
+
+def test_ci_node_job_keeps_the_rebuild_checks_on_every_pull_request():
+    job = load_ci_workflow()['jobs']['node']
+    assert 'if' not in job
+    assert all('if' not in step for step in job['steps'])
+    runs = run_commands(job)
+    for command in ('npm ci', 'npm run format:check', 'npm run lint', 'npx vitest run'):
+        assert command in runs
+    assert 'npm test' not in runs, 'the legacy unit tests in npm test are retired from CI'
+    lint = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['scripts']['lint']
+    assert 'check-file-length.mts' in lint and 'check_required_docs.js' in lint
+
+
+def test_ci_keeps_node_and_audit_and_nothing_is_scoped():
+    workflow = load_ci_workflow()
+    assert set(workflow['jobs']) == {'node', 'audit'}
+    for name in ('ci.yml', 'test-guard.yml', 'web.yml'):
+        assert scope_gated_parts(load_workflow(name)) == [], f'{name} must not use the scope step'
+    audit = workflow['jobs']['audit']
+    assert 'if' not in audit and all('if' not in step for step in audit['steps'])
