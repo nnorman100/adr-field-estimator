@@ -90,7 +90,7 @@ export function enrolErrorMessage(code: unknown): string {
       return 'For your safety, sign in again before changing your second step.';
     case 'auth/unverified-email':
       return 'Verify your email address first, then set up your authenticator app.';
-    case 'auth/second-factor-limit-exceeded':
+    case 'auth/maximum-second-factor-count-exceeded':
       return 'This account already has as many authenticator apps as it can have.';
     case 'auth/second-factor-already-in-use':
       return 'That authenticator app is already set up for this account.';

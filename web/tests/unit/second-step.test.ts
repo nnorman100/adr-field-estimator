@@ -102,6 +102,12 @@ describe('names and messages', () => {
     expect(enrolNeedsFreshSignIn('auth/invalid-verification-code')).toBe(false);
     expect(enrolErrorMessage('auth/requires-recent-login')).toMatch(/sign in again/);
   });
+
+  it("says the account has as many authenticator apps as it can have at Firebase's limit", () => {
+    expect(enrolErrorMessage('auth/maximum-second-factor-count-exceeded')).toBe(
+      'This account already has as many authenticator apps as it can have.',
+    );
+  });
 });
 
 function storage(initial: Record<string, string> = {}, broken = false) {
