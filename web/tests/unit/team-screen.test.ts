@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CAPABILITIES, ROLES } from '@/lib/access';
 import {
+  ACCEPT_SECOND_STEP_MESSAGE,
   ACCEPT_SIGN_IN_AGAIN_MESSAGE,
   acceptErrorMessage,
   fullTeam,
@@ -102,6 +103,13 @@ describe('words for a refused accept', () => {
     expect(message).toBe(ACCEPT_SIGN_IN_AGAIN_MESSAGE);
     expect(message).not.toContain('15 minutes');
     expect(acceptErrorMessage(409, { error: 'invitation_expired' })).toBe(teamErrorMessage(409, { error: 'invitation_expired' }));
+  });
+
+  it('tells an owner invitee without a second step to set one up before accepting, not to change the team', () => {
+    const message = acceptErrorMessage(403, { error: 'second_step_required' });
+    expect(message).toBe(ACCEPT_SECOND_STEP_MESSAGE);
+    expect(message).not.toContain('team');
+    expect(teamErrorMessage(403, { error: 'second_step_required' })).toContain('changing the team');
   });
 });
 

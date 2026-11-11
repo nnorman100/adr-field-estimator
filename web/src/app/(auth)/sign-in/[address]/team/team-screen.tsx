@@ -54,6 +54,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
+    const signOutOrUnavailable = () => signOutCompany(auth).catch(() => setPhase({ name: 'unavailable' }));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -61,7 +62,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
       if (stale(user)) return;
       const outcome = meOutcome(me.status, me.body);
       if (endsSession(outcome)) {
-        await signOutCompany(auth).catch(() => undefined);
+        await signOutOrUnavailable();
         return;
       }
       if (outcome.kind === 'unavailable') return setPhase({ name: 'unavailable' });
@@ -80,7 +81,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     return onAuthStateChanged(auth, (user) => {
       if (!user) return setPhase({ name: 'signed-out' });
       // This company's Auth instance only ever holds this tenant's sign-in.
-      if (!belongsTo(user, tenantId)) return void signOutCompany(auth).catch(() => undefined);
+      if (!belongsTo(user, tenantId)) return void signOutOrUnavailable();
       void open(user);
     });
   }, [config, tenantId]);

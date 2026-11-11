@@ -81,6 +81,25 @@ test('a visitor who is not signed in is asked to sign in', async ({ page }) => {
   await expectAccessible(page);
 });
 
+test('a refused sign-in that cannot be removed from the phone leaves a way out', async ({ page }) => {
+  await signInTo(page, team.owner);
+  // The server ends the sign-in, and the phone cannot delete its saved copy.
+  await page.route('**/api/me', (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_revoked' }) }),
+  );
+  await page.addInitScript(() => {
+    const remove = IDBObjectStore.prototype.delete;
+    IDBObjectStore.prototype.delete = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      if (String(key).startsWith('firebase:authUser')) throw new DOMException('blocked', 'UnknownError');
+      return remove.call(this, key);
+    };
+  });
+  await page.goto(`/sign-in/${team.address}/team`);
+  await expect(page.getByRole('heading', { name: 'We could not open the team' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.getByRole('link', { name: `Go to the ${team.companyName} sign-in page` })).toBeVisible();
+});
+
 for (const [kind, who] of [
   ['an estimator', () => team.estimator],
   ['an office user', () => team.office],
