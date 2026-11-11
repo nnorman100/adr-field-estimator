@@ -27,7 +27,8 @@ export type ServiceCallerServices = { caller: ServiceCaller; verifier: ServiceTo
 
 export function schedulerCaller(env: Record<string, string | undefined>): ServiceCaller {
   const { appEnv, projectId } = parseIdentityConfig(env);
-  if (appEnv === 'local') throw new ConfigError(['APP_ENV: internal job routes are not callable locally']);
+  if (appEnv === 'local')
+    throw new ConfigError(['APP_ENV: internal job routes are not callable locally']);
   return {
     email: `dryscope-scheduler-${appEnv}@${projectId}.iam.gserviceaccount.com`,
     audienceFor: (job) => `dryscope-${appEnv}-${job}`,

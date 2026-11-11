@@ -339,7 +339,7 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
 - The cross-company pass (`runAccessProjection`) runs on `POST /api/internal/access-projection`,
   which only the environment's scheduler service account may call (`serviceRoute`: a Google-signed
   ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
-  `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`).
+  `dryscope-<env>-access-projection`, named from `APP_ENV` and `GOOGLE_CLOUD_PROJECT`).
   That pass is what retries every row a projection left waiting, because its write failed or it
   found the actor busy, removals included. It needs a scheduled trigger: the scheduler account and
   its Cloud Scheduler job are not created yet (an owner follow-up in Terraform), and until they
