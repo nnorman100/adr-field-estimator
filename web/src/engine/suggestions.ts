@@ -20,7 +20,10 @@ export type RoomSuggestion = {
 export type EquipmentSuggestion = {
   ok: true;
   rooms: RoomSuggestion[];
-  /** Totals over the ready rooms only; `complete` says whether every water room was ready. */
+  /**
+   * Totals over the ready rooms only; `complete` says whether every water room was ready. The air-mover
+   * total is null when a ready room has no wet floor, as the floor-based range does not cover it.
+   */
   air_movers: { min: number; max: number } | null;
   pints_per_day: number | null;
   dehumidifiers: number | null;
@@ -58,16 +61,16 @@ export function suggestEquipment(inspection: Json): EquipmentSuggestion | { ok: 
     };
   });
   const ready = checks.filter((check) => check.status === 'available');
-  const sized = ready.filter((check) => check.airMin != null);
+  const sized = ready.length > 0 && ready.every((check) => check.airMin != null);
   const demand = sumDec(ready.map((check) => roomPpd(check)), ZERO);
   const rating = data.dehumidifierPpd;
   return {
     ok: true,
     rooms,
-    air_movers: sized.length
+    air_movers: sized
       ? {
-          min: sized.reduce((sum, check) => sum + (check.airMin ?? 0), 0),
-          max: sized.reduce((sum, check) => sum + (check.airMax ?? 0), 0),
+          min: ready.reduce((sum, check) => sum + (check.airMin ?? 0), 0),
+          max: ready.reduce((sum, check) => sum + (check.airMax ?? 0), 0),
         }
       : null,
     pints_per_day: ready.length ? up(demand) : null,

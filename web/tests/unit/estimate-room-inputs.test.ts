@@ -404,6 +404,49 @@ describe('room-type rows (off by default)', () => {
     expect(priced(table([typedItem()], { ...ROOM_TYPES, room_type_pricing: false }), pantry).warnings.advisory).toEqual([]);
   });
 
+  it('the room-type warning follows the row that priced the line', () => {
+    const typeWarnings = (result: { warnings: { advisory: Json[] } }) => [
+      ...advisory(result, 'room_type_other'),
+      ...advisory(result, 'room_type_unknown'),
+    ];
+    // Galley is a listed Kitchen with no Kitchen row of its own: the default $2.00 -> $200.00, and no
+    // warning, because its type is on the price list.
+    const bathOnly = item('demo', { rows: [{ room_type: 'bathroom', unit_price: '4.00' }] });
+    const galley = priced(table([bathOnly], ROOM_TYPES), job([hundred('Galley', { room_type_id: 'kitchen' })]));
+    expect(lineTotals(galley)).toEqual(['Galley: demo = 200.00']);
+    expect(typeWarnings(galley)).toEqual([]);
+    // Pantry (no type, so Other, Cat 1) against an Other row for Cat 3 only: the default $2.00 prices it,
+    // so the warning says it fell back.
+    const otherCat3 = item('demo', { rows: [{ room_type: 'other', category: 3, unit_price: '1.00' }] });
+    const pantry = priced(table([otherCat3], ROOM_TYPES), job([hundred('Pantry')]));
+    expect(lineTotals(pantry)).toEqual(['Pantry: demo = 200.00']);
+    expect(typeWarnings(pantry)).toEqual([
+      {
+        code: 'room_type_other',
+        room: 'Pantry',
+        text: 'Pantry: its room type is Other, so it uses the standard price for items priced by room type.',
+      },
+    ]);
+    // Den (an unlisted type, mold Condition 1) gets no line from a Condition 3 item, so nothing falls back.
+    // Closet (Kitchen, Condition 3): the Kitchen row 10 x $4.00 = $40.00.
+    const removal = item('mold_removal', {
+      group: 'treatment',
+      categories: ['mold'],
+      mold_conditions: [3],
+      unit_price: '3.00',
+      rows: [{ room_type: 'kitchen', unit_price: '4.00' }],
+    });
+    const den = priced(
+      table([removal], ROOM_TYPES),
+      job([
+        room('Den', { category: 'mold', room_type_id: 'garage', mold_condition: 1, unfinished_sf: 10 }),
+        room('Closet', { category: 'mold', room_type_id: 'kitchen', mold_condition: 3, unfinished_sf: 10 }),
+      ]),
+    );
+    expect(lineTotals(den)).toEqual(['Closet, Kitchen: mold removal = 40.00']);
+    expect(typeWarnings(den)).toEqual([]);
+  });
+
   it('W54 room-type rows on a per-room item price by size tier like the default row, as set', () => {
     // Kitchen row of tier prices $70 / $90 / $130 / $190. Galley (Kitchen, 150 sq ft = M): $90.00,
     // not x1.5 (Cat 2 multiplier). Pantry (no type, Cat 2, 150 sq ft = M): default $75.00 x1.5 = $112.50.
@@ -529,6 +572,21 @@ describe('equipment suggestions from class and room volume', () => {
       ['Attic', 'mold', []],
     ]);
     expect(result).toMatchObject({ air_movers: { min: 3, max: 3 }, pints_per_day: 8, dehumidifiers: null, complete: false });
+  });
+
+  it('a ready room with no wet floor withholds the job air-mover range but keeps its pints per day', () => {
+    // Hall: 100 x 8 = 800 cu ft, class 1: 8 pints/day, wet floor 0, so no floor-based air-mover range.
+    // Study: the same, wet floor 100: 1 + 2 = 3 to 1 + 2 = 3. The job range would leave Hall out: null.
+    // Pints per day still count both: 8 + 8 = 16.
+    const result = suggestion([
+      room('Hall', { floor_sf: 100, ceiling_height_ft: 8, water_class: 1, wet_floor_sf: 0 }),
+      room('Study', { floor_sf: 100, ceiling_height_ft: 8, water_class: 1, wet_floor_sf: 100 }),
+    ]);
+    expect(result.rooms.map((row) => [row.room, row.status, row.air_movers])).toEqual([
+      ['Hall', 'ready', null],
+      ['Study', 'ready', { min: 3, max: 3 }],
+    ]);
+    expect(result).toMatchObject({ air_movers: null, pints_per_day: 16, complete: true });
   });
 
   it('an invalid draft is refused, not guessed at', () => {

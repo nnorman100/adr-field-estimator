@@ -8,7 +8,7 @@ import { priceScopeV2 } from './price-v2';
 import { roomTypeOf } from './rooms';
 import { equipmentSizing, type Sizing } from './sizing';
 import { COUNT_DAYS, FIELD_SOURCES, blankPrice, parseSource, type Table } from './table';
-import { categoryOrder, categoryWords, numberText, truthy, type Category } from './values';
+import { OTHER_TYPE, categoryOrder, categoryWords, numberText, truthy, type Category, type PriceLine } from './values';
 import type { Priced } from './totals';
 
 const COMPARABLE_LOW = Dec.parse('2').div(Dec.parse('3'));
@@ -90,27 +90,22 @@ function missingInputWarnings(engine: JObj[]): JObj[] {
 
 /**
  * Room types that fall back. Only when "Price varies by room type" is on (the table passed here has
- * no room-type rows otherwise): a room whose type is not on the price list, or is Other, prices
- * from the rows without a room type for any item that has room-type prices.
+ * no room-type rows otherwise): a room whose type is not on the price list, or is Other, with a line
+ * of an item that has room-type prices priced from a row without a room type.
  */
-function roomTypeWarnings(data: Inspection, table: Table): JObj[] {
-  const typed = table.items.filter(
-    (item) =>
-      item.enabled &&
-      item.group !== 'extras' &&
-      !blankPrice(item) &&
-      parseSource(item.quantity_source).kind === 'room' &&
-      item.rows?.some((row) => row.room_type !== undefined),
+function roomTypeWarnings(data: Inspection, table: Table, lines: PriceLine[]): JObj[] {
+  const typed = new Set(
+    table.items.filter((item) => item.rows?.some((row) => row.room_type !== undefined)).map((item) => item.item_id),
+  );
+  const fell = new Set(
+    lines
+      .filter((line) => line.itemId !== null && typed.has(line.itemId) && (!line.priceRow || line.priceRow.startsWith('|')))
+      .map((line) => line.room),
   );
   const found: JObj[] = [];
   for (const room of data.rooms) {
     const known = roomTypeOf(room, table.policy);
-    const open = typed.filter(
-      (item) =>
-        (!item.categories.length || item.categories.includes(room.category)) &&
-        (known === null || !item.rows?.some((row) => row.room_type === known)),
-    );
-    if (!open.length) continue;
+    if ((known !== null && known !== OTHER_TYPE) || !fell.has(room.name)) continue;
     const name = room.name.trim() || 'Unnamed room';
     const why = known === null ? 'its room type is not on your price list' : 'its room type is Other';
     found.push(warning(known === null ? 'room_type_unknown' : 'room_type_other', `${name}: ${why}, so it uses the standard price for items priced by room type.`, name));
@@ -189,10 +184,11 @@ function sumArea(data: Inspection, wet: boolean): Dec {
 export function advisoryWarnings(data: Inspection, table: Table | null, priced: Priced | null, history: HistoryRow[] | null): JObj[] {
   const found = sizingWarnings(equipmentSizing(data));
   if (table) {
-    const engine = priceScopeV2(data, table.items, table.policy).warnings;
+    const scoped = priceScopeV2(data, table.items, table.policy);
+    const engine = scoped.warnings;
     found.push(...roomWarnings(data, table));
     found.push(...missingInputWarnings(engine as JObj[]));
-    found.push(...roomTypeWarnings(data, table));
+    found.push(...roomTypeWarnings(data, table, scoped.lines));
     found.push(...quantityWarnings(data, table));
     if (engine.some((row) => row.code === 'unpriced_extras_quantity')) found.push(warning('unpriced_extras', EXTRAS));
   }
