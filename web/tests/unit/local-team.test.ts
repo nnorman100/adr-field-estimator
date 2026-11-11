@@ -163,6 +163,27 @@ describe('the local team stand-in', () => {
     expect(listed.view === 'estimators' && listed.estimators.map((e) => e.email)).toEqual(['est@example.com']);
   });
 
+  it('leaves the team as it was when the sign-in call fails', async () => {
+    const failing: TenantUsers = {
+      async ensureAccount() {
+        throw new Error('identity down');
+      },
+      async revokeSessions() {
+        throw new Error('identity down');
+      },
+    };
+    const team = localTeamService(path, failing);
+    await expect(team.invite(COMPANY, by, { email: 'new@example.com', role: 'office' }, NOW)).rejects.toThrow('identity down');
+    expect(readFixtureSync(path).invitations).toEqual([]);
+    await expect(team.disable(COMPANY, by, ESTIMATOR_MEMBERSHIP, NOW)).rejects.toThrow('identity down');
+    expect(readFixtureSync(path).members.find((m) => m.membershipId === ESTIMATOR_MEMBERSHIP)?.status).toBe('active');
+
+    const { invitation } = await localTeamService(path, users).invite(COMPANY, by, { email: 'new@example.com', role: 'office' }, NOW);
+    const later = new Date(NOW.getTime() + 8 * 24 * 60 * 60 * 1000);
+    await expect(team.resend(COMPANY, by, invitation.id, later)).rejects.toThrow('identity down');
+    expect(readFixtureSync(path).invitations[0]?.expiresAt).toBe(invitation.expiresAt);
+  });
+
   it('applies the second-step rule of the role being accepted', async () => {
     const team = localTeamService(path, users);
     updateFixture(path, (data) => {

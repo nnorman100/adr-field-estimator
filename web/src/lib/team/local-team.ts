@@ -68,6 +68,13 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
 
   const expiry = (now: Date) => new Date(now.getTime() + INVITATION_DAYS * DAY_MS).toISOString();
 
+  // As teamService makes the sign-in call inside its transaction, the change is tried on a copy,
+  // the sign-in call made, and only then the change written, so a failed call leaves the file as it was.
+  async function updateAfter<T>(change: (data: Fixture) => T, identity: (result: T) => Promise<void>): Promise<T> {
+    await identity(change(readFixtureSync(path)));
+    return updateFixture(path, change);
+  }
+
   return {
     async list(companyId, view) {
       const data = readFixtureSync(path);
@@ -91,27 +98,29 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
     },
 
     async invite(companyId, _by: TeamActor, input, now) {
-      const created = updateFixture(path, (data) => {
-        const company = readyCompany(data, companyId);
-        if (data.members.some((m) => m.companyId === companyId && m.email === input.email)) throw new TeamError('already_member');
-        if (data.invitations.some((i) => i.companyId === companyId && i.email === input.email && i.status === 'pending')) {
-          throw new TeamError('invitation_pending');
-        }
-        const row: Invitation = {
-          id: randomUUID(),
-          companyId,
-          email: input.email,
-          role: input.role,
-          status: 'pending',
-          expiresAt: expiry(now),
-          createdAt: now.toISOString(),
-          clearedAt: null,
-          acceptedByActorId: null,
-        };
-        data.invitations.push(row);
-        return { row, tenant: company.tenantId, slug: company.signInAddress };
-      });
-      await users.ensureAccount(created.tenant, input.email);
+      const created = await updateAfter(
+        (data) => {
+          const company = readyCompany(data, companyId);
+          if (data.members.some((m) => m.companyId === companyId && m.email === input.email)) throw new TeamError('already_member');
+          if (data.invitations.some((i) => i.companyId === companyId && i.email === input.email && i.status === 'pending')) {
+            throw new TeamError('invitation_pending');
+          }
+          const row: Invitation = {
+            id: randomUUID(),
+            companyId,
+            email: input.email,
+            role: input.role,
+            status: 'pending',
+            expiresAt: expiry(now),
+            createdAt: now.toISOString(),
+            clearedAt: null,
+            acceptedByActorId: null,
+          };
+          data.invitations.push(row);
+          return { row, tenant: company.tenantId, slug: company.signInAddress };
+        },
+        (made) => users.ensureAccount(made.tenant, input.email),
+      );
       return {
         invitation: invitationView(created.row, now),
         delivery: 'copy_link' as const,
@@ -120,14 +129,16 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
     },
 
     async resend(companyId, _by, invitationId, now) {
-      const found = updateFixture(path, (data) => {
-        const company = readyCompany(data, companyId);
-        const row = invitationOf(data, companyId, invitationId);
-        if (row.status !== 'pending') throw new TeamError('invitation_closed');
-        row.expiresAt = expiry(now);
-        return { row: { ...row }, tenant: company.tenantId, slug: company.signInAddress };
-      });
-      await users.ensureAccount(found.tenant, found.row.email);
+      const found = await updateAfter(
+        (data) => {
+          const company = readyCompany(data, companyId);
+          const row = invitationOf(data, companyId, invitationId);
+          if (row.status !== 'pending') throw new TeamError('invitation_closed');
+          row.expiresAt = expiry(now);
+          return { row: { ...row }, tenant: company.tenantId, slug: company.signInAddress };
+        },
+        (made) => users.ensureAccount(made.tenant, made.row.email),
+      );
       return {
         invitation: invitationView(found.row, now),
         delivery: 'copy_link' as const,
@@ -164,12 +175,16 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
     },
 
     async disable(companyId, _by, membershipId) {
-      const { member, tenant, uid } = updateFixture(path, (data) => {
-        const row = memberOf(data, companyId, membershipId);
-        row.status = 'disabled';
-        return { member: memberView(row), tenant: tenantOf(data, companyId), uid: row.uid };
-      });
-      if (tenant) await users.revokeSessions(tenant, uid);
+      const { member } = await updateAfter(
+        (data) => {
+          const row = memberOf(data, companyId, membershipId);
+          row.status = 'disabled';
+          return { member: memberView(row), tenant: tenantOf(data, companyId), uid: row.uid };
+        },
+        async ({ tenant, uid }) => {
+          if (tenant) await users.revokeSessions(tenant, uid);
+        },
+      );
       return { member };
     },
 
