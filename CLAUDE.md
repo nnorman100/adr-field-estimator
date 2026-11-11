@@ -2,7 +2,7 @@
 
 A phone web app where a restoration technician walks a water or mold loss once, and leaves with a priced, signable estimate. Serves Alert Disaster Restoration (ADR) first and other restoration companies as isolated company workspaces.
 
-**Read these first, in order:** `AGENTS.md` (rules, pricing, compliance, deployment guardrails — authoritative) → `VISION.md` (what the product is and is not) → `docs/roadmap.md` "Handoff" section → `docs/STATUS.md` (what is built, on, and checked on a phone).
+**Read these first, in order:** `AGENTS.md` (rules, pricing, compliance, deployment guardrails — authoritative) → `VISION.md` (what the product is and is not) → `docs/roadmap.md` "Handoff" section → `docs/STATUS.md` (index of `docs/status/`: what is built, on, and checked on a phone).
 `AGENTS.md` wins any conflict with this file. It is imported here so it loads every session:
 
 @AGENTS.md
@@ -25,7 +25,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Python format/lint: `python -m ruff format . ; python -m ruff check .`
 - JS format/lint: `npm run format ; npm run lint`
 - Keep `index.html` and `public/index.html` identical.
-- CI no longer runs the legacy app's tests (the `python`, `browser` and `firestore-emulator` jobs are removed; `node` runs lint and vitest only; CodeQL still scans Python). Do not change legacy files except through S8 (`docs/RUNBOOK.md`, "Legacy CI retired"); the commands above run those suites by hand.
+- CI no longer runs the legacy app's tests (the `python`, `browser` and `firestore-emulator` jobs are removed; `node` runs lint and vitest only; CodeQL still scans Python). Do not change legacy files except through S8 (`docs/runbook/ci.md`, "Legacy CI retired"); the commands above run those suites by hand.
 
 ## Hard rules
 1. **Never weaken, skip, delete or loosen a test, eval fixture, threshold or workflow** to get green. Fix the code. The Test guard check blocks it. Never add or request the `test-change-approved` label.
@@ -41,13 +41,13 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 - Be one small PR with a test that fails without it.
 - Pass the "eight checks" in `docs/roadmap.md` (rules/indexes, older records, offline, who may use it, app cache/`sw.js`, help/docs, privacy/logs, phone check).
 - Add new actions to the role matrix (`can()` in `public/workspaces.js` plus the server check) and update `docs/ACCESS.md`.
-- Update `docs/STATUS.md` if a feature's state changes.
+- Do not edit `docs/status/` in feature PRs; status is updated in a batch after merges.
 
 ## Technology Standard 2.2 (rules agents need)
 Profile: `docs/ARCHITECTURE.md` (top). Recorded exceptions: `docs/DECISIONS.md` D-013 to D-015. D-016 (owner- or operator-run company sign-in tenants for the pilot) is a decision now written into the standard, not an exception. Stage plans and corrections live in `docs/plans/`.
 - **Migrations:** add first, switch over, remove later. Never rename or drop in one step. Drops or row deletions need a fresh backup and owner approval. Additive migrations apply automatically on the test copy: today from the release workflow's `migrate` job (`.github/workflows/web-release.yml`), moving to a Cloud Run job inside Google (PR #297). Live migrations need the owner until three clean releases. One database-changing job at a time.
-- **Release path** (the rebuilt app in `web/`): every merge to `master` releases to test with smoke tests; live comes later; the urgent-fix workflow and the release manifest are planned, not present yet. See `docs/RUNBOOK.md`.
-- **CI** runs on the self-hosted runner pool. Agents never set or delete `CI_RUNNER` or switch a job to GitHub-hosted runners (the owner has a $0 Actions hard stop); the owner uses that switch only as a fallback after raising the Actions budget above $0, and deletes it afterwards. See `docs/RUNBOOK.md` (CI runners).
+- **Release path** (the rebuilt app in `web/`): every merge to `master` releases to test with smoke tests; live comes later; the urgent-fix workflow and the release manifest are planned, not present yet. See `docs/RUNBOOK.md` (index of `docs/runbook/`), mainly `docs/runbook/releases.md` and `docs/runbook/test-release.md`.
+- **CI** runs on the self-hosted runner pool. Agents never set or delete `CI_RUNNER` or switch a job to GitHub-hosted runners (the owner has a $0 Actions hard stop); the owner uses that switch only as a fallback after raising the Actions budget above $0, and deletes it afterwards. See `docs/runbook/ci.md` (CI runners).
 - **New dependency:** give the reason in the PR, check the package is genuine (publisher, downloads, repository), and get reviewer approval.
 
 ## Risk and merging

@@ -3,7 +3,7 @@
 The approved plan (Oct 24, 2026) for making this repository the complete DryScope product. Any tool or person picking up the work starts at **Handoff**, then works the phases in order. `RELEASES.md` stays the one record of what is live; this file records what is planned and why.
 
 ## Handoff (updated Oct 27, 2026)
-- **Feature state at a glance:** `docs/STATUS.md` (built, switched on, phone-checked). Update it in the same PR as the change.
+- **Feature state at a glance:** `docs/STATUS.md` (built, switched on, phone-checked; one file per stage in `docs/status/`). Not edited in feature PRs; updated in a batch after merges.
 - **What is live:** read the newest rows of `RELEASES.md`. It is the one record of the serving backend revision, Hosting release and source commit; this file does not copy them. Check `git log origin/master` and `gh-axi pr list` for what has merged since.
 - **Merged and released:** all of Phase 1 and all six Phase 2 steps (see the Oct 24–25 rows in `RELEASES.md`). Phase 0 items 1–4 and 6 are not recorded as done; item 6 (the local SMTP timeout test fails on Windows, passes in CI) is still open.
 - **In the serving revision:** Phase 3a readiness (F1, #147) is on. The newest 100% row in `RELEASES.md` records `AI_FEATURES=readiness`. The voice-note gate (#148) is in that revision and is not behind `AI_FEATURES`. Drying watch (A1, #149), priced extras (F2, #150), job summaries and AI usage (O1 + O3, #151), and the price editor (#153) are in that same revision and stay off: `AI_FEATURES` is only `readiness`, and `PRICE_BOOKS_ENABLED` is unset. Compare each later merge with the source commit of the newest `live` row. The rel5 commit was rolled back, so it is on `master` and is not serving.

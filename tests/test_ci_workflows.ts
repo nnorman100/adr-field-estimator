@@ -11,7 +11,7 @@ import { evaluateStep, load, ROOT, WORKFLOWS, type Data } from './workflow_suppo
 
 // The Actions budget stop blocks GitHub-hosted jobs, so every job defaults to the self-hosted pool
 // and the repository variable CI_RUNNER (for example ubuntu-latest) switches it back. See
-// docs/RUNBOOK.md, "CI runners".
+// docs/runbook/ci.md, "CI runners".
 const RUNNER = "${{ vars.CI_RUNNER || 'dryscope-linux' }}";
 const WORKFLOW_FILES = readdirSync(WORKFLOWS)
   .filter((name) => /\.y[^/]*ml$/.test(name))

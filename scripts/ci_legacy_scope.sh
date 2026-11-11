@@ -3,7 +3,7 @@
 #
 # The old Python app (backend/, public/, tests/ and their tooling) is frozen reference code for
 # the TypeScript rebuild in web/ and infra/dryscope/. Its other CI jobs were removed (see
-# docs/RUNBOOK.md, "Legacy CI retired"); the CodeQL Python analysis is the one job that still calls
+# docs/runbook/ci.md, "Legacy CI retired"); the CodeQL Python analysis is the one job that still calls
 # this script right after checkout and skips its real steps, with a logged reason, when nothing the
 # legacy app depends on changed.
 #

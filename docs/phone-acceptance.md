@@ -1,7 +1,7 @@
 # Phone acceptance script
 
 A short check the owner runs on a real phone before a release is marked phone-checked in
-`docs/STATUS.md`. Automated and browser tests cannot prove camera and microphone release, Bluetooth
+`docs/status/`. Automated and browser tests cannot prove camera and microphone release, Bluetooth
 audio, iPhone screen behavior, network handoffs or conversational speed; only a real phone can.
 
 ## Which phone
@@ -94,5 +94,5 @@ Each line is what you do, then what you should see.
 | | | | | |
 
 When every check passes on the required phone, mark the features it covers as phone-checked in
-`docs/STATUS.md` with the phone model and iOS version. If a check fails, open an issue with the
+`docs/status/` with the phone model and iOS version. If a check fails, open an issue with the
 check number and what you saw.

@@ -120,7 +120,7 @@ python -m ruff format . ; python -m ruff check .   # Python format and lint
 npm run format ; npm run lint                      # JavaScript/CSS format and lint (npm run format:check in CI)
 ```
 
-The new TypeScript app skeleton lives in `web/` (Next.js, Tailwind v4, shadcn/ui, Zod, Vitest, Playwright; not serving users). It has its own lockfile, ESLint config and CI workflow (`.github/workflows/web.yml`); the root commands above do not cover it. Its test-environment release is `.github/workflows/web-release.yml` ([RUNBOOK](docs/RUNBOOK.md#release-the-rebuilt-app-to-test)):
+The new TypeScript app skeleton lives in `web/` (Next.js, Tailwind v4, shadcn/ui, Zod, Vitest, Playwright; not serving users). It has its own lockfile, ESLint config and CI workflow (`.github/workflows/web.yml`); the root commands above do not cover it. Its test-environment release is `.github/workflows/web-release.yml` ([runbook](docs/runbook/test-release.md)):
 
 ```bash
 cd web
@@ -153,7 +153,7 @@ The `audit` job runs `pip-audit` against both hash-locked files and `npm audit -
 
 The CodeQL workflow (`.github/workflows/codeql.yml`) scans the code with the `security-extended` queries. The JavaScript/TypeScript leg scans on every push and pull request to `master`. The Python leg scans only the old app's Python, so on a push or pull request it scans when legacy app, test or tooling files changed (`scripts/ci_legacy_scope.sh`) or when the diff base is unavailable, and otherwise reports green with the skip reason in its log. Both legs also scan weekly on Mondays at 09:23 UTC. Code scanning is not enabled on this private repository, so the workflow does not upload to it: each leg that scans writes its findings count and list to the job summary and keeps the full SARIF as the `codeql-results-<language>` artifact on the workflow run (Actions > CodeQL); a skipped Python leg writes neither. When code scanning is enabled (Settings > Advanced Security), change `upload: never` to `upload: always` in the analyze step; results then appear under Security > Code scanning and on pull requests.
 
-`tests/test_firestore_emulator.py` (quota, Live lease, signing and workspace transactions) and `tests/test_firestore_emulator_operations.py` (delivery, monitoring, extras, insight, price-book, retention and spending transactions) run the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. They are skipped unless `FIRESTORE_EMULATOR_HOST` is set; CI no longer runs them (the `firestore-emulator` job was removed; see `docs/RUNBOOK.md`, "Legacy CI retired"). Locally, with Java 21 or later:
+`tests/test_firestore_emulator.py` (quota, Live lease, signing and workspace transactions) and `tests/test_firestore_emulator_operations.py` (delivery, monitoring, extras, insight, price-book, retention and spending transactions) run the real store classes against the Firestore emulator, with concurrent callers standing in for separate Cloud Run instances. They are skipped unless `FIRESTORE_EMULATOR_HOST` is set; CI no longer runs them (the `firestore-emulator` job was removed; see `docs/runbook/ci.md`, "Legacy CI retired"). Locally, with Java 21 or later:
 
 ```powershell
 npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator.py tests/test_firestore_emulator_operations.py -q -p no:cacheprovider"
@@ -161,7 +161,7 @@ npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "
 
 The `demo-` project ID keeps the emulator and client offline; never point these tests at a real project.
 
-The browser suite serves production code with fake cloud adapters over temporary local TLS. CI no longer runs it (the `browser` job was removed from `.github/workflows/ci.yml` on 2026-11-10; see `docs/RUNBOOK.md`, "Legacy CI retired"), so run it locally for a legacy change. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
+The browser suite serves production code with fake cloud adapters over temporary local TLS. CI no longer runs it (the `browser` job was removed from `.github/workflows/ci.yml` on 2026-11-10; see `docs/runbook/ci.md`, "Legacy CI retired"), so run it locally for a legacy change. Local AI failures and unsafe text are deliberate synthetic fixtures. Real service checks are recorded separately. Windows Playwright WebKit offline service-worker navigation fails internally; this does not establish iPhone Safari behavior.
 
 Use [the operating guide](docs/firebase-isolation.md) for production deployment and rollback. Never run a blanket Firebase deploy. Deploy the compatible backend first, then only `hosting:alert-disaster` in the dedicated project.
 

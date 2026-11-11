@@ -24,4 +24,4 @@ Customer names, addresses, claim details and photos; signed agreements and evide
 Anything touching auth settings, IAM, secret bindings, the proposal's privacy wording, `firestore.rules`, `.github/workflows`, test fixtures, or production data.
 
 ## If something leaks
-Contain (revoke the link, disable the member, rotate the key), then record what happened in `RELEASES.md` or a postmortem. See `docs/RUNBOOK.md`.
+Contain (revoke the link, disable the member, rotate the key), then record what happened in `RELEASES.md` or a postmortem. See `docs/runbook/incidents.md`.

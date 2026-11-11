@@ -96,7 +96,7 @@ Approved plan for owner-set pricing in the rebuilt app (`web/` only). Planned 20
 | Offline | Estimate, publish, import and reprice are online only; the dated read-only table copy is S6's. |
 | Who may use it | `prices_read`, `prices_manage`, new `job_reprice`, checked on the server; `docs/ACCESS.md` updated in the same pull request. |
 | App cache | No service worker in `web/` yet; S6 adds it. |
-| Help and docs | In-app help for each role that sees Prices or room types; `docs/pricing-source.md` rewritten for `dryscope-v3` in S4-4a; `STATUS.md`, `DATA.md` (new tables) and `ACCESS.md` in the step that changes them. D-017 is recorded with this plan. |
+| Help and docs | In-app help for each role that sees Prices or room types; `docs/pricing-source.md` rewritten for `dryscope-v3` in S4-4a; `DATA.md` (new tables) and `ACCESS.md` in the step that changes them (`docs/status/` in the batch after merges). D-017 is recorded with this plan. |
 | Privacy and logs | Prices are not personal data; logs and audit details hold ids and counts only. |
 | Phone check | Prices read-only view, Check Scope room inputs and Review on a real iPhone, recorded apart from mock results. |
 

@@ -107,7 +107,7 @@ resource "google_project_iam_member" "gemini_caller" {
 # shared by test and live and stay owner-run) and no identitytoolkit.tenants.*.
 # Nothing binds this role here, on purpose: a project-level binding would reach
 # every tenant, including live's. The owner binds it on each of this environment's
-# own sign-in tenants (tenants:setIamPolicy), never on the project (RUNBOOK).
+# own sign-in tenants (tenants:setIamPolicy), never on the project (docs/runbook/terraform-apply.md).
 resource "google_project_iam_custom_role" "identity_users" {
   project     = var.project_id
   role_id     = "dryscopeIdentity${title(var.environment)}"

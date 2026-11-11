@@ -12,7 +12,7 @@ permissions:
 # tests) are retired from CI as of 2026-11-10. The legacy app is deleted in S8 and nothing changes
 # it until then, so those jobs (python, browser, firestore-emulator) were removed; the owner takes
 # them off the master ruleset's required checks. node keeps the repo-wide lint, format and vitest
-# checks the rebuild depends on. See docs/RUNBOOK.md, "Legacy CI retired".
+# checks the rebuild depends on. See docs/runbook/ci.md, "Legacy CI retired".
 jobs:
   node:
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}

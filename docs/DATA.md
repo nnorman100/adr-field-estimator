@@ -146,7 +146,7 @@ deletion are not built yet; update this file when they are.
 
 The TypeScript app in `web/` keeps a Postgres schema beside the Firestore data above. Nothing in
 that schema is applied to Cloud SQL yet. Once the owner finishes the setup in
-[RUNBOOK.md](RUNBOOK.md#release-the-rebuilt-app-to-test), the test release workflow applies it to
+[the test release runbook](runbook/test-release.md), the test release workflow applies it to
 the test instance only, as `dryscope-migrate-test` from the Cloud Run job of that name, before each new revision takes traffic; nothing
 applies it to live. An agent does not create the instance, run Terraform or change
 IAM. The owner applies infrastructure. There is no earlier Postgres schema to backfill, and the
@@ -158,7 +158,7 @@ them too. Only backups taken after that setting is applied are kept in `us`; ear
 `us-central1`, so the owner takes one on-demand backup after the apply to check its location, and
 another after the first migrations. There is no second-region export or replica. If `us-central1`
 is lost, the latest backup is restored into a new instance in another region
-([RUNBOOK.md](RUNBOOK.md#restore-into-another-region)), losing at most one day; point-in-time
+([the backups runbook](runbook/backups.md#restore-into-another-region)), losing at most one day; point-in-time
 recovery is not available then. The restored instance is the data copy only: the app runs in
 `us-central1` and stays down until that region returns, and a second-region app is a decision to
 revisit at launch. A quarterly drill restores into a different region once. Firestore stays in its
@@ -254,7 +254,7 @@ least-privilege migration role. Each file runs with its ledger row in one transa
 ends that transaction with its own `COMMIT` or `ROLLBACK` fails and is not recorded. Do not roll
 the database backward to make an older image start. Fix forward on the same data. The operator
 steps are in
-[RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
+[the migrations runbook](runbook/migrations.md). Connection failures from the
 migrator name the migration and omit the database URL.
 
 ## Rebuilt app field database (not deployed)

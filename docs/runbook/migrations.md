@@ -1,0 +1,11 @@
+# Postgres migrations for the rebuilt app
+
+`web/migrations` is a numbered ledger. Files are named `0001_name.sql`, `0002_name.sql`, and so on. From `web/`, `npm run db:migrate` applies each missing file in order, in its own transaction that takes the migration lock and rereads the ledger, before a new version of the rebuilt app takes traffic. It records the file id and a SHA-256 of the file bytes in `migration_ledger`. A second run applies nothing. A gap in the numbers, or a file whose bytes changed after it was applied, stops the run. The command reads `APP_ENV` and `DATABASE_URL` from the environment, then from `web/.env.local` for any that are unset. On Cloud Run it reads `SQL_CONNECTION_NAME`, `SQL_DATABASE_NAME` and `SQL_IAM_USER` instead of `DATABASE_URL` and logs in over the instance's `/cloudsql` socket with an access token as the password. The test release workflow runs it before a new revision is staged as the Cloud Run job `dryscope-migrate-test`, inside Google, as `dryscope-migrate-test`: the image carries it as `/app/migrate.mjs` (bundled from `web/src/db/job.ts` by `web/scripts/build-migrate.mjs`) with the ledger in `/app/migrations` ([Release the rebuilt app to test](test-release.md#release-the-rebuilt-app-to-test)). Nothing runs it against live.
+
+Schema changes follow add, then switch, then remove:
+
+1. Add the new table or column in a migration, and ship the app still able to read the old shape.
+2. Switch readers and writers to the new shape only after that migration has been applied.
+3. Remove the old shape in a later migration only after a fresh backup of that database and an explicit owner approval.
+
+The migrator does not parse SQL for removals: a migration that removes a table, column or rows needs the fresh backup and the owner's explicit approval before it merges, and a later least-privilege migration role will back that up. Each file runs with its ledger row in one transaction; a file that ends that transaction with its own `COMMIT` or `ROLLBACK` fails and is not recorded. Do not roll the database backward to make an older image start. Fix forward on the same data. The same rule is the data contract in [DATA.md](../DATA.md#rebuilt-app-postgres-not-deployed).

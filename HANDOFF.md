@@ -53,7 +53,7 @@ repository holds two migrations, both run by hand with the owner's word:
 The ledger "starts empty; migrations applied before it existed are not backfilled", so which of
 these show as applied is **not verified from the repository**. Read `_migrations` (owner or
 superadmin access) before assuming either has run. Rollbacks stop when the target is older than
-a recorded migration (`docs/RUNBOOK.md`).
+a recorded migration (`docs/runbook/releases.md`).
 
 ## Open items
 

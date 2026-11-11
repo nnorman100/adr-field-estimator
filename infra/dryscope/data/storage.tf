@@ -29,7 +29,7 @@ resource "google_storage_bucket" "evidence" {
 
 # Routine actors may create and read objects. objectCreator and objectViewer
 # carry no delete permission. Overwrite is refused only because every evidence
-# upload creates with ifGenerationMatch=0 (docs/RUNBOOK.md), not by the role.
+# upload creates with ifGenerationMatch=0 (docs/runbook/terraform-apply.md), not by the role.
 resource "google_storage_bucket_iam_member" "api_create" {
   bucket = google_storage_bucket.evidence.name
   role   = "roles/storage.objectCreator"
