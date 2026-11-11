@@ -31,6 +31,7 @@ resource "google_project_service" "apis" {
     "aiplatform.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "firebaserules.googleapis.com",
     "firestore.googleapis.com",
     "iam.googleapis.com",

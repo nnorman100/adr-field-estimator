@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { APP_ENV_ALIAS, type WebSettingName } from './settings-contract';
 
 // Typed server configuration. Every variable the app reads is declared here. src/instrumentation.ts
 // checks it when the server starts, so an invalid value stops the app with a message that names the
-// variable and never repeats the value. APP_ENV is required; the Cloud Run services set it as
-// APP_ENVIRONMENT (infra/dryscope/app/cloud_run.tf), which is read the same way. DATABASE_URL is
+// variable and never repeats the value. Every name is listed in src/lib/settings-contract.ts,
+// which tests/unit/settings-contract.test.ts holds to the Terraform in infra/dryscope/app. APP_ENV
+// is required; Terraform sets it as APP_ENV and the older APP_ENVIRONMENT is read the same way. DATABASE_URL is
 // optional until a database command runs, GOOGLE_CLOUD_PROJECT until a route checks a sign-in, and
 // FIRESTORE_DATABASE_ID until an access record is written; none has a default. No secrets belong in
 // this file.
@@ -36,8 +38,11 @@ function isLoopbackHost(value: string): boolean {
   }
 }
 
-const schema = z
-  .object({
+const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
+
+// Typed against src/lib/settings-contract.ts: a setting missing here, or declared here and not
+// listed there as read by the web app, fails the type check. APP_ENV_ALIAS is read by withAppEnv.
+const shape = {
   APP_ENV: z.enum(['local', 'test', 'live'], {
     error: 'APP_ENV (or APP_ENVIRONMENT) must be one of local, test or live',
   }),
@@ -47,7 +52,8 @@ const schema = z
     .string()
     .refine(isPostgresUrl, { message: 'DATABASE_URL must be a postgres URL' })
     .optional(),
-  // The commit the image was built from. web/Dockerfile bakes it in; local runs leave it unset.
+  // The commit the running app was built from. The image build sets it and Cloud Run runs with that
+  // value; local runs leave it unset.
   APP_COMMIT: z
     .string()
     .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })
@@ -95,24 +101,66 @@ const schema = z
     .string()
     .refine(isLoopbackHost, { message: 'FIRESTORE_EMULATOR_HOST must be a loopback host:port' })
     .optional(),
-  })
-  .superRefine((env, ctx) => {
-    for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
-      if (env[name] === undefined) continue;
-      if (env.APP_ENV !== 'local') {
-        ctx.addIssue({ code: 'custom', path: [name], message: `${name} is allowed only when APP_ENV is local` });
-      }
-      if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
-        ctx.addIssue({
-          code: 'custom',
-          path: [name],
-          message: `${name} needs a GOOGLE_CLOUD_PROJECT starting with demo-`,
-        });
-      }
-    }
-  });
+  // The browser sign-in settings of the project's Firebase web app (S3 plan, section 6, step 8).
+  // Both are public values that every visitor's browser receives; the sign-in screens say sign-in
+  // is not set up while either is missing outside the emulator.
+  FIREBASE_WEB_API_KEY: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{20,100}$/, {
+      message: 'FIREBASE_WEB_API_KEY must be a Firebase web API key',
+    })
+    .optional(),
+  FIREBASE_AUTH_DOMAIN: z
+    .string()
+    .regex(/^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, {
+      message: 'FIREBASE_AUTH_DOMAIN must be a host name',
+    })
+    .optional(),
+  // Local only: a JSON file that stands in for the companies, actors and memberships in Postgres,
+  // so the sign-in screens run against the Auth emulator with no database (tests/e2e). Allowed only
+  // beside the Auth emulator, for a demo- project, with no database configured.
+  LOCAL_SIGN_IN_FIXTURE: z
+    .string()
+    .regex(/^\/[^\0]{1,500}\.json$/, {
+      message: 'LOCAL_SIGN_IN_FIXTURE must be an absolute path to a .json file',
+    })
+    .optional(),
+} satisfies Record<Exclude<WebSettingName, typeof APP_ENV_ALIAS>, z.ZodType>;
 
-const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
+// Every name this file reads, for the contract test.
+export const CONFIG_SETTINGS = [...Object.keys(shape), APP_ENV_ALIAS];
+
+const schema = z.object(shape).superRefine((env, ctx) => {
+  if (env.LOCAL_SIGN_IN_FIXTURE !== undefined) {
+    const database =
+      env.DATABASE_URL !== undefined || SQL_KEYS.some((key) => env[key] !== undefined);
+    if (env.APP_ENV !== 'local' || env.FIREBASE_AUTH_EMULATOR_HOST === undefined || database) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['LOCAL_SIGN_IN_FIXTURE'],
+        message:
+          'LOCAL_SIGN_IN_FIXTURE is allowed only when APP_ENV is local, beside the Auth emulator, with no database',
+      });
+    }
+  }
+  for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
+    if (env[name] === undefined) continue;
+    if (env.APP_ENV !== 'local') {
+      ctx.addIssue({
+        code: 'custom',
+        path: [name],
+        message: `${name} is allowed only when APP_ENV is local`,
+      });
+    }
+    if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [name],
+        message: `${name} needs a GOOGLE_CLOUD_PROJECT starting with demo-`,
+      });
+    }
+  }
+});
 
 export type CloudSqlConfig = { connectionName: string; database: string; user: string };
 
@@ -130,14 +178,16 @@ export class ConfigError extends Error {
   }
 }
 
-// The environment name under either variable. Both set to different values is refused, so a
+// The environment name under either variable. Terraform sets APP_ENV (src/lib/settings-contract.ts);
+// the older APP_ENVIRONMENT is still accepted. Both set to different values is refused, so a
 // service cannot run as one environment while its settings say another.
 function withAppEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  const { APP_ENV, APP_ENVIRONMENT } = env;
-  if (APP_ENV !== undefined && APP_ENVIRONMENT !== undefined && APP_ENV !== APP_ENVIRONMENT) {
-    throw new ConfigError(['APP_ENV: APP_ENV and APP_ENVIRONMENT must match when both are set']);
+  const { APP_ENV } = env;
+  const alias = env[APP_ENV_ALIAS];
+  if (APP_ENV !== undefined && alias !== undefined && APP_ENV !== alias) {
+    throw new ConfigError([`APP_ENV: APP_ENV and ${APP_ENV_ALIAS} must match when both are set`]);
   }
-  return { ...env, APP_ENV: APP_ENV ?? APP_ENVIRONMENT };
+  return { ...env, APP_ENV: APP_ENV ?? alias };
 }
 
 function checked(env: Record<string, string | undefined>) {
@@ -182,7 +232,9 @@ export type IdentityConfig = {
 export function parseIdentityConfig(env: Record<string, string | undefined>): IdentityConfig {
   const data = checked(env);
   if (!data.GOOGLE_CLOUD_PROJECT) {
-    throw new ConfigError(['GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to check a sign-in']);
+    throw new ConfigError([
+      'GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to check a sign-in',
+    ]);
   }
   return {
     appEnv: data.APP_ENV,
@@ -206,7 +258,9 @@ export function parseProjectionConfig(env: Record<string, string | undefined>): 
     problems.push('GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to write access records');
   }
   if (!data.FIRESTORE_DATABASE_ID) {
-    problems.push('FIRESTORE_DATABASE_ID: FIRESTORE_DATABASE_ID is required to write access records');
+    problems.push(
+      'FIRESTORE_DATABASE_ID: FIRESTORE_DATABASE_ID is required to write access records',
+    );
   }
   if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT || !data.FIRESTORE_DATABASE_ID) {
     throw new ConfigError(problems);
@@ -216,4 +270,49 @@ export function parseProjectionConfig(env: Record<string, string | undefined>): 
     databaseId: data.FIRESTORE_DATABASE_ID,
     firestoreEmulatorHost: data.FIRESTORE_EMULATOR_HOST ?? null,
   };
+}
+
+// What a sign-in screen's browser needs to reach Identity Platform. Every value is public: the API
+// key names the project and is restricted to the app's address (S3 plan, section 6, step 8).
+export type BrowserSignInConfig = {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  // The Auth emulator's address for the browser, on a developer machine only; null elsewhere.
+  authEmulatorUrl: string | null;
+};
+
+// The emulator accepts any API key; this one is never valid on a real project.
+const EMULATOR_API_KEY = 'demo-emulator-api-key';
+
+// null when sign-in is not set up: no project, or (outside the emulator) no web API key or auth
+// domain. The sign-in screens then say so instead of trying a sign-in that cannot work.
+export function parseBrowserSignInConfig(
+  env: Record<string, string | undefined>,
+): BrowserSignInConfig | null {
+  const data = checked(env);
+  const projectId = data.GOOGLE_CLOUD_PROJECT;
+  if (!projectId) return null;
+  const emulator = data.FIREBASE_AUTH_EMULATOR_HOST;
+  if (emulator !== undefined) {
+    return {
+      apiKey: data.FIREBASE_WEB_API_KEY ?? EMULATOR_API_KEY,
+      authDomain: data.FIREBASE_AUTH_DOMAIN ?? `${projectId}.firebaseapp.com`,
+      projectId,
+      authEmulatorUrl: `http://${emulator}`,
+    };
+  }
+  if (!data.FIREBASE_WEB_API_KEY || !data.FIREBASE_AUTH_DOMAIN) return null;
+  return {
+    apiKey: data.FIREBASE_WEB_API_KEY,
+    authDomain: data.FIREBASE_AUTH_DOMAIN,
+    projectId,
+    authEmulatorUrl: null,
+  };
+}
+
+// The local stand-in for the sign-in records (LOCAL_SIGN_IN_FIXTURE), or null. The schema above
+// allows it only on a developer machine beside the Auth emulator with no database.
+export function parseLocalSignInFixture(env: Record<string, string | undefined>): string | null {
+  return checked(env).LOCAL_SIGN_IN_FIXTURE ?? null;
 }

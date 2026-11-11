@@ -3,6 +3,30 @@
 import type { Dec } from './decimal';
 import type { JObj } from './json';
 
+/** A room's category: water Category 1, 2 or 3, or Mold. Only water rooms take a category multiplier. */
+export const CATEGORIES = [1, 2, 3, 'mold'] as const;
+export type Category = (typeof CATEGORIES)[number];
+export type WaterCategory = 1 | 2 | 3;
+
+export function isWater(category: Category): category is WaterCategory {
+  return category !== 'mold';
+}
+
+/** Categories in list order: 1, 2, 3, then Mold. */
+export function categoryOrder(left: Category, right: Category): number {
+  return CATEGORIES.indexOf(left) - CATEGORIES.indexOf(right);
+}
+
+/** "Cat 3" or "Mold", as a document line names the row that priced it. */
+export function categoryLabel(category: Category): string {
+  return isWater(category) ? `Cat ${category}` : 'Mold';
+}
+
+/** "category 3 work" or "mold work", as a warning names it. */
+export function categoryWords(category: Category): string {
+  return isWater(category) ? `category ${category}` : 'mold';
+}
+
 export function has(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -55,6 +79,8 @@ export type PriceLine = {
   room: string | null;
   /** The square feet a room line prices; null on a job line. */
   area: Dec | null;
+  /** The category row that priced a room line; null or absent when the item's default row did. */
+  priceRow?: Category | null;
   priceBracket?: { upToSf: number | null; unitPrice: string } | null;
   bracketMode?: string | null;
 };

@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 import { Dec, ZERO } from './decimal';
-import { chars, collapse, oneLine, printable } from './values';
+import { chars, collapse, oneLine, printable, type Category } from './values';
 
 export class Reject extends Error {
   constructor(message: string) {
@@ -19,7 +19,7 @@ function bad(message = 'invalid'): never {
 
 export type Room = {
   name: string;
-  category: number;
+  category: Category;
   loss: 'water' | 'mold' | 'both' | null;
   unfinishedSf: Dec;
   finishedSf: Dec;
@@ -119,7 +119,7 @@ const quantity = amount('0', '100000', { places: 2 });
 const ROOM = z
   .strictObject({
     name: text(1, 100),
-    category: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(1),
+    category: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal('mold')]).default(1),
     loss: z.enum(['water', 'mold', 'both']).nullish(),
     unfinished_sf: amount('0', '100000').default(ZERO),
     finished_sf: amount('0', '100000').default(ZERO),

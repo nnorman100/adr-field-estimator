@@ -7,7 +7,7 @@ import { fieldDec } from './inspection';
 import { priceScopeV2 } from './price-v2';
 import { equipmentSizing, type Sizing } from './sizing';
 import { COUNT_DAYS, FIELD_SOURCES, blankPrice, parseSource, type Table } from './table';
-import { numberText, truthy } from './values';
+import { categoryOrder, categoryWords, numberText, truthy, type Category } from './values';
 import type { Priced } from './totals';
 
 const COMPARABLE_LOW = Dec.parse('2').div(Dec.parse('3'));
@@ -18,7 +18,7 @@ const MIN_JOBS = 5;
 const EXTRAS = 'Additional work hours are only priced once the owner approves them.';
 const QUANTITY_FIELDS = [...FIELD_SOURCES, ...[...new Set(COUNT_DAYS.map((pair) => pair[0]))].sort()];
 
-export type HistoryRow = { category: number; sf: Dec; low: Dec };
+export type HistoryRow = { category: Category; sf: Dec; low: Dec };
 
 function warning(code: string, text: string, room = ''): JObj {
   return { code, room, text };
@@ -50,7 +50,7 @@ function roomWarnings(data: Inspection, table: Table): JObj[] {
   const wet = table.policy.area_basis === 'wet_floor';
   const found: JObj[] = [];
   for (const room of data.rooms) {
-    const allows = (categories: number[]) => !categories.length || categories.includes(room.category);
+    const allows = (categories: Category[]) => !categories.length || categories.includes(room.category);
     if (sources.some((item) => allows(item.categories))) continue;
     const area = roomArea(room, wet);
     const other = roomArea(room, !wet);
@@ -60,7 +60,7 @@ function roomWarnings(data: Inspection, table: Table): JObj[] {
     found.push(
       warning(
         'unpriced_room',
-        `${name}: ${numberText(used)} sq ft of category ${room.category} work prices nothing on your company's price list.`,
+        `${name}: ${numberText(used)} sq ft of ${categoryWords(room.category)} work prices nothing on your company's price list.`,
         name,
       ),
     );
@@ -110,7 +110,10 @@ function median(values: Dec[]): Dec {
 
 function typicalWarning(data: Inspection, table: Table | null, priced: Priced | null, history: HistoryRow[] | null): JObj[] {
   if (!priced || !history || history.length === 0) return [];
-  const category = data.rooms.reduce((best, room) => Math.max(best, room.category), 1);
+  const category = data.rooms.reduce<Category>(
+    (best, room) => (categoryOrder(room.category, best) > 0 ? room.category : best),
+    1,
+  );
   const wet = table?.policy.area_basis === 'wet_floor';
   const area = sumArea(data, wet);
   const comparable = history
@@ -124,7 +127,7 @@ function typicalWarning(data: Inspection, table: Table | null, priced: Priced | 
   return [
     warning(
       'far_from_typical',
-      `This estimate's low end is about ${ratio.toString()}\u00d7 your company's typical category ${category} job of this size (${comparable.length} signed jobs). Check the quantities before you finish.`,
+      `This estimate's low end is about ${ratio.toString()}\u00d7 your company's typical ${categoryWords(category)} job of this size (${comparable.length} signed jobs). Check the quantities before you finish.`,
     ),
   ];
 }

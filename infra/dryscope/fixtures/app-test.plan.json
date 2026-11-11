@@ -595,6 +595,44 @@
    }
   },
   {
+   "address": "google_cloud_scheduler_job.jobs[\"access-projection\"]",
+   "type": "google_cloud_scheduler_job",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "app_engine_http_target": [],
+     "attempt_deadline": "180s",
+     "description": "DryScope test: POST /api/internal/access-projection as the scheduler account.",
+     "http_target": [
+      {
+       "body": null,
+       "headers": null,
+       "http_method": "POST",
+       "oauth_token": [],
+       "oidc_token": [
+        {
+         "audience": "dryscope-test-access-projection",
+         "service_account_email": "dryscope-scheduler-test@dryscope.iam.gserviceaccount.com"
+        }
+       ],
+       "uri": "https://dryscope-api-test-570228742694.us-central1.run.app/api/internal/access-projection"
+      }
+     ],
+     "name": "dryscope-access-projection-test",
+     "paused": false,
+     "project": "dryscope",
+     "pubsub_target": [],
+     "region": "us-central1",
+     "retry_config": [],
+     "schedule": "*/5 * * * *",
+     "time_zone": "Etc/UTC",
+     "timeouts": null
+    }
+   }
+  },
+  {
    "address": "google_monitoring_alert_policy.api_latency",
    "type": "google_monitoring_alert_policy",
    "change": {

@@ -11,8 +11,26 @@ describe('API sign-in gate', () => {
     expect(config.matcher).toBe('/api/:path*');
   });
 
-  it('keeps the public list to the two routes that hold nothing private', () => {
-    expect([...publicApiPaths].sort()).toEqual(['/api/echo', '/api/health']);
+  it('keeps the public list to the three routes that hold nothing private', () => {
+    expect([...publicApiPaths].sort()).toEqual(['/api/echo', '/api/health', '/api/sign-in/:address']);
+  });
+
+  it('matches a sign-in address segment to one sign-in address and nothing else', () => {
+    expect(call('/api/sign-in/company-a').headers.get('x-middleware-next')).toBe('1');
+    expect(call('/api/sign-in/a').headers.get('x-middleware-next')).toBe('1');
+    for (const path of [
+      '/api/sign-in',
+      '/api/sign-in/',
+      '/api/sign-in/Company-A',
+      '/api/sign-in/-company',
+      '/api/sign-in/company-',
+      '/api/sign-in/company_a',
+      `/api/sign-in/${'a'.repeat(41)}`,
+      '/api/sign-in/company-a/extra',
+      '/api/sign-in/..%2Fme',
+    ]) {
+      expect({ path, status: call(path).status }).toEqual({ path, status: 401 });
+    }
   });
 
   it('passes only the member and invitation routes on to their own sign-in check', () => {

@@ -522,6 +522,49 @@ describe('migrations', () => {
   });
 });
 
+describe('field-database rules', () => {
+  const rules = () => step(jobs.deploy, 'rules');
+
+  it('are released as the deploy account before the revision or traffic changes', () => {
+    const order = steps(jobs.deploy).map((s) => s.id || s.uses || s.name);
+    const at = (key: string) => order.findIndex((k: string) => k.startsWith(key));
+    expect(at('rules')).toBeGreaterThan(at('google-github-actions/auth@'));
+    expect(at('rules')).toBeGreaterThan(at('google-github-actions/setup-gcloud@'));
+    expect(at('rules')).toBeLessThan(at('before'));
+    expect(at('rules')).toBeLessThan(at('stage'));
+    expect(rules().if ?? null).toBeNull();
+    expect(rules().env ?? {}).toEqual({});
+  });
+
+  it('go to the test field database only, with the token on stdin', () => {
+    const runs = invocations(rules());
+    expect(runs).toContainEqual(['gcloud', 'auth', 'print-access-token']);
+    expect(runs).toContainEqual([
+      'node',
+      'web/scripts/release-rules.ts',
+      '--env',
+      'test',
+      '--file',
+      'web/firestore.rules',
+    ]);
+    expect(runs.filter((args) => args[0] === 'node')).toHaveLength(1);
+  });
+
+  it.each([true, false])(
+    'pass the token to the script and stop the release when it fails (passes: %s)',
+    (passes) => {
+      const sh = shell();
+      sh.fake('gcloud', 'echo ya29.fake-token');
+      sh.fake('node', `cat > "$HOME/stdin"; ${passes ? 'exit 0' : 'exit 1'}`);
+      const result = sh.run(rules().run, release.env);
+      expect(result.status === 0).toBe(passes);
+      expect(readFileSync(path.join(sh.tmp, 'stdin'), 'utf8').trim()).toBe('ya29.fake-token');
+      expect(sh.calls('gcloud')).toEqual([['auth', 'print-access-token']]);
+      if (!passes) expect(result.stdout).toContain('traffic did not move');
+    },
+  );
+});
+
 describe('traffic', () => {
   it('smoke-checks before traffic moves and rolls back only after a move', () => {
     const deploy = steps(jobs.deploy);

@@ -45,7 +45,13 @@ locals {
     live    = "dryscope-live-${local.env}"
     migrate = "dryscope-migrate-${local.env}"
     deploy  = "dryscope-deploy-${local.env}"
+    # Calls the internal job routes on a schedule (web/src/lib/auth/service-caller.ts accepts this
+    # account only). It holds no role.
+    scheduler = "dryscope-scheduler-${local.env}"
   }
+
+  # Fixed by the project_id check above; Cloud Run's deterministic address uses it.
+  project_number = "570228742694"
 }
 
 output "sql_instance_name" {
@@ -94,6 +100,23 @@ output "cloud_run_service_names" {
   value = {
     api  = "dryscope-api-${local.env}"
     live = "dryscope-live-${local.env}"
+  }
+}
+
+output "api_url" {
+  description = "The web app's deterministic Cloud Run address (SERVICE-PROJECT_NUMBER.REGION.run.app), the same one allowed_origins names."
+  value       = "https://dryscope-api-${local.env}-${local.project_number}.us-central1.run.app"
+}
+
+# Internal job routes the scheduler calls (serviceRoute in web/src/lib/auth/route.ts). Each job's
+# token audience is dryscope-<env>-<job>, the audience service-caller.ts checks.
+output "scheduled_jobs" {
+  value = {
+    access-projection = {
+      name     = "dryscope-access-projection-${local.env}"
+      path     = "/api/internal/access-projection"
+      audience = "dryscope-${local.env}-access-projection"
+    }
   }
 }
 

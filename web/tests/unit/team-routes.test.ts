@@ -34,7 +34,8 @@ async function routePaths(dir: string): Promise<string[]> {
 
 describe('team routes and the proxy', () => {
   it('lists exactly the route files that check the sign-in (or a service token) themselves', async () => {
-    const files = (await routePaths(API_DIR)).filter((path) => !isPublicApiPath(path));
+    // A public route's placeholder segment is checked with a real value of its shape.
+    const files = (await routePaths(API_DIR)).filter((path) => !isPublicApiPath(path.replace('[address]', 'company-a')));
     const patterns = files.map((path) => path.replace(/\[[A-Za-z]+\]/g, ':id'));
     expect([...patterns].sort()).toEqual([...memberApiPaths, ...operatorApiPaths, ...serviceApiPaths].sort());
     // A real path of each route file passes the proxy.

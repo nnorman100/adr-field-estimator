@@ -1,6 +1,7 @@
 import { openDatabase } from '@/db/client';
 import type { Database } from '@/db/tenant';
-import { parseIdentityConfig } from '@/lib/config';
+import { parseIdentityConfig, parseLocalSignInFixture } from '@/lib/config';
+import { localIdentityDirectory } from '@/lib/sign-in/local-directory';
 import { databaseDirectory, databaseOperators } from './directory';
 import { firebaseTokenVerifier } from './firebase';
 import type { IdentityDirectory, OperatorDirectory, TokenVerifier } from './identity';
@@ -17,11 +18,15 @@ export function serverDatabase(): Database {
 }
 
 // Built from the checked server configuration on the first request that checks a sign-in, then
-// reused. A missing or invalid setting throws, and that request fails closed.
+// reused. A missing or invalid setting throws, and that request fails closed. On a developer
+// machine beside the Auth emulator, LOCAL_SIGN_IN_FIXTURE stands in for the database
+// (src/lib/sign-in/local-directory.ts); the configuration refuses it anywhere else.
 export function identityServices(): IdentityServices {
   if (!services) {
     const config = parseIdentityConfig(process.env);
-    services = { verifier: firebaseTokenVerifier(config), directory: databaseDirectory(serverDatabase()) };
+    const fixture = parseLocalSignInFixture(process.env);
+    const directory = fixture ? localIdentityDirectory(fixture) : databaseDirectory(serverDatabase());
+    services = { verifier: firebaseTokenVerifier(config), directory };
   }
   return services;
 }
