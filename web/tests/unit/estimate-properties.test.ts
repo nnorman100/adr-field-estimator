@@ -75,18 +75,38 @@ const POOL: Array<[string, Obj]> = [
   ],
 ];
 
-function randomTable(rng: Rng, mode: 'tiered' | 'whole-job'): Obj {
+const CATEGORY_LIST: Json[] = [1, 2, 3, 'mold'];
+
+/** Category rows for a room item: some categories priced as set, flat or by their own brackets. */
+function randomRows(rng: Rng, body: Obj): Obj[] {
+  const filter = (body.categories as Json[] | undefined) ?? [];
+  const allowed = filter.length ? filter : CATEGORY_LIST;
+  return allowed
+    .filter(() => chance(rng, 0.5))
+    .map((category): Obj =>
+      body.unit === undefined && chance(rng, 0.8)
+        ? { category, price_brackets: bands(rng, 'unit_price') }
+        : { category, unit_price: cents(rng, 0.01, 60) },
+    );
+}
+
+function randomTable(rng: Rng, mode: 'tiered' | 'whole-job', rows = false): Obj {
   const chosen = POOL.filter(([id]) => id === 'demo_unfinished' || chance(rng, 0.5));
   const items = chosen.map(([id, base]) => {
     const body: Obj = { ...base, unit_price: cents(rng, 0.01, 60), taxable: chance(rng, 0.4) };
     if (chance(rng, 0.3)) body.waste_percent = String(int(rng, 1, 20));
-    if (chance(rng, 0.3)) body.categories = [1, 2, 3].filter(() => chance(rng, 0.6));
+    if (chance(rng, 0.3)) {
+      body.categories = (rows ? CATEGORY_LIST : [1, 2, 3]).filter(() => chance(rng, 0.6));
+    }
     const sf = body.unit === undefined;
     const roomOrTyped =
       String(body.quantity_source).startsWith('room:') || body.quantity_source === 'typed';
     if (sf && roomOrTyped && chance(rng, 0.4)) {
       body.unit_price = '';
       body.price_brackets = bands(rng, 'unit_price');
+    }
+    if (rows && String(body.quantity_source).startsWith('room:') && chance(rng, 0.7)) {
+      body.rows = randomRows(rng, body);
     }
     return item(id, body);
   });
@@ -132,13 +152,15 @@ function randomTable(rng: Rng, mode: 'tiered' | 'whole-job'): Obj {
   return { items, policy: policy(changes) };
 }
 
-function randomJob(rng: Rng, typed: boolean): Obj {
+function randomJob(rng: Rng, typed: boolean, mold = false): Obj {
+  // With rows, rooms stay small so each row's square feet sit near its band limits.
+  const most = mold ? 150 : 600;
   const rooms = Array.from({ length: int(rng, 1, 4) }, (_, index) => {
     const body: Obj = {
       name: `Room ${index + 1}`,
-      category: int(rng, 1, 3),
-      unfinished_sf: int(rng, 0, 600),
-      finished_sf: chance(rng, 0.5) ? int(rng, 0, 600) : 0,
+      category: mold ? pick(rng, CATEGORY_LIST) : int(rng, 1, 3),
+      unfinished_sf: int(rng, 0, most),
+      finished_sf: chance(rng, 0.5) ? int(rng, 0, most) : 0,
       custom_cabinetry: chance(rng, 0.3),
     };
     if (chance(rng, 0.3)) body.waste_percent = int(rng, 1, 15);
@@ -213,12 +235,17 @@ function price(tableJson: Json, inspectionJson: Obj): Estimate | null {
   return result.ok ? result : null;
 }
 
-function cases(seed: number, count: number, mode: 'tiered' | 'whole-job'): Array<[Obj, Obj, Rng]> {
+function cases(
+  seed: number,
+  count: number,
+  mode: 'tiered' | 'whole-job',
+  rows = false,
+): Array<[Obj, Obj, Rng]> {
   const rng = seeded(seed);
   return Array.from({ length: count }, () => {
-    const priceList = randomTable(rng, mode);
+    const priceList = randomTable(rng, mode, rows);
     const typed = (priceList.items as Obj[]).some((row) => row.item_id === 'typed_sf');
-    return [priceList, randomJob(rng, typed), rng];
+    return [priceList, randomJob(rng, typed, rows), rng];
   });
 }
 
@@ -251,6 +278,36 @@ describe('pricing properties', { timeout: 60_000 }, () => {
     });
     expect(problems.slice(0, 10)).toEqual([]);
     expect(compared).toBeGreaterThan(900);
+  });
+
+  it('with category rows and Mold rooms, adding square feet or a quantity never lowers either total (tiered)', () => {
+    const problems: string[] = [];
+    let compared = 0;
+    let withRows = 0;
+    cases(20261111, 800, 'tiered', true).forEach(([priceList, before, rng], index) => {
+      const base = price(priceList, before);
+      if (!base) return;
+      if (base.lines.some((line) => /^[^:]*, (Cat [123]|Mold): /.test(line.description))) withRows += 1;
+      for (let step = 0; step < 3; step += 1) {
+        const after = grow(rng, before);
+        const bigger = price(priceList, after);
+        if (!bigger) {
+          problems.push(`case ${index}: refused after growing`);
+          continue;
+        }
+        compared += 1;
+        if (centsOf(bigger.totals.low.total) < centsOf(base.totals.low.total)) {
+          problems.push(`case ${index}: low ${base.totals.low.total} -> ${bigger.totals.low.total}`);
+        }
+        const high = (estimate: Estimate) => estimate.totals.high?.total ?? estimate.totals.low.total;
+        if (centsOf(high(bigger)) < centsOf(high(base))) {
+          problems.push(`case ${index}: high ${high(base)} -> ${high(bigger)}`);
+        }
+      }
+    });
+    expect(problems.slice(0, 10)).toEqual([]);
+    expect(compared).toBeGreaterThan(1800);
+    expect(withRows).toBeGreaterThan(300);
   });
 
   it('the high total is never below the low total, and each total equals its lines plus adjustments', () => {

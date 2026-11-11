@@ -1,4 +1,4 @@
-// Low and high ends of a v2 estimate. Summary amounts are decimal strings; cents use HALF_UP once.
+// Low and high ends of a v3 estimate. Summary amounts are decimal strings; cents use HALF_UP once.
 
 import { Dec, HUNDRED, ONE, ZERO, maxDec, minDec, money, percentText, sumDec } from './decimal';
 import type { JObj, Json } from './json';
@@ -8,7 +8,7 @@ import { exactAmount, jobSf, priceScopeV2, sumBucket, type EngineWarning } from 
 import { equipmentSizing } from './sizing';
 import {
   DEFAULT_AFTER_HOURS_LABEL,
-  V2,
+  ENGINE_VERSION,
   cushionBrackets,
   hasCushionBrackets,
   type CushionBand,
@@ -16,9 +16,14 @@ import {
   type Policy,
   type Table,
 } from './table';
-import { commas, numberText, type PriceLine } from './values';
+import { commas, numberText, type Category, type PriceLine } from './values';
 
 const MINIMUM_CHARGE_LABEL = 'Minimum job charge';
+
+/** The hidden-damage percent key for a room: a Mold room uses the category 3 percent. */
+function hiddenKey(category: Category): '1' | '2' | '3' {
+  return category === 'mold' ? '3' : (String(category) as '1' | '2' | '3');
+}
 const BUCKETS = new Set(['fixed', 'equipment', 'labor_material']);
 
 export type End = {
@@ -124,8 +129,7 @@ function factors(data: Inspection, policy: Policy): Record<string, Dec> {
 function roomPercents(data: Inspection, policy: Policy): Map<string, Dec> {
   const percents = new Map<string, Dec>();
   for (const room of data.rooms) {
-    const key = String(room.category) as '1' | '2' | '3';
-    const percent = Dec.parse(policy.assist.hidden_damage_percent[key]).div(HUNDRED);
+    const percent = Dec.parse(policy.assist.hidden_damage_percent[hiddenKey(room.category)]).div(HUNDRED);
     percents.set(room.name, maxDec(percents.get(room.name) ?? ZERO, percent));
   }
   return percents;
@@ -336,8 +340,8 @@ function sizingClause(data: Inspection, policy: Policy): string | null {
 function hiddenClause(data: Inspection, policy: Policy): string | null {
   const hiddenPercent = policy.assist.hidden_damage_percent;
   const names: Record<string, string> = { '1': 'category 1', '2': 'category 2', '3': 'category 3 or mold' };
-  const present = new Set(data.rooms.map((room) => String(room.category)));
-  const parts = ['1', '2', '3']
+  const present = new Set(data.rooms.map((room) => hiddenKey(room.category)));
+  const parts = (['1', '2', '3'] as const)
     .filter((key) => present.has(key))
     .map((key) => `${percentText(hiddenPercent[key as '1' | '2' | '3'])}% in ${names[key]} rooms`);
   if (!parts.length) return null;
@@ -348,7 +352,7 @@ function hiddenClause(data: Inspection, policy: Policy): string | null {
 function uncertaintySentence(data: Inspection, policy: Policy): string | null {
   const numbers = highNumbers(data, policy);
   const assist = policy.assist;
-  const categories = new Set(data.rooms.map((room) => String(room.category)));
+  const categories = new Set(data.rooms.map((room) => hiddenKey(room.category)));
   const unchanged =
     asDec(numbers.air).eq(entered(data, 'air_movers')) &&
     asDec(numbers.dehu).eq(entered(data, 'dehumidifiers')) &&
@@ -443,9 +447,9 @@ export function explanation(policy: Policy, data: Inspection): string {
   return sentences.join(' ');
 }
 
-/** Price a saved draft from a parsed table with the dryscope-v2 formulas. */
+/** Price a saved draft from a parsed table with the dryscope-v3 formulas. */
 export function priceAndRange(data: Inspection, table: Table): Priced {
   const scoped = priceScopeV2(data, table.items, table.policy);
   const totals = computeTotals(data, scoped.lines, table.policy, table.items);
-  return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: V2 };
+  return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: ENGINE_VERSION };
 }
