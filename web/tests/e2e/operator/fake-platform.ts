@@ -20,6 +20,8 @@ export class FakePlatform {
   calls: Call[] = [];
   // While set, the routes that need a fresh sign-in refuse as a sign-in older than 15 minutes.
   stale = false;
+  // While set, reading the company list fails as the server being unavailable.
+  listUnavailable = false;
 
   constructor() {
     this.companies = [
@@ -60,7 +62,7 @@ export class FakePlatform {
       route.fulfill({ status, contentType: 'application/json', headers: { 'cache-control': 'no-store' }, body: JSON.stringify(payload) });
 
     if (path === '/api/platform/companies') {
-      if (method === 'GET') return json(200, { companies: this.companies });
+      if (method === 'GET') return this.listUnavailable ? json(503, { error: 'unavailable' }) : json(200, { companies: this.companies });
       const input = body as { name: string; signInSlug: string };
       if (this.companies.some((company) => company.signInSlug === input.signInSlug)) return json(409, { error: 'sign_in_address_taken' });
       const company = this.company(input.name, input.signInSlug, false);

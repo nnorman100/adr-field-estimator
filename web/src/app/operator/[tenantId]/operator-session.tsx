@@ -7,12 +7,20 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { BrowserSignInConfig } from '@/lib/config';
-import { belongsTo, companyAuth, signInWithGoogle, signInWithPassword, signOutCompany } from '@/lib/firebase-client';
+import {
+  belongsTo,
+  companyAuth,
+  signInWithGoogle,
+  signInWithPassword,
+  signOutCompany,
+  type SecondStepChallenge,
+} from '@/lib/firebase-client';
 import { operatorCall, platformPaths, type ApiResult, type CompaniesAnswer, type CompanyView } from '@/lib/operator/client';
 import { endsOperatorSession, operatorCheck, operatorSignInErrorMessage } from '@/lib/operator/screens';
 import { errorCode } from '@/lib/sign-in/outcome';
 import { FocusedPanel } from '../../(auth)/focused-panel';
 import { Panel } from '../../(auth)/panel';
+import { CodeScreen } from '../../(auth)/second-step/code-screen';
 import { ErrorMessage, Field, StatusMessage } from './ui';
 
 // The platform operator's session for every operator screen (S3-15). It signs in to the operator
@@ -25,7 +33,8 @@ import { ErrorMessage, Field, StatusMessage } from './ui';
 export type OperatorApi = {
   tenantId: string;
   companies: CompanyView[];
-  reload: () => Promise<void>;
+  // Puts a company the server just returned (created or changed) into the list the screens draw.
+  applyCompany: (company: CompanyView) => void;
   call: <T>(path: string, request?: { method?: 'GET' | 'POST'; body?: unknown }) => Promise<ApiResult<T>>;
   // A change to a team or a second step needs a sign-in under 15 minutes old: sign out, then sign in.
   signInAgain: () => Promise<void>;
@@ -42,6 +51,8 @@ export function useOperator(): OperatorApi {
 type Phase =
   | { name: 'starting' }
   | { name: 'signed-out' }
+  // The password or Google account was right and the operator has an authenticator app: the code is next.
+  | { name: 'code'; challenge: SecondStepChallenge }
   | { name: 'checking' }
   | { name: 'refused'; reason: 'verify-email' | 'second-step' | 'unavailable' }
   | { name: 'ready' };
@@ -79,7 +90,10 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
   const [busy, setBusy] = useState(false);
   const authRef = useRef<Auth | null>(null);
 
-  const showSignedOut = useCallback(() => setPhase({ name: 'signed-out' }), []);
+  const showSignedOut = useCallback(
+    () => setPhase((current) => (current.name === 'code' ? current : { name: 'signed-out' })),
+    [],
+  );
 
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
@@ -167,16 +181,19 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
     [refuse],
   );
 
-  const reload = useCallback(async () => {
-    const result = await call<CompaniesAnswer>(platformPaths.companies());
-    if (result.ok && Array.isArray(result.body.companies)) setCompanies(result.body.companies);
-  }, [call]);
+  const applyCompany = useCallback((company: CompanyView) => {
+    setCompanies((current) =>
+      current.some((candidate) => candidate.id === company.id)
+        ? current.map((candidate) => (candidate.id === company.id ? company : candidate))
+        : [...current, company],
+    );
+  }, []);
 
   const signInAgain = useCallback(() => endSession('For that change, sign in again.'), [endSession]);
 
   const api = useMemo<OperatorApi>(
-    () => ({ tenantId, companies, reload, call, signInAgain }),
-    [tenantId, companies, reload, call, signInAgain],
+    () => ({ tenantId, companies, applyCompany, call, signInAgain }),
+    [tenantId, companies, applyCompany, call, signInAgain],
   );
 
   async function run(action: () => Promise<void>) {
@@ -231,6 +248,24 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
     );
   }
 
+  if (phase.name === 'code') {
+    return (
+      <CodeScreen
+        challenge={phase.challenge}
+        onVerified={() => {}}
+        onExpired={() => {
+          setNotice('That sign-in timed out. Sign in again.');
+          setPhase({ name: 'signed-out' });
+        }}
+        onBack={() => {
+          setError(null);
+          setNotice(null);
+          setPhase({ name: 'signed-out' });
+        }}
+      />
+    );
+  }
+
   if (phase.name === 'refused') {
     switch (phase.reason) {
       case 'verify-email':
@@ -282,8 +317,9 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
           event.preventDefault();
           void run(async () => {
             setNotice(null);
-            await signInWithPassword(auth(), email, password);
+            const challenge = await signInWithPassword(auth(), email, password);
             setPassword('');
+            if (challenge) setPhase({ name: 'code', challenge });
           });
         }}
       >
@@ -323,7 +359,8 @@ function ConfiguredSession({ tenantId, config, children }: { tenantId: string; c
         onClick={() =>
           run(async () => {
             setNotice(null);
-            await signInWithGoogle(auth());
+            const challenge = await signInWithGoogle(auth());
+            if (challenge) setPhase({ name: 'code', challenge });
           })
         }
       >

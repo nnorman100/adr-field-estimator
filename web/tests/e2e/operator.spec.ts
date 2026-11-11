@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { FakePlatform } from './operator/fake-platform';
+import { APP_CODE, fakeSecondStep } from './second-step/fake-totp';
 import { PASSWORD, readSeed, type ProjectSeed, type Seed } from './sign-in/seed';
 
 // The platform operator's screens (S3-15) in Chromium and WebKit at phone width. An operator signs
@@ -87,6 +88,30 @@ test('an operator with no second step sees only the second-step message', async 
   await expect(page.getByRole('heading', { name: 'Platform operator sign-in' })).toBeVisible();
 });
 
+test('an operator with an authenticator app enters its code and sees Companies', async ({ page }) => {
+  const second = await fakeSecondStep(page, { factors: ['Authenticator app'] });
+  const fake = new FakePlatform();
+  await openAsOperator(page, fake);
+  await expect(page.getByRole('heading', { name: 'Enter your sign-in code' })).toBeVisible();
+  expect(fake.made('GET', /companies$/)).toHaveLength(0);
+  await expectAccessible(page);
+
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Companies', level: 1 })).toBeVisible();
+  expect(second.calls).toContain('mfaSignIn:finalize');
+  expect(fake.made('GET', /companies$/).length).toBeGreaterThan(0);
+});
+
+test('going back from the operator code step returns to the sign-in form', async ({ page }) => {
+  await fakeSecondStep(page, { factors: ['Authenticator app'] });
+  await openAsOperator(page, new FakePlatform());
+  await expect(page.getByRole('heading', { name: 'Enter your sign-in code' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Platform operator sign-in' })).toBeVisible();
+  await expect(page.getByLabel('Password')).toHaveValue('');
+});
+
 test('lists the companies and creates one', async ({ page }) => {
   const fake = new FakePlatform();
   await openAsOperator(page, fake);
@@ -155,6 +180,30 @@ test('offers archive only for a suspended company', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Suspend' })).toBeVisible();
 });
 
+test('a change shows the company the server returned even when the list cannot be read again', async ({ page }) => {
+  const fake = new FakePlatform();
+  await openAsOperator(page, fake);
+  await expect(page.getByRole('heading', { name: 'Companies', level: 1 })).toBeVisible();
+  fake.listUnavailable = true;
+
+  await page.getByLabel('Company name').fill('Company D Restoration');
+  await page.getByLabel('Sign-in address').fill('company-d');
+  await page.getByRole('button', { name: 'Add company' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Company D Restoration was created.' })).toBeVisible();
+  await expect(page.getByText('Active · Sign-in address: company-d · Sign-in tenant: not set yet')).toBeVisible();
+
+  await page.getByRole('link', { name: 'Manage Company A Restoration' }).click();
+  await page.getByRole('button', { name: 'Suspend' }).click();
+  await page.getByRole('button', { name: 'Confirm suspend' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Company A Restoration is now suspended.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Archive' }).click();
+  await page.getByRole('button', { name: 'Confirm archive' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Company A Restoration is now archived.' })).toBeVisible();
+  await expect(page.getByText('This company is archived.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Archive' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Reactivate' })).toBeVisible();
+});
+
 test('opening a company page directly reads the list first and shows only that company', async ({ page }) => {
   const fake = new FakePlatform();
   await fake.install(page);
@@ -166,6 +215,10 @@ test('opening a company page directly reads the list first and shows only that c
 
   await page.goto(operatorUrl('/companies/00000000-0000-4000-8000-000000000000'));
   await expect(page.getByRole('heading', { name: 'Company not found' })).toBeVisible();
+
+  await page.goto(operatorUrl('/companies/not-a-uuid/team'));
+  await expect(page.getByRole('heading', { name: 'Company not found' })).toBeVisible();
+  expect(fake.made('GET', /team$/)).toHaveLength(0);
 });
 
 test('invites the first owner, replaces the owner, and gives the link to copy', async ({ page }) => {

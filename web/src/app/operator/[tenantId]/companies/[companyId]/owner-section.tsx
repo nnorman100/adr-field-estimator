@@ -12,7 +12,7 @@ import { useAction } from '../../use-action';
 // owner off and signs them out everywhere before the server answers. Both need a sign-in under 15
 // minutes old, and the server decides; this form only asks.
 export function OwnerSection({ company }: { company: CompanyView }) {
-  const { call, reload } = useOperator();
+  const { call } = useOperator();
   const [mode, setMode] = useState<'first' | 'replace'>('first');
   const [email, setEmail] = useState('');
   const [understood, setUnderstood] = useState(false);
@@ -38,8 +38,7 @@ export function OwnerSection({ company }: { company: CompanyView }) {
     const person = email.trim();
     void action.run(
       () => call<OwnerAnswer>(platformPaths.owner(company.id), { method: 'POST', body: { email: person, replace: mode === 'replace' } }),
-      async (body) => {
-        await reload();
+      (body) => {
         // The link is a path on this app; the new owner opens it on this app's address.
         setResult({ link: `${window.location.origin}${body.link}`, email: person, replaced: body.replacedMembershipId !== null });
         setEmail('');

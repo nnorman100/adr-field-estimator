@@ -17,14 +17,15 @@ export function SupportTeamScreen({ companyId }: { companyId: string }) {
   const { tenantId, call } = useOperator();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const path = teamPath(companyId);
   // One read per opening: React may run an effect twice in development, and each read is audited.
   const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
+    if (path === null || started.current) return;
     started.current = true;
     void (async () => {
-      const result = await call<SupportTeamAnswer>(platformPaths.team(companyId));
+      const result = await call<SupportTeamAnswer>(path);
       if (!result.ok) {
         setError(isSignInAgainCode(result.code) ? 'Sign in again to view this team.' : operatorErrorMessage(result.code));
         return;
@@ -36,13 +37,26 @@ export function SupportTeamScreen({ companyId }: { companyId: string }) {
       }
       setLoaded({ answer: { ...result.body, team } });
     })();
-  }, [call, companyId]);
+  }, [call, path]);
 
   const back = (
     <Link href={`/operator/${tenantId}/companies/${companyId}`} className="w-fit font-medium underline underline-offset-4">
       Back to company
     </Link>
   );
+
+  if (path === null) {
+    return (
+      <>
+        <h1 className="text-2xl font-semibold leading-tight">Company not found</h1>
+        <p>
+          <Link href={`/operator/${tenantId}`} className="font-medium underline underline-offset-4">
+            Back to Companies
+          </Link>
+        </p>
+      </>
+    );
+  }
 
   if (!loaded) {
     return (
@@ -98,4 +112,12 @@ export function SupportTeamScreen({ companyId }: { companyId: string }) {
       {back}
     </>
   );
+}
+
+function teamPath(companyId: string): string | null {
+  try {
+    return platformPaths.team(companyId);
+  } catch {
+    return null;
+  }
 }

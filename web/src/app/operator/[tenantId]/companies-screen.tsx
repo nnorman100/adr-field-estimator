@@ -14,7 +14,7 @@ import { useAction } from './use-action';
 // a name and a sign-in address (owner decision D5); its sign-in tenant is made by the owner-run
 // command and bound afterwards, then its owner is invited from the company's own page.
 export function CompaniesScreen() {
-  const { tenantId, companies, reload, call } = useOperator();
+  const { tenantId, companies, applyCompany, call } = useOperator();
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [created, setCreated] = useState<string | null>(null);
@@ -36,8 +36,8 @@ export function CompaniesScreen() {
     }
     void action.run(
       () => call<CompanyAnswer>(platformPaths.companies(), { method: 'POST', body: { name: trimmed, signInSlug: address } }),
-      async (body) => {
-        await reload();
+      (body) => {
+        applyCompany(body.company);
         setCreated(`${body.company.name} was created.`);
         setName('');
         setAddress('');

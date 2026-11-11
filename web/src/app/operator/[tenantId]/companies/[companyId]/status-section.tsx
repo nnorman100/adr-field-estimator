@@ -11,7 +11,7 @@ import { useAction } from '../../use-action';
 // Suspend, reactivate or archive. Only what the server would accept is offered: archive appears
 // for a suspended company and for no other. Suspending and archiving ask for a confirmation first.
 export function StatusSection({ company }: { company: CompanyView }) {
-  const { call, reload } = useOperator();
+  const { call, applyCompany } = useOperator();
   const [pending, setPending] = useState<StatusAction | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const action = useAction();
@@ -20,9 +20,9 @@ export function StatusSection({ company }: { company: CompanyView }) {
     setDone(null);
     void action.run(
       () => call<CompanyAnswer>(platformPaths.status(company.id), { method: 'POST', body: { status: change.to } }),
-      async (body) => {
+      (body) => {
         setPending(null);
-        await reload();
+        applyCompany(body.company);
         setDone(`${body.company.name} is now ${STATUS_LABELS[body.company.status].toLowerCase()}.`);
       },
     );
