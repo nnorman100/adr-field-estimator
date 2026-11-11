@@ -20,6 +20,8 @@ export type ProjectSeed = {
   memberA: SeedAccount;
   // A verified estimator of company B.
   memberB: SeedAccount;
+  // The verified owner of company A, for the second-step tests (second-step.spec.ts).
+  ownerA: SeedAccount;
   // An estimator of company A whose email is not verified, and stays so.
   unverifiedA: SeedAccount;
   // Estimators of company A whose email is not verified yet, one per attempt of the test that
