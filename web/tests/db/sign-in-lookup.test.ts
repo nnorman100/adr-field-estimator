@@ -5,6 +5,7 @@ import { openDatabase } from '@/db/client';
 import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { withCompany } from '@/db/tenant';
 import { databaseDirectory } from '@/lib/auth/directory';
+import { databaseSignInDirectory } from '@/lib/sign-in/database-directory';
 import { IdentityRefusal, resolveIdentity, type TokenVerifier } from '@/lib/auth/identity';
 import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
@@ -260,6 +261,120 @@ describe('sign-in lookup (migration 0004)', () => {
 
   it('leaves every table forced and covered by a policy', async () => {
     expect(await unprotectedRelations(admin)).toEqual([]);
+  });
+});
+
+describe('sign-in address lookup (migration 0007)', () => {
+  type Page = { company_name: string; tenant_id: string };
+  const lookup = (address: string | null) =>
+    api<Page[]>`SELECT company_name, tenant_id FROM sign_in_company_page(${address}::text)`;
+
+  // A company with an address but no sign-in tenant yet (companies.auth_tenant_id is optional).
+  async function companyWithoutTenant(address: string, status = 'active') {
+    await admin`INSERT INTO companies (name, sign_in_slug, status) VALUES (${`Company ${address}`}, ${address}, ${status})`;
+  }
+
+  it('gives the name and tenant of an active company, as the runtime, which still sees no company row', async () => {
+    expect(await lookup('tenant-b')).toEqual([{ company_name: 'Company tenant-b', tenant_id: 'tenant-b' }]);
+    expect(await api`SELECT * FROM companies`).toHaveLength(0);
+    // It returns the two public fields only, never the company id or its status.
+    const [row] = await api<Record<string, unknown>[]>`SELECT * FROM sign_in_company_page('tenant-a')`;
+    expect(Object.keys(row!).sort()).toEqual(['company_name', 'tenant_id']);
+    // The lookup clears its setting when it returns, in the caller's transaction too.
+    const [after] = await api<{ n: number; setting: string | null }[]>`
+      SELECT (SELECT count(*)::int FROM sign_in_company_page('tenant-a')) AS n,
+             current_setting('app.sign_in_lookup', true) AS setting
+    `;
+    expect(after).toEqual({ n: 1, setting: '' });
+
+    // Inside company A the runtime still sees only A, even after looking up B's address.
+    const seen = await withCompany(handle.db, seed.a, async (tx) => {
+      await tx.execute(`SELECT * FROM sign_in_company_page('tenant-b')`);
+      return (await tx.execute(`SELECT id::text AS id FROM companies`)) as unknown as { id: string }[];
+    });
+    expect(seen.map((row) => row.id)).toEqual([seed.a]);
+  });
+
+  it('finds nothing for a suspended or archived company', async () => {
+    expect(await lookup('tenant-s')).toEqual([]);
+    await admin`UPDATE companies SET status = 'archived' WHERE id = ${seed.a}`;
+    expect(await lookup('tenant-a')).toEqual([]);
+    // Restored, it answers again: the lookup follows the company's status each time.
+    await admin`UPDATE companies SET status = 'active' WHERE id = ${seed.a}`;
+    expect(await lookup('tenant-a')).toHaveLength(1);
+  });
+
+  it('finds nothing for a company with no sign-in tenant, active or not', async () => {
+    await companyWithoutTenant('no-tenant');
+    await companyWithoutTenant('no-tenant-suspended', 'suspended');
+    expect(await lookup('no-tenant')).toEqual([]);
+    expect(await lookup('no-tenant-suspended')).toEqual([]);
+  });
+
+  it('finds nothing for an unknown, empty, missing, mis-cased or padded address', async () => {
+    for (const address of ['nobody', '', null, 'TENANT-A', ' tenant-a', 'tenant-a ', 'tenant-%', 'operators']) {
+      expect({ address, rows: await lookup(address) }).toEqual({ address, rows: [] });
+    }
+  });
+
+  it('answers the same way for an unknown address and a suspended company', async () => {
+    expect(await lookup('tenant-s')).toEqual(await lookup('nobody'));
+  });
+
+  it('may be called by the runtime only', async () => {
+    const [grants] = await admin<{ everyone: boolean; runtime: boolean }[]>`
+      SELECT has_function_privilege('public', 'sign_in_company_page(text)', 'EXECUTE') AS everyone,
+             has_function_privilege('dryscope_runtime', 'sign_in_company_page(text)', 'EXECUTE') AS runtime
+    `;
+    expect(grants).toEqual({ everyone: false, runtime: true });
+    const other = connect(OTHER_USER, otherPassword);
+    try {
+      expect(await errorCode(other`SELECT * FROM sign_in_company_page('tenant-a')`)).toBe(INSUFFICIENT_PRIVILEGE);
+    } finally {
+      await other.end({ timeout: 5 });
+    }
+    // Nor may the migrator's own session call it through a role it was never granted: the grant
+    // names the runtime alone, so the only other holder is the owner.
+    const holders = await admin<{ role: string }[]>`
+      SELECT r.rolname AS role FROM pg_roles r
+      WHERE has_function_privilege(r.oid, 'sign_in_company_page(text)', 'EXECUTE') AND NOT r.rolsuper
+      ORDER BY 1
+    `;
+    expect(holders.map((row) => row.role)).toEqual(['dryscope_runtime', MIGRATOR, API_USER].sort());
+  });
+
+  it('runs as its owner with a fixed search path and changes nothing', async () => {
+    const [fn] = await admin<{ definer: boolean; config: string[]; owner: string; strict: boolean; sets: boolean }[]>`
+      SELECT prosecdef AS definer, proconfig AS config, pg_get_userbyid(proowner) AS owner,
+             proisstrict AS strict, proretset AS sets
+      FROM pg_proc WHERE oid = 'sign_in_company_page(text)'::regprocedure
+    `;
+    expect(fn).toEqual({ definer: true, config: ['search_path=pg_catalog'], owner: MIGRATOR, strict: true, sets: true });
+
+    // 0007 adds no policy: the page lookup reads through 0004's SELECT-only policy.
+    const policies = await admin<{ name: string }[]>`SELECT polname AS name FROM pg_policy WHERE polrelid = 'companies'::regclass`;
+    expect(policies.map((row) => row.name).sort()).toEqual([
+      'companies_current',
+      'companies_operator_insert',
+      'companies_operator_read',
+      'companies_operator_update',
+      'companies_owner_read',
+    ]);
+    const before = await everything();
+    await lookup('tenant-a');
+    await lookup('nobody');
+    expect(await everything()).toBe(before);
+    expect(await unprotectedRelations(admin)).toEqual([]);
+  });
+
+  it('reads through the app directory in a read-only transaction', async () => {
+    const directory = databaseSignInDirectory(handle.db);
+    expect(await directory.pageFor('tenant-a')).toEqual({ companyName: 'Company tenant-a', tenantId: 'tenant-a' });
+    expect(await directory.pageFor('tenant-s')).toBeNull();
+    expect(await directory.pageFor('nobody')).toBeNull();
+    const before = await everything();
+    await directory.pageFor('tenant-b');
+    expect(await everything()).toBe(before);
   });
 });
 

@@ -9,7 +9,7 @@ import { isSignInAddress, type SignInDirectory } from './directory';
 // uses it only when LOCAL_SIGN_IN_FIXTURE is set, which the configuration allows only on a
 // developer machine beside the Auth emulator, for a demo- project, with no database configured
 // (src/lib/config.ts). It answers the same questions as the database: databaseDirectory for a
-// request's identity, and the address lookup that S3-13b adds to the database.
+// request's identity, and the address lookup of migration 0007.
 //
 // The file is read on every call, so a test can write it after the server has started.
 

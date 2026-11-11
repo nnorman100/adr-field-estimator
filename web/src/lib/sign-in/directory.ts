@@ -3,9 +3,9 @@
 // the page needs the company's name and its Identity Platform tenant, because the browser must
 // sign in to that tenant. Both are public: the tenant id goes to every visitor's browser.
 //
-// This step (S3-13a) has no database lookup for it. The SQL function that reads a company by its
-// address is a later database job (S3-13b, docs/plans/S3.md Corrections); until it lands, every
-// address answers "not recognised" outside the local emulator stand-in (local-directory.ts).
+// The server reads it through sign_in_company_page (migration 0007, S3-13b), see
+// database-directory.ts; on a developer machine beside the Auth emulator the local stand-in
+// (local-directory.ts) answers instead.
 
 export type SignInPage = { companyName: string; tenantId: string };
 
@@ -21,7 +21,7 @@ export function isSignInAddress(value: unknown): value is string {
   return typeof value === 'string' && SIGN_IN_ADDRESS.test(value);
 }
 
-// Until S3-13b: no address is recognised.
+// A directory that recognises no address.
 export const noSignInDirectory: SignInDirectory = Object.freeze({
   async pageFor() {
     return null;

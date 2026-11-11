@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConfigError, parseBrowserSignInConfig, parseConfig, parseLocalSignInFixture } from '@/lib/config';
 import { isSignInAddress, noSignInDirectory, signInPageFor, type SignInDirectory } from '@/lib/sign-in';
+import type { Database } from '@/db/tenant';
+import { databaseSignInDirectory } from '@/lib/sign-in/database-directory';
 import { localIdentityDirectory, localSignInDirectory, type LocalSignInFixture } from '@/lib/sign-in/local-directory';
 import { endsSession, errorCode, meOutcome, signInErrorMessage } from '@/lib/sign-in/outcome';
 
@@ -40,7 +42,7 @@ describe('sign-in address', () => {
     expect(await signInPageFor(directory, 'company-a')).toEqual({ companyName: 'A', tenantId: 't' });
   });
 
-  it('recognises no address until the database lookup lands (S3-13b)', async () => {
+  it('recognises no address with the empty directory', async () => {
     expect(await signInPageFor(noSignInDirectory, 'company-a')).toBeNull();
   });
 });
@@ -51,12 +53,47 @@ describe('GET /api/sign-in/{address}', () => {
     return GET(new Request(`http://localhost/api/sign-in/${address}`), { params: Promise.resolve({ address }) });
   };
 
-  it('answers 404 for every address when no directory is configured', async () => {
+  it('fails closed, never claiming "not recognised", when no database is configured', async () => {
     vi.stubEnv('APP_ENV', 'test');
-    const res = await get('company-a');
+    await expect(get('company-a')).rejects.toThrow(/DATABASE_URL/);
+  });
+
+  it('answers 404 for a malformed address without opening a database', async () => {
+    vi.stubEnv('APP_ENV', 'test');
+    const res = await get('Company_A');
     expect(res.status).toBe(404);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(await res.json()).toEqual({ error: 'not_found' });
+  });
+});
+
+describe('database sign-in directory', () => {
+  // A stand-in for the drizzle handle: one read-only transaction that returns the given rows.
+  const handle = (rows: unknown[]) => {
+    const calls: { config: unknown; sql: string }[] = [];
+    const db = {
+      transaction: async (run: (tx: unknown) => Promise<unknown>, config: unknown) =>
+        run({
+          execute: async (query: { queryChunks: unknown[] }) => {
+            calls.push({ config, sql: JSON.stringify(query.queryChunks) });
+            return rows;
+          },
+        }),
+    };
+    return { db: db as unknown as Database, calls };
+  };
+
+  it('maps the function row to the page, in a read-only transaction', async () => {
+    const { db, calls } = handle([{ company_name: 'Company A', tenant_id: 'tenant-a' }]);
+    expect(await databaseSignInDirectory(db).pageFor('company-a')).toEqual({ companyName: 'Company A', tenantId: 'tenant-a' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.config).toEqual({ accessMode: 'read only' });
+    expect(calls[0]!.sql).toContain('sign_in_company_page');
+    expect(calls[0]!.sql).toContain('company-a');
+  });
+
+  it('answers null when the function returns no row', async () => {
+    expect(await databaseSignInDirectory(handle([]).db).pageFor('company-z')).toBeNull();
   });
 });
 
