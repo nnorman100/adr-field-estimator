@@ -187,7 +187,7 @@ describe('the cushion grows each labor line by its own band', () => {
   });
 });
 
-describe('the cushion taxes each grown labor line once their tax factors differ', () => {
+describe('the cushion taxes each grown labor line', () => {
   const labor = (changes: Obj) =>
     item('labor', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '50.00', taxable: true, ...changes });
   const range: Obj = {
@@ -234,8 +234,14 @@ describe('the cushion taxes each grown labor line once their tax factors differ'
     expect(
       highTax([item('demo', { unit_price: '1.00', taxable: true, materials_share_percent: '40' }), hours({})], {}, {}),
     ).toBe('100.00');
-    // With no flag, the old proportion stands: demolition taxable, hours not, 10% x $2,000.00 x 3,250 / 2,500.
-    expect(highTax([item('demo', { unit_price: '1.00', taxable: true }), hours({})], {}, {})).toBe('260.00');
+    // With no flag, demolition taxable and hours not: 10% x $2,500.00 = $250.00. The old proportion,
+    // 10% x $2,000.00 x 3,250 / 2,500 = $260.00, taxed the growth of labor that is not taxable.
+    expect(highTax([item('demo', { unit_price: '1.00', taxable: true }), hours({})], {}, {})).toBe('250.00');
+    // The hours exempt and not taxable, O&P 10%: 10% x $2,500.00 x 1.10 = $275.00 (not $286.00, which taxed
+    // overhead on the hours' growth that the overhead line does not bill).
+    expect(
+      highTax([item('demo', { unit_price: '1.00', taxable: true }), hours({ no_overhead_profit: true })], { overhead_profit_percent: '10' }, {}),
+    ).toBe('275.00');
   });
 });
 

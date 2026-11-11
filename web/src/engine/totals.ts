@@ -352,28 +352,15 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   const low = end(lowLabor, equipment, addMix(addMix(fixedMix, equipmentMix), laborMix)).end;
   let high: End | null = null;
   if (policy.estimate_mode === 'range') {
-    // Each labor line grows by its own amount, scaled to the rounded high labor. The uncertainty method taxes each
-    // grown line. The cushion does too once a labor line carries a flag that changes its tax: a materials share, an
-    // exemption from overhead and profit, or the after-hours multiplier on some labor lines but not all. Without
-    // one it taxes the low end's taxable proportion of the high labor, as before.
+    // Each labor line grows by its own amount, scaled to the rounded high labor, and is taxed on that amount. The
+    // uncertainty method taxes its exact grown lines; the cushion scales them to its rounded high labor.
     const grownLabor = sumDec(grown.laborEntries.map((entry) => entry.amount), ZERO);
     const laborHigh = scaleMix(mixOf(grown.laborEntries, multiplier, overhead), highLaborAmount, grownLabor);
-    const flagged = labor.filter((line) => line.afterHours).length;
-    const legacyTax =
-      labor.every(
-        (line) =>
-          !line.taxable ||
-          (line.materialsShare.cmp(HUNDRED) === 0 && (!line.noOverheadProfit || overhead.isZero())),
-      ) &&
-      (multiplier.cmp(ONE) === 0 || flagged === 0 || flagged === labor.length);
-    const scaled = (value: Dec, amount: Dec, base: Dec): Dec => (base.isZero() ? ZERO : value.mul(amount).div(base));
     const highMix = uncertainEnd
       ? addMix(addMix(fixedMix, mixOf(uncertainEnd.equipmentEntries, multiplier, overhead)), laborHigh)
       : addMix(addMix(fixedMix, equipmentMix), {
           ...laborHigh,
-          taxed: legacyTax
-            ? scaled(laborMix.taxed, highLaborAmount, lowLabor)
-            : scaled(laborHigh.taxed, highLaborAmount, grownLabor),
+          taxed: grownLabor.isZero() ? ZERO : laborHigh.taxed.mul(highLaborAmount).div(grownLabor),
         });
     const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
     // A high end still under the job minimum is the low end unless it charges more before tax: it is not
