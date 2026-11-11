@@ -259,6 +259,16 @@ signed in as itself while the function runs. It registers an operator tenant, ad
 writes one `operator_added` audit row (no company, member or operator named). Operator audit rows
 hold ids, roles and counts only.
 
+`0007_sign_in_address` adds the company sign-in page's lookup (S3-13b). The page `/sign-in/{address}`
+needs the company's name and Identity Platform tenant before anyone has signed in, so the runtime
+calls `sign_in_company_page(address)` (`web/src/lib/sign-in/database-directory.ts`, behind
+`GET /api/sign-in/{address}`). It is built like `0004`: a migrator-owned `SECURITY DEFINER` function
+with a fixed `search_path`, executable only by `dryscope_runtime`, reading `companies` through
+`0004`'s `SELECT`-only policy while it holds the `app.sign_in_lookup` setting. It returns the name
+and tenant of an active company that has a sign-in tenant, and no row for an unknown or empty
+address, a company with no tenant yet, or a suspended or archived company (all look the same). It
+adds no table, column or policy and returns no company id.
+
 Migrations are additive. Change the schema by add, then switch, then remove:
 
 1. Add the new table or column in a migration, and ship the app still able to read the old shape.

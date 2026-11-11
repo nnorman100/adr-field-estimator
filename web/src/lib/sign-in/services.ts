@@ -1,11 +1,18 @@
+import { serverDatabase } from '@/lib/auth/services';
 import { parseLocalSignInFixture } from '@/lib/config';
-import { noSignInDirectory, type SignInDirectory } from './directory';
+import type { SignInDirectory } from './directory';
+import { databaseSignInDirectory } from './database-directory';
 import { localSignInDirectory } from './local-directory';
 
 // The server's address lookup: the local emulator stand-in when the configuration allows it,
-// otherwise none until S3-13b adds the database lookup. An invalid setting throws, so the page or
-// route fails closed.
+// otherwise the database (migration 0007). An invalid setting or a missing database configuration
+// throws, so the page or route fails closed. Built on the first question, so a malformed address,
+// which signInPageFor never passes on, opens nothing.
 export function signInDirectory(): SignInDirectory {
-  const fixture = parseLocalSignInFixture(process.env);
-  return fixture ? localSignInDirectory(fixture) : noSignInDirectory;
+  return {
+    pageFor(address) {
+      const fixture = parseLocalSignInFixture(process.env);
+      return (fixture ? localSignInDirectory(fixture) : databaseSignInDirectory(serverDatabase())).pageFor(address);
+    },
+  };
 }
