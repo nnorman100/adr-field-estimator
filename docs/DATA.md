@@ -325,8 +325,9 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
   `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`).
   That pass is what retries every row a projection left waiting, because its write failed or it
-  found the actor busy, removals included. It needs a scheduled trigger: the scheduler account and
-  its Cloud Scheduler job are not created yet (an owner follow-up in Terraform), and until they
-  exist those rows wait, unless a later membership change of the same member projects them. Opening
+  found the actor busy, removals included. Its scheduled trigger is the Cloud Scheduler job
+  `dryscope-access-projection-<env>` (`infra/dryscope/app/scheduler.tf`, every five minutes, as
+  `dryscope-scheduler-<env>` from the data root); until the owner applies both roots, those rows
+  wait, unless a later membership change of the same member projects them. Opening
   the app does not retry them: a removed member is refused before renewal runs, and renewal leaves a
   row alone while it waits out its back-off.

@@ -117,6 +117,44 @@
    }
   },
   {
+   "address": "google_project_iam_custom_role.rules_release",
+   "type": "google_project_iam_custom_role",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "description": "Create a Firestore rules ruleset and point the dryscope-field-test release at it. No delete.",
+     "permissions": [
+      "firebaserules.releases.create",
+      "firebaserules.releases.get",
+      "firebaserules.releases.update",
+      "firebaserules.rulesets.create",
+      "firebaserules.rulesets.get"
+     ],
+     "project": "dryscope",
+     "role_id": "dryscopeRulesReleaseTest",
+     "stage": null,
+     "title": "DryScope test field rules release"
+    }
+   }
+  },
+  {
+   "address": "google_project_iam_member.deploy_rules_release",
+   "type": "google_project_iam_member",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "condition": [],
+     "member": "serviceAccount:dryscope-deploy-test@dryscope.iam.gserviceaccount.com",
+     "project": "dryscope",
+     "role": "projects/dryscope/roles/dryscopeRulesReleaseTest"
+    }
+   }
+  },
+  {
    "address": "google_project_iam_member.firestore_user[\"api\"]",
    "type": "google_project_iam_member",
    "change": {
@@ -295,6 +333,22 @@
      "disable_on_destroy": false,
      "project": "dryscope",
      "service": "cloudresourcemanager.googleapis.com",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_project_service.apis[\"cloudscheduler.googleapis.com\"]",
+   "type": "google_project_service",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "disable_dependent_services": false,
+     "disable_on_destroy": false,
+     "project": "dryscope",
+     "service": "cloudscheduler.googleapis.com",
      "timeouts": null
     }
    }
@@ -726,6 +780,24 @@
      "description": null,
      "disabled": null,
      "display_name": "DryScope test schema migrator",
+     "project": "dryscope",
+     "timeouts": null
+    }
+   }
+  },
+  {
+   "address": "google_service_account.scheduler",
+   "type": "google_service_account",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "after": {
+     "account_id": "dryscope-scheduler-test",
+     "create_ignore_already_exists": null,
+     "description": null,
+     "disabled": null,
+     "display_name": "DryScope test scheduled jobs caller",
      "project": "dryscope",
      "timeouts": null
     }

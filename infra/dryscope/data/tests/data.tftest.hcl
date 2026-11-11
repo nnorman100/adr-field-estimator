@@ -485,3 +485,28 @@ run "the_migrator_takes_the_same_scoped_principal_set" {
     error_message = "The migrator takes the same repository-scoped principal set as the deploy account."
   }
 }
+
+# The scheduler account (identities.tf) calls the internal job routes and holds no role. The deploy
+# account's Firebase Rules role releases web/firestore.rules: read, create and point only.
+run "scheduler_account_and_rules_release_role" {
+  command = plan
+
+  assert {
+    condition     = google_service_account.scheduler.account_id == "dryscope-scheduler-${var.environment}" && contains(keys(google_project_service.apis), "cloudscheduler.googleapis.com")
+    error_message = "Each environment has its own scheduler account, and the Cloud Scheduler API is on."
+  }
+  assert {
+    condition = google_project_iam_custom_role.rules_release.role_id == "dryscopeRulesRelease${title(var.environment)}" && toset(google_project_iam_custom_role.rules_release.permissions) == toset([
+      "firebaserules.releases.create",
+      "firebaserules.releases.get",
+      "firebaserules.releases.update",
+      "firebaserules.rulesets.create",
+      "firebaserules.rulesets.get",
+    ])
+    error_message = "The rules release role reads, creates and points releases only: no delete, list, test or getExecutable."
+  }
+  assert {
+    condition     = google_project_iam_member.deploy_rules_release.member == "serviceAccount:dryscope-deploy-${var.environment}@dryscope.iam.gserviceaccount.com" && google_project_iam_member.deploy_rules_release.role == "projects/dryscope/roles/dryscopeRulesRelease${title(var.environment)}" && length(google_project_iam_member.deploy_rules_release.condition) == 0
+    error_message = "Only this environment's deploy account gets the rules release role, with no condition (Firebase Rules evaluates none)."
+  }
+}
