@@ -49,6 +49,8 @@ export type Harness = {
   onRevoke: (() => Promise<void>) | null;
   identity: IdentityServices;
   team: TeamService;
+  // Each member the team service asked to project, in order, after its change committed.
+  projected: { companyId: string; actorId: string }[];
 };
 
 function urlAs(server: DisposablePostgres, user: string, password: string): string {
@@ -195,6 +197,7 @@ export async function resetTeamDatabase(
     onRevoke: null,
     identity: { verifier: fakeVerifier(), directory: databaseDirectory(handle.db) },
     team: null as unknown as TeamService,
+    projected: [],
   };
   const users: TenantUsers = {
     async ensureAccount(tenant, email) {
@@ -213,7 +216,9 @@ export async function resetTeamDatabase(
       }
     },
   };
-  harness.team = teamService(handle.db, users);
+  harness.team = teamService(handle.db, users, async (companyId, actorId) => {
+    harness.projected.push({ companyId, actorId });
+  });
   return harness;
 }
 

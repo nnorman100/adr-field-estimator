@@ -22,6 +22,10 @@ export const memberApiPaths: readonly string[] = [
   '/api/invitations/:id/accept',
 ];
 
+// Internal job routes that check a service token themselves with serviceRoute (src/lib/auth/route.ts):
+// only the scheduler service account gets past them, never a person.
+export const serviceApiPaths: readonly string[] = ['/api/internal/access-projection'];
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function matches(pattern: string, pathname: string): boolean {
@@ -37,4 +41,8 @@ export function isPublicApiPath(pathname: string): boolean {
 
 export function isMemberApiPath(pathname: string): boolean {
   return memberApiPaths.some((pattern) => matches(pattern, pathname));
+}
+
+export function isServiceApiPath(pathname: string): boolean {
+  return serviceApiPaths.includes(pathname);
 }

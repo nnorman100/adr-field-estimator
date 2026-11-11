@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 const APP_DIR = fileURLToPath(new URL('../../src/app', import.meta.url));
 const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-const RULES = new Set(['publicRoute', 'memberRoute', 'accountRoute', 'requireFlag']);
+const RULES = new Set(['publicRoute', 'memberRoute', 'accountRoute', 'requireFlag', 'serviceRoute']);
 const ROUTE_FILE = /^route\.(ts|tsx|js|jsx|mjs)$/;
 
 function hasExport(node: ts.Node): boolean {

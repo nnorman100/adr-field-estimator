@@ -9,7 +9,8 @@ import type { TenantUsers } from './users';
 // company id taken from the verified sign-in (or, for a platform operator, the company the
 // operator is supporting), so the row-level security policies of migration 0003 limit it to that
 // company. Every change writes one audit row in the same transaction, and every membership change
-// queues the member's Firestore access record (access_projection_outbox, drained by S3-12).
+// queues the member's Firestore access record (access_projection_outbox, S3-12) and, once the
+// change has committed, projects it before answering.
 //
 // Owner decisions this follows: an invitation link is the only way in, and nobody but the invitee
 // ever knows a password (D11); the owner role is changed only by the platform operator (S3-9), so
@@ -186,10 +187,6 @@ async function audit(
   });
 }
 
-async function queueAccessRecord(tx: CompanyTransaction, companyId: string, actorId: string): Promise<void> {
-  await tx.insert(accessProjectionOutbox).values({ companyId, actorId });
-}
-
 async function readyCompany(tx: CompanyTransaction, companyId: string): Promise<{ slug: string; tenant: string }> {
   const [company] = await tx
     .select({ slug: companies.signInSlug, tenant: companies.authTenantId })
@@ -227,7 +224,28 @@ function memberView(row: MemberView): MemberView {
   return { membershipId, actorId, displayName, email, role, status };
 }
 
-export function teamService(db: Database, users: TenantUsers) {
+// Brings one member's Firestore access record in line with what just committed. It never throws:
+// a record it cannot write stays waiting in the outbox (web/src/lib/projection/services.ts).
+export type ProjectAccess = (companyId: string, actorId: string) => Promise<void>;
+
+export function teamService(db: Database, users: TenantUsers, project: ProjectAccess) {
+  // A change that alters a membership: `queue` adds the member's outbox row in the change's own
+  // transaction, and each queued member is projected only after that transaction commits.
+  async function membershipChange<T>(
+    companyId: string,
+    run: (tx: CompanyTransaction, queue: (actorId: string) => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    const queued: string[] = [];
+    const result = await inCompany(db, companyId, (tx) =>
+      run(tx, async (actorId) => {
+        await tx.insert(accessProjectionOutbox).values({ companyId, actorId });
+        queued.push(actorId);
+      }),
+    );
+    for (const actorId of queued) await project(companyId, actorId);
+    return result;
+  }
+
   return {
     // The owner (and a supporting operator) sees every member and every invitation not cleared.
     // An office user sees only the active estimators, to assign work to them.
@@ -386,14 +404,14 @@ export function teamService(db: Database, users: TenantUsers) {
       now: Date,
     ): Promise<{ member: MemberView }> {
       allowed(by, 'member_role_changed');
-      return inCompany(db, companyId, async (tx) => {
+      return membershipChange(companyId, async (tx, queue) => {
         const row = await lockedMember(tx, companyId, membershipId);
         if (row.role === role) return { member: memberView(row) };
         await tx
           .update(memberships)
           .set({ role, updatedAt: now })
           .where(and(eq(memberships.companyId, companyId), eq(memberships.id, membershipId)));
-        await queueAccessRecord(tx, companyId, row.actorId);
+        await queue(row.actorId);
         await audit(tx, companyId, by, 'member_role_changed', membershipId, { from: row.role, to: role });
         return { member: memberView({ ...row, role }) };
       });
@@ -404,14 +422,14 @@ export function teamService(db: Database, users: TenantUsers) {
     // changes and the owner can try again; a failed commit after it only signs the member out.
     async disable(companyId: string, by: TeamActor, membershipId: string, now: Date): Promise<{ member: MemberView }> {
       allowed(by, 'member_disabled');
-      return inCompany(db, companyId, async (tx) => {
+      return membershipChange(companyId, async (tx, queue) => {
         const row = await lockedMember(tx, companyId, membershipId);
         if (row.status === 'disabled') return { member: memberView(row) };
         await tx
           .update(memberships)
           .set({ status: 'disabled', updatedAt: now })
           .where(and(eq(memberships.companyId, companyId), eq(memberships.id, membershipId)));
-        await queueAccessRecord(tx, companyId, row.actorId);
+        await queue(row.actorId);
         await audit(tx, companyId, by, 'member_disabled', membershipId);
         await users.revokeSessions(row.tenant, row.uid);
         return { member: memberView({ ...row, status: 'disabled' }) };
@@ -420,14 +438,14 @@ export function teamService(db: Database, users: TenantUsers) {
 
     async enable(companyId: string, by: TeamActor, membershipId: string, now: Date): Promise<{ member: MemberView }> {
       allowed(by, 'member_enabled');
-      return inCompany(db, companyId, async (tx) => {
+      return membershipChange(companyId, async (tx, queue) => {
         const row = await lockedMember(tx, companyId, membershipId);
         if (row.status === 'active') return { member: memberView(row) };
         await tx
           .update(memberships)
           .set({ status: 'active', updatedAt: now })
           .where(and(eq(memberships.companyId, companyId), eq(memberships.id, membershipId)));
-        await queueAccessRecord(tx, companyId, row.actorId);
+        await queue(row.actorId);
         await audit(tx, companyId, by, 'member_enabled', membershipId);
         return { member: memberView({ ...row, status: 'active' }) };
       });
@@ -451,7 +469,7 @@ export function teamService(db: Database, users: TenantUsers) {
     // Creates the person's actor (bound to their sign-in tenant and uid) and one membership, once.
     // Accepting again returns the same membership and writes nothing.
     async accept(account: Account, invitationId: string, now: Date) {
-      return inCompany(db, account.companyId, async (tx) => {
+      return membershipChange(account.companyId, async (tx, queue) => {
         const companyId = account.companyId;
         const row = await lockedInvitation(tx, companyId, invitationId);
         if (!row || row.email !== account.email) throw new TeamError('not_found');
@@ -506,7 +524,7 @@ export function teamService(db: Database, users: TenantUsers) {
           .update(invitations)
           .set({ status: 'accepted', acceptedByActorId: actorId, acceptedAt: now, updatedAt: now })
           .where(and(eq(invitations.companyId, companyId), eq(invitations.id, invitationId)));
-        await queueAccessRecord(tx, companyId, actorId);
+        await queue(actorId);
         await audit(tx, companyId, { kind: 'invitee', actorId }, 'invitation_accepted', invitationId, { role: row.role });
         return { membershipId: membership!.id, role: membership!.role, status: membership!.status, accepted: true };
       });

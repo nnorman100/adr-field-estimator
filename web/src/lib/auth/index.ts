@@ -24,4 +24,4 @@ export {
   type SessionClaims,
   type SignInHolder,
 } from './policy';
-export { accountRoute, memberRoute, publicRoute, requireFlag } from './route';
+export { accountRoute, memberRoute, publicRoute, requireFlag, serviceRoute } from './route';

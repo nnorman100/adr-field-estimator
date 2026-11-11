@@ -195,7 +195,7 @@ spaces, so one person is one stored key. The team and invitation routes (S3-10,
 `web/src/lib/team/`) write actors, memberships, invitations, audit events and outbox rows, always
 inside `withCompany`; an invitation's record, with its email, stays after it is accepted,
 cancelled or cleared ("clear" only hides it from the team list); nothing in `web/` deletes it yet.
-Nothing else writes these tables yet. Prices and signed documents are later work.
+The access projection (below) marks outbox rows done; nothing else writes these tables yet. Prices and signed documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
 `BYPASSRLS` and no ownership, and grants it to the environment's API database user
@@ -208,8 +208,8 @@ after such a transaction, every policy matches nothing. Inside it the runtime re
 the company's sign-in tenant and its feature flags; reads, inserts and updates its actors,
 memberships, invitations and outbox rows; and reads and appends audit events, never updating or
 deleting them. The runtime has no `DELETE` or `TRUNCATE` anywhere, no right on `migration_ledger`,
-and sees no platform operator. Platform operator access across companies and the outbox worker
-have no database context yet; each needs a later migration. Forced row-level security binds the
+and sees no platform operator. Platform operator access across companies has no database context yet; it needs a later
+migration. The outbox worker's one lookup across companies is in `0005` (below). Forced row-level security binds the
 migrator too: only `migration_ledger` has a policy for its owner (`companies` adds one that only
 `sign_in_company` can use, see below), so a migration that must change
 rows turns `FORCE` off and back on inside its own transaction (the guard test in
@@ -227,6 +227,20 @@ function the migrator still reads no company row, even with that setting on, and
 without `withCompany`. The actor, membership and company status are then read inside
 `withCompany` for that company (`web/src/lib/auth/directory.ts`), in read-only transactions.
 
+`0005_access_projection` adds the outbox worker's lookup, built the same way. A change to a
+membership writes an `access_projection_outbox` row in its own transaction; the worker
+(`web/src/lib/projection/`) then needs to know which companies have rows waiting before it can open
+`withCompany` for them. `access_projection_due_companies(max)` (1 to 100) returns only the ids of
+companies with a row not yet done and due now, oldest first, never a row or anything else of a
+company. It is a migrator-owned `SECURITY DEFINER` function, executable only by
+`dryscope_runtime`, reading the outbox through a `SELECT`-only policy gated like `0004`'s (the
+owner's rights, a session signed in as another role, and the setting `app.projection_scan`, which
+the function sets for its one read and clears). Everything else the worker does (read the actor,
+membership and company, mark rows done) runs inside `withCompany` under the `0003` policies. It also
+adds an index on `(company_id, actor_id, processed_at)` for one actor's rows. Outbox rows are kept
+after they are done; about one per active member per day is added by renewal (below), and nothing
+prunes them yet.
+
 Migrations are additive. Change the schema by add, then switch, then remove:
 
 1. Add the new table or column in a migration, and ship the app still able to read the old shape.
@@ -243,11 +257,11 @@ steps are in
 [RUNBOOK.md](RUNBOOK.md#postgres-migrations-for-the-rebuilt-app). Connection failures from the
 migrator name the migration and omit the database URL.
 
-## Rebuilt app field database (rules only, not deployed)
+## Rebuilt app field database (not deployed)
 
 `web/firestore.rules` holds the rules for the rebuilt app's Firestore field database. They are
-checked in the emulator (`web/tests/emu/rules/`) and are not deployed. Nothing writes these records
-yet; the server writes the access records after a membership change commits in Postgres (S3-12).
+checked in the emulator (`web/tests/emu/rules/`) and are not deployed. The server writes the
+company header and the access records (`web/src/lib/projection/`, S3-12); drafts are later work.
 The rules deny every path they do not name. They read three server-written records:
 
 | Path | Fields the rules read | Who may change it |
@@ -263,3 +277,56 @@ owner or estimator, writes, and only the `field` map: of a draft, or of a docume
 (created holding only `field`, never deleted by a client). A draft that is `submitting` or
 `submitted` refuses every client write. What `field` may hold is checked field by field in S5. The
 `field` map will hold job details such as rooms, measurements and notes once S5 defines it.
+
+How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
+
+- A membership change and its outbox row commit together, so no record is written before the change
+  commits, and a change that rolls back writes nothing. The team routes (disable, re-enable, role
+  change, accepting an invitation) queue the row in the change's transaction and, once it has
+  committed, project that member before they answer. When that projection succeeds, a disabled
+  member's record is gone (and a changed role replaced) by the time the owner sees the change
+  succeed. When it fails, or finds the actor busy after the lock timeout, the change still succeeds
+  and its outbox rows wait (see the cross-company pass below). Later operator code calls
+  `enqueueAccessProjection` the same way, including when a company stops being active.
+- A run writes what Postgres holds when it runs, not what the row asked for: an access record with
+  the role for an active membership in an active company with a sign-in tenant (plus the header's
+  `authTenantId`), and otherwise no record. All of one actor's waiting rows are handled by one write
+  under a per-actor lock, and rows are marked done only after the write; a run with nothing waiting
+  writes nothing.
+- Removal: the sign-in check reads the membership in Postgres, so the server refuses a removed
+  member from the moment the change commits, before the record is removed. The record's removal is
+  done only once a read shows it gone.
+- A run holds the actor's lock until its Firestore write has settled; it never stops waiting for a
+  write it started, so a slow Firestore holds that request and its database connection until it
+  answers. The app keeps four projection connections, so other members' renewals go on meanwhile,
+  and a run that still finds an actor held after the 15-second lock timeout counts it busy and goes
+  on with the rest; its rows stay due for the next run. A run whose write succeeded looks again
+  before it returns and applies any row of that actor committed meanwhile (a member disabled while a
+  renewal's write was on its way). A run whose write failed does not look again, so a change that
+  found the actor busy behind it is left waiting. A failed write leaves the rows waiting with a
+  back-off (30 seconds, doubling, at most an hour) and a fixed error code; a crash at any point
+  leaves them waiting, due now. The next run repairs either.
+- Each write carries a version, the id of the run's Postgres transaction, taken under the lock, so
+  a later decision always has a higher one. The server keeps the last applied version in
+  `companies/{companyId}/accessVersions/{uid}`, which no rule names (clients can neither read nor
+  write it) and which stays after a removal deletes the access record. Each Firestore write is a
+  transaction that refuses a decision older than that version (`stale_decision`; the rows wait and
+  are tried again), so even a write that lands after its run lost the lock (its database session
+  ended) can neither bring back a removed record nor remove a newer grant, and a refused write is
+  never marked done.
+- A record works for 7 days from when it was written (`ACCESS_TTL_MS`). `GET /api/me` renews it once
+  it is more than a day old (`RENEW_AFTER_MS`), so a member who keeps using the app keeps working,
+  even offline for several days, and one who stops loses access within 7 days of their last write.
+  Removal is an active delete; the expiry bounds only a record the outbox could not remove. A
+  write a phone queued offline is checked by the rules when it reaches Firestore, so it is refused
+  once the record is gone or has run out.
+- The cross-company pass (`runAccessProjection`) runs on `POST /api/internal/access-projection`,
+  which only the environment's scheduler service account may call (`serviceRoute`: a Google-signed
+  ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
+  `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`).
+  That pass is what retries every row a projection left waiting, because its write failed or it
+  found the actor busy, removals included. It needs a scheduled trigger: the scheduler account and
+  its Cloud Scheduler job are not created yet (an owner follow-up in Terraform), and until they
+  exist those rows wait, unless a later membership change of the same member projects them. Opening
+  the app does not retry them: a removed member is refused before renewal runs, and renewal leaves a
+  row alone while it waits out its back-off.
