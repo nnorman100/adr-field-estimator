@@ -364,9 +364,12 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
         });
     const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
     // A high end still under the job minimum is the low end unless it charges more before tax: it is not
-    // floored on its own, but growth in items billed beyond the minimum still raises it.
+    // floored on its own, but growth in items billed beyond the minimum still raises it. A high end below the
+    // low end, which rounding on binding trade minimums can cause, is the low end too.
     const beforeTax = (value: End): Dec => value.total.sub(value.tax);
-    const kept = !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0);
+    const kept =
+      !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0) &&
+      candidate.end.total.cmp(low.total) >= 0;
     high = kept ? candidate.end : { ...low };
   }
   return {

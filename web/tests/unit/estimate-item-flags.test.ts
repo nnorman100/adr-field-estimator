@@ -375,6 +375,25 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
     expect(result.totals.low).toMatchObject({ subtotal: '300.00', total: '300.00' });
     expect(result.totals.low.trade_minimums).toEqual([]);
   });
+
+  it('W63 a high end whose minimum lines round below the low end is the low end', () => {
+    // Cushion 10%, three labor items of 1 hour, each under its own $100.00 heading: $10.06, $10.06 and $10.08.
+    // Low: $30.20 + $89.94 + $89.94 + $89.92 = $300.00. High labor $33.22; the grown trades $11.066, $11.066 and
+    // $11.088 round their lines to $88.93, $88.93 and $88.91, so the high end alone would be $299.99, a cent
+    // under the low end. A high end below the low end is the low end: both are $300.00.
+    const hours = (code: string, price: string) =>
+      item(code, { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: price, trade: code });
+    const headings = ['labor_a', 'labor_b', 'labor_c'].map((id) => ({ trade_id: id, name: id, minimum_charge: '100' }));
+    const result = priced(
+      withTrades([hours('labor_a', '10.06'), hours('labor_b', '10.06'), hours('labor_c', '10.08')], headings, {
+        estimate_mode: 'range',
+        range: { first_sf: 1000, first_percent: '10', beyond_percent: '0' },
+      }),
+      job([room('Kitchen', { unfinished_sf: 100 })], { labor_hours: 1 }),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '30.20', total: '300.00' });
+    expect(result.totals.high).toEqual(result.totals.low);
+  });
 });
 
 describe('flags at the high end and on approved additional work', () => {
