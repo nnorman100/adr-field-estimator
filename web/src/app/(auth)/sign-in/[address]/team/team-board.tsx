@@ -44,8 +44,9 @@ export function TeamBoard({
   const [error, setError] = useState<string | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  // The link of the invitation just made or resent, for the owner to copy.
-  const [link, setLink] = useState<{ email: string; url: string } | null>(null);
+  // The link of the invitation just made or resent, for the owner to copy while it is still open.
+  const [link, setLink] = useState<{ id: string; email: string; url: string } | null>(null);
+  const openLink = link && team.invitations.some((i) => i.id === link.id && i.status === 'pending') ? link : null;
 
   const base = `/api/companies/${companyId}`;
 
@@ -76,12 +77,12 @@ export function TeamBoard({
     }
   }
 
-  function showLink(invitationEmail: string, body: unknown) {
-    const path = typeof (body as { link?: unknown } | null)?.link === 'string' ? (body as { link: string }).link : null;
-    if (path) setLink({ email: invitationEmail, url: `${window.location.origin}${path}` });
+  function showLink(body: unknown) {
+    const { link: path, invitation } = (body ?? {}) as { link?: unknown; invitation?: { id?: unknown; email?: unknown } };
+    if (typeof path === 'string' && typeof invitation?.id === 'string' && typeof invitation.email === 'string') {
+      setLink({ id: invitation.id, email: invitation.email, url: `${window.location.origin}${path}` });
+    }
   }
-
-  const invitationEmail = (id: string) => team.invitations.find((i) => i.id === id)?.email ?? '';
 
   return (
     <FocusedPanel title="Team and invitations">
@@ -110,7 +111,7 @@ export function TeamBoard({
             const invited = email.trim().toLowerCase();
             void change(`${base}/invitations`, { method: 'POST', json: { email: invited, role } }, (body) => {
               setEmail('');
-              showLink(invited, body);
+              showLink(body);
             });
           }}
         >
@@ -143,7 +144,7 @@ export function TeamBoard({
             Create invitation
           </Button>
         </form>
-        {link ? <InvitationLink email={link.email} url={link.url} onCopied={setNotice} /> : null}
+        {openLink ? <InvitationLink email={openLink.email} url={openLink.url} onCopied={setNotice} /> : null}
       </section>
 
       <section aria-labelledby="members-heading" className="flex flex-col gap-3">
@@ -168,11 +169,7 @@ export function TeamBoard({
               key={invitation.id}
               invitation={invitation}
               busy={busy}
-              onResend={() =>
-                change(`${base}/invitations/${invitation.id}/resend`, { method: 'POST' }, (body) =>
-                  showLink(invitationEmail(invitation.id), body),
-                )
-              }
+              onResend={() => change(`${base}/invitations/${invitation.id}/resend`, { method: 'POST' }, showLink)}
               onCancel={() => change(`${base}/invitations/${invitation.id}/cancel`, { method: 'POST' })}
               onClear={() => change(`${base}/invitations/${invitation.id}/clear`, { method: 'POST' })}
             />

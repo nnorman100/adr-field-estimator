@@ -249,6 +249,9 @@ test('an invitation can be resent, cancelled and cleared', async ({ page, reques
   await expect(page.getByRole('button', { name: `Clear for ${email}` })).toHaveCount(0);
   await page.getByRole('button', { name: `Cancel for ${email}` }).click();
   await expect(row(page, email)).toContainText('Cancelled');
+  // The link of a cancelled invitation no longer works, so it is no longer offered.
+  await expect(page.getByText(`Invitation for ${email}`)).toHaveCount(0);
+  await expect(page.getByLabel(`Invitation link for ${email}`)).toHaveCount(0);
 
   await page.getByRole('button', { name: `Clear for ${email}` }).click();
   await expect(row(page, email)).toHaveCount(0);
