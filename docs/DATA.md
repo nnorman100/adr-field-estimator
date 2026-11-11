@@ -283,9 +283,10 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
 - A membership change and its outbox row commit together, so no record is written before the change
   commits, and a change that rolls back writes nothing. The team routes (disable, re-enable, role
   change, accepting an invitation) queue the row in the change's transaction and, once it has
-  committed, project that member before they answer, so a disabled member's record is gone (and a
-  changed role replaced) by the time the owner sees the change succeed. A projection that fails
-  there does not fail the change; its row waits for the next run. Later operator code calls
+  committed, project that member before they answer. When that projection succeeds, a disabled
+  member's record is gone (and a changed role replaced) by the time the owner sees the change
+  succeed. When it fails, or finds the actor busy after the lock timeout, the change still succeeds
+  and its outbox rows wait (see the cross-company pass below). Later operator code calls
   `enqueueAccessProjection` the same way, including when a company stops being active.
 - A run writes what Postgres holds when it runs, not what the row asked for: an access record with
   the role for an active membership in an active company with a sign-in tenant (plus the header's
@@ -299,11 +300,11 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   write it started, so a slow Firestore holds that request and its database connection until it
   answers. The app keeps four projection connections, so other members' renewals go on meanwhile,
   and a run that still finds an actor held after the 15-second lock timeout counts it busy and goes
-  on with the rest; its rows stay due for the next run. A run that wrote a record looks again before
-  it returns and applies any row of that actor committed meanwhile (a member disabled while a
-  renewal's write was on its way), so a change that found the actor busy is not left waiting. A
-  failed write leaves the rows waiting with
-  a back-off (30 seconds, doubling, at most an hour) and a fixed error code; a crash at any point
+  on with the rest; its rows stay due for the next run. A run whose write succeeded looks again
+  before it returns and applies any row of that actor committed meanwhile (a member disabled while a
+  renewal's write was on its way). A run whose write failed does not look again, so a change that
+  found the actor busy behind it is left waiting. A failed write leaves the rows waiting with a
+  back-off (30 seconds, doubling, at most an hour) and a fixed error code; a crash at any point
   leaves them waiting, due now. The next run repairs either.
 - Each write carries a version, the id of the run's Postgres transaction, taken under the lock, so
   a later decision always has a higher one. The server keeps the last applied version in
@@ -322,9 +323,10 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
 - The cross-company pass (`runAccessProjection`) runs on `POST /api/internal/access-projection`,
   which only the environment's scheduler service account may call (`serviceRoute`: a Google-signed
   ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
-  `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`). It
-  retries the rows a failed write left waiting. The scheduler account and its Cloud Scheduler job
-  are not created yet (an owner follow-up in Terraform); until then, a row a failed write left
-  waiting is retried only when something calls that route or a later membership change queues the
-  same member. Opening the app does not retry it: a removed member is refused before renewal runs,
-  and renewal leaves a row alone while it waits out its back-off.
+  `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`).
+  That pass is what retries every row a projection left waiting, because its write failed or it
+  found the actor busy, removals included. It needs a scheduled trigger: the scheduler account and
+  its Cloud Scheduler job are not created yet (an owner follow-up in Terraform), and until they
+  exist those rows wait, unless a later membership change of the same member projects them. Opening
+  the app does not retry them: a removed member is refused before renewal runs, and renewal leaves a
+  row alone while it waits out its back-off.
