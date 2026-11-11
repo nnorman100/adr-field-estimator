@@ -97,7 +97,15 @@ function MemberReset({ companyId, member, onDone }: { companyId: string; member:
             <Button type="submit" disabled={action.busy}>
               Reset second step
             </Button>
-            <Button type="button" variant="outline" disabled={action.busy} onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={action.busy}
+              onClick={() => {
+                setOpen(false);
+                setConfirmed(false);
+              }}
+            >
               Cancel
             </Button>
           </div>

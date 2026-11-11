@@ -235,6 +235,44 @@ test('asks for a new sign-in when a team change needs a fresh one', async ({ pag
   await expect(page.getByRole('main').getByRole('status')).toHaveText('For that change, sign in again.');
 });
 
+test('pressing Enter after a refused change sends the form again and does not sign out', async ({ page }) => {
+  const fake = new FakePlatform();
+  fake.stale = true;
+  await openAsOperator(page, fake);
+  await page.getByRole('link', { name: 'Manage Company A Restoration' }).click();
+  await page.getByLabel('New owner’s email').fill('first@example.com');
+  await page.getByRole('button', { name: 'Invite owner' }).click();
+  await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+  await page.getByLabel('New owner’s email').press('Enter');
+  await expect.poll(() => fake.made('POST', /owner$/).length).toBe(2);
+  await expect(page.getByRole('heading', { name: 'Company A Restoration', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Platform operator sign-in' })).toHaveCount(0);
+});
+
+test('a cancelled or abandoned confirmation is not kept', async ({ page }) => {
+  const fake = new FakePlatform();
+  await openAsOperator(page, fake);
+  await page.getByRole('link', { name: 'Manage Company A Restoration' }).click();
+
+  const understood = page.getByLabel('I understand the current owner is turned off');
+  await page.getByLabel('Replace the owner').check();
+  await understood.check();
+  await page.getByLabel('Invite the first owner').check();
+  await page.getByLabel('Replace the owner').check();
+  await expect(understood).not.toBeChecked();
+
+  await page.getByRole('button', { name: 'Choose a person' }).click();
+  const open = page.getByRole('button', { name: 'Reset second step for Olivia Owner (olivia@example.com)' });
+  const phone = page.getByLabel('I confirmed by phone that this is Olivia Owner.');
+  await open.click();
+  await phone.check();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await open.click();
+  await expect(phone).not.toBeChecked();
+  await page.getByRole('button', { name: 'Reset second step', exact: true }).click();
+  expect(fake.made('POST', /reset-second-step$/)).toHaveLength(0);
+});
+
 test('the support view of a team is read-only', async ({ page }) => {
   const fake = new FakePlatform();
   fake.invitations = [

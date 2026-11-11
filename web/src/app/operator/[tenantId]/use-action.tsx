@@ -38,7 +38,7 @@ export function useAction() {
     <>
       <ErrorMessage text={error} />
       {stale ? (
-        <Button variant="outline" onClick={() => void signInAgain()}>
+        <Button type="button" variant="outline" onClick={() => void signInAgain()}>
           Sign in again
         </Button>
       ) : null}

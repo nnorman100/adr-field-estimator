@@ -48,6 +48,11 @@ export function OwnerSection({ company }: { company: CompanyView }) {
     );
   }
 
+  function chooseMode(next: 'first' | 'replace') {
+    setMode(next);
+    setUnderstood(false);
+  }
+
   async function copy(link: string) {
     try {
       await navigator.clipboard.writeText(link);
@@ -63,11 +68,11 @@ export function OwnerSection({ company }: { company: CompanyView }) {
         <fieldset className="flex flex-col gap-2">
           <legend className="font-medium">What do you want to do?</legend>
           <label className="flex items-start gap-2">
-            <input type="radio" name="owner-mode" className="mt-1" checked={mode === 'first'} onChange={() => setMode('first')} />
+            <input type="radio" name="owner-mode" className="mt-1" checked={mode === 'first'} onChange={() => chooseMode('first')} />
             <span>Invite the first owner</span>
           </label>
           <label className="flex items-start gap-2">
-            <input type="radio" name="owner-mode" className="mt-1" checked={mode === 'replace'} onChange={() => setMode('replace')} />
+            <input type="radio" name="owner-mode" className="mt-1" checked={mode === 'replace'} onChange={() => chooseMode('replace')} />
             <span>Replace the owner</span>
           </label>
         </fieldset>
