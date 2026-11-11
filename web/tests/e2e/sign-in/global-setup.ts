@@ -25,15 +25,26 @@ export default async function globalSetup() {
 
   const projects: Record<string, ProjectSeed> = {};
   for (const project of PROJECTS) {
-    const account = async (tenant: string, companyId: string, name: string, emailVerified: boolean) => {
+    const account = async (
+      tenant: string,
+      companyId: string,
+      name: string,
+      emailVerified: boolean,
+      role: 'owner' | 'estimator' = 'estimator',
+    ) => {
       const email = `${name}-${project}-${run}@example.com`;
       const uid = await createUser(tenant, { email, password: PASSWORD, emailVerified });
-      fixture.members.push({ companyId, uid, actorId: randomUUID(), displayName: name, role: 'estimator', status: 'active' });
+      fixture.members.push({ companyId, uid, actorId: randomUUID(), displayName: name, role, status: 'active' });
       return { email, uid };
     };
     projects[project] = {
       memberA: await account(tenantA, companyA, 'member-a', true),
       memberB: await account(tenantB, companyB, 'member-b', true),
+      // The owner of company A, whose role needs the authenticator-app second step (S3-14). The
+      // emulator cannot do TOTP, so this account has none there; the second-step tests stand a
+      // second step in front of it at the network boundary, and it is never changed, so every test
+      // can sign it in.
+      ownerA: await account(tenantA, companyA, 'owner-a', true, 'owner'),
       unverifiedA: await account(tenantA, companyA, 'unverified-a', false),
       toVerifyA: [await account(tenantA, companyA, 'to-verify-a-0', false), await account(tenantA, companyA, 'to-verify-a-1', false)],
     };
