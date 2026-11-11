@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { accessProjectionOutbox, actors, auditEvents, companies, invitations, memberships } from '@/db/schema';
-import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
+import { withCompany, withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
 import type { Role } from '@/lib/access';
 import { IdentityRefusal, sessionRefusal, type Account } from '@/lib/auth';
 import type { TenantUsers } from './users';
@@ -36,6 +36,8 @@ export const TEAM_ERRORS = {
   invitation_active: 409,
   invitation_expired: 410,
   owner_protected: 409,
+  // The company has no active owner, so its pending owner invitation is the only way one gets in.
+  owner_invitation_required: 409,
   // The company has no sign-in address or tenant yet, so an invitation link cannot work.
   company_not_ready: 409,
   // Two changes met at the same moment; the caller may try again.
@@ -113,7 +115,7 @@ function isExpired(row: Pick<InvitationRow, 'status' | 'expiresAt'>, now: Date):
   return row.status === 'pending' && row.expiresAt.getTime() <= now.getTime();
 }
 
-function invitationView(row: InvitationRow, now: Date): InvitationView {
+export function invitationView(row: InvitationRow, now: Date): InvitationView {
   return {
     id: row.id,
     email: row.email,
@@ -155,9 +157,19 @@ function isUniqueViolation(error: unknown): boolean {
 
 // A unique index caught two changes racing (for example two invitations for one email, or two
 // active memberships for one person). Nothing was written; the caller may try again.
-async function inCompany<T>(db: Database, companyId: string, run: (tx: CompanyTransaction) => Promise<T>): Promise<T> {
+//
+// A platform operator's support action runs in that operator's own context (withOperator, migration
+// 0006) as well as the company's, because an audit row may name an operator only there.
+async function inCompany<T>(
+  db: Database,
+  companyId: string,
+  run: (tx: CompanyTransaction) => Promise<T>,
+  by?: TeamActor,
+): Promise<T> {
   try {
-    return await withCompany(db, companyId, run);
+    return by?.kind === 'operator'
+      ? await withOperator(db, by.operatorId, run, { companyId })
+      : await withCompany(db, companyId, run);
   } catch (error) {
     if (isUniqueViolation(error)) throw new TeamError('conflict');
     throw error;
@@ -224,6 +236,48 @@ function memberView(row: MemberView): MemberView {
   return { membershipId, actorId, displayName, email, role, status };
 }
 
+// The team as the owner (full) or an office user (estimators) sees it, read in the caller's
+// transaction for that company: the team list, and the operator's read-only support view (S3-9).
+export async function readTeam(
+  tx: CompanyTransaction,
+  companyId: string,
+  view: 'full' | 'estimators',
+  now: Date,
+): Promise<TeamView> {
+  if (view === 'estimators') {
+    const estimators = await tx
+      .select({
+        membershipId: memberships.id,
+        actorId: actors.id,
+        displayName: actors.displayName,
+        email: actors.email,
+      })
+      .from(memberships)
+      .innerJoin(actors, actorOfMembership)
+      .where(
+        and(
+          eq(memberships.companyId, companyId),
+          eq(memberships.role, 'estimator'),
+          eq(memberships.status, 'active'),
+        ),
+      )
+      .orderBy(asc(memberships.createdAt), asc(memberships.id));
+    return { view, estimators };
+  }
+  const members = await tx
+    .select(memberColumns)
+    .from(memberships)
+    .innerJoin(actors, actorOfMembership)
+    .where(eq(memberships.companyId, companyId))
+    .orderBy(asc(memberships.createdAt), asc(memberships.id));
+  const open = await tx
+    .select(invitationColumns)
+    .from(invitations)
+    .where(and(eq(invitations.companyId, companyId), isNull(invitations.clearedAt)))
+    .orderBy(desc(invitations.createdAt), asc(invitations.id));
+  return { view, members, invitations: open.map((row) => invitationView(row, now)) };
+}
+
 // Brings one member's Firestore access record in line with what just committed. It never throws:
 // a record it cannot write stays waiting in the outbox (web/src/lib/projection/services.ts).
 export type ProjectAccess = (companyId: string, actorId: string) => Promise<void>;
@@ -234,13 +288,18 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
   async function membershipChange<T>(
     companyId: string,
     run: (tx: CompanyTransaction, queue: (actorId: string) => Promise<void>) => Promise<T>,
+    by?: TeamActor,
   ): Promise<T> {
     const queued: string[] = [];
-    const result = await inCompany(db, companyId, (tx) =>
-      run(tx, async (actorId) => {
-        await tx.insert(accessProjectionOutbox).values({ companyId, actorId });
-        queued.push(actorId);
-      }),
+    const result = await inCompany(
+      db,
+      companyId,
+      (tx) =>
+        run(tx, async (actorId) => {
+          await tx.insert(accessProjectionOutbox).values({ companyId, actorId });
+          queued.push(actorId);
+        }),
+      by,
     );
     for (const actorId of queued) await project(companyId, actorId);
     return result;
@@ -252,38 +311,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
     async list(companyId: string, view: 'full' | 'estimators', now: Date): Promise<TeamView> {
       return withCompany(db, companyId, async (tx) => {
         await tx.execute(sql`SET TRANSACTION READ ONLY`);
-        if (view === 'estimators') {
-          const estimators = await tx
-            .select({
-              membershipId: memberships.id,
-              actorId: actors.id,
-              displayName: actors.displayName,
-              email: actors.email,
-            })
-            .from(memberships)
-            .innerJoin(actors, actorOfMembership)
-            .where(
-              and(
-                eq(memberships.companyId, companyId),
-                eq(memberships.role, 'estimator'),
-                eq(memberships.status, 'active'),
-              ),
-            )
-            .orderBy(asc(memberships.createdAt), asc(memberships.id));
-          return { view, estimators };
-        }
-        const members = await tx
-          .select(memberColumns)
-          .from(memberships)
-          .innerJoin(actors, actorOfMembership)
-          .where(eq(memberships.companyId, companyId))
-          .orderBy(asc(memberships.createdAt), asc(memberships.id));
-        const open = await tx
-          .select(invitationColumns)
-          .from(invitations)
-          .where(and(eq(invitations.companyId, companyId), isNull(invitations.clearedAt)))
-          .orderBy(desc(invitations.createdAt), asc(invitations.id));
-        return { view, members, invitations: open.map((row) => invitationView(row, now)) };
+        return readTeam(tx, companyId, view, now);
       });
     },
 
@@ -357,7 +385,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           delivery: 'copy_link',
           link: invitationLink(company.slug, invitationId),
         };
-      });
+      }, by);
     },
 
     async cancel(companyId: string, by: TeamActor, invitationId: string, now: Date): Promise<{ invitation: InvitationView }> {
@@ -366,6 +394,14 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
         const row = await lockedInvitation(tx, companyId, invitationId);
         if (!row || row.clearedAt) throw new TeamError('not_found');
         if (row.status !== 'pending') throw new TeamError('invitation_closed');
+        if (row.role === 'owner') {
+          const [owner] = await tx
+            .select({ id: memberships.id })
+            .from(memberships)
+            .where(and(eq(memberships.companyId, companyId), eq(memberships.role, 'owner'), eq(memberships.status, 'active')))
+            .limit(1);
+          if (!owner) throw new TeamError('owner_invitation_required');
+        }
         const [updated] = await tx
           .update(invitations)
           .set({ status: 'cancelled', cancelledAt: now, updatedAt: now })
@@ -373,7 +409,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           .returning(invitationColumns);
         await audit(tx, companyId, by, 'invitation_cancelled', invitationId);
         return { invitation: invitationView(updated!, now) };
-      });
+      }, by);
     },
 
     // Hides a finished invitation (accepted, cancelled or expired) from the team list. The record
@@ -392,7 +428,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
           .where(and(eq(invitations.companyId, companyId), eq(invitations.id, invitationId)));
         await audit(tx, companyId, by, 'invitation_cleared', invitationId, { expired });
         return { cleared: true };
-      });
+      }, by);
     },
 
     // Between estimator and office only. Changing to the role the member already has changes nothing.
@@ -414,7 +450,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
         await queue(row.actorId);
         await audit(tx, companyId, by, 'member_role_changed', membershipId, { from: row.role, to: role });
         return { member: memberView({ ...row, role }) };
-      });
+      }, by);
     },
 
     // Blocks the member at once: every request checks the membership, and their sessions are
@@ -433,7 +469,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
         await audit(tx, companyId, by, 'member_disabled', membershipId);
         await users.revokeSessions(row.tenant, row.uid);
         return { member: memberView({ ...row, status: 'disabled' }) };
-      });
+      }, by);
     },
 
     async enable(companyId: string, by: TeamActor, membershipId: string, now: Date): Promise<{ member: MemberView }> {
@@ -448,7 +484,7 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
         await queue(row.actorId);
         await audit(tx, companyId, by, 'member_enabled', membershipId);
         return { member: memberView({ ...row, status: 'active' }) };
-      });
+      }, by);
     },
 
     // What the invitee sees before accepting. An invitation for another email reads as not found,

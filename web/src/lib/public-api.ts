@@ -25,6 +25,21 @@ export const memberApiPaths: readonly string[] = [
   '/api/invitations/:id/accept',
 ];
 
+// Platform operator routes that check the operator sign-in themselves with operatorRoute
+// (src/lib/auth/route.ts): only an active platform operator gets past them, never a company user.
+export const operatorApiPaths: readonly string[] = [
+  '/api/platform/companies',
+  '/api/platform/companies/:id/status',
+  '/api/platform/companies/:id/tenant',
+  '/api/platform/companies/:id/owner',
+  '/api/platform/companies/:id/team',
+  '/api/platform/companies/:id/members/:id',
+  '/api/platform/companies/:id/members/:id/enable',
+  '/api/platform/companies/:id/members/:id/reset-second-step',
+  '/api/platform/companies/:id/invitations/:id/resend',
+  '/api/platform/companies/:id/invitations/:id/cancel',
+];
+
 // Internal job routes that check a service token themselves with serviceRoute (src/lib/auth/route.ts):
 // only the scheduler service account gets past them, never a person.
 export const serviceApiPaths: readonly string[] = ['/api/internal/access-projection'];
@@ -54,6 +69,10 @@ export function isPublicApiPath(pathname: string): boolean {
 
 export function isMemberApiPath(pathname: string): boolean {
   return memberApiPaths.some((pattern) => matches(pattern, pathname));
+}
+
+export function isOperatorApiPath(pathname: string): boolean {
+  return operatorApiPaths.some((pattern) => matches(pattern, pathname));
 }
 
 export function isServiceApiPath(pathname: string): boolean {

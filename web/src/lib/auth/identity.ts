@@ -74,6 +74,9 @@ export const REFUSALS = {
   second_step_required: 403,
   // The sign-in is older than the role allows, or than a sensitive route allows (policy.ts).
   sign_in_again: 401,
+  // An operator route, and the caller is not an active platform operator (an owner, estimator or
+  // office user included).
+  not_an_operator: 403,
 } as const;
 export type RefusalCode = keyof typeof REFUSALS;
 
@@ -198,4 +201,41 @@ export async function resolveAccount(
     name,
     session: { authTime: token.authTime, secondFactor: token.secondFactor },
   };
+}
+
+// The platform operator signing in (owner decision D6): an actor with no company, in an operator
+// tenant, with an active platform_admins row. Found by platform_operator (migration 0006).
+export type OperatorDirectory = {
+  operatorFor(tenant: string, uid: string): Promise<string | null>;
+};
+
+export type Operator = { operatorId: string; uid: string; tenant: string };
+
+// Who is calling an operator route, from the verified token alone. A company user's token names a
+// company tenant, which never finds an operator, so it is refused before anything is read or
+// written. The operator's session rules always apply in full: the second step is required on every
+// operator route (D6), and the sign-in must be under 12 hours old (D7), or under 15 minutes for a
+// route that changes a team or a second step.
+export async function resolveOperator(
+  request: Request,
+  verifier: TokenVerifier,
+  operators: OperatorDirectory,
+  options: { freshSignIn?: boolean; now?: () => number } = {},
+): Promise<Operator> {
+  const idToken = bearerToken(request);
+  const first = await verifier.verify(idToken);
+  if (!first.tenant) throw new IdentityRefusal('not_an_operator');
+  const tenant = first.tenant;
+
+  const operatorId = await operators.operatorFor(tenant, first.uid);
+  if (!operatorId) throw new IdentityRefusal('not_an_operator');
+
+  const token = await verifier.verifyNotRevoked(idToken, tenant);
+  if (token.tenant !== tenant || token.uid !== first.uid) throw new IdentityRefusal('invalid_token');
+  if (!token.emailVerified) throw new IdentityRefusal('email_unverified');
+
+  const now = (options.now ?? nowInSeconds)();
+  const refused = sessionRefusal('operator', token, { freshSignIn: options.freshSignIn === true }, now);
+  if (refused) throw new IdentityRefusal(refused);
+  return { operatorId, uid: token.uid, tenant };
 }

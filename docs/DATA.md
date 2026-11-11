@@ -195,7 +195,7 @@ spaces, so one person is one stored key. The team and invitation routes (S3-10,
 `web/src/lib/team/`) write actors, memberships, invitations, audit events and outbox rows, always
 inside `withCompany`; an invitation's record, with its email, stays after it is accepted,
 cancelled or cleared ("clear" only hides it from the team list); nothing in `web/` deletes it yet.
-The access projection (below) marks outbox rows done; nothing else writes these tables yet. Prices and signed documents are later work.
+The access projection (below) marks outbox rows done, and the platform operator routes (S3-9, `web/src/lib/platform/`, `0006` below) create companies, change their status and sign-in tenant, register company tenants and write owner invitations, memberships, outbox rows and audit rows; nothing else writes these tables yet. Prices and signed documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
 `BYPASSRLS` and no ownership, and grants it to the environment's API database user
@@ -208,8 +208,7 @@ after such a transaction, every policy matches nothing. Inside it the runtime re
 the company's sign-in tenant and its feature flags; reads, inserts and updates its actors,
 memberships, invitations and outbox rows; and reads and appends audit events, never updating or
 deleting them. The runtime has no `DELETE` or `TRUNCATE` anywhere, no right on `migration_ledger`,
-and sees no platform operator. Platform operator access across companies has no database context yet; it needs a later
-migration. The outbox worker's one lookup across companies is in `0005` (below). Forced row-level security binds the
+and sees no platform operator. Platform operator access across companies is in `0006` (below). The outbox worker's one lookup across companies is in `0005` (below). Forced row-level security binds the
 migrator too: only `migration_ledger` has a policy for its owner (`companies` adds one that only
 `sign_in_company` can use, see below), so a migration that must change
 rows turns `FORCE` off and back on inside its own transaction (the guard test in
@@ -240,6 +239,25 @@ membership and company, mark rows done) runs inside `withCompany` under the `000
 adds an index on `(company_id, actor_id, processed_at)` for one actor's rows. Outbox rows are kept
 after they are done; about one per active member per day is added by renewal (below), and nothing
 prunes them yet.
+
+`0006_platform_operator` adds the platform operator (S3-9). `platform_operator(tenant, uid)`
+returns the id of the active operator signing in (an actor with no company, in an operator tenant,
+with an active `platform_admins` row) or `NULL`, built like `0004`. Operator work runs in
+`withOperator` (`web/src/db/tenant.ts`), which sets `app.operator_id` for one transaction (and the
+company for actions on one company) and refuses unless `app_operator_active()`, a migrator-owned
+`SECURITY DEFINER` check that reads only the `platform_admins` row the setting names, confirms an
+active operator. Only in that context may the runtime read every company, insert one (column rights
+`name` and `sign_in_slug` only), update its `status`, `auth_tenant_id` and `updated_at` (column
+rights), read and insert company tenants (`kind = 'company'` only), and insert audit rows naming
+that operator; a restrictive policy refuses any runtime audit row naming an operator outside that
+operator's own context. A trigger refuses the runtime archiving a company that is not suspended or
+changing a sign-in tenant once set; the table owner can still repair one. Nothing gives the runtime a
+right on `platform_admins` beyond its empty read, so no route can add an operator.
+`add_platform_operator(tenant, uid, email)` is the owner-run command (`npm run
+platform:add-operator`): executable only by the table owner, and its policies match only the owner
+signed in as itself while the function runs. It registers an operator tenant, adds the operator and
+writes one `operator_added` audit row (no company, member or operator named). Operator audit rows
+hold ids, roles and counts only.
 
 Migrations are additive. Change the schema by add, then switch, then remove:
 

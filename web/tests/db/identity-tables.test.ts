@@ -98,6 +98,7 @@ describe('identity tables (migration 0002)', () => {
       '0003_runtime_role',
       '0004_sign_in_lookup',
       '0005_access_projection',
+      '0006_platform_operator',
     ]);
 
     const rows = await sql<
