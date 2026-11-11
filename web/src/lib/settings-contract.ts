@@ -62,6 +62,12 @@ export const SETTINGS = {
   DATABASE_URL: { source: 'local', services: NOT_SET, reader: 'web' },
   FIREBASE_AUTH_EMULATOR_HOST: { source: 'local', services: NOT_SET, reader: 'web' },
   FIRESTORE_EMULATOR_HOST: { source: 'local', services: NOT_SET, reader: 'web' },
+  // The sign-in screens' browser settings (public values) and the local sign-in records file.
+  // Terraform does not set the first two yet (docs/plans/S3.md, S3-13a); a later infra change moves
+  // them to source terraform. LOCAL_SIGN_IN_FIXTURE is never set outside a developer machine.
+  FIREBASE_WEB_API_KEY: { source: 'local', services: NOT_SET, reader: 'web' },
+  FIREBASE_AUTH_DOMAIN: { source: 'local', services: NOT_SET, reader: 'web' },
+  LOCAL_SIGN_IN_FIXTURE: { source: 'local', services: NOT_SET, reader: 'web' },
 } as const satisfies Record<string, Setting>;
 
 export type SettingName = keyof typeof SETTINGS;

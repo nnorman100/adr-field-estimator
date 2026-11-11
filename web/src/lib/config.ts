@@ -38,6 +38,8 @@ function isLoopbackHost(value: string): boolean {
   }
 }
 
+const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
+
 // Typed against src/lib/settings-contract.ts: a setting missing here, or declared here and not
 // listed there as read by the web app, fails the type check. APP_ENV_ALIAS is read by withAppEnv.
 const shape = {
@@ -99,12 +101,48 @@ const shape = {
     .string()
     .refine(isLoopbackHost, { message: 'FIRESTORE_EMULATOR_HOST must be a loopback host:port' })
     .optional(),
+  // The browser sign-in settings of the project's Firebase web app (S3 plan, section 6, step 8).
+  // Both are public values that every visitor's browser receives; the sign-in screens say sign-in
+  // is not set up while either is missing outside the emulator.
+  FIREBASE_WEB_API_KEY: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{20,100}$/, {
+      message: 'FIREBASE_WEB_API_KEY must be a Firebase web API key',
+    })
+    .optional(),
+  FIREBASE_AUTH_DOMAIN: z
+    .string()
+    .regex(/^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, {
+      message: 'FIREBASE_AUTH_DOMAIN must be a host name',
+    })
+    .optional(),
+  // Local only: a JSON file that stands in for the companies, actors and memberships in Postgres,
+  // so the sign-in screens run against the Auth emulator with no database (tests/e2e). Allowed only
+  // beside the Auth emulator, for a demo- project, with no database configured.
+  LOCAL_SIGN_IN_FIXTURE: z
+    .string()
+    .regex(/^\/[^\0]{1,500}\.json$/, {
+      message: 'LOCAL_SIGN_IN_FIXTURE must be an absolute path to a .json file',
+    })
+    .optional(),
 } satisfies Record<Exclude<WebSettingName, typeof APP_ENV_ALIAS>, z.ZodType>;
 
 // Every name this file reads, for the contract test.
 export const CONFIG_SETTINGS = [...Object.keys(shape), APP_ENV_ALIAS];
 
 const schema = z.object(shape).superRefine((env, ctx) => {
+  if (env.LOCAL_SIGN_IN_FIXTURE !== undefined) {
+    const database =
+      env.DATABASE_URL !== undefined || SQL_KEYS.some((key) => env[key] !== undefined);
+    if (env.APP_ENV !== 'local' || env.FIREBASE_AUTH_EMULATOR_HOST === undefined || database) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['LOCAL_SIGN_IN_FIXTURE'],
+        message:
+          'LOCAL_SIGN_IN_FIXTURE is allowed only when APP_ENV is local, beside the Auth emulator, with no database',
+      });
+    }
+  }
   for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
     if (env[name] === undefined) continue;
     if (env.APP_ENV !== 'local') {
@@ -123,8 +161,6 @@ const schema = z.object(shape).superRefine((env, ctx) => {
     }
   }
 });
-
-const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
 
 export type CloudSqlConfig = { connectionName: string; database: string; user: string };
 
@@ -234,4 +270,49 @@ export function parseProjectionConfig(env: Record<string, string | undefined>): 
     databaseId: data.FIRESTORE_DATABASE_ID,
     firestoreEmulatorHost: data.FIRESTORE_EMULATOR_HOST ?? null,
   };
+}
+
+// What a sign-in screen's browser needs to reach Identity Platform. Every value is public: the API
+// key names the project and is restricted to the app's address (S3 plan, section 6, step 8).
+export type BrowserSignInConfig = {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  // The Auth emulator's address for the browser, on a developer machine only; null elsewhere.
+  authEmulatorUrl: string | null;
+};
+
+// The emulator accepts any API key; this one is never valid on a real project.
+const EMULATOR_API_KEY = 'demo-emulator-api-key';
+
+// null when sign-in is not set up: no project, or (outside the emulator) no web API key or auth
+// domain. The sign-in screens then say so instead of trying a sign-in that cannot work.
+export function parseBrowserSignInConfig(
+  env: Record<string, string | undefined>,
+): BrowserSignInConfig | null {
+  const data = checked(env);
+  const projectId = data.GOOGLE_CLOUD_PROJECT;
+  if (!projectId) return null;
+  const emulator = data.FIREBASE_AUTH_EMULATOR_HOST;
+  if (emulator !== undefined) {
+    return {
+      apiKey: data.FIREBASE_WEB_API_KEY ?? EMULATOR_API_KEY,
+      authDomain: data.FIREBASE_AUTH_DOMAIN ?? `${projectId}.firebaseapp.com`,
+      projectId,
+      authEmulatorUrl: `http://${emulator}`,
+    };
+  }
+  if (!data.FIREBASE_WEB_API_KEY || !data.FIREBASE_AUTH_DOMAIN) return null;
+  return {
+    apiKey: data.FIREBASE_WEB_API_KEY,
+    authDomain: data.FIREBASE_AUTH_DOMAIN,
+    projectId,
+    authEmulatorUrl: null,
+  };
+}
+
+// The local stand-in for the sign-in records (LOCAL_SIGN_IN_FIXTURE), or null. The schema above
+// allows it only on a developer machine beside the Auth emulator with no database.
+export function parseLocalSignInFixture(env: Record<string, string | undefined>): string | null {
+  return checked(env).LOCAL_SIGN_IN_FIXTURE ?? null;
 }
