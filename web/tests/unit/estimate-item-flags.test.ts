@@ -117,6 +117,27 @@ describe('overhead and profit: off by default, its own line, per-item exemption 
   });
 });
 
+describe('the range explanation names what tax carries', () => {
+  const rates: Obj = { ...CUSHION, overhead_profit_percent: '10', sales_tax: { enabled: true, percent: '10' } };
+  const rooms = [room('Kitchen', { unfinished_sf: 100 })];
+  const rental = { ...AIR_MOVER, taxable: true, no_overhead_profit: true };
+
+  it('W56 a taxable item exempt from overhead and profit carries no share of it into the tax sentence', () => {
+    // Demolition $200.00 (not taxable); rental 6 x $25.00 = $150.00, taxable and exempt. Tax 10% x $150.00 = $15.00.
+    const exempt = priced(table([item('demo'), rental], rates), job(rooms, MOVERS));
+    expect(exempt.totals.low.tax).toBe('15.00');
+    expect(exempt.totals.explanation).toContain('Sales tax at 10% applies to the items marked taxable.');
+    // With a taxable item that does carry it, the share is named with the same exception as the O&P sentence.
+    const mixed = priced(
+      table([item('demo', { taxable: true }), rental], rates),
+      job(rooms, MOVERS),
+    );
+    expect(mixed.totals.explanation).toContain(
+      'Sales tax at 10% applies to the items marked taxable and their share of overhead and profit, except on items marked as carrying none.',
+    );
+  });
+});
+
 describe('a minimum per trade heading beside the job minimum (M7)', () => {
   const items = [
     item('demo', { trade: 'drywall' }),

@@ -477,8 +477,13 @@ export function explanation(policy: Policy, data: Inspection, lines: PriceLine[]
   }
   const tax = Dec.parse(policy.sales_tax.percent);
   if (policy.sales_tax.enabled && !tax.isZero()) {
-    const share = overhead.isZero() ? '' : ' and their share of overhead and profit';
-    const part = lines.some((line) => line.taxable && line.materialsShare.cmp(HUNDRED) < 0) ? 'the materials share of ' : '';
+    const taxed = lines.filter((line) => line.taxable);
+    const exempt = taxed.filter((line) => line.noOverheadProfit).length;
+    const share =
+      overhead.isZero() || (exempt > 0 && exempt === taxed.length)
+        ? ''
+        : ` and their share of overhead and profit${exempt > 0 ? ', except on items marked as carrying none' : ''}`;
+    const part = taxed.some((line) => line.materialsShare.cmp(HUNDRED) < 0) ? 'the materials share of ' : '';
     sentences.push(`Sales tax at ${percentText(tax)}% applies to ${part}the items marked taxable${share}.`);
   }
   return sentences.join(' ');
