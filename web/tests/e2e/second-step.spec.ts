@@ -374,6 +374,12 @@ test('a signed-in person adds a second authenticator app', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Add another authenticator app' }).click();
   await expect(page.getByRole('heading', { name: 'Add an authenticator app' })).toBeVisible();
+  await expect(
+    page.getByText(
+      'Add another authenticator app, for example on a second phone, so losing one does not lock you out.',
+    ),
+  ).toBeVisible();
+  await expect(page.getByText('Turn on a second sign-in step', { exact: false })).toHaveCount(0);
   await expect(page.getByText('Your second sign-in step was reset.')).toHaveCount(0);
   await expect(page.getByTestId('setup-key')).toBeVisible();
   await expectFitsPhone(page);
@@ -467,6 +473,12 @@ test('an estimator, who may turn the second step on, is offered it', async ({ pa
   await expect(signedIn(page)).toBeVisible();
   await expect(page.getByText('Second sign-in step: off.')).toBeVisible();
   await page.getByRole('button', { name: 'Add an authenticator app' }).click();
+  await expect(
+    page.getByText(
+      `Turn on a second sign-in step: each time you sign in to ${A}, you also enter a code from an authenticator app.`,
+    ),
+  ).toBeVisible();
+  await expect(page.getByText('Add another authenticator app', { exact: false })).toHaveCount(0);
   await page.getByLabel('6-digit code').fill(APP_CODE);
   await page.getByRole('button', { name: 'Turn on second step' }).click();
   await expect(page.getByText('Second sign-in step: on, with 1 authenticator app.')).toBeVisible();

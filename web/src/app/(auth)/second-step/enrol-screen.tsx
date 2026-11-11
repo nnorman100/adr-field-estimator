@@ -122,8 +122,13 @@ function EnrolAttempt({
           Your role needs an authenticator app as a second step every time you sign in to {companyName}. You cannot use
           DryScope until it is set up.
         </p>
-      ) : (
+      ) : existingCount > 0 ? (
         <p>Add another authenticator app, for example on a second phone, so losing one does not lock you out.</p>
+      ) : (
+        <p>
+          Turn on a second sign-in step: each time you sign in to {companyName}, you also enter a code from an
+          authenticator app.
+        </p>
       )}
       {setup ? (
         <>
