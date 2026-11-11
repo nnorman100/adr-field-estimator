@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { APP_ENV_ALIAS, type WebSettingName } from './settings-contract';
 
 // Typed server configuration. Every variable the app reads is declared here. src/instrumentation.ts
 // checks it when the server starts, so an invalid value stops the app with a message that names the
-// variable and never repeats the value. APP_ENV is required; the Cloud Run services set it as
-// APP_ENVIRONMENT (infra/dryscope/app/cloud_run.tf), which is read the same way. DATABASE_URL is
+// variable and never repeats the value. Every name is listed in src/lib/settings-contract.ts,
+// which tests/unit/settings-contract.test.ts holds to the Terraform in infra/dryscope/app. APP_ENV
+// is required; Terraform sets it as APP_ENV and the older APP_ENVIRONMENT is read the same way. DATABASE_URL is
 // optional until a database command runs, GOOGLE_CLOUD_PROJECT until a route checks a sign-in, and
 // FIRESTORE_DATABASE_ID until an access record is written; none has a default. No secrets belong in
 // this file.
@@ -36,8 +38,9 @@ function isLoopbackHost(value: string): boolean {
   }
 }
 
-const schema = z
-  .object({
+// Typed against src/lib/settings-contract.ts: a setting missing here, or declared here and not
+// listed there as read by the web app, fails the type check.
+const shape = {
   APP_ENV: z.enum(['local', 'test', 'live'], {
     error: 'APP_ENV (or APP_ENVIRONMENT) must be one of local, test or live',
   }),
@@ -47,7 +50,8 @@ const schema = z
     .string()
     .refine(isPostgresUrl, { message: 'DATABASE_URL must be a postgres URL' })
     .optional(),
-  // The commit the image was built from. web/Dockerfile bakes it in; local runs leave it unset.
+  // The commit the running app was built from. The CI smoke run sets it; Cloud Run and local runs
+  // leave it unset.
   APP_COMMIT: z
     .string()
     .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })
@@ -95,7 +99,13 @@ const schema = z
     .string()
     .refine(isLoopbackHost, { message: 'FIRESTORE_EMULATOR_HOST must be a loopback host:port' })
     .optional(),
-  })
+} satisfies Record<WebSettingName, z.ZodType>;
+
+// The names above, for the contract test.
+export const CONFIG_SETTINGS = Object.keys(shape);
+
+const schema = z
+  .object(shape)
   .superRefine((env, ctx) => {
     for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
       if (env[name] === undefined) continue;
@@ -130,14 +140,16 @@ export class ConfigError extends Error {
   }
 }
 
-// The environment name under either variable. Both set to different values is refused, so a
+// The environment name under either variable. Terraform sets APP_ENV (src/lib/settings-contract.ts);
+// the older APP_ENVIRONMENT is still accepted. Both set to different values is refused, so a
 // service cannot run as one environment while its settings say another.
 function withAppEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  const { APP_ENV, APP_ENVIRONMENT } = env;
-  if (APP_ENV !== undefined && APP_ENVIRONMENT !== undefined && APP_ENV !== APP_ENVIRONMENT) {
-    throw new ConfigError(['APP_ENV: APP_ENV and APP_ENVIRONMENT must match when both are set']);
+  const { APP_ENV } = env;
+  const alias = env[APP_ENV_ALIAS];
+  if (APP_ENV !== undefined && alias !== undefined && APP_ENV !== alias) {
+    throw new ConfigError([`APP_ENV: APP_ENV and ${APP_ENV_ALIAS} must match when both are set`]);
   }
-  return { ...env, APP_ENV: APP_ENV ?? APP_ENVIRONMENT };
+  return { ...env, APP_ENV: APP_ENV ?? alias };
 }
 
 function checked(env: Record<string, string | undefined>) {
