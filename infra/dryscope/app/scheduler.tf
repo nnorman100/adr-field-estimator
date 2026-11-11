@@ -8,8 +8,11 @@
 # access-projection: one outbox pass that writes or removes waiting Firestore access records and
 # retries failed ones (S3-12). Passes are safe to overlap (the outbox takes a lock), and a failed
 # pass is not retried: the next one runs five minutes later.
+#
+# Test only for now: the data root creates the scheduler account in test only, and live gets its
+# schedule with the live wiring, in a later step.
 resource "google_cloud_scheduler_job" "jobs" {
-  for_each = local.n.scheduled_jobs
+  for_each = var.environment == "test" ? local.n.scheduled_jobs : {}
 
   project          = var.project_id
   region           = var.region

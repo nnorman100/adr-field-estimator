@@ -29,7 +29,10 @@ resource "google_service_account" "deploy" {
 # (cloud_run.tf) and its serviceRoute accepts only this account's Google-signed token with the
 # job's own audience. The Cloud Scheduler service agent mints the token through its automatic
 # roles/cloudscheduler.serviceAgent grant; whoever applies the app root needs actAs on it.
+# Test only for now: live gets its scheduler account with the live wiring, in a later step.
 resource "google_service_account" "scheduler" {
+  count = var.environment == "test" ? 1 : 0
+
   project      = var.project_id
   account_id   = local.n.service_account_ids["scheduler"]
   display_name = "DryScope ${var.environment} scheduled jobs caller"
@@ -181,8 +184,11 @@ resource "google_service_account_iam_member" "migrate_workload_identity" {
 # getExecutable. Firebase Rules supports no IAM condition on a release or ruleset name and its
 # releases hold no IAM policy of their own, so this grant is project-wide: the deploy account can
 # also point the other environment's release at a ruleset. The workflow names only its own
-# database; the owner reviews this role at apply time (README, "Accepted risks").
+# database; the owner reviews this role at apply time (README, "Accepted risks"). Test only for
+# now: live rules releases stay owner-run until the live wiring, in a later step.
 resource "google_project_iam_custom_role" "rules_release" {
+  count = var.environment == "test" ? 1 : 0
+
   project     = var.project_id
   role_id     = "dryscopeRulesRelease${title(var.environment)}"
   title       = "DryScope ${var.environment} field rules release"
@@ -197,8 +203,10 @@ resource "google_project_iam_custom_role" "rules_release" {
 }
 
 resource "google_project_iam_member" "deploy_rules_release" {
+  count = var.environment == "test" ? 1 : 0
+
   project = var.project_id
-  role    = "projects/${var.project_id}/roles/${google_project_iam_custom_role.rules_release.role_id}"
+  role    = "projects/${var.project_id}/roles/${google_project_iam_custom_role.rules_release[0].role_id}"
   member  = "serviceAccount:${local.n.service_account_emails["deploy"]}"
 
   depends_on = [google_service_account.deploy]

@@ -424,24 +424,29 @@ run "deploy_account_may_only_update_and_run_the_migration_job" {
 }
 
 # The scheduled access-projection pass (scheduler.tf): the caller and audience serviceRoute accepts
-# (web/src/lib/auth/service-caller.ts), on this environment's own web app address.
-run "access_projection_is_called_as_the_scheduler_account" {
+# (web/src/lib/auth/service-caller.ts), on the test web app's own address. Test only for now; live
+# has no scheduled job until the live wiring.
+run "access_projection_is_called_as_the_scheduler_account_in_test_only" {
   command = plan
 
   assert {
-    condition     = google_cloud_scheduler_job.jobs["access-projection"].name == "dryscope-access-projection-${var.environment}" && google_cloud_scheduler_job.jobs["access-projection"].region == "us-central1" && google_cloud_scheduler_job.jobs["access-projection"].schedule == "*/5 * * * *"
-    error_message = "The access-projection job runs every five minutes in us-central1 and is named for its environment."
+    condition     = length(google_cloud_scheduler_job.jobs) == (var.environment == "test" ? 1 : 0) && alltrue([for k, j in google_cloud_scheduler_job.jobs : k == "access-projection"])
+    error_message = "Test has the access-projection job and nothing else; live has no scheduled job yet."
   }
   assert {
-    condition     = google_cloud_scheduler_job.jobs["access-projection"].http_target[0].http_method == "POST" && google_cloud_scheduler_job.jobs["access-projection"].http_target[0].uri == "https://dryscope-api-${var.environment}-570228742694.us-central1.run.app/api/internal/access-projection"
-    error_message = "The job POSTs to this environment's own internal access-projection route."
+    condition     = alltrue([for j in google_cloud_scheduler_job.jobs : j.name == "dryscope-access-projection-test" && j.region == "us-central1" && j.schedule == "*/5 * * * *"])
+    error_message = "The access-projection job runs every five minutes in us-central1 and is named for test."
   }
   assert {
-    condition     = google_cloud_scheduler_job.jobs["access-projection"].http_target[0].oidc_token[0].service_account_email == "dryscope-scheduler-${var.environment}@dryscope.iam.gserviceaccount.com" && google_cloud_scheduler_job.jobs["access-projection"].http_target[0].oidc_token[0].audience == "dryscope-${var.environment}-access-projection"
-    error_message = "The job's ID token is this environment's scheduler account with the access-projection audience."
+    condition     = alltrue([for j in google_cloud_scheduler_job.jobs : j.http_target[0].http_method == "POST" && j.http_target[0].uri == "https://dryscope-api-test-570228742694.us-central1.run.app/api/internal/access-projection"])
+    error_message = "The job POSTs to the test web app's own internal access-projection route."
   }
   assert {
-    condition     = length(google_cloud_scheduler_job.jobs["access-projection"].http_target[0].oauth_token) == 0
+    condition     = alltrue([for j in google_cloud_scheduler_job.jobs : j.http_target[0].oidc_token[0].service_account_email == "dryscope-scheduler-test@dryscope.iam.gserviceaccount.com" && j.http_target[0].oidc_token[0].audience == "dryscope-test-access-projection"])
+    error_message = "The job's ID token is the test scheduler account with the access-projection audience."
+  }
+  assert {
+    condition     = alltrue([for j in google_cloud_scheduler_job.jobs : length(j.http_target[0].oauth_token) == 0])
     error_message = "The job sends an ID token, never an OAuth access token."
   }
 }

@@ -117,7 +117,7 @@
    }
   },
   {
-   "address": "google_project_iam_custom_role.rules_release",
+   "address": "google_project_iam_custom_role.rules_release[0]",
    "type": "google_project_iam_custom_role",
    "change": {
     "actions": [
@@ -140,7 +140,7 @@
    }
   },
   {
-   "address": "google_project_iam_member.deploy_rules_release",
+   "address": "google_project_iam_member.deploy_rules_release[0]",
    "type": "google_project_iam_member",
    "change": {
     "actions": [
@@ -786,7 +786,7 @@
    }
   },
   {
-   "address": "google_service_account.scheduler",
+   "address": "google_service_account.scheduler[0]",
    "type": "google_service_account",
    "change": {
     "actions": [

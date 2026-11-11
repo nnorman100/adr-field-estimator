@@ -148,14 +148,13 @@ function expectedPlan(root, env) {
   if (root === 'data') {
     for (const a of APIS) others.push(`google_project_service.apis["${a}"]`);
     for (const k of RUNTIME) others.push(`google_service_account.runtime["${k}"]`);
-    others.push('google_service_account.deploy', 'google_service_account.scheduler');
+    others.push('google_service_account.deploy');
     others.push('google_sql_database_instance.main', 'google_sql_database.app');
     for (const k of RUNTIME) others.push(`google_sql_user.iam["${k}"]`);
     others.push('google_firestore_database.field', 'google_storage_bucket.evidence');
     others.push('google_artifact_registry_repository.images');
     others.push('google_project_iam_custom_role.gemini_caller');
     others.push('google_project_iam_custom_role.identity_users');
-    others.push('google_project_iam_custom_role.rules_release');
     for (const s of Object.keys(SECRET_ACCESS)) {
       others.push(`google_secret_manager_secret.app["${s}"]`);
     }
@@ -231,13 +230,6 @@ function expectedPlan(root, env) {
         };
       }
     }
-    // The deploy account releases the field-database rules. Project-wide: Firebase Rules takes no
-    // IAM condition, so one here would look narrower than it is, and is refused like any other.
-    grants['google_project_iam_member.deploy_rules_release'] = {
-      role: `projects/${PROJECT}/roles/dryscopeRulesRelease${title(env)}`,
-      member: sa('deploy'),
-      condition: null,
-    };
     grants['google_artifact_registry_repository_iam_member.deploy_write'] = {
       role: 'roles/artifactregistry.writer',
       member: sa('deploy'),
@@ -313,8 +305,6 @@ function expectedPlan(root, env) {
       attrs[`google_service_account.runtime["${k}"]`] = { account_id: `dryscope-${k}-${env}` };
     }
     attrs['google_service_account.deploy'] = { account_id: `dryscope-deploy-${env}` };
-    // The scheduler account holds no grant: none in the table names it as a member.
-    attrs['google_service_account.scheduler'] = { account_id: `dryscope-scheduler-${env}` };
     for (const a of APIS) attrs[`google_project_service.apis["${a}"]`] = { service: a };
     for (const s of Object.keys(SECRET_ACCESS)) {
       const address = `google_secret_manager_secret.app["${s}"]`;
@@ -335,12 +325,27 @@ function expectedPlan(root, env) {
     attrs['google_project_iam_custom_role.gemini_caller'] = {
       role_id: `dryscopeGemini${title(env)}`,
     };
-    lists['google_project_iam_custom_role.rules_release'] = {
-      permissions: RULES_RELEASE_PERMISSIONS,
-    };
-    attrs['google_project_iam_custom_role.rules_release'] = {
-      role_id: `dryscopeRulesRelease${title(env)}`,
-    };
+    // Test only for now; live gets neither until the live wiring, so a live plan holding either is
+    // refused as not in the inventory. The scheduler account holds no grant: none in the table names
+    // it as a member. The deploy account releases the field-database rules. Project-wide: Firebase
+    // Rules takes no IAM condition, so one here would look narrower than it is, and is refused like
+    // any other.
+    if (env === 'test') {
+      others.push('google_service_account.scheduler[0]');
+      attrs['google_service_account.scheduler[0]'] = { account_id: `dryscope-scheduler-${env}` };
+      others.push('google_project_iam_custom_role.rules_release[0]');
+      lists['google_project_iam_custom_role.rules_release[0]'] = {
+        permissions: RULES_RELEASE_PERMISSIONS,
+      };
+      attrs['google_project_iam_custom_role.rules_release[0]'] = {
+        role_id: `dryscopeRulesRelease${title(env)}`,
+      };
+      grants['google_project_iam_member.deploy_rules_release[0]'] = {
+        role: `projects/${PROJECT}/roles/dryscopeRulesRelease${title(env)}`,
+        member: sa('deploy'),
+        condition: null,
+      };
+    }
     lists['google_project_iam_custom_role.identity_users'] = { permissions: IDENTITY_PERMISSIONS };
     attrs['google_project_iam_custom_role.identity_users'] = {
       role_id: `dryscopeIdentity${title(env)}`,
@@ -430,8 +435,8 @@ function expectedPlan(root, env) {
     };
     // Scheduled job calls: POST to this environment's own web app address, with an ID token for this
     // environment's scheduler account and the job's own audience. No OAuth token, headers or body,
-    // and no Pub/Sub or App Engine target.
-    for (const [job, { path, schedule }] of Object.entries(SCHEDULED_JOBS)) {
+    // and no Pub/Sub or App Engine target. Test only for now; a live plan holding one is refused.
+    for (const [job, { path, schedule }] of Object.entries(env === 'test' ? SCHEDULED_JOBS : {})) {
       const address = `google_cloud_scheduler_job.jobs["${job}"]`;
       others.push(address);
       attrs[address] = {

@@ -7,7 +7,8 @@ import { schedulerCaller } from '@/lib/auth/service-caller';
 // The Cloud Scheduler jobs Terraform plans (infra/dryscope/app/scheduler.tf) must call each
 // internal job route exactly as serviceRoute accepts it: the account and audience schedulerCaller
 // derives from the web app's own Cloud Run settings, and that job's internal route. Read from the
-// mocked plans the plan check is tested on (infra/dryscope/fixtures).
+// mocked plans the plan check is tested on (infra/dryscope/fixtures). The jobs are test only for
+// now: live plans none until the live wiring.
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -32,8 +33,11 @@ const after = (changes: Change[], address: string) => {
   return found.change.after;
 };
 
-describe.each(['test', 'live'])('scheduled internal jobs in %s', (environment) => {
-  const changes = plan(environment);
+const jobsIn = (changes: Change[]) =>
+  changes.filter((rc) => rc.address.startsWith('google_cloud_scheduler_job.jobs['));
+
+describe('scheduled internal jobs in test', () => {
+  const changes = plan('test');
   // The plain settings the web app's service runs with.
   const settings = Object.fromEntries(
     (
@@ -44,7 +48,7 @@ describe.each(['test', 'live'])('scheduled internal jobs in %s', (environment) =
       .map((e) => [e.name, e.value as string]),
   );
   const caller = schedulerCaller(settings);
-  const jobs = changes.filter((rc) => rc.address.startsWith('google_cloud_scheduler_job.jobs['));
+  const jobs = jobsIn(changes);
 
   it('has the access-projection job', () => {
     expect(jobs.map((rc) => rc.address)).toEqual([
@@ -68,5 +72,11 @@ describe.each(['test', 'live'])('scheduled internal jobs in %s', (environment) =
     const url = new URL(target.uri);
     expect((settings.ALLOWED_ORIGINS ?? '').split(',')).toContain(url.origin);
     expect(url.pathname).toBe(`/api/internal/${job}`);
+  });
+});
+
+describe('scheduled internal jobs in live', () => {
+  it('has none yet', () => {
+    expect(jobsIn(plan('live'))).toEqual([]);
   });
 });

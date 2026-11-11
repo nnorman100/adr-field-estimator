@@ -117,44 +117,6 @@
    }
   },
   {
-   "address": "google_project_iam_custom_role.rules_release",
-   "type": "google_project_iam_custom_role",
-   "change": {
-    "actions": [
-     "create"
-    ],
-    "after": {
-     "description": "Create a Firestore rules ruleset and point the dryscope-field-live release at it. No delete.",
-     "permissions": [
-      "firebaserules.releases.create",
-      "firebaserules.releases.get",
-      "firebaserules.releases.update",
-      "firebaserules.rulesets.create",
-      "firebaserules.rulesets.get"
-     ],
-     "project": "dryscope",
-     "role_id": "dryscopeRulesReleaseLive",
-     "stage": null,
-     "title": "DryScope live field rules release"
-    }
-   }
-  },
-  {
-   "address": "google_project_iam_member.deploy_rules_release",
-   "type": "google_project_iam_member",
-   "change": {
-    "actions": [
-     "create"
-    ],
-    "after": {
-     "condition": [],
-     "member": "serviceAccount:dryscope-deploy-live@dryscope.iam.gserviceaccount.com",
-     "project": "dryscope",
-     "role": "projects/dryscope/roles/dryscopeRulesReleaseLive"
-    }
-   }
-  },
-  {
    "address": "google_project_iam_member.firestore_user[\"api\"]",
    "type": "google_project_iam_member",
    "change": {
@@ -780,24 +742,6 @@
      "description": null,
      "disabled": null,
      "display_name": "DryScope live schema migrator",
-     "project": "dryscope",
-     "timeouts": null
-    }
-   }
-  },
-  {
-   "address": "google_service_account.scheduler",
-   "type": "google_service_account",
-   "change": {
-    "actions": [
-     "create"
-    ],
-    "after": {
-     "account_id": "dryscope-scheduler-live",
-     "create_ignore_already_exists": null,
-     "description": null,
-     "disabled": null,
-     "display_name": "DryScope live scheduled jobs caller",
      "project": "dryscope",
      "timeouts": null
     }
