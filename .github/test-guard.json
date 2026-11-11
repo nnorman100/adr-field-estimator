@@ -1,13 +1,15 @@
 {
-  "tests": ["tests/**"],
+  "unguarded": [".github/dependabot.yml"],
+  "guard": [".github/test-guard.json", ".github/workflows/test-guard.yml", "scripts/test-guard.mjs"],
+  "workflows": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
   "protected": [
     ".github/**",
-    "scripts/test-guard.mjs",
-    "tests/fixtures/**",
     "scripts/readiness_eval.py",
     "scripts/verify_*.py",
     "playwright.config.js",
     "playwright.isolated.config.js",
     "firestore.rules"
-  ]
+  ],
+  "fixtures": ["tests/fixtures/**", "tests/golden/**"],
+  "tests": ["tests/**"]
 }

@@ -1,8 +1,10 @@
 name: Test guard
 
-# Fails a pull request that deletes or skips tests, removes test cases, or
-# changes scoring thresholds, eval files or workflow files, unless the owner
-# adds the "test-change-approved" label. Coding agents must never add it.
+# Fails a pull request that can weaken testing (deletes, skips or loosens
+# tests, changes stored answers, scoring thresholds or eval files, or removes
+# or disables a workflow job, step or check), unless the owner adds the
+# "test-change-approved" label. Coding agents must never add it. The rules are
+# in scripts/test-guard.mjs and .github/test-guard.json; see docs/RUNBOOK.md.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
