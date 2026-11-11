@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_EMU_PROJECT, requireDemoProject } from './guard';
+import { acquireEmulatorLock } from './lock';
 
 // Same pinned CLI as the root app's emulator job (.github/workflows/ci.yml). It stays out of
 // package.json so the other web jobs do not install it.
@@ -17,6 +18,16 @@ try {
   console.error((error as Error).message);
   process.exit(2);
 }
+
+// The emulators use fixed ports, so only one run per machine may hold them at a time.
+let release: () => void;
+try {
+  release = await acquireEmulatorLock();
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(1);
+}
+process.on('exit', release);
 
 const child = spawn(
   'npx',
@@ -39,3 +50,6 @@ child.on('error', (error) => {
   process.exit(1);
 });
 child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(signal, () => child.kill(signal)); // the child's exit then releases the lock
+}

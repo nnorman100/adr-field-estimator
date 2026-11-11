@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 import { Dec, ZERO } from './decimal';
-import { chars, collapse, oneLine, printable, type Category } from './values';
+import { chars, collapse, oneLine, printable, type Category, type MoldCondition, type SizeTier } from './values';
 
 export class Reject extends Error {
   constructor(message: string) {
@@ -29,6 +29,12 @@ export type Room = {
   wetFloorSf: Dec | null;
   ceilingHeightFt: Dec | null;
   waterClass: number | null;
+  /** The owner's room type id; null means Other. */
+  roomTypeId: string | null;
+  /** The size tier the technician confirmed; null means derive it from the room's areas. */
+  sizeTier: SizeTier | null;
+  moldCondition: MoldCondition | null;
+  affectedSf: Dec | null;
 };
 
 export type Approval = { acceptedByName: string; acceptedAt: string; rate: Dec; total: Dec };
@@ -129,6 +135,13 @@ const ROOM = z
     wet_floor_sf: amount('0', '100000').nullish(),
     ceiling_height_ft: amount('0', '60', { above: true }).nullish(),
     water_class: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).nullish(),
+    room_type_id: z
+      .string()
+      .regex(/^[a-z][a-z0-9_]{1,29}$/)
+      .nullish(),
+    size_tier: z.enum(['s', 'm', 'l', 'xl']).nullish(),
+    mold_condition: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullish(),
+    affected_sf: amount('0', '100000').nullish(),
     source_of_loss: z.boolean().nullish(),
     contents_present: z.boolean().nullish(),
     equipment_placed: z.boolean().nullish(),
@@ -148,6 +161,10 @@ const ROOM = z
       wetFloorSf: room.wet_floor_sf ?? null,
       ceilingHeightFt: room.ceiling_height_ft ?? null,
       waterClass: room.water_class ?? null,
+      roomTypeId: room.room_type_id ?? null,
+      sizeTier: room.size_tier ?? null,
+      moldCondition: room.mold_condition ?? null,
+      affectedSf: room.affected_sf ?? null,
     }),
   );
 

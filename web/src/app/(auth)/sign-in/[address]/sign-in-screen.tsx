@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { BrowserSignInConfig } from '@/lib/config';
 import {
+  authenticatorCount,
   belongsTo,
   checkSignIn,
   companyAuth,
@@ -15,11 +16,16 @@ import {
   signInWithGoogle,
   signInWithPassword,
   signOutCompany,
+  type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { FocusedPanel } from '../../focused-panel';
 import { Panel } from '../../panel';
+import { CodeScreen } from '../../second-step/code-screen';
+import { EnrolScreen } from '../../second-step/enrol-screen';
+import { hadSecondStep, rememberSecondStep } from '../../second-step/remember';
+import { SecondStepSection } from '../../second-step/second-step-section';
 
 export type SignInScreenProps = {
   address: string;
@@ -37,6 +43,10 @@ type Screen =
   | { name: 'set-password' }
   | { name: 'set-password-sent' }
   | { name: 'checking' }
+  // The password or Google account was right and the person has a second step: the code is next.
+  | { name: 'code'; challenge: SecondStepChallenge }
+  // A signed-in person adds an authenticator app (the required first setup is the outcome below).
+  | { name: 'add-authenticator'; existing: number }
   | { name: 'outcome'; outcome: Exclude<MeOutcome, { kind: 'sign-in-again' | 'not-this-company' | 'account-disabled' }> };
 
 export function SignInScreen(props: SignInScreenProps) {
@@ -58,17 +68,24 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const authRef = useRef<Auth | null>(null);
+  // The person signed in on this phone, for the screens that act on their account.
+  const [signedInUser, setSignedInUser] = useState<User | null>(null);
 
   // Where emailed links (set your password, verify your email) come back to.
   const returnUrl = useCallback(() => `${window.location.origin}${window.location.pathname}`, []);
 
   const showSignedOut = useCallback(() => {
-    setScreen((current) => (current.name === 'set-password' || current.name === 'set-password-sent' ? current : { name: 'signed-out' }));
+    setScreen((current) =>
+      current.name === 'set-password' || current.name === 'set-password-sent' || current.name === 'code'
+        ? current
+        : { name: 'signed-out' },
+    );
   }, []);
 
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
     if (auth) await signOutCompany(auth);
+    setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
   }, []);
@@ -84,13 +101,26 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [endSession],
   );
 
+  // When the server still wants the second step, Firebase is asked how many authenticator apps the
+  // account has. Any at all means this sign-in did not use one (the session that set it up), so the
+  // person signs in again with the app's code; none means setup, and when that cannot be read the
+  // check is retried.
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
       const outcome = await checkSignIn(user, fresh);
+      const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
       if (current !== user) {
         if (!current) showSignedOut();
+        return;
+      }
+      if (authenticators === null) {
+        setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
+        return;
+      }
+      if (authenticators > 0) {
+        await refuse('Your authenticator app is set up. Sign in again and enter its code.');
         return;
       }
       if (endsSession(outcome)) {
@@ -113,6 +143,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     const auth = companyAuth({ config, tenantId });
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {
+      setSignedInUser(user);
       if (!user) {
         showSignedOut();
         return;
@@ -138,6 +169,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     }
   }
 
+  // Firebase wants a newer sign-in before it changes a second step.
+  const needsFreshSignIn = useCallback(() => {
+    void refuse('For your safety, sign in again before changing your second step.');
+  }, [refuse]);
+
   const auth = () => authRef.current!;
   const currentUser = () => authRef.current?.currentUser ?? null;
 
@@ -156,6 +192,45 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         <p role="status">Checking your sign-in…</p>
       </FocusedPanel>
     );
+  }
+
+  if (screen.name === 'code') {
+    return (
+      <CodeScreen
+        challenge={screen.challenge}
+        onVerified={(uid) => rememberSecondStep(tenantId, uid)}
+        onExpired={() => {
+          setNotice('That sign-in timed out. Sign in again.');
+          setScreen({ name: 'signed-out' });
+        }}
+        onBack={() => {
+          setError(null);
+          setNotice(null);
+          setScreen({ name: 'signed-out' });
+        }}
+      />
+    );
+  }
+
+  if (screen.name === 'add-authenticator') {
+    const user = signedInUser;
+    if (user) {
+      return (
+        <EnrolScreen
+          user={user}
+          companyName={companyName}
+          mode="add"
+          wasReset={false}
+          existingCount={screen.existing}
+          onEnrolled={() => {
+            rememberSecondStep(tenantId, user.uid);
+            void check(user);
+          }}
+          onNeedsSignIn={needsFreshSignIn}
+          onLeave={() => void check(user)}
+        />
+      );
+    }
   }
 
   if (screen.name === 'set-password') {
@@ -212,6 +287,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               You are signed in as {ROLE_NAMES[outcome.role] ?? 'a team member'}. The rest of DryScope arrives in later
               updates.
             </p>
+            {signedInUser ? (
+              <SecondStepSection
+                user={signedInUser}
+                onAdd={(existing) => setScreen({ name: 'add-authenticator', existing })}
+              />
+            ) : null}
             {signOutButton}
           </FocusedPanel>
         );
@@ -275,16 +356,27 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             {signOutButton}
           </FocusedPanel>
         );
-      case 'second-step':
+      case 'second-step': {
+        // The only screen a person who needs a second step and has none can reach: no skip, no way
+        // on to the app, only setting it up or signing out.
+        const user = signedInUser;
+        if (!user) return null;
         return (
-          <FocusedPanel title="Set up your second sign-in step">
-            <p>
-              Your role needs an authenticator app as a second sign-in step. Setting it up from this screen arrives in
-              the next update.
-            </p>
-            {signOutButton}
-          </FocusedPanel>
+          <EnrolScreen
+            user={user}
+            companyName={companyName}
+            mode="required"
+            wasReset={hadSecondStep(tenantId, user.uid)}
+            existingCount={0}
+            onEnrolled={() => {
+              rememberSecondStep(tenantId, user.uid);
+              void check(user);
+            }}
+            onNeedsSignIn={needsFreshSignIn}
+            onLeave={() => void refuse('You are signed out.')}
+          />
         );
+      }
       case 'unavailable':
         return (
           <FocusedPanel title="We could not check your sign-in">
@@ -321,8 +413,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           event.preventDefault();
           void run(async () => {
             setNotice(null);
-            await signInWithPassword(auth(), email, password);
+            const challenge = await signInWithPassword(auth(), email, password);
             setPassword('');
+            if (challenge) setScreen({ name: 'code', challenge });
           });
         }}
       >
@@ -351,7 +444,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         onClick={() =>
           run(async () => {
             setNotice(null);
-            await signInWithGoogle(auth());
+            const challenge = await signInWithGoogle(auth());
+            if (challenge) setScreen({ name: 'code', challenge });
           })
         }
       >
