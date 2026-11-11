@@ -95,3 +95,19 @@ export function createDoc(caller: Caller, path: string, data: Data): Promise<num
 export function deleteDoc(caller: Caller, path: string): Promise<number> {
   return send(caller, `${documents}/${path}`, 'DELETE');
 }
+
+export type Write = { path: string; data: Data; create?: boolean };
+
+// One batched write (a `commit` with several writes), as the phone's SDK sends a `writeBatch`.
+// A create must not exist yet; any other write changes only the named top-level fields of an
+// existing document. The rules see every write of the batch in one request.
+export function commit(caller: Caller, writes: Write[]): Promise<number> {
+  const name = (path: string) => `projects/${projectId}/databases/(default)/documents/${path}`;
+  return send(caller, `${documents}:commit`, 'POST', {
+    writes: writes.map((write) => ({
+      update: { name: name(write.path), fields: encodeFields(write.data) },
+      ...(write.create ? {} : { updateMask: { fieldPaths: Object.keys(write.data) } }),
+      currentDocument: { exists: !write.create },
+    })),
+  });
+}

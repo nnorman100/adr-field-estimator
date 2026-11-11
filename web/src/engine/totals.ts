@@ -1,25 +1,22 @@
 // Low and high ends of a v2 estimate. Summary amounts are decimal strings; cents use HALF_UP once.
 
 import { Dec, HUNDRED, ONE, ZERO, maxDec, minDec, money, percentText, sumDec } from './decimal';
-import type { JObj, JVal } from './json';
-import { jint } from './json';
+import type { JObj, Json } from './json';
 import type { Inspection } from './inspection';
 import { fieldDec } from './inspection';
 import { exactAmount, jobSf, priceScopeV2, sumBucket, type EngineWarning } from './price-v2';
-import { priceScopeV1, proposalRange, V1 } from './price-v1';
 import { equipmentSizing } from './sizing';
 import {
   DEFAULT_AFTER_HOURS_LABEL,
   V2,
-  assistOf,
-  bracketModeOf,
   cushionBrackets,
-  type Band,
+  hasCushionBrackets,
+  type CushionBand,
   type Item,
   type Policy,
+  type Table,
 } from './table';
-import { commas, decFloat, numberText, type PriceLine } from './values';
-import type { JobPin } from './pin';
+import { commas, numberText, type PriceLine } from './values';
 
 const MINIMUM_CHARGE_LABEL = 'Minimum job charge';
 const BUCKETS = new Set(['fixed', 'equipment', 'labor_material']);
@@ -48,12 +45,9 @@ export type Totals = {
 
 export type Priced = {
   lines: PriceLine[];
-  totals: Totals | null;
+  totals: Totals;
   warnings: EngineWarning[];
   calculationVersion: string;
-  itemized: number;
-  low: Dec;
-  high: Dec | null;
 };
 
 type Amount = { kind: 'dec'; dec: Dec } | { kind: 'int'; int: number };
@@ -88,7 +82,7 @@ export function highNumbers(data: Inspection, policy: Policy): {
   days: Dec;
   available: boolean;
 } {
-  const assist = assistOf(policy);
+  const assist = policy.assist;
   const sizing = equipmentSizing(data);
   const available = sizing.status === 'available';
   let air: Amount = { kind: 'dec', dec: entered(data, 'air_movers') };
@@ -100,20 +94,15 @@ export function highNumbers(data: Inspection, policy: Policy): {
   return {
     air,
     dehu,
-    days: entered(data, 'drying_days').add(Dec.fromInt(assist.extraDryingDays)),
+    days: entered(data, 'drying_days').add(Dec.fromInt(assist.extra_drying_days)),
     available,
   };
 }
 
 function uncertaintyJson(data: Inspection, policy: Policy): JObj {
   const numbers = highNumbers(data, policy);
-  const assist = assistOf(policy);
-  const hidden: JObj = {
-    '1': assist.hiddenDamagePercent['1'],
-    '2': assist.hiddenDamagePercent['2'],
-    '3': assist.hiddenDamagePercent['3'],
-  };
-  const amount = (value: Amount): JVal => (value.kind === 'int' ? jint(value.int) : value.dec.toString());
+  const hidden: JObj = { ...policy.assist.hidden_damage_percent };
+  const amount = (value: Amount): Json => (value.kind === 'int' ? value.int : value.dec.toString());
   return {
     air_movers: amount(numbers.air),
     dehumidifiers: amount(numbers.dehu),
@@ -133,11 +122,10 @@ function factors(data: Inspection, policy: Policy): Record<string, Dec> {
 }
 
 function roomPercents(data: Inspection, policy: Policy): Map<string, Dec> {
-  const assist = assistOf(policy);
   const percents = new Map<string, Dec>();
   for (const room of data.rooms) {
     const key = String(room.category) as '1' | '2' | '3';
-    const percent = Dec.parse(assist.hiddenDamagePercent[key]).div(HUNDRED);
+    const percent = Dec.parse(policy.assist.hidden_damage_percent[key]).div(HUNDRED);
     percents.set(room.name, maxDec(percents.get(room.name) ?? ZERO, percent));
   }
   return percents;
@@ -160,37 +148,36 @@ function topDollars(rows: AreaRow[], first: Dec): Dec {
 }
 
 function cushionRows(lines: PriceLine[], policy: Policy): AreaRow[] {
-  const wasteCounts = policy.areaBasis === 'demolition_with_waste';
+  const wasteCounts = policy.area_basis === 'demolition_with_waste';
   return lines.map((line) => {
-    const area = decFloat(line.area ?? 0);
+    const area = line.area ?? ZERO;
     const counted =
-      wasteCounts && !line.priceBracket ? area.mul(ONE.add(decFloat(line.waste).div(HUNDRED))) : area;
-    return { total: line.priceBracket ? exactAmount(line) : decFloat(line.total), area: counted };
+      wasteCounts && !line.priceBracket ? area.mul(ONE.add(line.waste.div(HUNDRED))) : area;
+    return { total: line.priceBracket ? exactAmount(line) : line.total, area: counted };
   });
 }
 
-function bandFor(bands: Band[], area: Dec): Band {
-  const band = bands.find((row) => row.upToSf === null || area.cmp(Dec.fromInt(row.upToSf)) <= 0);
+function bandFor(bands: CushionBand[], area: Dec): CushionBand {
+  const band = bands.find((row) => row.up_to_sf === null || area.cmp(Dec.fromInt(row.up_to_sf)) <= 0);
   if (!band) throw new Error('cushion');
   return band;
 }
 
 function highLabor(data: Inspection, lines: PriceLine[], policy: Policy, items: Item[], areaDollars: Dec, otherDollars: Dec, areaLines: PriceLine[]): Dec {
-  const assist = assistOf(policy);
-  if (assist.rangeMethod === 'uncertainty') return uncertain(data, lines, items, policy).labor;
+  if (policy.assist.range_method === 'uncertainty') return uncertain(data, lines, items, policy).labor;
   const bands = cushionBrackets(policy);
   const areas = cushionRows(areaLines, policy);
-  if (bracketModeOf(policy) === 'whole-job') {
-    const percent = Dec.parse(bandFor(bands, jobSf(data, items, policy)).percent ?? '0').div(HUNDRED);
+  if (policy.bracket_mode === 'whole-job') {
+    const percent = Dec.parse(bandFor(bands, jobSf(data, items, policy)).percent).div(HUNDRED);
     return money(areaDollars.add(otherDollars).mul(ONE.add(percent)));
   }
   const firstBand = bands[0];
   const secondBand = bands[1];
   if (bands.length === 2 && firstBand && secondBand && !areaLines.some((line) => line.priceBracket)) {
-    const first = Dec.parse(firstBand.percent ?? '0').div(HUNDRED);
-    const beyond = Dec.parse(secondBand.percent ?? '0').div(HUNDRED);
-    if (firstBand.upToSf === null) throw new Error('cushion');
-    const top = topDollars(areas, Dec.fromInt(firstBand.upToSf));
+    const first = Dec.parse(firstBand.percent).div(HUNDRED);
+    const beyond = Dec.parse(secondBand.percent).div(HUNDRED);
+    if (firstBand.up_to_sf === null) throw new Error('cushion');
+    const top = topDollars(areas, Dec.fromInt(firstBand.up_to_sf));
     return money(
       ONE.add(beyond).mul(areaDollars).add(first.sub(beyond).mul(top)).add(ONE.add(first).mul(otherDollars)),
     );
@@ -199,10 +186,10 @@ function highLabor(data: Inspection, lines: PriceLine[], policy: Policy, items: 
   let allowance = ZERO;
   for (const band of bands) {
     const top =
-      band.upToSf === null
+      band.up_to_sf === null
         ? sumDec(areas.map((row) => row.total), ZERO)
-        : topDollars(areas, Dec.fromInt(band.upToSf));
-    allowance = allowance.add(top.sub(previous).mul(Dec.parse(band.percent ?? '0')).div(HUNDRED));
+        : topDollars(areas, Dec.fromInt(band.up_to_sf));
+    allowance = allowance.add(top.sub(previous).mul(Dec.parse(band.percent)).div(HUNDRED));
     previous = top;
   }
   const firstPercent = Dec.parse(firstBand?.percent ?? '0').div(HUNDRED);
@@ -219,7 +206,7 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
   const largest = [...percents.values()].reduce((best, value) => maxDec(best, value), ZERO);
   const growth = (line: PriceLine): Dec => {
     if (line.bucket !== 'labor_material') return ZERO;
-    if (!line.area || line.room == null) return largest;
+    if (line.area === null || line.room === null) return largest;
     return percents.get(line.room) ?? largest;
   };
   const high = priceScopeV2(data, items, policy, factors(data, policy), growth).lines;
@@ -241,7 +228,7 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
       });
       continue;
     }
-    const grown = decFloat(line.total).mul(ONE.add(growth(line)));
+    const grown = line.total.mul(ONE.add(growth(line)));
     labor = labor.add(grown);
     if (line.taxable) taxed = taxed.add(grown);
   }
@@ -259,30 +246,29 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
 }
 
 export function computeTotals(data: Inspection, lines: PriceLine[], policy: Policy, items: Item[]): Totals {
-  const missing = [...new Set(lines.filter((line) => !BUCKETS.has(line.bucket ?? '')).map((line) => line.code))].sort();
+  const missing = [...new Set(lines.filter((line) => !BUCKETS.has(line.bucket)).map((line) => line.code))].sort();
   if (missing.length) throw new Error(`Priced codes missing from the estimate range: ${missing}`);
   const fixed = sumBucket(lines, 'fixed');
   const equipment = sumBucket(lines, 'equipment');
   const labor = lines.filter((line) => line.bucket === 'labor_material');
-  const areaLines = labor.filter((line) => line.area);
-  const areaDollars = sumDec(areaLines.map((line) => decFloat(line.total)), ZERO);
+  const areaLines = labor.filter((line) => line.area !== null);
+  const areaDollars = sumDec(areaLines.map((line) => line.total), ZERO);
   const otherDollars = sumDec(
-    labor.filter((line) => !line.area).map((line) => decFloat(line.total)),
+    labor.filter((line) => line.area === null).map((line) => line.total),
     ZERO,
   );
   const lowLabor = areaDollars.add(otherDollars);
   if (fixed.add(equipment).add(lowLabor).cmp(ZERO) <= 0) {
     throw new Error('The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.');
   }
-  const assist = assistOf(policy);
-  const uncertainEnd = assist.rangeMethod === 'uncertainty' ? uncertain(data, lines, items, policy) : null;
+  const uncertainEnd = policy.assist.range_method === 'uncertainty' ? uncertain(data, lines, items, policy) : null;
   const highLaborAmount = uncertainEnd
     ? uncertainEnd.labor
     : highLabor(data, lines, policy, items, areaDollars, otherDollars, areaLines);
-  const multiplier = data.isAfterHours ? Dec.parse(policy.afterHours.multiplier) : ONE;
-  const overhead = Dec.parse(policy.overheadProfitPercent).div(HUNDRED);
-  const taxRate = policy.salesTax.enabled ? Dec.parse(policy.salesTax.percent).div(HUNDRED) : ZERO;
-  const minimum = Dec.parse(policy.minimumJobCharge);
+  const multiplier = data.isAfterHours ? Dec.parse(policy.after_hours.multiplier) : ONE;
+  const overhead = Dec.parse(policy.overhead_profit_percent).div(HUNDRED);
+  const taxRate = policy.sales_tax.enabled ? Dec.parse(policy.sales_tax.percent).div(HUNDRED) : ZERO;
+  const minimum = Dec.parse(policy.minimum_job_charge);
   const taxedFixed = sumBucket(lines, 'fixed', true);
   const taxedEquipment = sumBucket(lines, 'equipment', true);
   const taxedLabor = sumBucket(lines, 'labor_material', true);
@@ -307,18 +293,18 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   };
   const low = end(lowLabor);
   let high: End | null = null;
-  if (policy.estimateMode === 'range') {
+  if (policy.estimate_mode === 'range') {
     if (preMinimum(highLaborAmount, highEquipment).cmp(minimum) < 0) high = { ...low };
     else if (uncertainEnd) high = end(highLaborAmount, highEquipment, uncertainEnd.taxedEquipment, uncertainEnd.taxedLabor);
     else high = end(highLaborAmount);
   }
   return {
-    mode: policy.estimateMode,
+    mode: policy.estimate_mode,
     low,
     high,
     laborMaterialLow: lowLabor,
     laborMaterialHigh: highLaborAmount,
-    afterHoursLabel: policy.afterHours.label,
+    afterHoursLabel: policy.after_hours.label,
     minimumChargeLabel: MINIMUM_CHARGE_LABEL,
     explanation: explanation(policy, data),
     rangeExplanation: rangeExplanation(policy, data),
@@ -328,7 +314,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
 
 function equipmentClause(data: Inspection, policy: Policy): string {
   const numbers = highNumbers(data, policy);
-  const extra = assistOf(policy).extraDryingDays;
+  const extra = policy.assist.extra_drying_days;
   const days = counted({ kind: 'dec', dec: numbers.days }, 'drying day') + (extra ? ` (${extra} more than planned)` : '');
   if (!numbers.available) return `the equipment counts as entered for ${days}`;
   return `up to ${counted(numbers.air, 'air mover')} and ${counted(numbers.dehu, 'dehumidifier')} for ${days}`;
@@ -348,12 +334,12 @@ function sizingClause(data: Inspection, policy: Policy): string | null {
 }
 
 function hiddenClause(data: Inspection, policy: Policy): string | null {
-  const assist = assistOf(policy);
+  const hiddenPercent = policy.assist.hidden_damage_percent;
   const names: Record<string, string> = { '1': 'category 1', '2': 'category 2', '3': 'category 3 or mold' };
   const present = new Set(data.rooms.map((room) => String(room.category)));
   const parts = ['1', '2', '3']
     .filter((key) => present.has(key))
-    .map((key) => `${percentText(assist.hiddenDamagePercent[key as '1' | '2' | '3'])}% in ${names[key]} rooms`);
+    .map((key) => `${percentText(hiddenPercent[key as '1' | '2' | '3'])}% in ${names[key]} rooms`);
   if (!parts.length) return null;
   const text = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
   return `hidden damage of ${text}`;
@@ -361,13 +347,13 @@ function hiddenClause(data: Inspection, policy: Policy): string | null {
 
 function uncertaintySentence(data: Inspection, policy: Policy): string | null {
   const numbers = highNumbers(data, policy);
-  const assist = assistOf(policy);
+  const assist = policy.assist;
   const categories = new Set(data.rooms.map((room) => String(room.category)));
   const unchanged =
     asDec(numbers.air).eq(entered(data, 'air_movers')) &&
     asDec(numbers.dehu).eq(entered(data, 'dehumidifiers')) &&
-    !assist.extraDryingDays &&
-    ![...categories].some((key) => !Dec.parse(assist.hiddenDamagePercent[key as '1' | '2' | '3']).isZero());
+    !assist.extra_drying_days &&
+    ![...categories].some((key) => !Dec.parse(assist.hidden_damage_percent[key as '1' | '2' | '3']).isZero());
   if (unchanged) return null;
   let text = equipmentClause(data, policy);
   const sizing = sizingClause(data, policy);
@@ -382,12 +368,12 @@ function bracketSentence(policy: Policy): string {
   const parts: string[] = [];
   let previous = 0;
   for (const band of bands) {
-    const label = band.upToSf === null ? `over ${commas(previous)} sq ft` : `over ${commas(previous)} through ${commas(band.upToSf)} sq ft`;
-    parts.push(`${percentText(band.percent ?? '0')}% ${label}`);
-    previous = band.upToSf ?? previous;
+    const label = band.up_to_sf === null ? `over ${commas(previous)} sq ft` : `over ${commas(previous)} through ${commas(band.up_to_sf)} sq ft`;
+    parts.push(`${percentText(band.percent)}% ${label}`);
+    previous = band.up_to_sf ?? previous;
   }
   const first = percentText(bands[0]?.percent ?? '0');
-  if (bracketModeOf(policy) === 'whole-job') {
+  if (policy.bracket_mode === 'whole-job') {
     return (
       "The high end applies one whole-job cushion to labor and materials, selected by the job's total square feet before waste: each room once at the largest area figure its priced square-foot items use (finished plus unfinished demolition is one figure), plus square feet typed without a room: " +
       parts.join('; ') +
@@ -402,116 +388,64 @@ function bracketSentence(policy: Policy): string {
 }
 
 export function rangeExplanation(policy: Policy, data: Inspection): string | null {
-  if (policy.estimateMode !== 'range') return null;
-  const assist = assistOf(policy);
-  if (assist.rangeMethod === 'uncertainty') return uncertaintySentence(data, policy);
-  if (policy.range.brackets || bracketModeOf(policy) === 'whole-job') return bracketSentence(policy);
-  const first = Dec.parse(policy.range.firstPercent);
-  const beyond = Dec.parse(policy.range.beyondPercent);
+  if (policy.estimate_mode !== 'range') return null;
+  if (policy.assist.range_method === 'uncertainty') return uncertaintySentence(data, policy);
+  if (hasCushionBrackets(policy) || policy.bracket_mode === 'whole-job') return bracketSentence(policy);
+  const first = Dec.parse(policy.range.first_percent);
+  const beyond = Dec.parse(policy.range.beyond_percent);
   if (first.isZero()) return null;
   if (first.eq(beyond)) return `The high end allows ${percentText(first)}% extra on the work, for hidden damage.`;
   const tail = beyond.isZero() ? '' : ` and ${percentText(beyond)}% beyond`;
-  return `The high end allows ${percentText(first)}% extra on the first ${commas(policy.range.firstSf)} sq ft of work${tail}, for hidden damage.`;
+  return `The high end allows ${percentText(first)}% extra on the first ${commas(policy.range.first_sf)} sq ft of work${tail}, for hidden damage.`;
 }
 
 function howEndsDiffer(policy: Policy, data: Inspection): string[] {
-  const assist = assistOf(policy);
-  if (assist.rangeMethod === 'uncertainty') {
+  if (policy.assist.range_method === 'uncertainty') {
     return [
       'The low amount is the itemized total at the equipment counts and drying days entered.',
       `The high amount prices ${equipmentClause(data, policy)} and adds the hidden-damage allowance above to labor and materials.`,
       'Job charges and approved additional work are the same in both amounts.',
     ];
   }
-  if (policy.range.brackets || bracketModeOf(policy) === 'whole-job') {
+  if (hasCushionBrackets(policy) || policy.bracket_mode === 'whole-job') {
     return [
       'The low amount is the itemized total.',
       bracketSentence(policy),
       'Job charges, drying equipment and approved additional work are the same in both amounts.',
     ];
   }
-  const first = percentText(policy.range.firstPercent);
-  const beyond = percentText(policy.range.beyondPercent);
+  const first = percentText(policy.range.first_percent);
+  const beyond = percentText(policy.range.beyond_percent);
   return [
     'The low amount is the itemized total.',
     'The high amount adds an allowance to labor and materials for conditions found during the work: ' +
-      `${first}% on the first ${commas(policy.range.firstSf)} square feet of area-priced work (highest-priced areas first), ${beyond}% on area beyond that, and ${first}% on labor hours.`,
+      `${first}% on the first ${commas(policy.range.first_sf)} square feet of area-priced work (highest-priced areas first), ${beyond}% on area beyond that, and ${first}% on labor hours.`,
     'Job charges, drying equipment and approved additional work are the same in both amounts.',
   ];
 }
 
 export function explanation(policy: Policy, data: Inspection): string {
-  if (policy.estimateMode === 'single') return 'The price covers the itemized scope below.';
+  if (policy.estimate_mode === 'single') return 'The price covers the itemized scope below.';
   const sentences = howEndsDiffer(policy, data);
-  const multiplier = Dec.parse(policy.afterHours.multiplier);
+  const multiplier = Dec.parse(policy.after_hours.multiplier);
   if (data.isAfterHours && multiplier.cmp(ONE) > 0) {
-    const label = policy.afterHours.label;
+    const label = policy.after_hours.label;
     const named = label === DEFAULT_AFTER_HOURS_LABEL ? 'an after-hours adjustment' : `"${label}"`;
     sentences.push(`Both amounts include ${named} of ${percentText(multiplier.sub(ONE).mul(HUNDRED))}% of labor and materials.`);
   }
-  const overhead = Dec.parse(policy.overheadProfitPercent);
+  const overhead = Dec.parse(policy.overhead_profit_percent);
   if (!overhead.isZero()) sentences.push(`Both amounts include overhead and profit at ${percentText(overhead)}%.`);
-  const tax = Dec.parse(policy.salesTax.percent);
-  if (policy.salesTax.enabled && !tax.isZero()) {
+  const tax = Dec.parse(policy.sales_tax.percent);
+  if (policy.sales_tax.enabled && !tax.isZero()) {
     const share = overhead.isZero() ? '' : ' and their share of overhead and profit';
     sentences.push(`Sales tax at ${percentText(tax)}% applies to the items marked taxable${share}.`);
   }
   return sentences.join(' ');
 }
 
-function endToJ(end: End): JObj {
-  return {
-    after_hours: end.afterHours.toString(),
-    minimum_charge: end.minimumCharge.toString(),
-    overhead_profit: end.overheadProfit.toString(),
-    subtotal: end.subtotal.toString(),
-    tax: end.tax.toString(),
-    total: end.total.toString(),
-  };
+/** Price a saved draft from a parsed table with the dryscope-v2 formulas. */
+export function priceAndRange(data: Inspection, table: Table): Priced {
+  const scoped = priceScopeV2(data, table.items, table.policy);
+  const totals = computeTotals(data, scoped.lines, table.policy, table.items);
+  return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: V2 };
 }
-
-export function totalsToJ(totals: Totals): JObj {
-  return {
-    after_hours_label: totals.afterHoursLabel,
-    explanation: totals.explanation,
-    high: totals.high ? endToJ(totals.high) : null,
-    labor_material_high: totals.laborMaterialHigh.toString(),
-    labor_material_low: totals.laborMaterialLow.toString(),
-    low: endToJ(totals.low),
-    minimum_charge_label: totals.minimumChargeLabel,
-    mode: totals.mode,
-    range_explanation: totals.rangeExplanation,
-    uncertainty: totals.uncertainty,
-  };
-}
-
-export function priceAndRange(data: Inspection, pin: JobPin): Priced {
-  if (pin.calculationVersion === V2 && pin.items && pin.policy) {
-    const scoped = priceScopeV2(data, pin.items, pin.policy);
-    const totals = computeTotals(data, scoped.lines, pin.policy, pin.items);
-    return {
-      lines: scoped.lines,
-      totals,
-      warnings: scoped.warnings,
-      calculationVersion: V2,
-      itemized: totals.low.total.toNumber(),
-      low: totals.low.total,
-      high: totals.high ? totals.high.total : null,
-    };
-  }
-  if (pin.calculationVersion !== V1 || !pin.rates) {
-    throw new Error(`Unsupported calculation version: ${pin.calculationVersion}`);
-  }
-  const scoped = priceScopeV1(data, pin.rates);
-  const range = proposalRange(data, scoped.lines);
-  return {
-    lines: scoped.lines,
-    totals: null,
-    warnings: [],
-    calculationVersion: pin.calculationVersion,
-    itemized: scoped.itemized,
-    low: range.low,
-    high: range.high,
-  };
-}
-
