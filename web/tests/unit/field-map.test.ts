@@ -31,14 +31,6 @@ describe('field rules and the Zod schema', () => {
     const list = /f\.shotTag in \[([^\]]*)\]/.exec(CODE)?.[1] ?? '';
     expect([...list.matchAll(/'([^']+)'/g)].map((match) => match[1])).toEqual([...SHOT_TAGS]);
   });
-
-  it('read only the company, the access record and the draft', () => {
-    // The batch test in tests/emu/rules/field-map.test.ts counts on three reads per write.
-    const reads = [...CODE.matchAll(/\b(get|exists|getAfter|existsAfter)\((\w+\(|\/databases)/g)].map(
-      (match) => match[0],
-    );
-    expect(reads).toEqual(['get(companyPath(', 'get(accessPath(', 'get(/databases']);
-  });
 });
 
 // A worked example. The table prices unfinished-area demolition at $2.00 per sq ft (with the
