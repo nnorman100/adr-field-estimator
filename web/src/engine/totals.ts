@@ -351,7 +351,6 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   };
   const low = end(lowLabor, equipment, addMix(addMix(fixedMix, equipmentMix), laborMix)).end;
   let high: End | null = null;
-  let explained = lines;
   if (policy.estimate_mode === 'range') {
     // Each labor line grows by its own amount, scaled to the rounded high labor. The uncertainty method taxes each
     // grown line. The cushion taxes the low end's taxable proportion of the high labor while every taxable labor
@@ -379,7 +378,6 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     const beforeTax = (value: End): Dec => value.total.sub(value.tax);
     const kept = !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0);
     high = kept ? candidate.end : { ...low };
-    if (kept && uncertainEnd) explained = [...lines, ...uncertainEnd.equipmentEntries.map((entry) => entry.line)];
   }
   return {
     mode: policy.estimate_mode,
@@ -389,7 +387,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     laborMaterialHigh: highLaborAmount,
     afterHoursLabel: policy.after_hours.label,
     minimumChargeLabel: MINIMUM_CHARGE_LABEL,
-    explanation: explanation(policy, data, explained),
+    explanation: explanation(policy, data, items),
     rangeExplanation: rangeExplanation(policy, data),
     uncertainty: uncertainEnd ? uncertaintyJson(data, policy) : null,
   };
@@ -507,11 +505,17 @@ function howEndsDiffer(policy: Policy, data: Inspection): string[] {
   ];
 }
 
-export function explanation(policy: Policy, data: Inspection, lines: PriceLine[] = []): string {
+/**
+ * The paragraph under a range. The flag sentences are judged from the table's enabled items, not from the lines
+ * either end prices, so the text never depends on which end the job minimum keeps.
+ */
+export function explanation(policy: Policy, data: Inspection, items: Item[]): string {
   if (policy.estimate_mode === 'single') return 'The price covers the itemized scope below.';
   const sentences = howEndsDiffer(policy, data);
+  const enabled = items.filter((item) => item.enabled);
+  const exempt = (item: Item): boolean => item.no_overhead_profit === true;
   const multiplier = Dec.parse(policy.after_hours.multiplier);
-  if (data.isAfterHours && multiplier.cmp(ONE) > 0 && lines.some((line) => line.afterHours)) {
+  if (data.isAfterHours && multiplier.cmp(ONE) > 0 && enabled.some((item) => item.after_hours === true)) {
     const label = policy.after_hours.label;
     const named = label === DEFAULT_AFTER_HOURS_LABEL ? 'an after-hours adjustment' : `"${label}"`;
     sentences.push(
@@ -520,19 +524,19 @@ export function explanation(policy: Policy, data: Inspection, lines: PriceLine[]
   }
   const overhead = Dec.parse(policy.overhead_profit_percent);
   if (!overhead.isZero()) {
-    const except = lines.some((line) => line.noOverheadProfit) ? ', except on items marked as carrying none' : '';
+    const except = enabled.some(exempt) ? ', except on items marked as carrying none' : '';
     sentences.push(`Both amounts include overhead and profit at ${percentText(overhead)}%${except}.`);
   }
   const tax = Dec.parse(policy.sales_tax.percent);
   if (policy.sales_tax.enabled && !tax.isZero()) {
-    const taxed = lines.filter((line) => line.taxable);
-    const exempt = taxed.filter((line) => line.noOverheadProfit).length;
+    const taxed = enabled.filter((item) => item.taxable);
+    const exempted = taxed.filter(exempt).length;
     const share =
-      overhead.isZero() || (exempt > 0 && exempt === taxed.length)
+      overhead.isZero() || (exempted > 0 && exempted === taxed.length)
         ? ''
-        : ` and their share of overhead and profit${exempt > 0 ? ', except on items marked as carrying none' : ''}`;
-    const part = taxed.some((line) => line.materialsShare.cmp(HUNDRED) < 0) ? 'the materials share of ' : '';
-    sentences.push(`Sales tax at ${percentText(tax)}% applies to ${part}the items marked taxable${share}.`);
+        : ` and their share of overhead and profit${exempted > 0 ? ', except on items marked as carrying none' : ''}`;
+    const reduced = taxed.some((item) => Dec.parse(item.materials_share_percent ?? '100').cmp(HUNDRED) < 0);
+    sentences.push(`Sales tax at ${percentText(tax)}% applies to ${reduced ? 'the materials share of ' : ''}the items marked taxable${share}.`);
   }
   return sentences.join(' ');
 }

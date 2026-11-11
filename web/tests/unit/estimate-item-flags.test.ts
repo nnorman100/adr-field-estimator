@@ -248,14 +248,15 @@ describe('the range explanation reads the lines at both ends', () => {
     expect(result.totals.explanation).toContain('Sales tax at 10% applies to the materials share of the items marked taxable.');
   });
 
-  it('W61 a high end replaced by the low end under the job minimum leaves its high-only lines out of the sentences', () => {
-    // As W58 without the exemption, overhead 0, job minimum $1,000.00. Low work $200.00, high $200.00 + $225.00 =
-    // $425.00: both are the $1,000.00 minimum before tax, so the high end is the low end and no tax is charged.
-    // The rental's 40% share is on neither amount, so the sentence does not name a materials share.
-    const result = priced(
+  it('W61 the sentences come from the table, so they do not change with which end the job minimum keeps', () => {
+    // As W58 without the exemption, overhead 0, tax 10%. Job minimum $1,000.00: low work $200.00, high $200.00 +
+    // $225.00 = $425.00, both the $1,000.00 minimum before tax, so the high end is the low end and no tax is
+    // charged. With no minimum the high end is kept and taxes 10% x $225.00 x 40% = $9.00. The table is the same,
+    // so the sentence is the same: it names the rental's materials share either way.
+    const priceList = (minimum: string) =>
       table([item('demo'), { ...AIR_MOVER, taxable: true, materials_share_percent: '40' }], {
         estimate_mode: 'range',
-        minimum_job_charge: '1000',
+        minimum_job_charge: minimum,
         sales_tax: { enabled: true, percent: '10' },
         assist: {
           drying_days: 3,
@@ -263,15 +264,19 @@ describe('the range explanation reads the lines at both ends', () => {
           extra_drying_days: 0,
           hidden_damage_percent: { '1': '0', '2': '0', '3': '0' },
         },
-      }),
-      job([room('Kitchen', { unfinished_sf: 100, floor_sf: 100, ceiling_height_ft: 8, water_class: 2 })], {
-        air_movers: 0,
-        drying_days: 3,
-      }),
-    );
-    expect(result.totals.low).toMatchObject({ minimum_charge: '800.00', tax: '0.00', total: '1000.00' });
-    expect(result.totals.high).toEqual(result.totals.low);
-    expect(result.totals.explanation).toContain('Sales tax at 10% applies to the items marked taxable.');
+      });
+    const rentalJob = job([room('Kitchen', { unfinished_sf: 100, floor_sf: 100, ceiling_height_ft: 8, water_class: 2 })], {
+      air_movers: 0,
+      drying_days: 3,
+    });
+    const floored = priced(priceList('1000'), rentalJob);
+    expect(floored.totals.low).toMatchObject({ minimum_charge: '800.00', tax: '0.00', total: '1000.00' });
+    expect(floored.totals.high).toEqual(floored.totals.low);
+    const kept = priced(priceList('0'), rentalJob);
+    expect(kept.totals.high?.tax).toBe('9.00');
+    const sentence = 'Sales tax at 10% applies to the materials share of the items marked taxable.';
+    expect(kept.totals.explanation).toContain(sentence);
+    expect(floored.totals.explanation).toBe(kept.totals.explanation);
   });
 });
 
