@@ -125,13 +125,14 @@ describe('the owner-run tenant command', () => {
   it('names only the status when the call fails, and checks its arguments', async () => {
     const fetch = vi.fn(async () => new Response('{"error":{"message":"secret detail"}}', { status: 403 }));
     await expect(
-      createTenant({ project: 'dryscope', name: 'test-ops', dryRun: false }, { accessToken: async () => 't', fetch: fetch as unknown as typeof globalThis.fetch }),
+      createTenant({ project: 'dryscope', name: 'test-ops' }, { accessToken: async () => 't', fetch: fetch as unknown as typeof globalThis.fetch }),
     ).rejects.toThrow(/^creating the tenant failed with status 403$/);
     expect(() => parseTenantArgs(['--project', 'dryscope'])).toThrow(/--name is required/);
     expect(() => parseTenantArgs(['--project', 'dryscope', '--name', '1abc'])).toThrow(/--name/);
     expect(() => parseTenantArgs(['--project', 'dryscope', '--name', 'abc'])).toThrow(/--name/);
     expect(() => parseTenantArgs(['--project', 'Dry Scope', '--name', 'test-ops'])).toThrow(/--project/);
     expect(() => parseTenantArgs(['--project', 'dryscope', '--name', 'test-ops', '--kind', 'x'])).toThrow(/unknown option/);
-    expect(parseTenantArgs(['--project', 'dryscope', '--name', 'test-ops', '--dry-run']).dryRun).toBe(true);
+    expect(() => parseTenantArgs(['--project', 'dryscope', '--name', 'test-ops', '--dry-run'])).toThrow(/unknown option/);
+    expect(parseTenantArgs(['--project', 'dryscope', '--name', 'test-ops'])).toEqual({ project: 'dryscope', name: 'test-ops' });
   });
 });

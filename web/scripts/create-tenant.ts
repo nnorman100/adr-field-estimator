@@ -4,7 +4,7 @@
 // narrow per-tenant user role (infra/dryscope, S3-5) and can never create a tenant.
 //
 //   npm run platform:create-tenant -- --project dryscope --name test-company-a
-//   npm run platform:create-tenant -- --project dryscope --name test-operators --dry-run
+//   npm run platform:create-tenant -- --project dryscope --name test-operators
 //
 // The tenant gets password sign-in, no public sign-up, no account deletion by the user, and
 // authenticator-app (TOTP) second steps (D1), as in docs/plans/S3.md section 6, step 5. It prints
@@ -14,7 +14,7 @@
 // Google sign-in on (step 9) stay separate owner steps. Prints no token.
 import { pathToFileURL } from 'node:url';
 
-export type TenantOptions = { project: string; name: string; dryRun: boolean };
+export type TenantOptions = { project: string; name: string };
 
 // A Google Cloud project id, and an Identity Platform display name: 4-20 letters, digits and
 // hyphens, starting with a letter (docs.cloud.google.com/identity-platform/docs/multi-tenancy-managing-tenants).
@@ -28,7 +28,7 @@ export function parseTenantArgs(argv: string[]): TenantOptions {
     if (!v || v.startsWith('--')) throw new Error(`--${name} is required`);
     return v;
   };
-  const known = new Set(['--project', '--name', '--dry-run']);
+  const known = new Set(['--project', '--name']);
   argv.forEach((arg, i) => {
     if (arg.startsWith('--') && !known.has(arg)) throw new Error(`unknown option ${arg}`);
     if (!arg.startsWith('--') && !['--project', '--name'].includes(argv[i - 1] ?? '')) {
@@ -41,7 +41,7 @@ export function parseTenantArgs(argv: string[]): TenantOptions {
   if (!DISPLAY_NAME.test(name)) {
     throw new Error('--name must be 4-20 letters, digits and hyphens, starting with a letter');
   }
-  return { project, name, dryRun: argv.includes('--dry-run') };
+  return { project, name };
 }
 
 // The tenant body (Identity Platform v2 projects.tenants).
@@ -84,11 +84,6 @@ export async function createTenant(options: TenantOptions, deps: CreateTenantDep
 
 async function main() {
   const options = parseTenantArgs(process.argv.slice(2));
-  if (options.dryRun) {
-    console.log(`would create tenant ${options.name} in ${options.project}:`);
-    console.log(JSON.stringify(tenantBody(options.name), null, 2));
-    return;
-  }
   const { GoogleAuth } = await import('google-auth-library');
   const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
   const tenant = await createTenant(options, {
