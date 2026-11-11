@@ -224,7 +224,7 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
   for (const line of mixed) {
     if (line.bucket !== 'labor_material') continue;
     if (line.priceBracket) {
-      const key = line.itemId ?? '';
+      const key = `${line.itemId ?? ''}\u0000${line.priceRow ?? ''}`;
       const prior = bracketed.get(key) ?? { amount: ZERO, taxable: line.taxable === true };
       bracketed.set(key, {
         amount: prior.amount.add(exactAmount(line).mul(ONE.add(growth(line)))),

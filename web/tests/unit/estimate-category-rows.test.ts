@@ -248,6 +248,45 @@ describe('brackets count per row', () => {
     ]);
     expect(result.totals.low.total).toBe('440.00');
   });
+  it('W33 uncertainty: the high end rounds each row of one item on its own, as the low end does', () => {
+    // Default row and Cat 3 row each one open band at $0.67; every hidden-damage percent 0, so the high
+    // end must equal the low end. Hall (Cat 1) and Bath (Cat 3) at 1.5 sq ft: each row is 1.005, so
+    // $1.01 + $1.01 = $2.02 (rounding the two rows as one amount gives $2.01). At 1.2 sq ft each row is
+    // 0.804, so $0.80 + $0.80 = $1.60 (as one amount, $1.61).
+    const band = [{ up_to_sf: null, unit_price: '0.67' }];
+    const priceList = (mode: string) =>
+      table(
+        [
+          item('demo', {
+            unit_price: '',
+            price_brackets: band,
+            rows: [{ category: 3, price_brackets: band }],
+          }),
+        ],
+        {
+          bracket_mode: mode,
+          estimate_mode: 'range',
+          assist: {
+            drying_days: 3,
+            range_method: 'uncertainty',
+            extra_drying_days: 0,
+            hidden_damage_percent: { '1': '0', '2': '0', '3': '0' },
+          },
+        },
+      );
+    const rooms = (sf: number) =>
+      job([room('Hall', { unfinished_sf: sf }), room('Bath', { category: 3, unfinished_sf: sf })]);
+    for (const mode of ['tiered', 'whole-job']) {
+      for (const [sf, total] of [
+        [1.5, '2.02'],
+        [1.2, '1.60'],
+      ] as const) {
+        const result = priced(priceList(mode), rooms(sf));
+        expect(result.totals.low.total).toBe(total);
+        expect(result.totals.high?.total).toBe(total);
+      }
+    }
+  });
 });
 
 describe('category rows in the table schema', () => {
