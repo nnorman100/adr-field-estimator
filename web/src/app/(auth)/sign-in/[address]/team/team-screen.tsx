@@ -137,7 +137,11 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           companyId={phase.companyId}
           initial={phase.team}
           onSignInAgain={async () => {
-            if (authRef.current) await signOutCompany(authRef.current).catch(() => undefined);
+            try {
+              if (authRef.current) await signOutCompany(authRef.current);
+            } catch {
+              return setPhase({ name: 'unavailable' });
+            }
             router.push(`/sign-in/${address}`);
           }}
         />

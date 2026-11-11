@@ -76,7 +76,7 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
   }
 
   return {
-    async list(companyId, view) {
+    async list(companyId, view, now) {
       const data = readFixtureSync(path);
       const members = data.members.filter((m) => m.companyId === companyId);
       if (view === 'estimators') {
@@ -90,7 +90,6 @@ export function localTeamService(path: string, users: TenantUsers): TeamService 
           }));
         return { view, estimators };
       }
-      const now = new Date();
       const open = data.invitations
         .filter((i) => i.companyId === companyId && !i.clearedAt)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

@@ -86,6 +86,17 @@ describe('the local team stand-in', () => {
     await expect(team.invite(COMPANY, by, { email: 'est@example.com', role: 'office' }, NOW)).rejects.toMatchObject({ code: 'already_member' });
   });
 
+  it('lists an invitation as open or expired at the instant it is asked about', async () => {
+    const team = localTeamService(path, users);
+    await team.invite(COMPANY, by, { email: 'new@example.com', role: 'office' }, NOW);
+    const status = async (at: Date) => {
+      const listed = await team.list(COMPANY, 'full', at);
+      return listed.view === 'full' && listed.invitations.map((i) => i.status);
+    };
+    expect(await status(NOW)).toEqual(['pending']);
+    expect(await status(new Date(NOW.getTime() + 8 * 24 * 60 * 60 * 1000))).toEqual(['expired']);
+  });
+
   it('shows an invitation only to the email it is addressed to', async () => {
     const team = localTeamService(path, users);
     const { invitation } = await team.invite(COMPANY, by, { email: 'new@example.com', role: 'office' }, NOW);
