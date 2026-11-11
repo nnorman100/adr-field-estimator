@@ -394,6 +394,72 @@ test('a signed-in person adds a second authenticator app', async ({ page }) => {
   expect(fake.factors).toHaveLength(2);
 });
 
+test("the add button waits for the count, so a spare is not saved under the first app's name", async ({
+  page,
+}) => {
+  const fake = await fakeSecondStep(page, {
+    factors: ['Authenticator app'],
+    enrolmentTokenCarriesSecondFactor: true,
+  });
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.ownerA.email);
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('button', { name: 'Add another authenticator app' }).click();
+  await expect(page.getByRole('heading', { name: 'Add an authenticator app' })).toBeVisible();
+
+  // Back to the signed-in screen while Firebase is slow to list the apps.
+  let release!: () => void;
+  const listed = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\/v1\/accounts:lookup/, async (route) => {
+    await listed;
+    await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(signedIn(page)).toBeVisible();
+  const add = page.getByRole('main').getByRole('button', { name: /authenticator app/ });
+  await expect(add).toBeDisabled();
+
+  release();
+  await page.getByRole('button', { name: 'Add another authenticator app' }).click();
+  await page.getByLabel('6-digit code').fill(APP_CODE);
+  await page.getByRole('button', { name: 'Turn on second step' }).click();
+  await expect(signedIn(page)).toBeVisible();
+  expect(fake.factors.map((factor) => factor.name)).toEqual([
+    'Authenticator app',
+    'Authenticator app 2',
+  ]);
+});
+
+test('a failed sign-out on the setup screen is shown, not lost', async ({ page }) => {
+  await fakeSecondStep(page);
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.ownerA.email);
+  await expect(setupHeading(page)).toBeVisible();
+
+  // The phone cannot remove its saved sign-in.
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.delete;
+    (window as unknown as { restoreDelete: () => void }).restoreDelete = () => {
+      IDBObjectStore.prototype.delete = original;
+    };
+    IDBObjectStore.prototype.delete = () => {
+      throw new DOMException('blocked', 'UnknownError');
+    };
+  });
+  await page.getByRole('main').getByRole('button', { name: 'Sign out' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'We could not check your sign-in' }),
+  ).toBeVisible();
+  await expect(setupHeading(page)).toHaveCount(0);
+
+  await page.evaluate(() => (window as unknown as { restoreDelete: () => void }).restoreDelete());
+  await page.getByRole('main').getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('status')).toHaveText('You are signed out.');
+  await expect(alertIn(page)).toHaveCount(0);
+});
+
 test('an estimator, who may turn the second step on, is offered it', async ({ page }) => {
   await fakeSecondStep(page, { enrolmentTokenCarriesSecondFactor: true });
   await page.goto('/sign-in/company-a');

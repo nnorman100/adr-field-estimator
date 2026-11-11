@@ -85,6 +85,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
     if (auth) await signOutCompany(auth);
+    setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
   }, []);
@@ -372,7 +373,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               void check(user);
             }}
             onNeedsSignIn={needsFreshSignIn}
-            onLeave={() => void run(() => endSession('You are signed out.'))}
+            onLeave={() => void refuse('You are signed out.')}
           />
         );
       }
