@@ -88,29 +88,23 @@ export function exemptCharged(mix: Mix, adjustment: ReturnType<typeof adjustment
   return mix.exempt.add(adjustment.byGroup.get(EXEMPT) ?? ZERO);
 }
 
-/** The trades with a priced line that carries overhead and profit; only those can owe a minimum. */
-export function usedTrades(lines: PriceLine[]): Set<string> {
-  const used = new Set<string>();
-  for (const line of lines) if (line.trade !== null && !line.noOverheadProfit) used.add(line.trade);
-  return used;
-}
-
 /**
- * What each used trade is short of its minimum, in trade-id order. Items that are exempt from overhead and
- * profit (a rental, say) are neither counted toward a minimum nor able to trigger one.
+ * What each trade with a line at this end that carries overhead and profit is short of its minimum, in
+ * trade-id order. Items that are exempt from overhead and profit (a rental, say) are neither counted toward a
+ * minimum nor able to trigger one.
  */
 export function tradeMinimums(
   trades: Trade[],
-  used: Set<string>,
   mix: Mix,
   adjustment: ReturnType<typeof adjustments>,
 ): TradeMinimum[] {
   const owed: TradeMinimum[] = [];
   for (const trade of trades) {
-    if (!used.has(trade.trade_id)) continue;
+    const counted = mix.trades.get(trade.trade_id);
+    if (counted === undefined) continue;
     const minimum = Dec.parse(trade.minimum_charge);
     if (minimum.isZero()) continue;
-    const charged = (mix.trades.get(trade.trade_id) ?? ZERO).add(adjustment.byGroup.get(trade.trade_id) ?? ZERO);
+    const charged = counted.add(adjustment.byGroup.get(trade.trade_id) ?? ZERO);
     const amount = money(maxDec(ZERO, minimum.sub(charged)));
     if (!amount.isZero()) owed.push({ tradeId: trade.trade_id, name: trade.name, amount });
   }

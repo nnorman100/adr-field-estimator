@@ -185,6 +185,88 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
   });
 });
 
+describe('flags at the high end and on approved additional work', () => {
+  it('W53 a high end under the job minimum still charges the growth of items billed beyond it', () => {
+    // Job minimum $1,000.00, cushion 50%. Demolition 50 x $2.00 = $100.00; antimicrobial 50 x $4.00 = $200.00,
+    // exempt from O&P. Low: work $100.00, minimum line $900.00, total $300.00 + $900.00 = $1,200.00.
+    // High: labor 1.5 x $300.00 = $450.00, exempt $300.00, work $150.00, minimum line $850.00, total $1,300.00.
+    const result = priced(
+      table(
+        [item('demo'), item('antimicrobial', { group: 'treatment', unit_price: '4.00', no_overhead_profit: true })],
+        { ...CUSHION, minimum_job_charge: '1000' },
+      ),
+      job([room('Kitchen', { unfinished_sf: 50 })]),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '300.00', minimum_charge: '900.00', total: '1200.00' });
+    expect(result.totals.high).toMatchObject({ subtotal: '450.00', minimum_charge: '850.00', total: '1300.00' });
+  });
+
+  it('W54 a trade whose only line is at the high end is charged its minimum there', () => {
+    // Uncertainty, no hidden damage or extra days. Demolition 100 x $2.00 = $200.00 at both ends. Air movers
+    // entered 0, so no low line; the IICRC maximum for a 100 sq ft wet floor is 1 + ceil(100 / 50) = 3, so
+    // the high end has 3 x 3 days x $25.00 = $225.00 under Mold work, short of $500.00 by $275.00.
+    // Low $200.00. High $200.00 + $225.00 + $275.00 = $700.00.
+    const result = priced(
+      withTrades(
+        [item('demo'), { ...AIR_MOVER, trade: 'mold_work' }],
+        [{ trade_id: 'mold_work', name: 'Mold work', minimum_charge: '500' }],
+        {
+          estimate_mode: 'range',
+          assist: {
+            drying_days: 3,
+            range_method: 'uncertainty',
+            extra_drying_days: 0,
+            hidden_damage_percent: { '1': '0', '2': '0', '3': '0' },
+          },
+        },
+      ),
+      job([room('Kitchen', { unfinished_sf: 100, floor_sf: 100, ceiling_height_ft: 8, water_class: 2 })], {
+        air_movers: 0,
+        drying_days: 3,
+      }),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '200.00', total: '200.00', trade_minimums: [] });
+    expect(result.totals.high).toMatchObject({ subtotal: '425.00', total: '700.00' });
+    expect(result.totals.high?.trade_minimums).toEqual([{ trade_id: 'mold_work', name: 'Mold work', amount: '275.00' }]);
+  });
+
+  it('W55 approved additional work carries the extras item materials share, O&P exemption and heading', () => {
+    // Demolition 100 x $2.00 = $200.00. Approved additional work 2 hours x $50.00 = $100.00, taxable at a 40%
+    // materials share. O&P 10%, tax 10%.
+    // Exempt from O&P: O&P 10% x $200.00 = $20.00; tax 10% x $100.00 x 40% = $4.00. Total $324.00.
+    // Under Drywall (minimum $400.00) instead: $100.00 is short by $300.00; O&P 10% x $600.00 = $60.00;
+    // tax 10% x $100.00 x 40% x 1.10 = $4.40. Total $300.00 + $300.00 + $60.00 + $4.40 = $664.40.
+    const extras = (changes: Obj) =>
+      item('additional_work', {
+        group: 'extras',
+        unit: 'hour',
+        quantity_source: 'field:labor_hours',
+        unit_price: '50.00',
+        taxable: true,
+        materials_share_percent: '40',
+        ...changes,
+      });
+    const approval = {
+      accepted_by_uid: 'uid-1',
+      accepted_by_name: 'Casey Customer',
+      accepted_at: '2026-11-01T10:00:00Z',
+      rate: '50.00',
+      total: '100.00',
+      company_id: 'example-co',
+      company_version: 1,
+    };
+    const withExtra = job([room('Kitchen', { unfinished_sf: 100 })], {
+      extras: [{ id: 'a'.repeat(32), description: 'Extra tear-out', hours: '2', approval }],
+    });
+    const rates = { overhead_profit_percent: '10', sales_tax: { enabled: true, percent: '10' } };
+    const exempt = priced(table([item('demo'), extras({ no_overhead_profit: true })], rates), withExtra);
+    expect(exempt.totals.low).toMatchObject({ subtotal: '300.00', overhead_profit: '20.00', tax: '4.00', total: '324.00' });
+    const headed = priced(withTrades([item('demo'), extras({ trade: 'drywall' })], TRADES, rates), withExtra);
+    expect(headed.totals.low).toMatchObject({ subtotal: '300.00', overhead_profit: '60.00', tax: '4.40', total: '664.40' });
+    expect(headed.totals.low.trade_minimums).toEqual([{ trade_id: 'drywall', name: 'Drywall', amount: '300.00' }]);
+  });
+});
+
 describe('tax applies to the materials share of a taxable item (M9)', () => {
   const rooms = [room('Kitchen', { unfinished_sf: 50 })];
   const taxed = (share: Obj, changes: Obj = {}) =>

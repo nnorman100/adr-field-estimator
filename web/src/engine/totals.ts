@@ -8,7 +8,6 @@ import {
   minimumTotal,
   scaleMix,
   tradeMinimums,
-  usedTrades,
   type Entry,
   type Mix,
   type TradeMinimum,
@@ -282,7 +281,6 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   const overhead = Dec.parse(policy.overhead_profit_percent).div(HUNDRED);
   const taxRate = policy.sales_tax.enabled ? Dec.parse(policy.sales_tax.percent).div(HUNDRED) : ZERO;
   const minimum = Dec.parse(policy.minimum_job_charge);
-  const used = usedTrades(lines);
   const mixOfLines = (list: PriceLine[]): Mix =>
     mixOf(list.map((line) => ({ line, amount: line.total })), multiplier, overhead);
   const fixedMix = mixOfLines(lines.filter((line) => line.bucket === 'fixed'));
@@ -295,7 +293,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     const subtotal = fixed.add(equipmentAmount).add(laborAmount);
     const adjusted = adjustments(mix, multiplier);
     const adjustment = adjusted.total;
-    const owed = tradeMinimums(trades, used, mix, adjusted);
+    const owed = tradeMinimums(trades, mix, adjusted);
     const topUps = minimumTotal(owed);
     const work = maxDec(ZERO, subtotal.add(adjustment).sub(exemptCharged(mix, adjusted)).add(topUps));
     const floor = money(maxDec(ZERO, minimum.sub(work)));
@@ -330,8 +328,10 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
         )
       : addMix(addMix(fixedMix, equipmentMix), scaleMix(laborMix, highLaborAmount, lowLabor));
     const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
-    // A high end still under the job minimum is the low end: it is not floored on its own.
-    high = candidate.short ? { ...low } : candidate.end;
+    // A high end still under the job minimum is the low end unless it charges more before tax: it is not
+    // floored on its own, but growth in items billed beyond the minimum still raises it.
+    const beforeTax = (value: End): Dec => value.total.sub(value.tax);
+    high = candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0 ? { ...low } : candidate.end;
   }
   return {
     mode: policy.estimate_mode,

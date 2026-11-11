@@ -381,7 +381,7 @@ export function priceScopeV2(
   }
   const categories = new Set(data.rooms.map((room) => room.category));
   const priced: Array<[Item, PriceLine[]]> = [];
-  let extrasTaxable = false;
+  let extrasItem: Item | null = null;
   const enabled = items
     .filter((item) => item.enabled)
     .sort((left, right) => {
@@ -391,7 +391,7 @@ export function priceScopeV2(
     });
   for (const item of enabled) {
     if (item.group === EXTRAS) {
-      extrasTaxable = item.taxable;
+      extrasItem = item;
       if (unpricedQuantity(item, data)) {
         warnings.push({ code: 'unpriced_extras_quantity', item_id: item.item_id });
       }
@@ -439,11 +439,11 @@ export function priceScopeV2(
       unitPrice: extra.approval.rate,
       waste: ZERO,
       total: money(extra.hours.mul(extra.approval.rate)),
-      taxable: extrasTaxable,
-      materialsShare: HUNDRED,
+      taxable: extrasItem?.taxable ?? false,
+      materialsShare: Dec.parse(extrasItem?.materials_share_percent ?? '100'),
       afterHours: false,
-      noOverheadProfit: false,
-      trade: null,
+      noOverheadProfit: extrasItem?.no_overhead_profit === true,
+      trade: extrasItem?.trade ?? null,
       xactimateCode: '',
       room: null,
       area: null,
