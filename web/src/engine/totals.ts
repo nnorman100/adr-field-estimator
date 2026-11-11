@@ -1,5 +1,18 @@
 // Low and high ends of a v3 estimate. Summary amounts are decimal strings; cents use HALF_UP once.
 
+import {
+  addMix,
+  adjustments,
+  exemptCharged,
+  mixOf,
+  minimumTotal,
+  scaleMix,
+  tradeMinimums,
+  usedTrades,
+  type Entry,
+  type Mix,
+  type TradeMinimum,
+} from './adjust';
 import { Dec, HUNDRED, ONE, ZERO, maxDec, minDec, money, percentText, sumDec } from './decimal';
 import type { JObj, Json } from './json';
 import type { Inspection } from './inspection';
@@ -15,6 +28,7 @@ import {
   type Item,
   type Policy,
   type Table,
+  type Trade,
 } from './table';
 import { commas, numberText, type Category, type PriceLine } from './values';
 
@@ -29,6 +43,8 @@ const BUCKETS = new Set(['fixed', 'equipment', 'labor_material']);
 export type End = {
   subtotal: Dec;
   afterHours: Dec;
+  /** What each trade heading under its minimum is short of it, in trade-id order. */
+  tradeMinimums: TradeMinimum[];
   minimumCharge: Dec;
   overheadProfit: Dec;
   tax: Dec;
@@ -202,9 +218,9 @@ function highLabor(data: Inspection, lines: PriceLine[], policy: Policy, items: 
 
 function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: Policy): {
   labor: Dec;
-  taxedLabor: Dec;
+  laborEntries: Entry[];
   equipment: Dec;
-  taxedEquipment: Dec;
+  equipmentEntries: Entry[];
 } {
   const percents = roomPercents(data, policy);
   const largest = [...percents.values()].reduce((best, value) => maxDec(best, value), ZERO);
@@ -214,9 +230,8 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
     return percents.get(line.room) ?? largest;
   };
   const high = priceScopeV2(data, items, policy, factors(data, policy), growth).lines;
-  let labor = ZERO;
-  let taxed = ZERO;
-  const bracketed = new Map<string, { amount: Dec; taxable: boolean }>();
+  const laborEntries: Entry[] = [];
+  const bracketed = new Map<string, Entry>();
   const mixed = [
     ...lines.filter((line) => !line.priceBracket),
     ...high.filter((line) => line.priceBracket),
@@ -225,31 +240,25 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
     if (line.bucket !== 'labor_material') continue;
     if (line.priceBracket) {
       const key = `${line.itemId ?? ''}\u0000${line.priceRow ?? ''}`;
-      const prior = bracketed.get(key) ?? { amount: ZERO, taxable: line.taxable === true };
+      const prior = bracketed.get(key);
       bracketed.set(key, {
-        amount: prior.amount.add(exactAmount(line).mul(ONE.add(growth(line)))),
-        taxable: line.taxable === true,
+        line: prior?.line ?? line,
+        amount: (prior?.amount ?? ZERO).add(exactAmount(line).mul(ONE.add(growth(line)))),
       });
       continue;
     }
-    const grown = line.total.mul(ONE.add(growth(line)));
-    labor = labor.add(grown);
-    if (line.taxable) taxed = taxed.add(grown);
+    laborEntries.push({ line, amount: line.total.mul(ONE.add(growth(line))) });
   }
-  for (const row of bracketed.values()) {
-    const rounded = money(row.amount);
-    labor = labor.add(rounded);
-    if (row.taxable) taxed = taxed.add(rounded);
-  }
+  for (const row of bracketed.values()) laborEntries.push({ line: row.line, amount: money(row.amount) });
   return {
-    labor: money(labor),
-    taxedLabor: taxed,
+    labor: money(sumDec(laborEntries.map((entry) => entry.amount), ZERO)),
+    laborEntries,
     equipment: sumBucket(high, 'equipment'),
-    taxedEquipment: sumBucket(high, 'equipment', true),
+    equipmentEntries: high.filter((line) => line.bucket === 'equipment').map((line) => ({ line, amount: line.total })),
   };
 }
 
-export function computeTotals(data: Inspection, lines: PriceLine[], policy: Policy, items: Item[]): Totals {
+export function computeTotals(data: Inspection, lines: PriceLine[], policy: Policy, items: Item[], trades: Trade[] = []): Totals {
   const missing = [...new Set(lines.filter((line) => !BUCKETS.has(line.bucket)).map((line) => line.code))].sort();
   if (missing.length) throw new Error(`Priced codes missing from the estimate range: ${missing}`);
   const fixed = sumBucket(lines, 'fixed');
@@ -273,34 +282,56 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   const overhead = Dec.parse(policy.overhead_profit_percent).div(HUNDRED);
   const taxRate = policy.sales_tax.enabled ? Dec.parse(policy.sales_tax.percent).div(HUNDRED) : ZERO;
   const minimum = Dec.parse(policy.minimum_job_charge);
-  const taxedFixed = sumBucket(lines, 'fixed', true);
-  const taxedEquipment = sumBucket(lines, 'equipment', true);
-  const taxedLabor = sumBucket(lines, 'labor_material', true);
-  const highEquipment = uncertainEnd ? uncertainEnd.equipment : equipment;
-  const preMinimum = (laborAmount: Dec, equipmentAmount: Dec): Dec =>
-    fixed.add(equipmentAmount).add(laborAmount).add(money(laborAmount.mul(multiplier.sub(ONE))));
-  const end = (laborAmount: Dec, equipmentAmount = equipment, taxedEquipmentAmount = taxedEquipment, share: Dec | null = null): End => {
+  const used = usedTrades(lines);
+  const mixOfLines = (list: PriceLine[]): Mix =>
+    mixOf(list.map((line) => ({ line, amount: line.total })), multiplier, overhead);
+  const fixedMix = mixOfLines(lines.filter((line) => line.bucket === 'fixed'));
+  const equipmentMix = mixOfLines(lines.filter((line) => line.bucket === 'equipment'));
+  const laborMix = mixOfLines(labor);
+  // One end of the range. The multiplier applies to flagged items only; an item that is exempt from overhead
+  // and profit is left out of its base and out of what a minimum compares; a taxable item adds its materials
+  // share to the tax base. A minimum line is never short by a cent that rounds away, so `short` is exact.
+  const end = (laborAmount: Dec, equipmentAmount: Dec, mix: Mix): { end: End; short: boolean } => {
     const subtotal = fixed.add(equipmentAmount).add(laborAmount);
-    const adjustment = money(laborAmount.mul(multiplier.sub(ONE)));
-    const floor = maxDec(ZERO, minimum.sub(subtotal.add(adjustment)));
-    const overheadProfit = money(overhead.mul(subtotal.add(adjustment).add(floor)));
-    const used = share ?? (lowLabor.isZero() ? ZERO : taxedLabor.mul(laborAmount).div(lowLabor));
-    const tax = money(taxRate.mul(taxedFixed.add(taxedEquipmentAmount).add(multiplier.mul(used))).mul(ONE.add(overhead)));
+    const adjusted = adjustments(mix, multiplier);
+    const adjustment = adjusted.total;
+    const owed = tradeMinimums(trades, used, mix, adjusted);
+    const topUps = minimumTotal(owed);
+    const work = maxDec(ZERO, subtotal.add(adjustment).sub(exemptCharged(mix, adjusted)).add(topUps));
+    const floor = money(maxDec(ZERO, minimum.sub(work)));
+    const overheadProfit = money(overhead.mul(work.add(floor)));
+    const tax = money(taxRate.mul(mix.taxed));
     return {
-      subtotal,
-      afterHours: adjustment,
-      minimumCharge: floor,
-      overheadProfit,
-      tax,
-      total: subtotal.add(adjustment).add(floor).add(overheadProfit).add(tax),
+      short: work.cmp(minimum) < 0,
+      end: {
+        subtotal,
+        afterHours: adjustment,
+        tradeMinimums: owed,
+        minimumCharge: floor,
+        overheadProfit,
+        tax,
+        total: subtotal.add(adjustment).add(topUps).add(floor).add(overheadProfit).add(tax),
+      },
     };
   };
-  const low = end(lowLabor);
+  const low = end(lowLabor, equipment, addMix(addMix(fixedMix, equipmentMix), laborMix)).end;
   let high: End | null = null;
   if (policy.estimate_mode === 'range') {
-    if (preMinimum(highLaborAmount, highEquipment).cmp(minimum) < 0) high = { ...low };
-    else if (uncertainEnd) high = end(highLaborAmount, highEquipment, uncertainEnd.taxedEquipment, uncertainEnd.taxedLabor);
-    else high = end(highLaborAmount);
+    // The cushion grows every labor line in proportion; the uncertainty method grows each line by its own room.
+    const highMix = uncertainEnd
+      ? addMix(
+          addMix(fixedMix, mixOf(uncertainEnd.equipmentEntries, multiplier, overhead)),
+          scaleMix(
+            mixOf(uncertainEnd.laborEntries, multiplier, overhead),
+            uncertainEnd.labor,
+            sumDec(uncertainEnd.laborEntries.map((entry) => entry.amount), ZERO),
+            false,
+          ),
+        )
+      : addMix(addMix(fixedMix, equipmentMix), scaleMix(laborMix, highLaborAmount, lowLabor));
+    const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
+    // A high end still under the job minimum is the low end: it is not floored on its own.
+    high = candidate.short ? { ...low } : candidate.end;
   }
   return {
     mode: policy.estimate_mode,
@@ -310,7 +341,7 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
     laborMaterialHigh: highLaborAmount,
     afterHoursLabel: policy.after_hours.label,
     minimumChargeLabel: MINIMUM_CHARGE_LABEL,
-    explanation: explanation(policy, data),
+    explanation: explanation(policy, data, lines),
     rangeExplanation: rangeExplanation(policy, data),
     uncertainty: uncertainEnd ? uncertaintyJson(data, policy) : null,
   };
@@ -428,21 +459,27 @@ function howEndsDiffer(policy: Policy, data: Inspection): string[] {
   ];
 }
 
-export function explanation(policy: Policy, data: Inspection): string {
+export function explanation(policy: Policy, data: Inspection, lines: PriceLine[] = []): string {
   if (policy.estimate_mode === 'single') return 'The price covers the itemized scope below.';
   const sentences = howEndsDiffer(policy, data);
   const multiplier = Dec.parse(policy.after_hours.multiplier);
-  if (data.isAfterHours && multiplier.cmp(ONE) > 0) {
+  if (data.isAfterHours && multiplier.cmp(ONE) > 0 && lines.some((line) => line.afterHours)) {
     const label = policy.after_hours.label;
     const named = label === DEFAULT_AFTER_HOURS_LABEL ? 'an after-hours adjustment' : `"${label}"`;
-    sentences.push(`Both amounts include ${named} of ${percentText(multiplier.sub(ONE).mul(HUNDRED))}% of labor and materials.`);
+    sentences.push(
+      `Both amounts include ${named} of ${percentText(multiplier.sub(ONE).mul(HUNDRED))}% of the labor and materials marked as after-hours work.`,
+    );
   }
   const overhead = Dec.parse(policy.overhead_profit_percent);
-  if (!overhead.isZero()) sentences.push(`Both amounts include overhead and profit at ${percentText(overhead)}%.`);
+  if (!overhead.isZero()) {
+    const except = lines.some((line) => line.noOverheadProfit) ? ', except on items marked as carrying none' : '';
+    sentences.push(`Both amounts include overhead and profit at ${percentText(overhead)}%${except}.`);
+  }
   const tax = Dec.parse(policy.sales_tax.percent);
   if (policy.sales_tax.enabled && !tax.isZero()) {
     const share = overhead.isZero() ? '' : ' and their share of overhead and profit';
-    sentences.push(`Sales tax at ${percentText(tax)}% applies to the items marked taxable${share}.`);
+    const part = lines.some((line) => line.taxable && line.materialsShare.cmp(HUNDRED) < 0) ? 'the materials share of ' : '';
+    sentences.push(`Sales tax at ${percentText(tax)}% applies to ${part}the items marked taxable${share}.`);
   }
   return sentences.join(' ');
 }
@@ -450,6 +487,6 @@ export function explanation(policy: Policy, data: Inspection): string {
 /** Price a saved draft from a parsed table with the dryscope-v3 formulas. */
 export function priceAndRange(data: Inspection, table: Table): Priced {
   const scoped = priceScopeV2(data, table.items, table.policy);
-  const totals = computeTotals(data, scoped.lines, table.policy, table.items);
+  const totals = computeTotals(data, scoped.lines, table.policy, table.items, table.trades ?? []);
   return { lines: scoped.lines, totals, warnings: scoped.warnings, calculationVersion: ENGINE_VERSION };
 }
