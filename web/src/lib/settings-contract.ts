@@ -4,8 +4,9 @@
 // one side only (the way FIREBASE_PROJECT_ID and GOOGLE_CLOUD_PROJECT once were).
 //
 // To add or rename a setting: change this list, config.ts and the Terraform in the same PR. Names
-// only; no values and no secrets belong here. Settings that come from Secret Manager are not
-// listed: the app reads none yet, and the test refuses any other way Terraform could add one.
+// only; no values and no secrets belong here. Settings Terraform fills from Secret Manager are
+// listed by name like any other, so a secret added in infra/dryscope/modules/naming fails the test
+// until it is listed here too.
 
 // The deployed services that receive settings from Terraform: the web app (dryscope-api-<env>),
 // the Live relay (dryscope-live-<env>, a placeholder until stage S7) and the migration job
@@ -44,9 +45,17 @@ export const SETTINGS = {
   GOOGLE_CLOUD_LOCATION: { source: 'terraform', services: SERVING, reader: 'planned' },
   EVIDENCE_BUCKET: { source: 'terraform', services: SERVING, reader: 'planned' },
   ALLOWED_ORIGINS: { source: 'terraform', services: SERVING, reader: 'planned' },
+  // Secret Manager references (the naming module's secret_access table), named by Terraform from
+  // the secret's name. Nothing reads them yet.
+  RESEND_API_KEY: { source: 'terraform', services: ['api'], reader: 'planned' },
+  STRIPE_SECRET_KEY: { source: 'terraform', services: ['api'], reader: 'planned' },
+  MAPS_API_KEY: { source: 'terraform', services: ['api'], reader: 'planned' },
+  LINK_SIGNING_KEY: { source: 'terraform', services: SERVING, reader: 'planned' },
   // The commit a running app was built from. The image build sets it, and Cloud Run runs with that
   // value, so Terraform must not set it.
   APP_COMMIT: { source: 'tooling', services: NOT_SET, reader: 'web' },
+  // An older name for APP_ENV that config.ts still accepts. Terraform sets APP_ENV, never this.
+  APP_ENVIRONMENT: { source: 'local', services: NOT_SET, reader: 'web' },
   // Developer machine only. The emulator hosts make firebase-admin trust unsigned tokens and
   // credential-free writes, so Terraform must never set them (config.ts also refuses them unless
   // APP_ENV is local).
@@ -62,8 +71,7 @@ export type WebSettingName = {
   [K in SettingName]: (typeof SETTINGS)[K]['reader'] extends 'web' ? K : never;
 }[SettingName];
 
-// An older name for APP_ENV that the app still accepts. Terraform sets APP_ENV, not this.
-export const APP_ENV_ALIAS = 'APP_ENVIRONMENT';
+export const APP_ENV_ALIAS = 'APP_ENVIRONMENT' satisfies SettingName;
 
 export function settingNames(): SettingName[] {
   return Object.keys(SETTINGS) as SettingName[];

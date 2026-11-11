@@ -39,7 +39,7 @@ function isLoopbackHost(value: string): boolean {
 }
 
 // Typed against src/lib/settings-contract.ts: a setting missing here, or declared here and not
-// listed there as read by the web app, fails the type check.
+// listed there as read by the web app, fails the type check. APP_ENV_ALIAS is read by withAppEnv.
 const shape = {
   APP_ENV: z.enum(['local', 'test', 'live'], {
     error: 'APP_ENV (or APP_ENVIRONMENT) must be one of local, test or live',
@@ -99,28 +99,30 @@ const shape = {
     .string()
     .refine(isLoopbackHost, { message: 'FIRESTORE_EMULATOR_HOST must be a loopback host:port' })
     .optional(),
-} satisfies Record<WebSettingName, z.ZodType>;
+} satisfies Record<Exclude<WebSettingName, typeof APP_ENV_ALIAS>, z.ZodType>;
 
-// The names above, for the contract test.
-export const CONFIG_SETTINGS = Object.keys(shape);
+// Every name this file reads, for the contract test.
+export const CONFIG_SETTINGS = [...Object.keys(shape), APP_ENV_ALIAS];
 
-const schema = z
-  .object(shape)
-  .superRefine((env, ctx) => {
-    for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
-      if (env[name] === undefined) continue;
-      if (env.APP_ENV !== 'local') {
-        ctx.addIssue({ code: 'custom', path: [name], message: `${name} is allowed only when APP_ENV is local` });
-      }
-      if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
-        ctx.addIssue({
-          code: 'custom',
-          path: [name],
-          message: `${name} needs a GOOGLE_CLOUD_PROJECT starting with demo-`,
-        });
-      }
+const schema = z.object(shape).superRefine((env, ctx) => {
+  for (const name of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST'] as const) {
+    if (env[name] === undefined) continue;
+    if (env.APP_ENV !== 'local') {
+      ctx.addIssue({
+        code: 'custom',
+        path: [name],
+        message: `${name} is allowed only when APP_ENV is local`,
+      });
     }
-  });
+    if (!env.GOOGLE_CLOUD_PROJECT?.startsWith('demo-')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [name],
+        message: `${name} needs a GOOGLE_CLOUD_PROJECT starting with demo-`,
+      });
+    }
+  }
+});
 
 const SQL_KEYS = ['SQL_CONNECTION_NAME', 'SQL_DATABASE_NAME', 'SQL_IAM_USER'] as const;
 
@@ -194,7 +196,9 @@ export type IdentityConfig = {
 export function parseIdentityConfig(env: Record<string, string | undefined>): IdentityConfig {
   const data = checked(env);
   if (!data.GOOGLE_CLOUD_PROJECT) {
-    throw new ConfigError(['GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to check a sign-in']);
+    throw new ConfigError([
+      'GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to check a sign-in',
+    ]);
   }
   return {
     appEnv: data.APP_ENV,
@@ -218,7 +222,9 @@ export function parseProjectionConfig(env: Record<string, string | undefined>): 
     problems.push('GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to write access records');
   }
   if (!data.FIRESTORE_DATABASE_ID) {
-    problems.push('FIRESTORE_DATABASE_ID: FIRESTORE_DATABASE_ID is required to write access records');
+    problems.push(
+      'FIRESTORE_DATABASE_ID: FIRESTORE_DATABASE_ID is required to write access records',
+    );
   }
   if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT || !data.FIRESTORE_DATABASE_ID) {
     throw new ConfigError(problems);
