@@ -4,11 +4,14 @@ export {
   bearerToken,
   resolveAccount,
   resolveIdentity,
+  resolveOperator,
   type Account,
   type AccountClaims,
   type Identity,
   type IdentityDirectory,
   type MemberRecord,
+  type Operator,
+  type OperatorDirectory,
   type RefusalCode,
   type ResolveOptions,
   type SessionToken,
@@ -24,4 +27,4 @@ export {
   type SessionClaims,
   type SignInHolder,
 } from './policy';
-export { accountRoute, memberRoute, publicRoute, requireFlag, serviceRoute } from './route';
+export { accountRoute, memberRoute, operatorRoute, publicRoute, requireFlag, serviceRoute } from './route';

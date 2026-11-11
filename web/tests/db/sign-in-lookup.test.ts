@@ -228,6 +228,10 @@ describe('sign-in lookup (migration 0004)', () => {
     `;
     expect(policies).toEqual([
       { name: 'companies_current', command: 'r', roles: ['dryscope_runtime'] },
+      // The platform operator's (migration 0006, tests/db/platform-operator.test.ts).
+      { name: 'companies_operator_insert', command: 'a', roles: ['dryscope_runtime'] },
+      { name: 'companies_operator_read', command: 'r', roles: ['dryscope_runtime'] },
+      { name: 'companies_operator_update', command: 'w', roles: ['dryscope_runtime'] },
       { name: 'companies_owner_read', command: 'r', roles: ['-'] },
     ]);
 

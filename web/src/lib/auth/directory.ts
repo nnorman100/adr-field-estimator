@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { actors, companies, companyFeatureFlags, memberships } from '@/db/schema';
 import { withCompany, type Database } from '@/db/tenant';
-import type { IdentityDirectory, MemberRecord } from './identity';
+import type { IdentityDirectory, MemberRecord, OperatorDirectory } from './identity';
 
 // The sign-in records in Postgres. The company comes from sign_in_company (migration 0004), the
 // one lookup allowed before a company is known; everything else is read inside withCompany, so
@@ -49,6 +49,24 @@ export function databaseDirectory(db: Database): IdentityDirectory {
           .where(eq(companyFeatureFlags.companyId, companyId));
         return { company, actor, membership: membership ?? null, flags };
       });
+    },
+  };
+}
+
+// The platform operator signing in, through platform_operator (migration 0006), the one lookup of an
+// operator the runtime may make. Read-only, so a refused request writes nothing.
+export function databaseOperators(db: Database): OperatorDirectory {
+  return {
+    async operatorFor(tenant, uid) {
+      return db.transaction(
+        async (tx) => {
+          const rows = (await tx.execute(sql`SELECT platform_operator(${tenant}, ${uid})::text AS id`)) as unknown as {
+            id: string | null;
+          }[];
+          return rows[0]?.id ?? null;
+        },
+        { accessMode: 'read only' },
+      );
     },
   };
 }
