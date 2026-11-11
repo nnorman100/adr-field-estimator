@@ -13,8 +13,8 @@ const EXEMPT = '\u0000exempt';
 const OPEN = '\u0000open';
 
 /**
- * Sums over the lines at one end. Every field is linear in the line amounts, so the cushion's high end can
- * scale the labor part of a mix by (high labor / low labor), as it already does for the taxable share.
+ * Sums over the lines at one end. Every field is linear in the line amounts, so the high end can scale the
+ * mix of its grown labor lines to the rounded high labor.
  * - `flagged`: amounts of lines that take the after-hours multiplier, by the group its adjustment rounds in.
  * - `exempt`: amounts of lines that carry no overhead and profit.
  * - `taxed`: the tax base, each taxable line's materials share at the multiplier, plus its share of overhead
@@ -58,16 +58,15 @@ export function addMix(left: Mix, right: Mix): Mix {
 }
 
 /**
- * The mix of labor lines at another labor amount, in proportion (zero when there is none). With `tax` off the
- * tax base is left as it is: the uncertainty method taxes its exact grown amounts, and only rounds the labor
- * that goes into the subtotal.
+ * The mix of grown labor lines scaled to the rounded labor amount (zero when there is none). The tax base is left
+ * as it is: the uncertainty method taxes its exact grown amounts, and the cushion sets its own.
  */
-export function scaleMix(mix: Mix, amount: Dec, low: Dec, tax = true): Mix {
+export function scaleMix(mix: Mix, amount: Dec, low: Dec): Mix {
   const scale = (value: Dec): Dec => (low.isZero() ? ZERO : value.mul(amount).div(low));
   return {
     flagged: new Map([...mix.flagged].map(([group, value]) => [group, scale(value)])),
     exempt: scale(mix.exempt),
-    taxed: tax ? scale(mix.taxed) : mix.taxed,
+    taxed: mix.taxed,
     trades: new Map([...mix.trades].map(([trade, value]) => [trade, scale(value)])),
   };
 }

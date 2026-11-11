@@ -138,6 +138,88 @@ describe('the range explanation names what tax carries', () => {
   });
 });
 
+describe('the cushion grows each labor line by its own band', () => {
+  it('W57 a flagged labor-hours line takes the first-band percent, not the blended growth of all labor', () => {
+    // Demolition 2,000 x $1.00 = $2,000.00 (not flagged); labor 10 hours x $50.00 = $500.00 (flagged).
+    // Multiplier 1.5. Low: adjustment 50% x $500.00 = $250.00, total $2,750.00.
+    // Cushion: first 1,000 sq ft at 50%, beyond at 0%. High area $2,000.00 + 50% x $1,000.00 = $2,500.00;
+    // labor hours at the first percent, 1.5 x $500.00 = $750.00. High labor $3,250.00.
+    // Adjustment 50% x $750.00 = $375.00 (not 50% x $500.00 x 3,250 / 2,500 = $325.00). High total $3,625.00.
+    const result = priced(
+      table(
+        [
+          item('demo', { unit_price: '1.00' }),
+          item('labor', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '50.00', after_hours: true }),
+        ],
+        { ...NIGHT, estimate_mode: 'range', range: { first_sf: 1000, first_percent: '50', beyond_percent: '0' } },
+      ),
+      job([room('Kitchen', { unfinished_sf: 2000 })], { labor_hours: 10, is_after_hours: true }),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '2500.00', after_hours: '250.00', total: '2750.00' });
+    expect(result.totals.high).toMatchObject({ subtotal: '3250.00', after_hours: '375.00', total: '3625.00' });
+  });
+
+  it('W59 with three cushion bands each area line takes the bands its own dearest square feet fall in', () => {
+    // Kitchen 200 sq ft: demolition $2.00 = $400.00 (flagged); antimicrobial $1.00 = $200.00. Multiplier 1.5.
+    // Bands: first 100 sq ft at 50%, up to 300 at 20%, beyond at 0%. Dearest first: demolition.
+    // Demolition: 100 sq ft ($200.00) at 50% + 100 sq ft ($200.00) at 20% = $140.00, so $540.00.
+    // Antimicrobial: 100 sq ft ($100.00) at 20% = $20.00, so $220.00. High labor $760.00.
+    // Adjustment 50% x $540.00 = $270.00 (not 50% x $400.00 x 760 / 600). High total $1,030.00. Low $800.00.
+    const result = priced(
+      table([item('demo', { after_hours: true }), item('antimicrobial', { group: 'treatment', unit_price: '1.00' })], {
+        ...NIGHT,
+        estimate_mode: 'range',
+        range: {
+          first_sf: 100,
+          first_percent: '50',
+          beyond_percent: '0',
+          brackets: [
+            { up_to_sf: 100, percent: '50' },
+            { up_to_sf: 300, percent: '20' },
+            { up_to_sf: null, percent: '0' },
+          ],
+        },
+      }),
+      job([room('Kitchen', { unfinished_sf: 200 })], { is_after_hours: true }),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '600.00', after_hours: '200.00', total: '800.00' });
+    expect(result.totals.high).toMatchObject({ subtotal: '760.00', after_hours: '270.00', total: '1030.00' });
+  });
+});
+
+describe('the range explanation reads the lines at both ends', () => {
+  it('W58 a taxable exempt rental that only the high end prices shapes the overhead and tax sentences', () => {
+    // Uncertainty, no hidden damage or extra days. Demolition $200.00 (not taxable). Air movers entered 0, so no
+    // low line; the IICRC maximum for a 100 sq ft wet floor is 3, so the high end rents 3 x 3 days x $25.00 =
+    // $225.00, taxable at a 40% materials share and exempt from O&P. High tax 10% x $225.00 x 40% = $9.00.
+    const result = priced(
+      table(
+        [item('demo'), { ...AIR_MOVER, taxable: true, materials_share_percent: '40', no_overhead_profit: true }],
+        {
+          estimate_mode: 'range',
+          overhead_profit_percent: '10',
+          sales_tax: { enabled: true, percent: '10' },
+          assist: {
+            drying_days: 3,
+            range_method: 'uncertainty',
+            extra_drying_days: 0,
+            hidden_damage_percent: { '1': '0', '2': '0', '3': '0' },
+          },
+        },
+      ),
+      job([room('Kitchen', { unfinished_sf: 100, floor_sf: 100, ceiling_height_ft: 8, water_class: 2 })], {
+        air_movers: 0,
+        drying_days: 3,
+      }),
+    );
+    expect(result.totals.high?.tax).toBe('9.00');
+    expect(result.totals.explanation).toContain(
+      'Both amounts include overhead and profit at 10%, except on items marked as carrying none.',
+    );
+    expect(result.totals.explanation).toContain('Sales tax at 10% applies to the materials share of the items marked taxable.');
+  });
+});
+
 describe('a minimum per trade heading beside the job minimum (M7)', () => {
   const items = [
     item('demo', { trade: 'drywall' }),
