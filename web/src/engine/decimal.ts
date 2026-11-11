@@ -1,5 +1,5 @@
 // CPython decimal (prec 28, ROUND_HALF_EVEN) with the coefficient and exponent that str() keeps.
-// decimal.js drops those trailing zeros, and the pinned oracle compares the Python text.
+// decimal.js drops those trailing zeros, which the engine keeps to match the Python text.
 
 const PREC = 28;
 
