@@ -268,15 +268,31 @@ The rules deny every path they do not name. They read three server-written recor
 | --- | --- | --- |
 | `companies/{companyId}` (company header) | `authTenantId`, the company's sign-in tenant | server only |
 | `companies/{companyId}/access/{uid}` (access record) | `role` (owner, estimator or office) and `expiresAt` (a timestamp; the record stops working then) | server only |
-| `companies/{companyId}/drafts/{draftId}` and documents nested under it | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts |
+| `companies/{companyId}/drafts/{draftId}`, its `rooms/{roomId}` and its `photos/{photoId}` | draft: `fieldOwnerUid` and `state` (editing, submitting or submitted); client data sits in one `field` map in each document | the draft's field owner changes only `field`, while the draft is `editing`; the server creates and removes drafts |
 
 Every read or write needs a token whose `firebase.tenant` is the company's `authTenantId` and an
 unexpired access record for that uid in that company. With both, owner and office read every draft
 of the company and an estimator reads only drafts they own in the field. Only the field owner, as
-owner or estimator, writes, and only the `field` map: of a draft, or of a document nested under it
-(created holding only `field`, never deleted by a client). A draft that is `submitting` or
-`submitted` refuses every client write. What `field` may hold is checked field by field in S5. The
-`field` map will hold job details such as rooms, measurements and notes once S5 defines it.
+owner or estimator, writes, and only the `field` map: of a draft, or of a room or photo reference
+under it (created holding only `field`, never deleted by a client; no other collection and nothing
+deeper). A draft that is `submitting` or `submitted` refuses every client write.
+
+Each `field` map follows field map v1 (S5a-1, `web/src/lib/field/schema.ts`), and the rules refuse
+a key it does not name, a value of the wrong type, and a text, number or list outside its size. Every
+key is optional; clearing a value deletes its key.
+
+| Document | `field` keys |
+| --- | --- |
+| Draft | `yearBuilt`; `roomOrder` (room ids, at most 30, no repeats); `notes` (up to 40,000 characters) and `summary` (the written summary of findings, up to 6,000); `scopeConfirmed`; equipment counts `airMovers`, `dehumidifiers`, `airScrubbers`, `woodFloorSystems` with `dryingDays` and `woodFloorDays`; job charges `emergencyCalls`, `monitoringHours`, `haulLoads`, `hepaFilters`, `matterportScans`, `dumpTruckLoads`, `equipmentDecon`, `powerDistribution`, `laborHours`, `isAfterHours` |
+| Room | `name`, `category` (1 to 3), `unfinishedSf`, `finishedSf`, `floorSf`, `wetFloorSf`, `wastePercent` |
+| Photo reference | `roomId`, `shotTag` (overview, source, surface, meter, contents or equipment) |
+
+`notes` and `summary` are free text and may hold personal details, so they are personal data. The
+rules cannot check a list's entries; the server checks `roomOrder` when it reads the draft
+(`toInspection` in `web/src/lib/field/inspection.ts` maps a draft and its rooms to the engine's
+inspection JSON). Each write reads the company header, the access record and, for a room or photo,
+the draft: three documents of the 10 a write may read. A batched write may read 20 in all; counted
+write by write, that is the draft update (two reads) and six room or photo writes (three each).
 
 How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
 
