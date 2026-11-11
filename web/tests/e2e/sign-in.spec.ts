@@ -115,6 +115,59 @@ test('signing out clears the session', async ({ page }) => {
   expect(savedUsers).toEqual([]);
 });
 
+test('a failed sign-out keeps the signed-in screen and the session', async ({ page }) => {
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.memberA.email, PASSWORD);
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+
+  // The phone cannot remove the saved sign-in (its storage refuses the delete).
+  await page.evaluate(() => {
+    IDBObjectStore.prototype.delete = () => {
+      throw new DOMException('Storage refused', 'UnknownError');
+    };
+  });
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText('Sign-in did not work. Try again.');
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+  await expect(page.getByText('You are signed out.')).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+});
+
+test('a sign-in check that finishes after the sign-in ended is not shown', async ({ context, page }) => {
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.memberA.email, PASSWORD);
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+
+  // A second tab of company A whose sign-in check is held back.
+  const other = await context.newPage();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let seen!: () => void;
+  const requested = new Promise<void>((resolve) => (seen = resolve));
+  await other.route('**/api/me', async (route) => {
+    seen();
+    await held;
+    await route.continue();
+  });
+  await other.goto('/sign-in/company-a');
+  await requested;
+  await expect(other.getByText('Checking your sign-in…')).toBeVisible();
+
+  // Signing out in the first tab ends the sign-in in the second, before its check answers.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  await expect(other.getByLabel('Password')).toBeVisible();
+
+  const answer = nextMeAnswer(other);
+  release();
+  expect((await answer).status()).toBe(200);
+  await other.waitForTimeout(500);
+  await expect(other.getByRole('heading', { name: `Signed in to ${A}` })).toHaveCount(0);
+  await expect(other.getByLabel('Password')).toBeVisible();
+});
+
 test('an unverified email cannot reach the app', async ({ page }) => {
   await page.goto('/sign-in/company-a');
   const answer = nextMeAnswer(page);

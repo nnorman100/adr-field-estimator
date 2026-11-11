@@ -47,7 +47,7 @@ export function SignInScreen(props: SignInScreenProps) {
       </Panel>
     );
   }
-  return <CompanySignIn {...props} config={props.config} />;
+  return <CompanySignIn key={props.tenantId} {...props} config={props.config} />;
 }
 
 function CompanySignIn({ address, companyName, tenantId, invitationId, config }: SignInScreenProps & { config: BrowserSignInConfig }) {
@@ -64,15 +64,27 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
-    if (auth) await signOutCompany(auth).catch(() => undefined);
+    if (auth) await signOutCompany(auth);
     setNotice(message);
     setScreen({ name: 'signed-out' });
   }, []);
+
+  const refuse = useCallback(
+    async (message: string) => {
+      try {
+        await endSession(message);
+      } catch {
+        setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
+      }
+    },
+    [endSession],
+  );
 
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
       const outcome = await checkSignIn(user, fresh);
+      if (authRef.current?.currentUser !== user) return;
       if (endsSession(outcome)) {
         const message =
           outcome.kind === 'not-this-company'
@@ -80,12 +92,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             : outcome.kind === 'account-disabled'
               ? `This account is turned off. Ask the owner of ${companyName}.`
               : 'Please sign in again.';
-        await endSession(message);
+        await refuse(message);
         return;
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
-    [companyName, endSession],
+    [companyName, refuse],
   );
 
   useEffect(() => {
@@ -99,12 +111,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       }
       // Belt and braces: this company's Auth instance only ever holds this tenant's sign-in.
       if (!belongsTo(user, tenantId)) {
-        void endSession(`That sign-in is not for ${companyName}.`);
+        void refuse(`That sign-in is not for ${companyName}.`);
         return;
       }
       void check(user);
     });
-  }, [address, check, companyName, config, endSession, tenantId]);
+  }, [address, check, companyName, config, refuse, tenantId]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -122,9 +134,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const currentUser = () => authRef.current?.currentUser ?? null;
 
   const signOutButton = (
-    <Button variant="outline" disabled={busy} onClick={() => run(() => endSession('You are signed out.'))}>
-      Sign out
-    </Button>
+    <>
+      <ErrorMessage text={error} />
+      <Button variant="outline" disabled={busy} onClick={() => run(() => endSession('You are signed out.'))}>
+        Sign out
+      </Button>
+    </>
   );
 
   if (screen.name === 'starting' || screen.name === 'checking') {
@@ -200,7 +215,6 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
               then come back here.
             </p>
             <StatusMessage text={notice} />
-            <ErrorMessage text={error} />
             <Button
               disabled={busy}
               onClick={() =>
