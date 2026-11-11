@@ -31,12 +31,31 @@ export type ProjectSeed = {
   // an authenticator-app second step, so the server asks this account for one (S3-14, S3-18).
   operator: SeedAccount;
 };
+export type TeamAccount = SeedAccount & { name: string };
+// A company of its own for each browser project, for the team screens (tests/e2e/team.spec.ts),
+// whose tests change its team.
+export type TeamSeed = {
+  address: string;
+  companyId: string;
+  companyName: string;
+  tenantId: string;
+  owner: TeamAccount;
+  estimator: TeamAccount;
+  office: TeamAccount;
+  // Estimators for the tests that change a role, and for the ones that turn a member off, one per
+  // attempt (Playwright retries once in CI), so a retry starts from an unchanged member.
+  forRoleChange: TeamAccount[];
+  forTurnOff: TeamAccount[];
+  // A verified account of the company with no membership and no invitation.
+  stranger: TeamAccount;
+};
 export type Seed = {
   tenantA: string;
   tenantB: string;
   // The operator sign-in tenant (owner decision D6).
   tenantOperators: string;
   projects: Record<string, ProjectSeed>;
+  teams: Record<string, TeamSeed>;
   fixture: LocalSignInFixture;
 };
 

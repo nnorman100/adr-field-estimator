@@ -1,7 +1,7 @@
 import { openDatabase } from '@/db/client';
 import type { Database } from '@/db/tenant';
 import { parseIdentityConfig, parseLocalSignInFixture } from '@/lib/config';
-import { localIdentityDirectory, localOperatorDirectory } from '@/lib/sign-in/local-directory';
+import { localIdentityDirectory, localOperatorDirectory, withLocalSecondStep } from '@/lib/sign-in/local-directory';
 import { databaseDirectory, databaseOperators } from './directory';
 import { firebaseTokenVerifier } from './firebase';
 import type { IdentityDirectory, OperatorDirectory, TokenVerifier } from './identity';
@@ -26,7 +26,8 @@ export function identityServices(): IdentityServices {
     const config = parseIdentityConfig(process.env);
     const fixture = parseLocalSignInFixture(process.env);
     const directory = fixture ? localIdentityDirectory(fixture) : databaseDirectory(serverDatabase());
-    services = { verifier: firebaseTokenVerifier(config), directory };
+    const verifier = firebaseTokenVerifier(config);
+    services = { verifier: fixture ? withLocalSecondStep(verifier, fixture) : verifier, directory };
   }
   return services;
 }
