@@ -260,7 +260,8 @@ migrator name the migration and omit the database URL.
 ## Rebuilt app field database (not deployed)
 
 `web/firestore.rules` holds the rules for the rebuilt app's Firestore field database. They are
-checked in the emulator (`web/tests/emu/rules/`) and are not deployed. The server writes the
+checked in the emulator (`web/tests/emu/rules/`); the test release workflow releases them to `dryscope-field-test`
+(`docs/runbook/test-release.md`) and live is still released by the owner. The server writes the
 company header and the access records (`web/src/lib/projection/`, S3-12); drafts are later work.
 The rules deny every path they do not name. They read three server-written records:
 
