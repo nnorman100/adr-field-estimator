@@ -72,6 +72,7 @@ const OTHER_MESSAGES: Record<string, string> = {
 };
 
 export const SIGN_IN_AGAIN_MESSAGE = 'For safety, team changes need a sign-in from the last 15 minutes. Sign in again, then repeat the change.';
+export const ACCEPT_SIGN_IN_AGAIN_MESSAGE = 'Your sign-in has run out. Sign in again, then accept the invitation.';
 const TRY_AGAIN_MESSAGE = 'We could not make that change. Check your connection, then try again.';
 
 export function isSignInAgain(status: number, body: unknown): boolean {
@@ -87,6 +88,18 @@ export function teamErrorMessage(status: number, body: unknown): string {
     if (Object.hasOwn(OTHER_MESSAGES, code)) return OTHER_MESSAGES[code]!;
   }
   return TRY_AGAIN_MESSAGE;
+}
+
+// The words for a refused accept: its sign-in rule is the role's sign-in age, not the 15-minute
+// rule of team changes.
+export function acceptErrorMessage(status: number, body: unknown): string {
+  return isSignInAgain(status, body) ? ACCEPT_SIGN_IN_AGAIN_MESSAGE : teamErrorMessage(status, body);
+}
+
+// The link just made or resent stays on screen until a list read from the server no longer holds
+// its invitation as open.
+export function stillOpenLink<T extends { id: string }>(link: T | null, invitations: InvitationView[]): T | null {
+  return link && invitations.some((i) => i.id === link.id && i.status === 'pending') ? link : null;
 }
 
 // What an invitation says about itself in the list.

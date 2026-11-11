@@ -4,7 +4,7 @@ import type { User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { callApi } from '@/lib/firebase-client';
-import { invitationOffer, roleLabel, teamErrorMessage, type InvitationOffer } from '@/lib/team/screen';
+import { acceptErrorMessage, invitationOffer, roleLabel, type InvitationOffer } from '@/lib/team/screen';
 import { FocusedPanel } from '../../focused-panel';
 
 type State =
@@ -58,7 +58,7 @@ export function InvitationScreen({
     try {
       const answer = await callApi(user, `/api/invitations/${invitationId}/accept`, { method: 'POST' });
       if (answer.status === 200 || answer.status === 201) await onAccepted();
-      else setError(teamErrorMessage(answer.status, answer.body));
+      else setError(acceptErrorMessage(answer.status, answer.body));
     } finally {
       setBusy(false);
     }

@@ -12,6 +12,7 @@ import {
   isSignInAgain,
   otherStaffRole,
   roleLabel,
+  stillOpenLink,
   teamErrorMessage,
 } from '@/lib/team/screen';
 import type { InvitationView, MemberView, TeamView } from '@/lib/team/service';
@@ -46,15 +47,16 @@ export function TeamBoard({
   const [notice, setNotice] = useState<string | null>(null);
   // The link of the invitation just made or resent, for the owner to copy while it is still open.
   const [link, setLink] = useState<{ id: string; email: string; url: string } | null>(null);
-  const openLink = link && team.invitations.some((i) => i.id === link.id && i.status === 'pending') ? link : null;
 
   const base = `/api/companies/${companyId}`;
 
   async function reload() {
     const answer = await callApi(user, `${base}/team`);
     const next = answer.status === 200 ? fullTeam(answer.body) : null;
-    if (next) setTeam(next);
-    else setError('The change was made, but the list could not be refreshed. Reload the page.');
+    if (next) {
+      setTeam(next);
+      setLink((current) => stillOpenLink(current, next.invitations));
+    } else setError('The change was made, but the list could not be refreshed. Reload the page.');
   }
 
   // One change: call, then show what the server holds. `done` reads the answer of a call that
@@ -144,7 +146,7 @@ export function TeamBoard({
             Create invitation
           </Button>
         </form>
-        {openLink ? <InvitationLink email={openLink.email} url={openLink.url} onCopied={setNotice} /> : null}
+        {link ? <InvitationLink email={link.email} url={link.url} onCopied={setNotice} /> : null}
       </section>
 
       <section aria-labelledby="members-heading" className="flex flex-col gap-3">

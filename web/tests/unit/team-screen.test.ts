@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CAPABILITIES, ROLES } from '@/lib/access';
 import {
+  ACCEPT_SIGN_IN_AGAIN_MESSAGE,
+  acceptErrorMessage,
   fullTeam,
   invitationOffer,
   invitationStatusText,
@@ -9,6 +11,7 @@ import {
   otherStaffRole,
   roleLabel,
   signedInMember,
+  stillOpenLink,
   teamErrorMessage,
 } from '@/lib/team/screen';
 import { TEAM_ERRORS } from '@/lib/team/service';
@@ -90,6 +93,39 @@ describe('words for a refused team call', () => {
     [409, { error: 'a_code_nobody_knows' }, 'We could not make that change'],
   ])('%i %j says "%s"', (status, body, text) => {
     expect(teamErrorMessage(status, body)).toContain(text);
+  });
+});
+
+describe('words for a refused accept', () => {
+  it('asks the invitee to sign in again and accept, without the 15-minute rule of team changes', () => {
+    const message = acceptErrorMessage(401, { error: 'sign_in_again' });
+    expect(message).toBe(ACCEPT_SIGN_IN_AGAIN_MESSAGE);
+    expect(message).not.toContain('15 minutes');
+    expect(acceptErrorMessage(409, { error: 'invitation_expired' })).toBe(teamErrorMessage(409, { error: 'invitation_expired' }));
+  });
+});
+
+describe('the invitation link on screen', () => {
+  const invitation = (id: string, status: 'pending' | 'expired' | 'accepted' | 'cancelled') => ({
+    id,
+    email: 'new@example.com',
+    role: 'office' as const,
+    status,
+    expiresAt: '2026-11-18T10:00:00.000Z',
+    createdAt: '2026-11-11T10:00:00.000Z',
+  });
+  const link = { id: 'inv-1', email: 'new@example.com', url: 'https://example.test/sign-in/a/invitations/inv-1' };
+
+  it('stays while the list read from the server holds its invitation as open', () => {
+    expect(stillOpenLink(link, [invitation('inv-1', 'pending')])).toBe(link);
+  });
+
+  it('goes once the list shows its invitation cancelled, accepted, expired or cleared', () => {
+    for (const status of ['cancelled', 'accepted', 'expired'] as const) {
+      expect(stillOpenLink(link, [invitation('inv-1', status)])).toBeNull();
+    }
+    expect(stillOpenLink(link, [invitation('inv-2', 'pending')])).toBeNull();
+    expect(stillOpenLink(null, [invitation('inv-1', 'pending')])).toBeNull();
   });
 });
 

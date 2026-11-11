@@ -260,6 +260,18 @@ test('an invitation can be resent, cancelled and cleared', async ({ page, reques
   await expect(row(page, email)).toHaveCount(0);
 });
 
+test('the new link stays on screen when the list cannot be refreshed', async ({ page }) => {
+  const email = uniqueEmail('no-refresh');
+  await signInTo(page, team.owner);
+  await openTeam(page);
+  await page.route(`**/api/companies/${team.companyId}/team`, (route) => route.fulfill({ status: 503, body: '' }));
+  await page.getByLabel('Email address to invite').fill(email);
+  await page.getByRole('button', { name: 'Create invitation' }).click();
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('the list could not be refreshed');
+  await expect(page.getByText(`Invitation for ${email}`)).toBeVisible();
+  await expect(page.getByLabel(`Invitation link for ${email}`)).toHaveValue(/\/sign-in\/team-[a-z]+\/invitations\/[0-9a-f-]{36}$/);
+});
+
 test('an email already invited or on the team is refused with a reason', async ({ page }) => {
   await signInTo(page, team.owner);
   await openTeam(page);
