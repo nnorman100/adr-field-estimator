@@ -25,6 +25,7 @@ export function CompaniesScreen() {
     event.preventDefault();
     setCreated(null);
     setFormError(null);
+    action.clear();
     const trimmed = name.trim();
     if (trimmed.length === 0) {
       setFormError('Enter the company’s name.');

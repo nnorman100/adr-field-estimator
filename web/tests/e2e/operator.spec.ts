@@ -134,6 +134,12 @@ test('lists the companies and creates one', async ({ page }) => {
   await page.getByRole('button', { name: 'Add company' }).click();
   await expect(page.getByRole('main').getByRole('alert').filter({ hasText: 'Another company already uses' })).toBeVisible();
 
+  // A later check on the phone replaces that refusal: it was about an address no longer sent.
+  await page.getByLabel('Sign-in address').fill('North-star');
+  await page.getByRole('button', { name: 'Add company' }).click();
+  await expect(page.getByRole('main').getByRole('alert').filter({ hasText: 'lowercase letters' })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('alert').filter({ hasText: 'Another company already uses' })).toHaveCount(0);
+
   await page.getByLabel('Sign-in address').fill('company-d');
   await page.getByRole('button', { name: 'Add company' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Company D Restoration was created.' })).toBeVisible();

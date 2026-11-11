@@ -45,5 +45,10 @@ export function useAction() {
     </>
   );
 
-  return { busy, run, problem, clear: () => setError(null) };
+  function clear() {
+    setError(null);
+    setStale(false);
+  }
+
+  return { busy, run, problem, clear };
 }

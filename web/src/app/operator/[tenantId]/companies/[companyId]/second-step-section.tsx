@@ -111,7 +111,14 @@ function MemberReset({ companyId, member, onDone }: { companyId: string; member:
           </div>
         </form>
       ) : (
-        <Button variant="outline" className="w-fit" onClick={() => setOpen(true)} aria-label={`Reset second step for ${who}`}>
+        <Button
+          variant="outline"
+          className="w-fit"
+          onClick={() => {
+            action.clear();
+            setOpen(true);
+          }}
+          aria-label={`Reset second step for ${who}`}>
           Reset second step
         </Button>
       )}
