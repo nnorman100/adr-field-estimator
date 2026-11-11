@@ -95,6 +95,22 @@ describe('access records written by the server, checked by the rules', () => {
     expect(await getDoc({ idToken: outsider.idToken }, draft)).toBe(403);
   });
 
+  it('after a role change, a write the old role allowed is refused', async () => {
+    const tenant = await createTenant('projection-e');
+    const company = randomUUID();
+    const member = await estimator(tenant);
+    const caller = { idToken: member.idToken };
+    const draft = `companies/${company}/drafts/d1`;
+    await serverSet(draft, { fieldOwnerUid: member.uid, state: 'editing', field: {} });
+    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'estimator', expiresAt: new Date(Date.now() + DAY), version: 1 });
+    expect(await updateDoc(caller, draft, { field: { notes: 'as estimator' } })).toBe(200);
+
+    // The owner moves the member to office; the change projects the new role before it answers.
+    await store.grant({ companyId: company, authTenantId: tenant, uid: member.uid, role: 'office', expiresAt: new Date(Date.now() + DAY), version: 2 });
+    expect(await updateDoc(caller, draft, { field: { notes: 'queued as estimator' } })).toBe(403);
+    expect(await getDoc(caller, draft)).toBe(200);
+  });
+
   it('a client cannot write or remove its own access record, or read or change its version', async () => {
     const tenant = await createTenant('projection-d');
     const company = randomUUID();

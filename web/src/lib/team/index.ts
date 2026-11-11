@@ -14,6 +14,7 @@ export {
   TeamError,
   invitationLink,
   teamService,
+  type ProjectAccess,
   type TeamActor,
   type TeamErrorCode,
   type TeamService,

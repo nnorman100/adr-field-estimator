@@ -3,6 +3,7 @@ import type { Database } from '@/db/tenant';
 import type { Identity } from '@/lib/auth/identity';
 import { parseProjectionConfig } from '@/lib/config';
 import { firestoreAccessStore, firestoreFor } from './firestore';
+import { projectActor, runAccessProjection, type RunSummary } from './outbox';
 import { renewAccess } from './renew';
 import type { AccessStore } from './store';
 
@@ -22,6 +23,28 @@ export function projectionServices(): ProjectionServices {
     services = { db, store: firestoreAccessStore(firestoreFor(config)) };
   }
   return services;
+}
+
+// Called by a team change right after its transaction commits, for the member it changed: a
+// removal reaches Firestore before the owner's request answers. It never fails that request: a
+// record it cannot write now stays waiting in the outbox, for the next run of the outbox pass.
+export async function projectCommittedChange(
+  companyId: string,
+  actorId: string,
+  build: () => ProjectionServices = projectionServices,
+): Promise<void> {
+  try {
+    const { db, store } = build();
+    await projectActor(db, store, companyId, actorId);
+  } catch (error) {
+    console.error('access projection unavailable', error instanceof Error ? error.name : 'unknown');
+  }
+}
+
+// One outbox pass across every company (POST /api/internal/access-projection).
+export async function runQueuedProjection(build: () => ProjectionServices = projectionServices): Promise<RunSummary> {
+  const { db, store } = build();
+  return runAccessProjection(db, store);
 }
 
 // The request path's renewal. It never fails the request: a record it cannot write now is left

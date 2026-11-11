@@ -19,7 +19,9 @@ import {
   runAccessProjection,
   type AccessStore,
 } from '@/lib/projection';
+import { projectCommittedChange } from '@/lib/projection/services';
 import { AccessStoreError } from '@/lib/projection/store';
+import { teamService } from '@/lib/team/service';
 import { key, memoryStore } from '../projection/memory-store';
 import { accessStoreContract } from '../projection/store-contract';
 import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
@@ -499,9 +501,10 @@ describe('access projection outbox (S3-12)', () => {
     } finally {
       await holder.close();
     }
-    // The held actor's newer row is still waiting, due now, for the next run.
-    expect(await runAccessProjection(worker.db, inner)).toMatchObject({ granted: 1, busy: 0 });
+    // The held actor's run looked again after its write and applied the newer change itself.
     expect(inner.records.get(key(seed.a, 'estimator-a'))?.role).toBe('office');
+    expect((await outbox()).every((row) => row.processed)).toBe(true);
+    expect(await runAccessProjection(worker.db, inner)).toMatchObject({ granted: 0, busy: 0 });
   }, 40_000);
 
   it("a slow write leaves the app's projection connections free for other members", async () => {
@@ -541,6 +544,120 @@ describe('access projection outbox (S3-12)', () => {
       vi.unstubAllEnvs();
       vi.resetModules();
     }
+  });
+
+  describe('a team change projects its member before it answers', () => {
+    // The team service as the routes build it, its projection pointed at the in-memory store.
+    function teamWith(store: AccessStore) {
+      return teamService(
+        handle.db,
+        { ensureAccount: async () => {}, revokeSessions: async () => {} },
+        (companyId, actorId) => projectCommittedChange(companyId, actorId, () => ({ db: worker.db, store })),
+      );
+    }
+    const byOwner = () => ({ kind: 'member' as const, actorId: seed.ownerA });
+    async function membershipOf(actorId: string): Promise<string> {
+      const [row] = await admin<{ id: string }[]>`SELECT id::text FROM memberships WHERE actor_id = ${actorId}`;
+      return row!.id;
+    }
+
+    it('a disabled member has no access record once the disable answers', async () => {
+      const store = memoryStore();
+      await enqueue(seed.a, seed.estimatorA);
+      await runAccessProjection(worker.db, store);
+      expect(store.records.has(key(seed.a, 'estimator-a'))).toBe(true);
+
+      await teamWith(store).disable(seed.a, byOwner(), await membershipOf(seed.estimatorA), new Date());
+      // No outbox run: the change itself removed the record, so the rules refuse a queued write now.
+      expect(store.records.has(key(seed.a, 'estimator-a'))).toBe(false);
+      expect((await outbox()).every((row) => row.processed)).toBe(true);
+
+      await teamWith(store).enable(seed.a, byOwner(), await membershipOf(seed.estimatorA), new Date());
+      expect(store.records.get(key(seed.a, 'estimator-a'))?.role).toBe('estimator');
+    });
+
+    it('a role change replaces the old role before it answers', async () => {
+      const store = memoryStore();
+      await enqueue(seed.a, seed.estimatorA);
+      await runAccessProjection(worker.db, store);
+
+      await teamWith(store).changeRole(seed.a, byOwner(), await membershipOf(seed.estimatorA), 'office', new Date());
+      expect(store.records.get(key(seed.a, 'estimator-a'))?.role).toBe('office');
+      expect((await outbox()).every((row) => row.processed)).toBe(true);
+    });
+
+    it('a change whose record cannot be written still commits, and its row waits for the next run', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const failing: AccessStore = {
+        async grant() {
+          throw new Error('unavailable');
+        },
+        async remove() {
+          throw new Error('unavailable');
+        },
+      };
+      await teamWith(failing).disable(seed.a, byOwner(), await membershipOf(seed.estimatorA), new Date());
+      errors.mockRestore();
+      expect(await outbox()).toEqual([expect.objectContaining({ processed: false, last_error_code: 'store_failed' })]);
+      const store = memoryStore();
+      await backOffPassed();
+      expect(await runAccessProjection(worker.db, store)).toMatchObject({ removed: 1 });
+    });
+
+    it('a disable during a renewal\'s write is applied before the renewal returns', async () => {
+      const inner = memoryStore();
+      const started = deferred();
+      const finish = deferred();
+      const slow: AccessStore = {
+        async grant(grant) {
+          started.release();
+          await finish.promise;
+          await inner.grant(grant);
+        },
+        remove: inner.remove,
+      };
+      const renewal = renewAccess(worker.db, slow, { companyId: seed.a, actorId: seed.estimatorA });
+      await started.promise;
+      // The disable commits after the renewal claimed its row; its own projection found the actor
+      // busy (left out here), so only the renewal's run is left to apply it.
+      await setMembership(seed.a, seed.estimatorA, { status: 'disabled' });
+      finish.release();
+      expect(await renewal).toBe('removed');
+      expect(inner.records.has(key(seed.a, 'estimator-a'))).toBe(false);
+      expect((await outbox()).every((row) => row.processed)).toBe(true);
+    });
+
+    it('a disable racing a renewal leaves no record, whichever finishes first', async () => {
+      const inner = memoryStore();
+      const started = deferred();
+      const finish = deferred();
+      const slow: AccessStore = {
+        async grant(grant) {
+          started.release();
+          await finish.promise;
+          await inner.grant(grant);
+        },
+        remove: inner.remove,
+      };
+      const renewal = renewAccess(worker.db, slow, { companyId: seed.a, actorId: seed.estimatorA });
+      await started.promise;
+      const other = openDatabase({ APP_ENV: 'test', DATABASE_URL: urlAs(API_USER, apiPassword) });
+      try {
+        const team = teamService(
+          other.db,
+          { ensureAccount: async () => {}, revokeSessions: async () => {} },
+          (companyId, actorId) => projectCommittedChange(companyId, actorId, () => ({ db: other.db, store: inner })),
+        );
+        const disabled = team.disable(seed.a, byOwner(), await membershipOf(seed.estimatorA), new Date());
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        finish.release();
+        await Promise.all([renewal, disabled]);
+      } finally {
+        await other.close();
+      }
+      expect(inner.records.has(key(seed.a, 'estimator-a'))).toBe(false);
+      expect((await outbox()).every((row) => row.processed)).toBe(true);
+    });
   });
 
   describe('removing a member', () => {

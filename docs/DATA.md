@@ -281,9 +281,12 @@ owner or estimator, writes, and only the `field` map: of a draft, or of a docume
 How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
 
 - A membership change and its outbox row commit together, so no record is written before the change
-  commits, and a change that rolls back writes nothing. Later team and operator code calls
-  `enqueueAccessProjection` inside the change's transaction, including when a company stops being
-  active.
+  commits, and a change that rolls back writes nothing. The team routes (disable, re-enable, role
+  change, accepting an invitation) queue the row in the change's transaction and, once it has
+  committed, project that member before they answer, so a disabled member's record is gone (and a
+  changed role replaced) by the time the owner sees the change succeed. A projection that fails
+  there does not fail the change; its row waits for the next run. Later operator code calls
+  `enqueueAccessProjection` the same way, including when a company stops being active.
 - A run writes what Postgres holds when it runs, not what the row asked for: an access record with
   the role for an active membership in an active company with a sign-in tenant (plus the header's
   `authTenantId`), and otherwise no record. All of one actor's waiting rows are handled by one write
@@ -296,7 +299,10 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   write it started, so a slow Firestore holds that request and its database connection until it
   answers. The app keeps four projection connections, so other members' renewals go on meanwhile,
   and a run that still finds an actor held after the 15-second lock timeout counts it busy and goes
-  on with the rest; its rows stay due for the next run. A failed write leaves the rows waiting with
+  on with the rest; its rows stay due for the next run. A run that wrote a record looks again before
+  it returns and applies any row of that actor committed meanwhile (a member disabled while a
+  renewal's write was on its way), so a change that found the actor busy is not left waiting. A
+  failed write leaves the rows waiting with
   a back-off (30 seconds, doubling, at most an hour) and a fixed error code; a crash at any point
   leaves them waiting, due now. The next run repairs either.
 - Each write carries a version, the id of the run's Postgres transaction, taken under the lock, so
@@ -313,5 +319,10 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   Removal is an active delete; the expiry bounds only a record the outbox could not remove. A
   write a phone queued offline is checked by the rules when it reaches Firestore, so it is refused
   once the record is gone or has run out.
-- Nothing runs the cross-company pass (`runAccessProjection`) on a schedule yet. Until a later step
-  adds one, waiting rows are written when the member next opens the app.
+- The cross-company pass (`runAccessProjection`) runs on `POST /api/internal/access-projection`,
+  which only the environment's scheduler service account may call (`serviceRoute`: a Google-signed
+  ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
+  `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`). It
+  retries the rows a failed write left waiting. The scheduler account and its Cloud Scheduler job
+  are not created yet (an owner follow-up in Terraform); until then, waiting rows are retried when
+  the member's company next changes them or the member next opens the app.

@@ -122,18 +122,54 @@ function errorCode(error: unknown): string {
   return 'store_failed';
 }
 
+type ActorOptions = ProjectionOptions & { wait?: boolean };
+
 // Brings one actor's record in line. `wait` false skips an actor another run holds (the request
-// path); true waits for it (the outbox run), and reports it busy if it is still held after the lock
-// timeout, so one actor whose write is slow does not stop the rest of a run.
+// path); true waits for it (the outbox run, and the change that queued it), and reports it busy if
+// it is still held after the lock timeout, so one actor whose write is slow does not stop the rest
+// of a run. A change that committed while this run held the actor (a member disabled during a
+// renewal's write) may have found it busy, so after a write this run looks again and applies what
+// is due before it returns.
 export async function projectActor(
   db: Database,
   store: AccessStore,
   companyId: string,
   actorId: string,
-  { wait = true, now = () => new Date() }: ProjectionOptions & { wait?: boolean } = {},
+  options: ActorOptions = {},
 ): Promise<ActorOutcome> {
   companyId = uuid(companyId, 'companyId');
   actorId = uuid(actorId, 'actorId');
+  let outcome = await projectOnce(db, store, companyId, actorId, options);
+  while ((outcome === 'granted' || outcome === 'removed') && (await hasDueRow(db, companyId, actorId))) {
+    const next = await projectOnce(db, store, companyId, actorId, options);
+    if (next === 'busy' || next === 'nothing_due') break;
+    outcome = next;
+  }
+  return outcome;
+}
+
+async function hasDueRow(db: Database, companyId: string, actorId: string): Promise<boolean> {
+  return withCompany(db, companyId, async (tx) => {
+    const [row] = rows<{ due: boolean }>(
+      await tx.execute(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM access_projection_outbox
+          WHERE company_id = ${companyId}::uuid AND actor_id = ${actorId}::uuid
+            AND processed_at IS NULL AND available_at <= now()
+        ) AS due
+      `),
+    );
+    return row?.due === true;
+  });
+}
+
+async function projectOnce(
+  db: Database,
+  store: AccessStore,
+  companyId: string,
+  actorId: string,
+  { wait = true, now = () => new Date() }: ActorOptions,
+): Promise<ActorOutcome> {
   let claimed: string[] = [];
   try {
     return await withCompany(db, companyId, async (tx) => {
