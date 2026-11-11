@@ -14,7 +14,9 @@
     "test:emu": "tsx tests/emu/run.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx src/db/cli.ts",
-    "build:migrate": "node scripts/build-migrate.mjs"
+    "build:migrate": "node scripts/build-migrate.mjs",
+    "platform:create-tenant": "tsx scripts/create-tenant.ts",
+    "platform:add-operator": "tsx scripts/add-operator.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "1.5.0",

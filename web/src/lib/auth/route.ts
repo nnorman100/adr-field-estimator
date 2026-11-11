@@ -1,8 +1,17 @@
 import { parseFlagName, type FlagName } from '@/lib/flags';
-import { bearerToken, IdentityRefusal, resolveAccount, resolveIdentity, type Account, type Identity } from './identity';
+import {
+  bearerToken,
+  IdentityRefusal,
+  resolveAccount,
+  resolveIdentity,
+  resolveOperator,
+  type Account,
+  type Identity,
+  type Operator,
+} from './identity';
 import type { RouteSessionRule } from './policy';
 import { serviceCallerServices, type ServiceCallerServices } from './service-caller';
-import { identityServices, type IdentityServices } from './services';
+import { identityServices, operatorServices, type IdentityServices, type OperatorServices } from './services';
 
 // Every API route declares its access rule where it is defined, by wrapping each handler:
 //
@@ -31,14 +40,21 @@ import { identityServices, type IdentityServices } from './services';
 //   export const POST = serviceRoute('access-projection', async (request) => ...);
 //                                         // the scheduler service account, token minted for this job
 //
+// And one is for the platform operator (owner decision D6), never a company user:
+//
+//   export const GET = operatorRoute(async (request, operator) => ...);
+//   export const POST = operatorRoute(handler, { freshSignIn: true }); // changes a team or a second step
+//
 // tests/unit/route-rules.test.ts finds every route file and fails on a handler that is not
-// wrapped, so a route with no rule cannot ship. Later rules (operator, a capability) are added
-// here as further wrappers.
+// wrapped, so a route with no rule cannot ship; tests/unit/platform-routes.test.ts fails a file
+// under api/platform that is not an operator route. Later rules (a capability) are added here as
+// further wrappers.
 
 type RouteContext = { params: Promise<Record<string, string | string[] | undefined>> };
 type Handler = (request: Request, context: RouteContext) => Response | Promise<Response>;
 type MemberHandler = (request: Request, identity: Identity, context: RouteContext) => Response | Promise<Response>;
 type AccountHandler = (request: Request, account: Account, context: RouteContext) => Response | Promise<Response>;
+type OperatorHandler = (request: Request, operator: Operator, context: RouteContext) => Response | Promise<Response>;
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
@@ -141,5 +157,27 @@ export function serviceRoute(
     }
     if (!claims.emailVerified || claims.email !== found.caller.email) return refusal('not_allowed', 403);
     return handler(request, context);
+  };
+}
+
+// Only a signed-in, active platform operator with an authenticator-app second step and a sign-in
+// under 12 hours old (or 15 minutes with freshSignIn). Everyone else, company owners included, gets
+// 403 not_an_operator before the handler runs. The handler must act through withOperator with the
+// operator id it is given.
+export function operatorRoute(
+  handler: OperatorHandler,
+  rule: { freshSignIn?: boolean } = {},
+  services: () => OperatorServices = operatorServices,
+): Handler {
+  const freshSignIn = rule.freshSignIn === true;
+  return async (request, context) => {
+    let operator: Operator;
+    try {
+      const { verifier, operators } = services();
+      operator = await resolveOperator(request, verifier, operators, { freshSignIn });
+    } catch (error) {
+      return refusalOf(error);
+    }
+    return handler(request, operator, context);
   };
 }

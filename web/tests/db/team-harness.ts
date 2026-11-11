@@ -2,11 +2,13 @@ import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
 import { applyMigrations, migrationsDirectory } from '@/db/migrate';
-import { databaseDirectory } from '@/lib/auth/directory';
+import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
-import type { IdentityServices } from '@/lib/auth/services';
+import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
+import { platformService, type PlatformService } from '@/lib/platform/service';
+import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
-import { TenantUsersUnavailable, type TenantUsers } from '@/lib/team/users';
+import { TenantUsersUnavailable } from '@/lib/team/users';
 import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
 
 // The team and invitation routes against a real Postgres, as the app's runtime role with forced
@@ -33,7 +35,7 @@ export type Seed = {
   operator: string;
 };
 
-export type TenantCall = { call: 'ensureAccount' | 'revokeSessions'; tenant: string; value: string };
+export type TenantCall = { call: 'ensureAccount' | 'revokeSessions' | 'resetSecondStep'; tenant: string; value: string };
 
 export type Harness = {
   server: DisposablePostgres;
@@ -44,11 +46,16 @@ export type Harness = {
   seed: Seed;
   calls: TenantCall[];
   // Set to make the next tenant call fail as if Identity Platform were unreachable.
-  failNext: { ensureAccount: boolean; revokeSessions: boolean };
+  failNext: { ensureAccount: boolean; revokeSessions: boolean; resetSecondStep: boolean };
   // Runs inside each revokeSessions call, before it returns.
   onRevoke: (() => Promise<void>) | null;
   identity: IdentityServices;
+  // The operator routes' sign-in check: the fake verifier with the real platform_operator lookup.
+  operators: OperatorServices;
   team: TeamService;
+  platform: PlatformService;
+  // The migrator's login (the table owner), for the owner-run command.
+  migratorUrl: string;
   // Each member the team service asked to project, in order, after its change committed.
   projected: { companyId: string; actorId: string }[];
 };
@@ -193,13 +200,16 @@ export async function resetTeamDatabase(
     apiUrl,
     seed,
     calls: [],
-    failNext: { ensureAccount: false, revokeSessions: false },
+    failNext: { ensureAccount: false, revokeSessions: false, resetSecondStep: false },
     onRevoke: null,
     identity: { verifier: fakeVerifier(), directory: databaseDirectory(handle.db) },
+    operators: { verifier: fakeVerifier(), operators: databaseOperators(handle.db) },
     team: null as unknown as TeamService,
+    platform: null as unknown as PlatformService,
+    migratorUrl: urlAs(server, MIGRATOR, migratorPassword),
     projected: [],
   };
-  const users: TenantUsers = {
+  const users: PlatformUsers = {
     async ensureAccount(tenant, email) {
       harness.calls.push({ call: 'ensureAccount', tenant, value: email });
       if (harness.failNext.ensureAccount) {
@@ -215,10 +225,19 @@ export async function resetTeamDatabase(
         throw new TenantUsersUnavailable();
       }
     },
+    async resetSecondStep(tenant, uid) {
+      harness.calls.push({ call: 'resetSecondStep', tenant, value: uid });
+      if (harness.failNext.resetSecondStep) {
+        harness.failNext.resetSecondStep = false;
+        throw new TenantUsersUnavailable();
+      }
+    },
   };
-  harness.team = teamService(handle.db, users, async (companyId, actorId) => {
+  const projectInto = async (companyId: string, actorId: string) => {
     harness.projected.push({ companyId, actorId });
-  });
+  };
+  harness.platform = platformService(handle.db, users, projectInto);
+  harness.team = teamService(handle.db, users, projectInto);
   return harness;
 }
 
@@ -233,3 +252,6 @@ export async function everything(admin: postgres.Sql): Promise<string> {
 }
 
 export const owner = (uid = 'owner-a', tenant = 'tenant-a'): FakeClaims => ({ tenant, uid });
+
+// The seeded platform operator, signed in with an authenticator app a minute ago.
+export const operatorClaims = (extra: Partial<FakeClaims> = {}): FakeClaims => ({ tenant: 'operators', uid: 'operator-1', ...extra });

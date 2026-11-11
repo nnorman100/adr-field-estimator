@@ -33,3 +33,49 @@ export async function withCompany<T>(
     return run(tx);
   });
 }
+
+export class OperatorContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OperatorContextError';
+  }
+}
+
+export type OperatorContext = {
+  // The company the operator acts on, set for this transaction as withCompany would set it, so the
+  // company's own rows (actors, memberships, invitations, outbox) are reachable too.
+  companyId?: string;
+  // A read-only transaction: any write in it fails.
+  readOnly?: boolean;
+};
+
+// Runs a platform operator's work in one transaction. It sets app.operator_id for that transaction
+// only, so migration 0006's operator policies apply, and refuses before running anything unless the
+// database confirms an active operator (app_operator_active). The operator id must come from the
+// verified operator sign-in (platform_operator in 0006), never from the request.
+export async function withOperator<T>(
+  db: Database,
+  operatorId: string,
+  run: (tx: CompanyTransaction) => Promise<T>,
+  context: OperatorContext = {},
+): Promise<T> {
+  if (typeof operatorId !== 'string' || !UUID.test(operatorId)) {
+    throw new OperatorContextError('withOperator needs an operator id that is a uuid');
+  }
+  const { companyId } = context;
+  if (companyId !== undefined && (typeof companyId !== 'string' || !UUID.test(companyId))) {
+    throw new CompanyContextError('withOperator needs a company id that is a uuid');
+  }
+  return db.transaction(
+    async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.operator_id', ${operatorId.toLowerCase()}, true)`);
+      if (companyId !== undefined) {
+        await tx.execute(sql`SELECT set_config('app.company_id', ${companyId.toLowerCase()}, true)`);
+      }
+      const [row] = (await tx.execute(sql`SELECT app_operator_active() AS active`)) as unknown as { active: boolean }[];
+      if (row?.active !== true) throw new OperatorContextError('not an active platform operator');
+      return run(tx);
+    },
+    context.readOnly === true ? { accessMode: 'read only' } : undefined,
+  );
+}

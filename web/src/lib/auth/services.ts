@@ -1,9 +1,9 @@
 import { openDatabase } from '@/db/client';
 import type { Database } from '@/db/tenant';
 import { parseIdentityConfig } from '@/lib/config';
-import { databaseDirectory } from './directory';
+import { databaseDirectory, databaseOperators } from './directory';
 import { firebaseTokenVerifier } from './firebase';
-import type { IdentityDirectory, TokenVerifier } from './identity';
+import type { IdentityDirectory, OperatorDirectory, TokenVerifier } from './identity';
 
 export type IdentityServices = { verifier: TokenVerifier; directory: IdentityDirectory };
 
@@ -24,4 +24,14 @@ export function identityServices(): IdentityServices {
     services = { verifier: firebaseTokenVerifier(config), directory: databaseDirectory(serverDatabase()) };
   }
   return services;
+}
+
+export type OperatorServices = { verifier: TokenVerifier; operators: OperatorDirectory };
+
+let operatorServicesCache: OperatorServices | null = null;
+
+// The same verifier as member routes, with the operator lookup instead of the company lookup.
+export function operatorServices(): OperatorServices {
+  operatorServicesCache ??= { verifier: identityServices().verifier, operators: databaseOperators(serverDatabase()) };
+  return operatorServicesCache;
 }

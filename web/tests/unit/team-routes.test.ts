@@ -4,7 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { IdentityRefusal, type IdentityDirectory, type TokenVerifier } from '@/lib/auth/identity';
 import { accountRoute } from '@/lib/auth/route';
-import { isMemberApiPath, isPublicApiPath, isServiceApiPath, memberApiPaths, serviceApiPaths } from '@/lib/public-api';
+import {
+  isMemberApiPath,
+  isOperatorApiPath,
+  isPublicApiPath,
+  isServiceApiPath,
+  memberApiPaths,
+  operatorApiPaths,
+  serviceApiPaths,
+} from '@/lib/public-api';
 import { INVITATION_DAYS, invitationLink } from '@/lib/team/service';
 
 // The team routes without a database: every route file is reachable through the proxy and nothing
@@ -28,11 +36,11 @@ describe('team routes and the proxy', () => {
   it('lists exactly the route files that check the sign-in (or a service token) themselves', async () => {
     const files = (await routePaths(API_DIR)).filter((path) => !isPublicApiPath(path));
     const patterns = files.map((path) => path.replace(/\[[A-Za-z]+\]/g, ':id'));
-    expect([...patterns].sort()).toEqual([...memberApiPaths, ...serviceApiPaths].sort());
+    expect([...patterns].sort()).toEqual([...memberApiPaths, ...operatorApiPaths, ...serviceApiPaths].sort());
     // A real path of each route file passes the proxy.
     for (const path of files) {
       const real = path.replace(/\[[A-Za-z]+\]/g, ID);
-      expect({ path, passes: isMemberApiPath(real) || isServiceApiPath(real) }).toEqual({ path, passes: true });
+      expect({ path, passes: isMemberApiPath(real) || isOperatorApiPath(real) || isServiceApiPath(real) }).toEqual({ path, passes: true });
     }
   });
 
