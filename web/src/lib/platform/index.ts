@@ -4,6 +4,7 @@ export {
   inviteOwner,
   listCompanies,
   resetSecondStep,
+  setCompanyFlag,
   setCompanyStatus,
   supportChangeRole,
   supportEnableMember,

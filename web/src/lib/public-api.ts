@@ -30,6 +30,7 @@ export const memberApiPaths: readonly string[] = [
 export const operatorApiPaths: readonly string[] = [
   '/api/platform/companies',
   '/api/platform/companies/:id/status',
+  '/api/platform/companies/:id/flags',
   '/api/platform/companies/:id/tenant',
   '/api/platform/companies/:id/owner',
   '/api/platform/companies/:id/team',

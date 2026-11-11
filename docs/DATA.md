@@ -185,7 +185,7 @@ operator-only tenant, never both), `platform_admins` (operators are actors with 
 in through an operator tenant, per owner decision D6), `audit_events` (ids and counts only in
 `details`; `actor_id` is a member of the event's company and `operator_actor_id` a platform
 operator), `company_feature_flags` (a missing row means off, and so does a name not in `web/src/lib/flags/`;
-only an operator changes one, per D12, and the runtime can only read it until S3-11b adds that path)
+only an operator changes one, per D12, through `0008` below)
 and `access_projection_outbox` (actors whose Firestore access record must follow a committed
 membership change). Rows that refer to another company row carry `company_id` in a composite key,
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
@@ -195,7 +195,7 @@ spaces, so one person is one stored key. The team and invitation routes (S3-10,
 `web/src/lib/team/`) write actors, memberships, invitations, audit events and outbox rows, always
 inside `withCompany`; an invitation's record, with its email, stays after it is accepted,
 cancelled or cleared ("clear" only hides it from the team list); nothing in `web/` deletes it yet.
-The access projection (below) marks outbox rows done, and the platform operator routes (S3-9, `web/src/lib/platform/`, `0006` below) create companies, change their status and sign-in tenant, register company tenants and write owner invitations, memberships, outbox rows and audit rows; nothing else writes these tables yet. Prices and signed documents are later work.
+The access projection (below) marks outbox rows done, and the platform operator routes (S3-9, `web/src/lib/platform/`, `0006` below) create companies, change their status and sign-in tenant, register company tenants and write owner invitations, memberships, outbox rows and audit rows, and change a company's feature flags (S3-11b); nothing else writes these tables yet. Prices and signed documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
 `BYPASSRLS` and no ownership, and grants it to the environment's API database user
@@ -268,6 +268,17 @@ with a fixed `search_path`, executable only by `dryscope_runtime`, reading `comp
 and tenant of an active company that has a sign-in tenant, and no row for an unknown or empty
 address, a company with no tenant yet, or a suspended or archived company (all look the same). It
 adds no table, column or policy and returns no company id.
+
+`0008_feature_flag_writes` adds the operator's write path on `company_feature_flags` (S3-11b). In an
+active operator's context (`withOperator`, `0006`) the runtime may insert or update a flag row, only
+for the company that context names and only stamped with that operator's own id; a company
+transaction never matches, so an owner cannot change a flag (D12). Column rights only: a row is
+created with its company, name, value, operator and time, and afterwards only its value, operator and
+time change. There is still no `DELETE`: a switched-off flag is a row with `enabled = false`. The
+known names stay in code (`web/src/lib/flags/`), so a new flag needs no migration.
+`POST /api/platform/companies/{companyId}/flags` (`{ flag, enabled }`) locks the company row, writes
+the flag and one `feature_flag_changed` audit row naming the operator (`details` holds the new and
+previous value only) in one transaction, and refuses an unknown name before writing.
 
 Migrations are additive. Change the schema by add, then switch, then remove:
 

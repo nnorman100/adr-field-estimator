@@ -100,6 +100,7 @@ describe('identity tables (migration 0002)', () => {
       '0005_access_projection',
       '0006_platform_operator',
       '0007_sign_in_address',
+      '0008_feature_flag_writes',
     ]);
 
     const rows = await sql<
