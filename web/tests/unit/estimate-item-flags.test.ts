@@ -214,6 +214,29 @@ describe('the cushion taxes each grown labor line once their tax factors differ'
     expect(shared.totals.low.tax).toBe('220.00');
     expect(shared.totals.high?.tax).toBe('280.00');
   });
+
+  it('W62 a tax flag on one labor line taxes its own growth even beside labor that is not taxable', () => {
+    // As W57. Demolition 2,000 x $1.00 grows to $2,500.00; labor 10 hours x $50.00 grows to $750.00. Tax 10%.
+    const hours = (changes: Obj) =>
+      item('labor', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '50.00', ...changes });
+    const highTax = (items: Obj[], changes: Obj, jobChanges: Obj) =>
+      priced(table(items, { ...range, ...changes }), job(rooms, { labor_hours: 10, ...jobChanges })).totals.high?.tax;
+    const demo = item('demo', { unit_price: '1.00' });
+    // Only the hours are taxable, at a 40% share: 10% x $750.00 x 40% = $30.00 (not 10% x $200.00 x 3,250 / 2,500).
+    expect(highTax([demo, hours({ taxable: true, materials_share_percent: '40' })], {}, {})).toBe('30.00');
+    // Only the hours are taxable and flagged, multiplier 1.5: 10% x $750.00 x 1.5 = $112.50 (not $97.50).
+    expect(highTax([demo, hours({ taxable: true, after_hours: true })], NIGHT, { is_after_hours: true })).toBe('112.50');
+    // Only the hours are taxable and exempt, O&P 10%: 10% x $750.00 = $75.00 (not $65.00).
+    expect(
+      highTax([demo, hours({ taxable: true, no_overhead_profit: true })], { overhead_profit_percent: '10' }, {}),
+    ).toBe('75.00');
+    // Only the demolition is taxable, at a 40% share: 10% x $2,500.00 x 40% = $100.00 (not $104.00).
+    expect(
+      highTax([item('demo', { unit_price: '1.00', taxable: true, materials_share_percent: '40' }), hours({})], {}, {}),
+    ).toBe('100.00');
+    // With no flag, the old proportion stands: demolition taxable, hours not, 10% x $2,000.00 x 3,250 / 2,500.
+    expect(highTax([item('demo', { unit_price: '1.00', taxable: true }), hours({})], {}, {})).toBe('260.00');
+  });
 });
 
 describe('the range explanation reads the lines at both ends', () => {

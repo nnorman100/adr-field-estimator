@@ -353,22 +353,25 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   let high: End | null = null;
   if (policy.estimate_mode === 'range') {
     // Each labor line grows by its own amount, scaled to the rounded high labor. The uncertainty method taxes each
-    // grown line. The cushion taxes the low end's taxable proportion of the high labor while every taxable labor
-    // line carries the same tax factor, and each grown line, scaled the same way, once they differ.
+    // grown line. The cushion does too once a labor line carries a flag that changes its tax: a materials share, an
+    // exemption from overhead and profit, or the after-hours multiplier on some labor lines but not all. Without
+    // one it taxes the low end's taxable proportion of the high labor, as before.
     const grownLabor = sumDec(grown.laborEntries.map((entry) => entry.amount), ZERO);
     const laborHigh = scaleMix(mixOf(grown.laborEntries, multiplier, overhead), highLaborAmount, grownLabor);
-    const taxFactors = labor
-      .filter((line) => line.taxable)
-      .map((line) =>
-        line.materialsShare.mul(line.afterHours ? multiplier : ONE).mul(line.noOverheadProfit ? ONE : ONE.add(overhead)),
-      );
-    const uniform = taxFactors.every((factor) => factor.cmp(taxFactors[0] ?? factor) === 0);
+    const flagged = labor.filter((line) => line.afterHours).length;
+    const legacyTax =
+      labor.every(
+        (line) =>
+          !line.taxable ||
+          (line.materialsShare.cmp(HUNDRED) === 0 && (!line.noOverheadProfit || overhead.isZero())),
+      ) &&
+      (multiplier.cmp(ONE) === 0 || flagged === 0 || flagged === labor.length);
     const scaled = (value: Dec, amount: Dec, base: Dec): Dec => (base.isZero() ? ZERO : value.mul(amount).div(base));
     const highMix = uncertainEnd
       ? addMix(addMix(fixedMix, mixOf(uncertainEnd.equipmentEntries, multiplier, overhead)), laborHigh)
       : addMix(addMix(fixedMix, equipmentMix), {
           ...laborHigh,
-          taxed: uniform
+          taxed: legacyTax
             ? scaled(laborMix.taxed, highLaborAmount, lowLabor)
             : scaled(laborHigh.taxed, highLaborAmount, grownLabor),
         });
