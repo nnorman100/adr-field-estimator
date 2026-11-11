@@ -27,10 +27,17 @@ export type ProjectSeed = {
   // Estimators of company A whose email is not verified yet, one per attempt of the test that
   // verifies it (Playwright retries once in CI), so a retry starts from an unverified account.
   toVerifyA: SeedAccount[];
+  // The owner of company A: a verified account of company A's tenant, not an operator.
+  ownerA: SeedAccount;
+  // A verified platform operator, signed in through the operator tenant. The emulator cannot do
+  // an authenticator-app second step, so the server asks this account for one (S3-14, S3-18).
+  operator: SeedAccount;
 };
 export type Seed = {
   tenantA: string;
   tenantB: string;
+  // The operator sign-in tenant (owner decision D6).
+  tenantOperators: string;
   projects: Record<string, ProjectSeed>;
   fixture: LocalSignInFixture;
 };

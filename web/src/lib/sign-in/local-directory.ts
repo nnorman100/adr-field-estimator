@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { ROLES } from '@/lib/access';
-import type { IdentityDirectory, MemberRecord } from '@/lib/auth/identity';
+import type { IdentityDirectory, MemberRecord, OperatorDirectory } from '@/lib/auth/identity';
 import { isSignInAddress, type SignInDirectory } from './directory';
 
 // A stand-in for the sign-in records in Postgres, read from a JSON file, so the sign-in screens can
@@ -33,10 +33,15 @@ const fixtureSchema = z.object({
       status: z.enum(['active', 'disabled']),
     }),
   ),
+  // Platform operators: the sign-in tenant and uid of each (the table platform_admins holds).
+  operators: z
+    .array(z.object({ tenantId: z.string().regex(/^[A-Za-z0-9-]{1,128}$/), uid: z.string().min(1).max(128), operatorId: z.uuid() }))
+    .default([]),
 });
-export type LocalSignInFixture = z.infer<typeof fixtureSchema>;
+// What a test writes: `operators` may be left out. What the server reads has it (empty by default).
+export type LocalSignInFixture = z.input<typeof fixtureSchema>;
 
-async function load(path: string): Promise<LocalSignInFixture> {
+async function load(path: string): Promise<z.output<typeof fixtureSchema>> {
   return fixtureSchema.parse(JSON.parse(await readFile(path, 'utf8')));
 }
 
@@ -70,6 +75,16 @@ export function localIdentityDirectory(path: string): IdentityDirectory {
         membership: { role: row.role, status: row.status },
         flags: [],
       };
+    },
+  };
+}
+
+// The platform_operator(tenant, uid) lookup of the database, for the operator routes: the id of an
+// active operator, or null for everyone else (a company owner included).
+export function localOperatorDirectory(path: string): OperatorDirectory {
+  return {
+    async operatorFor(tenant, uid) {
+      return (await load(path)).operators.find((o) => o.tenantId === tenant && o.uid === uid)?.operatorId ?? null;
     },
   };
 }

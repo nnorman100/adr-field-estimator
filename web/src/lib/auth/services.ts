@@ -1,7 +1,7 @@
 import { openDatabase } from '@/db/client';
 import type { Database } from '@/db/tenant';
 import { parseIdentityConfig, parseLocalSignInFixture } from '@/lib/config';
-import { localIdentityDirectory } from '@/lib/sign-in/local-directory';
+import { localIdentityDirectory, localOperatorDirectory } from '@/lib/sign-in/local-directory';
 import { databaseDirectory, databaseOperators } from './directory';
 import { firebaseTokenVerifier } from './firebase';
 import type { IdentityDirectory, OperatorDirectory, TokenVerifier } from './identity';
@@ -35,8 +35,15 @@ export type OperatorServices = { verifier: TokenVerifier; operators: OperatorDir
 
 let operatorServicesCache: OperatorServices | null = null;
 
-// The same verifier as member routes, with the operator lookup instead of the company lookup.
+// The same verifier as member routes, with the operator lookup instead of the company lookup. The
+// local sign-in records file stands in for the operators table as it does for the company tables.
 export function operatorServices(): OperatorServices {
-  operatorServicesCache ??= { verifier: identityServices().verifier, operators: databaseOperators(serverDatabase()) };
+  if (!operatorServicesCache) {
+    const fixture = parseLocalSignInFixture(process.env);
+    operatorServicesCache = {
+      verifier: identityServices().verifier,
+      operators: fixture ? localOperatorDirectory(fixture) : databaseOperators(serverDatabase()),
+    };
+  }
   return operatorServicesCache;
 }
