@@ -3,12 +3,11 @@
 import { Dec, ZERO } from './decimal';
 import type { JObj } from './json';
 import type { Inspection, Room } from './inspection';
-import { jobCount } from './inspection';
+import { fieldDec } from './inspection';
 import { priceScopeV2 } from './price-v2';
 import { equipmentSizing, type Sizing } from './sizing';
-import { COUNT_DAYS, FIELD_SOURCES, parseSource, type Table } from './table';
-import { decFloat, numberText, orZero, truthy } from './values';
-import { pyStrip } from './pystr';
+import { COUNT_DAYS, FIELD_SOURCES, blankPrice, parseSource, type Table } from './table';
+import { numberText, truthy } from './values';
 import type { Priced } from './totals';
 
 const COMPARABLE_LOW = Dec.parse('2').div(Dec.parse('3'));
@@ -26,9 +25,8 @@ function warning(code: string, text: string, room = ''): JObj {
 }
 
 function roomArea(room: Room, wet: boolean): Dec {
-  if (!wet) return orZero('float', room.unfinishedSf).add(orZero('float', room.finishedSf));
-  if (room.wetFloorSf === null) return orZero('float', room.floorSf);
-  return decFloat(room.wetFloorSf);
+  if (!wet) return room.unfinishedSf.add(room.finishedSf);
+  return room.wetFloorSf ?? room.floorSf ?? ZERO;
 }
 
 function sizingWarnings(sizing: Sizing): JObj[] {
@@ -46,19 +44,19 @@ function sizingWarnings(sizing: Sizing): JObj[] {
 function roomWarnings(data: Inspection, table: Table): JObj[] {
   const sources = table.items.filter((item) => {
     if (!item.enabled || item.group === 'extras') return false;
-    if (item.unitPrice === '' && !item.priceBrackets) return false;
-    if ((item.priceBrackets ?? []).some((band) => band.unitPrice === '')) return false;
-    return parseSource(item.quantitySource).kind === 'room';
+    if (blankPrice(item)) return false;
+    return parseSource(item.quantity_source).kind === 'room';
   });
-  const wet = table.policy.areaBasis === 'wet_floor';
+  const wet = table.policy.area_basis === 'wet_floor';
   const found: JObj[] = [];
   for (const room of data.rooms) {
-    if (sources.some((item) => !item.categories.length || item.categories.includes(room.category))) continue;
+    const allows = (categories: number[]) => !categories.length || categories.includes(room.category);
+    if (sources.some((item) => allows(item.categories))) continue;
     const area = roomArea(room, wet);
     const other = roomArea(room, !wet);
     const used = truthy(area) ? area : other;
     if (!truthy(used)) continue;
-    const name = pyStrip(room.name) || 'Unnamed room';
+    const name = room.name.trim() || 'Unnamed room';
     found.push(
       warning(
         'unpriced_room',
@@ -70,32 +68,33 @@ function roomWarnings(data: Inspection, table: Table): JObj[] {
   return found;
 }
 
-function quantityText(quantity: Dec | number, name: string): JObj {
-  const text = typeof quantity === 'number' ? numberText(decFloat(quantity)) : numberText(quantity);
-  return warning('unpriced_quantity', `${text} ${name.replaceAll('_', ' ')} entered, but your price list has no item for it.`);
+function quantityText(quantity: Dec, name: string): JObj {
+  return warning(
+    'unpriced_quantity',
+    `${numberText(quantity)} ${name.replaceAll('_', ' ')} entered, but your price list has no item for it.`,
+  );
 }
 
 function quantityWarnings(data: Inspection, table: Table): JObj[] {
   const listed = new Set<string>();
   for (const item of table.items) {
     if (!item.enabled) continue;
-    const source = parseSource(item.quantitySource);
+    const source = parseSource(item.quantity_source);
     if (source.field) listed.add(source.field);
     if (source.countField) listed.add(source.countField);
   }
   const found: JObj[] = [];
   for (const field of QUANTITY_FIELDS) {
     if (listed.has(field)) continue;
-    const quantity = jobCount(data, field);
-    if (quantity > 0) found.push(quantityText(quantity, field));
+    const quantity = fieldDec(data, field);
+    if (quantity.cmp(ZERO) > 0) found.push(quantityText(quantity, field));
   }
   for (const row of priceScopeV2(data, table.items, table.policy).warnings) {
     if (row.code !== 'unknown_scope_item' || typeof row.item_id !== 'string') continue;
     const entry = data.scopeItems?.[row.item_id];
     if (!entry) continue;
-    const quantity = entry.quantity.isZero() ? entry.count * entry.days : entry.quantity;
-    const positive = typeof quantity === 'number' ? quantity > 0 : truthy(quantity);
-    if (positive) found.push(quantityText(quantity, row.item_id));
+    const quantity = entry.quantity.isZero() ? Dec.fromInt(entry.count * entry.days) : entry.quantity;
+    if (truthy(quantity)) found.push(quantityText(quantity, row.item_id));
   }
   return found;
 }
@@ -112,14 +111,14 @@ function median(values: Dec[]): Dec {
 function typicalWarning(data: Inspection, table: Table | null, priced: Priced | null, history: HistoryRow[] | null): JObj[] {
   if (!priced || !history || history.length === 0) return [];
   const category = data.rooms.reduce((best, room) => Math.max(best, room.category), 1);
-  const wet = Boolean(table) && table?.policy.areaBasis === 'wet_floor';
+  const wet = table?.policy.area_basis === 'wet_floor';
   const area = sumArea(data, wet);
   const comparable = history
     .filter((row) => row.category === category && COMPARABLE_LOW.mul(area).cmp(row.sf) <= 0 && row.sf.cmp(COMPARABLE_HIGH.mul(area)) <= 0)
     .map((row) => row.low);
   if (comparable.length < MIN_JOBS) return [];
   const typical = median(comparable);
-  const low = Dec.parse(priced.low.toString());
+  const low = priced.totals.low.total;
   if (typical.cmp(ZERO) <= 0 || (FAR_LOW.mul(typical).cmp(low) <= 0 && low.cmp(FAR_HIGH.mul(typical)) <= 0)) return [];
   const ratio = low.div(typical).quantize(-1, 'HALF_UP');
   return [
