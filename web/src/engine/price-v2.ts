@@ -288,6 +288,7 @@ export function jobSf(data: Inspection, items: Item[], policy: Policy): Dec {
     }
     data.rooms.forEach((room, index) => {
       if (allowed.length && !allowed.includes(room.category)) return;
+      if (!applies(item, room, [])) return;
       const area =
         source.field === 'finished_sf' || source.field === 'unfinished_sf'
           ? roomQuantity(room, demolition, demolitionPolicy, rooms)

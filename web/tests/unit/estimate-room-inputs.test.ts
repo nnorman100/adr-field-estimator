@@ -273,6 +273,38 @@ describe('containment by affected area (M8)', () => {
     ]);
   });
 
+  it("whole-job: a mold item that does not apply to a room adds none of its square feet to the job total", () => {
+    // Demo (Cat 1 only): $10.00 per sq ft through 100 sq ft of the job's total, $1.00 above. Kitchen
+    // removes 80 sq ft. Den (mold, Condition 1, 50 sq ft) gets no removal line (Condition 3 only) and no
+    // containment line (over 100 sq ft affected only; Den has 5), so the job total is 80, not 180:
+    // 80 x $10.00 = $800.00.
+    const demo = item('demo', {
+      categories: [1],
+      unit_price: '',
+      price_brackets: [
+        { up_to_sf: 100, unit_price: '10.00' },
+        { up_to_sf: null, unit_price: '1.00' },
+      ],
+    });
+    const containment = item('containment', {
+      group: 'treatment',
+      categories: ['mold'],
+      affected_bands: ['over_100'],
+      unit_price: '2.00',
+    });
+    const result = priced(
+      table([demo, MOLD_ITEMS[0] as Obj, containment], { bracket_mode: 'whole-job' }),
+      job([
+        room('Kitchen', { unfinished_sf: 80 }),
+        room('Den', { category: 'mold', unfinished_sf: 50, mold_condition: 1, affected_sf: 5 }),
+      ]),
+    );
+    expect(lineTotals(result)).toEqual([
+      "Kitchen: demo (whole-job bracket: over 0 through 100 sq ft of the job's total square feet) = 800.00",
+    ]);
+    expect(result.totals.low.total).toBe('800.00');
+  });
+
   it('W48 condition and band filters together: both must match', () => {
     // Containment for Condition 3 over 100 sq ft only. A (Condition 3, 150): $600.00.
     // B (Condition 2, 150) and C (Condition 3, 50) get nothing.
@@ -667,6 +699,9 @@ describe('room inputs in the table schema', () => {
     expect(refused([item('aa', { ...mold, mold_conditions: [3, 3] })])).toBe(true);
     expect(refused([item('aa', { ...mold, affected_bands: ['up_to_50'] })])).toBe(true);
     expect(refused([item('aa', { ...mold, affected_bands: ['up_to_10', 'up_to_10'] })])).toBe(true);
+    // A job-level line has no room to read a condition or affected area from.
+    expect(refused([item('aa', { ...mold, quantity_source: 'typed', mold_conditions: [3] })])).toBe(true);
+    expect(refused([item('aa', { ...mold, quantity_source: 'typed', affected_bands: ['over_100'] })])).toBe(true);
     // An empty filter is the same table as no filter.
     expect(contentHash(parseTable(table([item('aa', { mold_conditions: [] })])))).toBe(
       contentHash(parseTable(table([item('aa')]))),

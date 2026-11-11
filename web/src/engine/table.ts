@@ -423,6 +423,9 @@ const ITEM = z
     if ((item.mold_conditions?.length || item.affected_bands?.length) && !moldOnly) {
       ctx.addIssue({ code: 'custom', path: ['categories'], message: 'mold conditions and affected-area bands need categories: ["mold"]' });
     }
+    if ((item.mold_conditions?.length || item.affected_bands?.length) && source.kind !== 'room') {
+      ctx.addIssue({ code: 'custom', path: ['quantity_source'], message: 'mold conditions and affected-area bands need a room quantity source' });
+    }
     if (new Set(item.mold_conditions ?? []).size !== (item.mold_conditions ?? []).length) {
       ctx.addIssue({ code: 'custom', path: ['mold_conditions'], message: 'mold conditions repeat' });
     }
