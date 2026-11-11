@@ -1,0 +1,230 @@
+import { randomBytes } from 'node:crypto';
+import postgres from 'postgres';
+import { openDatabase } from '@/db/client';
+import { applyMigrations, migrationsDirectory } from '@/db/migrate';
+import { databaseDirectory } from '@/lib/auth/directory';
+import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
+import type { IdentityServices } from '@/lib/auth/services';
+import { teamService, type TeamService } from '@/lib/team/service';
+import { TenantUsersUnavailable, type TenantUsers } from '@/lib/team/users';
+import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
+
+// The team and invitation routes against a real Postgres, as the app's runtime role with forced
+// row-level security, set up like a fresh Cloud SQL instance (see sign-in-lookup.test.ts): a
+// CREATEROLE migrator owns the tables and the API user inherits dryscope_runtime. Sign-in tokens
+// and the tenant's accounts are replaced by fakes; tests/emu/tenant-users.test.ts checks the real
+// account calls against the Auth emulator.
+const MIGRATOR = 'dryscope_migrator_ci';
+const API_USER = 'dryscope-api-ci@dryscope.iam';
+
+const migratorPassword = randomBytes(16).toString('hex');
+const apiPassword = randomBytes(16).toString('hex');
+
+export type Seed = {
+  a: string;
+  b: string;
+  suspended: string;
+  ownerA: { actor: string; membership: string };
+  estimatorA: { actor: string; membership: string };
+  officeA: { actor: string; membership: string };
+  disabledA: { actor: string; membership: string };
+  ownerB: { actor: string; membership: string };
+  estimatorB: { actor: string; membership: string };
+  operator: string;
+};
+
+export type TenantCall = { call: 'ensureAccount' | 'revokeSessions'; tenant: string; value: string };
+
+export type Harness = {
+  server: DisposablePostgres;
+  admin: postgres.Sql;
+  handle: ReturnType<typeof openDatabase>;
+  // The runtime's login, for a test that needs a second connection.
+  apiUrl: string;
+  seed: Seed;
+  calls: TenantCall[];
+  // Set to make the next tenant call fail as if Identity Platform were unreachable.
+  failNext: { ensureAccount: boolean; revokeSessions: boolean };
+  // Runs inside each revokeSessions call, before it returns.
+  onRevoke: (() => Promise<void>) | null;
+  identity: IdentityServices;
+  team: TeamService;
+};
+
+function urlAs(server: DisposablePostgres, user: string, password: string): string {
+  const url = new URL(server.databaseUrl);
+  url.username = user;
+  url.password = password;
+  return url.toString();
+}
+
+export async function startTeamServer(): Promise<Pick<Harness, 'server' | 'admin'>> {
+  const server = await startDisposablePostgres({ APP_ENV: 'test' });
+  const admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+  await admin.unsafe(`CREATE ROLE ${MIGRATOR} LOGIN CREATEROLE PASSWORD '${migratorPassword}'`);
+  await admin.unsafe(`GRANT CREATE ON DATABASE "${server.databaseName}" TO ${MIGRATOR}`);
+  await admin.unsafe(`CREATE ROLE "${API_USER}" LOGIN PASSWORD '${apiPassword}'`);
+  return { server, admin };
+}
+
+async function seedCompanies(admin: postgres.Sql): Promise<Seed> {
+  await admin`
+    INSERT INTO auth_tenants (id, kind) VALUES
+      ('tenant-a', 'company'), ('tenant-b', 'company'), ('tenant-s', 'company'), ('operators', 'operator')
+  `;
+  const company = async (tenant: string, slug: string, status = 'active') => {
+    const [row] = await admin<{ id: string }[]>`
+      INSERT INTO companies (name, sign_in_slug, auth_tenant_id, status)
+      VALUES (${`Company ${slug}`}, ${slug}, ${tenant}, ${status}) RETURNING id
+    `;
+    return row!.id;
+  };
+  const member = async (companyId: string, tenant: string, uid: string, role: string, status = 'active') => {
+    const [actor] = await admin<{ id: string }[]>`
+      INSERT INTO actors (company_id, auth_tenant_id, uid, email)
+      VALUES (${companyId}, ${tenant}, ${uid}, ${`${uid}@example.test`}) RETURNING id
+    `;
+    const [membership] = await admin<{ id: string }[]>`
+      INSERT INTO memberships (company_id, actor_id, role, status)
+      VALUES (${companyId}, ${actor!.id}, ${role}, ${status}) RETURNING id
+    `;
+    return { actor: actor!.id, membership: membership!.id };
+  };
+  const a = await company('tenant-a', 'company-a');
+  const b = await company('tenant-b', 'company-b');
+  const suspended = await company('tenant-s', 'company-s', 'suspended');
+  const seed = {
+    a,
+    b,
+    suspended,
+    ownerA: await member(a, 'tenant-a', 'owner-a', 'owner'),
+    estimatorA: await member(a, 'tenant-a', 'estimator-a', 'estimator'),
+    officeA: await member(a, 'tenant-a', 'office-a', 'office'),
+    disabledA: await member(a, 'tenant-a', 'disabled-a', 'estimator', 'disabled'),
+    ownerB: await member(b, 'tenant-b', 'owner-b', 'owner'),
+    estimatorB: await member(b, 'tenant-b', 'estimator-b', 'estimator'),
+  };
+  const [operator] = await admin<{ id: string }[]>`
+    INSERT INTO actors (company_id, auth_tenant_id, uid, email)
+    VALUES (NULL, 'operators', 'operator-1', 'operator-1@example.test') RETURNING id
+  `;
+  await admin`INSERT INTO platform_admins (actor_id) VALUES (${operator!.id})`;
+  return { ...seed, operator: operator!.id };
+}
+
+// Claims a fake token carries; the fake verifier below trusts them.
+export type FakeClaims = {
+  tenant: string | null;
+  uid: string;
+  email?: string;
+  name?: string;
+  verified?: boolean;
+  revoked?: boolean;
+  // Seconds before now that the person signed in; a minute by default.
+  signedInAgo?: number;
+  secondFactor?: string | null;
+};
+
+export function fakeVerifier(): TokenVerifier {
+  const read = (idToken: string): FakeClaims =>
+    JSON.parse(Buffer.from(idToken.split('.')[1]!, 'base64url').toString()) as FakeClaims;
+  return {
+    async verify(idToken) {
+      const claims = read(idToken);
+      return { tenant: claims.tenant, uid: claims.uid, emailVerified: claims.verified ?? true };
+    },
+    async verifyNotRevoked(idToken, tenant) {
+      const claims = read(idToken);
+      if (claims.tenant !== tenant) throw new IdentityRefusal('invalid_token');
+      if (claims.revoked) throw new IdentityRefusal('sign_in_revoked');
+      return {
+        tenant: claims.tenant,
+        uid: claims.uid,
+        emailVerified: claims.verified ?? true,
+        authTime: Math.floor(Date.now() / 1000) - (claims.signedInAgo ?? 60),
+        // An authenticator app by default, so an owner meets the session rules.
+        secondFactor: claims.secondFactor === undefined ? 'totp' : claims.secondFactor,
+        email: claims.email ?? `${claims.uid}@example.test`,
+        name: claims.name ?? null,
+      };
+    },
+  };
+}
+
+export function request(
+  claims: FakeClaims | null,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Request {
+  const headers = new Headers();
+  if (claims) {
+    headers.set('Authorization', `Bearer e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.`);
+  }
+  if (init.body !== undefined) headers.set('Content-Type', 'application/json');
+  return new Request(`http://localhost${path}`, {
+    method: init.method ?? 'GET',
+    headers,
+    body: init.body === undefined ? undefined : typeof init.body === 'string' ? init.body : JSON.stringify(init.body),
+  });
+}
+
+export const params = (values: Record<string, string>) => ({ params: Promise.resolve(values) });
+
+// A fresh database with the seed, a runtime-role connection and fake tenant accounts.
+export async function resetTeamDatabase(
+  base: Pick<Harness, 'server' | 'admin'>,
+  previous: Harness | null,
+): Promise<Harness> {
+  await previous?.handle.close();
+  const { server, admin } = base;
+  await emptyDiscardDatabase(server.databaseUrl);
+  await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
+  await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${MIGRATOR}`);
+  await applyMigrations(urlAs(server, MIGRATOR, migratorPassword), migrationsDirectory);
+  const seed = await seedCompanies(admin);
+  const apiUrl = urlAs(server, API_USER, apiPassword);
+  const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: apiUrl });
+  const harness: Harness = {
+    server,
+    admin,
+    handle,
+    apiUrl,
+    seed,
+    calls: [],
+    failNext: { ensureAccount: false, revokeSessions: false },
+    onRevoke: null,
+    identity: { verifier: fakeVerifier(), directory: databaseDirectory(handle.db) },
+    team: null as unknown as TeamService,
+  };
+  const users: TenantUsers = {
+    async ensureAccount(tenant, email) {
+      harness.calls.push({ call: 'ensureAccount', tenant, value: email });
+      if (harness.failNext.ensureAccount) {
+        harness.failNext.ensureAccount = false;
+        throw new TenantUsersUnavailable();
+      }
+    },
+    async revokeSessions(tenant, uid) {
+      harness.calls.push({ call: 'revokeSessions', tenant, value: uid });
+      await harness.onRevoke?.();
+      if (harness.failNext.revokeSessions) {
+        harness.failNext.revokeSessions = false;
+        throw new TenantUsersUnavailable();
+      }
+    },
+  };
+  harness.team = teamService(handle.db, users);
+  return harness;
+}
+
+// Every row of every table, to prove a refused request changed nothing.
+export async function everything(admin: postgres.Sql): Promise<string> {
+  const tables = await admin<{ name: string }[]>`
+    SELECT relname AS name FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' ORDER BY relname
+  `;
+  const dump: Record<string, unknown> = {};
+  for (const { name } of tables) dump[name] = await admin.unsafe(`SELECT * FROM "${name}" ORDER BY 1`);
+  return JSON.stringify(dump);
+}
+
+export const owner = (uid = 'owner-a', tenant = 'tenant-a'): FakeClaims => ({ tenant, uid });

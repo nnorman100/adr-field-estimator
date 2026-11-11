@@ -152,6 +152,18 @@ applies it to live. An agent does not create the instance, run Terraform or chan
 IAM. The owner applies infrastructure. There is no earlier Postgres schema to backfill, and the
 Firestore records in this file are unchanged.
 
+Cloud SQL backups: automated daily backups and point-in-time recovery are on, and the backups are
+kept in the US multi-region (`us`), not in the instance's region, so a regional outage cannot take
+them too. Only backups taken after that setting is applied are kept in `us`; earlier ones stay in
+`us-central1`, so the owner takes one on-demand backup after the apply to check its location, and
+another after the first migrations. There is no second-region export or replica. If `us-central1`
+is lost, the latest backup is restored into a new instance in another region
+([RUNBOOK.md](RUNBOOK.md#restore-into-another-region)), losing at most one day; point-in-time
+recovery is not available then. The restored instance is the data copy only: the app runs in
+`us-central1` and stays down until that region returns, and a second-region app is a decision to
+revisit at launch. A quarterly drill restores into a different region once. Firestore stays in its
+own region with its own point-in-time recovery.
+
 The schema is a numbered ledger. Files in `web/migrations` are named `0001_name.sql`,
 `0002_name.sql`, and so on. `npm run db:migrate` applies each missing file in order, inside its own
 transaction, and records the file id and a SHA-256 of its bytes in `migration_ledger`. A second run
@@ -179,8 +191,11 @@ membership change). Rows that refer to another company row carry `company_id` in
 so a membership, invitation, audit event or outbox row can never point at an actor or invitation of
 another company. `actors.email`, `actors.display_name` and `invitations.email` are personal data.
 Emails are stored lowercase and tenant ids, uids, emails and display names without surrounding
-spaces, so one person is one stored key. Nothing writes these tables yet. Prices and signed
-documents are later work.
+spaces, so one person is one stored key. The team and invitation routes (S3-10,
+`web/src/lib/team/`) write actors, memberships, invitations, audit events and outbox rows, always
+inside `withCompany`; an invitation's record, with its email, stays after it is accepted,
+cancelled or cleared ("clear" only hides it from the team list); nothing in `web/` deletes it yet.
+Nothing else writes these tables yet. Prices and signed documents are later work.
 
 `0003_runtime_role` adds the second lock. It creates `dryscope_runtime`, a role with no login, no
 `BYPASSRLS` and no ownership, and grants it to the environment's API database user
