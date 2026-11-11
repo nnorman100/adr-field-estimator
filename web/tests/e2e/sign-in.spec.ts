@@ -135,6 +135,31 @@ test('a failed sign-out keeps the signed-in screen and the session', async ({ pa
   await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
 });
 
+test('a sign-in the phone cannot remove stays signed in when the server refuses it', async ({ page }) => {
+  await page.goto('/sign-in/company-a');
+  await signIn(page, mine.memberA.email, PASSWORD);
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+
+  // The server now refuses the sign-in, and the phone's storage refuses to delete it.
+  await page.route('**/api/me', (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_again' }) }),
+  );
+  await page.addInitScript(() => {
+    const remove = IDBObjectStore.prototype.delete;
+    IDBObjectStore.prototype.delete = function (key) {
+      if (String(key).startsWith('firebase:authUser:')) throw new DOMException('Storage refused', 'UnknownError');
+      return remove.call(this, key);
+    };
+  });
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'We could not check your sign-in' })).toBeVisible();
+
+  // Trying again does not pretend the sign-in is gone.
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('heading', { name: 'We could not check your sign-in' })).toBeVisible();
+  await expect(page.getByLabel('Password')).toHaveCount(0);
+});
+
 test('a sign-in check that finishes after the sign-in ended is not shown', async ({ context, page }) => {
   await page.goto('/sign-in/company-a');
   await signIn(page, mine.memberA.email, PASSWORD);
