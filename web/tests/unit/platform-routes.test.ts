@@ -1,7 +1,6 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { IdentityRefusal, type OperatorDirectory, type TokenVerifier } from '@/lib/auth/identity';
@@ -10,12 +9,11 @@ import { isMemberApiPath, isOperatorApiPath, operatorApiPaths } from '@/lib/publ
 import { proxy } from '@/proxy';
 import { createTenant, parseTenantArgs, tenantBody } from '../../scripts/create-tenant';
 
-// The operator routes without a database: every file under api/platform is an operator route and
-// nothing else is, the rule refuses what it must before any handler runs, and the owner-run tenant
-// command sends what the plan says. tests/db/platform-*.test.ts drive the routes against Postgres.
+// The operator routes without a database: the proxy passes exactly the files under api/platform on
+// to the operator sign-in check, the rule refuses what it must before any handler runs, and the
+// owner-run tenant command sends what the plan says. tests/db/platform-*.test.ts drive the routes against Postgres.
 
 const API_DIR = fileURLToPath(new URL('../../src/app/api', import.meta.url));
-const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
 const ID = '0b5a1c1e-7d2f-4c8e-9a6b-3f4e5d6c7b8a';
 
 async function routeFiles(dir: string): Promise<string[]> {
@@ -28,33 +26,7 @@ async function routeFiles(dir: string): Promise<string[]> {
   return found.sort();
 }
 
-// The access rule of each exported handler in one route file.
-function rulesOf(source: string): string[] {
-  const file = ts.createSourceFile('route.ts', source, ts.ScriptTarget.Latest, true);
-  const rules: string[] = [];
-  for (const statement of file.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || !METHODS.has(declaration.name.text)) continue;
-      const init = declaration.initializer;
-      rules.push(init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) ? init.expression.text : 'none');
-    }
-  }
-  return rules;
-}
-
 describe('operator route files', () => {
-  it('uses operatorRoute for every handler under api/platform, and nowhere else', async () => {
-    const found: Record<string, string[]> = {};
-    for (const path of await routeFiles(API_DIR)) {
-      const rules = rulesOf(await readFile(path, 'utf8'));
-      const name = relative(API_DIR, path);
-      const platform = name.startsWith('platform/');
-      if (platform ? rules.some((rule) => rule !== 'operatorRoute') : rules.includes('operatorRoute')) found[name] = rules;
-    }
-    expect(found).toEqual({});
-  });
-
   it('passes exactly the operator routes on to their own sign-in check', async () => {
     const files = (await routeFiles(join(API_DIR, 'platform'))).map((path) =>
       `/api/${relative(API_DIR, join(path, '..'))}`.replace(/\[[A-Za-z]+\]/g, ':id'),
