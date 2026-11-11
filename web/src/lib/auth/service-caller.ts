@@ -5,7 +5,7 @@ import { ConfigError, parseIdentityConfig } from '@/lib/config';
 // service account, with a Google-signed ID token minted for that one job. No member, account or
 // operator sign-in is accepted there.
 //
-// The account is named from settings the Cloud Run Terraform already sets (APP_ENVIRONMENT and
+// The account is named from settings the Cloud Run Terraform already sets (APP_ENV and
 // GOOGLE_CLOUD_PROJECT, infra/dryscope/app/cloud_run.tf): dryscope-scheduler-{env}, the naming
 // module's pattern (infra/dryscope/modules/naming). The scheduler account and its Cloud Scheduler
 // job are not created yet; until the owner adds them, no token can pass.
@@ -27,7 +27,8 @@ export type ServiceCallerServices = { caller: ServiceCaller; verifier: ServiceTo
 
 export function schedulerCaller(env: Record<string, string | undefined>): ServiceCaller {
   const { appEnv, projectId } = parseIdentityConfig(env);
-  if (appEnv === 'local') throw new ConfigError(['APP_ENV: internal job routes are not callable locally']);
+  if (appEnv === 'local')
+    throw new ConfigError(['APP_ENV: internal job routes are not callable locally']);
   return {
     email: `dryscope-scheduler-${appEnv}@${projectId}.iam.gserviceaccount.com`,
     audienceFor: (job) => `dryscope-${appEnv}-${job}`,
