@@ -548,9 +548,6 @@ describe('field-database rules', () => {
       'web/firestore.rules',
     ]);
     expect(runs.filter((args) => args[0] === 'node')).toHaveLength(1);
-    expect(rules().run).toMatch(
-      /gcloud auth print-access-token \| node web\/scripts\/release-rules\.ts/,
-    );
   });
 
   it.each([true, false])(

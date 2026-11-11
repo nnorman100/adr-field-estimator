@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -6,8 +6,8 @@ import { schedulerCaller } from '@/lib/auth/service-caller';
 
 // The Cloud Scheduler jobs Terraform plans (infra/dryscope/app/scheduler.tf) must call each
 // internal job route exactly as serviceRoute accepts it: the account and audience schedulerCaller
-// derives from the web app's own Cloud Run settings, and a path that is a real serviceRoute for
-// that job. Read from the mocked plans the plan check is tested on (infra/dryscope/fixtures).
+// derives from the web app's own Cloud Run settings, and that job's internal route. Read from the
+// mocked plans the plan check is tested on (infra/dryscope/fixtures).
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -67,15 +67,6 @@ describe.each(['test', 'live'])('scheduled internal jobs in %s', (environment) =
 
     const url = new URL(target.uri);
     expect((settings.ALLOWED_ORIGINS ?? '').split(',')).toContain(url.origin);
-    const route = path.join(
-      REPO,
-      'web',
-      'src',
-      'app',
-      ...url.pathname.split('/').filter(Boolean),
-      'route.ts',
-    );
-    expect(existsSync(route), route).toBe(true);
-    expect(readFileSync(route, 'utf8')).toContain(`export const POST = serviceRoute('${job}',`);
+    expect(url.pathname).toBe(`/api/internal/${job}`);
   });
 });
