@@ -1,8 +1,17 @@
-// dryscope-v2 line builder. Totals and the high-end sentences live in totals.ts.
+// dryscope-v3 line builder. Totals and the high-end sentences live in totals.ts.
 
 import { Dec, HUNDRED, ONE, ZERO, money, maxDec, minDec, sumDec } from './decimal';
 import type { JObj } from './json';
-import { collapse, commas, truthy, type PriceLine } from './values';
+import {
+  categoryLabel,
+  categoryOrder,
+  collapse,
+  commas,
+  isWater,
+  truthy,
+  type Category,
+  type PriceLine,
+} from './values';
 import type { Inspection, Room } from './inspection';
 import { fieldDec, roomNumber } from './inspection';
 import {
@@ -15,6 +24,7 @@ import {
   type Item,
   type Policy,
   type PriceBand,
+  type PriceRow,
   type Source,
 } from './table';
 
@@ -139,10 +149,27 @@ export function makeLine(
   };
 }
 
-function catPrice(item: Item, policy: Policy, category: number): Dec {
-  const base = item.price_brackets ? ONE : Dec.parse(item.unit_price);
-  const key = String(category) as '1' | '2' | '3';
-  return base.mul(Dec.parse(policy.category_multipliers[key]));
+/** The category row that prices a room of this category, or null for the item's default row. */
+function rowFor(item: Item, category: Category): PriceRow | null {
+  return item.rows?.find((row) => row.category === category) ?? null;
+}
+
+/**
+ * A room line's unit price. A category row is used as set. The default row takes the water-category
+ * multiplier, and the cabinetry multiplier in a custom-cabinetry Cat 3 room; a Mold room takes neither.
+ * A bracketed row's unit price is the factor its band prices are multiplied by.
+ */
+function roomPrice(item: Item, source: Source, policy: Policy, room: Room, row: PriceRow | null): Dec {
+  if (row) return row.price_brackets ? ONE : Dec.parse(row.unit_price ?? '');
+  let price = item.price_brackets ? ONE : Dec.parse(item.unit_price);
+  if (!isWater(room.category)) return price;
+  const key = String(room.category) as '1' | '2' | '3';
+  price = price.mul(Dec.parse(policy.category_multipliers[key]));
+  const cabinetry = source.finish === 'finished' || policy.cabinetry.scope === 'all_cat3';
+  if (room.category === 3 && room.customCabinetry && cabinetry) {
+    price = price.mul(Dec.parse(policy.cabinetry.multiplier));
+  }
+  return price;
 }
 
 function roomLines(
@@ -162,15 +189,30 @@ function roomLines(
       warnings.push({ code: 'missing_area', item_id: item.item_id, room: room.name });
       continue;
     }
-    let price = catPrice(item, policy, room.category);
-    const cabinetry = source.finish === 'finished' || policy.cabinetry.scope === 'all_cat3';
-    if (room.category === 3 && room.customCabinetry && cabinetry) {
-      price = price.mul(Dec.parse(policy.cabinetry.multiplier));
-    }
+    const row = rowFor(item, room.category);
+    const price = roomPrice(item, source, policy, room, row);
     const waste = truthy(room.wastePercent) ? room.wastePercent : Dec.parse(item.waste_percent);
-    lines.push(makeLine(item, `${room.name}: ${label}`, quantity, price, waste, room.name, quantity));
+    const where = row ? `${room.name}, ${categoryLabel(row.category)}` : room.name;
+    const line = makeLine(item, `${where}: ${label}`, quantity, price, waste, room.name, quantity);
+    if (row) line.priceRow = row.category;
+    lines.push(line);
   }
   return lines;
+}
+
+/**
+ * An item's lines split by the row that priced them, default row first, then rows in category
+ * order, each with its own bracket list (null for a flat price).
+ */
+function byRow(item: Item, lines: PriceLine[]): Array<[PriceBand[] | null, PriceLine[]]> {
+  const groups: Array<[PriceBand[] | null, PriceLine[]]> = [
+    [item.price_brackets ?? null, lines.filter((line) => !line.priceRow)],
+  ];
+  const rows = [...(item.rows ?? [])].sort((left, right) => categoryOrder(left.category, right.category));
+  for (const row of rows) {
+    groups.push([row.price_brackets ?? null, lines.filter((line) => line.priceRow === row.category)]);
+  }
+  return groups.filter(([, group]) => group.length > 0);
 }
 
 function bandFor(brackets: PriceBand[], area: Dec): PriceBand {
@@ -214,14 +256,17 @@ function score(line: PriceLine, growth?: (line: PriceLine) => Dec): Dec {
   return line.unitPrice.mul(waste).mul(grown);
 }
 
+/**
+ * Bracket lines for one row. In tiered mode only the lines this row priced count toward its bands;
+ * in whole-job mode the job's total square feet picks the band in this row's own list.
+ */
 function bracketLines(
-  item: Item,
+  brackets: PriceBand[],
   lines: PriceLine[],
   policy: Policy,
   jobArea: Dec | null,
   growth?: (line: PriceLine) => Dec,
 ): PriceLine[] {
-  const brackets = item.price_brackets ?? [];
   const mode = policy.bracket_mode;
   const whole = mode === 'whole-job';
   const selected = whole ? bandFor(brackets, jobArea ?? ZERO) : null;
@@ -320,7 +365,13 @@ export function priceScopeV2(
   const area = policy.bracket_mode === 'whole-job' ? jobSf(data, items, policy) : null;
   const lines: PriceLine[] = [];
   for (const [item, itemLines] of priced) {
-    lines.push(...(item.price_brackets ? bracketLines(item, itemLines, policy, area, growth) : itemLines));
+    if (!item.rows) {
+      lines.push(...(item.price_brackets ? bracketLines(item.price_brackets, itemLines, policy, area, growth) : itemLines));
+      continue;
+    }
+    for (const [brackets, group] of byRow(item, itemLines)) {
+      lines.push(...(brackets ? bracketLines(brackets, group, policy, area, growth) : group));
+    }
   }
   for (const extra of data.extras) {
     if (!extra.approval) continue;

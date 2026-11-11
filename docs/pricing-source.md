@@ -1,6 +1,66 @@
 # Pricing source
 
-Each company sets its own prices. DryScope has no default price list, and one company's rates are never used for another.
+Each company sets its own prices. DryScope has no default price list, and one company's rates are never used for another. Prices and totals come from the server in Decimal; a model never supplies a price.
+
+Two pricing engines exist while the app is rebuilt. The rebuilt app's engine is `dryscope-v3`, below. The old app (`backend/`, retired in S8) prices on `adr-residential-v1` and `dryscope-v2`, described under [The old app](#the-old-app-backend-until-s8).
+
+## The rebuilt app (`web/`, engine `dryscope-v3`)
+
+The engine is in `web/src/engine/` and is a library for now: no route or screen calls it yet (the price tables, Prices API and pins come in later steps of the [pricing plan](plans/pricing.md)). Its entry points are in `estimate.ts`:
+
+- `priceEstimate(table, job)` prices a saved draft from a published table: plain JSON in and out, money as Decimal strings. It returns the lines, both ends of the range, the warnings, `engine_version: "dryscope-v3"` and `table_sha256`, the SHA-256 of the parsed table's canonical JSON with items in id order. A refusal names its stage (`table`, `inspection`, `pricing` or `documents`).
+- `checkTable(table, acknowledgements)` is the publish check: a blank price on an enabled item blocks publishing, and a zero price needs the item's `allow_zero` and its id or code in `acknowledgements`.
+
+The table is one Zod schema, `PriceTableV3` in `table.ts`, used by every caller. Prices, percents and multipliers are Decimal strings; an unknown key is refused. Once a signed job uses an engine version, that version's formulas never change; new formulas get a new version.
+
+### Categories
+
+A room's `category` is `1`, `2` or `3` (water Category 1 to 3) or `"mold"`. An item's `categories` filter lists the categories it applies to, from the same four; an empty filter means every category, Mold included. The filter decides whether a room gets a line for the item; rows only decide its price.
+
+### Which price a room line uses
+
+Every item has a required **default row**: its `unit_price`, or its own `price_brackets`. An item may also carry `rows`, each naming one category with a `unit_price` or its own `price_brackets`:
+
+```json
+{ "item_id": "drywall_removal", "unit_price": "2.00",
+  "rows": [{ "category": 3, "unit_price": "5.00" }, { "category": "mold", "unit_price": "4.00" }] }
+```
+
+For each room, the row naming the room's category wins; otherwise the default row prices it.
+
+| The room | Priced by | Multipliers |
+| --- | --- | --- |
+| Has a row of its category | that row, used as set | none: no category multiplier and no cabinetry multiplier |
+| Water room (Cat 1, 2, 3) without one | the default row | the category multiplier, and the cabinetry multiplier in a Cat 3 room with custom cabinetry (finished work, or all work when the scope is `all_cat3`) |
+| Mold room without one | the default row | none |
+
+So an owner who types a Cat 3 price gets exactly that price, even in a custom-cabinetry kitchen. A line priced by a row names it, for example "Kitchen, Cat 3: Drywall removal"; a default-row line reads "Kitchen: Drywall removal".
+
+The schema allows at most one row per category (four in all), only categories the item's filter allows, and rows only on items priced per room (`room:` quantity sources), because a job-level line has no room and so no category. A row's brackets follow the default row's rules: square-foot items only, limits rising, the last band open-ended. A blank row price blocks publishing like any blank price, and a zero row price needs `allow_zero` and the owner's confirmation. Rows are stored in category order (1, 2, 3, Mold), so the order they were written in does not change the content hash, and an empty `rows` list is the same table as none.
+
+### Brackets count per row
+
+- **Tiered** (the default): only the rooms a row priced count toward that row's bands, dearest rooms first; the default row's bands count only the rooms the default row priced. A bracketed row's lines round on that row's cumulative amount. Counting square feet across rows could lower a total when square feet are added (a Cat 1 row at $0.10 growing by 100 sq ft would push a Cat 3 row's 100 sq ft from $10.00 into a $1.00 band, $890.00 less), so it is not done.
+- **Whole-job**: the job's total square feet (each room once at the largest area figure its priced square-foot items read, plus square feet typed without a room, before waste) picks the band in each row's own list, as in [Owner square-foot brackets](sqft-brackets.md). Whole-job can price a job just above a band boundary lower, by design.
+
+### Mold rooms elsewhere
+
+- Under the uncertainty method, a Mold room carries the category 3 hidden-damage percent (`assist.hidden_damage_percent["3"]`), and the range sentence names it as "category 3 or mold rooms".
+- Unless the room states its loss type, the IICRC drying-equipment check treats a Mold room as a mold loss and skips it, as it already did a Cat 3 room.
+- A Mold room that no item prices is named in the advisory warning as "mold work".
+
+### What `dryscope-v3` keeps from `dryscope-v2`
+
+Everything else follows the rules described for `dryscope-v2` below, in Decimal: lines (`quantity x price x (1 + waste / 100)`, rounded to the cent half up, once), a room's own waste over the item's, the three buckets, the cushion over the dearest square feet or the uncertainty high end, the after-hours adjustment, the minimum job charge, overhead and profit, sales tax on the taxable share, the single-price mode and the $0.00 guard. A table with no rows, priced for rooms with no Mold category, prices exactly as `dryscope-v2` did. The rebuilt app has no `adr-residential-v1`, no ADR rates in code and no switch from a rate book (D-017). Room types, room-size tiers and per-room items (S4-4b), and per-item after-hours, no-O&P and materials-share flags with per-trade minimums (S4-4c) are not built yet.
+
+### Tests
+
+Hand-worked examples, each with its arithmetic in a comment: `web/tests/unit/estimate-worked-examples.test.ts` (quantity, waste, eligibility, multipliers, brackets, range, minimum, overhead and profit, tax, after-hours, publish checks, rounding) and `web/tests/unit/estimate-category-rows.test.ts` (each precedence step, Mold rooms, each bracket mode with rows, row schema rules). `web/tests/unit/estimate-properties.test.ts` scans seeded random tables and jobs, with and without rows and Mold rooms: in tiered mode adding square feet or a quantity never lowers either total; the high is never below the low; each total equals its lines and adjustments; the same table gives the same hash.
+
+## The old app (`backend/`, until S8)
+
+The rest of this page describes the old app's pricing, which the Python backend still runs until it is retired in S8.
+
 
 - **A company with no published prices cannot price an estimate.** The audit answers 409 and the job stays a draft. The owner is told "Set your company prices before your first estimate", with a Set company prices button while the editor is on; estimators and office staff are told to ask the owner.
 - **Owners publish prices under Company prices** (behind `PRICE_BOOKS_ENABLED`), or import the CSV/XLSX template. The template for a company without prices lists item names and units with blank prices; `version_id=starter` on the export route gives the v2 starter catalog in the same blank form. See [Company workspaces](company-workspaces.md#company-prices). While the flag is off the editor is unavailable, so a company other than ADR cannot set prices; that page says when the flag may be turned on.
@@ -14,7 +74,7 @@ For pricing work outside the catalog and its treatment in the estimate range, se
 
 Each job's saved prices record a calculation version, and that version selects the formulas used to price the job (`POLICIES` in `backend/claims.py`, `CALCULATION_FACTORS` in `backend/price_books.py`). `adr-residential-v1` and `dryscope-v2` are the versions with formulas, and `backend/pricing.py` chooses between them. Audits, additional-work approvals and reprice price a job from the table pinned to it (see [Documents from a company price table](#documents-from-a-company-price-table-calculation-dryscope-v2)). A version's formulas never change once saved prices use it, so existing drafts and signed documents keep their numbers; new formulas get a new version. An unknown version is refused, never priced with another version's formulas.
 
-## Company-defined tables (`dryscope-v2`)
+### Company-defined tables (`dryscope-v2`)
 
 A company on calculation version `dryscope-v2` prices from its own table: `items` and `policy`, pinned to the job (see [Company workspaces](company-workspaces.md#company-prices)). Documents already priced on `adr-residential-v1` keep that calculation and their numbers. `backend/pricing_v2.py` holds this calculation. All math is `Decimal`; a model never supplies a price.
 
@@ -63,11 +123,11 @@ The itemized total printed beside the range is the low total. A single-price com
 
 **Sample jobs.** `SAMPLE_JOBS` are three made-up jobs for previews: "Clean-water kitchen leak", "Gray-water main floor" and "Mold remediation, after hours". Each carries the notice "Sample job only. This does not price a saved job." and states every job number and room area, so a default quantity reaches a preview only through a typed-quantity item, which the sample cannot state. A starting quantity on such an item raises every sample it applies to.
 
-## Square-foot price and cushion brackets
+### Square-foot price and cushion brackets
 
 Owners can choose tiered brackets (default) or whole-job brackets for area-item prices and the cushion. Tiered prices charge each band separately; whole-job prices may drop at a boundary. Existing tables without brackets keep the calculation above. See [Owner square-foot brackets](sqft-brackets.md) for formulas, rounding, boundary previews, CSV/XLSX, immutable pins and document fields.
 
-## Range from real uncertainty
+### Range from real uncertainty
 
 When `assist.range_method` is `uncertainty`, the low end and every summary rule above are unchanged, and the high end prices what could actually change on the job. It uses no model. The cushion settings are stored but unused. The owner's reasons and the rollout are in [Estimate assist](estimate-assist.md#2-the-range-from-real-uncertainty).
 
@@ -106,7 +166,7 @@ T_L_high = Σ taxable area lines total × (1 + p_c)  +  T_L_other × (1 + p_top)
 | A count of zero, with the check available | named, as in "up to 4 air movers and 0 dehumidifiers for 4 drying days" |
 | No equipment difference, no extra days and every named percent 0 | no sentence, because the two amounts are equal |
 
-## Switching from a rate book to a table
+### Switching from a rate book to a table
 
 An owner on `adr-residential-v1` moves with **Switch to v2** (`POST /api/companies/{id}/prices/start-v2`). `price_table.from_v1_rates` maps that company's own 21 rates to items with the same prices and quantity sources, and sets the policy to the rate book's rules: range 1,000 sq ft / 50% / 20%, after-hours x1.2, cabinetry x2 on finished surfaces, demolition area basis, no overhead and profit or tax. A company holding no prices of its own, including one holding ADR's rates, starts from the blank starter list instead.
 
@@ -120,7 +180,7 @@ For the same job the table matches the rate book at or below 1,000 sq ft, low an
 
 Publishing records `source: from_v1`, continues the version numbering, and stores `switched_at` and `last_v1_version_id` on the company head. A draft created before `switched_at` with no pin yet prices from that last rate book (ADR's from its starting book if it had published none). Pinned drafts keep their pins. Either kind moves only when the owner applies the table to that draft (`explicit_reprice`), and signed documents never change. A rate book cannot be restored after the switch.
 
-## Documents from a company price table (calculation `dryscope-v2`)
+### Documents from a company price table (calculation `dryscope-v2`)
 
 The server prices a job from the table pinned to it (see [Company workspaces](company-workspaces.md#company-prices)), then writes the four documents. The mandatory clauses, the 1978 pre-test notice, findings, signability rules and the photo log are the same as for the rate book; only the pricing text changes.
 
