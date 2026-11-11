@@ -62,6 +62,10 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   // Where emailed links (set your password, verify your email) come back to.
   const returnUrl = useCallback(() => `${window.location.origin}${window.location.pathname}`, []);
 
+  const showSignedOut = useCallback(() => {
+    setScreen((current) => (current.name === 'set-password' || current.name === 'set-password-sent' ? current : { name: 'signed-out' }));
+  }, []);
+
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
     if (auth) await signOutCompany(auth);
@@ -84,7 +88,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
       const outcome = await checkSignIn(user, fresh);
-      if (authRef.current?.currentUser !== user) return;
+      const current = authRef.current?.currentUser ?? null;
+      if (current !== user) {
+        if (!current) showSignedOut();
+        return;
+      }
       if (endsSession(outcome)) {
         const message =
           outcome.kind === 'not-this-company'
@@ -97,7 +105,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
-    [companyName, refuse],
+    [companyName, refuse, showSignedOut],
   );
 
   useEffect(() => {
@@ -106,7 +114,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     authRef.current = auth;
     return onAuthStateChanged(auth, (user) => {
       if (!user) {
-        setScreen((current) => (current.name === 'set-password' || current.name === 'set-password-sent' ? current : { name: 'signed-out' }));
+        showSignedOut();
         return;
       }
       // Belt and braces: this company's Auth instance only ever holds this tenant's sign-in.
@@ -116,7 +124,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       }
       void check(user);
     });
-  }, [address, check, companyName, config, refuse, tenantId]);
+  }, [address, check, companyName, config, refuse, showSignedOut, tenantId]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -287,7 +295,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 run(async () => {
                   const user = currentUser();
                   if (user) await check(user, true);
-                  else setScreen({ name: 'signed-out' });
+                  else await endSession(null);
                 })
               }
             >

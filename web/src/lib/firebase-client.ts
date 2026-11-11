@@ -8,7 +8,6 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
-  updateCurrentUser,
   type Auth,
   type User,
 } from 'firebase/auth';
@@ -100,11 +99,5 @@ export async function checkSignIn(user: User, fresh = false): Promise<MeOutcome>
 
 // Removes this company's saved sign-in from the phone.
 export async function signOutCompany(auth: Auth): Promise<void> {
-  const user = auth.currentUser;
-  try {
-    await signOut(auth);
-  } catch (error) {
-    if (user) await updateCurrentUser(auth, user).catch(() => undefined);
-    throw error;
-  }
+  await signOut(auth);
 }
