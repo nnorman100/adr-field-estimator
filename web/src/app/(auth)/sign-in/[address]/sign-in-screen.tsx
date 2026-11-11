@@ -99,11 +99,13 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [endSession],
   );
 
-  // `afterEnrolment`: the person has just set up an authenticator app. The tokens Firebase issued with
-  // it are used as they are (no forced refresh). If the server still wants the second step, the
-  // sign-in did not use one, so the person signs in again with the app's code.
+  // The account that has just set up an authenticator app on this screen, until the server gives a
+  // definite answer about its sign-in. If the server still wants the second step, the sign-in did not
+  // use one, so the person signs in again with the app's code.
+  const enrolledUid = useRef<string | null>(null);
+
   const check = useCallback(
-    async (user: User, fresh = false, afterEnrolment = false) => {
+    async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
       const outcome = await checkSignIn(user, fresh);
       const current = authRef.current?.currentUser ?? null;
@@ -111,6 +113,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         if (!current) showSignedOut();
         return;
       }
+      const afterEnrolment = enrolledUid.current === user.uid;
+      if (outcome.kind !== 'unavailable') enrolledUid.current = null;
       if (afterEnrolment && outcome.kind === 'second-step') {
         await refuse('Your authenticator app is set up. Sign in again and enter its code.');
         return;
@@ -216,7 +220,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           existingCount={screen.existing}
           onEnrolled={() => {
             rememberSecondStep(tenantId, user.uid);
-            void check(user, false, true);
+            enrolledUid.current = user.uid;
+            void check(user);
           }}
           onNeedsSignIn={needsFreshSignIn}
           onLeave={() => void check(user)}
@@ -362,7 +367,8 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             existingCount={0}
             onEnrolled={() => {
               rememberSecondStep(tenantId, user.uid);
-              void check(user, false, true);
+              enrolledUid.current = user.uid;
+              void check(user);
             }}
             onNeedsSignIn={needsFreshSignIn}
             onLeave={() => void run(() => endSession('You are signed out.'))}
