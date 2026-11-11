@@ -287,6 +287,42 @@ describe('brackets count per row', () => {
       }
     }
   });
+  it("W34 whole-job: another square-foot item raises the job's total and moves a row's band", () => {
+    // Demolition: default flat $2.00 (no default-row room here); Cat 1 row $3.00 up to 100 sq ft, then
+    // $1.00. Hall (Cat 1) 80 sq ft. Alone, the job's total is 80 sq ft: 80 x $3.00 = $240.00.
+    // Add a typed square-foot item, 1,000 sq ft at $0.10 = $100.00: the job's total is 1,080 sq ft, over
+    // 100, so the Cat 1 row bills 80 x $1.00 = $80.00 (the item's own 80 sq ft would still give $240.00).
+    // Total $80.00 + $100.00 = $180.00.
+    const priceList = table(
+      [
+        item('demo', {
+          rows: [
+            {
+              category: 1,
+              price_brackets: [
+                { up_to_sf: 100, unit_price: '3.00' },
+                { up_to_sf: null, unit_price: '1.00' },
+              ],
+            },
+          ],
+        }),
+        item('wrap', { group: 'treatment', quantity_source: 'typed', unit_price: '0.10' }),
+      ],
+      { bracket_mode: 'whole-job' },
+    );
+    const hall = [room('Hall', { unfinished_sf: 80 })];
+    const alone = priced(priceList, job(hall));
+    expect(lineTotals(alone)).toEqual([
+      "Hall, Cat 1: demo (whole-job bracket: over 0 through 100 sq ft of the job's total square feet) = 240.00",
+    ]);
+    expect(alone.totals.low.total).toBe('240.00');
+    const withTyped = priced(priceList, job(hall, { scope_items: { wrap: { quantity: '1000' } } }));
+    expect(lineTotals(withTyped)).toEqual([
+      "Hall, Cat 1: demo (whole-job bracket: over 100 sq ft of the job's total square feet) = 80.00",
+      'wrap = 100.00',
+    ]);
+    expect(withTyped.totals.low.total).toBe('180.00');
+  });
 });
 
 describe('category rows in the table schema', () => {
