@@ -36,6 +36,8 @@ export const TEAM_ERRORS = {
   invitation_active: 409,
   invitation_expired: 410,
   owner_protected: 409,
+  // The company has no active owner, so its pending owner invitation is the only way one gets in.
+  owner_invitation_required: 409,
   // The company has no sign-in address or tenant yet, so an invitation link cannot work.
   company_not_ready: 409,
   // Two changes met at the same moment; the caller may try again.
@@ -392,6 +394,14 @@ export function teamService(db: Database, users: TenantUsers, project: ProjectAc
         const row = await lockedInvitation(tx, companyId, invitationId);
         if (!row || row.clearedAt) throw new TeamError('not_found');
         if (row.status !== 'pending') throw new TeamError('invitation_closed');
+        if (row.role === 'owner') {
+          const [owner] = await tx
+            .select({ id: memberships.id })
+            .from(memberships)
+            .where(and(eq(memberships.companyId, companyId), eq(memberships.role, 'owner'), eq(memberships.status, 'active')))
+            .limit(1);
+          if (!owner) throw new TeamError('owner_invitation_required');
+        }
         const [updated] = await tx
           .update(invitations)
           .set({ status: 'cancelled', cancelledAt: now, updatedAt: now })

@@ -1,7 +1,7 @@
 import { serverDatabase } from '@/lib/auth/services';
 import { parseIdentityConfig } from '@/lib/config';
 import { projectCommittedChange } from '@/lib/projection/services';
-import { platformService, type PlatformService } from './service';
+import { noEmailService, platformService, type PlatformService } from './service';
 import { firebasePlatformUsers } from './users';
 
 let service: PlatformService | null = null;
@@ -13,6 +13,7 @@ export function platformServices(): PlatformService {
     serverDatabase(),
     firebasePlatformUsers(parseIdentityConfig(process.env)),
     (companyId, actorId) => projectCommittedChange(companyId, actorId),
+    noEmailService,
   );
   return service;
 }

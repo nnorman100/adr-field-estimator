@@ -5,7 +5,7 @@ import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
 import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
-import { platformService, type PlatformService } from '@/lib/platform/service';
+import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
 import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
 import { TenantUsersUnavailable } from '@/lib/team/users';
@@ -236,7 +236,7 @@ export async function resetTeamDatabase(
   const projectInto = async (companyId: string, actorId: string) => {
     harness.projected.push({ companyId, actorId });
   };
-  harness.platform = platformService(handle.db, users, projectInto);
+  harness.platform = platformService(handle.db, users, projectInto, noEmailService);
   harness.team = teamService(handle.db, users, projectInto);
   return harness;
 }

@@ -375,6 +375,18 @@ describe('the owner', () => {
     expect(await (await call(ownerRoute, operatorClaims(), { companyId: h.seed.a }, { body: { email: 'x@example.test' } })).json()).toEqual({ error: 'owner_exists' });
   });
 
+  it('refuses cancelling the owner invitation of a company with no active owner, writing nothing', async () => {
+    const replaced = await call(ownerRoute, operatorClaims(), { companyId: h.seed.a }, { body: { email: 'new-owner@example.test', replace: true } });
+    expect(replaced.status).toBe(201);
+    const { invitation } = (await replaced.json()) as { invitation: { id: string } };
+    const before = await everything(h.admin);
+    const refused = await call(cancel, operatorClaims(), { companyId: h.seed.a, invitationId: invitation.id }, { body: {} });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: 'owner_invitation_required' });
+    expect(await everything(h.admin)).toBe(before);
+    expect(await h.admin`SELECT status FROM invitations WHERE id = ${invitation.id}`).toEqual([{ status: 'pending' }]);
+  });
+
   it('cancels an older pending owner invitation, and changes nothing when the old owner cannot be signed out', async () => {
     const company = h.seed.b;
     await h.admin`UPDATE memberships SET status = 'disabled' WHERE id = ${h.seed.ownerB.membership}`;
@@ -399,7 +411,7 @@ describe('second step reset (D9)', () => {
   it('resets the member’s second step and signs them out, with one audit row', async () => {
     const response = await call(reset, operatorClaims(), { companyId: h.seed.a, membershipId: h.seed.ownerA.membership }, { body: { confirmedBy: 'phone' } });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ reset: true, email: 'not_sent' });
+    expect(await response.json()).toEqual({ reset: true, email: 'not_sent', tellByPhone: true });
     expect(h.calls).toEqual([{ call: 'resetSecondStep', tenant: 'tenant-a', value: 'owner-a' }]);
     expect(await auditRows()).toEqual([
       {

@@ -92,6 +92,11 @@ function companyView(row: CompanyRow): CompanyView {
   };
 }
 
+// D9's email to the person whose second step was reset. It waits for the email service (S9), which
+// plugs in here; until then nothing is sent and the operator tells the person by phone.
+export type SecondStepNotice = (companyId: string, membershipId: string) => Promise<'sent' | 'not_sent'>;
+export const noEmailService: SecondStepNotice = async () => 'not_sent';
+
 function rows<T>(result: unknown): T[] {
   return result as T[];
 }
@@ -129,7 +134,7 @@ async function lockedCompany(tx: CompanyTransaction, companyId: string): Promise
   return row;
 }
 
-export function platformService(db: Database, users: PlatformUsers, project: ProjectAccess) {
+export function platformService(db: Database, users: PlatformUsers, project: ProjectAccess, notice: SecondStepNotice) {
   // A unique index caught two operator actions racing; nothing was written.
   async function act<T>(operatorId: string, run: (tx: CompanyTransaction) => Promise<T>, companyId?: string): Promise<T> {
     try {
@@ -345,14 +350,14 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
     // D9: after the operator has confirmed the person by phone, removes their second steps and
     // signs them out; they enrol again at their next sign-in. The audit row is written first in the
     // same transaction, and the sign-in change runs before the commit, so a failure changes nothing.
-    // No email service exists yet (S9), so the person is not emailed: the answer says so, and the
-    // operator tells them on the same call.
+    // The email follows the commit. With no email service yet (S9) it is not sent, and the answer
+    // tells the operator to tell the person by phone.
     async resetSecondStep(
       operatorId: string,
       companyId: string,
       membershipId: string,
-    ): Promise<{ reset: true; email: 'not_sent' }> {
-      return act(
+    ): Promise<{ reset: true; email: 'sent' | 'not_sent'; tellByPhone: boolean }> {
+      await act(
         operatorId,
         async (tx) => {
           const [row] = await tx
@@ -364,10 +369,11 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
           if (!row) throw new PlatformError('not_found');
           await audit(tx, operatorId, companyId, 'second_step_reset', membershipId, { role: row.role, confirmedBy: 'phone' });
           await users.resetSecondStep(row.tenant, row.uid);
-          return { reset: true as const, email: 'not_sent' as const };
         },
         companyId,
       );
+      const email = await notice(companyId, membershipId);
+      return { reset: true as const, email, tellByPhone: email !== 'sent' };
     },
 
     // The read-only support view of a company's team: read in a read-only transaction, then one
