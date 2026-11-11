@@ -7,9 +7,10 @@ import { ConfigError, parseIdentityConfig } from '@/lib/config';
 //
 // The account is named from settings the Cloud Run Terraform already sets (APP_ENV and
 // GOOGLE_CLOUD_PROJECT, infra/dryscope/app/cloud_run.tf): dryscope-scheduler-{env}, the naming
-// module's pattern (infra/dryscope/modules/naming). Terraform creates the account (data root,
-// identities.tf) and the Cloud Scheduler job that calls each route with this caller and audience
-// (app root, scheduler.tf); until the owner applies both, no token can pass.
+// module's pattern (infra/dryscope/modules/naming). In test, Terraform creates the account (data
+// root, identities.tf) and the Cloud Scheduler job that calls each route with this caller and
+// audience (app root, scheduler.tf); until the owner applies both, and in live for now, no token
+// can pass.
 
 export type ServiceCallerClaims = { email: string | null; emailVerified: boolean };
 
