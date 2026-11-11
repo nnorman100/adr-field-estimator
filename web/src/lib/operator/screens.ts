@@ -130,12 +130,6 @@ export function operatorErrorMessage(code: string | null): string {
   }
 }
 
-// The sign-in address rule of companies_sign_in_slug_check (migration 0002), for the form's hint
-// and its own check before asking the server.
-export function isSignInAddressText(value: string): boolean {
-  return /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(value);
-}
-
 // A refusal that only a new sign-in clears: the sign-in is too old for a change to a team or a
 // second step (15 minutes), or is no longer valid.
 export function isSignInAgainCode(code: string | null): boolean {

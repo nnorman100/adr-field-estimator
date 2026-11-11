@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { platformPaths, type CompanyAnswer } from '@/lib/operator/client';
-import { isSignInAddressText, STATUS_LABELS } from '@/lib/operator/screens';
+import { STATUS_LABELS } from '@/lib/operator/screens';
+import { isSignInAddress } from '@/lib/sign-in/directory';
 import { useOperator } from './operator-session';
 import { Field, Section, StatusMessage } from './ui';
 import { useAction } from './use-action';
@@ -29,7 +30,7 @@ export function CompaniesScreen() {
       setFormError('Enter the company’s name.');
       return;
     }
-    if (!isSignInAddressText(address)) {
+    if (!isSignInAddress(address)) {
       setFormError('The sign-in address is lowercase letters, digits and hyphens, and starts and ends with a letter or digit.');
       return;
     }

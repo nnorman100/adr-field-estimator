@@ -6,7 +6,6 @@ import { fullTeam, operatorCall, platformPaths } from '@/lib/operator/client';
 import {
   endsOperatorSession,
   isOperatorTenantId,
-  isSignInAddressText,
   isSignInAgainCode,
   operatorCheck,
   operatorErrorMessage,
@@ -14,6 +13,7 @@ import {
   statusActions,
 } from '@/lib/operator/screens';
 import { PLATFORM_ERRORS } from '@/lib/platform';
+import { isSignInAddress } from '@/lib/sign-in/directory';
 import { localOperatorDirectory, type LocalSignInFixture } from '@/lib/sign-in/local-directory';
 
 // What the platform operator's screens decide (S3-15) and how they call the operator routes. The
@@ -132,10 +132,10 @@ describe('words for a refused action', () => {
   });
 
   it('checks a sign-in address as migration 0002 does', () => {
-    expect(isSignInAddressText('adr')).toBe(true);
-    expect(isSignInAddressText('Company')).toBe(false);
-    expect(isSignInAddressText('-a')).toBe(false);
-    expect(isSignInAddressText('')).toBe(false);
+    expect(isSignInAddress('adr')).toBe(true);
+    expect(isSignInAddress('Company')).toBe(false);
+    expect(isSignInAddress('-a')).toBe(false);
+    expect(isSignInAddress('')).toBe(false);
   });
 });
 
