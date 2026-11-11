@@ -130,12 +130,9 @@ function EnrolAttempt({
           <ol className="flex list-decimal flex-col gap-3 pl-5">
             <li>Open an authenticator app on your phone.</li>
             <li>
-              Scan this QR code with it. On the same phone, use the link below the code instead.
+              Scan this QR code with it.
               <div className="mt-3 flex flex-col gap-3">
                 <QrCode text={setup.uri} label="QR code for your authenticator app" />
-                <a href={setup.uri} className="font-medium underline">
-                  Open in my authenticator app
-                </a>
               </div>
             </li>
             <li>

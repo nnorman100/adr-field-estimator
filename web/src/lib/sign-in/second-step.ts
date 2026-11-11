@@ -17,8 +17,8 @@ export function normalizeCode(input: string): string | null {
 
 export const CODE_SHAPE_MESSAGE = 'Enter the 6-digit code from your authenticator app.';
 
-// The otpauth address an authenticator app reads from a QR code, or opens from a link on the same
-// phone (https://github.com/google/google-authenticator/wiki/Key-Uri-Format). Built here, with every
+// The otpauth address an authenticator app reads from a QR code
+// (https://github.com/google/google-authenticator/wiki/Key-Uri-Format). Built here, with every
 // part encoded, rather than by the Firebase SDK, which leaves the account name unencoded.
 export function authenticatorUri(parts: {
   issuer: string;
