@@ -324,5 +324,7 @@ How the access records follow Postgres (S3-12, `web/src/lib/projection/`):
   ID token for `dryscope-scheduler-<env>@<project>.iam.gserviceaccount.com` with the audience
   `dryscope-<env>-access-projection`, named from `APP_ENVIRONMENT` and `GOOGLE_CLOUD_PROJECT`). It
   retries the rows a failed write left waiting. The scheduler account and its Cloud Scheduler job
-  are not created yet (an owner follow-up in Terraform); until then, waiting rows are retried when
-  the member's company next changes them or the member next opens the app.
+  are not created yet (an owner follow-up in Terraform); until then, a row a failed write left
+  waiting is retried only when something calls that route or a later membership change queues the
+  same member. Opening the app does not retry it: a removed member is refused before renewal runs,
+  and renewal leaves a row alone while it waits out its back-off.
