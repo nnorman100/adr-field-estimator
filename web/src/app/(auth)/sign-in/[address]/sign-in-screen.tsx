@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { BrowserSignInConfig } from '@/lib/config';
 import {
+  authenticatorCount,
   belongsTo,
   checkSignIn,
   companyAuth,
@@ -99,23 +100,25 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     [endSession],
   );
 
-  // The account that has just set up an authenticator app on this screen, until the server gives a
-  // definite answer about its sign-in. If the server still wants the second step, the sign-in did not
-  // use one, so the person signs in again with the app's code.
-  const enrolledUid = useRef<string | null>(null);
-
+  // When the server still wants the second step, Firebase is asked how many authenticator apps the
+  // account has. Any at all means this sign-in did not use one (the session that set it up), so the
+  // person signs in again with the app's code; none means setup, and when that cannot be read the
+  // check is retried.
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
       const outcome = await checkSignIn(user, fresh);
+      const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
       if (current !== user) {
         if (!current) showSignedOut();
         return;
       }
-      const afterEnrolment = enrolledUid.current === user.uid;
-      if (outcome.kind !== 'unavailable') enrolledUid.current = null;
-      if (afterEnrolment && outcome.kind === 'second-step') {
+      if (authenticators === null) {
+        setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
+        return;
+      }
+      if (authenticators > 0) {
         await refuse('Your authenticator app is set up. Sign in again and enter its code.');
         return;
       }
@@ -220,7 +223,6 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
           existingCount={screen.existing}
           onEnrolled={() => {
             rememberSecondStep(tenantId, user.uid);
-            enrolledUid.current = user.uid;
             void check(user);
           }}
           onNeedsSignIn={needsFreshSignIn}
@@ -367,7 +369,6 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             existingCount={0}
             onEnrolled={() => {
               rememberSecondStep(tenantId, user.uid);
-              enrolledUid.current = user.uid;
               void check(user);
             }}
             onNeedsSignIn={needsFreshSignIn}
