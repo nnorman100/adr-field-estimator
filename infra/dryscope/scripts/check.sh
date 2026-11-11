@@ -29,8 +29,14 @@ for root in data app; do
     if [ "$root" = app ]; then extra=(-var-file="tests/images-$env.tfvars"); fi
     "$TF" -chdir="$dir" test -var-file="envs/$env.tfvars" "${extra[@]}"
     echo "== $root: plan check ($env)"
-    "$TF" -chdir="$dir" test -json -verbose -var-file="envs/$env.tfvars" "${extra[@]}" |
-      node "$HERE/scripts/check-plan.js" "$root" "$env" -
+    "$TF" -chdir="$dir" test -json -verbose -var-file="envs/$env.tfvars" "${extra[@]}" >"$TMP/$root-$env.stream"
+    node "$HERE/scripts/check-plan.js" "$root" "$env" "$TMP/$root-$env.stream"
+    if [ "$root" = app ]; then
+      # web/tests/unit/settings-contract.test.ts reads the committed plan, so it must be this one.
+      echo "== $root: committed plan is current ($env)"
+      node "$HERE/scripts/check-plan.js" export "$TMP/$root-$env.stream" |
+        cmp - "$HERE/fixtures/$root-$env.plan.json"
+    fi
   done
   # Every protected resource must set lifecycle.prevent_destroy = true; check-guards.js reads
   # that from the .tf files (Terraform 1.17 prints no teardown refusal to rely on). The mocked
