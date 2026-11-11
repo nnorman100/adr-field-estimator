@@ -50,8 +50,8 @@ const shape = {
     .string()
     .refine(isPostgresUrl, { message: 'DATABASE_URL must be a postgres URL' })
     .optional(),
-  // The commit the running app was built from. The CI smoke run sets it; Cloud Run and local runs
-  // leave it unset.
+  // The commit the running app was built from. The image build sets it and Cloud Run runs with that
+  // value; local runs leave it unset.
   APP_COMMIT: z
     .string()
     .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })

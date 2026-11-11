@@ -44,7 +44,8 @@ export const SETTINGS = {
   GOOGLE_CLOUD_LOCATION: { source: 'terraform', services: SERVING, reader: 'planned' },
   EVIDENCE_BUCKET: { source: 'terraform', services: SERVING, reader: 'planned' },
   ALLOWED_ORIGINS: { source: 'terraform', services: SERVING, reader: 'planned' },
-  // The commit a running app was built from; the CI smoke run sets it. Cloud Run leaves it unset.
+  // The commit a running app was built from. The image build sets it, and Cloud Run runs with that
+  // value, so Terraform must not set it.
   APP_COMMIT: { source: 'tooling', services: NOT_SET, reader: 'web' },
   // Developer machine only. The emulator hosts make firebase-admin trust unsigned tokens and
   // credential-free writes, so Terraform must never set them (config.ts also refuses them unless
