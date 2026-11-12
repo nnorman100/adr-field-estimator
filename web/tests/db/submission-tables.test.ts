@@ -1,10 +1,11 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '@/db/client';
 import { agreements, jobEstimates, jobPricePins, jobSubmissions } from '@/db/schema';
 import { withCompany, withOperator, type CompanyTransaction } from '@/db/tenant';
+import { sharedRoles } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
 import {
   CHECK_VIOLATION,
@@ -38,10 +39,8 @@ import { everything, resetTeamDatabase, startTeamServer, type Harness } from './
 // these tests write and read through withCompany and withOperator exactly as S5a-8 will. The pin,
 // estimate and agreement tables are in agreement-tables.test.ts.
 const TABLES = ['agreements', 'job_estimates', 'job_price_pins', 'job_submissions'];
-const OTHER_USER = 'dryscope_other_ci';
 const INVALID_PARAMETER = '22023';
 
-const otherPassword = randomBytes(16).toString('hex');
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
 // The runtime with several connections, so two transactions can overlap.
@@ -49,7 +48,6 @@ let pool: ReturnType<typeof openDatabase>;
 
 beforeAll(async () => {
   base = await startTeamServer();
-  await base.admin.unsafe(`CREATE ROLE ${OTHER_USER} LOGIN PASSWORD '${otherPassword}'`);
 });
 
 beforeEach(async () => {
@@ -61,7 +59,6 @@ beforeEach(async () => {
 afterAll(async () => {
   await pool?.close();
   await h?.handle.close();
-  await base?.admin.unsafe(`DROP ROLE IF EXISTS ${OTHER_USER}`).catch(() => undefined);
   await base?.admin.end({ timeout: 5 });
   await base?.server.stop();
 });
@@ -71,10 +68,11 @@ const asOperator = <T>(run: (tx: CompanyTransaction) => Promise<T>, readOnly = f
   withOperator(h.handle.db, h.seed.operator, run, { companyId: h.seed.a, readOnly });
 const rows = <T>(result: unknown) => result as unknown as T[];
 const sqlOf = (text: string) => sql.raw(text);
-const login = (user: string, password: string) => {
+// A login that is neither the runtime nor the owner (the run's shared `other` role).
+const loginAsOther = () => {
   const url = new URL(base.server.databaseUrl);
-  url.username = user;
-  url.password = password;
+  url.username = sharedRoles().other.name;
+  url.password = sharedRoles().other.password;
   return postgres(url.toString(), { max: 1, connect_timeout: 10, onnotice: () => {} });
 };
 
@@ -594,7 +592,7 @@ describe('migration 0011: the worker’s lookup across companies', () => {
 
   it('refuses everyone but the runtime, and the owner reads nothing through it', async () => {
     await submissionOf(h.seed.a, { madeAgo: 7200, expiresIn: -3600 });
-    const other = login(OTHER_USER, otherPassword);
+    const other = loginAsOther();
     const migrator = postgres(h.migratorUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
     try {
       expect(await errorCode(other`SELECT job_submission_due_companies(10, 0)`)).toBe(INSUFFICIENT_PRIVILEGE);
