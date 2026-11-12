@@ -195,6 +195,34 @@ export async function checkSignIn(user: User, fresh = false): Promise<MeOutcome>
   return meOutcome(response.status, body);
 }
 
+// One call to this app's own API as the signed-in person (the team and invitation screens, S3-16).
+// `status` 0 means the call never got an answer (no signal); the server's answer is judged by its
+// status and fixed error code only, as in checkSignIn.
+export type ApiAnswer = { status: number; body: unknown };
+
+export async function callApi(user: User, path: string, init: { method?: string; json?: unknown } = {}): Promise<ApiAnswer> {
+  let response: Response;
+  try {
+    const token = await user.getIdToken();
+    response = await fetch(path, {
+      method: init.method ?? 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(init.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: init.json !== undefined ? JSON.stringify(init.json) : undefined,
+      cache: 'no-store',
+    });
+  } catch {
+    return { status: 0, body: null };
+  }
+  try {
+    return { status: response.status, body: await response.json() };
+  } catch {
+    return { status: response.status, body: null };
+  }
+}
+
 // Removes this company's saved sign-in from the phone.
 export async function signOutCompany(auth: Auth): Promise<void> {
   await signOut(auth);

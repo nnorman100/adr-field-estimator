@@ -3,6 +3,7 @@
 import type { Auth, User } from 'firebase/auth';
 import { onAuthStateChanged } from 'firebase/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { BrowserSignInConfig } from '@/lib/config';
@@ -20,12 +21,14 @@ import {
 } from '@/lib/firebase-client';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
+import { offersTeamScreen } from '@/lib/team/screen';
 import { FocusedPanel } from '../../focused-panel';
 import { Panel } from '../../panel';
 import { CodeScreen } from '../../second-step/code-screen';
 import { EnrolScreen } from '../../second-step/enrol-screen';
 import { hadSecondStep, rememberSecondStep } from '../../second-step/remember';
 import { SecondStepSection } from '../../second-step/second-step-section';
+import { InvitationScreen } from './invitation-screen';
 
 export type SignInScreenProps = {
   address: string;
@@ -293,6 +296,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 onAdd={(existing) => setScreen({ name: 'add-authenticator', existing })}
               />
             ) : null}
+            {offersTeamScreen(outcome.role) ? (
+              <Button asChild>
+                <Link href={`/sign-in/${address}/team`}>Team and invitations</Link>
+              </Button>
+            ) : null}
             {signOutButton}
           </FocusedPanel>
         );
@@ -332,7 +340,20 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             {signOutButton}
           </FocusedPanel>
         );
-      case 'needs-invitation':
+      case 'needs-invitation': {
+        // On an invitation link, offer the invitation to the account it is addressed to.
+        const user = signedInUser;
+        if (invitationId && user) {
+          return (
+            <InvitationScreen
+              invitationId={invitationId}
+              companyName={companyName}
+              user={user}
+              onAccepted={() => check(user, true)}
+              signOut={signOutButton}
+            />
+          );
+        }
         return (
           <FocusedPanel title="Accept a company invitation before using this app">
             <p>
@@ -342,6 +363,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             {signOutButton}
           </FocusedPanel>
         );
+      }
       case 'member-disabled':
         return (
           <FocusedPanel title="Your access is turned off">

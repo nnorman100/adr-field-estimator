@@ -59,3 +59,24 @@ export async function getUser(tenantId: string, localId: string): Promise<{ emai
   const reply = await admin(`/v1/projects/${E2E_PROJECT}/tenants/${tenantId}/accounts:lookup`, { localId: [localId] });
   return ((reply.users as { emailVerified?: boolean }[] | undefined) ?? [])[0] ?? {};
 }
+
+// What an invited person does by hand: the account an invitation made has no password and an
+// unverified email; this gives it a password and marks the email verified, as the emailed link would.
+export async function activateAccount(tenantId: string, email: string, password: string): Promise<void> {
+  const found = await admin(`/v1/projects/${E2E_PROJECT}/tenants/${tenantId}/accounts:lookup`, { email: [email] });
+  const localId = ((found.users as { localId?: string }[] | undefined) ?? [])[0]?.localId;
+  if (!localId) throw new Error('Auth emulator has no account for that email');
+  await admin(`/v1/projects/${E2E_PROJECT}/tenants/${tenantId}/accounts:update`, { localId, password, emailVerified: true });
+}
+
+// An ID token for a password sign-in to one tenant, for calling the app's API directly.
+export async function idTokenFor(tenantId: string, email: string, password: string): Promise<string> {
+  const response = await fetch(`${base}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, tenantId, returnSecureToken: true }),
+  });
+  const reply = (await response.json()) as { idToken?: string };
+  if (!response.ok || !reply.idToken) throw new Error(`Auth emulator sign-in answered ${response.status}`);
+  return reply.idToken;
+}

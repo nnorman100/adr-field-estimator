@@ -3,7 +3,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import type { LocalSignInFixture } from '../../../src/lib/sign-in/local-directory';
 import type { FullConfig } from '@playwright/test';
 import { createTenant, createUser } from './emulator';
-import { FIXTURE_PATH, PASSWORD, SEED_PATH, STATE_DIR, type ProjectSeed, type Seed } from './seed';
+import {
+  FIXTURE_PATH,
+  PASSWORD,
+  SEED_PATH,
+  STATE_DIR,
+  type ProjectSeed,
+  type Seed,
+  type TeamAccount,
+  type TeamSeed,
+} from './seed';
 import { warmRoutes } from './warm-routes';
 
 // Two companies in two Auth emulator tenants, and for each browser project its own accounts, so
@@ -58,10 +67,76 @@ export default async function globalSetup(config: FullConfig) {
     };
   }
 
+  // A company of its own for each project's team tests: the owner has the second step the emulator
+  // cannot do (the fixture's `secondStep`), and the team starts with one estimator and one office
+  // user besides the people the tests change.
+  const teams: Record<string, TeamSeed> = {};
+  for (const project of PROJECTS) {
+    const tenantId = await createTenant(`team-${project}-${run}`);
+    const companyId = randomUUID();
+    const address = `team-${project}`;
+    const companyName = `Team ${project} Restoration`;
+    fixture.companies.push({ id: companyId, name: companyName, signInAddress: address, tenantId, status: 'active' });
+    const person = async (name: string, role: 'owner' | 'estimator' | 'office' | null): Promise<TeamAccount> => {
+      const email = `${name}-${project}-${run}@example.com`;
+      const uid = await createUser(tenantId, { email, password: PASSWORD, emailVerified: true });
+      if (role) {
+        fixture.members.push({
+          companyId,
+          uid,
+          actorId: randomUUID(),
+          membershipId: randomUUID(),
+          email,
+          displayName: name,
+          role,
+          status: 'active',
+          ...(role === 'owner' ? { secondStep: true } : {}),
+        });
+      }
+      return { email, uid, name };
+    };
+    teams[project] = {
+      address,
+      companyId,
+      companyName,
+      tenantId,
+      owner: await person('owner-team', 'owner'),
+      estimator: await person('estimator-team', 'estimator'),
+      office: await person('office-team', 'office'),
+      forRoleChange: [await person('role-change-0', 'estimator'), await person('role-change-1', 'estimator')],
+      forTurnOff: [await person('turn-off-0', 'estimator'), await person('turn-off-1', 'estimator')],
+      stranger: await person('stranger-team', null),
+    };
+  }
+
   await mkdir(STATE_DIR, { recursive: true });
   await writeFile(FIXTURE_PATH, JSON.stringify(fixture));
-  const seed: Seed = { tenantA, tenantB, tenantOperators, projects, fixture };
+  const seed: Seed = { tenantA, tenantB, tenantOperators, projects, teams, fixture };
   await writeFile(SEED_PATH, JSON.stringify(seed));
   // The fixture is in place, so the dev server can answer the sign-in routes: compile each route now.
   await warmRoutes(config.projects[0]!.use.baseURL!);
+  await warmTeamRoutes(config.projects[0]!.use.baseURL!);
+}
+
+// The team screens' pages and routes, which warmRoutes does not ask for. Same reason: the dev server
+// compiles each the first time it is asked, and four browsers waiting on those compiles at once made
+// the first tests of a run miss their five-second waits. Best effort: a failure here only means a
+// test meets the compile itself.
+async function warmTeamRoutes(baseUrl: string) {
+  const id = randomUUID();
+  const paths = [
+    ['GET', '/sign-in/company-z'],
+    ['GET', '/sign-in/company-a/team'],
+    ['GET', `/api/companies/${id}/team`],
+    ['POST', `/api/companies/${id}/invitations`],
+    ['POST', `/api/companies/${id}/invitations/${id}/resend`],
+    ['POST', `/api/companies/${id}/invitations/${id}/cancel`],
+    ['POST', `/api/companies/${id}/invitations/${id}/clear`],
+    ['PATCH', `/api/companies/${id}/members/${id}`],
+    ['POST', `/api/companies/${id}/members/${id}/disable`],
+    ['POST', `/api/companies/${id}/members/${id}/enable`],
+  ] as const;
+  for (const [method, path] of paths) {
+    await fetch(new URL(path, baseUrl), { method, signal: AbortSignal.timeout(120_000) }).catch(() => undefined);
+  }
 }
