@@ -86,21 +86,27 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     );
   }, []);
 
-  const endSession = useCallback(async (message: string | null) => {
+  // False when the phone could not let go of the sign-in, which then stays.
+  const endSession = useCallback(async (message: string | null): Promise<boolean> => {
     const auth = authRef.current;
     const signedIn = auth?.currentUser ?? null;
-    // The field shell no longer starts from this sign-in (S6-2), before any screen leads to it.
-    if (signedIn) await forgetMe(tenantId, signedIn.uid);
+    // The field shell must not start from this sign-in again (S6-2), so its row goes first and the
+    // person stays signed in when it cannot.
+    if (signedIn && !(await forgetMe(tenantId, signedIn.uid))) {
+      setError('This phone could not finish signing out. Try again.');
+      return false;
+    }
     if (auth) await signOutCompany(auth);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
+    return true;
   }, [tenantId]);
 
   const refuse = useCallback(
     async (message: string) => {
       try {
-        await endSession(message);
+        if (!(await endSession(message))) setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
       } catch {
         setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
       }
@@ -194,7 +200,15 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const signOutButton = (
     <>
       <ErrorMessage text={error} />
-      <Button variant="outline" disabled={busy} onClick={() => run(() => endSession('You are signed out.'))}>
+      <Button
+        variant="outline"
+        disabled={busy}
+        onClick={() =>
+          run(async () => {
+            await endSession('You are signed out.');
+          })
+        }
+      >
         Sign out
       </Button>
     </>
@@ -307,9 +321,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 onAdd={(existing) => setScreen({ name: 'add-authenticator', existing })}
               />
             ) : null}
-            <Button asChild>
-              <a href="/field">Open the field app</a>
-            </Button>
+            {busy ? null : (
+              <Button asChild>
+                <a href="/field">Open the field app</a>
+              </Button>
+            )}
             {offersTeamScreen(outcome.role) ? (
               <Button asChild>
                 <Link href={`/sign-in/${address}/team`}>Team and invitations</Link>

@@ -29,15 +29,24 @@ export function FieldShell() {
   useEffect(() => {
     registerFieldWorker();
     let live = true;
-    void readLatestMe().then((me) => {
-      if (!live) return;
-      const address = rememberedSignInAddress();
-      if (me === 'unavailable') setBoot({ kind: 'no-storage', address });
-      else if (me === null) setBoot({ kind: 'signed-out', address });
-      else setBoot({ kind: 'ready', me });
-    });
+    const load = () =>
+      void readLatestMe().then((me) => {
+        if (!live) return;
+        const address = rememberedSignInAddress();
+        if (me === 'unavailable') setBoot({ kind: 'no-storage', address });
+        else if (me === null) setBoot({ kind: 'signed-out', address });
+        else setBoot({ kind: 'ready', me });
+      });
+    // A page brought back from the back-forward cache keeps its old state; the phone may have
+    // signed out since.
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) load();
+    };
+    load();
+    window.addEventListener('pageshow', restored);
     return () => {
       live = false;
+      window.removeEventListener('pageshow', restored);
     };
   }, []);
 

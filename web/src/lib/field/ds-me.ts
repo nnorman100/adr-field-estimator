@@ -107,52 +107,60 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
 
 // A change to the rows, settled when the transaction has committed (not when its request was
 // accepted: a page that navigates away first loses it) or has failed. True when it committed. A
-// phone whose storage never answers is not waited on for longer than WRITE_WITHIN_MS.
+// phone whose storage does not answer within WRITE_WITHIN_MS gets false, and false is final: the
+// change is aborted, or never made if the database opens later. `unopened` is the answer when the
+// database cannot be opened at all.
 const WRITE_WITHIN_MS = 3_000;
 
-async function commit(change: (store: IDBObjectStore) => void): Promise<boolean> {
-  let db: IDBDatabase;
-  try {
-    db = await openDb();
-  } catch {
-    return false;
-  }
-  try {
-    const transaction = db.transaction(ME_STORE, 'readwrite');
-    change(transaction.objectStore(ME_STORE));
-    await new Promise<void>((resolve, reject) => {
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error('ds-me write failed'));
-      transaction.onabort = () => reject(transaction.error ?? new Error('ds-me write aborted'));
-    });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    db.close();
-  }
-}
-
-async function write(change: (store: IDBObjectStore) => void): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<false>((resolve) => {
-    timer = setTimeout(() => resolve(false), WRITE_WITHIN_MS);
+function write(change: (store: IDBObjectStore) => void, unopened: boolean): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let transaction: IDBTransaction | null = null;
+    const finish = (committed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(committed);
+    };
+    const timer = setTimeout(() => {
+      try {
+        transaction?.abort();
+      } catch {
+        return;
+      }
+      finish(false);
+    }, WRITE_WITHIN_MS);
+    openDb().then(
+      (db) => {
+        if (settled) {
+          db.close();
+          return;
+        }
+        try {
+          transaction = db.transaction(ME_STORE, 'readwrite');
+          transaction.oncomplete = () => finish(true);
+          transaction.onerror = () => finish(false);
+          transaction.onabort = () => finish(false);
+          change(transaction.objectStore(ME_STORE));
+        } catch {
+          finish(false);
+        } finally {
+          db.close();
+        }
+      },
+      () => finish(unopened),
+    );
   });
-  try {
-    return await Promise.race([commit(change), late]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 // Saves this sign-in's row, replacing the same (tenant, person)'s earlier one. False when it could
 // not be saved; the sign-in itself is not affected.
 export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
-  return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }));
+  return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }), false);
 }
 
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
-// row: another company's stays.
+// row: another company's stays. True when no such row is left (also when the phone keeps no data).
 export function forgetMe(tenantId: string, uid: string): Promise<boolean> {
-  return write((store) => store.delete(meKey(tenantId, uid)));
+  return write((store) => store.delete(meKey(tenantId, uid)), true);
 }

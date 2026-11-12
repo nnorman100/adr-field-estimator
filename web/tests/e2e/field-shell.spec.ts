@@ -49,7 +49,7 @@ test('the shell starts from the sign-in the phone saved, and signing out removes
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
 });
 
-// The rows of ds-me as they are now, read past the hold below.
+// The rows of ds-me as they are now, read past the hold of holdStorage.
 function savedRows(page: Page): Promise<Record<string, unknown>[]> {
   return page.evaluate(
     ([db, store, version]) =>
@@ -70,31 +70,41 @@ function savedRows(page: Page): Promise<Record<string, unknown>[]> {
   );
 }
 
-test('the sign-in is saved before the field app is offered, and removed before signing out shows', async ({ page }) => {
-  // A slow phone: the page's own ds-me opens answer a second late.
-  await page.addInitScript((db) => {
-    const open = IDBFactory.prototype.open;
-    (window as unknown as { openUnheld: IDBFactory['open'] }).openUnheld = (name, version) => open.call(indexedDB, name, version);
-    IDBFactory.prototype.open = function (name: string, version?: number) {
-      const request = open.call(this, name, version);
-      if (name !== db) return request;
-      let handler: ((this: IDBRequest, event: Event) => unknown) | null = null;
-      Object.defineProperty(request, 'onsuccess', {
-        get: () => handler,
-        set: (value: typeof handler) => {
-          handler = value;
-          request.addEventListener('success', (event) => setTimeout(() => handler?.call(request, event), 1_000));
-        },
-      });
-      return request;
-    };
-  }, ME_DB);
+// A slow phone: the page's own ds-me opens answer `ms` late. Reads by savedRows are not held.
+async function holdStorage(page: Page, ms: number) {
+  await page.addInitScript(
+    ([db, delay]) => {
+      const open = IDBFactory.prototype.open;
+      (window as unknown as { openUnheld: IDBFactory['open'] }).openUnheld = (name, version) => open.call(indexedDB, name, version);
+      IDBFactory.prototype.open = function (name: string, version?: number) {
+        const request = open.call(this, name, version);
+        if (name !== db) return request;
+        let handler: ((this: IDBRequest, event: Event) => unknown) | null = null;
+        Object.defineProperty(request, 'onsuccess', {
+          get: () => handler,
+          set: (value: typeof handler) => {
+            handler = value;
+            request.addEventListener('success', (event) => setTimeout(() => handler?.call(request, event), delay as number));
+          },
+        });
+        return request;
+      };
+    },
+    [ME_DB, ms] as const,
+  );
+}
 
+async function signInAsMemberA(page: Page) {
   await page.goto('/sign-in/company-a');
   await page.getByLabel('Email').fill(mine.memberA.email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Open the field app' })).toBeVisible();
+}
+
+test('the sign-in is saved before the field app is offered, and removed before signing out shows', async ({ page }) => {
+  await holdStorage(page, 1_000);
+  await signInAsMemberA(page);
 
   const rows = await savedRows(page);
   expect(rows).toHaveLength(1);
@@ -103,8 +113,50 @@ test('the sign-in is saved before the field app is offered, and removed before s
   expect(JSON.stringify(rows[0])).not.toContain(mine.memberA.email);
 
   await page.getByRole('button', { name: 'Sign out' }).click();
+  // While the row is being removed, nothing leads to the field app.
+  expect(await page.getByRole('link', { name: 'Open the field app' }).count()).toBe(0);
   await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
   expect(await savedRows(page)).toEqual([]);
+});
+
+test('a phone too slow to save the sign-in is signed in without it, and cannot sign out until it can', async ({ page }) => {
+  await holdStorage(page, 5_000);
+  await signInAsMemberA(page);
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+
+  // The save that was given up on is never made, even once the storage answers.
+  await page.waitForTimeout(3_000);
+  expect(await savedRows(page)).toEqual([]);
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'This phone could not finish signing out. Try again.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+});
+
+test('a shell brought back from the back-forward cache reads the phone again', async ({ page }) => {
+  await signInAsMemberA(page);
+  await page.getByRole('link', { name: 'Open the field app' }).click();
+  await expect(page.getByRole('heading', { name: A })).toBeVisible();
+
+  // Signed out in another window, then this page is shown again as it was left.
+  await page.evaluate(
+    ([db, store]) =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open(db as string);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const transaction = open.result.transaction(store as string, 'readwrite');
+          transaction.objectStore(store as string).clear();
+          transaction.oncomplete = () => {
+            open.result.close();
+            resolve();
+          };
+        };
+      }),
+    [ME_DB, ME_STORE] as const,
+  );
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
 });
 
 test('the install sheet opens once with the Share-menu steps and its help line, then from its button', async ({ page }) => {
