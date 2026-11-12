@@ -28,7 +28,7 @@ export type SmokeOptions = {
 // Business routes a signed-out caller must never reach. Until sign-in exists every /api route
 // outside the public list refuses (src/proxy.ts); once real routes land they stay on this list.
 export const signedOutProbes: ReadonlyArray<{ method: 'GET' | 'POST'; path: string }> = [
-  { method: 'GET', path: '/api/jobs' },
+  { method: 'GET', path: '/api/jobs/current' }, // not a job id, so no route takes it
   { method: 'POST', path: '/api/companies' },
 ];
 
