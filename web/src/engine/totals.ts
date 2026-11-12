@@ -191,14 +191,15 @@ function bandFor(bands: CushionBand[], area: Dec): CushionBand {
  */
 function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLine[]): Entry[] {
   const areaLines = labor.filter((line) => line.area !== null);
-  const otherLines = labor.filter((line) => line.area === null);
   const bands = cushionBrackets(policy);
   const areas = cushionRows(areaLines, policy);
-  const grownBy = (lines: PriceLine[], percent: Dec): Entry[] =>
-    lines.map((line) => ({ line, amount: line.total.mul(ONE.add(percent)) }));
+  const inPricedOrder = (areaAmounts: Dec[], otherPercent: Dec): Entry[] => {
+    const byLine = new Map(areaLines.map((line, index) => [line, areaAmounts[index] ?? line.total]));
+    return labor.map((line) => ({ line, amount: byLine.get(line) ?? line.total.mul(ONE.add(otherPercent)) }));
+  };
   if (policy.bracket_mode === 'whole-job') {
     const percent = Dec.parse(bandFor(bands, jobSf(data, items, policy)).percent).div(HUNDRED);
-    return grownBy(labor, percent);
+    return labor.map((line) => ({ line, amount: line.total.mul(ONE.add(percent)) }));
   }
   const firstBand = bands[0];
   const secondBand = bands[1];
@@ -207,13 +208,10 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
     const beyond = Dec.parse(secondBand.percent).div(HUNDRED);
     if (firstBand.up_to_sf === null) throw new Error('cushion');
     const shares = topShares(areas, Dec.fromInt(firstBand.up_to_sf));
-    return [
-      ...areaLines.map((line, index) => ({
-        line,
-        amount: ONE.add(beyond).mul(line.total).add(first.sub(beyond).mul(shares.get(index) ?? ZERO)),
-      })),
-      ...grownBy(otherLines, first),
-    ];
+    return inPricedOrder(
+      areaLines.map((line, index) => ONE.add(beyond).mul(line.total).add(first.sub(beyond).mul(shares.get(index) ?? ZERO))),
+      first,
+    );
   }
   let previousShares = new Map<number, Dec>();
   const allowances = areaLines.map(() => ZERO);
@@ -229,10 +227,10 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
     previousShares = shares;
   }
   const firstPercent = Dec.parse(firstBand?.percent ?? '0').div(HUNDRED);
-  return [
-    ...areaLines.map((line, index) => ({ line, amount: line.total.add(allowances[index] ?? ZERO) })),
-    ...grownBy(otherLines, firstPercent),
-  ];
+  return inPricedOrder(
+    areaLines.map((line, index) => line.total.add(allowances[index] ?? ZERO)),
+    firstPercent,
+  );
 }
 
 /** The high end's labor lines at their grown amounts, unrounded, and its equipment lines, which are whole cents. */

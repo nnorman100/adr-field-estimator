@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { settle, type Entry } from '../../src/engine/adjust';
 import { Dec, ZERO, money, sumDec } from '../../src/engine/decimal';
 import type { PriceLine } from '../../src/engine/values';
+import { item, job, lineTotals, priced, room, table } from './estimate-fixtures';
 
 const entry = (amount: string): Entry => ({ line: {} as PriceLine, amount: Dec.parse(amount) });
 const amounts = (entries: Entry[]): string[] => entries.map((row) => row.amount.format('.2f'));
@@ -45,5 +46,30 @@ describe('settle: grown line amounts in whole cents', () => {
       if (!total.eq(money(sumDec(grown, ZERO)))) problems.push(`case ${index}: lines do not add up to the rounded total`);
     }
     expect(problems.slice(0, 10)).toEqual([]);
+  });
+});
+
+describe('the cushion settles its grown lines in the order they are priced', () => {
+  it('H4 a typed demolition line priced before an area treatment line takes its cent first', () => {
+    // Baseboard (demolition, typed, no area) 1 lf x $100.04 = $100.04, not taxable; antimicrobial (treatment,
+    // area) 41 sq ft x $2.44 = $100.04, taxable. Demolition is priced before treatment. A 10% cushion grows each
+    // to $110.044. Running totals $110.044 and $220.088 round to $110.04 and $220.09, so the baseboard is
+    // $110.04 and the antimicrobial $110.05. Tax 10% x $110.05 = $11.005 -> $11.01. High total $220.09 + $11.01.
+    const result = priced(
+      table(
+        [
+          item('antimicrobial', { group: 'treatment', unit_price: '2.44', taxable: true }),
+          item('baseboard', { unit: 'lf', quantity_source: 'typed', unit_price: '100.04' }),
+        ],
+        {
+          estimate_mode: 'range',
+          range: { first_sf: 1000, first_percent: '10', beyond_percent: '10' },
+          sales_tax: { enabled: true, percent: '10' },
+        },
+      ),
+      job([room('Kitchen', { unfinished_sf: 41 })], { scope_items: { baseboard: { quantity: '1' } } }),
+    );
+    expect(lineTotals(result)).toEqual(['baseboard = 100.04', 'Kitchen: antimicrobial = 100.04']);
+    expect(result.totals.high).toMatchObject({ subtotal: '220.09', tax: '11.01', total: '231.10' });
   });
 });
