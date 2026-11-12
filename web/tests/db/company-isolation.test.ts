@@ -1,0 +1,517 @@
+import postgres from 'postgres';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FakeClaims, Harness } from './team-harness';
+import { handlersOf, MATRIX, matrixKey, matrixProblems, routeModules, type MatrixRow, type RouteModule } from './isolation-matrix';
+
+// S3-17, the company-isolation gate: the standard's required test as one named suite
+// (`npm run test:isolation`, the `company-isolation` job in .github/workflows/web.yml).
+//
+// It seeds two companies in two sign-in tenants, then as each company's owner, estimator and office
+// user calls every registered route with the other company's ids, and checks SQL directly as the
+// runtime role. The Firestore rules half is tests/emu/rules/company-isolation.test.ts, which needs
+// the emulator and runs in the same job. Every refusal is held to 401, 403 or 404, no body may hold
+// a trace of the other company, and a refused call changes nothing. The route list is the file
+// system's: a route that is not in isolation-matrix.ts fails here (docs/ACCESS.md, "Company isolation gate").
+const live = vi.hoisted(() => ({
+  harness: null as Harness | null,
+  projectionRuns: 0,
+  schedulerToken: 'e30.e30.scheduler',
+}));
+vi.mock('@/lib/auth/services', () => ({
+  identityServices: () => live.harness!.identity,
+  operatorServices: () => live.harness!.operators,
+  serverDatabase: () => live.harness!.handle.db,
+}));
+vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
+vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
+vi.mock('@/lib/sign-in/services', async () => {
+  const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
+  return { signInDirectory: () => databaseSignInDirectory(live.harness!.handle.db) };
+});
+// The scheduler's route: only the one service token below passes the verifier; a person's token never does.
+vi.mock('@/lib/auth/service-caller', () => ({
+  serviceCallerServices: () => ({
+    caller: { email: 'scheduler@example.test', audienceFor: (job: string) => `isolation-${job}` },
+    verifier: {
+      async verify(token: string) {
+        if (token !== live.schedulerToken) throw new Error('not a service token');
+        return { email: 'scheduler@example.test', emailVerified: true };
+      },
+    },
+  }),
+}));
+vi.mock('@/lib/projection/services', () => ({
+  renewSignedInAccess: async () => {},
+  runQueuedProjection: async () => {
+    live.projectionRuns += 1;
+    return { processed: 0 };
+  },
+}));
+
+const { everything, operatorClaims, params, request, resetTeamDatabase, startTeamServer } = await import('./team-harness');
+
+type Handler = (request: Request, context: ReturnType<typeof params>) => Response | Promise<Response>;
+
+const REFUSED = [401, 403, 404];
+
+let base: Awaited<ReturnType<typeof startTeamServer>>;
+let h: Harness;
+let a: Side;
+let b: Side;
+
+// One company as the suite sees it: its ids, its three people, and the strings that would show it
+// in a response or a row.
+type Side = {
+  name: 'A' | 'B';
+  companyId: string;
+  ids: { membershipId: string; invitationId: string; address: string };
+  people: { owner: FakeClaims; estimator: FakeClaims; office: FakeClaims };
+  markers: string[];
+};
+
+async function seedSides(): Promise<void> {
+  const officeB = await h.admin<{ id: string }[]>`
+    INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${h.seed.b}, 'tenant-b', 'office-b', 'office-b@example.test') RETURNING id
+  `;
+  await h.admin`INSERT INTO memberships (company_id, actor_id, role) VALUES (${h.seed.b}, ${officeB[0]!.id}, 'office')`;
+  const invite = async (company: string, by: string, email: string) =>
+    (
+      await h.admin<{ id: string }[]>`
+        INSERT INTO invitations (company_id, email, role, expires_at, created_by_actor_id)
+        VALUES (${company}, ${email}, 'estimator', now() + interval '7 days', ${by}) RETURNING id
+      `
+    )[0]!.id;
+  const invitationA = await invite(h.seed.a, h.seed.ownerA.actor, 'shared-invitee@example.test');
+  const invitationB = await invite(h.seed.b, h.seed.ownerB.actor, 'invitee-b@example.test');
+  for (const [company, by] of [
+    [h.seed.a, h.seed.ownerA.actor],
+    [h.seed.b, h.seed.ownerB.actor],
+  ] as const) {
+    await h.admin`INSERT INTO audit_events (company_id, actor_id, action, target) VALUES (${company}, ${by}, 'seeded_event', ${company})`;
+    await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true)`;
+    await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
+  }
+  const side = (
+    name: 'A' | 'B',
+    companyId: string,
+    suffix: string,
+    membershipId: string,
+    invitationId: string,
+    ids: string[],
+    extra: string[],
+  ): Side => {
+    const tenant = `tenant-${suffix}`;
+    const person = (uid: string): FakeClaims => ({ tenant, uid });
+    return {
+      name,
+      companyId,
+      ids: { membershipId, invitationId, address: `company-${suffix}` },
+      people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
+      markers: [companyId, membershipId, invitationId, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra].map((value) =>
+        value.toLowerCase(),
+      ),
+    };
+  };
+  a = side('A', h.seed.a, 'a', h.seed.estimatorA.membership, invitationA, [h.seed.ownerA.actor, h.seed.estimatorA.actor, h.seed.officeA.actor, h.seed.ownerA.membership], ['shared-invitee@example.test']);
+  b = side('B', h.seed.b, 'b', h.seed.estimatorB.membership, invitationB, [h.seed.ownerB.actor, h.seed.estimatorB.actor, officeB[0]!.id, h.seed.ownerB.membership], ['invitee-b@example.test']);
+}
+
+beforeAll(async () => {
+  base = await startTeamServer();
+  vi.stubEnv('APP_ENV', 'test');
+});
+
+beforeEach(async () => {
+  h = await resetTeamDatabase(base, live.harness);
+  live.harness = h;
+  live.projectionRuns = 0;
+  await seedSides();
+});
+
+afterAll(async () => {
+  vi.unstubAllEnvs();
+  await live.harness?.handle.close();
+  await base?.admin.end({ timeout: 5 });
+  await base?.server.stop();
+});
+
+let loaded: Promise<Map<string, RouteModule>> | undefined;
+const modules = () => (loaded ??= routeModules());
+async function handlerFor(route: string, method: string): Promise<Handler> {
+  const found = (await modules()).get(route)?.[method];
+  if (typeof found !== 'function') throw new Error(`${method} ${route} is not exported`);
+  return found as Handler;
+}
+
+// The path with every [name] filled in from `ids`, as the framework would hand it to the handler.
+function pathFor(route: string, ids: Record<string, string>): string {
+  return `/${route}`.replace(/\[([A-Za-z]+)\]/g, (_m, name: string) => ids[name] ?? '00000000-0000-4000-8000-000000000000');
+}
+
+type Answer = { status: number; text: string };
+async function call(
+  row: Pick<MatrixRow, 'route' | 'method' | 'body'>,
+  claims: FakeClaims | null,
+  ids: Record<string, string>,
+  extra: { query?: string; headers?: Record<string, string> } = {},
+): Promise<Answer> {
+  const handler = await handlerFor(row.route, row.method);
+  const built = request(claims, `${pathFor(row.route, ids)}${extra.query ?? ''}`, { method: row.method, body: row.body });
+  for (const [name, value] of Object.entries(extra.headers ?? {})) built.headers.set(name, value);
+  const response = await handler(built, params(ids));
+  return { status: response.status, text: await response.text() };
+}
+
+// Whether any trace of the other company is in `text`: an id, an email, its address or its tenant.
+const leaks = (text: string, victim: Side) => victim.markers.filter((marker) => text.toLowerCase().includes(marker));
+
+// The ids of `victim`'s records in the path, with whose company the path names.
+const idsOf = (victim: Side, company: Side = victim): Record<string, string> => ({
+  companyId: company.companyId,
+  membershipId: victim.ids.membershipId,
+  invitationId: victim.ids.invitationId,
+  address: victim.ids.address,
+});
+
+const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));
+// The two directions are built after the seed, so the matrix functions read them lazily.
+const directions = (): [Side, Side][] => [
+  [b, a],
+  [a, b],
+];
+
+// The calls a signed-in user of the other company is answered rather than refused, and all each
+// answer may hold. Every other row of the matrix must be refused.
+type OpenCheck = (answer: Answer, where: string, attacker: Side, victim: Side) => void;
+const OPEN: Record<string, OpenCheck> = {
+  // The caller's own sign-in, whatever company the path names.
+  'GET api/me': (answer, where, attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(JSON.parse(answer.text).company.id, where).toBe(attacker.companyId);
+    expect(leaks(answer.text, victim), where).toEqual([]);
+  },
+  // The one open route that names a company: its sign-in page. It is public on purpose and answers
+  // exactly two fields, the company's name and its tenant, for an active company with a tenant.
+  'GET api/sign-in/[address]': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(JSON.parse(answer.text), where).toEqual({ company: { name: `Company ${victim.ids.address}` }, tenantId: victim.people.owner.tenant });
+  },
+  'GET api/health': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(leaks(answer.text, victim), where).toEqual([]);
+  },
+  'POST api/echo': (answer, where) => {
+    expect(answer.status, where).toBe(200);
+    expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
+  },
+};
+
+describe('the route list', () => {
+  it('has a row in the matrix for every handler of every route file, and no other', async () => {
+    expect(matrixProblems(handlersOf(await modules()))).toEqual([]);
+  });
+
+  it('lists no open answer for a route the matrix does not have', () => {
+    expect(Object.keys(OPEN).filter((name) => !MATRIX.some((row) => matrixKey(row) === name))).toEqual([]);
+  });
+
+  it('names a handler the matrix lacks, a row no handler has, and a row listed twice', () => {
+    const handler = () => new Response();
+    const found = handlersOf(new Map([['api/x/[id]', { POST: handler, GET: handler, HEAD: handler, dynamic: 'force-dynamic', helper: handler }]]));
+    expect(found).toEqual([
+      { route: 'api/x/[id]', method: 'GET' },
+      { route: 'api/x/[id]', method: 'HEAD' },
+      { route: 'api/x/[id]', method: 'POST' },
+    ]);
+    const missing = (method: string) => `${method} api/x/[id] is not in the isolation matrix (web/tests/db/isolation-matrix.ts)`;
+    expect(matrixProblems(found)).toEqual([
+      missing('GET'),
+      missing('HEAD'),
+      missing('POST'),
+      ...MATRIX.map((row) => `${row.method} ${row.route} is in the matrix but no route file has it`),
+    ]);
+    const rows: MatrixRow[] = [
+      { route: 'api/x/[id]', method: 'GET', kind: 'public' },
+      { route: 'api/x/[id]', method: 'POST', kind: 'company' },
+    ];
+    expect(matrixProblems(found, rows)).toEqual([missing('HEAD')]);
+    expect(matrixProblems(found.filter((entry) => entry.method !== 'HEAD'), [...rows, rows[0]!])).toEqual(['GET api/x/[id] is in the matrix twice']);
+    expect(matrixProblems([], rows)).toEqual([
+      'GET api/x/[id] is in the matrix but no route file has it',
+      'POST api/x/[id] is in the matrix but no route file has it',
+    ]);
+  });
+});
+
+describe('the leak check itself', () => {
+  it('finds each company’s own data when its own owner reads it, so a clean answer to the other is not a blind spot', async () => {
+    for (const side of [a, b]) {
+      const team = MATRIX.find((row) => row.route.endsWith('/team') && row.kind === 'company')!;
+      const own = await call(team, side.people.owner, idsOf(side));
+      expect(own.status).toBe(200);
+      expect(leaks(own.text, side).length).toBeGreaterThan(0);
+      const me = await call({ route: 'api/me', method: 'GET' }, side.people.owner, {});
+      expect(me.status).toBe(200);
+      expect(leaks(me.text, side)).toContain(side.companyId.toLowerCase());
+    }
+  });
+});
+
+describe('every route, called with the other company’s ids', () => {
+  it('refuses a call with no sign-in on every route that needs one', async () => {
+    const before = await everything(h.admin);
+    for (const row of rowsOfKind('company', 'invitation', 'operator', 'session', 'service')) {
+      const answer = await call(row, null, idsOf(a));
+      expect({ route: `${row.method} ${row.route}`, status: answer.status }).toEqual({ route: `${row.method} ${row.route}`, status: 401 });
+    }
+    expect(await everything(h.admin)).toBe(before);
+    expect(live.projectionRuns).toBe(0);
+  });
+
+  it('answers 401, 403 or 404 to the other company’s owner, estimator and office user, with nothing of the company and no change', async () => {
+    const before = await everything(h.admin);
+    const checked: string[] = [];
+    for (const [attacker, victim] of directions()) {
+      for (const [role, claims] of Object.entries(attacker.people)) {
+        for (const row of MATRIX) {
+          const answer = await call(row, claims, idsOf(victim));
+          const where = `${attacker.name} ${role}: ${row.method} ${row.route}`;
+          const open = OPEN[matrixKey(row)];
+          if (open) {
+            open(answer, where, attacker, victim);
+          } else {
+            expect({ where, status: REFUSED.includes(answer.status) ? 'refused' : answer.status }).toEqual({ where, status: 'refused' });
+            expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
+          }
+          checked.push(where);
+        }
+      }
+    }
+    // 2 directions x 3 people x every row of the matrix.
+    expect(checked).toHaveLength(2 * 3 * MATRIX.length);
+    expect(await everything(h.admin)).toBe(before);
+    expect(h.calls).toEqual([]);
+    expect(h.projected).toEqual([]);
+  });
+
+  it('refuses the other company’s email on an invitation addressed to it, because the invitation is in another company', async () => {
+    // The invitee's address registered in the other company's sign-in tenant is a different person.
+    const before = await everything(h.admin);
+    for (const [attacker, victim] of directions()) {
+      for (const row of rowsOfKind('invitation')) {
+        const claims: FakeClaims = { tenant: attacker.people.office.tenant, uid: 'impostor', email: victim === a ? 'shared-invitee@example.test' : 'invitee-b@example.test' };
+        const answer = await call(row, claims, idsOf(victim));
+        expect({ route: `${attacker.name}: ${row.method} ${row.route}`, status: REFUSED.includes(answer.status) }).toEqual({
+          route: `${attacker.name}: ${row.method} ${row.route}`,
+          status: true,
+        });
+        expect(leaks(answer.text, victim)).toEqual([]);
+      }
+    }
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('refuses the caller’s own company with the other company’s record ids, and lists only the caller’s own rows', async () => {
+    const before = await everything(h.admin);
+    for (const [attacker, victim] of directions()) {
+      for (const [role, claims] of Object.entries(attacker.people)) {
+        for (const row of MATRIX.filter((found) => found.own === 'cross')) {
+          const answer = await call(row, claims, idsOf(victim, attacker));
+          const where = `${attacker.name} ${role}: ${row.method} ${row.route} in its own company`;
+          expect({ where, status: REFUSED.includes(answer.status) ? 'refused' : answer.status }).toEqual({ where, status: 'refused' });
+          expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
+        }
+        for (const row of MATRIX.filter((found) => found.own === 'list')) {
+          const answer = await call(row, claims, idsOf(attacker));
+          const where = `${attacker.name} ${role}: ${row.method} ${row.route}`;
+          expect({ where, status: [200, 403].includes(answer.status) }).toEqual({ where, status: true });
+          expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
+        }
+      }
+    }
+    expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('answers /api/me about the caller’s own sign-in whatever company the request names', async () => {
+    for (const [attacker, victim] of directions()) {
+      for (const claims of Object.values(attacker.people)) {
+        const answer = await call({ route: 'api/me', method: 'GET' }, claims, {}, {
+          query: `?companyId=${victim.companyId}&company=${victim.companyId}`,
+          headers: { 'x-company-id': victim.companyId, 'x-forwarded-company': victim.companyId },
+        });
+        expect(answer.status).toBe(200);
+        expect(JSON.parse(answer.text).company.id).toBe(attacker.companyId);
+        expect(leaks(answer.text, victim)).toEqual([]);
+      }
+    }
+  });
+
+  it('gives a company user no way into the scheduler’s route, and lets only the scheduler’s own token through', async () => {
+    const row = { route: 'api/internal/access-projection', method: 'POST' } as const;
+    for (const side of [a, b]) {
+      for (const claims of [...Object.values(side.people), operatorClaims()]) {
+        const token = `e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.`;
+        const built = request(null, '/api/internal/access-projection', { method: 'POST' });
+        built.headers.set('Authorization', `Bearer ${token}`);
+        const response = await (await handlerFor(row.route, row.method))(built, params({}));
+        expect(REFUSED).toContain(response.status);
+      }
+    }
+    expect(live.projectionRuns).toBe(0);
+    const built = request(null, '/api/internal/access-projection', { method: 'POST' });
+    built.headers.set('Authorization', `Bearer ${live.schedulerToken}`);
+    expect((await (await handlerFor(row.route, row.method))(built, params({}))).status).toBe(200);
+    expect(live.projectionRuns).toBe(1);
+  });
+
+  it('answers a sign-in page for an address that is not a company the same as for a suspended company', async () => {
+    for (const address of ['no-such-company', 'company-s']) {
+      const answer = await call({ route: 'api/sign-in/[address]', method: 'GET' }, null, { address });
+      expect(answer.status).toBe(404);
+    }
+  });
+});
+
+describe('the platform operator', () => {
+  it('writes an audit row naming the operator and the company for a view of the company’s team, and none for the other', async () => {
+    const team = MATRIX.find((row) => row.route === 'api/platform/companies/[companyId]/team')!;
+    const rows = () =>
+      h.admin<{ company_id: string | null; actor_id: string | null; operator_actor_id: string | null; action: string; target: string }[]>`
+        SELECT company_id, actor_id, operator_actor_id, action, target FROM audit_events WHERE action = 'support_team_viewed' ORDER BY id
+      `;
+    expect(await rows()).toEqual([]);
+    for (const side of [a, b]) {
+      const answer = await call(team, operatorClaims(), idsOf(side));
+      expect(answer.status).toBe(200);
+      expect(leaks(answer.text, side).length).toBeGreaterThan(0);
+      // The view shows this company and no other.
+      expect(leaks(answer.text, side === a ? b : a)).toEqual([]);
+    }
+    expect(await rows()).toEqual([
+      { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_team_viewed', target: h.seed.a },
+      { company_id: h.seed.b, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_team_viewed', target: h.seed.b },
+    ]);
+  });
+
+  it('keeps that audit row out of reach of the other company, whose own rows it can read', async () => {
+    const team = MATRIX.find((row) => row.route === 'api/platform/companies/[companyId]/team')!;
+    await call(team, operatorClaims(), idsOf(a));
+    const asB = await withContext(h.seed.b, (tx) => tx<{ company_id: string; action: string }[]>`SELECT company_id, action FROM audit_events ORDER BY id`);
+    expect(asB).toEqual([{ company_id: h.seed.b, action: 'seeded_event' }]);
+    const asA = await withContext(h.seed.a, (tx) => tx<{ action: string }[]>`SELECT action FROM audit_events ORDER BY id`);
+    expect(asA.map((found) => found.action)).toEqual(['seeded_event', 'support_team_viewed']);
+  });
+});
+
+// --- SQL, directly, as the runtime role ----------------------------------------------------------
+
+const runtime = () => postgres(h.apiUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
+
+// A transaction as the runtime role with the company the request's sign-in would have set.
+async function withContext<T>(companyId: string | null, run: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> {
+  const sql = runtime();
+  try {
+    return (await sql.begin(async (tx) => {
+      if (companyId !== null) await tx`SELECT set_config('app.company_id', ${companyId}, true)`;
+      return run(tx);
+    })) as T;
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+async function publicTables(): Promise<string[]> {
+  return (
+    await h.admin<{ name: string }[]>`
+      SELECT relname AS name FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') ORDER BY relname
+    `
+  ).map((found) => found.name);
+}
+
+async function refusedOrNothing(companyId: string, statement: string): Promise<string> {
+  try {
+    const result = await withContext(companyId, (tx) => tx.unsafe(statement));
+    return result.count === 0 ? 'no rows' : `changed ${result.count} rows`;
+  } catch (error) {
+    return `error ${(error as { code?: string }).code ?? 'unknown'}`;
+  }
+}
+
+describe('SQL as the runtime role', () => {
+  it('reads every table of the schema, found by searching it, and sees nothing of the other company', async () => {
+    const tables = await publicTables();
+    // A table added later is read here too: the list is the catalog's, not a copy of the schema.
+    expect(tables).toEqual(
+      expect.arrayContaining(['access_projection_outbox', 'actors', 'audit_events', 'auth_tenants', 'companies', 'company_feature_flags', 'invitations', 'memberships', 'migration_ledger', 'platform_admins']),
+    );
+    for (const [self, other] of [[b, a], [a, b]] as const) {
+      // A table the runtime holds no grant on is refused outright, which is as closed as it gets.
+      const seen = await withContext(self.companyId, async (tx) => {
+        const found: Record<string, string> = {};
+        for (const table of tables) {
+          found[table] = await tx
+            .savepoint(async (sp) => JSON.stringify(await sp.unsafe(`SELECT to_jsonb(t) AS row FROM "${table}" t ORDER BY 1`)))
+            .catch((error: { code?: string }) => (error.code === '42501' ? '[]' : Promise.reject(error)));
+        }
+        return found;
+      });
+      for (const table of tables) {
+        expect({ table, as: self.name, leaked: leaks(seen[table]!, other) }).toEqual({ table, as: self.name, leaked: [] });
+      }
+      // Each side's own rows do show, so a clean read is not an empty one.
+      expect(leaks(seen.memberships!, self).length).toBeGreaterThan(0);
+      expect(leaks(seen.audit_events!, self).length).toBeGreaterThan(0);
+      expect(leaks(seen.invitations!, self).length).toBeGreaterThan(0);
+      expect(JSON.parse(seen.companies!)).toHaveLength(1);
+      expect(JSON.parse(seen.auth_tenants!)).toHaveLength(1);
+      expect(JSON.parse(seen.platform_admins!)).toEqual([]);
+      expect(JSON.parse(seen.migration_ledger!)).toEqual([]);
+    }
+  });
+
+  it('sees nothing at all when no company is set, or the setting is not a company', async () => {
+    const tables = await publicTables();
+    for (const context of [null, '', 'not-a-uuid', '00000000-0000-4000-8000-000000000000']) {
+      for (const table of tables) {
+        let outcome: string;
+        try {
+          outcome = String((await withContext(context, (tx) => tx.unsafe(`SELECT count(*)::int AS n FROM "${table}"`)))[0]!.n);
+        } catch (error) {
+          outcome = `error ${(error as { code?: string }).code ?? 'unknown'}`;
+        }
+        // Zero rows, or the database refusing the setting; never another company's rows.
+        expect({ context, table, outcome: outcome === '0' || outcome.startsWith('error') }).toEqual({ context, table, outcome: true });
+      }
+    }
+  });
+
+  it('refuses to create, change or remove the other company’s rows, and leaves them as they were', async () => {
+    const before = await everything(h.admin);
+    const victim = h.seed.a;
+    const attempts: [string, string][] = [
+      ['insert a member', `INSERT INTO memberships (company_id, actor_id, role) VALUES ('${victim}', '${h.seed.estimatorA.actor}', 'owner')`],
+      ['insert an actor', `INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES ('${victim}', 'tenant-a', 'planted', 'planted@example.test')`],
+      ['insert an invitation', `INSERT INTO invitations (company_id, email, role, expires_at) VALUES ('${victim}', 'planted@example.test', 'owner', now() + interval '1 day')`],
+      ['insert an audit event', `INSERT INTO audit_events (company_id, action) VALUES ('${victim}', 'planted')`],
+      ['insert an outbox row', `INSERT INTO access_projection_outbox (company_id, actor_id) VALUES ('${victim}', '${h.seed.ownerA.actor}')`],
+      ['insert a feature flag', `INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES ('${victim}', 'planted', true)`],
+      ['change a role', `UPDATE memberships SET role = 'owner' WHERE company_id = '${victim}'`],
+      ['change a status', `UPDATE memberships SET status = 'disabled' WHERE company_id = '${victim}'`],
+      ['change an email', `UPDATE actors SET email = 'taken@example.test' WHERE company_id = '${victim}'`],
+      ['cancel an invitation', `UPDATE invitations SET status = 'cancelled' WHERE company_id = '${victim}'`],
+      ['change the company', `UPDATE companies SET name = 'taken', status = 'suspended' WHERE id = '${victim}'`],
+      ['turn a flag off', `UPDATE company_feature_flags SET enabled = false WHERE company_id = '${victim}'`],
+      ['move the company to another company', `UPDATE memberships SET company_id = '${h.seed.b}' WHERE company_id = '${victim}'`],
+      ['delete members', `DELETE FROM memberships WHERE company_id = '${victim}'`],
+      ['delete the company', `DELETE FROM companies WHERE id = '${victim}'`],
+      ['delete audit events', `DELETE FROM audit_events WHERE company_id = '${victim}'`],
+      ['read through a join to the company', `SELECT 1 FROM memberships m JOIN companies c ON c.id = m.company_id WHERE c.id = '${victim}'`],
+    ];
+    for (const [what, statement] of attempts) {
+      const outcome = await refusedOrNothing(h.seed.b, statement);
+      // Either the policy or the grant refuses (42501), or the policy hides every row (no rows).
+      expect({ what, outcome: outcome === 'no rows' || outcome === 'error 42501' ? 'stopped' : outcome }).toEqual({ what, outcome: 'stopped' });
+    }
+    expect(await everything(h.admin)).toBe(before);
+  });
+});

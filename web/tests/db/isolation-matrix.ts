@@ -1,0 +1,139 @@
+import { readdir } from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The company-isolation matrix (S3-17): one row for every handler of every route file under
+// src/app, saying what kind of access rule it has and how the isolation suite attacks it. The suite
+// (company-isolation.test.ts) imports every route file, fails when one of its handlers is not in
+// this list or a row names one that no longer exists, and calls every row with the other company's
+// ids. So a new route cannot ship without somebody deciding here how another company's caller is
+// refused, and the decision is read in review. That each handler has an access rule at all is
+// tests/unit/route-rules.test.ts.
+//
+// Kinds:
+//   company     a company member; the company comes from the sign-in
+//   invitation  a verified account of the company, member or not
+//   operator    the platform operator; every company user is refused
+//   service     the scheduler's service account; no person is accepted
+//   session     answers about the caller's own sign-in only
+//   public      open to anyone; must return nothing of another company
+//               beyond what its own comment says is public
+export type RouteKind = 'company' | 'invitation' | 'operator' | 'service' | 'session' | 'public';
+
+export type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+export type MatrixRow = {
+  // The route file's folder under src/app, as the file system spells it.
+  route: string;
+  method: Method;
+  kind: RouteKind;
+  // A request body that is valid for the route, so a refusal is the access rule's and not the
+  // body check's. Never carries another company's id: the ids come from the path.
+  body?: unknown;
+  // How the suite also calls the route as the caller's own company, where that is a read or a
+  // path that names another company's record:
+  //   list   the caller's own ids; a 200 that holds none of the other company's rows
+  //   cross  the caller's own company with the other company's record ids: refused
+  own?: 'list' | 'cross';
+};
+
+const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixRow, 'body' | 'own'> = {}): MatrixRow => ({
+  route,
+  method,
+  kind,
+  ...extra,
+});
+
+const COMPANY = 'api/companies/[companyId]';
+const PLATFORM = 'api/platform/companies';
+const PLATFORM_ONE = `${PLATFORM}/[companyId]`;
+
+export const MATRIX: readonly MatrixRow[] = [
+  row(`${COMPANY}/team`, 'GET', 'company', { own: 'list' }),
+  row(`${COMPANY}/invitations`, 'POST', 'company', { body: { email: 'new-person@example.test', role: 'estimator' } }),
+  row(`${COMPANY}/invitations/[invitationId]/cancel`, 'POST', 'company', { own: 'cross' }),
+  row(`${COMPANY}/invitations/[invitationId]/clear`, 'POST', 'company', { own: 'cross' }),
+  row(`${COMPANY}/invitations/[invitationId]/resend`, 'POST', 'company', { own: 'cross' }),
+  row(`${COMPANY}/members/[membershipId]`, 'PATCH', 'company', { body: { role: 'office' }, own: 'cross' }),
+  row(`${COMPANY}/members/[membershipId]/disable`, 'POST', 'company', { own: 'cross' }),
+  row(`${COMPANY}/members/[membershipId]/enable`, 'POST', 'company', { own: 'cross' }),
+
+  row('api/invitations/[invitationId]', 'GET', 'invitation'),
+  row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),
+
+  row('api/me', 'GET', 'session'),
+
+  row('api/health', 'GET', 'public'),
+  row('api/echo', 'POST', 'public', { body: { message: 'hello' } }),
+  row('api/sign-in/[address]', 'GET', 'public'),
+
+  row('api/internal/access-projection', 'POST', 'service'),
+
+  row(PLATFORM, 'GET', 'operator'),
+  row(PLATFORM, 'POST', 'operator', { body: { name: 'Another Co', signInSlug: 'another-co' } }),
+  row(`${PLATFORM_ONE}/flags`, 'POST', 'operator', { body: { flag: 'price_books', enabled: true } }),
+  row(`${PLATFORM_ONE}/status`, 'POST', 'operator', { body: { status: 'suspended' } }),
+  row(`${PLATFORM_ONE}/tenant`, 'POST', 'operator', { body: { tenantId: 'tenant-x' } }),
+  row(`${PLATFORM_ONE}/owner`, 'POST', 'operator', { body: { email: 'boss@example.test', replace: true } }),
+  row(`${PLATFORM_ONE}/team`, 'GET', 'operator'),
+  row(`${PLATFORM_ONE}/members/[membershipId]`, 'PATCH', 'operator', { body: { role: 'office' } }),
+  row(`${PLATFORM_ONE}/members/[membershipId]/enable`, 'POST', 'operator'),
+  row(`${PLATFORM_ONE}/members/[membershipId]/reset-second-step`, 'POST', 'operator', { body: { confirmedBy: 'phone' } }),
+  row(`${PLATFORM_ONE}/invitations/[invitationId]/cancel`, 'POST', 'operator'),
+  row(`${PLATFORM_ONE}/invitations/[invitationId]/resend`, 'POST', 'operator'),
+];
+
+export const APP_DIR = fileURLToPath(new URL('../../src/app', import.meta.url));
+// Every method the framework would route to a file's export; the matrix must name each one.
+const ROUTED = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
+
+export type RouteModule = Record<string, unknown>;
+export type FoundHandler = { route: string; method: string };
+
+async function routeFiles(dir: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...(await routeFiles(path)));
+    else if (/^route\.(ts|tsx|js|jsx|mjs)$/.test(entry.name)) found.push(path);
+  }
+  return found.sort();
+}
+
+// Every route file under src/app, found by searching it (never from a list) and imported, keyed by
+// its folder.
+export async function routeModules(dir = APP_DIR): Promise<Map<string, RouteModule>> {
+  const modules = new Map<string, RouteModule>();
+  for (const file of await routeFiles(dir)) modules.set(relative(dir, join(file, '..')), (await import(file)) as RouteModule);
+  return modules;
+}
+
+// Every handler the framework would route to: each export of a route module named for a method.
+export function handlersOf(modules: ReadonlyMap<string, RouteModule>): FoundHandler[] {
+  const found: FoundHandler[] = [];
+  for (const [route, module] of modules) {
+    for (const method of Object.keys(module).sort()) if (ROUTED.has(method)) found.push({ route, method });
+  }
+  return found;
+}
+
+export const matrixKey = (value: { route: string; method: string }) => `${value.method} ${value.route}`;
+
+// What is wrong between the handlers found and the matrix; empty when they agree.
+export function matrixProblems(found: readonly FoundHandler[], matrix: readonly MatrixRow[] = MATRIX): string[] {
+  const problems: string[] = [];
+  const rows = new Set<string>();
+  for (const entry of matrix) {
+    if (rows.has(matrixKey(entry))) problems.push(`${matrixKey(entry)} is in the matrix twice`);
+    rows.add(matrixKey(entry));
+  }
+  const seen = new Set<string>();
+  for (const handler of found) {
+    seen.add(matrixKey(handler));
+    if (!rows.has(matrixKey(handler))) problems.push(`${matrixKey(handler)} is not in the isolation matrix (web/tests/db/isolation-matrix.ts)`);
+  }
+  for (const name of rows) {
+    if (!seen.has(name)) problems.push(`${name} is in the matrix but no route file has it`);
+  }
+  return problems;
+}
