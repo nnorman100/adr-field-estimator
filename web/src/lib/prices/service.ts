@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { auditEvents, priceTableVersions, priceTableWorkingCopies } from '@/db/schema';
 import { withCompany, type CompanyTransaction, type Database } from '@/db/tenant';
 import { checkTable, priceEstimate, type Estimate, type Json, type Refusal } from '@/engine/estimate';
-import { ENGINE_VERSION, contentHash, parseTable, zeroPriceItems, type Table } from '@/engine/table';
+import { ENGINE_VERSION, contentHash, effectiveTable, parseTable, zeroPriceItems, type Table } from '@/engine/table';
 import { exportPriceList } from './csv';
 import { SAMPLE_JOBS } from './samples';
 import { starterTable } from './starter';
@@ -315,7 +315,7 @@ export function previewTable(table: Table): Preview {
   });
   return {
     publishCheck: check.ok ? { ok: true } : { ok: false, error: check.error },
-    zeroPrices: zeroPriceItems(table),
+    zeroPrices: zeroPriceItems(effectiveTable(table)),
     samples,
   };
 }

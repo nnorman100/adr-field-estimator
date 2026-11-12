@@ -269,6 +269,20 @@ describe('preview', () => {
     const invalid = await call(preview, owner(), { method: 'POST', body: { table: { items: [] } } });
     expect(invalid.status).toBe(422);
   });
+
+  it('leaves out a zero room-type price while room-type pricing is off, as publishing does', async () => {
+    const table = smallTable('3.00');
+    const item = (table.items as Json[])[0]!;
+    item.allow_zero = true;
+    item.rows = [{ room_type: 'other', unit_price: '0' }];
+    const off = (await call(preview, owner(), { method: 'POST', body: { table } })).body!;
+    expect(off.publishCheck).toEqual({ ok: true });
+    expect(off.zeroPrices).toEqual([]);
+    (table.policy as Json).room_type_pricing = true;
+    const on = (await call(preview, owner(), { method: 'POST', body: { table } })).body!;
+    expect(on.zeroPrices).toEqual(['extraction']);
+    expect(on.publishCheck).toEqual({ ok: false, error: 'extraction: confirm the zero price' });
+  });
 });
 
 describe('publishing', () => {
