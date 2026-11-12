@@ -16,10 +16,10 @@ import {
   sendVerifyEmail,
   signInWithGoogle,
   signInWithPassword,
-  signOutCompany,
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
-import { forgetMe, saveMe } from '@/lib/field/ds-me';
+import { saveMe } from '@/lib/field/ds-me';
+import { signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersTeamScreen } from '@/lib/team/screen';
@@ -89,14 +89,10 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   // False when the phone could not let go of the sign-in, which then stays.
   const endSession = useCallback(async (message: string | null): Promise<boolean> => {
     const auth = authRef.current;
-    const signedIn = auth?.currentUser ?? null;
-    // The field shell must not start from this sign-in again (S6-2), so its row goes first and the
-    // person stays signed in when it cannot.
-    if (signedIn && !(await forgetMe(tenantId, signedIn.uid))) {
+    if (auth && !(await signOutOfCompany(auth, tenantId))) {
       setError('This phone could not finish signing out. Try again.');
       return false;
     }
-    if (auth) await signOutCompany(auth);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
