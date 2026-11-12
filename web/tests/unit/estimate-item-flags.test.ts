@@ -397,6 +397,28 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
     expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['88.93', '88.93', '88.92']);
   });
 
+  it('W66 the gap goes on the trade minimum line, never on the after-hours adjustment', () => {
+    // As W63 with labor_a flagged, multiplier 1.5. Low: adjustment 50% x $10.06 = $5.03; labor_a charged $15.09,
+    // so its line is $84.91; total $30.20 + $5.03 + $84.91 + $89.94 + $89.92 = $300.00. High: adjustment
+    // 50% x $11.066 = $5.53; labor_a charged $16.596, line $83.40; with $88.93 and $88.91 the total would be
+    // $299.99. The cent goes on the last trade line ($88.92); the adjustment stays $5.53.
+    const hours = (code: string, price: string, changes: Obj = {}) =>
+      item(code, { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: price, trade: code, ...changes });
+    const headings = ['labor_a', 'labor_b', 'labor_c'].map((id) => ({ trade_id: id, name: id, minimum_charge: '100' }));
+    const result = priced(
+      withTrades(
+        [hours('labor_a', '10.06', { after_hours: true }), hours('labor_b', '10.06'), hours('labor_c', '10.08')],
+        headings,
+        { ...NIGHT, estimate_mode: 'range', range: { first_sf: 1000, first_percent: '10', beyond_percent: '0' } },
+      ),
+      job([room('Kitchen', { unfinished_sf: 100 })], { labor_hours: 1, is_after_hours: true }),
+    );
+    expect(result.totals.low).toMatchObject({ after_hours: '5.03', total: '300.00' });
+    expect(result.totals.low.trade_minimums.map((row) => row.amount)).toEqual(['84.91', '89.94', '89.92']);
+    expect(result.totals.high).toMatchObject({ subtotal: '33.22', after_hours: '5.53', total: '300.00' });
+    expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['83.40', '88.93', '88.92']);
+  });
+
   it('W64 a taxable line that does not grow is taxed on its own amount at the high end', () => {
     // Cushion 0.1% on the dearest 1 sq ft, 0% beyond, tax 10%. Demolition 5 sq ft x $2.01 = $10.05, taxable;
     // antimicrobial 5 sq ft x $3.00 = $15.00 and 1 labor hour at $10.00, not taxable. The dearest square foot is
@@ -439,6 +461,27 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
       job([room('Kitchen', { unfinished_sf: 5 })]),
     );
     expect(result.totals.high).toMatchObject({ subtotal: '10.05', tax: '1.01', total: '11.06' });
+  });
+
+  it('W67 under the uncertainty method a labor line that does not grow is taxed on its own amount', () => {
+    // As W65, plus a category-2 room (hidden damage 0%) with the same $10.00 of taxable demolition. Only the
+    // category-1 line grows, to $10.049; high labor rounds to $20.05, all of the growth billed on that line.
+    // High tax 10% x ($10.05 + $10.00) = $2.01 (half up), not 10% x $20.049 x 20.05 / 20.049 on a blend.
+    const result = priced(
+      table([item('demo', { taxable: true })], {
+        estimate_mode: 'range',
+        sales_tax: { enabled: true, percent: '10' },
+        assist: {
+          drying_days: 3,
+          range_method: 'uncertainty',
+          extra_drying_days: 0,
+          hidden_damage_percent: { '1': '0.49', '2': '0', '3': '0' },
+        },
+      }),
+      job([room('Kitchen', { unfinished_sf: 5 }), room('Hall', { unfinished_sf: 5, category: 2 })]),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '20.00', tax: '2.00', total: '22.00' });
+    expect(result.totals.high).toMatchObject({ subtotal: '20.05', tax: '2.01', total: '22.06' });
   });
 });
 
