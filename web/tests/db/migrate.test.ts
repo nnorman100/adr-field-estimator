@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -27,6 +27,8 @@ const SHIPPED_TABLES = [
   'memberships',
   'migration_ledger',
   'platform_admins',
+  'price_table_versions',
+  'price_table_working_copies',
 ];
 
 let disposable: DisposablePostgres;
@@ -228,6 +230,45 @@ describe('numbered migration ledger', () => {
       ]);
       expect([...first.applied, ...second.applied].sort()).toEqual(['0001_foundation', '0002_slow']);
       expect(await tableNames()).toEqual(['companies', 'migration_ledger', 'second_step']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds the price tables to a database already holding 0001 to 0008 and its rows', async () => {
+    const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0009');
+    expect(earlier.map((file) => file.id)).toEqual(SHIPPED.slice(0, 8));
+    const dir = await tempMigrations(Object.fromEntries(earlier.map((file) => [`${file.id}.sql`, file.sql])));
+    try {
+      expect((await applyMigrations(disposable.databaseUrl, dir)).applied).toEqual(SHIPPED.slice(0, 8));
+      const holding = async () =>
+        withSql(async (sql) => ({
+          companies: await sql`SELECT * FROM companies ORDER BY id`,
+          actors: await sql`SELECT * FROM actors ORDER BY id`,
+          flags: await sql`SELECT * FROM company_feature_flags ORDER BY company_id, flag`,
+          tables: await tableNames(),
+        }));
+      await withSql(async (sql) => {
+        await sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-x', 'company')`;
+        const [company] = await sql<{ id: string }[]>`
+          INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', 'existing', 'tenant-x') RETURNING id
+        `;
+        await sql`INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-x', 'u1', 'u1@example.test')`;
+        await sql`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company!.id}, 'price_books', true)`;
+      });
+      const before = await holding();
+      expect(before.tables).not.toContain('price_table_versions');
+      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(['0009_price_tables']);
+      const after = await holding();
+      expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
+      expect(after.tables).toEqual(SHIPPED_TABLES);
+      const counts = await withSql(
+        (sql) => sql<{ versions: number; copies: number }[]>`
+          SELECT (SELECT count(*)::int FROM price_table_versions) AS versions,
+                 (SELECT count(*)::int FROM price_table_working_copies) AS copies
+        `,
+      );
+      expect(counts).toEqual([{ versions: 0, copies: 0 }]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
