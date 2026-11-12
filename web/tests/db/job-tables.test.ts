@@ -371,11 +371,11 @@ describe('a job', () => {
     await create(newJob(h.seed.a, h.seed.ownerA.actor, { digest: 'f'.repeat(64) }));
   });
 
-  it('holds the property address to one line of at most 300 characters, with no padding', async () => {
-    for (const address of [' 12 Main Street', '12 Main Street ', '12 Main\nStreet', '12 Main\tStreet', 'x'.repeat(301)]) {
+  it('holds the property address to one line of at most 500 characters, with no padding', async () => {
+    for (const address of [' 12 Main Street', '12 Main Street ', '12 Main\nStreet', '12 Main\tStreet', 'x'.repeat(501)]) {
       expect({ address, code: await errorCode(create(newJob(h.seed.a, h.seed.ownerA.actor, { address }))) }).toEqual({ address, code: CHECK_VIOLATION });
     }
-    await create(newJob(h.seed.a, h.seed.ownerA.actor, { address: 'x'.repeat(300) }));
+    await create(newJob(h.seed.a, h.seed.ownerA.actor, { address: 'x'.repeat(500) }));
     await create(newJob(h.seed.a, h.seed.ownerA.actor, { address: '12 Main Street, Apt 4, Pasadena, CA 91101' }));
   });
 
@@ -436,7 +436,7 @@ describe('a customer and a claim', () => {
   });
 
   it('holds each customer field to one line within its limit, and an email to lowercase with an @', async () => {
-    const limits: [string, number][] = [['name', 150], ['phone', 40]];
+    const limits: [string, number][] = [['name', 150], ['phone', 80]];
     for (const [column, max] of limits) {
       for (const value of [` ${'x'}`, 'x ', 'a\nb', 'x'.repeat(max + 1)]) {
         expect({ column, value, code: await errorCode(insert('job_customers', { [column]: value })) }).toEqual({ column, value, code: CHECK_VIOLATION });
@@ -445,7 +445,7 @@ describe('a customer and a claim', () => {
     for (const email of ['Pat@Example.test', 'pat example.test', 'pat@', '@example.test', 'pat@example', ' pat@example.test', `${'x'.repeat(250)}@e.co`]) {
       expect({ email, code: await errorCode(insert('job_customers', { email })) }).toEqual({ email, code: CHECK_VIOLATION });
     }
-    await insert('job_customers', { name: 'x'.repeat(150), phone: '(555) 010-0100 ext. 4', email: 'pat.q+claims@example.test' });
+    await insert('job_customers', { name: 'x'.repeat(150), phone: 'x'.repeat(80), email: 'pat.q+claims@example.test' });
   });
 
   it('holds each claim field to one line within its limit, and takes only a real date for the date of loss', async () => {

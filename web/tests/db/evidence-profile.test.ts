@@ -243,13 +243,13 @@ describe('the company profile (columns on companies)', () => {
   it('holds each profile field to one line within its limit, and the email to lowercase with an @', async () => {
     const refused = async (p: Partial<typeof PROFILE>) =>
       expect({ p, code: await errorCode(as(h.seed.a, (tx) => setProfile(tx, h.seed.a, p))) }).toEqual({ p, code: CHECK_VIOLATION });
-    for (const [key, max] of [['address', 300], ['phone', 40], ['license', 40], ['signoff', 150]] as const) {
+    for (const [key, max] of [['address', 500], ['phone', 80], ['license', 80], ['signoff', 150]] as const) {
       for (const value of [' x', 'x ', 'a\nb', 'a\tb', 'x'.repeat(max + 1)]) await refused({ [key]: value });
     }
     for (const email of ['Office@Example.test', 'office example.test', 'office@', '@example.test', 'office@example', ' office@example.test', `${'x'.repeat(250)}@e.co`]) {
       await refused({ email });
     }
-    await as(h.seed.a, (tx) => setProfile(tx, h.seed.a, { address: 'x'.repeat(300), phone: 'x'.repeat(40), license: 'x'.repeat(40), signoff: 'x'.repeat(150), email: 'office.q+x@example.test' }));
+    await as(h.seed.a, (tx) => setProfile(tx, h.seed.a, { address: 'x'.repeat(500), phone: 'x'.repeat(80), license: 'x'.repeat(80), signoff: 'x'.repeat(150), email: 'office.q+x@example.test' }));
     // Clearing a field back to empty is allowed.
     await as(h.seed.a, (tx) => tx.execute(sql`UPDATE companies SET profile_license = '', profile_email = '' WHERE id = ${h.seed.a}::uuid`));
   });

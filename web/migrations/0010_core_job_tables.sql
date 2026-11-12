@@ -30,16 +30,16 @@ ALTER TABLE companies
   ADD COLUMN profile_license text NOT NULL DEFAULT '',
   ADD COLUMN profile_signoff text NOT NULL DEFAULT '',
   ADD CONSTRAINT companies_profile_address_check
-    CHECK (profile_address = btrim(profile_address) AND char_length(profile_address) <= 300 AND profile_address !~ '[[:cntrl:]]'),
+    CHECK (profile_address = btrim(profile_address) AND char_length(profile_address) <= 500 AND profile_address !~ '[[:cntrl:]]'),
   ADD CONSTRAINT companies_profile_phone_check
-    CHECK (profile_phone = btrim(profile_phone) AND char_length(profile_phone) <= 40 AND profile_phone !~ '[[:cntrl:]]'),
+    CHECK (profile_phone = btrim(profile_phone) AND char_length(profile_phone) <= 80 AND profile_phone !~ '[[:cntrl:]]'),
   ADD CONSTRAINT companies_profile_email_check
     CHECK (
       profile_email = lower(btrim(profile_email)) AND char_length(profile_email) <= 254
       AND (profile_email = '' OR profile_email ~ '^[^[:space:]@<>]+@[^[:space:]@<>]+\.[^[:space:]@<>]+$')
     ),
   ADD CONSTRAINT companies_profile_license_check
-    CHECK (profile_license = btrim(profile_license) AND char_length(profile_license) <= 40 AND profile_license !~ '[[:cntrl:]]'),
+    CHECK (profile_license = btrim(profile_license) AND char_length(profile_license) <= 80 AND profile_license !~ '[[:cntrl:]]'),
   ADD CONSTRAINT companies_profile_signoff_check
     CHECK (profile_signoff = btrim(profile_signoff) AND char_length(profile_signoff) <= 150 AND profile_signoff !~ '[[:cntrl:]]');
 
@@ -58,7 +58,7 @@ CREATE TABLE jobs (
   current_draft_id uuid NOT NULL,
   -- The property the work is at: one line, empty until the technician enters it.
   property_address text NOT NULL DEFAULT ''
-    CHECK (property_address = btrim(property_address) AND char_length(property_address) <= 300 AND property_address !~ '[[:cntrl:]]'),
+    CHECK (property_address = btrim(property_address) AND char_length(property_address) <= 500 AND property_address !~ '[[:cntrl:]]'),
   archived_at timestamptz,
   archived_by_actor_id uuid,
   -- 1 when the job is created, then one more with every change (trigger below), so an update made
@@ -98,7 +98,7 @@ CREATE TABLE job_customers (
   name text NOT NULL DEFAULT ''
     CHECK (name = btrim(name) AND char_length(name) <= 150 AND name !~ '[[:cntrl:]]'),
   phone text NOT NULL DEFAULT ''
-    CHECK (phone = btrim(phone) AND char_length(phone) <= 40 AND phone !~ '[[:cntrl:]]'),
+    CHECK (phone = btrim(phone) AND char_length(phone) <= 80 AND phone !~ '[[:cntrl:]]'),
   email text NOT NULL DEFAULT ''
     CHECK (
       email = lower(btrim(email)) AND char_length(email) <= 254
