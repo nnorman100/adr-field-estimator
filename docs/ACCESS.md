@@ -42,7 +42,7 @@ Office can read only active estimators' uid/email from the team, for assignment.
 These routes test the owner role directly, so a new role would not gain them from a key:
 - Approve additional work (`/extras/{id}/approve`), read company AI usage, read this month's company AI spending (`GET /api/companies/{id}/ai-spending`; other companies, estimators, office and superadmin support are refused), restore a price version, preview a reprice, read price version detail and history events, list pending signing links of a member, clear invitations, and all member and invitation changes.
 - Company drying-watch list: owner or office only (estimators use "My drying jobs").
-- `POST /api/companies/{id}/prices/import-preview` is checked with `prices_read`, so any role that can read prices can run an import preview; saving or publishing still needs `prices_manage`. This looks like a gap and is recorded here, not changed.
+- `POST /api/companies/{id}/prices/import-preview` is checked with `prices_read`, so any role that can read prices can run an import preview; saving or publishing still needs `prices_manage`. This looks like a gap and is recorded here, not changed. The rebuilt app (`web/`, S4-7) does not carry the gap over: `POST /api/prices/import` needs `prices_manage`.
 - `POST /api/qr-tags` needs a signed-in member but no capability and no job.
 
 ## Feature switches that gate routes
@@ -65,9 +65,12 @@ Every route is `requireFlag('price_books', ...)`: a company without the flag ans
 | `GET /api/prices/versions`, `GET /api/prices/versions/{id}` | `prices_manage` | nothing |
 | `POST /api/prices/versions/{id}/restore` | `prices_manage` | the working copy only; audit `price_version_restored` |
 | `GET /api/prices/export` | `prices_manage` | nothing (CSV price list of the working copy) |
+| `POST /api/prices/import` | `prices_manage` (an estimator or office user is refused before the file is read) | the working copy only, never a version; audit `price_working_copy_imported`, none when the file changes no price; a stale revision answers 409 |
 | `GET /api/platform/companies/{companyId}/prices` | platform operator, read-only | audit `support_prices_viewed`, one per view |
 
 A refused request writes nothing, audit row included. Audit details hold ids, sequence numbers and counts, never a price or a reason.
+
+The import (S4-7) reads a CSV price list in the export's own columns and changes prices only: a line is matched to one price of the working copy by item, row, room type, band limit and tier, and its name, unit, trade, group and on/off columns must still match the working copy (those change in the editor). A cell starting with `=`, `+`, `-`, `@` or a tab is refused; every refusal names the line and column and never repeats the cell.
 
 ## Non-role access
 - **Anonymous**: `GET /health` and `GET /api/health` (status, schema version, release version, source commit). `GET /api/health/details` needs a signed-in member. In the rebuilt app (`web/`), also `GET /api/sign-in/{address}`: a company's name and sign-in tenant for its sign-in page, both public; an unknown, inactive, tenant-less or malformed address answers 404.

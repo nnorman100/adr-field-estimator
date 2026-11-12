@@ -76,6 +76,8 @@ export const MATRIX: readonly MatrixRow[] = [
     body: { expectedRevision: STALE, reason: 'Isolation check', publishKey: 'isolation-key-1', rangeChoice: 'single' },
   }),
   row(`${PRICES}/export`, 'GET', 'company', { self: true, own: 'list' }),
+  // A file with no price in it: refused or answered about the caller's own company, never applied.
+  row(`${PRICES}/import`, 'POST', 'company', { self: true, body: { expectedRevision: STALE, csv: 'item_id,code,name,group,trade,unit,enabled,row,room_type,up_to_sf,tier,price\r\n' } }),
   row(`${PRICES}/versions`, 'GET', 'company', { self: true, own: 'list' }),
   row(`${PRICES}/versions/[versionId]`, 'GET', 'company', { own: 'cross' }),
   row(`${PRICES}/versions/[versionId]/restore`, 'POST', 'company', { body: { expectedRevision: STALE }, own: 'cross' }),
