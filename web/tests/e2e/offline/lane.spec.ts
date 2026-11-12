@@ -4,8 +4,8 @@
 import { connect } from 'node:net';
 import { expect, test } from './fixture';
 
-const reachable = (url: string, ms = 2000) =>
-  fetch(url, { signal: AbortSignal.timeout(ms) }).then(
+const reachable = (url: string) =>
+  fetch(url, { signal: AbortSignal.timeout(2000) }).then(
     (response) => response.status,
     () => null,
   );
@@ -31,18 +31,6 @@ test.describe('the network lane', () => {
     expect(lane.refused('auth')).toBe(0);
     lane.restore(['firestore']);
     expect(await reachable(`http://${lane.firestoreHost}/`)).toBe(200);
-  });
-
-  test('a hang cut accepts the connection and never answers', async ({ lane }) => {
-    lane.cut(['app', 'auth', 'firestore'], 'hang');
-    for (const url of [`${lane.appUrl}/__harness/`, `http://${lane.authHost}/`, `http://${lane.firestoreHost}/`]) {
-      expect(await reachable(url, 1200)).toBeNull();
-    }
-    lane.restore();
-    // Connections that lived through a hang are dead and are reset, so a client's first try after
-    // the restore may fail, as a phone's does; the next one goes through.
-    await expect.poll(() => reachable(`${lane.appUrl}/__harness/`)).toBe(200);
-    await expect.poll(() => reachable(`http://${lane.firestoreHost}/`)).toBe(200);
   });
 
   test('a cut tears down a connection already open', async ({ lane }) => {

@@ -44,7 +44,7 @@ export class Phone {
   }
 
   // Starts the company's Firestore client under `key` (default "main").
-  start(world: Pick<World, 'tenantId'>, cache: CacheKind, key = 'main', extra: Pick<Boot, 'appName' | 'networkOff'> = {}) {
+  start(world: Pick<World, 'tenantId'>, cache: CacheKind, key = 'main', extra: Pick<Boot, 'networkOff'> = {}) {
     const boot: Boot = { config: browserConfig(this.lane), tenantId: world.tenantId, cache, ...extra };
     return this.call('open', key, boot);
   }

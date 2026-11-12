@@ -5,13 +5,12 @@
 // lane (lane.ts) next to the real app; it is never part of the app's own build.
 //
 // Every function returns plain JSON, so page.evaluate can carry the answer back.
-import { deleteApp, getApps, initializeApp } from 'firebase/app';
+import { getApps, initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, signInWithEmailAndPassword, signOut, type Auth } from 'firebase/auth';
 import {
   FirestoreError,
   clearIndexedDbPersistence,
   connectFirestoreEmulator,
-  deleteField,
   disableNetwork,
   doc,
   enableNetwork,
@@ -40,7 +39,7 @@ setLogLevel('silent');
 export type CacheKind = 'single' | 'multi' | 'memory';
 // `networkOff` switches the SDK's network off in the same tick the client is made, as the sync
 // gate will (S6-3), so nothing gets to start before it.
-export type Boot = { config: BrowserSignInConfig; tenantId: string; cache: CacheKind; appName?: string; networkOff?: boolean };
+export type Boot = { config: BrowserSignInConfig; tenantId: string; cache: CacheKind; networkOff?: boolean };
 export type OpState = { state: 'pending' | 'acked' | 'rejected'; code?: string };
 export type SnapshotEvent = {
   exists?: boolean;
@@ -50,7 +49,7 @@ export type SnapshotEvent = {
   error?: string;
 };
 
-type Entry = { db: Firestore; auth: Auth; appName: string };
+type Entry = { db: Firestore; auth: Auth };
 const entries = new Map<string, Entry>();
 const ops = new Map<string, OpState>();
 const listeners = new Map<string, { events: SnapshotEvent[]; stop: Unsubscribe }>();
@@ -69,7 +68,6 @@ function decode(value: unknown): unknown {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
     if (typeof record.__inc === 'number') return increment(record.__inc);
-    if (record.__delete === true) return deleteField();
     return Object.fromEntries(Object.entries(record).map(([k, v]) => [k, decode(v)]));
   }
   return value;
@@ -94,17 +92,13 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number, otherwise: T): Promise
   Promise.race([promise, new Promise<T>((done) => setTimeout(() => done(otherwise), ms))]);
 
 const h = {
-  userAgent: () => navigator.userAgent,
-  logLevel: (level: 'debug' | 'silent') => setLogLevel(level),
-
   // Starts a Firestore client for one company tenant, as the field screens will: an app named for
   // the tenant (firebase-client.ts does the same for Auth), its Auth set to the tenant, and the
   // field database with the chosen cache. Returns at once; nothing here waits for the network.
-  open(key: string, boot: Boot): { ok: true; ms: number } | { ok: false; error: string } {
-    const started = performance.now();
+  open(key: string, boot: Boot): { ok: true } | { ok: false; error: string } {
     try {
       const { config } = boot;
-      const appName = boot.appName ?? `dryscope-${boot.tenantId}`;
+      const appName = `dryscope-${boot.tenantId}`;
       const app = getApps().find((existing) => existing.name === appName) ?? initializeApp({ apiKey: config.apiKey, authDomain: config.authDomain, projectId: config.projectId }, appName);
       const auth = getAuth(app);
       auth.tenantId = boot.tenantId;
@@ -115,8 +109,8 @@ const h = {
         connectFirestoreEmulator(db, url.hostname, Number(url.port));
       }
       if (boot.networkOff) void disableNetwork(db);
-      entries.set(key, { db, auth, appName });
-      return { ok: true, ms: performance.now() - started };
+      entries.set(key, { db, auth });
+      return { ok: true };
     } catch (error) {
       return { ok: false, error: code(error) };
     }
@@ -139,9 +133,8 @@ const h = {
 
   // Writes, started and left running: the id says how each one ends. A write that is waiting
   // for the network stays `pending`.
-  set(key: string, path: string, data: Record<string, unknown>, merge = true): string {
-    const ref = doc(entry(key).db, path);
-    return track(merge ? setDoc(ref, decode(data) as DocumentData, { merge: true }) : setDoc(ref, decode(data) as DocumentData));
+  set(key: string, path: string, data: Record<string, unknown>): string {
+    return track(setDoc(doc(entry(key).db, path), decode(data) as DocumentData, { merge: true }));
   },
   // `data` keys may be dotted paths ("field.notes").
   update(key: string, path: string, data: Record<string, unknown>): string {
@@ -196,7 +189,6 @@ const h = {
       return code(error);
     }
   },
-  disableNetwork: (key: string) => disableNetwork(entry(key).db),
   enableNetwork: (key: string) => enableNetwork(entry(key).db),
   async terminate(key: string, ms = 5000): Promise<string> {
     const { db } = entry(key);
@@ -217,12 +209,6 @@ const h = {
     } catch (error) {
       return code(error);
     }
-  },
-  async deleteApp(key: string): Promise<void> {
-    const { appName } = entry(key);
-    entries.delete(key);
-    const app = getApps().find((existing) => existing.name === appName);
-    if (app) await deleteApp(app);
   },
 
   // What a hung IndexedDB looks like to the SDK: the request is made and never answers. Only the

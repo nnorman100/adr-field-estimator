@@ -16,10 +16,6 @@ import { FIRESTORE_EMULATOR_HOST } from './emulators';
 
 export type Target = 'app' | 'auth' | 'firestore';
 export const TARGETS: readonly Target[] = ['app', 'auth', 'firestore'];
-// `reset`: connections are refused or torn down at once, as when a phone loses its radio.
-// `hang`: connections are accepted and then say nothing, as in a tunnel with one bar.
-export type CutMode = 'reset' | 'hang';
-
 const LOOPBACK = '127.0.0.1';
 export const APP_PORT = 3100;
 
@@ -42,7 +38,7 @@ export type StaticFile = { type: string; body: string | Buffer };
 
 export class NetworkLane {
   private readonly sides = new Map<Target, Side>();
-  private readonly cuts = new Map<Target, CutMode>();
+  private readonly cuts = new Set<Target>();
   private readonly bytesAtCut = new Map<Target, number>();
   private statics = new Map<string, StaticFile>();
 
@@ -78,28 +74,20 @@ export class NetworkLane {
     return this.cuts.has(target);
   }
 
-  // Cuts the network for these targets (all of them by default): every open connection is torn
-  // down now, and a new one is refused (`reset`) or left silent (`hang`) until restore().
-  cut(targets: readonly Target[] = TARGETS, mode: CutMode = 'reset'): void {
+  // Cuts the network for these targets (all of them by default), as when a phone loses its radio:
+  // every open connection is torn down now, and a new one is refused until restore().
+  cut(targets: readonly Target[] = TARGETS): void {
     for (const target of targets) {
-      this.cuts.set(target, mode);
+      this.cuts.add(target);
       const side = this.side(target);
       this.bytesAtCut.set(target, side.bytes);
-      for (const socket of [...side.sockets]) {
-        if (mode === 'reset') socket.resetAndDestroy();
-      }
-      if (mode === 'reset') side.sockets.clear();
+      for (const socket of [...side.sockets]) socket.resetAndDestroy();
+      side.sockets.clear();
     }
   }
 
   restore(targets: readonly Target[] = TARGETS): void {
-    for (const target of targets) {
-      this.cuts.delete(target);
-      const side = this.side(target);
-      // Held connections of a `hang` cut carry nothing worth keeping.
-      for (const socket of [...side.sockets]) socket.resetAndDestroy();
-      side.sockets.clear();
-    }
+    for (const target of targets) this.cuts.delete(target);
   }
 
   // Connections that reached this side while it was cut.
@@ -134,15 +122,9 @@ export class NetworkLane {
 
   // Applies a cut to a connection that has just arrived. True when the caller must not forward it.
   private arrival(target: Target, socket: Socket, side: Side): boolean {
-    const mode = this.cuts.get(target);
-    if (!mode) return false;
+    if (!this.cuts.has(target)) return false;
     side.refused += 1;
-    if (mode === 'reset') socket.resetAndDestroy();
-    else {
-      side.sockets.add(socket);
-      socket.on('error', () => undefined);
-      socket.on('close', () => side.sockets.delete(socket));
-    }
+    socket.resetAndDestroy();
     return true;
   }
 
@@ -155,7 +137,6 @@ export class NetworkLane {
       side.sockets.add(behind);
       const forward = (from: Socket, to: Socket) => {
         from.on('data', (chunk) => {
-          if (this.cuts.get(target) === 'hang') return;
           side.bytes += chunk.length;
           to.write(chunk);
         });
@@ -183,8 +164,6 @@ export class NetworkLane {
   private listenApp(): Promise<void> {
     const side: Side = { server: undefined as unknown as HttpServer, port: 0, sockets: new Set(), refused: 0, bytes: 0 };
     const server = createHttpServer((req, res) => {
-      // A `hang` cut holds the connection and answers nothing.
-      if (this.cuts.get('app') === 'hang') return;
       const own = this.statics.get(new URL(req.url ?? '/', 'http://lane').pathname);
       if (own) {
         res.writeHead(200, { 'Content-Type': own.type, 'Cache-Control': 'no-store' });

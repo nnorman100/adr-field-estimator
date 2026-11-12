@@ -126,26 +126,34 @@ test.describe('a write the rules refuse (S6-1 b)', () => {
   // after a restart, in Chromium and WebKit, against the emulator. An absolute value is the same
   // however many times it lands. If this test starts to fail, the SDK or the emulator changed:
   // re-read it before relaxing anything.
-  test('an increment queued behind a refused write is applied twice (so edits are absolute values)', async ({ browser, lane }) => {
-    const context = await browser.newContext();
-    const world = await seedCompany();
-    const other = `${world.draftPath}-other`;
-    await adminDb().doc(other).set({ fieldOwnerUid: world.owner.uid, state: 'editing', field: { airMovers: 0 } });
-    const phone = await Phone.open(context, lane);
-    await phone.start(world, 'single');
-    await phone.signIn(world.owner);
-    for (const path of [world.draftPath, other]) {
-      const id = await phone.call('listen', 'main', path);
-      await expect.poll(async () => (await phone.call('events', id)).some((e) => e.fromCache === false)).toBe(true);
-    }
-    lane.cut(['auth', 'firestore']);
-    await phone.call('update', 'main', world.draftPath, { 'field.notes': 'first, will be refused' });
-    await phone.call('update', 'main', other, { 'field.airMovers': { __inc: 1 } });
-    await expect.poll(async () => (await phone.call('readCache', 'main', other)).hasPendingWrites).toBe(true);
-    await expectNothingSent(lane);
-    await fenceDraft(world);
-    lane.restore(['auth', 'firestore']);
-    await expect.poll(async () => (await adminDb().doc(other).get()).data()?.field, { timeout: 45_000 }).toMatchObject({ airMovers: 2 });
-    await context.close();
-  });
+  for (const restart of [false, true]) {
+    test(`an increment queued behind a refused write is applied twice ${restart ? 'after a restart' : 'with the page alive'} (so edits are absolute values)`, async ({ browser, lane }) => {
+      const context = await browser.newContext();
+      const world = await seedCompany();
+      const other = `${world.draftPath}-other`;
+      await adminDb().doc(other).set({ fieldOwnerUid: world.owner.uid, state: 'editing', field: { airMovers: 0 } });
+      let phone = await Phone.open(context, lane);
+      await phone.start(world, 'single');
+      await phone.signIn(world.owner);
+      for (const path of [world.draftPath, other]) {
+        const id = await phone.call('listen', 'main', path);
+        await expect.poll(async () => (await phone.call('events', id)).some((e) => e.fromCache === false)).toBe(true);
+      }
+      lane.cut(['auth', 'firestore']);
+      await phone.call('update', 'main', world.draftPath, { 'field.notes': 'first, will be refused' });
+      await phone.call('update', 'main', other, { 'field.airMovers': { __inc: 1 } });
+      await expect.poll(async () => (await phone.call('readCache', 'main', other)).hasPendingWrites).toBe(true);
+      await expectNothingSent(lane);
+      await fenceDraft(world);
+      if (restart) {
+        phone = await phone.restart(context);
+        await phone.start(world, 'single');
+        expect(await phone.call('uid', 'main')).toBe(world.owner.uid);
+        await phone.call('listen', 'main', other);
+      }
+      lane.restore(['auth', 'firestore']);
+      await expect.poll(async () => (await adminDb().doc(other).get()).data()?.field, { timeout: 45_000 }).toMatchObject({ airMovers: 2 });
+      await context.close();
+    });
+  }
 });

@@ -23,14 +23,18 @@ test.describe('a write made offline (S6-1 a)', () => {
     await expect.poll(async () => (await phone.call('readCache', 'main', world.draftPath)).hasPendingWrites).toBe(true);
     await expectNothingSent(lane);
 
-    // The page is reloaded: its memory is gone, the phone's storage is not.
-    phone = await phone.restart(context);
-    expect(await phone.start(world, 'single')).toMatchObject({ ok: true });
-    expect(await phone.call('uid', 'main')).toBe(world.owner.uid);
-    const kept = await phone.call('readCache', 'main', world.draftPath);
-    expect(kept).toMatchObject({ exists: true, fromCache: true, hasPendingWrites: true });
-    expect(kept.data?.field).toMatchObject({ airMovers: 1 });
-    expect((await readDraft(world)).field.airMovers).toBe(0);
+    // The window ends both ways a window can, a reload and then a close followed by a new window:
+    // its memory goes each time, the phone's storage does not.
+    for (const end of ['reload', 'close and reopen'] as const) {
+      if (end === 'reload') await phone.reload();
+      else phone = await phone.restart(context);
+      expect(await phone.start(world, 'single')).toMatchObject({ ok: true });
+      expect(await phone.call('uid', 'main')).toBe(world.owner.uid);
+      const kept = await phone.call('readCache', 'main', world.draftPath);
+      expect(kept, `after a ${end}`).toMatchObject({ exists: true, fromCache: true, hasPendingWrites: true });
+      expect(kept.data?.field).toMatchObject({ airMovers: 1 });
+      expect((await readDraft(world)).field.airMovers).toBe(0);
+    }
 
     lane.restore(['auth', 'firestore']);
     await expect.poll(() => phone.call('waitPending', 'main', 4000), { timeout: 45_000 }).toBe('done');
@@ -81,12 +85,12 @@ test.describe('the network switched off at start-up (S6-1 f)', () => {
     // Before the first listen is answered, nothing has reached the server: the cache is empty.
     const write = await phone.call('set', 'main', world.draftPath, { field: { airMovers: { __inc: 1 } } });
     expect(await phone.call('waitPending', 'main', 2500)).toBe('timeout');
-    expect((await readDraft(world)).field.airMovers).toBe(0);
+    await expectWithheld(async () => (await readDraft(world)).field.airMovers === 0);
     expect(await phone.call('op', write)).toEqual({ state: 'pending' });
     expect((await phone.call('events', listener)).every((event) => event.fromCache !== false)).toBe(true);
 
     await phone.call('enableNetwork', 'main');
-    await expect.poll(() => phone.call('op', write), { timeout: 20_000 }).toEqual({ state: 'acked' });
+    await expect.poll(() => phone.call('op', write), { timeout: SEND_MS }).toEqual({ state: 'acked' });
     expect((await readDraft(world)).field.airMovers).toBe(1);
     await context.close();
   });
@@ -111,10 +115,10 @@ test.describe('the network switched off at start-up (S6-1 f)', () => {
     await phone.call('uid', 'main');
     await phone.call('listen', 'main', world.draftPath);
     expect(await phone.call('waitPending', 'main', 4000)).toBe('timeout');
-    expect((await readDraft(world)).field.airMovers).toBe(0);
+    await expectWithheld(async () => (await readDraft(world)).field.airMovers === 0);
 
     await phone.call('enableNetwork', 'main');
-    await expect.poll(async () => (await readDraft(world)).field.airMovers, { timeout: 20_000 }).toBe(1);
+    await expect.poll(async () => (await readDraft(world)).field.airMovers, { timeout: SEND_MS }).toBe(1);
     await context.close();
   });
 });

@@ -38,7 +38,7 @@ const HOUR = 60 * 60 * 1000;
 
 // `roles` sets a role for a named person (estimator by default). The first person owns the draft.
 export async function seedCompany(
-  options: { people?: string[]; roles?: Record<string, 'owner' | 'estimator' | 'office'>; expiresInMs?: number } = {},
+  options: { people?: string[]; roles?: Record<string, 'owner' | 'estimator' | 'office'> } = {},
 ): Promise<World> {
   const run = randomUUID().slice(0, 8);
   const tenantId = await createTenant(`offline-${run}`);
@@ -55,17 +55,17 @@ export async function seedCompany(
   const db = adminDb();
   await db.doc(`companies/${companyId}`).set({ authTenantId: tenantId });
   for (const person of Object.values(people)) {
-    await grantAccess(companyId, person, options.roles?.[person.name] ?? 'estimator', options.expiresInMs ?? 24 * HOUR);
+    await grantAccess(companyId, person, options.roles?.[person.name] ?? 'estimator');
   }
   const draftPath = `companies/${companyId}/drafts/${draftId}`;
   await db.doc(draftPath).set({ fieldOwnerUid: owner.uid, state: 'editing', field: { airMovers: 0 } });
   return { companyId, tenantId, draftId, owner, people, draftPath };
 }
 
-export async function grantAccess(companyId: string, person: Person, role: 'owner' | 'estimator' | 'office', expiresInMs: number): Promise<void> {
+async function grantAccess(companyId: string, person: Person, role: 'owner' | 'estimator' | 'office'): Promise<void> {
   await adminDb()
     .doc(`companies/${companyId}/access/${person.uid}`)
-    .set({ role, expiresAt: Timestamp.fromMillis(Date.now() + expiresInMs) });
+    .set({ role, expiresAt: Timestamp.fromMillis(Date.now() + 24 * HOUR) });
 }
 
 export async function removeAccess(companyId: string, person: Person): Promise<void> {
@@ -86,10 +86,6 @@ export async function readDraft(world: Pick<World, 'draftPath'>): Promise<{ stat
 }
 
 // What the server does when a job is finished: the draft stops being editable.
-export async function fenceDraft(world: Pick<World, 'draftPath'>, state: 'submitting' | 'submitted' = 'submitted'): Promise<void> {
-  await adminDb().doc(world.draftPath).update({ state });
-}
-
-export async function setServerDraftField(world: Pick<World, 'draftPath'>, field: Record<string, unknown>): Promise<void> {
-  await adminDb().doc(world.draftPath).update({ field });
+export async function fenceDraft(world: Pick<World, 'draftPath'>): Promise<void> {
+  await adminDb().doc(world.draftPath).update({ state: 'submitted' });
 }
