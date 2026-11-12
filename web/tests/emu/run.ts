@@ -29,6 +29,15 @@ try {
 }
 process.on('exit', release);
 
+// Test files to run instead of all of tests/emu (`npm run test:isolation`). They join a command
+// line the Firebase CLI runs through a shell, so only plain relative test-file paths are accepted.
+const files = process.argv.slice(2);
+if (files.some((file) => !/^tests\/emu\/[A-Za-z0-9_./-]+\.test\.ts$/.test(file) || file.includes('..'))) {
+  console.error('Test files for test:emu must be paths like tests/emu/rules/example.test.ts');
+  release();
+  process.exit(2);
+}
+
 const child = spawn(
   'npx',
   [
@@ -41,7 +50,7 @@ const child = spawn(
     projectId,
     '--config',
     'firebase.json',
-    'npx vitest run --config vitest.emu.config.ts',
+    ['npx vitest run --config vitest.emu.config.ts', ...files].join(' '),
   ],
   { cwd: webDir, stdio: 'inherit' },
 );

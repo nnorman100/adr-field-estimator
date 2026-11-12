@@ -72,8 +72,42 @@ jobs:
       - run: npm ci
       - run: npm run test:emu
 
+  # The company-isolation gate (S3-17): two companies in two tenants, every route called with the
+  # other's ids, SQL as the runtime role and the Firestore rules (docs/ACCESS.md, "Company isolation
+  # gate"). It also runs inside `database` and `emulators`; this job gives it a check of its own.
+  # `check` below fails when this job does, so that check cannot pass without it.
+  company-isolation:
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 25
+    env:
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Same PostgreSQL 16 setup as the database job, and Java 21 for the Firestore emulator.
+      - name: Install PostgreSQL 16 when there is no Docker daemon
+        run: |
+          if ! docker version --format '{{.Server.Version}}' > /dev/null 2>&1 &&
+            [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo mkdir -p /etc/postgresql-common
+            echo 'create_main_cluster = false' | sudo tee /etc/postgresql-common/createcluster.conf > /dev/null
+            sudo apt-get update -q
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+              -o Dpkg::Options::=--force-confold postgresql-16
+          fi
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run test:isolation
+
   check:
-    needs: [database, emulators]
+    needs: [database, emulators, company-isolation]
     if: always() && !cancelled()
     runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
     timeout-minutes: 15
@@ -83,6 +117,8 @@ jobs:
         run: test "${{ needs.database.result }}" = "success"
       - name: Require the emulator job
         run: test "${{ needs.emulators.result }}" = "success"
+      - name: Require the company-isolation job
+        run: test "${{ needs.company-isolation.result }}" = "success"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: lts/*
