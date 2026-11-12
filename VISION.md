@@ -2,7 +2,7 @@
 
 `adr-field-estimator` exists so that a restoration technician can walk a water or mold loss once, talking and photographing as they go, and leave with an estimate the company can sign, defend and carry out.
 It serves Alert Disaster Restoration first, and other restoration companies in any state as paying subscribers in isolated company workspaces.
-It turns a confirmed inspection - rooms, measurements, categories, equipment, photos and the walkthrough recording - into four documents: a proposal with a low-high estimate, an itemized claim, a scope defense letter and a photo moisture log.
+It turns a confirmed inspection - rooms, measurements, categories, equipment, photos and the walkthrough transcript - into four documents: a proposal with a low-high estimate, an itemized claim, a scope defense letter and a photo moisture log.
 It owns exactly one thing: the path from one water or mold loss inspection to a signed, priced, evidence-backed agreement, delivered to the people who need it and scheduled into drying work.
 
 ## Prices come from the company's own price book
@@ -28,7 +28,7 @@ Audits and signatures bind to a saved revision and proposal hash, and any later 
 A homeowner may sign on site or from their own phone through a link, under the same revision and hash binding (the link signs as the technician who sent it, works once, expires after 7 days and stops working on any edit; it is shared by QR code, copied link or the phone's share sheet, delivery behavior is described in [document delivery](docs/company-workspaces.md#document-delivery)).
 Success is shown only after a durable server receipt.
 After signing, office staff may correct address, name and contact fields without re-signing, and each correction is recorded in an audit entry naming who changed what.
-Everything else in a signed agreement, its documents, its evidence and the walkthrough recording never changes; later coordination lives in separate sidecars.
+Everything else in a signed agreement, its documents, its evidence and the walkthrough transcript never changes; later coordination lives in separate sidecars.
 
 ## The agreement reaches everyone it involves
 
