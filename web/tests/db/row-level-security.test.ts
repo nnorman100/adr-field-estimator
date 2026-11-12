@@ -237,6 +237,8 @@ describe('runtime role and row-level security (migration 0003)', () => {
       invitations: ['INSERT', 'SELECT', 'UPDATE'],
       memberships: ['INSERT', 'SELECT', 'UPDATE'],
       platform_admins: ['SELECT'],
+      price_table_versions: ['INSERT', 'SELECT'],
+      price_table_working_copies: ['INSERT', 'SELECT'],
     });
   });
 
@@ -491,7 +493,7 @@ describe('runtime role and row-level security (migration 0003)', () => {
     const migrator = connect(MIGRATOR, migratorPassword);
     try {
       expect(await migrator`SELECT * FROM companies`).toHaveLength(0);
-      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(8);
+      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(9);
     } finally {
       await migrator.end({ timeout: 5 });
     }
