@@ -160,3 +160,20 @@ export function matrixProblems(found: readonly FoundHandler[], matrix: readonly 
   }
   return problems;
 }
+
+// The path with every [name] filled in from `ids`, as the framework would hand it to the handler. A
+// name that `ids` does not have is an error, not a made-up id: a route with a new path parameter
+// must be given the other company's value for it before the suite can call it.
+export function pathFor(route: string, ids: Readonly<Record<string, string>>): string {
+  return `/${route}`.replace(/\[([A-Za-z]+)\]/g, (_match, name: string) => {
+    const value = ids[name];
+    if (value === undefined) throw new Error(`${route} has the path parameter [${name}], which the isolation suite has no id for (web/tests/db/company-isolation.test.ts, idsOf)`);
+    return value;
+  });
+}
+
+// One call the suite made: who, which handler, and the path it was given.
+export const callKey = (who: string, method: string, path: string) => `${who} ${method} ${path}`;
+
+// The calls that were expected and were not made, so a handler the loop skipped fails by name.
+export const uncalled = (expected: readonly string[], made: ReadonlySet<string>): string[] => expected.filter((key) => !made.has(key));
