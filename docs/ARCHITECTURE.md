@@ -107,7 +107,7 @@ The accepted rebuild's future authority boundaries and submit fence are in [Data
 
 ## Product rules (moved from AGENTS.md)
 
-Moved here on Nov 12, 2026 when `AGENTS.md` became a link to `CLAUDE.md`. `CLAUDE.md` points here. Section numbers are the old `AGENTS.md` numbers.
+Moved here on Nov 12, 2026 when `AGENTS.md` was rewritten as the short agent instructions (`CLAUDE.md` imports it). `AGENTS.md` points here. Section numbers are the old `AGENTS.md` numbers.
 
 ### 1. Project Mission & Identity
 
