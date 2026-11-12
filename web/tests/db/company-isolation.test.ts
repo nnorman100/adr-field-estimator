@@ -230,9 +230,10 @@ const OPEN: Record<string, OpenCheck> = {
     expect(answer.status, where).toBe(200);
     expect(leaks(answer.text, victim), where).toEqual([]);
   },
-  'POST api/echo': (answer, where) => {
+  'POST api/echo': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(200);
     expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
+    expect(leaks(answer.text, victim), where).toEqual([]);
   },
 };
 
