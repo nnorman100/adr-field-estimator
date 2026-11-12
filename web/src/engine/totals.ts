@@ -1,15 +1,13 @@
 // Low and high ends of a v3 estimate. Summary amounts are decimal strings; cents use HALF_UP once.
 
 import {
-  addMix,
   adjustments,
   exemptCharged,
   mixOf,
   minimumTotal,
-  scaleMix,
+  settle,
   tradeMinimums,
   type Entry,
-  type Mix,
   type TradeMinimum,
 } from './adjust';
 import { Dec, HUNDRED, ONE, ZERO, maxDec, minDec, money, percentText, sumDec } from './decimal';
@@ -170,10 +168,6 @@ function topShares(rows: AreaRow[], first: Dec): Map<number, Dec> {
   return shares;
 }
 
-function topDollars(shares: Map<number, Dec>): Dec {
-  return sumDec([...shares.values()], ZERO);
-}
-
 function cushionRows(lines: PriceLine[], policy: Policy): AreaRow[] {
   const wasteCounts = policy.area_basis === 'demolition_with_waste';
   return lines.map((line) => {
@@ -191,22 +185,21 @@ function bandFor(bands: CushionBand[], area: Dec): CushionBand {
 }
 
 /**
- * The cushion's high labor, and each labor line's own grown amount by the same rules: the dearest square feet at
- * their band's percent, the rest of the area at the later percents, other labor at the first percent, and in
- * whole-job mode every line at the job's one percent. The total is rounded once, as before.
+ * Each labor line's own grown amount, unrounded: the dearest square feet at their band's percent, the rest of the
+ * area at the later percents, other labor at the first percent, and in whole-job mode every line at the job's one
+ * percent. `settle` puts the amounts into cents.
  */
-function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLine[]): { labor: Dec; laborEntries: Entry[] } {
+function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLine[]): Entry[] {
   const areaLines = labor.filter((line) => line.area !== null);
-  const otherLines = labor.filter((line) => line.area === null);
-  const areaDollars = sumDec(areaLines.map((line) => line.total), ZERO);
-  const otherDollars = sumDec(otherLines.map((line) => line.total), ZERO);
   const bands = cushionBrackets(policy);
   const areas = cushionRows(areaLines, policy);
-  const grownBy = (lines: PriceLine[], percent: Dec): Entry[] =>
-    lines.map((line) => ({ line, amount: line.total.mul(ONE.add(percent)) }));
+  const inPricedOrder = (areaAmounts: Dec[], otherPercent: Dec): Entry[] => {
+    const byLine = new Map(areaLines.map((line, index) => [line, areaAmounts[index] ?? line.total]));
+    return labor.map((line) => ({ line, amount: byLine.get(line) ?? line.total.mul(ONE.add(otherPercent)) }));
+  };
   if (policy.bracket_mode === 'whole-job') {
     const percent = Dec.parse(bandFor(bands, jobSf(data, items, policy)).percent).div(HUNDRED);
-    return { labor: money(areaDollars.add(otherDollars).mul(ONE.add(percent))), laborEntries: grownBy(labor, percent) };
+    return labor.map((line) => ({ line, amount: line.total.mul(ONE.add(percent)) }));
   }
   const firstBand = bands[0];
   const secondBand = bands[1];
@@ -215,22 +208,11 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
     const beyond = Dec.parse(secondBand.percent).div(HUNDRED);
     if (firstBand.up_to_sf === null) throw new Error('cushion');
     const shares = topShares(areas, Dec.fromInt(firstBand.up_to_sf));
-    const top = topDollars(shares);
-    return {
-      labor: money(
-        ONE.add(beyond).mul(areaDollars).add(first.sub(beyond).mul(top)).add(ONE.add(first).mul(otherDollars)),
-      ),
-      laborEntries: [
-        ...areaLines.map((line, index) => ({
-          line,
-          amount: ONE.add(beyond).mul(line.total).add(first.sub(beyond).mul(shares.get(index) ?? ZERO)),
-        })),
-        ...grownBy(otherLines, first),
-      ],
-    };
+    return inPricedOrder(
+      areaLines.map((line, index) => ONE.add(beyond).mul(line.total).add(first.sub(beyond).mul(shares.get(index) ?? ZERO))),
+      first,
+    );
   }
-  let previous = ZERO;
-  let allowance = ZERO;
   let previousShares = new Map<number, Dec>();
   const allowances = areaLines.map(() => ZERO);
   for (const band of bands) {
@@ -238,9 +220,6 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
       band.up_to_sf === null
         ? new Map(areas.map((row, index) => [index, row.total]))
         : topShares(areas, Dec.fromInt(band.up_to_sf));
-    const top = band.up_to_sf === null ? sumDec(areas.map((row) => row.total), ZERO) : topDollars(shares);
-    allowance = allowance.add(top.sub(previous).mul(Dec.parse(band.percent)).div(HUNDRED));
-    previous = top;
     areas.forEach((_, index) => {
       const added = (shares.get(index) ?? ZERO).sub(previousShares.get(index) ?? ZERO);
       allowances[index] = (allowances[index] ?? ZERO).add(added.mul(Dec.parse(band.percent)).div(HUNDRED));
@@ -248,19 +227,15 @@ function cushion(data: Inspection, policy: Policy, items: Item[], labor: PriceLi
     previousShares = shares;
   }
   const firstPercent = Dec.parse(firstBand?.percent ?? '0').div(HUNDRED);
-  return {
-    labor: money(areaDollars.add(allowance).add(ONE.add(firstPercent).mul(otherDollars))),
-    laborEntries: [
-      ...areaLines.map((line, index) => ({ line, amount: line.total.add(allowances[index] ?? ZERO) })),
-      ...grownBy(otherLines, firstPercent),
-    ],
-  };
+  return inPricedOrder(
+    areaLines.map((line, index) => line.total.add(allowances[index] ?? ZERO)),
+    firstPercent,
+  );
 }
 
+/** The high end's labor lines at their grown amounts, unrounded, and its equipment lines, which are whole cents. */
 function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: Policy): {
-  labor: Dec;
   laborEntries: Entry[];
-  equipment: Dec;
   equipmentEntries: Entry[];
 } {
   const percents = roomPercents(data, policy);
@@ -292,9 +267,7 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
   }
   for (const row of bracketed.values()) laborEntries.push({ line: row.line, amount: money(row.amount) });
   return {
-    labor: money(sumDec(laborEntries.map((entry) => entry.amount), ZERO)),
     laborEntries,
-    equipment: sumBucket(high, 'equipment'),
     equipmentEntries: high.filter((line) => line.bucket === 'equipment').map((line) => ({ line, amount: line.total })),
   };
 }
@@ -302,32 +275,25 @@ function uncertain(data: Inspection, lines: PriceLine[], items: Item[], policy: 
 export function computeTotals(data: Inspection, lines: PriceLine[], policy: Policy, items: Item[], trades: Trade[] = []): Totals {
   const missing = [...new Set(lines.filter((line) => !BUCKETS.has(line.bucket)).map((line) => line.code))].sort();
   if (missing.length) throw new Error(`Priced codes missing from the estimate range: ${missing}`);
-  const fixed = sumBucket(lines, 'fixed');
-  const equipment = sumBucket(lines, 'equipment');
   const labor = lines.filter((line) => line.bucket === 'labor_material');
-  const areaDollars = sumDec(labor.filter((line) => line.area !== null).map((line) => line.total), ZERO);
-  const otherDollars = sumDec(labor.filter((line) => line.area === null).map((line) => line.total), ZERO);
-  const lowLabor = areaDollars.add(otherDollars);
-  if (fixed.add(equipment).add(lowLabor).cmp(ZERO) <= 0) {
+  const lowLabor = sumBucket(labor, 'labor_material');
+  if (sumDec(lines.map((line) => line.total), ZERO).cmp(ZERO) <= 0) {
     throw new Error('The priced scope totals $0.00. Enter at least one quantity or room measurement before auditing.');
   }
   const uncertainEnd = policy.assist.range_method === 'uncertainty' ? uncertain(data, lines, items, policy) : null;
-  const grown = uncertainEnd ?? cushion(data, policy, items, labor);
-  const highLaborAmount = grown.labor;
   const multiplier = data.isAfterHours ? Dec.parse(policy.after_hours.multiplier) : ONE;
   const overhead = Dec.parse(policy.overhead_profit_percent).div(HUNDRED);
   const taxRate = policy.sales_tax.enabled ? Dec.parse(policy.sales_tax.percent).div(HUNDRED) : ZERO;
   const minimum = Dec.parse(policy.minimum_job_charge);
-  const mixOfLines = (list: PriceLine[]): Mix =>
-    mixOf(list.map((line) => ({ line, amount: line.total })), multiplier, overhead);
-  const fixedMix = mixOfLines(lines.filter((line) => line.bucket === 'fixed'));
-  const equipmentMix = mixOfLines(lines.filter((line) => line.bucket === 'equipment'));
-  const laborMix = mixOfLines(labor);
-  // One end of the range. The multiplier applies to flagged items only; an item that is exempt from overhead
-  // and profit is left out of its base and out of what a minimum compares; a taxable item adds its materials
-  // share to the tax base. A minimum line is never short by a cent that rounds away, so `short` is exact.
-  const end = (laborAmount: Dec, equipmentAmount: Dec, mix: Mix): { end: End; short: boolean } => {
-    const subtotal = fixed.add(equipmentAmount).add(laborAmount);
+  const entriesOf = (list: PriceLine[]): Entry[] => list.map((line) => ({ line, amount: line.total }));
+  // One end of the range, from the amount each of its lines is billed at: the line total at the low end, the
+  // grown amount at the high end. Both ends run this one path, so the high end is priced like the low end. The
+  // multiplier applies to flagged items only; an item that is exempt from overhead and profit is left out of its
+  // base and out of what a minimum compares; a taxable item adds its materials share to the tax base, and the
+  // rate is applied once to that base. A minimum line is never short by a cent that rounds away, so `short` is exact.
+  const end = (entries: Entry[]): { end: End; short: boolean } => {
+    const subtotal = sumDec(entries.map((entry) => entry.amount), ZERO);
+    const mix = mixOf(entries, multiplier, overhead);
     const adjusted = adjustments(mix, multiplier);
     const adjustment = adjusted.total;
     const owed = tradeMinimums(trades, mix, adjusted);
@@ -349,36 +315,22 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
       },
     };
   };
-  const low = end(lowLabor, equipment, addMix(addMix(fixedMix, equipmentMix), laborMix)).end;
+  const low = end(entriesOf(lines)).end;
+  // Each labor line's grown amount in whole cents. Fixed lines stay as they are; equipment lines stay too, except
+  // under the uncertainty method, which prices them again at its own counts.
+  const grownLabor = settle(uncertainEnd ? uncertainEnd.laborEntries : cushion(data, policy, items, labor));
+  const highLaborAmount = sumDec(grownLabor.map((entry) => entry.amount), ZERO);
   let high: End | null = null;
   if (policy.estimate_mode === 'range') {
-    // Each labor line grows by its own amount, and the high end bills the share of that growth the rounded high
-    // labor bills; the flagged, exempt, trade and tax sums are taken from those amounts.
-    const grownLabor = sumDec(grown.laborEntries.map((entry) => entry.amount), ZERO);
-    const growth = grownLabor.sub(lowLabor);
-    const share = growth.isZero() ? ZERO : highLaborAmount.sub(lowLabor).div(growth);
-    const laborHigh = scaleMix(mixOf(grown.laborEntries, multiplier, overhead), laborMix, share);
-    const highMix = addMix(
-      addMix(fixedMix, uncertainEnd ? mixOf(uncertainEnd.equipmentEntries, multiplier, overhead) : equipmentMix),
-      laborHigh,
-    );
-    const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
+    const candidate = end([
+      ...entriesOf(lines.filter((line) => line.bucket === 'fixed')),
+      ...(uncertainEnd ? uncertainEnd.equipmentEntries : entriesOf(lines.filter((line) => line.bucket === 'equipment'))),
+      ...grownLabor,
+    ]);
     // A high end still under the job minimum is the low end unless it charges more before tax: it is not
-    // floored on its own, but growth in items billed beyond the minimum still raises it. Trade minimum lines
-    // measured on fractions of a cent can round the high end below the low end; the last one takes the gap.
+    // floored on its own, but growth in items billed beyond the minimum still raises it.
     const beforeTax = (value: End): Dec => value.total.sub(value.tax);
-    const kept = !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0);
-    const owed = candidate.end.tradeMinimums;
-    const last = owed[owed.length - 1];
-    const gap = low.total.sub(candidate.end.total);
-    if (!kept) high = { ...low };
-    else if (last && gap.cmp(ZERO) > 0) {
-      high = {
-        ...candidate.end,
-        tradeMinimums: [...owed.slice(0, -1), { ...last, amount: last.amount.add(gap) }],
-        total: low.total,
-      };
-    } else high = candidate.end;
+    high = candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0 ? { ...low } : candidate.end;
   }
   return {
     mode: policy.estimate_mode,

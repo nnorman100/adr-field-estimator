@@ -13,8 +13,7 @@ const EXEMPT = '\u0000exempt';
 const OPEN = '\u0000open';
 
 /**
- * Sums over the lines at one end. Every field is linear in the line amounts, so the high end can bill the
- * growth of its labor lines in proportion to the rounded high labor.
+ * Sums over the lines at one end, from the amount each line is billed at there.
  * - `flagged`: amounts of lines that take the after-hours multiplier, by the group its adjustment rounds in.
  * - `exempt`: amounts of lines that carry no overhead and profit.
  * - `taxed`: the tax base, each taxable line's materials share at the multiplier, plus its share of overhead
@@ -49,29 +48,21 @@ export function mixOf(entries: Entry[], multiplier: Dec, overhead: Dec): Mix {
   return mix;
 }
 
-export function addMix(left: Mix, right: Mix): Mix {
-  const flagged = new Map(left.flagged);
-  for (const [group, amount] of right.flagged) plus(flagged, group, amount);
-  const trades = new Map(left.trades);
-  for (const [trade, amount] of right.trades) plus(trades, trade, amount);
-  return { flagged, exempt: left.exempt.add(right.exempt), taxed: left.taxed.add(right.taxed), trades };
-}
-
 /**
- * The high end's labor mix: each sum at the low end plus `share` of its growth, where `share` is the part of the
- * grown labor's growth that the rounded high labor bills. A line that does not grow keeps its low amount, so no sum
- * falls below the low end's.
+ * A line's high-end amount in whole cents, as every low-end line is. The grown amounts are rounded together
+ * once, as the high labor is, and each line takes the step in that running total, so the lines add up to the
+ * rounded total. A line that does not grow keeps its low amount exactly, and none ends below it: low amounts
+ * are whole cents, so the step is at least the low amount.
  */
-export function scaleMix(grown: Mix, low: Mix, share: Dec): Mix {
-  const between = (from: Dec, to: Dec): Dec => from.add(to.sub(from).mul(share));
-  const both = (from: Map<string, Dec>, to: Map<string, Dec>): Map<string, Dec> =>
-    new Map([...new Set([...from.keys(), ...to.keys()])].map((key) => [key, between(from.get(key) ?? ZERO, to.get(key) ?? ZERO)]));
-  return {
-    flagged: both(low.flagged, grown.flagged),
-    exempt: between(low.exempt, grown.exempt),
-    taxed: between(low.taxed, grown.taxed),
-    trades: both(low.trades, grown.trades),
-  };
+export function settle(entries: Entry[]): Entry[] {
+  let exact = ZERO;
+  let billed = ZERO;
+  return entries.map(({ line, amount }) => {
+    exact = exact.add(amount);
+    const cents = money(exact).sub(billed);
+    billed = billed.add(cents);
+    return { line, amount: cents };
+  });
 }
 
 /**
