@@ -7,8 +7,14 @@ import { dirname, join } from 'node:path';
 import { constants } from 'node:fs';
 import { promisify } from 'node:util';
 import postgres from 'postgres';
+import { inject } from 'vitest';
+import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 
 const exec = promisify(execFile);
+
+// A throwaway server never has to survive a crash, and several test files share one server, so it
+// trades durability for speed and allows more connections than the default 100.
+const SERVER_SETTINGS = ['fsync=off', 'synchronous_commit=off', 'full_page_writes=off', 'max_connections=300'];
 const DISCARD_NAME = /^dryscope_discard_[a-f0-9]{16}$/;
 
 export type DisposablePostgres = {
@@ -163,6 +169,7 @@ async function startDockerPostgres(): Promise<{ databaseUrl: string; stop: () =>
       '-p',
       '127.0.0.1::5432',
       'postgres:16',
+      ...SERVER_SETTINGS.flatMap((setting) => ['-c', setting]),
     ],
     { timeoutMs: 90_000 },
   );
@@ -230,7 +237,12 @@ async function startPgCtlPostgres(): Promise<{ databaseUrl: string; stop: () => 
           '30',
           'start',
           '-o',
-          `-c listen_addresses=127.0.0.1 -c port=${port} -c unix_socket_directories=${dataDir}`,
+          [
+            '-c listen_addresses=127.0.0.1',
+            `-c port=${port}`,
+            `-c unix_socket_directories=${dataDir}`,
+            ...SERVER_SETTINGS.map((setting) => `-c ${setting}`),
+          ].join(' '),
         ],
         { asPostgres: asRoot, timeoutMs: 40_000 },
       );
@@ -249,7 +261,7 @@ async function startPgCtlPostgres(): Promise<{ databaseUrl: string; stop: () => 
   }
 }
 
-async function startOwnedServer(): Promise<{ databaseUrl: string; stop: () => Promise<void> }> {
+export async function startOwnedServer(): Promise<{ databaseUrl: string; stop: () => Promise<void> }> {
   const errors: string[] = [];
   if (await dockerAvailable()) {
     try {
@@ -268,13 +280,13 @@ async function startOwnedServer(): Promise<{ databaseUrl: string; stop: () => Pr
   );
 }
 
-function databaseUrlFor(base: string, database: string): string {
+export function databaseUrlFor(base: string, database: string): string {
   const url = new URL(base);
   url.pathname = `/${database}`;
   return url.toString();
 }
 
-async function createDiscardDatabase(adminUrl: string): Promise<{
+export async function createDiscardDatabase(adminUrl: string): Promise<{
   databaseName: string;
   databaseUrl: string;
   drop: () => Promise<void>;
@@ -300,12 +312,21 @@ async function createDiscardDatabase(adminUrl: string): Promise<{
   };
 }
 
+export type StartOptions = {
+  // Start a server this caller owns even when the run provides a shared one, for a file whose
+  // tests change what a whole server holds (its roles).
+  ownServer?: boolean;
+};
+
 export async function startDisposablePostgres(
   env: Record<string, string | undefined> = process.env,
+  options: StartOptions = {},
 ): Promise<DisposablePostgres> {
   assertHarnessAllowed(env);
-  const owned = env.DATABASE_URL ? null : await startOwnedServer();
-  const adminUrl = env.DATABASE_URL ?? owned?.databaseUrl;
+  // A given DATABASE_URL wins, then the run's shared server, then a server of this caller's own.
+  const shared = env.DATABASE_URL || options.ownServer ? undefined : inject('dryscopeDatabases');
+  const owned = env.DATABASE_URL || shared ? null : await startOwnedServer();
+  const adminUrl = env.DATABASE_URL ?? shared?.plainUrl ?? owned?.databaseUrl;
   if (!adminUrl) throw new Error('No disposable Postgres is available');
   try {
     const discard = await createDiscardDatabase(adminUrl);
@@ -333,4 +354,183 @@ export async function emptyDiscardDatabase(databaseUrl: string): Promise<void> {
   } finally {
     await sql.end({ timeout: 5 });
   }
+}
+
+// --- One server for the whole run ---------------------------------------------------------------
+//
+// vitest.db.config.ts starts the servers once (tests/db/global-setup.ts) and the files, which run in
+// parallel, each take their own database from them:
+//   - a plain server, with no roles of its own, for files that migrate for themselves;
+//   - a roles server, set up like a fresh Cloud SQL instance (a CREATEROLE migrator that owns the
+//     tables, an API user that inherits dryscope_runtime, and one more login that has no rights),
+//     with every migration applied once to a template database. A file's database is a copy of
+//     that template, so the grants, owners and row-level-security settings are the ones the
+//     migrations make, in every copy.
+// Roles belong to a server, not a database, so a test that creates, changes or drops one must run on
+// a server of its own (startDisposablePostgres with ownServer).
+
+export const MIGRATOR_ROLE = 'dryscope_migrator_ci';
+export const API_ROLE = 'dryscope-api-ci@dryscope.iam';
+export const OTHER_ROLE = 'dryscope_other_ci';
+
+export type SharedRole = { name: string; password: string };
+export type SharedRoles = { migrator: SharedRole; api: SharedRole; other: SharedRole };
+export type SharedDatabases = {
+  plainUrl: string;
+  rolesUrl: string;
+  templateName: string;
+  roles: SharedRoles;
+};
+
+declare module 'vitest' {
+  export interface ProvidedContext {
+    dryscopeDatabases: SharedDatabases;
+  }
+}
+
+function providedDatabases(): SharedDatabases {
+  const shared = inject('dryscopeDatabases');
+  if (!shared) {
+    throw new Error('The shared databases come from tests/db/global-setup.ts; run this file with vitest.db.config.ts');
+  }
+  return shared;
+}
+
+// The login roles every database of the roles server is used with, and their passwords for this run.
+export function sharedRoles(): SharedRoles {
+  return providedDatabases().roles;
+}
+
+async function adminSql(url: string, run: (sql: postgres.Sql) => Promise<void>): Promise<void> {
+  const sql = postgres(url, { max: 1, connect_timeout: 10, onnotice: () => {} });
+  try {
+    await run(sql);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+function loginUrl(databaseUrl: string, role: SharedRole): string {
+  const url = new URL(databaseUrl);
+  url.username = role.name;
+  url.password = role.password;
+  return url.toString();
+}
+
+// Creates the roles and the migrated template on a server; the template is built the way each
+// test used to build its own database before every test: an empty public schema as a new database
+// has it (everyone may use it, only its owner may create in it), the migrator given CREATE by hand
+// as in the runbook's bootstrap, then every migration as the migrator.
+async function prepareRolesServer(
+  adminUrl: string,
+): Promise<{ templateName: string; roles: SharedRoles; remove: () => Promise<void> }> {
+  const roles: SharedRoles = {
+    migrator: { name: MIGRATOR_ROLE, password: randomBytes(16).toString('hex') },
+    api: { name: API_ROLE, password: randomBytes(16).toString('hex') },
+    other: { name: OTHER_ROLE, password: randomBytes(16).toString('hex') },
+  };
+  const templateName = `dryscope_discard_${randomBytes(8).toString('hex')}`;
+  await adminSql(adminUrl, async (sql) => {
+    await sql.unsafe(`CREATE ROLE ${roles.migrator.name} LOGIN CREATEROLE PASSWORD '${roles.migrator.password}'`);
+    await sql.unsafe(`CREATE ROLE "${roles.api.name}" LOGIN PASSWORD '${roles.api.password}'`);
+    await sql.unsafe(`CREATE ROLE ${roles.other.name} LOGIN PASSWORD '${roles.other.password}'`);
+    await sql.unsafe(`CREATE DATABASE ${quoteDiscardName(templateName)}`);
+  });
+  const templateUrl = databaseUrlFor(adminUrl, templateName);
+  await emptyDiscardDatabase(templateUrl);
+  await adminSql(templateUrl, async (sql) => {
+    await sql.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
+    await sql.unsafe(`GRANT CREATE ON SCHEMA public TO ${roles.migrator.name}`);
+  });
+  await applyMigrations(loginUrl(templateUrl, roles.migrator), migrationsDirectory);
+  // Nobody may connect to a template while it is being copied.
+  await adminSql(adminUrl, (sql) =>
+    sql.unsafe(`ALTER DATABASE ${quoteDiscardName(templateName)} WITH IS_TEMPLATE true ALLOW_CONNECTIONS false`).then(() => {}),
+  );
+  return {
+    templateName,
+    roles,
+    // For a server this run did not start: the template and the roles go, nothing else.
+    remove: async () => {
+      await adminSql(adminUrl, async (sql) => {
+        const name = quoteDiscardName(templateName);
+        await sql.unsafe(`ALTER DATABASE ${name} WITH IS_TEMPLATE false`);
+        await sql.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+        for (const role of [roles.migrator, roles.api, roles.other]) {
+          await sql.unsafe(`DROP ROLE IF EXISTS "${role.name}"`);
+        }
+      });
+    },
+  };
+}
+
+// Starts the run's servers. Called once, by tests/db/global-setup.ts. A DATABASE_URL (loopback, and
+// marked disposable) stands for both servers, as it did for every file before.
+export async function startSharedDatabases(
+  env: Record<string, string | undefined> = process.env,
+): Promise<{ databases: SharedDatabases; stop: () => Promise<void> }> {
+  assertHarnessAllowed(env);
+  const external = env.DATABASE_URL ?? null;
+  const started: { stop: () => Promise<void> }[] = [];
+  const start = async () => {
+    const server = await startOwnedServer();
+    started.push(server);
+    return server;
+  };
+  try {
+    const [plain, rolesServer] = external
+      ? [{ databaseUrl: external }, { databaseUrl: external }]
+      : await Promise.all([start(), start()]);
+    const prepared = await prepareRolesServer(rolesServer.databaseUrl);
+    return {
+      databases: {
+        plainUrl: plain.databaseUrl,
+        rolesUrl: rolesServer.databaseUrl,
+        templateName: prepared.templateName,
+        roles: prepared.roles,
+      },
+      stop: async () => {
+        if (external) await prepared.remove().catch(() => {});
+        await Promise.all(started.map((server) => server.stop()));
+      },
+    };
+  } catch (error) {
+    await Promise.all(started.map((server) => server.stop().catch(() => {})));
+    throw error;
+  }
+}
+
+// A database of the roles server, copied from the migrated template: the migrator owns the
+// tables, the API user can use them as the runtime, and no row is in them yet.
+export type MigratedDatabase = DisposablePostgres & {
+  roles: SharedRoles;
+  // The database as it was first copied, for a test that needs a fresh one. Connections to it are
+  // ended; callers close their own pools first, as they did before emptying it.
+  reset: () => Promise<void>;
+};
+
+export async function startMigratedDatabase(): Promise<MigratedDatabase> {
+  const shared = providedDatabases();
+  const databaseName = `dryscope_discard_${randomBytes(8).toString('hex')}`;
+  const quoted = quoteDiscardName(databaseName);
+  const copy = () =>
+    adminSql(shared.rolesUrl, async (sql) => {
+      await sql.unsafe(`CREATE DATABASE ${quoted} TEMPLATE ${quoteDiscardName(shared.templateName)}`);
+      await sql.unsafe(`GRANT CREATE ON DATABASE ${quoted} TO ${shared.roles.migrator.name}`);
+    });
+  const drop = () =>
+    adminSql(shared.rolesUrl, async (sql) => {
+      await sql.unsafe(`DROP DATABASE IF EXISTS ${quoted} WITH (FORCE)`);
+    });
+  await copy();
+  return {
+    databaseUrl: databaseUrlFor(shared.rolesUrl, databaseName),
+    databaseName,
+    roles: shared.roles,
+    reset: async () => {
+      await drop();
+      await copy();
+    },
+    stop: () => drop().catch(() => {}),
+  };
 }
