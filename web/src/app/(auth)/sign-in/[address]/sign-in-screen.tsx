@@ -19,6 +19,7 @@ import {
   signOutCompany,
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
+import { forgetMe, saveMe } from '@/lib/field/ds-me';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
 import { offersTeamScreen } from '@/lib/team/screen';
@@ -87,11 +88,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
 
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
+    const signedIn = auth?.currentUser ?? null;
     if (auth) await signOutCompany(auth);
+    // The field shell no longer starts from this sign-in (S6-2).
+    if (signedIn) void forgetMe(tenantId, signedIn.uid);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
-  }, []);
+  }, [tenantId]);
 
   const refuse = useCallback(
     async (message: string) => {
@@ -136,9 +140,14 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         await refuse(message);
         return;
       }
+      // The field shell starts from this row with no signal (S6-2); a phone that cannot keep it
+      // still signs in, and the shell says it is not saved.
+      if (outcome.kind === 'signed-in') {
+        void saveMe({ tenantId, uid: user.uid, companyName: outcome.companyName, address, config });
+      }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },
-    [companyName, refuse, showSignedOut],
+    [address, companyName, config, refuse, showSignedOut, tenantId],
   );
 
   useEffect(() => {
@@ -296,6 +305,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
                 onAdd={(existing) => setScreen({ name: 'add-authenticator', existing })}
               />
             ) : null}
+            <Button asChild>
+              <a href="/field">Open the field app</a>
+            </Button>
             {offersTeamScreen(outcome.role) ? (
               <Button asChild>
                 <Link href={`/sign-in/${address}/team`}>Team and invitations</Link>
