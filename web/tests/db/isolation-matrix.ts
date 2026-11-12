@@ -6,10 +6,10 @@ import { starterTable } from '@/lib/prices/starter';
 // The company-isolation matrix (S3-17): one row for every handler of every route file under
 // src/app, saying what kind of access rule it has and how the isolation suite attacks it. The suite
 // (company-isolation.test.ts) imports every route file, fails when one of its handlers is not in
-// this list or a row names one that no longer exists, and calls every row with the other company's
-// ids. So a new route cannot ship without somebody deciding here how another company's caller is
-// refused, and the decision is read in review. That each handler has an access rule at all is
-// tests/unit/route-rules.test.ts.
+// this list or a row names one that no longer exists, and calls every exported handler with the
+// other company's ids, failing by name on one it did not reach. So a new route cannot ship without
+// somebody deciding here how another company's caller is refused, and the decision is read in
+// review. That each handler has an access rule at all is tests/unit/route-rules.test.ts.
 //
 // Kinds:
 //   company     a company member; the company comes from the sign-in
@@ -160,3 +160,20 @@ export function matrixProblems(found: readonly FoundHandler[], matrix: readonly 
   }
   return problems;
 }
+
+// The path with every [name] filled in from `ids`, as the framework would hand it to the handler. A
+// name that `ids` does not have is an error, not a made-up id: a route with a new path parameter
+// must be given the other company's value for it before the suite can call it.
+export function pathFor(route: string, ids: Readonly<Record<string, string>>): string {
+  return `/${route}`.replace(/\[([A-Za-z]+)\]/g, (_match, name: string) => {
+    const value = ids[name];
+    if (value === undefined) throw new Error(`${route} has the path parameter [${name}], which the isolation suite has no id for (web/tests/db/company-isolation.test.ts, idsOf)`);
+    return value;
+  });
+}
+
+// One call the suite made: who, which handler, and the path it was given.
+export const callKey = (who: string, method: string, path: string) => `${who} ${method} ${path}`;
+
+// The calls that were expected and were not made, so a handler the loop skipped fails by name.
+export const uncalled = (expected: readonly string[], made: ReadonlySet<string>): string[] => expected.filter((key) => !made.has(key));
