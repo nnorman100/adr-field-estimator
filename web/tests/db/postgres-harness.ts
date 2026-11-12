@@ -480,7 +480,7 @@ export async function startSharedDatabases(
   try {
     const [plain, rolesServer] = external
       ? [{ databaseUrl: external }, { databaseUrl: external }]
-      : await Promise.all([start(), start()]);
+      : [await start(), await start()];
     const prepared = await prepareRolesServer(rolesServer.databaseUrl);
     return {
       databases: {
