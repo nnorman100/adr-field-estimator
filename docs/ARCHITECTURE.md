@@ -11,7 +11,7 @@ Technology Standard profile (the standard itself is the owner's; this block reco
 | Modules on          | A (multi-company), B (offline field capture), C (voice and long-running services), E (AI search), F (agents)           |
 | Recorded exceptions | See [Decision log](DECISIONS.md): D-013 (build server and CI runner), D-014 (agent limit), D-015 (pipeline reviewer)   |
 | Agent limit         | May use every available agent (owner, Nov 6, 2026), instead of the standard's three                                    |
-| Standard version    | 2.3 (approved by the owner Nov 11, 2026)                                                                               |
+| Standard version    | 2.4 (approved by the owner Nov 12, 2026)                                                                               |
 
 ## Overview
 
