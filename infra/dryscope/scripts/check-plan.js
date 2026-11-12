@@ -27,6 +27,14 @@
 // table, with every other attribute unchanged. A fourth covers a Cloud SQL instance already applied
 // with a regional backup location: it may change in place, and only to the US multi-region (`us`),
 // with every other attribute unchanged. Nothing else may be deleted, replaced or updated.
+//
+// A RE-APPLY plan (the root is already applied, so at least one resource in the plan is a no-op)
+// adds one more allowance: a resource of a type in REAPPLY_UPDATABLE may change in place, because
+// the planned state of every resource is held to the table in any case (name, location, service
+// account, schedule target, exact environment). Grants, custom roles, data stores, secrets,
+// accounts and the Cloud Run services and Cloud SQL instance stay as above: no-op, or the named
+// exception. A plan with no no-op resource is a first apply and every update in it is refused, as
+// is every delete or replacement in either kind.
 const fs = require('node:fs');
 const readline = require('node:readline');
 
@@ -117,6 +125,16 @@ const RULES_RELEASE_PERMISSIONS = [
 const SCHEDULED_JOBS = {
   'access-projection': { path: '/api/internal/access-projection', schedule: '*/5 * * * *' },
 };
+
+// Resource types whose in-place update a re-apply plan may hold. Never an IAM grant (the provider
+// replaces those, and a replacement is refused), a custom role (its permission list is IAM), a data
+// store, a secret or a service account.
+const REAPPLY_UPDATABLE = new Set([
+  'google_cloud_run_v2_job',
+  'google_cloud_scheduler_job',
+  'google_monitoring_alert_policy',
+  'google_monitoring_notification_channel',
+]);
 
 // Resource types with no project attribute; every other resource must name PROJECT.
 const PROJECTLESS = new Set([
@@ -505,18 +523,31 @@ const NEW_SETTINGS = ['ALLOWED_ORIGINS'];
 // instead of the short names a fresh plan holds. Each is accepted only when it resolves to
 // exactly the expected name in PROJECT (and REGION for a repository); any other project,
 // location or name still fails the comparison.
+// `name` is a Cloud Run service's or job's, so the path depends on the resource type.
 const FULL_PATHS = {
-  bucket: (name) => `b/${name}`,
-  secret_id: (name) => `projects/${PROJECT}/secrets/${name}`,
-  repository: (name) => `projects/${PROJECT}/locations/${REGION}/repositories/${name}`,
+  bucket: () => (name) => `b/${name}`,
+  secret_id: () => (name) => `projects/${PROJECT}/secrets/${name}`,
+  repository: () => (name) => `projects/${PROJECT}/locations/${REGION}/repositories/${name}`,
+  name: (type) =>
+    ({
+      google_cloud_run_v2_service_iam_member: (name) =>
+        `projects/${PROJECT}/locations/${REGION}/services/${name}`,
+      google_cloud_run_v2_job_iam_member: (name) =>
+        `projects/${PROJECT}/locations/${REGION}/jobs/${name}`,
+    })[type],
 };
-const sameField = (field, want, got) =>
-  same(want, got) ||
-  (typeof want === 'string' && FULL_PATHS[field] !== undefined && got === FULL_PATHS[field](want));
+const sameField = (type, field, want, got) => {
+  if (same(want, got)) return true;
+  const path = typeof want === 'string' ? FULL_PATHS[field]?.(type) : undefined;
+  return path !== undefined && got === path(want);
+};
 
 /** Returns a list of problems; an empty list means the plan matches the table. */
-function checkPlan(resourceChanges, { root, environment, complete = true }) {
+function checkPlan(resourceChanges, { root, environment, complete = true, reapply }) {
   const problems = [];
+  // Existing infrastructure shows as no-op; a first apply has none. Pass `reapply` to force either.
+  const isReapply =
+    reapply ?? resourceChanges.some((rc) => (rc.change?.actions ?? []).join() === 'no-op');
   const want = expectedPlan(root, environment);
   const byAddress = new Map(resourceChanges.map((rc) => [rc.address, rc]));
 
@@ -629,6 +660,13 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
       // Named, reviewed exception (see the table).
     } else if (actions.includes('delete')) {
       problems.push(`${rc.address}: plan would delete or replace it (${actions.join(', ')})`);
+    } else if (
+      isReapply &&
+      actions.length === 1 &&
+      actions[0] === 'update' &&
+      REAPPLY_UPDATABLE.has(rc.type ?? rc.address.split('.')[0])
+    ) {
+      // Re-apply: the planned state is held to the table below like any other.
     } else if (actions.includes('update')) {
       problems.push(`${rc.address}: plan would change it in place; a first apply only creates`);
     } else if (!actions.every((a) => ['create', 'no-op', 'read', 'update'].includes(a))) {
@@ -666,7 +704,7 @@ function checkPlan(resourceChanges, { root, environment, complete = true }) {
             `${address}: condition is ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`,
           );
         }
-      } else if (!sameField(field, expected, after[field])) {
+      } else if (!sameField(address.split('.')[0], field, expected, after[field])) {
         problems.push(
           `${address}: ${field} is ${JSON.stringify(after[field])}, expected ${expected}`,
         );
@@ -810,7 +848,12 @@ async function main(args) {
   plans.forEach((plan, i) => {
     // A mocked run that expects a validation failure plans only part of the root, so
     // only the first plan (or a single saved plan) must contain everything.
-    for (const problem of checkPlan(plan, { root, environment, complete: i === 0 })) {
+    const reapply = plan.some((rc) => (rc.change?.actions ?? []).join() === 'no-op');
+    if (i === 0 && reapply)
+      console.log(
+        `re-apply plan: existing resources are no-op, or an allowed in-place change (${[...REAPPLY_UPDATABLE].join(', ')}, and the named exceptions)`,
+      );
+    for (const problem of checkPlan(plan, { root, environment, complete: i === 0, reapply })) {
       failed += 1;
       console.error(`plan ${i + 1}: ${problem}`);
     }
