@@ -15,6 +15,7 @@ export default async function globalSetup(config: FullConfig) {
   const run = randomUUID().slice(0, 8);
   const tenantA = await createTenant(`company-a-${run}`);
   const tenantB = await createTenant(`company-b-${run}`);
+  const tenantOperators = await createTenant(`operators-${run}`);
   const companyA = randomUUID();
   const companyB = randomUUID();
   const fixture: LocalSignInFixture = {
@@ -23,6 +24,7 @@ export default async function globalSetup(config: FullConfig) {
       { id: companyB, name: 'Company B Restoration', signInAddress: 'company-b', tenantId: tenantB, status: 'active' },
     ],
     members: [],
+    operators: [],
   };
 
   const projects: Record<string, ProjectSeed> = {};
@@ -39,7 +41,11 @@ export default async function globalSetup(config: FullConfig) {
       fixture.members.push({ companyId, uid, actorId: randomUUID(), displayName: name, role, status: 'active' });
       return { email, uid };
     };
+    const operatorEmail = `operator-${project}-${run}@example.com`;
+    const operatorUid = await createUser(tenantOperators, { email: operatorEmail, password: PASSWORD, emailVerified: true });
+    fixture.operators!.push({ tenantId: tenantOperators, uid: operatorUid, operatorId: randomUUID() });
     projects[project] = {
+      operator: { email: operatorEmail, uid: operatorUid },
       memberA: await account(tenantA, companyA, 'member-a', true),
       memberB: await account(tenantB, companyB, 'member-b', true),
       // The owner of company A, whose role needs the authenticator-app second step (S3-14). The
@@ -54,7 +60,7 @@ export default async function globalSetup(config: FullConfig) {
 
   await mkdir(STATE_DIR, { recursive: true });
   await writeFile(FIXTURE_PATH, JSON.stringify(fixture));
-  const seed: Seed = { tenantA, tenantB, projects, fixture };
+  const seed: Seed = { tenantA, tenantB, tenantOperators, projects, fixture };
   await writeFile(SEED_PATH, JSON.stringify(seed));
   // The fixture is in place, so the dev server can answer the sign-in routes: compile each route now.
   await warmRoutes(config.projects[0]!.use.baseURL!);
