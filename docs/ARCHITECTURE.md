@@ -30,7 +30,7 @@ The diagram shows the current Python app, which lives in Google Cloud / Firebase
 
 ## Two engines
 
-1. **Live walkthrough** — authenticated WebSocket relay; 16 kHz audio and a 640 px frame every 2 s; coaching and meter-photo reading.
+1. **Live walkthrough** — authenticated WebSocket relay; 16 kHz audio only (no camera frames, S7 decision V7); coaching and meter-photo reading.
 2. **Claims engine** — `POST /api/audit`: transcript + photos + facts → four documents. The server applies prices and mandatory wording; the model drafts only.
    Models are set by `AUDIT_MODEL`, `OCR_MODEL`, `LIVE_MODEL`.
 
