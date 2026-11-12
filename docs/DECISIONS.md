@@ -56,6 +56,8 @@ Superseded (Nov 6, 2026, owner, per the rebuild plan's settled "test-to-live dep
 
 Reinstated (Nov 9, 2026, owner): see D-012. The Nov 6 supersession no longer applies; agents ask before merging any PR.
 
+Updated (Nov 12, 2026, owner): standing approval, in the owner's words: "standing approval: merge low-risk PRs when green, waive known-infra check failures, do housekeeping, and proceed on your recommendation for in-plan calls; keep high-risk merges, money, permissions, cloud, live and deletions with me." Meaning: the supervising agent may merge Low and Medium risk PRs once every check is green, and may waive only known infrastructure check failures, putting the reason on the PR. Worker agents still never merge. High-risk PRs need the owner's approval, and deletions, money, permissions, cloud, live and anything irreversible stay with the owner. This replaces "agents ask before merging any PR" (D-009 and D-012) for Low and Medium risk only. The `gh pr merge` approval rule in `.claude/settings.json` is unchanged.
+
 ### D-010: No default prices; ADR's rates are ADR's alone (Nov 2, 2026)
 
 Status: accepted (owner). Superseded in part for the rebuild by D-017 (Nov 10, 2026): no default prices and "no published prices, no estimate" still hold, but no ADR rate book is kept in code. ADR's estimating sheet is proprietary to ADR, so it is not a product default. A company without published prices is blocked from pricing with a clear message. ADR's rates are kept as ADR's data and used only for company `adr`, and no rate ships in browser code. Later steps of the owner-pricing plan add owner-defined tables; formulas and `CALCULATION_VERSION` are unchanged here.
