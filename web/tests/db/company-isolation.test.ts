@@ -1,8 +1,7 @@
-import { join } from 'node:path';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeClaims, Harness } from './team-harness';
-import { APP_DIR, foundHandlers, handlersIn, MATRIX, matrixProblems, type MatrixRow } from './isolation-matrix';
+import { handlersOf, MATRIX, matrixKey, matrixProblems, routeModules, type MatrixRow, type RouteModule } from './isolation-matrix';
 
 // S3-17, the company-isolation gate: the standard's required test as one named suite
 // (`npm run test:isolation`, the `company-isolation` job in .github/workflows/web.yml).
@@ -136,12 +135,12 @@ afterAll(async () => {
   await base?.server.stop();
 });
 
-const handlers = new Map<string, Record<string, Handler | undefined>>();
+let loaded: Promise<Map<string, RouteModule>> | undefined;
+const modules = () => (loaded ??= routeModules());
 async function handlerFor(route: string, method: string): Promise<Handler> {
-  if (!handlers.has(route)) handlers.set(route, (await import(join(APP_DIR, route, 'route.ts'))) as Record<string, Handler>);
-  const found = handlers.get(route)![method];
+  const found = (await modules()).get(route)?.[method];
   if (typeof found !== 'function') throw new Error(`${method} ${route} is not exported`);
-  return found;
+  return found as Handler;
 }
 
 // The path with every [name] filled in from `ids`, as the framework would hand it to the handler.
@@ -181,27 +180,66 @@ const directions = (): [Side, Side][] => [
   [a, b],
 ];
 
+// The calls a signed-in user of the other company is answered rather than refused, and all each
+// answer may hold. Every other row of the matrix must be refused.
+type OpenCheck = (answer: Answer, where: string, attacker: Side, victim: Side) => void;
+const OPEN: Record<string, OpenCheck> = {
+  // The caller's own sign-in, whatever company the path names.
+  'GET api/me': (answer, where, attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(JSON.parse(answer.text).company.id, where).toBe(attacker.companyId);
+    expect(leaks(answer.text, victim), where).toEqual([]);
+  },
+  // The one open route that names a company: its sign-in page. It is public on purpose and answers
+  // exactly two fields, the company's name and its tenant, for an active company with a tenant.
+  'GET api/sign-in/[address]': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(JSON.parse(answer.text), where).toEqual({ company: { name: `Company ${victim.ids.address}` }, tenantId: victim.people.owner.tenant });
+  },
+  'GET api/health': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(leaks(answer.text, victim), where).toEqual([]);
+  },
+  'POST api/echo': (answer, where) => {
+    expect(answer.status, where).toBe(200);
+    expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
+  },
+};
+
 describe('the route list', () => {
   it('has a row in the matrix for every handler of every route file, and no other', async () => {
-    expect(matrixProblems(await foundHandlers())).toEqual([]);
+    expect(matrixProblems(handlersOf(await modules()))).toEqual([]);
   });
 
-  it('names a route, a handler or a rule the matrix does not agree with', () => {
-    const wrapped = (wrapper: string) => handlersIn('api/x/[id]', `export const GET = ${wrapper}(async () => Response.json({}));`);
-    expect(matrixProblems(wrapped('memberRoute'))).toEqual([
-      'GET api/x/[id] is not in the isolation matrix (web/tests/db/isolation-matrix.ts)',
+  it('lists no open answer for a route the matrix does not have', () => {
+    expect(Object.keys(OPEN).filter((name) => !MATRIX.some((row) => matrixKey(row) === name))).toEqual([]);
+  });
+
+  it('names a handler the matrix lacks, a row no handler has, and a row listed twice', () => {
+    const handler = () => new Response();
+    const found = handlersOf(new Map([['api/x/[id]', { POST: handler, GET: handler, HEAD: handler, dynamic: 'force-dynamic', helper: handler }]]));
+    expect(found).toEqual([
+      { route: 'api/x/[id]', method: 'GET' },
+      { route: 'api/x/[id]', method: 'HEAD' },
+      { route: 'api/x/[id]', method: 'POST' },
+    ]);
+    const missing = (method: string) => `${method} api/x/[id] is not in the isolation matrix (web/tests/db/isolation-matrix.ts)`;
+    expect(matrixProblems(found)).toEqual([
+      missing('GET'),
+      missing('HEAD'),
+      missing('POST'),
       ...MATRIX.map((row) => `${row.method} ${row.route} is in the matrix but no route file has it`),
     ]);
-    const rows: MatrixRow[] = [{ route: 'api/x/[id]', method: 'GET', kind: 'company' }];
-    expect(matrixProblems(wrapped('memberRoute'), rows)).toEqual([]);
-    expect(matrixProblems(wrapped('requireFlag'), rows)).toEqual([]);
-    expect(matrixProblems(wrapped('publicRoute'), rows)).toEqual(['GET api/x/[id] is listed as company but its rule is publicRoute']);
-    expect(matrixProblems(handlersIn('api/x/[id]', 'export async function GET() { return Response.json({}); }'), rows)).toEqual([
-      'GET api/x/[id] is listed as company but its rule is not a wrapper',
+    const rows: MatrixRow[] = [
+      { route: 'api/x/[id]', method: 'GET', kind: 'public' },
+      { route: 'api/x/[id]', method: 'POST', kind: 'company' },
+    ];
+    expect(matrixProblems(found, rows)).toEqual([missing('HEAD')]);
+    expect(matrixProblems(found.filter((entry) => entry.method !== 'HEAD'), [...rows, rows[0]!])).toEqual(['GET api/x/[id] is in the matrix twice']);
+    expect(matrixProblems([], rows)).toEqual([
+      'GET api/x/[id] is in the matrix but no route file has it',
+      'POST api/x/[id] is in the matrix but no route file has it',
     ]);
-    expect(matrixProblems(wrapped('memberRoute'), [...rows, ...rows])).toEqual(['GET api/x/[id] is in the matrix twice']);
-    expect(matrixProblems([], rows)).toEqual(['GET api/x/[id] is in the matrix but no route file has it']);
-    expect(matrixProblems(handlersIn('api/x', 'export const dynamic = "force-dynamic";'), [])).toEqual([]);
   });
 });
 
@@ -235,17 +273,22 @@ describe('every route, called with the other company’s ids', () => {
     const checked: string[] = [];
     for (const [attacker, victim] of directions()) {
       for (const [role, claims] of Object.entries(attacker.people)) {
-        for (const row of rowsOfKind('company', 'operator', 'invitation')) {
+        for (const row of MATRIX) {
           const answer = await call(row, claims, idsOf(victim));
           const where = `${attacker.name} ${role}: ${row.method} ${row.route}`;
-          expect({ where, status: REFUSED.includes(answer.status) ? 'refused' : answer.status }).toEqual({ where, status: 'refused' });
-          expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
+          const open = OPEN[matrixKey(row)];
+          if (open) {
+            open(answer, where, attacker, victim);
+          } else {
+            expect({ where, status: REFUSED.includes(answer.status) ? 'refused' : answer.status }).toEqual({ where, status: 'refused' });
+            expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
+          }
           checked.push(where);
         }
       }
     }
-    // 2 directions x 3 people x every company, operator and invitation row.
-    expect(checked).toHaveLength(2 * 3 * rowsOfKind('company', 'operator', 'invitation').length);
+    // 2 directions x 3 people x every row of the matrix.
+    expect(checked).toHaveLength(2 * 3 * MATRIX.length);
     expect(await everything(h.admin)).toBe(before);
     expect(h.calls).toEqual([]);
     expect(h.projected).toEqual([]);
@@ -321,21 +364,7 @@ describe('every route, called with the other company’s ids', () => {
     expect(live.projectionRuns).toBe(1);
   });
 
-  it('shows the open routes nothing of a company beyond the name and sign-in tenant its own sign-in page needs', async () => {
-    for (const [attacker, victim] of directions()) {
-      const claims = attacker.people.owner;
-      const health = await call({ route: 'api/health', method: 'GET' }, claims, {});
-      expect(health.status).toBe(200);
-      expect(leaks(health.text, victim)).toEqual([]);
-      const echo = await call({ route: 'api/echo', method: 'POST', body: { message: 'hello' } }, claims, {});
-      expect(JSON.parse(echo.text)).toEqual({ message: 'hello' });
-      // The one open route that names a company: its page. It is public on purpose and answers
-      // exactly two fields, the company's name and its tenant, for an active company with a tenant.
-      const page = await call({ route: 'api/sign-in/[address]', method: 'GET' }, claims, idsOf(victim));
-      expect(page.status).toBe(200);
-      expect(JSON.parse(page.text)).toEqual({ company: { name: `Company company-${victim === a ? 'a' : 'b'}` }, tenantId: `tenant-${victim === a ? 'a' : 'b'}` });
-    }
-    // An address that is not a company, and a suspended company, look the same.
+  it('answers a sign-in page for an address that is not a company the same as for a suspended company', async () => {
     for (const address of ['no-such-company', 'company-s']) {
       const answer = await call({ route: 'api/sign-in/[address]', method: 'GET' }, null, { address });
       expect(answer.status).toBe(404);

@@ -1,22 +1,23 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The company-isolation matrix (S3-17): one row for every handler of every route file under
 // src/app, saying what kind of access rule it has and how the isolation suite attacks it. The suite
-// (company-isolation.test.ts) fails when a route file or handler is not in this list, when a row
-// names one that no longer exists, or when a row's kind disagrees with the access rule the route
-// file really uses. So a new route cannot ship without somebody deciding here how another
-// company's caller is refused, and the decision is read in review.
+// (company-isolation.test.ts) imports every route file, fails when one of its handlers is not in
+// this list or a row names one that no longer exists, and calls every row with the other company's
+// ids. So a new route cannot ship without somebody deciding here how another company's caller is
+// refused, and the decision is read in review. That each handler has an access rule at all is
+// tests/unit/route-rules.test.ts.
 //
-// Kinds, and the access rule each is held to:
-//   company     memberRoute / requireFlag   a company member; the company comes from the sign-in
-//   invitation  accountRoute                a verified account of the company, member or not
-//   operator    operatorRoute               the platform operator; every company user is refused
-//   service     serviceRoute                the scheduler's service account; no person is accepted
-//   session     memberRoute                 answers about the caller's own sign-in only
-//   public      publicRoute                 open to anyone; must return nothing of another company
-//                                           beyond what its own comment says is public
+// Kinds:
+//   company     a company member; the company comes from the sign-in
+//   invitation  a verified account of the company, member or not
+//   operator    the platform operator; every company user is refused
+//   service     the scheduler's service account; no person is accepted
+//   session     answers about the caller's own sign-in only
+//   public      open to anyone; must return nothing of another company
+//               beyond what its own comment says is public
 export type RouteKind = 'company' | 'invitation' | 'operator' | 'service' | 'session' | 'public';
 
 export type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -83,21 +84,11 @@ export const MATRIX: readonly MatrixRow[] = [
 ];
 
 export const APP_DIR = fileURLToPath(new URL('../../src/app', import.meta.url));
-const METHODS: readonly Method[] = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'];
 // Every method the framework would route to a file's export; the matrix must name each one.
 const ROUTED = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
 
-// The wrappers each kind may use, from src/lib/auth/route.ts.
-export const WRAPPERS: Record<RouteKind, readonly string[]> = {
-  company: ['memberRoute', 'requireFlag'],
-  session: ['memberRoute'],
-  invitation: ['accountRoute'],
-  operator: ['operatorRoute'],
-  service: ['serviceRoute'],
-  public: ['publicRoute'],
-};
-
-export type FoundHandler = { route: string; method: string; wrapper: string | null };
+export type RouteModule = Record<string, unknown>;
+export type FoundHandler = { route: string; method: string };
 
 async function routeFiles(dir: string): Promise<string[]> {
   const found: string[] = [];
@@ -109,54 +100,39 @@ async function routeFiles(dir: string): Promise<string[]> {
   return found.sort();
 }
 
-// Every exported handler in every route file, found by searching src/app (never from a list), with
-// the name of the wrapper the file puts around it. A handler declared any other way has none.
-export async function foundHandlers(dir = APP_DIR): Promise<FoundHandler[]> {
+// Every route file under src/app, found by searching it (never from a list) and imported, keyed by
+// its folder.
+export async function routeModules(dir = APP_DIR): Promise<Map<string, RouteModule>> {
+  const modules = new Map<string, RouteModule>();
+  for (const file of await routeFiles(dir)) modules.set(relative(dir, join(file, '..')), (await import(file)) as RouteModule);
+  return modules;
+}
+
+// Every handler the framework would route to: each export of a route module named for a method.
+export function handlersOf(modules: ReadonlyMap<string, RouteModule>): FoundHandler[] {
   const found: FoundHandler[] = [];
-  for (const file of await routeFiles(dir)) {
-    const route = relative(dir, join(file, '..'));
-    found.push(...handlersIn(route, await readFile(file, 'utf8')));
+  for (const [route, module] of modules) {
+    for (const method of Object.keys(module).sort()) if (ROUTED.has(method)) found.push({ route, method });
   }
   return found;
 }
 
-export function handlersIn(route: string, source: string): FoundHandler[] {
-  const found: FoundHandler[] = [];
-  for (const match of source.matchAll(/^export\s+(?:const|async\s+function|function)\s+([A-Z]+)\b(.*)$/gm)) {
-    const method = match[1]!;
-    if (!ROUTED.has(method)) continue;
-    const wrapper = /^\s*=\s*(?:async\s*)?(\w+)\s*\(/.exec(match[2]!)?.[1] ?? null;
-    found.push({ route, method, wrapper });
-  }
-  return found;
-}
-
-const key = (value: { route: string; method: string }) => `${value.method} ${value.route}`;
+export const matrixKey = (value: { route: string; method: string }) => `${value.method} ${value.route}`;
 
 // What is wrong between the handlers found and the matrix; empty when they agree.
 export function matrixProblems(found: readonly FoundHandler[], matrix: readonly MatrixRow[] = MATRIX): string[] {
   const problems: string[] = [];
-  const rows = new Map<string, MatrixRow>();
+  const rows = new Set<string>();
   for (const entry of matrix) {
-    if (rows.has(key(entry))) problems.push(`${key(entry)} is in the matrix twice`);
-    rows.set(key(entry), entry);
+    if (rows.has(matrixKey(entry))) problems.push(`${matrixKey(entry)} is in the matrix twice`);
+    rows.add(matrixKey(entry));
   }
   const seen = new Set<string>();
   for (const handler of found) {
-    seen.add(key(handler));
-    const entry = rows.get(key(handler));
-    if (!entry) {
-      problems.push(`${key(handler)} is not in the isolation matrix (web/tests/db/isolation-matrix.ts)`);
-      continue;
-    }
-    if (!handler.wrapper || !WRAPPERS[entry.kind].includes(handler.wrapper)) {
-      problems.push(`${key(handler)} is listed as ${entry.kind} but its rule is ${handler.wrapper ?? 'not a wrapper'}`);
-    }
-    if (!(METHODS as readonly string[]).includes(handler.method)) {
-      problems.push(`${key(handler)} uses a method the isolation suite does not attack`);
-    }
+    seen.add(matrixKey(handler));
+    if (!rows.has(matrixKey(handler))) problems.push(`${matrixKey(handler)} is not in the isolation matrix (web/tests/db/isolation-matrix.ts)`);
   }
-  for (const name of rows.keys()) {
+  for (const name of rows) {
     if (!seen.has(name)) problems.push(`${name} is in the matrix but no route file has it`);
   }
   return problems;
