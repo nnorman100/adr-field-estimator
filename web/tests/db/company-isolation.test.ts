@@ -3,7 +3,7 @@ import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeClaims, Harness } from './team-harness';
 import { contentHash, parseTable } from '@/engine/table';
-import { handlersOf, MATRIX, matrixKey, matrixProblems, routeModules, type MatrixRow, type RouteModule } from './isolation-matrix';
+import { callKey, handlersOf, MATRIX, matrixKey, matrixProblems, pathFor, routeModules, uncalled, type MatrixRow, type RouteModule } from './isolation-matrix';
 
 // S3-17, the company-isolation gate: the standard's required test as one named suite
 // (`npm run test:isolation`, the `company-isolation` job in .github/workflows/web.yml).
@@ -170,6 +170,7 @@ beforeEach(async () => {
   h = await resetTeamDatabase(base, live.harness);
   live.harness = h;
   live.projectionRuns = 0;
+  made = new Set();
   await seedSides();
 });
 
@@ -188,10 +189,8 @@ async function handlerFor(route: string, method: string): Promise<Handler> {
   return found as Handler;
 }
 
-// The path with every [name] filled in from `ids`, as the framework would hand it to the handler.
-function pathFor(route: string, ids: Record<string, string>): string {
-  return `/${route}`.replace(/\[([A-Za-z]+)\]/g, (_m, name: string) => ids[name] ?? '00000000-0000-4000-8000-000000000000');
-}
+// Every call `call` has made in this test, so the suite can say which handlers it really reached.
+let made = new Set<string>();
 
 type Answer = { status: number; text: string };
 async function call(
@@ -201,7 +200,9 @@ async function call(
   extra: { query?: string; headers?: Record<string, string> } = {},
 ): Promise<Answer> {
   const handler = await handlerFor(row.route, row.method);
-  const built = request(claims, `${pathFor(row.route, ids)}${extra.query ?? ''}`, { method: row.method, body: row.body });
+  const path = pathFor(row.route, ids);
+  made.add(callKey(claims?.uid ?? 'no sign-in', row.method, path));
+  const built = request(claims, `${path}${extra.query ?? ''}`, { method: row.method, body: row.body });
   for (const [name, value] of Object.entries(extra.headers ?? {})) built.headers.set(name, value);
   const response = await handler(built, params(ids));
   return { status: response.status, text: await response.text() };
@@ -220,9 +221,6 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   jobId: victim.ids.jobId,
 });
 
-// The rows a call with the other company's ids must refuse. A create row makes the caller's own
-// record instead; its own test is below.
-const refusedRows = () => MATRIX.filter((row) => row.own !== 'create');
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));
 // The two directions are built after the seed, so the matrix functions read them lazily.
 const directions = (): [Side, Side][] => [
@@ -246,18 +244,14 @@ const OPEN: Record<string, OpenCheck> = {
     expect(answer.status, where).toBe(200);
     expect(JSON.parse(answer.text), where).toEqual({ company: { name: `Company ${victim.ids.address}` }, tenantId: victim.people.owner.tenant });
   },
-  // The caller's own company's jobs, whatever the other company's ids; none of the other's shows.
-  'GET api/jobs': (answer, where, _attacker, victim) => {
-    expect(answer.status, where).toBe(200);
-    expect(leaks(answer.text, victim), where).toEqual([]);
-  },
   'GET api/health': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(200);
     expect(leaks(answer.text, victim), where).toEqual([]);
   },
-  'POST api/echo': (answer, where) => {
+  'POST api/echo': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(200);
     expect(JSON.parse(answer.text), where).toEqual({ message: 'hello' });
+    expect(leaks(answer.text, victim), where).toEqual([]);
   },
 };
 
@@ -298,6 +292,28 @@ describe('the route list', () => {
   });
 });
 
+describe('the calls the suite makes', () => {
+  it('fills every path parameter from the ids it is given and refuses one it has no id for', () => {
+    const ids = { companyId: 'c1', membershipId: 'm1' };
+    expect(pathFor('api/companies/[companyId]/members/[membershipId]', ids)).toBe('/api/companies/c1/members/m1');
+    expect(pathFor('api/health', {})).toBe('/api/health');
+    expect(() => pathFor('api/jobs/[jobId]', ids)).toThrow('api/jobs/[jobId] has the path parameter [jobId]');
+  });
+
+  it('names a call that was expected and not made', () => {
+    const reached = new Set([callKey('owner-a', 'GET', '/api/x/1'), callKey('owner-a', 'POST', '/api/x/1')]);
+    expect(uncalled([callKey('owner-a', 'GET', '/api/x/1'), callKey('owner-a', 'POST', '/api/x/1')], reached)).toEqual([]);
+    expect(uncalled([callKey('owner-a', 'GET', '/api/x/1'), callKey('estimator-a', 'GET', '/api/x/1'), callKey('owner-a', 'GET', '/api/x/2')], reached)).toEqual([
+      'estimator-a GET /api/x/1',
+      'owner-a GET /api/x/2',
+    ]);
+  });
+
+  it('lists exactly four open answers: the caller’s own sign-in, the sign-in page, health and echo', () => {
+    expect(Object.keys(OPEN).sort()).toEqual(['GET api/health', 'GET api/me', 'GET api/sign-in/[address]', 'POST api/echo']);
+  });
+});
+
 describe('the leak check itself', () => {
   it('finds each company’s own data when its own owner reads it, so a clean answer to the other is not a blind spot', async () => {
     for (const side of [a, b]) {
@@ -330,9 +346,20 @@ describe('every route, called with the other company’s ids', () => {
   it('answers 401, 403 or 404 to the other company’s owner, estimator and office user, with nothing of the company and no change', async () => {
     const before = await everything(h.admin);
     const checked: string[] = [];
+    const expected: string[] = [];
+    // The handlers are the route modules' own exports, not the matrix's rows: a handler with no row
+    // fails here by name, and a row cannot stand in for a handler the loop never reached.
+    const handlers = handlersOf(await modules()).map((handler) => {
+      const row = MATRIX.find((found) => matrixKey(found) === matrixKey(handler));
+      if (!row) throw new Error(`${matrixKey(handler)} is not in the isolation matrix (web/tests/db/isolation-matrix.ts)`);
+      return row;
+    });
+    // A create row makes the caller's own record instead of refusing; its own test is below.
+    const refused = handlers.filter((row) => row.own !== 'create');
     for (const [attacker, victim] of directions()) {
       for (const [role, claims] of Object.entries(attacker.people)) {
-        for (const row of refusedRows()) {
+        for (const row of refused) {
+          expected.push(callKey(claims.uid, row.method, pathFor(row.route, idsOf(victim))));
           const answer = await call(row, claims, idsOf(victim));
           const where = `${attacker.name} ${role}: ${row.method} ${row.route}`;
           const open = OPEN[matrixKey(row)];
@@ -350,8 +377,11 @@ describe('every route, called with the other company’s ids', () => {
         }
       }
     }
-    // 2 directions x 3 people x every row of the matrix but the create rows.
-    expect(checked).toHaveLength(2 * 3 * refusedRows().length);
+    // 2 directions x 3 people x every handler the route files export but the create handlers, each
+    // one called with the other company's ids: the calls are counted where they are made, not where
+    // the loop meant to make them.
+    expect(checked).toHaveLength(2 * 3 * refused.length);
+    expect(uncalled(expected, made)).toEqual([]);
     expect(await everything(h.admin)).toBe(before);
     expect(h.calls).toEqual([]);
     expect(h.projected).toEqual([]);
