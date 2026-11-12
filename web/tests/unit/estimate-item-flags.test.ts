@@ -376,12 +376,13 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
     expect(result.totals.low.trade_minimums).toEqual([]);
   });
 
-  it('W63 a high end whose minimum lines round below the low end takes the gap on its trade minimum line', () => {
+  it('W63 each grown line is whole cents, so the high end prices its trade minimum lines like the low end', () => {
     // Cushion 10%, three labor items of 1 hour, each under its own $100.00 heading: $10.06, $10.06 and $10.08.
-    // Low: $30.20 + $89.94 + $89.94 + $89.92 = $300.00. High labor $33.22; the grown trades $11.066, $11.066 and
-    // $11.088 round their lines to $88.93, $88.93 and $88.91, so the high end alone would be $299.99, a cent
-    // under the low end. The high end keeps its grown labor and adds that cent to its last trade minimum line:
-    // $33.22 + $88.93 + $88.93 + $88.92 = $300.00.
+    // Low: $30.20 + $89.94 + $89.94 + $89.92 = $300.00. The grown lines are $11.066, $11.066 and $11.088; the high
+    // labor rounds once to $33.22 and each line takes its share in whole cents, running total rounded and each
+    // line the step from the one before: $11.07, $11.06 and $11.09. Each trade is short of $100.00 by $88.93,
+    // $88.94 and $88.91, the same path the low end takes, and $33.22 + $266.78 = $300.00. No line takes a
+    // cent to close a gap, because there is none.
     const hours = (code: string, price: string) =>
       item(code, { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: price, trade: code });
     const headings = ['labor_a', 'labor_b', 'labor_c'].map((id) => ({ trade_id: id, name: id, minimum_charge: '100' }));
@@ -394,14 +395,15 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
     );
     expect(result.totals.low).toMatchObject({ subtotal: '30.20', total: '300.00' });
     expect(result.totals.high).toMatchObject({ subtotal: '33.22', total: '300.00' });
-    expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['88.93', '88.93', '88.92']);
+    expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['88.93', '88.94', '88.91']);
   });
 
-  it('W66 the gap goes on the trade minimum line, never on the after-hours adjustment', () => {
+  it('W66 the after-hours adjustment is rounded on the whole-cent grown lines, as at the low end', () => {
     // As W63 with labor_a flagged, multiplier 1.5. Low: adjustment 50% x $10.06 = $5.03; labor_a charged $15.09,
-    // so its line is $84.91; total $30.20 + $5.03 + $84.91 + $89.94 + $89.92 = $300.00. High: adjustment
-    // 50% x $11.066 = $5.53; labor_a charged $16.596, line $83.40; with $88.93 and $88.91 the total would be
-    // $299.99. The cent goes on the last trade line ($88.92); the adjustment stays $5.53.
+    // so its line is $84.91; total $30.20 + $5.03 + $84.91 + $89.94 + $89.92 = $300.00. High: labor_a's grown line
+    // is $11.07, so the adjustment is 50% x $11.07 = $5.535, $5.54 half up; labor_a is charged $16.61 and its
+    // line is $83.39; labor_b and labor_c lines are $88.94 and $88.91. Total
+    // $33.22 + $5.54 + $83.39 + $88.94 + $88.91 = $300.00.
     const hours = (code: string, price: string, changes: Obj = {}) =>
       item(code, { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: price, trade: code, ...changes });
     const headings = ['labor_a', 'labor_b', 'labor_c'].map((id) => ({ trade_id: id, name: id, minimum_charge: '100' }));
@@ -415,8 +417,8 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
     );
     expect(result.totals.low).toMatchObject({ after_hours: '5.03', total: '300.00' });
     expect(result.totals.low.trade_minimums.map((row) => row.amount)).toEqual(['84.91', '89.94', '89.92']);
-    expect(result.totals.high).toMatchObject({ subtotal: '33.22', after_hours: '5.53', total: '300.00' });
-    expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['83.40', '88.93', '88.92']);
+    expect(result.totals.high).toMatchObject({ subtotal: '33.22', after_hours: '5.54', total: '300.00' });
+    expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['83.39', '88.94', '88.91']);
   });
 
   it('W64 a taxable line that does not grow is taxed on its own amount at the high end', () => {
