@@ -1,10 +1,11 @@
 import { defineConfig } from '@playwright/test';
 import { AUTH_EMULATOR_HOST, E2E_PROJECT } from './tests/e2e/sign-in/emulator';
+import { FIRESTORE_EMULATOR_HOST } from './tests/e2e/offline/emulators';
 import { FIXTURE_PATH } from './tests/e2e/sign-in/seed';
 
 const port = 3100;
 
-// Same pinned CLI as tests/emu/run.ts. The Auth emulator needs no Java, unlike Firestore's.
+// Same pinned CLI as tests/emu/run.ts. The Firestore emulator needs Java 21, as test:emu does.
 const FIREBASE_TOOLS = 'firebase-tools@15.31.0';
 
 // Browser tests against a local production build, in the two engines iPhones use for testing
@@ -12,6 +13,8 @@ const FIREBASE_TOOLS = 'firebase-tools@15.31.0';
 // (tests/e2e/sign-in.spec.ts) sign in to the Firebase Auth emulator, under a demo- project only;
 // the server checks those sign-ins as it would in production, with a local file standing in
 // for the database (LOCAL_SIGN_IN_FIXTURE, written by the global setup once both servers answer).
+// The Firestore emulator runs beside the Auth emulator for the offline tests (tests/e2e/offline),
+// which put each test behind a switchable network of its own (lane.ts) to cut and restore.
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 60_000,
@@ -27,10 +30,14 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only auth --project ${E2E_PROJECT} --config firebase.json`,
-      url: `http://${AUTH_EMULATOR_HOST}/`,
+      command: `npx --yes ${FIREBASE_TOOLS} emulators:start --only auth,firestore --project ${E2E_PROJECT} --config firebase.json`,
+      // Firestore's emulator is the slower of the two to start, so its answer means both are up.
+      url: `http://${FIRESTORE_EMULATOR_HOST}/`,
       reuseExistingServer: false,
       timeout: 180_000,
+      // Playwright's default is to kill the CLI outright, which leaves the Firestore emulator's Java
+      // process holding its port. The CLI stops it cleanly on SIGINT.
+      gracefulShutdown: { signal: 'SIGINT', timeout: 15_000 },
     },
     {
       // A production build and server, not `next dev`: the dev server stopped listening in the

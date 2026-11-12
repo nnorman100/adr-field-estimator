@@ -109,6 +109,7 @@ describe('who may use the operator routes', () => {
     const handlers = await platformHandlers();
     expect(handlers.map((found) => found.name).sort()).toEqual([
       'GET platform/companies',
+      'GET platform/companies/[companyId]/prices',
       'GET platform/companies/[companyId]/team',
       'PATCH platform/companies/[companyId]/members/[membershipId]',
       'POST platform/companies',

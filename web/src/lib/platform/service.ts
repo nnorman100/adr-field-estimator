@@ -3,6 +3,7 @@ import { actors, auditEvents, invitations, memberships } from '@/db/schema';
 import { withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
 import { changeCompanyFlag, type FlagChangeResult } from '@/lib/flags';
 import { postgresFlagStore } from '@/lib/flags/store';
+import { readCompanyPrices, readVersionList, type PricesView, type VersionMeta } from '@/lib/prices/service';
 import { enqueueAccessProjection } from '@/lib/projection/outbox';
 import {
   INVITATION_DAYS,
@@ -410,6 +411,39 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
         { companyId, readOnly: true },
       );
       await act(operatorId, (tx) => audit(tx, operatorId, companyId, 'support_team_viewed', companyId), companyId);
+      return seen;
+    },
+
+    // The read-only support view of a company's prices (S4-6): the current version, the working copy
+    // and the version list, read in a read-only transaction, then one audit row for the view. The
+    // database refuses an operator's price writes too (migration 0009). Nothing is returned unless
+    // that row committed.
+    async supportPrices(
+      operatorId: string,
+      companyId: string,
+    ): Promise<{ company: CompanyView; prices: PricesView; versions: VersionMeta[]; moreVersions: boolean }> {
+      const seen = await withOperator(
+        db,
+        operatorId,
+        async (tx) => {
+          const [company] = rows<CompanyRow>(
+            await tx.execute(sql`
+              SELECT id::text, name, sign_in_slug, status, auth_tenant_id, created_at
+              FROM companies WHERE id = ${companyId}::uuid
+            `),
+          );
+          if (!company) throw new PlatformError('not_found');
+          const list = await readVersionList(tx, companyId);
+          return {
+            company: companyView(company),
+            prices: await readCompanyPrices(tx, companyId, 'owner'),
+            versions: list.versions,
+            moreVersions: list.more,
+          };
+        },
+        { companyId, readOnly: true },
+      );
+      await act(operatorId, (tx) => audit(tx, operatorId, companyId, 'support_prices_viewed', companyId), companyId);
       return seen;
     },
   };

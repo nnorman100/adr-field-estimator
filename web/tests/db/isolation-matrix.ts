@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { starterTable } from '@/lib/prices/starter';
 
 // The company-isolation matrix (S3-17): one row for every handler of every route file under
 // src/app, saying what kind of access rule it has and how the isolation suite attacks it. The suite
@@ -39,9 +40,14 @@ export type MatrixRow = {
   //          company's record ids in the body and checks the caller got only its own record and
   //          the other company's rows are unchanged
   own?: 'list' | 'cross' | 'create';
+  // The route names no company and no record of one: the company is the caller's sign-in (the
+  // Prices routes). A call by the other company's user is therefore answered about the caller's own
+  // company, so the suite expects an answer that holds nothing of the other company and changes
+  // nothing (a write here carries a stale revision, so it is refused), instead of a refusal.
+  self?: true;
 };
 
-const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixRow, 'body' | 'own'> = {}): MatrixRow => ({
+const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixRow, 'body' | 'own' | 'self'> = {}): MatrixRow => ({
   route,
   method,
   kind,
@@ -56,6 +62,10 @@ const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24
 const COMPANY = 'api/companies/[companyId]';
 const PLATFORM = 'api/platform/companies';
 const PLATFORM_ONE = `${PLATFORM}/[companyId]`;
+const PRICES = 'api/prices';
+// A write that is well formed but made from a revision no company has reached, so it is refused (409)
+// and never writes, whoever sends it.
+const STALE = 999_999;
 
 export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/team`, 'GET', 'company', { own: 'list' }),
@@ -67,7 +77,18 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/members/[membershipId]/disable`, 'POST', 'company', { own: 'cross' }),
   row(`${COMPANY}/members/[membershipId]/enable`, 'POST', 'company', { own: 'cross' }),
 
-  row('api/jobs', 'GET', 'company', { own: 'list' }),
+  row(PRICES, 'GET', 'company', { self: true, own: 'list' }),
+  row(`${PRICES}/working-copy`, 'PUT', 'company', { self: true, body: { expectedRevision: STALE, table: starterTable() } }),
+  row(`${PRICES}/preview`, 'POST', 'company', { self: true, body: {} }),
+  row(`${PRICES}/publish`, 'POST', 'company', {
+    self: true,
+    body: { expectedRevision: STALE, reason: 'Isolation check', publishKey: 'isolation-key-1', rangeChoice: 'single' },
+  }),
+  row(`${PRICES}/export`, 'GET', 'company', { self: true, own: 'list' }),
+  row(`${PRICES}/versions`, 'GET', 'company', { self: true, own: 'list' }),
+  row(`${PRICES}/versions/[versionId]`, 'GET', 'company', { own: 'cross' }),
+  row(`${PRICES}/versions/[versionId]/restore`, 'POST', 'company', { body: { expectedRevision: STALE }, own: 'cross' }),
+  row('api/jobs', 'GET', 'company', { self: true, own: 'list' }),
   row('api/jobs', 'POST', 'company', { body: { id: '3c9a6e12-84d1-4f0b-b7a3-52e8d1c04f96', draftId: 'a1f0d7b4-2e65-4c39-8b1a-9d3e6f20c578' }, own: 'create' }),
   row('api/jobs/[jobId]', 'GET', 'company', { own: 'cross' }),
   row('api/jobs/[jobId]/customer', 'PUT', 'company', { body: JOB_CUSTOMER, own: 'cross' }),
@@ -91,6 +112,7 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${PLATFORM_ONE}/tenant`, 'POST', 'operator', { body: { tenantId: 'tenant-x' } }),
   row(`${PLATFORM_ONE}/owner`, 'POST', 'operator', { body: { email: 'boss@example.test', replace: true } }),
   row(`${PLATFORM_ONE}/team`, 'GET', 'operator'),
+  row(`${PLATFORM_ONE}/prices`, 'GET', 'operator'),
   row(`${PLATFORM_ONE}/members/[membershipId]`, 'PATCH', 'operator', { body: { role: 'office' } }),
   row(`${PLATFORM_ONE}/members/[membershipId]/enable`, 'POST', 'operator'),
   row(`${PLATFORM_ONE}/members/[membershipId]/reset-second-step`, 'POST', 'operator', { body: { confirmedBy: 'phone' } }),

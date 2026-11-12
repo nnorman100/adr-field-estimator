@@ -9,6 +9,7 @@ export {
   supportChangeRole,
   supportEnableMember,
   supportInvitationAction,
+  supportPrices,
   supportTeam,
 } from './http';
 export {
