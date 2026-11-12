@@ -90,6 +90,14 @@ export type PriceLine = {
   group: string;
   bucket: string;
   taxable: boolean;
+  /** The percent of the line sales tax applies to when the item is taxable (100 unless the owner set a share). */
+  materialsShare: Dec;
+  /** The item takes the after-hours multiplier on an after-hours job. */
+  afterHours: boolean;
+  /** Overhead and profit is not charged on this line. */
+  noOverheadProfit: boolean;
+  /** The trade heading the item sits under, whose minimum charge it counts toward. */
+  trade: string | null;
   xactimateCode: string;
   room: string | null;
   /** The square feet a room line prices; null on a job line. */

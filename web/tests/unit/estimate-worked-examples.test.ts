@@ -391,6 +391,8 @@ describe('minimum, overhead and profit, tax, after-hours', () => {
   it('W19 after hours: the multiplier adds to labor and materials only, and the after-hours item appears', () => {
     // Multiplier 1.5. Service call $150.00 + after-hours charge $75.00 (job charges, not multiplied)
     // + demolition 100 x $2.00 = $200.00 -> subtotal $425.00; adjustment 50% x $200.00 = $100.00; total $525.00.
+    // Updated in S4-4c (owner decision M5): the multiplier now applies only to items flagged after-hours, so the
+    // demolition item carries `after_hours: true`. Every number is unchanged; W35 to W37 cover the unflagged case.
     const priceList = table(
       [
         SERVICE_CALL,
@@ -400,7 +402,7 @@ describe('minimum, overhead and profit, tax, after-hours', () => {
           quantity_source: 'after_hours',
           unit_price: '75.00',
         }),
-        item('demo'),
+        item('demo', { after_hours: true }),
       ],
       { after_hours: { multiplier: '1.5' } },
     );

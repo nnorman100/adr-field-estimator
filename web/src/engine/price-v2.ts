@@ -146,6 +146,10 @@ export function makeLine(
     group: item.group,
     bucket: bucketOf(item.group, item.code),
     taxable: item.taxable,
+    materialsShare: Dec.parse(item.materials_share_percent ?? '100'),
+    afterHours: item.after_hours === true,
+    noOverheadProfit: item.no_overhead_profit === true,
+    trade: item.trade ?? null,
     xactimateCode: item.xactimate_code,
     room,
     area,
@@ -377,7 +381,7 @@ export function priceScopeV2(
   }
   const categories = new Set(data.rooms.map((room) => room.category));
   const priced: Array<[Item, PriceLine[]]> = [];
-  let extrasTaxable = false;
+  let extrasItem: Item | null = null;
   const enabled = items
     .filter((item) => item.enabled)
     .sort((left, right) => {
@@ -387,7 +391,7 @@ export function priceScopeV2(
     });
   for (const item of enabled) {
     if (item.group === EXTRAS) {
-      extrasTaxable = item.taxable;
+      extrasItem = item;
       if (unpricedQuantity(item, data)) {
         warnings.push({ code: 'unpriced_extras_quantity', item_id: item.item_id });
       }
@@ -435,7 +439,11 @@ export function priceScopeV2(
       unitPrice: extra.approval.rate,
       waste: ZERO,
       total: money(extra.hours.mul(extra.approval.rate)),
-      taxable: extrasTaxable,
+      taxable: extrasItem?.taxable ?? false,
+      materialsShare: Dec.parse(extrasItem?.materials_share_percent ?? '100'),
+      afterHours: false,
+      noOverheadProfit: extrasItem?.no_overhead_profit === true,
+      trade: extrasItem?.trade ?? null,
       xactimateCode: '',
       room: null,
       area: null,

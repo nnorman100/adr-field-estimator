@@ -25,6 +25,7 @@ import {
 /** The formulas that price a table: category rows, Mold, and brackets counted per row. */
 export const ENGINE_VERSION = 'dryscope-v3';
 const MAX_ITEMS = 150;
+const MAX_TRADES = 30;
 const MAX_BRACKETS = 20;
 const MAX_SF = 100000;
 const MAX_ROOM_TYPES = 30;
@@ -78,7 +79,6 @@ export const DEFAULT_AFTER_HOURS_LABEL = 'After-hours adjustment';
 
 const ITEM_ID = /^[a-z][a-z0-9_]{1,39}$/;
 const CODE_RE = /^[A-Z0-9][A-Z0-9-]{0,15}$/;
-const XACT = /^(?:[A-Z0-9][A-Z0-9 ._/-]{0,29})?$/;
 const DECIMAL_RE = /^\d+(?:\.\d+)?$/;
 const FORMULA = /^[=+\-@]/;
 
@@ -281,9 +281,20 @@ type ParsedItem = {
   tier_prices?: TierPrices;
   mold_conditions?: MoldCondition[];
   affected_bands?: AffectedBand[];
+  /** Present only when set: the after-hours multiplier applies to this item on an after-hours job. */
+  after_hours?: true;
+  /** Present only when set: overhead and profit is not charged on this item. */
+  no_overhead_profit?: true;
+  /** Present only when below 100: the part of a taxable item's line that sales tax applies to. */
+  materials_share_percent?: string;
+  /** Present only when set: the trade heading this item sits under. */
+  trade?: string;
 };
 
 type ParsedRoomType = { id: string; name: string; suggested_items: string[] };
+
+/** A trade heading: an owner-named group of items that may carry its own minimum charge. */
+type ParsedTrade = { trade_id: string; name: string; minimum_charge: string };
 
 type ParsedRange = {
   first_sf: number;
@@ -386,11 +397,15 @@ const ITEM = z
     mold_conditions: z.array(z.union([z.literal(1), z.literal(2), z.literal(3)])).max(MOLD_CONDITIONS.length).optional(),
     affected_bands: z.array(z.enum(AFFECTED_BANDS)).max(AFFECTED_BANDS.length).optional(),
     taxable: z.boolean().default(false),
-    xactimate_code: z.string().trim().regex(XACT, 'not a valid line note').nullish(),
+    xactimate_code: text(0, 80).nullish(),
     enabled: z.boolean().default(true),
     sort_order: z.number().int().min(0).max(10000).nullish(),
     price_brackets: z.array(PRICE_BAND).min(1).max(MAX_BRACKETS).optional(),
     rows: z.array(ROW).max(MAX_ROWS).optional(),
+    after_hours: z.boolean().default(false),
+    no_overhead_profit: z.boolean().default(false),
+    materials_share_percent: percent.default('100'),
+    trade: z.string().regex(ITEM_ID, 'must be 2 to 40 lowercase letters, digits or _').nullish(),
   })
   .superRefine((item, ctx) => {
     const code = item.code ? item.code : defaultCode(item.item_id);
@@ -439,6 +454,20 @@ const ITEM = z
       checkBands(item.price_brackets, ctx, ['price_brackets']);
     }
     checkRows(item, source, ctx);
+    if (item.after_hours && BUCKET_OF_GROUP[item.group] !== 'labor_material') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['after_hours'],
+        message: 'only demolition, treatment and labor items take the after-hours multiplier',
+      });
+    }
+    if (item.materials_share_percent !== '100' && !item.taxable) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['materials_share_percent'],
+        message: 'a materials share needs a taxable item',
+      });
+    }
     const zero =
       isZeroPrice(item.unit_price ?? '') ||
       (item.tier_prices !== undefined && rowPrices({ tier_prices: item.tier_prices }).some(isZeroPrice)) ||
@@ -480,6 +509,10 @@ const ITEM = z
     if (item.affected_bands?.length) {
       out.affected_bands = AFFECTED_BANDS.filter((band) => item.affected_bands?.includes(band));
     }
+    if (item.after_hours) out.after_hours = true;
+    if (item.no_overhead_profit) out.no_overhead_profit = true;
+    if (item.materials_share_percent !== '100') out.materials_share_percent = item.materials_share_percent;
+    if (item.trade) out.trade = item.trade;
     if (item.rows?.length) {
       out.rows = item.rows
         .map((row): ParsedRow => {
@@ -568,8 +601,16 @@ const POLICY = z.strictObject({
   room_types: z.array(ROOM_TYPE).max(MAX_ROOM_TYPES).default([]),
 });
 
+const TRADE = z.strictObject({
+  trade_id: z.string().regex(ITEM_ID, 'must be 2 to 40 lowercase letters, digits or _'),
+  name: text(1, 60),
+  minimum_charge: decimal({ max: '100000', places: 2 }).default('0'),
+});
+
+type TableBody = { items: ParsedItem[]; trades?: ParsedTrade[]; policy: z.output<typeof POLICY> };
+
 export const PriceTableV3 = z
-  .strictObject({ items: z.array(ITEM).max(MAX_ITEMS), policy: POLICY })
+  .strictObject({ items: z.array(ITEM).max(MAX_ITEMS), trades: z.array(TRADE).max(MAX_TRADES).optional(), policy: POLICY })
   .superRefine((table, ctx) => {
     const ids = new Set<string>();
     const codes = new Set<string>();
@@ -584,6 +625,27 @@ export const PriceTableV3 = z
       ctx.addIssue({ code: 'custom', path: ['items'], message: 'only one additional-work item may be on' });
     }
     checkRoomTypes(table, ctx);
+    const trades = new Set<string>();
+    (table.trades ?? []).forEach((trade, index) => {
+      if (trades.has(trade.trade_id)) {
+        ctx.addIssue({ code: 'custom', path: ['trades', index], message: 'repeats a trade id' });
+      }
+      trades.add(trade.trade_id);
+    });
+    table.items.forEach((item, index) => {
+      if (item.trade !== undefined && !trades.has(item.trade)) {
+        ctx.addIssue({ code: 'custom', path: ['items', index, 'trade'], message: 'names no trade heading' });
+      }
+    });
+  })
+  .transform((table): TableBody => {
+    const body: TableBody = { items: table.items, policy: table.policy };
+    if (table.trades?.length) {
+      body.trades = [...table.trades].sort((left, right) =>
+        left.trade_id < right.trade_id ? -1 : left.trade_id > right.trade_id ? 1 : 0,
+      );
+    }
+    return body;
   });
 
 /**
@@ -627,6 +689,7 @@ function checkRoomTypes(
 
 export type Table = z.output<typeof PriceTableV3>;
 export type Item = Table['items'][number];
+export type Trade = ParsedTrade;
 export type Policy = Table['policy'];
 export type PriceBand = z.output<typeof PRICE_BAND>;
 export type PriceRow = ParsedRow;
@@ -727,5 +790,6 @@ export function hasCushionBrackets(policy: Policy): boolean {
 /** SHA-256 of the canonical JSON of the parsed table, items in id order. */
 export function contentHash(table: Table): string {
   const items = [...table.items].sort((a, b) => (a.item_id < b.item_id ? -1 : a.item_id > b.item_id ? 1 : 0));
-  return sha256(canonical({ items, policy: table.policy } as unknown as Json));
+  const body = table.trades ? { items, trades: table.trades, policy: table.policy } : { items, policy: table.policy };
+  return sha256(canonical(body as unknown as Json));
 }

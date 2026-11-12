@@ -46,6 +46,8 @@ export type EstimateLine = {
 export type EstimateEnd = {
   subtotal: string;
   after_hours: string;
+  /** What each trade heading under its minimum is short of it. */
+  trade_minimums: Array<{ trade_id: string; name: string; amount: string }>;
   minimum_charge: string;
   overhead_profit: string;
   tax: string;
@@ -65,6 +67,8 @@ export type EstimateDocuments = {
   compliance_notes: string[];
   photo_log: Json[];
   claim: Json;
+  /** The itemized claim's lines: description, price and the owner's optional "matches Xactimate line" note. */
+  itemized_claim: Json[];
   unpriced_work: string[];
   signable: boolean;
 };
@@ -125,6 +129,7 @@ function endOf(end: End): EstimateEnd {
   return {
     subtotal: cents(end.subtotal),
     after_hours: cents(end.afterHours),
+    trade_minimums: end.tradeMinimums.map((row) => ({ trade_id: row.tradeId, name: row.name, amount: cents(row.amount) })),
     minimum_charge: cents(end.minimumCharge),
     overhead_profit: cents(end.overheadProfit),
     tax: cents(end.tax),
@@ -156,6 +161,7 @@ function documentsOf(documents: JObj): EstimateDocuments {
     compliance_notes: strings(documents.compliance_notes),
     photo_log: Array.isArray(photos) ? photos : [],
     claim: documents.claim ?? null,
+    itemized_claim: Array.isArray(documents.xactimate_scope) ? documents.xactimate_scope : [],
     unpriced_work: strings(documents.unpriced_work),
     signable: documents.signable === true,
   };

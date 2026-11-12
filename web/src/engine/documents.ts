@@ -206,7 +206,7 @@ function photoOf(raw: Json): PhotoRow {
 }
 
 function endJson(end: End): JObj {
-  return {
+  const body: JObj = {
     after_hours: money(end.afterHours).toString(),
     minimum_charge: money(end.minimumCharge).toString(),
     overhead_profit: money(end.overheadProfit).toString(),
@@ -214,6 +214,14 @@ function endJson(end: End): JObj {
     tax: money(end.tax).toString(),
     total: money(end.total).toString(),
   };
+  if (end.tradeMinimums.length) {
+    body.trade_minimums = end.tradeMinimums.map((row) => ({
+      amount: money(row.amount).toString(),
+      name: row.name,
+      trade_id: row.tradeId,
+    }));
+  }
+  return body;
 }
 
 function estimateOf(totals: Totals, table: Table): JObj {
