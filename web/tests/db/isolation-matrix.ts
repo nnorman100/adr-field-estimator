@@ -34,7 +34,11 @@ export type MatrixRow = {
   // path that names another company's record:
   //   list   the caller's own ids; a 200 that holds none of the other company's rows
   //   cross  the caller's own company with the other company's record ids: refused
-  own?: 'list' | 'cross';
+  //   create a route that makes the caller's own record from the body and names no company in its
+  //          path, so the other company's people are not refused: the suite sends the other
+  //          company's record ids in the body and checks the caller got only its own record and
+  //          the other company's rows are unchanged
+  own?: 'list' | 'cross' | 'create';
 };
 
 const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixRow, 'body' | 'own'> = {}): MatrixRow => ({
@@ -43,6 +47,11 @@ const row = (route: string, method: Method, kind: RouteKind, extra: Pick<MatrixR
   kind,
   ...extra,
 });
+
+// Bodies that are valid for the job routes, so a refusal is the access rule's (the ids in them are
+// the suite's own; the path carries the other company's job).
+const JOB_CUSTOMER = { revision: 1, changeId: '5b7c1e0a-3f6d-4a52-9d1e-7a0c2b4f8e61', name: 'Planted Name', phone: '555-0100', email: 'planted@example.test', propertyAddress: '1 Planted Way' };
+const JOB_CLAIM = { revision: 1, changeId: '8d2f4a90-61b3-4c7e-a5d8-0e9b3c1f7a24', carrier: 'Planted Mutual', claimNumber: 'PL-1', policyNumber: 'PL-2', dateOfLoss: null, lossCause: '', adjusterName: '', adjusterEmail: '', adjusterPhone: '', deductible: '' };
 
 const COMPANY = 'api/companies/[companyId]';
 const PLATFORM = 'api/platform/companies';
@@ -57,6 +66,12 @@ export const MATRIX: readonly MatrixRow[] = [
   row(`${COMPANY}/members/[membershipId]`, 'PATCH', 'company', { body: { role: 'office' }, own: 'cross' }),
   row(`${COMPANY}/members/[membershipId]/disable`, 'POST', 'company', { own: 'cross' }),
   row(`${COMPANY}/members/[membershipId]/enable`, 'POST', 'company', { own: 'cross' }),
+
+  row('api/jobs', 'GET', 'company', { own: 'list' }),
+  row('api/jobs', 'POST', 'company', { body: { id: '3c9a6e12-84d1-4f0b-b7a3-52e8d1c04f96', draftId: 'a1f0d7b4-2e65-4c39-8b1a-9d3e6f20c578' }, own: 'create' }),
+  row('api/jobs/[jobId]', 'GET', 'company', { own: 'cross' }),
+  row('api/jobs/[jobId]/customer', 'PUT', 'company', { body: JOB_CUSTOMER, own: 'cross' }),
+  row('api/jobs/[jobId]/claim', 'PUT', 'company', { body: JOB_CLAIM, own: 'cross' }),
 
   row('api/invitations/[invitationId]', 'GET', 'invitation'),
   row('api/invitations/[invitationId]/accept', 'POST', 'invitation'),

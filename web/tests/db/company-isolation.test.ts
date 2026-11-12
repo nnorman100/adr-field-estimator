@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeClaims, Harness } from './team-harness';
@@ -23,6 +24,7 @@ vi.mock('@/lib/auth/services', () => ({
   serverDatabase: () => live.harness!.handle.db,
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
+vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
@@ -64,7 +66,7 @@ let b: Side;
 type Side = {
   name: 'A' | 'B';
   companyId: string;
-  ids: { membershipId: string; invitationId: string; address: string };
+  ids: { membershipId: string; invitationId: string; address: string; jobId: string; draftId: string };
   people: { owner: FakeClaims; estimator: FakeClaims; office: FakeClaims };
   markers: string[];
 };
@@ -91,6 +93,20 @@ async function seedSides(): Promise<void> {
     await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
+  // One job with a customer and a claim in each company, so a clean answer to the other company is
+  // not an empty one. Its strings are markers, like the ids.
+  const job = async (company: string, by: string, suffix: string) => {
+    const ids = { jobId: randomUUID(), draftId: randomUUID() };
+    await h.admin`
+      INSERT INTO jobs (id, company_id, created_by_actor_id, field_owner_actor_id, current_draft_id, property_address, request_digest)
+      VALUES (${ids.jobId}, ${company}, ${by}, ${by}, ${ids.draftId}, ${`Property Line ${suffix}`}, ${'0'.repeat(64)})
+    `;
+    await h.admin`INSERT INTO job_customers (company_id, job_id, name, phone, email) VALUES (${company}, ${ids.jobId}, ${`Customer ${suffix}`}, ${`555-01${suffix === 'a' ? '11' : '22'}`}, ${`customer-${suffix}@example.test`})`;
+    await h.admin`INSERT INTO job_claims (company_id, job_id, carrier, claim_number) VALUES (${company}, ${ids.jobId}, ${`Carrier ${suffix}`}, ${`Claim ${suffix}`})`;
+    return ids;
+  };
+  const jobA = await job(h.seed.a, h.seed.ownerA.actor, 'a');
+  const jobB = await job(h.seed.b, h.seed.ownerB.actor, 'b');
   const side = (
     name: 'A' | 'B',
     companyId: string,
@@ -99,21 +115,22 @@ async function seedSides(): Promise<void> {
     invitationId: string,
     ids: string[],
     extra: string[],
+    job: { jobId: string; draftId: string },
   ): Side => {
     const tenant = `tenant-${suffix}`;
     const person = (uid: string): FakeClaims => ({ tenant, uid });
     return {
       name,
       companyId,
-      ids: { membershipId, invitationId, address: `company-${suffix}` },
+      ids: { membershipId, invitationId, address: `company-${suffix}`, ...job },
       people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
-      markers: [companyId, membershipId, invitationId, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra].map((value) =>
+      markers: [companyId, membershipId, invitationId, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`].map((value) =>
         value.toLowerCase(),
       ),
     };
   };
-  a = side('A', h.seed.a, 'a', h.seed.estimatorA.membership, invitationA, [h.seed.ownerA.actor, h.seed.estimatorA.actor, h.seed.officeA.actor, h.seed.ownerA.membership], ['shared-invitee@example.test']);
-  b = side('B', h.seed.b, 'b', h.seed.estimatorB.membership, invitationB, [h.seed.ownerB.actor, h.seed.estimatorB.actor, officeB[0]!.id, h.seed.ownerB.membership], ['invitee-b@example.test']);
+  a = side('A', h.seed.a, 'a', h.seed.estimatorA.membership, invitationA, [h.seed.ownerA.actor, h.seed.estimatorA.actor, h.seed.officeA.actor, h.seed.ownerA.membership], ['shared-invitee@example.test'], jobA);
+  b = side('B', h.seed.b, 'b', h.seed.estimatorB.membership, invitationB, [h.seed.ownerB.actor, h.seed.estimatorB.actor, officeB[0]!.id, h.seed.ownerB.membership], ['invitee-b@example.test'], jobB);
 }
 
 beforeAll(async () => {
@@ -171,8 +188,12 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   membershipId: victim.ids.membershipId,
   invitationId: victim.ids.invitationId,
   address: victim.ids.address,
+  jobId: victim.ids.jobId,
 });
 
+// The rows a call with the other company's ids must refuse. A create row makes the caller's own
+// record instead; its own test is below.
+const refusedRows = () => MATRIX.filter((row) => row.own !== 'create');
 const rowsOfKind = (...kinds: MatrixRow['kind'][]) => MATRIX.filter((row) => kinds.includes(row.kind));
 // The two directions are built after the seed, so the matrix functions read them lazily.
 const directions = (): [Side, Side][] => [
@@ -195,6 +216,11 @@ const OPEN: Record<string, OpenCheck> = {
   'GET api/sign-in/[address]': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(200);
     expect(JSON.parse(answer.text), where).toEqual({ company: { name: `Company ${victim.ids.address}` }, tenantId: victim.people.owner.tenant });
+  },
+  // The caller's own company's jobs, whatever the other company's ids; none of the other's shows.
+  'GET api/jobs': (answer, where, _attacker, victim) => {
+    expect(answer.status, where).toBe(200);
+    expect(leaks(answer.text, victim), where).toEqual([]);
   },
   'GET api/health': (answer, where, _attacker, victim) => {
     expect(answer.status, where).toBe(200);
@@ -273,7 +299,7 @@ describe('every route, called with the other company’s ids', () => {
     const checked: string[] = [];
     for (const [attacker, victim] of directions()) {
       for (const [role, claims] of Object.entries(attacker.people)) {
-        for (const row of MATRIX) {
+        for (const row of refusedRows()) {
           const answer = await call(row, claims, idsOf(victim));
           const where = `${attacker.name} ${role}: ${row.method} ${row.route}`;
           const open = OPEN[matrixKey(row)];
@@ -287,8 +313,8 @@ describe('every route, called with the other company’s ids', () => {
         }
       }
     }
-    // 2 directions x 3 people x every row of the matrix.
-    expect(checked).toHaveLength(2 * 3 * MATRIX.length);
+    // 2 directions x 3 people x every row of the matrix but the create rows.
+    expect(checked).toHaveLength(2 * 3 * refusedRows().length);
     expect(await everything(h.admin)).toBe(before);
     expect(h.calls).toEqual([]);
     expect(h.projected).toEqual([]);
@@ -330,6 +356,38 @@ describe('every route, called with the other company’s ids', () => {
       }
     }
     expect(await everything(h.admin)).toBe(before);
+  });
+
+  it('lets a create route make only the caller’s own record from the other company’s ids, and changes nothing of the other’s', async () => {
+    const creates = MATRIX.filter((row) => row.own === 'create');
+    expect(creates.length).toBeGreaterThan(0);
+    const tables = ['jobs', 'job_customers', 'job_claims', 'evidence_objects', 'audit_events'];
+    const rowsOf = async (company: string) => JSON.stringify(await Promise.all(tables.map((table) => h.admin.unsafe(`SELECT to_jsonb(t) AS row FROM "${table}" t WHERE company_id = '${company}' ORDER BY 1`))));
+    for (const row of creates) {
+      for (const [attacker, victim] of directions()) {
+        const victimBefore = await rowsOf(victim.companyId);
+        const draftsBefore = h.drafts.made.size;
+        for (const [role, claims] of Object.entries(attacker.people)) {
+          // The other company's own job and draft ids, in the body.
+          const body = { id: victim.ids.jobId, draftId: victim.ids.draftId };
+          const answer = await call({ ...row, body }, claims, idsOf(victim));
+          const where = `${attacker.name} ${role}: ${row.method} ${row.route}`;
+          // The caller's own record (the owner), or the same request again (office) or another
+          // person's id in its own company (the estimator), but never the victim's.
+          expect({ where, status: [200, 201, 409].includes(answer.status) }).toEqual({ where, status: true });
+          // The answer repeats the two ids the caller itself sent; nothing else of the other company.
+          const sent = [victim.ids.jobId, victim.ids.draftId].map((id) => id.toLowerCase());
+          expect({ where, leaked: leaks(answer.text, victim).filter((marker) => !sent.includes(marker)) }).toEqual({ where, leaked: [] });
+        }
+        expect(await rowsOf(victim.companyId)).toBe(victimBefore);
+        // The attacker's company holds a job of its own under that id, and only one.
+        const own = await h.admin`SELECT company_id FROM jobs WHERE id = ${victim.ids.jobId}`;
+        expect(own.map((found) => found.company_id).sort()).toEqual([attacker.companyId, victim.companyId].sort());
+        // One draft was made, in the attacker's own company: never a write into the other's.
+        const made = [...h.drafts.made.keys()].slice(draftsBefore);
+        expect(made).toEqual([`${attacker.companyId}/${victim.ids.draftId}`]);
+      }
+    }
   });
 
   it('answers /api/me about the caller’s own sign-in whatever company the request names', async () => {
@@ -495,6 +553,12 @@ describe('SQL as the runtime role', () => {
       ['insert an audit event', `INSERT INTO audit_events (company_id, action) VALUES ('${victim}', 'planted')`],
       ['insert an outbox row', `INSERT INTO access_projection_outbox (company_id, actor_id) VALUES ('${victim}', '${h.seed.ownerA.actor}')`],
       ['insert a feature flag', `INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES ('${victim}', 'planted', true)`],
+      ['insert a job', `INSERT INTO jobs (id, company_id, created_by_actor_id, current_draft_id, request_digest) VALUES (gen_random_uuid(), '${victim}', '${h.seed.ownerA.actor}', gen_random_uuid(), '${'0'.repeat(64)}')`],
+      ['insert a customer', `INSERT INTO job_customers (company_id, job_id, name) VALUES ('${victim}', '${h.seed.ownerA.actor}', 'planted')`],
+      ['change a job', `UPDATE jobs SET property_address = 'taken', revision = revision + 1 WHERE company_id = '${victim}'`],
+      ['change a customer', `UPDATE job_customers SET name = 'taken' WHERE company_id = '${victim}'`],
+      ['change a claim', `UPDATE job_claims SET carrier = 'taken' WHERE company_id = '${victim}'`],
+      ['delete jobs', `DELETE FROM jobs WHERE company_id = '${victim}'`],
       ['change a role', `UPDATE memberships SET role = 'owner' WHERE company_id = '${victim}'`],
       ['change a status', `UPDATE memberships SET status = 'disabled' WHERE company_id = '${victim}'`],
       ['change an email', `UPDATE actors SET email = 'taken@example.test' WHERE company_id = '${victim}'`],
