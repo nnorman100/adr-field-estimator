@@ -276,6 +276,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'a price pin must take the job''s next sequence number' USING ERRCODE = '23514';
   END IF;
+  PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
   RETURN NEW;
 END
 $$;
@@ -299,6 +300,7 @@ DECLARE
   version_hash text;
   version_engine text;
 BEGIN
+  PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
   SELECT s.status INTO submission_status
   FROM public.job_submissions s WHERE s.company_id = NEW.company_id AND s.id = NEW.submission_id;
   IF FOUND AND submission_status <> 'committed' THEN
@@ -348,6 +350,7 @@ DECLARE
   evidence_kind text;
   evidence_job uuid;
 BEGIN
+  PERFORM 1 FROM public.jobs j WHERE j.company_id = NEW.company_id AND j.id = NEW.job_id FOR UPDATE;
   SELECT * INTO estimate FROM public.job_estimates e WHERE e.company_id = NEW.company_id AND e.id = NEW.estimate_id;
   IF FOUND THEN
     IF estimate.submission_id <> NEW.submission_id THEN
