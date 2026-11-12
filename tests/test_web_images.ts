@@ -68,6 +68,9 @@ function repo(sh: Shell): string {
   const root = path.join(sh.tmp, 'repo');
   mkdirSync(path.join(root, 'web', 'scripts'), { recursive: true });
   mkdirSync(path.join(root, 'web', 'node_modules'));
+  // The icons and the field worker (/sw.js) the standalone output leaves out of the image.
+  mkdirSync(path.join(root, 'web', 'public'));
+  writeFileSync(path.join(root, 'web', 'public', 'sw.js'), 'worker\n');
   mkdirSync(path.join(root, 'live-relay-placeholder'));
   for (const name of [
     'web/scripts/build-image.sh',
@@ -143,6 +146,7 @@ describe('building images', () => {
     for (const name of [
       'app/server.js',
       'app/.next/static/chunks/main.js',
+      'app/public/sw.js',
       'app/migrate.mjs',
       'app/migrations/0001_foundation.sql',
     ]) {
