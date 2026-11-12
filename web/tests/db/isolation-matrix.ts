@@ -7,9 +7,9 @@ import { starterTable } from '@/lib/prices/starter';
 // src/app, saying what kind of access rule it has and how the isolation suite attacks it. The suite
 // (company-isolation.test.ts) imports every route file, fails when one of its handlers is not in
 // this list or a row names one that no longer exists, and calls every exported handler with the
-// other company's ids, failing by name on one it did not reach. So a new route cannot ship without somebody deciding here how another company's caller is
-// refused, and the decision is read in review. That each handler has an access rule at all is
-// tests/unit/route-rules.test.ts.
+// other company's ids, failing by name on one it did not reach. So a new route cannot ship without
+// somebody deciding here how another company's caller is refused, and the decision is read in
+// review. That each handler has an access rule at all is tests/unit/route-rules.test.ts.
 //
 // Kinds:
 //   company     a company member; the company comes from the sign-in
