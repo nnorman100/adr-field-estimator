@@ -13,8 +13,8 @@ const EXEMPT = '\u0000exempt';
 const OPEN = '\u0000open';
 
 /**
- * Sums over the lines at one end. Every field is linear in the line amounts, so the high end can scale the
- * mix of its grown labor lines to the rounded high labor.
+ * Sums over the lines at one end. Every field is linear in the line amounts, so the high end can bill the
+ * growth of its labor lines in proportion to the rounded high labor.
  * - `flagged`: amounts of lines that take the after-hours multiplier, by the group its adjustment rounds in.
  * - `exempt`: amounts of lines that carry no overhead and profit.
  * - `taxed`: the tax base, each taxable line's materials share at the multiplier, plus its share of overhead
@@ -58,16 +58,19 @@ export function addMix(left: Mix, right: Mix): Mix {
 }
 
 /**
- * The mix of grown labor lines scaled to the rounded labor amount (zero when there is none). The tax base is left
- * as it is: the uncertainty method taxes its exact grown amounts, and the cushion sets its own.
+ * The high end's labor mix: each sum at the low end plus `share` of its growth, where `share` is the part of the
+ * grown labor's growth that the rounded high labor bills. A line that does not grow keeps its low amount, so no sum
+ * falls below the low end's.
  */
-export function scaleMix(mix: Mix, amount: Dec, low: Dec): Mix {
-  const scale = (value: Dec): Dec => (low.isZero() ? ZERO : value.mul(amount).div(low));
+export function scaleMix(grown: Mix, low: Mix, share: Dec): Mix {
+  const between = (from: Dec, to: Dec): Dec => from.add(to.sub(from).mul(share));
+  const both = (from: Map<string, Dec>, to: Map<string, Dec>): Map<string, Dec> =>
+    new Map([...new Set([...from.keys(), ...to.keys()])].map((key) => [key, between(from.get(key) ?? ZERO, to.get(key) ?? ZERO)]));
   return {
-    flagged: new Map([...mix.flagged].map(([group, value]) => [group, scale(value)])),
-    exempt: scale(mix.exempt),
-    taxed: mix.taxed,
-    trades: new Map([...mix.trades].map(([trade, value]) => [trade, scale(value)])),
+    flagged: both(low.flagged, grown.flagged),
+    exempt: between(low.exempt, grown.exempt),
+    taxed: between(low.taxed, grown.taxed),
+    trades: both(low.trades, grown.trades),
   };
 }
 

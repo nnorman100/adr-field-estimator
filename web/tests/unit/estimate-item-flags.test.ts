@@ -376,11 +376,12 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
     expect(result.totals.low.trade_minimums).toEqual([]);
   });
 
-  it('W63 a high end whose minimum lines round below the low end is the low end', () => {
+  it('W63 a high end whose minimum lines round below the low end takes the gap on its trade minimum line', () => {
     // Cushion 10%, three labor items of 1 hour, each under its own $100.00 heading: $10.06, $10.06 and $10.08.
     // Low: $30.20 + $89.94 + $89.94 + $89.92 = $300.00. High labor $33.22; the grown trades $11.066, $11.066 and
     // $11.088 round their lines to $88.93, $88.93 and $88.91, so the high end alone would be $299.99, a cent
-    // under the low end. A high end below the low end is the low end: both are $300.00.
+    // under the low end. The high end keeps its grown labor and adds that cent to its last trade minimum line:
+    // $33.22 + $88.93 + $88.93 + $88.92 = $300.00.
     const hours = (code: string, price: string) =>
       item(code, { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: price, trade: code });
     const headings = ['labor_a', 'labor_b', 'labor_c'].map((id) => ({ trade_id: id, name: id, minimum_charge: '100' }));
@@ -392,7 +393,52 @@ describe('a minimum per trade heading beside the job minimum (M7)', () => {
       job([room('Kitchen', { unfinished_sf: 100 })], { labor_hours: 1 }),
     );
     expect(result.totals.low).toMatchObject({ subtotal: '30.20', total: '300.00' });
-    expect(result.totals.high).toEqual(result.totals.low);
+    expect(result.totals.high).toMatchObject({ subtotal: '33.22', total: '300.00' });
+    expect(result.totals.high?.trade_minimums.map((row) => row.amount)).toEqual(['88.93', '88.93', '88.92']);
+  });
+
+  it('W64 a taxable line that does not grow is taxed on its own amount at the high end', () => {
+    // Cushion 0.1% on the dearest 1 sq ft, 0% beyond, tax 10%. Demolition 5 sq ft x $2.01 = $10.05, taxable;
+    // antimicrobial 5 sq ft x $3.00 = $15.00 and 1 labor hour at $10.00, not taxable. The dearest square foot is
+    // the antimicrobial's, so the demolition does not grow; growth is $0.003 + $0.010 = $0.013 and high labor is
+    // $35.06. Low tax 10% x $10.05 = $1.01 (half up). The high end bills $0.01 of that growth, none of it on the
+    // demolition, so its tax is $1.01 too and its total $35.06 + $1.01 = $36.07, not $1.00 and $36.06.
+    const result = priced(
+      table(
+        [
+          item('demo', { unit_price: '2.01', taxable: true }),
+          item('antimicrobial', { group: 'treatment', unit_price: '3.00' }),
+          item('labor', { group: 'labor', unit: 'hour', quantity_source: 'field:labor_hours', unit_price: '10.00' }),
+        ],
+        {
+          estimate_mode: 'range',
+          range: { first_sf: 1, first_percent: '0.1', beyond_percent: '0' },
+          sales_tax: { enabled: true, percent: '10' },
+        },
+      ),
+      job([room('Kitchen', { unfinished_sf: 5 })], { labor_hours: 1 }),
+    );
+    expect(result.totals.low).toMatchObject({ subtotal: '35.05', tax: '1.01', total: '36.06' });
+    expect(result.totals.high).toMatchObject({ subtotal: '35.06', tax: '1.01', total: '36.07' });
+  });
+
+  it('W65 the uncertainty high end taxes its labor at the rounded high labor', () => {
+    // Uncertainty, category-1 hidden damage 0.49%, tax 10%. Demolition 5 sq ft x $2.00 = $10.00, taxable, grows
+    // to $10.049; high labor rounds to $10.05, so the high tax is 10% x $10.05 = $1.01 (not 10% x $10.049 = $1.00).
+    const result = priced(
+      table([item('demo', { taxable: true })], {
+        estimate_mode: 'range',
+        sales_tax: { enabled: true, percent: '10' },
+        assist: {
+          drying_days: 3,
+          range_method: 'uncertainty',
+          extra_drying_days: 0,
+          hidden_damage_percent: { '1': '0.49', '2': '0', '3': '0' },
+        },
+      }),
+      job([room('Kitchen', { unfinished_sf: 5 })]),
+    );
+    expect(result.totals.high).toMatchObject({ subtotal: '10.05', tax: '1.01', total: '11.06' });
   });
 });
 

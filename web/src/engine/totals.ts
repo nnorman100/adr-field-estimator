@@ -352,25 +352,33 @@ export function computeTotals(data: Inspection, lines: PriceLine[], policy: Poli
   const low = end(lowLabor, equipment, addMix(addMix(fixedMix, equipmentMix), laborMix)).end;
   let high: End | null = null;
   if (policy.estimate_mode === 'range') {
-    // Each labor line grows by its own amount, scaled to the rounded high labor, and is taxed on that amount. The
-    // uncertainty method taxes its exact grown lines; the cushion scales them to its rounded high labor.
+    // Each labor line grows by its own amount, and the high end bills the share of that growth the rounded high
+    // labor bills; the flagged, exempt, trade and tax sums are taken from those amounts.
     const grownLabor = sumDec(grown.laborEntries.map((entry) => entry.amount), ZERO);
-    const laborHigh = scaleMix(mixOf(grown.laborEntries, multiplier, overhead), highLaborAmount, grownLabor);
-    const highMix = uncertainEnd
-      ? addMix(addMix(fixedMix, mixOf(uncertainEnd.equipmentEntries, multiplier, overhead)), laborHigh)
-      : addMix(addMix(fixedMix, equipmentMix), {
-          ...laborHigh,
-          taxed: grownLabor.isZero() ? ZERO : laborHigh.taxed.mul(highLaborAmount).div(grownLabor),
-        });
+    const growth = grownLabor.sub(lowLabor);
+    const share = growth.isZero() ? ZERO : highLaborAmount.sub(lowLabor).div(growth);
+    const laborHigh = scaleMix(mixOf(grown.laborEntries, multiplier, overhead), laborMix, share);
+    const highMix = addMix(
+      addMix(fixedMix, uncertainEnd ? mixOf(uncertainEnd.equipmentEntries, multiplier, overhead) : equipmentMix),
+      laborHigh,
+    );
     const candidate = end(highLaborAmount, uncertainEnd ? uncertainEnd.equipment : equipment, highMix);
     // A high end still under the job minimum is the low end unless it charges more before tax: it is not
-    // floored on its own, but growth in items billed beyond the minimum still raises it. A high end below the
-    // low end, which rounding on binding trade minimums can cause, is the low end too.
+    // floored on its own, but growth in items billed beyond the minimum still raises it. Trade minimum lines
+    // measured on fractions of a cent can round the high end below the low end; the last one takes the gap.
     const beforeTax = (value: End): Dec => value.total.sub(value.tax);
-    const kept =
-      !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0) &&
-      candidate.end.total.cmp(low.total) >= 0;
-    high = kept ? candidate.end : { ...low };
+    const kept = !(candidate.short && beforeTax(candidate.end).cmp(beforeTax(low)) <= 0);
+    const owed = candidate.end.tradeMinimums;
+    const last = owed[owed.length - 1];
+    const gap = low.total.sub(candidate.end.total);
+    if (!kept) high = { ...low };
+    else if (last && gap.cmp(ZERO) > 0) {
+      high = {
+        ...candidate.end,
+        tradeMinimums: [...owed.slice(0, -1), { ...last, amount: last.amount.add(gap) }],
+        total: low.total,
+      };
+    } else high = candidate.end;
   }
   return {
     mode: policy.estimate_mode,
