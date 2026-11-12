@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { LocalSignInFixture } from '../../../src/lib/sign-in/local-directory';
+import type { FullConfig } from '@playwright/test';
 import { createTenant, createUser } from './emulator';
 import { FIXTURE_PATH, PASSWORD, SEED_PATH, STATE_DIR, type ProjectSeed, type Seed } from './seed';
+import { warmRoutes } from './warm-routes';
 
 // Two companies in two Auth emulator tenants, and for each browser project its own accounts, so
 // Chromium and WebKit never change each other's users. The companies and memberships go to the
 // file the dev server reads in place of Postgres (src/lib/sign-in/local-directory.ts).
 const PROJECTS = ['chromium', 'webkit'];
 
-export default async function globalSetup() {
+export default async function globalSetup(config: FullConfig) {
   const run = randomUUID().slice(0, 8);
   const tenantA = await createTenant(`company-a-${run}`);
   const tenantB = await createTenant(`company-b-${run}`);
@@ -54,4 +56,6 @@ export default async function globalSetup() {
   await writeFile(FIXTURE_PATH, JSON.stringify(fixture));
   const seed: Seed = { tenantA, tenantB, projects, fixture };
   await writeFile(SEED_PATH, JSON.stringify(seed));
+  // The fixture is in place, so the dev server can answer the sign-in routes: compile each route now.
+  await warmRoutes(config.projects[0]!.use.baseURL!);
 }
