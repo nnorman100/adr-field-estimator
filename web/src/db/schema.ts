@@ -254,6 +254,64 @@ export const accessProjectionOutbox = pgTable(
   ],
 );
 
+export const priceTableSources = ['blank', 'import', 'restore'] as const;
+export type PriceTableSource = (typeof priceTableSources)[number];
+
+// Every published price table, whole and never changed: the runtime has SELECT and INSERT only
+// (0009). A company's current prices are its highest sequence. content is the parsed table
+// (web/src/engine/table.ts); the hash and the engine version sit beside it.
+export const priceTableVersions = pgTable(
+  'price_table_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    sequence: integer('sequence').notNull(),
+    content: jsonb('content').$type<Record<string, unknown>>().notNull(),
+    contentHash: text('content_hash').notNull(),
+    engineVersion: text('engine_version').notNull(),
+    reason: text('reason').notNull(),
+    source: text('source', { enum: priceTableSources }).notNull(),
+    publishedByActorId: uuid('published_by_actor_id').notNull(),
+    publishedAt: timestamp('published_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    publishKey: text('publish_key').notNull(),
+  },
+  (t) => [
+    unique('price_table_versions_company_id_id_key').on(t.companyId, t.id),
+    unique('price_table_versions_company_sequence_key').on(t.companyId, t.sequence),
+    unique('price_table_versions_company_publish_key_key').on(t.companyId, t.publishKey),
+    foreignKey({
+      name: 'price_table_versions_published_by_fkey',
+      columns: [t.companyId, t.publishedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
+// The one table a company's owner is editing, one row per company (not a job draft). revision rises
+// by one with every change; baseSequence is the version it started from or was last published as.
+export const priceTableWorkingCopies = pgTable(
+  'price_table_working_copies',
+  {
+    companyId: uuid('company_id')
+      .primaryKey()
+      .references(() => companies.id),
+    baseSequence: integer('base_sequence'),
+    content: jsonb('content').$type<Record<string, unknown>>().notNull(),
+    revision: integer('revision').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: 'price_table_working_copies_base_fkey',
+      columns: [t.companyId, t.baseSequence],
+      foreignColumns: [priceTableVersions.companyId, priceTableVersions.sequence],
+    }),
+  ],
+);
+
 export const schema = {
   migrationLedger,
   authTenants,
@@ -265,4 +323,6 @@ export const schema = {
   auditEvents,
   companyFeatureFlags,
   accessProjectionOutbox,
+  priceTableVersions,
+  priceTableWorkingCopies,
 };
