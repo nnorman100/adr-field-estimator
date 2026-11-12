@@ -234,6 +234,8 @@ describe('sign-in lookup (migration 0004)', () => {
       { name: 'companies_operator_read', command: 'r', roles: ['dryscope_runtime'] },
       { name: 'companies_operator_update', command: 'w', roles: ['dryscope_runtime'] },
       { name: 'companies_owner_read', command: 'r', roles: ['-'] },
+      // A company's own profile columns (migration 0010, tests/db/evidence-profile.test.ts).
+      { name: 'companies_profile_update', command: 'w', roles: ['dryscope_runtime'] },
     ]);
 
     const migrator = connect(MIGRATOR, migratorPassword);
@@ -359,6 +361,7 @@ describe('sign-in address lookup (migration 0007)', () => {
       'companies_operator_read',
       'companies_operator_update',
       'companies_owner_read',
+      'companies_profile_update',
     ]);
     const before = await everything();
     await lookup('tenant-a');
