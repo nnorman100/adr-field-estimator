@@ -6,12 +6,13 @@ import { useEffect, useState } from 'react';
 //
 // `navigator.onLine` and the `online`/`offline` events are not enough: on an iPhone they stay
 // "online" on Wi-Fi with no way out, and they say nothing when the network is cut behind the
-// browser (the offline tests cut it at a proxy). So the page also asks the app's own health route
-// when it opens, when it becomes visible, when the browser reports a change and every 15 seconds
+// browser (the offline tests cut it at a proxy). So the page also fetches a tiny static file of the
+// app when it opens, when it becomes visible, when the browser reports a change and every 15 seconds
 // while it is visible and reachable (every 5 seconds while it is not, so the banner clears soon
-// after the signal returns). Any answer at all, whatever its status, means the app was reached.
-// The route answers with no person's data, and the worker lets the request through untouched.
-const PROBE_PATH = '/api/health';
+// after the signal returns). Any answer at all, whatever its status, means the app was reached;
+// only a failed request or the time limit means no signal. The file is not in the worker's list, so
+// the worker lets the request through untouched, and serving it touches no database.
+export const PROBE_PATH = '/reachable.txt';
 const ONLINE_EVERY_MS = 15_000;
 const OFFLINE_EVERY_MS = 5_000;
 const PROBE_TIMEOUT_MS = 8_000;

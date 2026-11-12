@@ -4,6 +4,7 @@
 // window that is running.
 import { expect, test } from './fixture';
 import { missingFromPrecache } from '../../../scripts/build-sw';
+import { PROBE_PATH } from '../../../src/app/field/connection';
 import { buildIdOf, cacheNames, cachedPaths, COMPANY, nudge, openControlled, precacheOf, workerText } from './shell';
 
 test.use({ viewport: { width: 390, height: 844 } });
@@ -71,7 +72,7 @@ test.describe('what the worker keeps', () => {
     const listed = precacheOf(await workerText(lane));
     const page = await context.newPage();
     const asked = await openControlled(page, lane);
-    const shellFiles = asked.filter((path) => !path.startsWith('/api/') && path !== '/sw.js');
+    const shellFiles = asked.filter((path) => !path.startsWith('/api/') && path !== '/sw.js' && path !== PROBE_PATH);
     expect(shellFiles.length).toBeGreaterThan(3);
     expect(missingFromPrecache(shellFiles, listed)).toEqual([]);
   });
@@ -89,7 +90,8 @@ test.describe('what the worker keeps', () => {
     lane.serve('/sw.js', { type: 'text/javascript; charset=utf-8', body: short });
     const page = await context.newPage();
     const asked = await openControlled(page, lane);
-    expect(missingFromPrecache(asked.filter((path) => !path.startsWith('/api/') && path !== '/sw.js'), precacheOf(short))).toEqual([chunk]);
+    const shellFiles = asked.filter((path) => !path.startsWith('/api/') && path !== '/sw.js' && path !== PROBE_PATH);
+    expect(missingFromPrecache(shellFiles, precacheOf(short))).toEqual([chunk]);
   });
 });
 

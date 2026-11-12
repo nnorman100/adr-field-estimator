@@ -52,7 +52,7 @@ export function FieldShell() {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col" data-shell="field">
-      <OfflineBanner offline={!reachable} />
+      <OfflineBanner offline={!reachable && (boot.kind === 'ready' || boot.kind === 'signed-out')} />
       <NotSavedBanner unavailable={boot.kind === 'no-storage'} />
       <main className="flex flex-1 flex-col gap-4 p-6">
         <p className="text-sm font-semibold tracking-wide">DryScope</p>

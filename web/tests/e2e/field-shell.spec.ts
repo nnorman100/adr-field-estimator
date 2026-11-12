@@ -1,5 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { NOT_SAVED_TEXT, OFFLINE_TEXT } from '../../src/app/field/banners';
+import { PROBE_PATH } from '../../src/app/field/connection';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
@@ -189,4 +191,31 @@ test('a phone that keeps no data says it is not saved', async ({ page }) => {
   await expect(banner).toBeVisible();
   await expect(banner).toContainText('work can be lost when you close the page');
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+});
+
+test('a phone that keeps no data and has no signal says only that it is not saved', async ({ page, context }) => {
+  await page.addInitScript(() => {
+    IDBFactory.prototype.open = () => {
+      throw new DOMException('Storage refused', 'SecurityError');
+    };
+  });
+  await page.goto('/field');
+  await expect(page.getByRole('alert').filter({ hasText: NOT_SAVED_TEXT })).toBeVisible();
+
+  await context.setOffline(true);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForTimeout(1_000);
+  await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+  await expect(page.getByRole('alert').filter({ hasText: NOT_SAVED_TEXT })).toBeVisible();
+  await context.setOffline(false);
+});
+
+test('the "No signal" check reaches the app without its API', async ({ page }) => {
+  await page.route('**/api/**', (route) => route.abort('internetdisconnected'));
+  await page.goto('/field');
+  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+  const probed = page.waitForResponse((response) => new URL(response.url()).pathname === PROBE_PATH, { timeout: 10_000 });
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  expect((await probed).ok()).toBe(true);
+  await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
 });
