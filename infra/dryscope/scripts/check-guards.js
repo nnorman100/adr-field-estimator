@@ -96,11 +96,57 @@ function ownLevel(body) {
   return out;
 }
 
+// What a release sets by hand and a later apply must therefore leave alone: each protected
+// resource's lifecycle.ignore_changes must name these. Plan JSON cannot show a missing one until
+// the day a plan tries to put the old value back, so the configuration is read here instead.
+// Cloud Run services: the image and traffic move with releases and rollbacks, and the revision
+// name is set by the release workflow (this root never configures it), so a plan that kept it
+// out of ignore_changes would clear it in place on the running service.
+const REQUIRED_IGNORED = {
+  data: {},
+  app: {
+    'google_cloud_run_v2_service.svc': [
+      'template[0].containers[0].image',
+      'template[0].revision',
+      'traffic',
+    ],
+    'google_cloud_run_v2_job.migrate': ['template[0].template[0].containers[0].image'],
+  },
+};
+
+/** The entries of `ignore_changes = [ ... ]` at this level of a lifecycle block (blanked text). */
+function ignoredIn(inner) {
+  const found = /(^|\s)ignore_changes\s*=\s*\[/.exec(inner);
+  if (!found) return [];
+  const start = found.index + found[0].length;
+  let depth = 1;
+  let i = start;
+  for (; i < inner.length && depth > 0; i++) {
+    if (inner[i] === '[') depth++;
+    else if (inner[i] === ']') depth--;
+  }
+  // Entries are separated by commas outside their own [index] brackets.
+  const entries = [];
+  let level = 0;
+  let current = '';
+  for (const c of inner.slice(start, i - 1)) {
+    if (c === '[') level++;
+    if (c === ']') level--;
+    if (c === ',' && level === 0) {
+      entries.push(current);
+      current = '';
+    } else current += c;
+  }
+  entries.push(current);
+  return entries.map((e) => e.replace(/\s+/g, '')).filter(Boolean);
+}
+
 /**
- * Maps "type.name" to whether the resource has lifecycle { prevent_destroy = true } in the
- * .tf files of `dir`. A resource with for_each is one block, so one guard covers every key.
+ * Maps "type.name" to {guarded, ignored} for every resource in the .tf files of `dir`: whether it
+ * has lifecycle { prevent_destroy = true }, and the entries of its lifecycle ignore_changes. A
+ * resource with for_each is one block, so one guard covers every key.
  */
-function readGuards(dir) {
+function readLifecycles(dir) {
   const guards = new Map();
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.tf'))) {
     const original = fs.readFileSync(path.join(dir, file), 'utf8');
@@ -111,6 +157,7 @@ function readGuards(dir) {
       const open = found.index + found[0].length - 1;
       const body = text.slice(open + 1, closing(text, open) - 1);
       let guarded = false;
+      let ignored = [];
       // Only a lifecycle block directly inside the resource counts, not one nested deeper.
       for (let i = 0; i < body.length; i++) {
         if (body[i] !== '{') continue;
@@ -118,20 +165,37 @@ function readGuards(dir) {
         if (/(^|\s)lifecycle\s*$/.test(body.slice(0, i))) {
           const inner = ownLevel(body.slice(i + 1, end - 1));
           if (/^[ \t]*prevent_destroy[ \t]*=[ \t]*true[ \t]*$/m.test(inner)) guarded = true;
+          ignored = [...ignored, ...ignoredIn(inner)];
         }
         i = end - 1;
       }
       const [[a, b], [c, d]] = [found.indices[1], found.indices[2]];
-      guards.set(`${original.slice(a, b)}.${original.slice(c, d)}`, guarded);
+      guards.set(`${original.slice(a, b)}.${original.slice(c, d)}`, { guarded, ignored });
     }
   }
   return guards;
 }
 
+/** Maps "type.name" to whether the resource has lifecycle { prevent_destroy = true }. */
+function readGuards(dir) {
+  return new Map([...readLifecycles(dir)].map(([name, { guarded }]) => [name, guarded]));
+}
+
 /** Problems with the configuration in `dir`, independent of the Terraform version. */
 function checkConfig(dir, root) {
+  const lifecycles = readLifecycles(dir);
   const guards = readGuards(dir);
   const problems = [];
+  for (const [base, required] of Object.entries(REQUIRED_IGNORED[root])) {
+    const have = lifecycles.get(base)?.ignored ?? [];
+    for (const entry of required) {
+      if (!have.includes(entry)) {
+        problems.push(
+          `${base}: lifecycle.ignore_changes must name ${entry} (a release sets it; an apply would put it back)`,
+        );
+      }
+    }
+  }
   for (const address of PROTECTED[root]) {
     const base = address.replace(/\[.*\]$/, '');
     if (!guards.has(base)) problems.push(`${address}: resource ${base} not found in ${dir}`);
@@ -214,4 +278,12 @@ if (require.main === module) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }
 
-module.exports = { checkGuards, checkConfig, readGuards, PROTECTED, REQUIRED_RUNS };
+module.exports = {
+  checkGuards,
+  checkConfig,
+  readGuards,
+  readLifecycles,
+  PROTECTED,
+  REQUIRED_IGNORED,
+  REQUIRED_RUNS,
+};

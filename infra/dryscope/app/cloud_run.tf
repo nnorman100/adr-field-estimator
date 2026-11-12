@@ -124,11 +124,14 @@ resource "google_cloud_run_v2_service" "svc" {
     # One owner for what is running. Terraform creates the service with the first
     # image; releases and rollbacks go through gcloud as the deploy account, which
     # cannot run this root. Without these lines the next apply would put the
-    # tfvars image and traffic back. client and client_version are stamped by tooling.
+    # tfvars image and traffic back. The release also names each revision it deploys
+    # (template[0].revision), which this root never sets; without that line the next apply
+    # would plan to clear the name. client and client_version are stamped by tooling.
     ignore_changes = [
       client,
       client_version,
       template[0].containers[0].image,
+      template[0].revision,
       traffic,
     ]
   }
