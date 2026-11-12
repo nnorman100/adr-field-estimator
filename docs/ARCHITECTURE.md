@@ -96,8 +96,7 @@ app later.
 | Tests                      | pytest, `node:test`, Playwright                                                  | new tests in Vitest (the required-docs test is the first); old suites convert by area without weakening                                                                                                                                                                          | Gap                                                                            | S1 onward                                 |
 
 Still **[open]** (owner gates in the rebuild plan, section 10): the Google Cloud organization (R1),
-the Live and voice-note screening exception (R2), image screening location and Preview status
-(R3), live Cloud SQL HA vs zonal and recovery targets (R4; the `test` tier is settled, see `docs/DECISIONS.md`), and per-company AI ceilings (R5). R6 (classification and retention of existing data) no longer applies, because no existing data migrates. R7 is decided by the accepted S3 plan decisions D8 (first-sign-in enrollment) and D9 (operator reset for a lost authenticator).
+live Cloud SQL HA vs zonal and recovery targets (R4; the `test` tier is settled, see `docs/DECISIONS.md`). R2 (Live and voice-note screening exception), R3 (image screening) and R5 (per-company AI ceilings) were decided 2026-11-12 as S7 decisions V1, V3 and V5 ([S7 plan](plans/S7.md), section 8). R6 (classification and retention of existing data) no longer applies, because no existing data migrates. R7 is decided by the accepted S3 plan decisions D8 (first-sign-in enrollment) and D9 (operator reset for a lost authenticator).
 
 ## Testing layers
 

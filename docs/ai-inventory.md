@@ -282,17 +282,17 @@ Text and supported images are screened; raw audio and video are not, because Mod
 | Live system prompt and text context updates | Screen before opening or updating the session, including field notes and shot context, not only the static instruction | Never log content to demonstrate coverage |
 | Live user transcript | Feed the input transcription to streaming screening; also screen each completed utterance and the full accepted transcript before scope or audit reuse | Gemini has already heard the audio: this is detection and downstream containment, not protection before input |
 | Live assistant text replies and captions | Screen text before it is shown or saved as accepted; track generation and turn ids so a stale verdict cannot approve later text | Chunk screening can miss meaning split across chunks, so complete-utterance screening supplements it |
-| Still photos for OCR and audit | Screen each image separately and the text separately, then send the approved exact bytes and prompt | JPEG, PNG or BMP, at most 4 MB, one image per request, `us` or `eu` multi-region only, currently Preview; mixed text-and-image screening is unsupported; needs the image-residency decision R3 |
-| **Raw audio and video (Live spoken replies, Live camera stream, offline recorded voice notes)** | **Not screened.** If approved: unscreened audio and video are allowed only in their narrow form, with streamed text screening, stop and quarantine on a bad verdict, no Live business tools, and transcription-only processing for recorded voice notes with the transcript screened before it is accepted or reused | **PENDING OWNER DECISION R2.** Until the owner decides, the plan's fail-closed default applies: these modalities stay off in the port. Never claim all speech is blocked before playback, or sub-second latency, without observation |
+| Still photos for OCR and audit | Screen each image separately and the text separately, then send the approved exact bytes and prompt | JPEG, PNG or BMP, at most 4 MB, one image per request, `us` or `eu` multi-region only, currently Preview; mixed text-and-image screening is unsupported; R3 decided 2026-11-12 (S7 decision V3 C): the `us` multi-region template is used |
+| **Raw audio and video (Live spoken replies, Live camera stream, offline recorded voice notes)** | **Not screened.** If approved: unscreened audio and video are allowed only in their narrow form, with streamed text screening, stop and quarantine on a bad verdict, no Live business tools, and transcription-only processing for recorded voice notes with the transcript screened before it is accepted or reused | **R2 decided 2026-11-12 (S7 decision V1 B, [S7 plan](plans/S7.md) section 8):** the narrow form above is approved for S7, with no camera frames (V7 A). Never claim all speech is blocked before playback, or sub-second latency, without observation |
 
-Rules that hold whichever way R2 and R3 are decided:
+Rules that hold for the R2 and R3 decisions:
 
 - Screening is an explicit step in the TypeScript AI boundary for every supported payload; it is not assumed from a project setting.
 - A call that cannot be screened is not allowed by default; manual capture and pricing keep working with AI off.
 - An adverse verdict on Live stops playback and the upstream session, discards queued output and the checkpoint, and needs a
   clean restart; the affected transcript is not reused by later AI calls.
 - Durable data stays central: the port's active app and data are in `us-central1`; the existing `us-west2` Firestore and evidence bucket are the legacy source. Any AI processing exception is recorded honestly.
-- Image screening in the `us` multi-region and the Preview status of image screening are owner decisions (R3), separate from R2.
+- Image screening in the `us` multi-region and the Preview status of image screening were owner decisions (R3), decided 2026-11-12 as S7 decision V3 C, separate from R2.
 
 Source: Model Armor [overview](https://docs.cloud.google.com/model-armor/overview),
 [locations](https://docs.cloud.google.com/model-armor/locations) and
