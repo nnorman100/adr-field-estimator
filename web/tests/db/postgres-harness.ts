@@ -14,6 +14,7 @@ const exec = promisify(execFile);
 
 // A throwaway server never has to survive a crash, and several test files share one server, so it
 // trades durability for speed and allows more connections than the default 100.
+// They apply only to a server this harness starts itself, never to a DATABASE_URL server or any real database.
 const SERVER_SETTINGS = ['fsync=off', 'synchronous_commit=off', 'full_page_writes=off', 'max_connections=300'];
 const DISCARD_NAME = /^dryscope_discard_[a-f0-9]{16}$/;
 
