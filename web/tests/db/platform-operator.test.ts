@@ -121,10 +121,12 @@ describe('the operator context', () => {
     expect(
       await errorCode(asOperator((tx) => tx.execute(sql`INSERT INTO companies (name, sign_in_slug, status) VALUES ('X', 'x', 'archived')`))),
     ).toBe(INSUFFICIENT_PRIVILEGE);
-    // A company transaction cannot change or create companies at all.
+    // A company transaction cannot change its status or create companies (0010 lets it change its own profile columns, and its
+    // guard refuses anything else on the row).
     expect(
-      await withCompany(h.handle.db, h.seed.a, (tx) => tx.execute(sql`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}::uuid RETURNING id`)),
-    ).toHaveLength(0);
+      await errorCode(withCompany(h.handle.db, h.seed.a, (tx) => tx.execute(sql`UPDATE companies SET status = 'suspended' WHERE id = ${h.seed.a}::uuid RETURNING id`))),
+    ).toBe(CHECK_VIOLATION);
+    expect(await h.admin`SELECT status FROM companies WHERE id = ${h.seed.a}`).toEqual([{ status: 'active' }]);
     expect(await errorCode(withCompany(h.handle.db, h.seed.a, (tx) => tx.execute(sql`INSERT INTO companies (name, sign_in_slug) VALUES ('X', 'x')`)))).toBe(
       INSUFFICIENT_PRIVILEGE,
     );
@@ -140,6 +142,12 @@ describe('the operator context', () => {
       { table: 'companies', column: 'name', privilege: 'INSERT' },
       { table: 'companies', column: 'sign_in_slug', privilege: 'INSERT' },
       { table: 'companies', column: 'auth_tenant_id', privilege: 'UPDATE' },
+      // 0010: a company's own profile columns, which the operator's context cannot change.
+      { table: 'companies', column: 'profile_address', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_email', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_license', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_phone', privilege: 'UPDATE' },
+      { table: 'companies', column: 'profile_signoff', privilege: 'UPDATE' },
       { table: 'companies', column: 'status', privilege: 'UPDATE' },
       { table: 'companies', column: 'updated_at', privilege: 'UPDATE' },
     ]);
@@ -199,10 +207,11 @@ describe('the company trigger', () => {
         CHECK_VIOLATION,
       );
     }
-    // A company transaction cannot change it either (no update policy without an operator).
+    // A company transaction cannot change it either (0010's guard refuses it outside an operator's context).
     expect(
-      await withCompany(h.handle.db, h.seed.b, (tx) => tx.execute(sql`UPDATE companies SET auth_tenant_id = 'tenant-z' WHERE id = ${h.seed.b}::uuid RETURNING id`)),
-    ).toHaveLength(0);
+      await errorCode(withCompany(h.handle.db, h.seed.b, (tx) => tx.execute(sql`UPDATE companies SET auth_tenant_id = 'tenant-z' WHERE id = ${h.seed.b}::uuid RETURNING id`))),
+    ).toBe(CHECK_VIOLATION);
+    expect(await h.admin`SELECT auth_tenant_id FROM companies WHERE id = ${h.seed.b}`).toEqual([{ auth_tenant_id: 'tenant-b' }]);
     // The owner, outside any policy, may repair a company nobody has signed in to yet.
     const fresh = await asOperator(async (tx) => {
       const [row] = (await tx.execute(sql`INSERT INTO companies (name, sign_in_slug) VALUES ('Fresh', 'fresh') RETURNING id::text`)) as unknown as { id: string }[];

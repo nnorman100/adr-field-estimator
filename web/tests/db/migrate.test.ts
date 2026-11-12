@@ -15,7 +15,7 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
@@ -23,7 +23,11 @@ const SHIPPED_TABLES = [
   'auth_tenants',
   'companies',
   'company_feature_flags',
+  'evidence_objects',
   'invitations',
+  'job_claims',
+  'job_customers',
+  'jobs',
   'memberships',
   'migration_ledger',
   'platform_admins',
@@ -94,6 +98,12 @@ describe('numbered migration ledger', () => {
       { column_name: 'auth_tenant_id', data_type: 'text' },
       { column_name: 'auth_tenant_kind', data_type: 'text' },
       { column_name: 'updated_at', data_type: 'timestamp with time zone' },
+      // 0010: the company profile the documents print.
+      { column_name: 'profile_address', data_type: 'text' },
+      { column_name: 'profile_phone', data_type: 'text' },
+      { column_name: 'profile_email', data_type: 'text' },
+      { column_name: 'profile_license', data_type: 'text' },
+      { column_name: 'profile_signoff', data_type: 'text' },
     ]);
 
     const handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: disposable.databaseUrl });
@@ -243,7 +253,7 @@ describe('numbered migration ledger', () => {
       expect((await applyMigrations(disposable.databaseUrl, dir)).applied).toEqual(SHIPPED.slice(0, 8));
       const holding = async () =>
         withSql(async (sql) => ({
-          companies: await sql`SELECT * FROM companies ORDER BY id`,
+          companies: await sql`SELECT id, created_at, name, sign_in_slug, status, auth_tenant_id, auth_tenant_kind, updated_at FROM companies ORDER BY id`,
           actors: await sql`SELECT * FROM actors ORDER BY id`,
           flags: await sql`SELECT * FROM company_feature_flags ORDER BY company_id, flag`,
           tables: await tableNames(),
@@ -258,7 +268,7 @@ describe('numbered migration ledger', () => {
       });
       const before = await holding();
       expect(before.tables).not.toContain('price_table_versions');
-      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(['0009_price_tables']);
+      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(SHIPPED.slice(8));
       const after = await holding();
       expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
       expect(after.tables).toEqual(SHIPPED_TABLES);
@@ -269,6 +279,61 @@ describe('numbered migration ledger', () => {
         `,
       );
       expect(counts).toEqual([{ versions: 0, copies: 0 }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds the job tables and company profile to a database already holding 0001 to 0009 and its rows', async () => {
+    const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0010');
+    expect(earlier.map((file) => file.id)).toEqual(SHIPPED.slice(0, 9));
+    const dir = await tempMigrations(Object.fromEntries(earlier.map((file) => [`${file.id}.sql`, file.sql])));
+    try {
+      expect((await applyMigrations(disposable.databaseUrl, dir)).applied).toEqual(SHIPPED.slice(0, 9));
+      const holding = async () =>
+        withSql(async (sql) => ({
+          companies: await sql`SELECT id, name, sign_in_slug, status, auth_tenant_id, created_at, updated_at FROM companies ORDER BY id`,
+          actors: await sql`SELECT * FROM actors ORDER BY id`,
+          flags: await sql`SELECT * FROM company_feature_flags ORDER BY company_id, flag`,
+          versions: await sql`SELECT id, company_id, sequence, content_hash FROM price_table_versions ORDER BY id`,
+          copies: await sql`SELECT * FROM price_table_working_copies ORDER BY company_id`,
+          tables: await tableNames(),
+        }));
+      await withSql(async (sql) => {
+        await sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-x', 'company')`;
+        const [company] = await sql<{ id: string }[]>`
+          INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', 'existing', 'tenant-x') RETURNING id
+        `;
+        const [actor] = await sql<{ id: string }[]>`
+          INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-x', 'u1', 'u1@example.test') RETURNING id
+        `;
+        await sql`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company!.id}, 'price_books', true)`;
+        await sql`
+          INSERT INTO price_table_versions (company_id, sequence, content, content_hash, engine_version, reason, source, published_by_actor_id, publish_key)
+          VALUES (${company!.id}, 1, '{}'::jsonb, ${'a'.repeat(64)}, 'dryscope-v3', 'First prices', 'blank', ${actor!.id}, 'publish-key-000001')
+        `;
+        await sql`INSERT INTO price_table_working_copies (company_id, base_sequence, content) VALUES (${company!.id}, 1, '{}'::jsonb)`;
+      });
+      const before = await holding();
+      expect(before.tables).not.toContain('jobs');
+      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(['0010_core_job_tables']);
+      const after = await holding();
+      expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
+      expect(after.tables).toEqual(SHIPPED_TABLES);
+      // The existing company keeps its row and starts with an empty profile; no job rows exist.
+      const [profile] = await withSql(
+        (sql) => sql`
+          SELECT profile_address, profile_phone, profile_email, profile_license, profile_signoff FROM companies WHERE sign_in_slug = 'existing'
+        `,
+      );
+      expect(profile).toEqual({ profile_address: '', profile_phone: '', profile_email: '', profile_license: '', profile_signoff: '' });
+      const counts = await withSql(
+        (sql) => sql<{ jobs: number; customers: number; claims: number; evidence: number }[]>`
+          SELECT (SELECT count(*)::int FROM jobs) AS jobs, (SELECT count(*)::int FROM job_customers) AS customers,
+                 (SELECT count(*)::int FROM job_claims) AS claims, (SELECT count(*)::int FROM evidence_objects) AS evidence
+        `,
+      );
+      expect(counts).toEqual([{ jobs: 0, customers: 0, claims: 0, evidence: 0 }]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

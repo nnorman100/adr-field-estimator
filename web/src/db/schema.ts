@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  date,
   foreignKey,
   integer,
   jsonb,
@@ -57,6 +58,13 @@ export const companies = pgTable(
     authTenantId: text('auth_tenant_id').unique('companies_auth_tenant_id_key'),
     authTenantKind: text('auth_tenant_kind', { enum: tenantKinds }).generatedAlwaysAs(sql`'company'`),
     updatedAt: updatedAt(),
+    // The profile the four documents print (0010). Empty means not set; the runtime changes these
+    // columns of its own company, and only the owner's route does (profile_manage).
+    profileAddress: text('profile_address').notNull().default(''),
+    profilePhone: text('profile_phone').notNull().default(''),
+    profileEmail: text('profile_email').notNull().default(''),
+    profileLicense: text('profile_license').notNull().default(''),
+    profileSignoff: text('profile_signoff').notNull().default(''),
   },
   (t) => [
     unique('companies_id_auth_tenant_id_key').on(t.id, t.authTenantId),
@@ -312,6 +320,141 @@ export const priceTableWorkingCopies = pgTable(
   ],
 );
 
+export const jobStatuses = ['draft', 'submitted', 'signed', 'archived'] as const;
+export type JobStatus = (typeof jobStatuses)[number];
+export const evidenceKinds = ['photo', 'original', 'signature'] as const;
+export type EvidenceKind = (typeof evidenceKinds)[number];
+
+// One row per job (0010), keyed by company and a client-made id so a retried create finds its row.
+// revision rises by exactly one with every change; lastChangeId is the client's id for the latest
+// change, so a retry is not a conflict; requestDigest is the SHA-256 of the create request.
+export const jobs = pgTable(
+  'jobs',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    fieldOwnerActorId: uuid('field_owner_actor_id'),
+    status: text('status', { enum: jobStatuses }).notNull().default('draft'),
+    currentDraftId: uuid('current_draft_id').notNull(),
+    propertyAddress: text('property_address').notNull().default(''),
+    archivedAt: optionalTime('archived_at'),
+    archivedByActorId: uuid('archived_by_actor_id'),
+    revision: integer('revision').notNull().default(1),
+    lastChangeId: uuid('last_change_id'),
+    requestDigest: text('request_digest').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    unique('jobs_company_current_draft_key').on(t.companyId, t.currentDraftId),
+    foreignKey({
+      name: 'jobs_created_by_fkey',
+      columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    foreignKey({
+      name: 'jobs_field_owner_fkey',
+      columns: [t.companyId, t.fieldOwnerActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    foreignKey({
+      name: 'jobs_archived_by_fkey',
+      columns: [t.companyId, t.archivedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
+// At most one row per job; personal data (docs/DATA.md).
+export const jobCustomers = pgTable(
+  'job_customers',
+  {
+    companyId: uuid('company_id').notNull(),
+    jobId: uuid('job_id').notNull(),
+    name: text('name').notNull().default(''),
+    phone: text('phone').notNull().default(''),
+    email: text('email').notNull().default(''),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.jobId] }),
+    foreignKey({
+      name: 'job_customers_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+  ],
+);
+
+// At most one row per job; personal data. dateOfLoss is a calendar date as 'YYYY-MM-DD', empty when
+// not known.
+export const jobClaims = pgTable(
+  'job_claims',
+  {
+    companyId: uuid('company_id').notNull(),
+    jobId: uuid('job_id').notNull(),
+    carrier: text('carrier').notNull().default(''),
+    claimNumber: text('claim_number').notNull().default(''),
+    policyNumber: text('policy_number').notNull().default(''),
+    dateOfLoss: date('date_of_loss', { mode: 'string' }),
+    lossCause: text('loss_cause').notNull().default(''),
+    adjusterName: text('adjuster_name').notNull().default(''),
+    adjusterEmail: text('adjuster_email').notNull().default(''),
+    adjusterPhone: text('adjuster_phone').notNull().default(''),
+    deductible: text('deductible').notNull().default(''),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.jobId] }),
+    foreignKey({
+      name: 'job_claims_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+  ],
+);
+
+// The registry of stored bytes in the evidence bucket, inserted once and never changed: the runtime
+// has SELECT and INSERT only (0010). objectName sits under the row's own company and job.
+export const evidenceObjects = pgTable(
+  'evidence_objects',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull(),
+    jobId: uuid('job_id').notNull(),
+    objectId: uuid('object_id').notNull(),
+    kind: text('kind', { enum: evidenceKinds }).notNull(),
+    objectName: text('object_name').notNull(),
+    generation: bigint('generation', { mode: 'bigint' }).notNull(),
+    sha256: text('sha256').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    contentType: text('content_type').notNull(),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('evidence_objects_company_id_id_key').on(t.companyId, t.id),
+    unique('evidence_objects_job_object_kind_key').on(t.companyId, t.jobId, t.objectId, t.kind),
+    unique('evidence_objects_company_object_name_key').on(t.companyId, t.objectName),
+    foreignKey({
+      name: 'evidence_objects_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+    foreignKey({
+      name: 'evidence_objects_created_by_fkey',
+      columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
 export const schema = {
   migrationLedger,
   authTenants,
@@ -325,4 +468,8 @@ export const schema = {
   accessProjectionOutbox,
   priceTableVersions,
   priceTableWorkingCopies,
+  jobs,
+  jobCustomers,
+  jobClaims,
+  evidenceObjects,
 };
