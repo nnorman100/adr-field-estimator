@@ -27,6 +27,10 @@ const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 // with a letter and end with a letter or digit.
 const FIRESTORE_DATABASE = /^(\(default\)|[a-z][a-z0-9-]{2,61}[a-z0-9])$/;
 
+// A Cloud Storage bucket name: 3-63 lowercase letters, digits, hyphens, underscores and dots,
+// starting and ending with a letter or digit.
+const BUCKET_NAME = /^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/;
+
 // host:port of a loopback emulator, as the Firebase CLI writes it.
 function isLoopbackHost(value: string): boolean {
   if (!/^[\w.:[\]-]{1,100}:\d{1,5}$/.test(value)) return false;
@@ -94,6 +98,13 @@ const shape = {
   FIRESTORE_DATABASE_ID: z
     .string()
     .regex(FIRESTORE_DATABASE, { message: 'FIRESTORE_DATABASE_ID must be a Firestore database id' })
+    .optional(),
+  // The private evidence bucket for photos and their originals (infra/dryscope/data/storage.tf):
+  // `<project>-evidence-<env>`. Cloud Run gets it from Terraform; there is no storage emulator, so
+  // local work and CI replace the bucket with a fake at its boundary (src/lib/photos/).
+  EVIDENCE_BUCKET: z
+    .string()
+    .regex(BUCKET_NAME, { message: 'EVIDENCE_BUCKET must be a Cloud Storage bucket name' })
     .optional(),
   // firebase-admin reads this one itself too and then writes to the emulator with no credentials;
   // the same limits as the Auth emulator apply.
@@ -270,6 +281,25 @@ export function parseProjectionConfig(env: Record<string, string | undefined>): 
     databaseId: data.FIRESTORE_DATABASE_ID,
     firestoreEmulatorHost: data.FIRESTORE_EMULATOR_HOST ?? null,
   };
+}
+
+export type EvidenceConfig = { projectId: string; bucket: string };
+
+// What storing and reading photo bytes needs. Called when the first photo request arrives, so the
+// shell still boots without these; that request then fails closed.
+export function parseEvidenceConfig(env: Record<string, string | undefined>): EvidenceConfig {
+  const data = checked(env);
+  const problems: string[] = [];
+  if (!data.GOOGLE_CLOUD_PROJECT) {
+    problems.push('GOOGLE_CLOUD_PROJECT: GOOGLE_CLOUD_PROJECT is required to store photos');
+  }
+  if (!data.EVIDENCE_BUCKET) {
+    problems.push('EVIDENCE_BUCKET: EVIDENCE_BUCKET is required to store photos');
+  }
+  if (problems.length > 0 || !data.GOOGLE_CLOUD_PROJECT || !data.EVIDENCE_BUCKET) {
+    throw new ConfigError(problems);
+  }
+  return { projectId: data.GOOGLE_CLOUD_PROJECT, bucket: data.EVIDENCE_BUCKET };
 }
 
 // What a sign-in screen's browser needs to reach Identity Platform. Every value is public: the API

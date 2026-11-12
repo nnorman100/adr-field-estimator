@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, parseConfig } from '@/lib/config';
+import { ConfigError, parseConfig, parseEvidenceConfig } from '@/lib/config';
 
 describe('parseConfig', () => {
   it('accepts a valid environment', () => {
@@ -42,6 +42,27 @@ describe('parseConfig', () => {
     (value) => {
       expect(() => parseConfig({ APP_ENV: 'test', APP_COMMIT: value })).toThrow(/APP_COMMIT/);
       if (value) expect(() => parseConfig({ APP_ENV: 'test', APP_COMMIT: value })).not.toThrow(value);
+    },
+  );
+});
+
+describe('parseEvidenceConfig', () => {
+  const env = { APP_ENV: 'test', GOOGLE_CLOUD_PROJECT: 'dryscope', EVIDENCE_BUCKET: 'dryscope-evidence-test' };
+
+  it('returns the project and the evidence bucket', () => {
+    expect(parseEvidenceConfig(env)).toEqual({ projectId: 'dryscope', bucket: 'dryscope-evidence-test' });
+  });
+
+  it('names what is missing, and fails closed', () => {
+    expect(() => parseEvidenceConfig({ APP_ENV: 'test', GOOGLE_CLOUD_PROJECT: 'dryscope' })).toThrow(/EVIDENCE_BUCKET/);
+    expect(() => parseEvidenceConfig({ APP_ENV: 'test', EVIDENCE_BUCKET: 'dryscope-evidence-test' })).toThrow(/GOOGLE_CLOUD_PROJECT/);
+  });
+
+  it.each([['Not A Bucket'], ['x'], ['-leading-hyphen'], ['gs://dryscope-evidence-test'], ['secret-value/../x']])(
+    'refuses %j without echoing it',
+    (bucket) => {
+      expect(() => parseEvidenceConfig({ ...env, EVIDENCE_BUCKET: bucket })).toThrow(ConfigError);
+      expect(() => parseEvidenceConfig({ ...env, EVIDENCE_BUCKET: bucket })).not.toThrow(new RegExp(bucket.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')));
     },
   );
 });

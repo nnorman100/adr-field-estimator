@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { objectNameOf } from '@/lib/photos/service';
 import type { FakeClaims, Harness } from './team-harness';
 import { handlersOf, MATRIX, matrixKey, matrixProblems, routeModules, type MatrixRow, type RouteModule } from './isolation-matrix';
 
@@ -25,6 +26,7 @@ vi.mock('@/lib/auth/services', () => ({
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
 vi.mock('@/lib/jobs/services', () => ({ jobsServices: () => live.harness!.jobs }));
+vi.mock('@/lib/photos/services', () => ({ photosServices: () => live.harness!.photos }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
@@ -58,6 +60,11 @@ const REFUSED = [401, 403, 404];
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
+
+// A company's photo and original bytes: a real PNG signature, then text that names the company, so
+// a read that returned the other's bytes would be seen.
+const photoBytes = (suffix: string, kind: 'photo' | 'original'): Uint8Array =>
+  Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Buffer.from(`company ${suffix} ${kind} bytes`)]);
 let a: Side;
 let b: Side;
 
@@ -66,7 +73,7 @@ let b: Side;
 type Side = {
   name: 'A' | 'B';
   companyId: string;
-  ids: { membershipId: string; invitationId: string; address: string; jobId: string; draftId: string };
+  ids: { membershipId: string; invitationId: string; address: string; jobId: string; draftId: string; photoId: string };
   people: { owner: FakeClaims; estimator: FakeClaims; office: FakeClaims };
   markers: string[];
 };
@@ -96,13 +103,26 @@ async function seedSides(): Promise<void> {
   // One job with a customer and a claim in each company, so a clean answer to the other company is
   // not an empty one. Its strings are markers, like the ids.
   const job = async (company: string, by: string, suffix: string) => {
-    const ids = { jobId: randomUUID(), draftId: randomUUID() };
+    const ids = { jobId: randomUUID(), draftId: randomUUID(), photoId: randomUUID() };
     await h.admin`
       INSERT INTO jobs (id, company_id, created_by_actor_id, field_owner_actor_id, current_draft_id, property_address, request_digest)
       VALUES (${ids.jobId}, ${company}, ${by}, ${by}, ${ids.draftId}, ${`Property Line ${suffix}`}, ${'0'.repeat(64)})
     `;
     await h.admin`INSERT INTO job_customers (company_id, job_id, name, phone, email) VALUES (${company}, ${ids.jobId}, ${`Customer ${suffix}`}, ${`555-01${suffix === 'a' ? '11' : '22'}`}, ${`customer-${suffix}@example.test`})`;
     await h.admin`INSERT INTO job_claims (company_id, job_id, carrier, claim_number) VALUES (${company}, ${ids.jobId}, ${`Carrier ${suffix}`}, ${`Claim ${suffix}`})`;
+    // A photo and its full-size original, in the registry and in the (fake) bucket, so a refusal to
+    // the other company is not a refusal of an empty store.
+    for (const kind of ['photo', 'original'] as const) {
+      const bytes = photoBytes(suffix, kind);
+      const name = objectNameOf(company, ids.jobId, kind, ids.photoId);
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      const generation = BigInt(kind === 'photo' ? 11 : 12);
+      h.evidence.objects.set(name, { bytes, contentType: 'image/png', sha256, generation });
+      await h.admin`
+        INSERT INTO evidence_objects (company_id, job_id, object_id, kind, object_name, generation, sha256, size_bytes, content_type, created_by_actor_id)
+        VALUES (${company}, ${ids.jobId}, ${ids.photoId}, ${kind}, ${name}, ${generation}, ${sha256}, ${bytes.byteLength}, 'image/png', ${by})
+      `;
+    }
     return ids;
   };
   const jobA = await job(h.seed.a, h.seed.ownerA.actor, 'a');
@@ -115,7 +135,7 @@ async function seedSides(): Promise<void> {
     invitationId: string,
     ids: string[],
     extra: string[],
-    job: { jobId: string; draftId: string },
+    job: { jobId: string; draftId: string; photoId: string },
   ): Side => {
     const tenant = `tenant-${suffix}`;
     const person = (uid: string): FakeClaims => ({ tenant, uid });
@@ -124,7 +144,7 @@ async function seedSides(): Promise<void> {
       companyId,
       ids: { membershipId, invitationId, address: `company-${suffix}`, ...job },
       people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
-      markers: [companyId, membershipId, invitationId, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`].map((value) =>
+      markers: [companyId, membershipId, invitationId, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra, job.jobId, job.draftId, job.photoId, `Property Line ${suffix}`, `Customer ${suffix}`, `Carrier ${suffix}`, `Claim ${suffix}`].map((value) =>
         value.toLowerCase(),
       ),
     };
@@ -167,13 +187,13 @@ function pathFor(route: string, ids: Record<string, string>): string {
 
 type Answer = { status: number; text: string };
 async function call(
-  row: Pick<MatrixRow, 'route' | 'method' | 'body'>,
+  row: Pick<MatrixRow, 'route' | 'method' | 'body' | 'query'>,
   claims: FakeClaims | null,
   ids: Record<string, string>,
   extra: { query?: string; headers?: Record<string, string> } = {},
 ): Promise<Answer> {
   const handler = await handlerFor(row.route, row.method);
-  const built = request(claims, `${pathFor(row.route, ids)}${extra.query ?? ''}`, { method: row.method, body: row.body });
+  const built = request(claims, `${pathFor(row.route, ids)}${extra.query ?? row.query ?? ''}`, { method: row.method, body: row.body });
   for (const [name, value] of Object.entries(extra.headers ?? {})) built.headers.set(name, value);
   const response = await handler(built, params(ids));
   return { status: response.status, text: await response.text() };
@@ -189,6 +209,7 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   invitationId: victim.ids.invitationId,
   address: victim.ids.address,
   jobId: victim.ids.jobId,
+  photoId: victim.ids.photoId,
 });
 
 // The rows a call with the other company's ids must refuse. A create row makes the caller's own
@@ -388,6 +409,56 @@ describe('every route, called with the other company’s ids', () => {
         expect(made).toEqual([`${attacker.companyId}/${victim.ids.draftId}`]);
       }
     }
+  });
+
+  it('never gives company B the photo bytes or the original of company A, and gives each company its own', async () => {
+    const readsOf = async (claims: FakeClaims, jobId: string, photoId: string, kind: string) => {
+      const response = await (await handlerFor('api/jobs/[jobId]/photos/[photoId]', 'GET'))(
+        request(claims, `/api/jobs/${jobId}/photos/${photoId}?kind=${kind}`),
+        params({ jobId, photoId }),
+      );
+      return { status: response.status, bytes: Buffer.from(await response.arrayBuffer()) };
+    };
+    // Each company's own people read their own bytes (owner and estimator of the job), so the
+    // refusals below are not blind.
+    for (const [side, suffix] of [[a, 'a'], [b, 'b']] as const) {
+      for (const kind of ['photo', 'original'] as const) {
+        const own = await readsOf(side.people.owner, side.ids.jobId, side.ids.photoId, kind);
+        expect({ side: side.name, kind, status: own.status, same: own.bytes.equals(Buffer.from(photoBytes(suffix, kind))) }).toEqual({ side: side.name, kind, status: 200, same: true });
+      }
+    }
+    const before = await everything(h.admin);
+    const objectsBefore = new Map(h.evidence.objects);
+    for (const [attacker, victim] of directions()) {
+      const suffix = victim === a ? 'a' : 'b';
+      for (const [role, claims] of Object.entries(attacker.people)) {
+        for (const kind of ['photo', 'original']) {
+          // The victim's job and photo, the attacker's own job with the victim's photo id, and the
+          // victim's job with the attacker's own photo id.
+          for (const [jobId, photoId] of [
+            [victim.ids.jobId, victim.ids.photoId],
+            [attacker.ids.jobId, victim.ids.photoId],
+            [victim.ids.jobId, attacker.ids.photoId],
+          ] as const) {
+            const read = await readsOf(claims, jobId, photoId, kind);
+            const where = `${attacker.name} ${role} reads ${kind}`;
+            expect({ where, status: read.status }).toEqual({ where, status: 404 });
+            expect({ where, leaked: read.bytes.toString().includes(`company ${suffix} `) }).toEqual({ where, leaked: false });
+          }
+        }
+      }
+    }
+    // Nor can the attacker store an original of the victim's photo, with the victim's photo hash.
+    for (const [attacker, victim] of directions()) {
+      const copyHash = createHash('sha256').update(photoBytes(victim === a ? 'a' : 'b', 'photo')).digest('hex');
+      const built = request(attacker.people.owner, `/api/jobs/${victim.ids.jobId}/photos/${victim.ids.photoId}?kind=original`, { method: 'PUT', body: photoBytes('x', 'original') });
+      built.headers.set('X-Photo-Sha256', copyHash);
+      const answer = await (await handlerFor('api/jobs/[jobId]/photos/[photoId]', 'PUT'))(built, params({ jobId: victim.ids.jobId, photoId: victim.ids.photoId }));
+      expect(answer.status).toBe(404);
+    }
+    expect(await everything(h.admin)).toBe(before);
+    expect(new Map(h.evidence.objects)).toEqual(objectsBefore);
+    expect(h.evidence.creates).toEqual([]);
   });
 
   it('answers /api/me about the caller’s own sign-in whatever company the request names', async () => {
