@@ -1,7 +1,7 @@
 // S6-1 (a) and (f): what the Firestore SDK does with a write made while the network is cut.
 // Each test runs in Chromium and WebKit with the pinned `firebase` web SDK, against the Firestore
 // emulator, through a lane the test cuts and restores (lane.ts).
-import { expect, expectNothingSent, test } from './fixture';
+import { expect, expectNothingSent, expectWithheld, test, SEND_MS } from './fixture';
 import { Phone } from './fixture';
 import { readDraft, seedCompany } from './world';
 
@@ -59,11 +59,10 @@ test.describe('a write made offline (S6-1 a)', () => {
     lane.restore(['auth', 'firestore']);
     await phone.start(world, 'single');
     expect(await phone.call('uid', 'main')).toBe(world.owner.uid);
-    await phone.page.waitForTimeout(4000);
-    expect((await readDraft(world)).field).not.toHaveProperty('notes');
+    await expectWithheld(async () => !('notes' in (await readDraft(world)).field));
     // The first use starts it.
     await phone.call('waitPending', 'main', 1000);
-    await expect.poll(async () => (await readDraft(world)).field, { timeout: 30_000 }).toMatchObject({ notes: 'saved on the phone' });
+    await expect.poll(async () => (await readDraft(world)).field, { timeout: SEND_MS }).toMatchObject({ notes: 'saved on the phone' });
     await context.close();
   });
 });

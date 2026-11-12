@@ -2,7 +2,7 @@
 // (S6-3, S6-4) rely on it, or build their own walls, so these tests pin what the pinned SDK does:
 // a person signing out and in again, another person signing in on the same app instance, and two
 // companies' app instances in one browser.
-import { expect, expectNothingSent, test, Phone } from './fixture';
+import { expect, expectNothingSent, expectWithheld, test, Phone, SEND_MS } from './fixture';
 import { readDraft, seedCompany } from './world';
 
 const cached = (phone: Phone, path: string, key = 'main') => phone.call('readCache', key, path);
@@ -24,11 +24,10 @@ test.describe('people and companies on one phone (S6-1 c)', () => {
     await phone.call('signOut', 'main');
     lane.restore(['auth', 'firestore']);
     // Signed out, with signal: nothing is sent, and the write is not shown as the nobody's.
-    await phone.page.waitForTimeout(4000);
-    expect((await readDraft(world)).field.airMovers).toBe(0);
+    await expectWithheld(async () => (await readDraft(world)).field.airMovers === 0);
 
     await phone.signIn(world.owner);
-    await expect.poll(async () => (await readDraft(world)).field.airMovers, { timeout: 30_000 }).toBe(1);
+    await expect.poll(async () => (await readDraft(world)).field.airMovers, { timeout: SEND_MS }).toBe(1);
     await phone.page.waitForTimeout(3000);
     expect((await readDraft(world)).field.airMovers).toBe(1);
     await context.close();
@@ -52,8 +51,7 @@ test.describe('people and companies on one phone (S6-1 c)', () => {
     lane.restore(['auth', 'firestore']);
     await phone.signIn(ben);
     // Ben (office: may read every draft, edit none) is signed in, with signal, for long enough.
-    await phone.page.waitForTimeout(5000);
-    expect((await readDraft(world)).field.airMovers).toBe(0);
+    await expectWithheld(async () => (await readDraft(world)).field.airMovers === 0);
     // What Ben sees of the draft ana had cached: the document is shared, ana's pending edit is not.
     const seenByBen = await cached(phone, world.draftPath);
     expect(seenByBen).toMatchObject({ exists: true, fromCache: true, hasPendingWrites: false });
@@ -62,7 +60,7 @@ test.describe('people and companies on one phone (S6-1 c)', () => {
     // Ana comes back: her write is still there, and goes out once.
     await phone.call('signOut', 'main');
     await phone.signIn(ana);
-    await expect.poll(async () => (await readDraft(world)).field.airMovers, { timeout: 30_000 }).toBe(1);
+    await expect.poll(async () => (await readDraft(world)).field.airMovers, { timeout: SEND_MS }).toBe(1);
     await context.close();
   });
 
@@ -148,11 +146,10 @@ test.describe('people and companies on one phone (S6-1 c)', () => {
     // Company one signs out; company two does not.
     await phone.call('signOut', 'one');
     lane.restore(['auth', 'firestore']);
-    await expect.poll(async () => (await readDraft(two)).field.airMovers, { timeout: 30_000 }).toBe(1);
-    await phone.page.waitForTimeout(3000);
-    expect((await readDraft(one)).field.airMovers).toBe(0);
+    await expect.poll(async () => (await readDraft(two)).field.airMovers, { timeout: SEND_MS }).toBe(1);
+    await expectWithheld(async () => (await readDraft(one)).field.airMovers === 0);
     await phone.signIn(one.owner, 'one');
-    await expect.poll(async () => (await readDraft(one)).field.airMovers, { timeout: 30_000 }).toBe(1);
+    await expect.poll(async () => (await readDraft(one)).field.airMovers, { timeout: SEND_MS }).toBe(1);
     expect((await readDraft(two)).field.airMovers).toBe(1);
     await context.close();
   });

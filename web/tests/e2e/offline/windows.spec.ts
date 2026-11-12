@@ -2,7 +2,7 @@
 // chose the single-window manager (O3), which makes "Open DryScope in one window" the app's job:
 // these tests pin what the SDK does (and does not say) with a second window, so that job is built
 // on what really happens.
-import { expect, expectNothingSent, test, Phone } from './fixture';
+import { expect, expectNothingSent, expectWithheld, test, Phone, SEND_MS } from './fixture';
 import { readDraft, seedCompany } from './world';
 import type { CacheKind } from './harness/page';
 import type { BrowserContext } from '@playwright/test';
@@ -51,7 +51,7 @@ test.describe('two windows (S6-1 d)', () => {
     expect(kept).not.toHaveProperty('summary');
     lane.restore(['auth', 'firestore']);
     await three.call('waitPending', 'main', 3000);
-    await expect.poll(async () => (await readDraft(world)).field, { timeout: 30_000 }).toMatchObject({ notes: 'from the first window' });
+    await expect.poll(async () => (await readDraft(world)).field, { timeout: SEND_MS }).toMatchObject({ notes: 'from the first window' });
     await three.page.waitForTimeout(3000);
     expect((await readDraft(world)).field).not.toHaveProperty('summary');
     await context.close();
@@ -69,9 +69,8 @@ test.describe('two windows (S6-1 d)', () => {
     expect((await two.call('events', second)).at(-1)?.hasPendingWrites).toBe(false);
     await one.page.close();
     lane.restore(['auth', 'firestore']);
-    await two.page.waitForTimeout(6000);
-    // The second window is open with signal and the first is closed; the edit has not gone out.
-    expect((await readDraft(world)).field).not.toHaveProperty('notes');
+    // The second window is open with signal and the first is closed; the edit does not go out.
+    await expectWithheld(async () => !('notes' in (await readDraft(world)).field));
     await context.close();
   });
 

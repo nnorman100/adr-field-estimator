@@ -1,6 +1,6 @@
 // The Playwright fixtures for the offline tests (S6-1): a lane of its own per test, and a
 // `Phone` that drives the test page inside one browser page.
-import { test as base, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test as base, type BrowserContext, type Page } from '@playwright/test';
 import { parseBrowserSignInConfig, type BrowserSignInConfig } from '../../../src/lib/config';
 import { harnessFiles } from './bundle';
 import { E2E_PROJECT, FIELD_DATABASE } from './emulators';
@@ -78,12 +78,26 @@ export const test = base.extend<Fixtures>({
   },
 });
 
-export { expect } from '@playwright/test';
+export { expect };
 
 // After a write made while the network is cut: waits long enough for the write to have gone out
 // if it could, and checks that nothing has gone through the lane to the Firestore emulator since
 // the cut. Without it a test cannot tell "the write is waiting for the network" from "the write is
 // still on its way".
+// How long a write may take to reach the server once it can go: the budget a test gives a send, and
+// so how long a write must stay off the server before a test calls it withheld.
+export const SEND_MS = 30_000;
+
+// Checks `unsent` every second for as long as a send may take, and fails the first time it is false.
+export async function expectWithheld(unsent: () => Promise<boolean>): Promise<void> {
+  const until = Date.now() + SEND_MS;
+  for (;;) {
+    expect(await unsent(), 'the write reached the server').toBe(true);
+    if (Date.now() >= until) return;
+    await new Promise((done) => setTimeout(done, 1000));
+  }
+}
+
 export async function expectNothingSent(lane: NetworkLane, ms = 1200): Promise<void> {
   await new Promise((done) => setTimeout(done, ms));
   const sent = lane.bytesSinceCut('firestore');
