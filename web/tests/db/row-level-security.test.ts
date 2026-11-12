@@ -231,6 +231,7 @@ describe('runtime role and row-level security (migration 0003)', () => {
     expect(byTable).toEqual({
       access_projection_outbox: ['INSERT', 'SELECT', 'UPDATE'],
       actors: ['INSERT', 'SELECT', 'UPDATE'],
+      agreements: ['INSERT', 'SELECT'],
       audit_events: ['INSERT', 'SELECT'],
       auth_tenants: ['SELECT'],
       companies: ['SELECT'],
@@ -239,6 +240,9 @@ describe('runtime role and row-level security (migration 0003)', () => {
       invitations: ['INSERT', 'SELECT', 'UPDATE'],
       job_claims: ['INSERT', 'SELECT'],
       job_customers: ['INSERT', 'SELECT'],
+      job_estimates: ['INSERT', 'SELECT'],
+      job_price_pins: ['INSERT', 'SELECT'],
+      job_submissions: ['INSERT', 'SELECT'],
       jobs: ['INSERT', 'SELECT'],
       memberships: ['INSERT', 'SELECT', 'UPDATE'],
       platform_admins: ['SELECT'],
@@ -498,7 +502,7 @@ describe('runtime role and row-level security (migration 0003)', () => {
     const migrator = connect(MIGRATOR, migratorPassword);
     try {
       expect(await migrator`SELECT * FROM companies`).toHaveLength(0);
-      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(10);
+      expect(await migrator`SELECT * FROM migration_ledger`).toHaveLength(11);
     } finally {
       await migrator.end({ timeout: 5 });
     }

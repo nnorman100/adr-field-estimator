@@ -15,10 +15,11 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
+  'agreements',
   'audit_events',
   'auth_tenants',
   'companies',
@@ -27,6 +28,9 @@ const SHIPPED_TABLES = [
   'invitations',
   'job_claims',
   'job_customers',
+  'job_estimates',
+  'job_price_pins',
+  'job_submissions',
   'jobs',
   'memberships',
   'migration_ledger',
@@ -316,7 +320,7 @@ describe('numbered migration ledger', () => {
       });
       const before = await holding();
       expect(before.tables).not.toContain('jobs');
-      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(['0010_core_job_tables']);
+      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(SHIPPED.slice(9));
       const after = await holding();
       expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
       expect(after.tables).toEqual(SHIPPED_TABLES);
@@ -334,6 +338,61 @@ describe('numbered migration ledger', () => {
         `,
       );
       expect(counts).toEqual([{ jobs: 0, customers: 0, claims: 0, evidence: 0 }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds the submission, pin, estimate and agreement tables to a database already holding 0001 to 0010 and its rows', async () => {
+    const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0011');
+    expect(earlier.map((file) => file.id)).toEqual(SHIPPED.slice(0, 10));
+    const dir = await tempMigrations(Object.fromEntries(earlier.map((file) => [`${file.id}.sql`, file.sql])));
+    try {
+      expect((await applyMigrations(disposable.databaseUrl, dir)).applied).toEqual(SHIPPED.slice(0, 10));
+      const holding = async () =>
+        withSql(async (sql) => ({
+          companies: await sql`SELECT * FROM companies ORDER BY id`,
+          actors: await sql`SELECT * FROM actors ORDER BY id`,
+          versions: await sql`SELECT id, company_id, sequence, content_hash FROM price_table_versions ORDER BY id`,
+          jobs: await sql`SELECT * FROM jobs ORDER BY id`,
+          evidence: await sql`SELECT id, company_id, job_id, kind, object_name FROM evidence_objects ORDER BY id`,
+          tables: await tableNames(),
+        }));
+      await withSql(async (sql) => {
+        await sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-x', 'company')`;
+        const [company] = await sql<{ id: string }[]>`
+          INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', 'existing', 'tenant-x') RETURNING id
+        `;
+        const [actor] = await sql<{ id: string }[]>`
+          INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-x', 'u1', 'u1@example.test') RETURNING id
+        `;
+        await sql`
+          INSERT INTO price_table_versions (company_id, sequence, content, content_hash, engine_version, reason, source, published_by_actor_id, publish_key)
+          VALUES (${company!.id}, 1, '{}'::jsonb, ${'a'.repeat(64)}, 'dryscope-v3', 'First prices', 'blank', ${actor!.id}, 'publish-key-000001')
+        `;
+        const [job] = await sql<{ id: string }[]>`
+          INSERT INTO jobs (id, company_id, created_by_actor_id, current_draft_id, request_digest)
+          VALUES (gen_random_uuid(), ${company!.id}, ${actor!.id}, gen_random_uuid(), ${'b'.repeat(64)}) RETURNING id
+        `;
+        const object = '11111111-1111-4111-8111-111111111111';
+        await sql`
+          INSERT INTO evidence_objects (company_id, job_id, object_id, kind, object_name, generation, sha256, size_bytes, content_type, created_by_actor_id)
+          VALUES (${company!.id}, ${job!.id}, ${object}, 'photo', ${`companies/${company!.id}/jobs/${job!.id}/photos/${object}`}, 1, ${'c'.repeat(64)}, 10, 'image/jpeg', ${actor!.id})
+        `;
+      });
+      const before = await holding();
+      expect(before.tables).not.toContain('job_submissions');
+      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(SHIPPED.slice(10));
+      const after = await holding();
+      expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
+      expect(after.tables).toEqual(SHIPPED_TABLES);
+      const counts = await withSql(
+        (sql) => sql<{ submissions: number; pins: number; estimates: number; agreements: number }[]>`
+          SELECT (SELECT count(*)::int FROM job_submissions) AS submissions, (SELECT count(*)::int FROM job_price_pins) AS pins,
+                 (SELECT count(*)::int FROM job_estimates) AS estimates, (SELECT count(*)::int FROM agreements) AS agreements
+        `,
+      );
+      expect(counts).toEqual([{ submissions: 0, pins: 0, estimates: 0, agreements: 0 }]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

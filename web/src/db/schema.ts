@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  customType,
   date,
   foreignKey,
   integer,
@@ -23,6 +24,8 @@ import {
 const createdAt = () => timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow();
 const optionalTime = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
+// Stored bytes (a snapshot, a proposal, the signed documents); the driver returns a Buffer.
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
 
 export const roles = ['owner', 'estimator', 'office'] as const;
 export type Role = (typeof roles)[number];
@@ -455,6 +458,218 @@ export const evidenceObjects = pgTable(
   ],
 );
 
+export const submissionKinds = ['original', 'change_order'] as const;
+export type SubmissionKind = (typeof submissionKinds)[number];
+export const submissionStatuses = ['pending', 'committed', 'aborted'] as const;
+export type SubmissionStatus = (typeof submissionStatuses)[number];
+export const submissionMarkerStates = ['pending', 'done'] as const;
+export const pinReasons = ['first_price', 'owner_reprice'] as const;
+export type PinReason = (typeof pinReasons)[number];
+export const signerKinds = ['device', 'link'] as const;
+export type SignerKind = (typeof signerKinds)[number];
+
+// Submit's rows (0011), made `pending` first, then moved once to `committed` (with the canonical
+// snapshot and its SHA-256) or `aborted`. A trigger freezes every column of a decided row except
+// markerState, which goes from pending to done once; the runtime's UPDATE covers status,
+// snapshotBytes, snapshotSha256 and markerState only. decidedAt is set by the trigger.
+export const jobSubmissions = pgTable(
+  'job_submissions',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    draftId: uuid('draft_id').notNull(),
+    epoch: uuid('epoch').notNull(),
+    kind: text('kind', { enum: submissionKinds }).notNull(),
+    parentAgreementId: uuid('parent_agreement_id'),
+    status: text('status', { enum: submissionStatuses }).notNull().default('pending'),
+    requestDigest: text('request_digest').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    snapshotBytes: bytea('snapshot_bytes'),
+    snapshotSha256: text('snapshot_sha256'),
+    markerState: text('marker_state', { enum: submissionMarkerStates }).notNull().default('pending'),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    createdAt: createdAt(),
+    decidedAt: optionalTime('decided_at'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    unique('job_submissions_company_draft_epoch_key').on(t.companyId, t.draftId, t.epoch),
+    unique('job_submissions_company_job_id_key').on(t.companyId, t.jobId, t.id),
+    uniqueIndex('job_submissions_one_committed_per_draft')
+      .on(t.companyId, t.draftId)
+      .where(sql`status = 'committed'`),
+    foreignKey({
+      name: 'job_submissions_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+    foreignKey({
+      name: 'job_submissions_created_by_fkey',
+      columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+    // job_submissions_parent_fkey (company, job and parent agreement to agreements) is in the migration
+    // only: naming it here would make this view and agreements refer to each other.
+  ],
+);
+
+// Which published price version a job is priced from (0011): sequence 1 is the first price, each
+// later pin the owner's reprice; the current pin is the highest sequence. Insert-only.
+export const jobPricePins = pgTable(
+  'job_price_pins',
+  {
+    id: uuid('id').notNull().defaultRandom(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    sequence: integer('sequence').notNull(),
+    versionId: uuid('version_id').notNull(),
+    reason: text('reason', { enum: pinReasons }).notNull(),
+    pinnedByActorId: uuid('pinned_by_actor_id').notNull(),
+    pinnedAt: timestamp('pinned_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    unique('job_price_pins_company_job_sequence_key').on(t.companyId, t.jobId, t.sequence),
+    unique('job_price_pins_company_job_id_key').on(t.companyId, t.jobId, t.id),
+    foreignKey({
+      name: 'job_price_pins_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+    foreignKey({
+      name: 'job_price_pins_version_fkey',
+      columns: [t.companyId, t.versionId],
+      foreignColumns: [priceTableVersions.companyId, priceTableVersions.id],
+    }),
+    foreignKey({
+      name: 'job_price_pins_pinned_by_fkey',
+      columns: [t.companyId, t.pinnedByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
+// One priced estimate per committed submission and pin (0011). Insert-only. pricedResult is the
+// engine's output; proposalSha256 is the SHA-256 of proposalBytes (checked in the database).
+export const jobEstimates = pgTable(
+  'job_estimates',
+  {
+    id: uuid('id').notNull().defaultRandom(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    submissionId: uuid('submission_id').notNull(),
+    pinId: uuid('pin_id').notNull(),
+    tableHash: text('table_hash').notNull(),
+    engineVersion: text('engine_version').notNull(),
+    pricedResult: jsonb('priced_result').$type<Record<string, unknown>>().notNull(),
+    proposalBytes: bytea('proposal_bytes').notNull(),
+    proposalSha256: text('proposal_sha256').notNull(),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    unique('job_estimates_company_job_id_key').on(t.companyId, t.jobId, t.id),
+    unique('job_estimates_company_submission_pin_key').on(t.companyId, t.submissionId, t.pinId),
+    foreignKey({
+      name: 'job_estimates_submission_fkey',
+      columns: [t.companyId, t.jobId, t.submissionId],
+      foreignColumns: [jobSubmissions.companyId, jobSubmissions.jobId, jobSubmissions.id],
+    }),
+    foreignKey({
+      name: 'job_estimates_pin_fkey',
+      columns: [t.companyId, t.jobId, t.pinId],
+      foreignColumns: [jobPricePins.companyId, jobPricePins.jobId, jobPricePins.id],
+    }),
+    foreignKey({
+      name: 'job_estimates_created_by_fkey',
+      columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
+// The signed record (0011), insert-only, one original per job. It restates its estimate (a trigger
+// checks it) and holds the documents as signed; a signed job is shown from this row alone.
+export const agreements = pgTable(
+  'agreements',
+  {
+    id: uuid('id').notNull(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id),
+    jobId: uuid('job_id').notNull(),
+    submissionId: uuid('submission_id').notNull(),
+    estimateId: uuid('estimate_id').notNull(),
+    kind: text('kind', { enum: submissionKinds }).notNull(),
+    parentAgreementId: uuid('parent_agreement_id'),
+    signerKind: text('signer_kind', { enum: signerKinds }).notNull(),
+    signerName: text('signer_name').notNull(),
+    signatureEvidenceId: uuid('signature_evidence_id').notNull(),
+    proposalSha256: text('proposal_sha256').notNull(),
+    pricedResult: jsonb('priced_result').$type<Record<string, unknown>>().notNull(),
+    versionId: uuid('version_id').notNull(),
+    contentHash: text('content_hash').notNull(),
+    engineVersion: text('engine_version').notNull(),
+    documentsBytes: bytea('documents_bytes').notNull(),
+    requestDigest: text('request_digest').notNull(),
+    createdByActorId: uuid('created_by_actor_id').notNull(),
+    signedAt: timestamp('signed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    unique('agreements_company_job_id_key').on(t.companyId, t.jobId, t.id),
+    unique('agreements_company_submission_key').on(t.companyId, t.submissionId),
+    unique('agreements_company_estimate_key').on(t.companyId, t.estimateId),
+    unique('agreements_company_signature_key').on(t.companyId, t.signatureEvidenceId),
+    uniqueIndex('agreements_one_original_per_job')
+      .on(t.companyId, t.jobId)
+      .where(sql`kind = 'original'`),
+    foreignKey({
+      name: 'agreements_job_fkey',
+      columns: [t.companyId, t.jobId],
+      foreignColumns: [jobs.companyId, jobs.id],
+    }),
+    foreignKey({
+      name: 'agreements_submission_fkey',
+      columns: [t.companyId, t.jobId, t.submissionId],
+      foreignColumns: [jobSubmissions.companyId, jobSubmissions.jobId, jobSubmissions.id],
+    }),
+    foreignKey({
+      name: 'agreements_estimate_fkey',
+      columns: [t.companyId, t.jobId, t.estimateId],
+      foreignColumns: [jobEstimates.companyId, jobEstimates.jobId, jobEstimates.id],
+    }),
+    foreignKey({
+      name: 'agreements_parent_fkey',
+      columns: [t.companyId, t.jobId, t.parentAgreementId],
+      foreignColumns: [t.companyId, t.jobId, t.id],
+    }),
+    foreignKey({
+      name: 'agreements_signature_fkey',
+      columns: [t.companyId, t.signatureEvidenceId],
+      foreignColumns: [evidenceObjects.companyId, evidenceObjects.id],
+    }),
+    foreignKey({
+      name: 'agreements_version_fkey',
+      columns: [t.companyId, t.versionId],
+      foreignColumns: [priceTableVersions.companyId, priceTableVersions.id],
+    }),
+    foreignKey({
+      name: 'agreements_created_by_fkey',
+      columns: [t.companyId, t.createdByActorId],
+      foreignColumns: [actors.companyId, actors.id],
+    }),
+  ],
+);
+
 export const schema = {
   migrationLedger,
   authTenants,
@@ -472,4 +687,8 @@ export const schema = {
   jobCustomers,
   jobClaims,
   evidenceObjects,
+  jobSubmissions,
+  jobPricePins,
+  jobEstimates,
+  agreements,
 };
