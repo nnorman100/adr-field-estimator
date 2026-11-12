@@ -8,29 +8,26 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 @AGENTS.md
 
 ## Stack (do not change without the owner's approval)
-- Frontend: static web app, **no build step**, plain JavaScript in `public/`, same-origin vendored dependencies only.
-- Backend: Python on Google Cloud Run (`backend/`, entry `backend/main.py`), region `us-west2`.
-- Data: Firestore (deny-all browser rules) + private evidence bucket. AI: Vertex AI (Gemini).
-- Hosting: Firebase Hosting target `alert-disaster`, project `alert-disaster-field-2026`.
+- The app is the rebuild in `web/`: TypeScript, Next.js (React, Tailwind) with Zod at every route boundary. Business logic (pricing, documents, mandatory wording) is in `web/src/engine/`, access rules in `web/src/lib/access/`.
+- Hosting: Cloud Run in Google Cloud project `dryscope`, region `us-central1`; `test` and `live` resources are defined in `infra/dryscope/` (Terraform).
+- Data: Cloud SQL Postgres with row-level security and numbered Drizzle migrations (`web/migrations`); drafts in a Firestore field database with deny-all browser rules (`web/firestore.rules`).
+- The old app (`backend/`, `public/`, `tests/`, project `alert-disaster-field-2026`, `us-west2`) is retired and switched off. Its files are frozen reference code, deleted in S8; do not change them except through S8 (`docs/runbook/ci.md`, "Legacy CI retired"), and do not deploy or touch its project.
 - Details: `docs/ARCHITECTURE.md`.
 
 ## Commands
-- Set up (fresh machine or cloud session):
-  `python -m pip install --require-hashes -r backend/requirements.txt -r backend/requirements-dev.txt` · `npm ci` · `npx playwright install chromium webkit`
-- Firestore emulator tests (needs Java 21+; `demo-` project only, never a real one):
-  `npx firebase-tools emulators:exec --only firestore --project demo-adr-emulator "python -m pytest tests/test_firestore_emulator*.py -q -p no:cacheprovider"`
-- Python tests: `python -m pytest tests -q -p no:cacheprovider`
-- JS tests: `npm test`
-- Browser tests: `npm run test:browser` (Playwright; run for lifecycle/UI changes)
-- Python format/lint: `python -m ruff format . ; python -m ruff check .`
-- JS format/lint: `npm run format ; npm run lint`
-- Keep `index.html` and `public/index.html` identical.
-- CI no longer runs the legacy app's tests (the `python`, `browser` and `firestore-emulator` jobs are removed; `node` runs lint and vitest only; CodeQL still scans Python). Do not change legacy files except through S8 (`docs/runbook/ci.md`, "Legacy CI retired"); the commands above run those suites by hand.
+Run from the repo root unless a line says `web/`. CI runs exactly these (`.github/workflows/ci.yml`, `.github/workflows/web.yml`).
+- Set up (fresh machine or cloud session): `npm ci` at the root and in `web/`; for browser tests, `npx playwright install chromium webkit` in `web/`.
+- Root checks (the `node` job): `npm run format:check`, `npm run lint` (ESLint, file-length limit, required docs), `npx vitest run` (Terraform plan check and the workflow guards).
+- Web unit tests: `npm test`, type check `npm run typecheck`, lint `npm run lint`, build `npm run build` (all in `web/`).
+- Web database tests: `npm run test:db` (in `web/`; starts a throwaway PostgreSQL 16 that must run locally).
+- Firestore rules and Auth emulator tests: `npm run test:emu` (in `web/`; needs Java 21+; `demo-` project only, never a real one).
+- Browser tests: `npm run test:e2e` (in `web/`, Playwright, Chromium and WebKit; run for UI changes).
+- Format: `npm run format` at the root.
 
 ## Hard rules
 1. **Never weaken, skip, delete or loosen a test, eval fixture, threshold or workflow** to get green. Fix the code. The Test guard check blocks it. Never add or request the `test-change-approved` label.
-2. **Never run a blanket `firebase deploy`.** Only `firebase deploy --only hosting:alert-disaster --project alert-disaster-field-2026`, after the backend is deployed. You do not deploy, promote, change IAM, secrets, or Firebase Auth settings unless the owner says go for that specific release.
-3. **Prices and mandatory wording come from the server** (Decimal math in `backend/claims.py`). A model never supplies a price, overrides a total, or removes required wording.
+2. **Never run a blanket `firebase deploy`.** The rebuild releases through `.github/workflows/web-release.yml` (`docs/runbook/test-release.md`), never from a laptop. You do not deploy, promote, change IAM, secrets, or Firebase Auth settings unless the owner says go for that specific release.
+3. **Prices and mandatory wording come from the server** (Decimal math in `web/src/engine/`). A model never supplies a price, overrides a total, or removes required wording.
 4. **Company isolation on every business endpoint** — check identity, company membership and job access server-side. Browser capability checks are convenience only. See `docs/ACCESS.md`.
 5. **Signed records are immutable.** Later coordination goes in sidecars.
 6. No secrets, keys, tokens, prompts, transcripts, emails, addresses or coordinates in logs or in git.
@@ -40,7 +37,7 @@ A phone web app where a restoration technician walks a water or mold loss once, 
 ## Every change must
 - Be one small PR with a test that fails without it.
 - Pass the "eight checks" in `docs/roadmap.md` (rules/indexes, older records, offline, who may use it, app cache/`sw.js`, help/docs, privacy/logs, phone check).
-- Add new actions to the role matrix (`can()` in `public/workspaces.js` plus the server check) and update `docs/ACCESS.md`.
+- Add new actions to the role matrix (`web/src/lib/access/roles.ts` and `can.ts`, plus the server check) and update `docs/ACCESS.md`.
 - Do not edit `docs/status/` in feature PRs; status is updated in a batch after merges.
 
 ## Technology Standard 2.2 (rules agents need)
@@ -54,10 +51,10 @@ Profile: `docs/ARCHITECTURE.md` (top). Recorded exceptions: `docs/DECISIONS.md` 
 The owner approves every merge: agents ask before merging any PR and nothing merges automatically (D-009, kept on Nov 9, 2026; D-012). High-risk work needs two separate independent reviews on top of the pipeline review, from models that did not write the code. Deploys run to test first, then live. Still owner-only: anything that deletes data, cannot be undone, or changes security or permissions (IAM, secrets, Firebase Auth settings); turning on deletion or new pricing; and production steps the owner runs. Still rate each PR's risk in its description. Anything touching auth, workspaces/isolation, pricing, signing, email sending, `firestore.rules`, IAM, secrets or workflows is High. When unsure, treat it as High.
 
 ## How to work
-1. Read the relevant doc first (`docs/company-workspaces.md` for auth/workspaces, `docs/firebase-isolation.md` for cloud, `docs/pricing-source.md` for prices).
+1. Read the relevant doc first (`docs/ACCESS.md` and the stage plan in `docs/plans/` for auth and workspaces, `infra/dryscope/README.md` and `docs/runbook/` for cloud, `docs/pricing-source.md` for prices).
 2. Search for functions by name; line numbers drift.
 3. Write the failing test first, then the smallest change.
-4. Run the Python, JS and (for UI) browser tests.
+4. Run the checks under Commands, and the browser tests for UI changes.
 5. Report: what changed, what you were unsure of, what the owner must check on a phone.
 6. Work on a branch; open a PR; it merges only as allowed above.
 
