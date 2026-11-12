@@ -722,6 +722,11 @@ function zeroPrice(item: Item): boolean {
   );
 }
 
+/** The ids of the enabled items that carry a zero price, which publishing needs the owner to confirm. */
+export function zeroPriceItems(table: Table): string[] {
+  return table.items.filter((item) => item.enabled && zeroPrice(item)).map((item) => item.item_id);
+}
+
 /**
  * The publish rules on a parsed table: at least one item, no blank price on an enabled item, and
  * every zero price on an enabled item confirmed by its id or code in `acknowledgements`.

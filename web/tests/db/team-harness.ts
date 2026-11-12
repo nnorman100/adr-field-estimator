@@ -6,6 +6,7 @@ import { databaseDirectory, databaseOperators } from '@/lib/auth/directory';
 import { IdentityRefusal, type TokenVerifier } from '@/lib/auth/identity';
 import type { IdentityServices, OperatorServices } from '@/lib/auth/services';
 import { noEmailService, platformService, type PlatformService } from '@/lib/platform/service';
+import { pricesService, type PricesService } from '@/lib/prices/service';
 import type { PlatformUsers } from '@/lib/platform/users';
 import { teamService, type TeamService } from '@/lib/team/service';
 import { TenantUsersUnavailable } from '@/lib/team/users';
@@ -54,6 +55,7 @@ export type Harness = {
   operators: OperatorServices;
   team: TeamService;
   platform: PlatformService;
+  prices: PricesService;
   // The migrator's login (the table owner), for the owner-run command.
   migratorUrl: string;
   // Each member the team service asked to project, in order, after its change committed.
@@ -206,6 +208,7 @@ export async function resetTeamDatabase(
     operators: { verifier: fakeVerifier(), operators: databaseOperators(handle.db) },
     team: null as unknown as TeamService,
     platform: null as unknown as PlatformService,
+    prices: pricesService(handle.db),
     migratorUrl: urlAs(server, MIGRATOR, migratorPassword),
     projected: [],
   };

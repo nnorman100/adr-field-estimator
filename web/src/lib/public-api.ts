@@ -23,6 +23,15 @@ export const memberApiPaths: readonly string[] = [
   '/api/companies/:id/members/:id/enable',
   '/api/invitations/:id',
   '/api/invitations/:id/accept',
+  // The company's prices (S4-6): the company is the sign-in's, so no id is in the path.
+  '/api/prices',
+  '/api/prices/working-copy',
+  '/api/prices/preview',
+  '/api/prices/publish',
+  '/api/prices/export',
+  '/api/prices/versions',
+  '/api/prices/versions/:id',
+  '/api/prices/versions/:id/restore',
 ];
 
 // Platform operator routes that check the operator sign-in themselves with operatorRoute
@@ -34,6 +43,7 @@ export const operatorApiPaths: readonly string[] = [
   '/api/platform/companies/:id/tenant',
   '/api/platform/companies/:id/owner',
   '/api/platform/companies/:id/team',
+  '/api/platform/companies/:id/prices',
   '/api/platform/companies/:id/members/:id',
   '/api/platform/companies/:id/members/:id/enable',
   '/api/platform/companies/:id/members/:id/reset-second-step',
