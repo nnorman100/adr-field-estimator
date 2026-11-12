@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeClaims, Harness } from './team-harness';
+import { contentHash, parseTable } from '@/engine/table';
 import { handlersOf, MATRIX, matrixKey, matrixProblems, routeModules, type MatrixRow, type RouteModule } from './isolation-matrix';
 
 // S3-17, the company-isolation gate: the standard's required test as one named suite
@@ -23,6 +24,7 @@ vi.mock('@/lib/auth/services', () => ({
   serverDatabase: () => live.harness!.handle.db,
 }));
 vi.mock('@/lib/team/services', () => ({ teamServices: () => live.harness!.team }));
+vi.mock('@/lib/prices/services', () => ({ pricesServices: () => live.harness!.prices }));
 vi.mock('@/lib/platform/services', () => ({ platformServices: () => live.harness!.platform }));
 vi.mock('@/lib/sign-in/services', async () => {
   const { databaseSignInDirectory } = await import('@/lib/sign-in/database-directory');
@@ -53,6 +55,9 @@ const { everything, operatorClaims, params, request, resetTeamDatabase, startTea
 type Handler = (request: Request, context: ReturnType<typeof params>) => Response | Promise<Response>;
 
 const REFUSED = [401, 403, 404];
+// What a route that names no company may answer a call by the other company's user: the caller's own
+// data (200), a refusal of its role (403) or a write refused for its stale revision (409).
+const SELF_ANSWERS = [200, 403, 409];
 
 let base: Awaited<ReturnType<typeof startTeamServer>>;
 let h: Harness;
@@ -64,7 +69,7 @@ let b: Side;
 type Side = {
   name: 'A' | 'B';
   companyId: string;
-  ids: { membershipId: string; invitationId: string; address: string };
+  ids: { membershipId: string; invitationId: string; address: string; versionId: string };
   people: { owner: FakeClaims; estimator: FakeClaims; office: FakeClaims };
   markers: string[];
 };
@@ -91,12 +96,35 @@ async function seedSides(): Promise<void> {
     await h.admin`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES (${company}, 'price_books', true)`;
     await h.admin`INSERT INTO access_projection_outbox (company_id, actor_id) VALUES (${company}, ${by})`;
   }
+  // Each company has a working copy and a published version, named so a leak of either shows.
+  const prices = async (company: string, by: string, suffix: string) => {
+    const table = parseTable({
+      items: [{ item_id: 'sample_item', group: 'treatment', name: `zz-price-marker-${suffix}`, unit: 'sf', quantity_source: 'room:wet_floor', unit_price: '2.00' }],
+      policy: {
+        estimate_mode: 'single',
+        range: { first_sf: 1000, first_percent: '0', beyond_percent: '0' },
+        after_hours: { multiplier: '1' },
+        category_multipliers: { '1': '1', '2': '1', '3': '1' },
+        cabinetry: { multiplier: '1', scope: 'finished_only' },
+        sales_tax: { enabled: false, percent: '0' },
+      },
+    });
+    const [version] = await h.admin<{ id: string }[]>`
+      INSERT INTO price_table_versions (company_id, sequence, content, content_hash, engine_version, reason, source, published_by_actor_id, publish_key)
+      VALUES (${company}, 1, ${h.admin.json(table as never)}, ${contentHash(table)}, 'dryscope-v3', ${`zz-reason-${suffix}`}, 'blank', ${by}, ${`zz-key-${suffix}-0001`}) RETURNING id
+    `;
+    await h.admin`INSERT INTO price_table_working_copies (company_id, base_sequence, content) VALUES (${company}, 1, ${h.admin.json(table as never)})`;
+    return version!.id;
+  };
+  const versionA = await prices(h.seed.a, h.seed.ownerA.actor, 'a');
+  const versionB = await prices(h.seed.b, h.seed.ownerB.actor, 'b');
   const side = (
     name: 'A' | 'B',
     companyId: string,
     suffix: string,
     membershipId: string,
     invitationId: string,
+    versionId: string,
     ids: string[],
     extra: string[],
   ): Side => {
@@ -105,15 +133,15 @@ async function seedSides(): Promise<void> {
     return {
       name,
       companyId,
-      ids: { membershipId, invitationId, address: `company-${suffix}` },
+      ids: { membershipId, invitationId, address: `company-${suffix}`, versionId },
       people: { owner: person(`owner-${suffix}`), estimator: person(`estimator-${suffix}`), office: person(`office-${suffix}`) },
-      markers: [companyId, membershipId, invitationId, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra].map((value) =>
+      markers: [companyId, membershipId, invitationId, versionId, `zz-price-marker-${suffix}`, `zz-reason-${suffix}`, tenant, `company-${suffix}`, `-${suffix}@example.test`, ...ids, ...extra].map((value) =>
         value.toLowerCase(),
       ),
     };
   };
-  a = side('A', h.seed.a, 'a', h.seed.estimatorA.membership, invitationA, [h.seed.ownerA.actor, h.seed.estimatorA.actor, h.seed.officeA.actor, h.seed.ownerA.membership], ['shared-invitee@example.test']);
-  b = side('B', h.seed.b, 'b', h.seed.estimatorB.membership, invitationB, [h.seed.ownerB.actor, h.seed.estimatorB.actor, officeB[0]!.id, h.seed.ownerB.membership], ['invitee-b@example.test']);
+  a = side('A', h.seed.a, 'a', h.seed.estimatorA.membership, invitationA, versionA, [h.seed.ownerA.actor, h.seed.estimatorA.actor, h.seed.officeA.actor, h.seed.ownerA.membership], ['shared-invitee@example.test']);
+  b = side('B', h.seed.b, 'b', h.seed.estimatorB.membership, invitationB, versionB, [h.seed.ownerB.actor, h.seed.estimatorB.actor, officeB[0]!.id, h.seed.ownerB.membership], ['invitee-b@example.test']);
 }
 
 beforeAll(async () => {
@@ -170,6 +198,7 @@ const idsOf = (victim: Side, company: Side = victim): Record<string, string> => 
   companyId: company.companyId,
   membershipId: victim.ids.membershipId,
   invitationId: victim.ids.invitationId,
+  versionId: victim.ids.versionId,
   address: victim.ids.address,
 });
 
@@ -250,6 +279,10 @@ describe('the leak check itself', () => {
       const own = await call(team, side.people.owner, idsOf(side));
       expect(own.status).toBe(200);
       expect(leaks(own.text, side).length).toBeGreaterThan(0);
+      // The Prices read shows the company's own working copy and version too.
+      const prices = await call({ route: 'api/prices', method: 'GET' }, side.people.owner, idsOf(side));
+      expect(prices.status).toBe(200);
+      expect(leaks(prices.text, side)).toEqual(expect.arrayContaining([`zz-price-marker-${side.name.toLowerCase()}`, side.ids.versionId.toLowerCase()]));
       const me = await call({ route: 'api/me', method: 'GET' }, side.people.owner, {});
       expect(me.status).toBe(200);
       expect(leaks(me.text, side)).toContain(side.companyId.toLowerCase());
@@ -279,6 +312,10 @@ describe('every route, called with the other company’s ids', () => {
           const open = OPEN[matrixKey(row)];
           if (open) {
             open(answer, where, attacker, victim);
+          } else if (row.self) {
+            // Answered about the caller's own company: never 401 or a server error, and none of the other's.
+            expect({ where, status: SELF_ANSWERS.includes(answer.status) ? 'answered' : answer.status }).toEqual({ where, status: 'answered' });
+            expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
           } else {
             expect({ where, status: REFUSED.includes(answer.status) ? 'refused' : answer.status }).toEqual({ where, status: 'refused' });
             expect({ where, leaked: leaks(answer.text, victim) }).toEqual({ where, leaked: [] });
@@ -393,6 +430,25 @@ describe('the platform operator', () => {
     ]);
   });
 
+  it('writes an audit row naming the operator and the company for a view of the company’s prices, which show that company only', async () => {
+    const prices = MATRIX.find((row) => row.route === 'api/platform/companies/[companyId]/prices')!;
+    const rows = () =>
+      h.admin<{ company_id: string | null; actor_id: string | null; operator_actor_id: string | null; action: string; target: string }[]>`
+        SELECT company_id, actor_id, operator_actor_id, action, target FROM audit_events WHERE action = 'support_prices_viewed' ORDER BY id
+      `;
+    expect(await rows()).toEqual([]);
+    for (const side of [a, b]) {
+      const answer = await call(prices, operatorClaims(), idsOf(side));
+      expect(answer.status).toBe(200);
+      expect(leaks(answer.text, side)).toEqual(expect.arrayContaining([`zz-price-marker-${side.name.toLowerCase()}`, side.ids.versionId.toLowerCase()]));
+      expect(leaks(answer.text, side === a ? b : a)).toEqual([]);
+    }
+    expect(await rows()).toEqual([
+      { company_id: h.seed.a, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_prices_viewed', target: h.seed.a },
+      { company_id: h.seed.b, actor_id: null, operator_actor_id: h.seed.operator, action: 'support_prices_viewed', target: h.seed.b },
+    ]);
+  });
+
   it('keeps that audit row out of reach of the other company, whose own rows it can read', async () => {
     const team = MATRIX.find((row) => row.route === 'api/platform/companies/[companyId]/team')!;
     await call(team, operatorClaims(), idsOf(a));
@@ -442,7 +498,7 @@ describe('SQL as the runtime role', () => {
     const tables = await publicTables();
     // A table added later is read here too: the list is the catalog's, not a copy of the schema.
     expect(tables).toEqual(
-      expect.arrayContaining(['access_projection_outbox', 'actors', 'audit_events', 'auth_tenants', 'companies', 'company_feature_flags', 'invitations', 'memberships', 'migration_ledger', 'platform_admins']),
+      expect.arrayContaining(['access_projection_outbox', 'actors', 'audit_events', 'auth_tenants', 'companies', 'company_feature_flags', 'invitations', 'memberships', 'migration_ledger', 'platform_admins', 'price_table_versions', 'price_table_working_copies']),
     );
     for (const [self, other] of [[b, a], [a, b]] as const) {
       // A table the runtime holds no grant on is refused outright, which is as closed as it gets.
@@ -462,6 +518,8 @@ describe('SQL as the runtime role', () => {
       expect(leaks(seen.memberships!, self).length).toBeGreaterThan(0);
       expect(leaks(seen.audit_events!, self).length).toBeGreaterThan(0);
       expect(leaks(seen.invitations!, self).length).toBeGreaterThan(0);
+      expect(leaks(seen.price_table_versions!, self).length).toBeGreaterThan(0);
+      expect(leaks(seen.price_table_working_copies!, self).length).toBeGreaterThan(0);
       expect(JSON.parse(seen.companies!)).toHaveLength(1);
       expect(JSON.parse(seen.auth_tenants!)).toHaveLength(1);
       expect(JSON.parse(seen.platform_admins!)).toEqual([]);
@@ -504,6 +562,12 @@ describe('SQL as the runtime role', () => {
       ['move the company to another company', `UPDATE memberships SET company_id = '${h.seed.b}' WHERE company_id = '${victim}'`],
       ['delete members', `DELETE FROM memberships WHERE company_id = '${victim}'`],
       ['delete the company', `DELETE FROM companies WHERE id = '${victim}'`],
+      ['insert a price version', `INSERT INTO price_table_versions (company_id, sequence, content, content_hash, engine_version, reason, source, published_by_actor_id, publish_key) VALUES ('${victim}', 1, '{}', '${'0'.repeat(64)}', 'dryscope-v3', 'planted', 'blank', '${h.seed.ownerA.actor}', 'planted-key-0001')`],
+      ['insert a working copy', `INSERT INTO price_table_working_copies (company_id, content) VALUES ('${victim}', '{}')`],
+      ['change a working copy', `UPDATE price_table_working_copies SET revision = 2, content = '{}'::jsonb WHERE company_id = '${victim}'`],
+      ['change a price version', `UPDATE price_table_versions SET reason = 'changed' WHERE company_id = '${victim}'`],
+      ['delete a price version', `DELETE FROM price_table_versions WHERE company_id = '${victim}'`],
+      ['delete a working copy', `DELETE FROM price_table_working_copies WHERE company_id = '${victim}'`],
       ['delete audit events', `DELETE FROM audit_events WHERE company_id = '${victim}'`],
       ['read through a join to the company', `SELECT 1 FROM memberships m JOIN companies c ON c.id = m.company_id WHERE c.id = '${victim}'`],
     ];

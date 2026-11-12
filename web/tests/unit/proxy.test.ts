@@ -46,9 +46,22 @@ describe('API sign-in gate', () => {
       '/api/companies/:id/members/:id/enable',
       '/api/invitations/:id',
       '/api/invitations/:id/accept',
+      '/api/prices',
+      '/api/prices/working-copy',
+      '/api/prices/preview',
+      '/api/prices/publish',
+      '/api/prices/export',
+      '/api/prices/versions',
+      '/api/prices/versions/:id',
+      '/api/prices/versions/:id/restore',
     ]);
     expect(call('/api/me').headers.get('x-middleware-next')).toBe('1');
     expect(call('/api/me/extra').status).toBe(401);
+    // The Prices routes name no company; a look-alike path or a non-uuid version id gets no pass.
+    expect(call('/api/prices').headers.get('x-middleware-next')).toBe('1');
+    for (const path of ['/api/prices/', '/api/prices/versions/current', '/api/prices/versions/x/restore', '/api/prices/other', '/api/prices/export/extra']) {
+      expect({ path, status: call(path).status }).toEqual({ path, status: 401 });
+    }
   });
 
   it('matches an id segment to one uuid and nothing else', () => {
