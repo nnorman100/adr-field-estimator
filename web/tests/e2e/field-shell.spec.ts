@@ -51,7 +51,7 @@ test('the shell starts from the sign-in the phone saved, and signing out removes
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
 });
 
-// The rows of ds-me as they are now, read past the hold of holdStorage.
+// The rows of ds-me as they are now, read past holdStorage and refuseStorage.
 function savedRows(page: Page): Promise<Record<string, unknown>[]> {
   return page.evaluate(
     ([db, store, version]) =>
@@ -131,8 +131,57 @@ test('a phone too slow to save the sign-in is signed in without it, and cannot s
   expect(await savedRows(page)).toEqual([]);
 
   await page.getByRole('button', { name: 'Sign out' }).click();
+  // The removal and the check that the row is gone each wait up to 3 seconds.
+  await expect(page.getByRole('alert').filter({ hasText: 'This phone could not finish signing out. Try again.' })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+});
+
+// A phone whose storage refuses ds-me: every open from now on (`always`) or only the next (`once`).
+async function refuseStorage(page: Page, when: 'always' | 'once' | 'never') {
+  await page.addInitScript(
+    ([db, mode]) => {
+      const state = window as unknown as { openUnheld: IDBFactory['open']; refuseMe: string };
+      const open = IDBFactory.prototype.open;
+      state.openUnheld = (name, version) => open.call(indexedDB, name, version);
+      state.refuseMe = mode as string;
+      IDBFactory.prototype.open = function (name: string, version?: number) {
+        if (name === db && state.refuseMe !== 'never') {
+          if (state.refuseMe === 'once') state.refuseMe = 'never';
+          throw new DOMException('Storage refused', 'SecurityError');
+        }
+        return open.call(this, name, version);
+      };
+    },
+    [ME_DB, when] as const,
+  );
+}
+
+test('signing out stays signed in while the saved sign-in may still be on the phone', async ({ page }) => {
+  await refuseStorage(page, 'never');
+  await signInAsMemberA(page);
+  expect(await savedRows(page)).toHaveLength(1);
+
+  // The removal's open fails once; the row is still there, so the shell could still start from it.
+  await page.evaluate(() => {
+    (window as unknown as { refuseMe: string }).refuseMe = 'once';
+  });
+  await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'This phone could not finish signing out. Try again.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+  expect(await savedRows(page)).toHaveLength(1);
+
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  expect(await savedRows(page)).toEqual([]);
+});
+
+test('a phone that keeps no data can still sign out', async ({ page }) => {
+  await refuseStorage(page, 'always');
+  await signInAsMemberA(page);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
 });
 
 test('a shell brought back from the back-forward cache reads the phone again', async ({ page }) => {

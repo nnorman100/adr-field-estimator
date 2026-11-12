@@ -108,11 +108,10 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
 // A change to the rows, settled when the transaction has committed (not when its request was
 // accepted: a page that navigates away first loses it) or has failed. True when it committed. A
 // phone whose storage does not answer within WRITE_WITHIN_MS gets false, and false is final: the
-// change is aborted, or never made if the database opens later. `unopened` is the answer when the
-// database cannot be opened at all.
+// change is aborted, or never made if the database opens later.
 const WRITE_WITHIN_MS = 3_000;
 
-function write(change: (store: IDBObjectStore) => void, unopened: boolean): Promise<boolean> {
+function write(change: (store: IDBObjectStore) => void): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     let transaction: IDBTransaction | null = null;
@@ -148,7 +147,34 @@ function write(change: (store: IDBObjectStore) => void, unopened: boolean): Prom
           db.close();
         }
       },
-      () => finish(unopened),
+      () => finish(false),
+    );
+  });
+}
+
+// Whether the row at `key` may still be there: true when it is, when the read fails and when the
+// storage does not answer within WRITE_WITHIN_MS; false when it is not, or when the storage cannot
+// be opened at all (the shell then cannot start from it either).
+function mayHold(key: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(true), WRITE_WITHIN_MS);
+    const answer = (held: boolean) => {
+      clearTimeout(timer);
+      resolve(held);
+    };
+    openDb().then(
+      (db) => {
+        try {
+          const request = db.transaction(ME_STORE, 'readonly').objectStore(ME_STORE).count(key);
+          request.onsuccess = () => answer(request.result > 0);
+          request.onerror = () => answer(true);
+        } catch {
+          answer(true);
+        } finally {
+          db.close();
+        }
+      },
+      () => answer(false),
     );
   });
 }
@@ -156,11 +182,14 @@ function write(change: (store: IDBObjectStore) => void, unopened: boolean): Prom
 // Saves this sign-in's row, replacing the same (tenant, person)'s earlier one. False when it could
 // not be saved; the sign-in itself is not affected.
 export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
-  return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }), false);
+  return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }));
 }
 
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
-// row: another company's stays. True when no such row is left (also when the phone keeps no data).
-export function forgetMe(tenantId: string, uid: string): Promise<boolean> {
-  return write((store) => store.delete(meKey(tenantId, uid)), true);
+// row: another company's stays. True only when that row is shown to be gone, or the phone's storage
+// cannot be opened at all; false when it may still be there.
+export async function forgetMe(tenantId: string, uid: string): Promise<boolean> {
+  const key = meKey(tenantId, uid);
+  if (await write((store) => store.delete(key))) return true;
+  return !(await mayHold(key));
 }
