@@ -350,6 +350,27 @@ test('signing in again from the team screen removes the sign-in from the field a
   await expectFieldSignedOut(page);
 });
 
+test('a sign-in the team screen cannot remove keeps the field app signed in', async ({ page }) => {
+  await signInTo(page, team.owner);
+  await openTeam(page);
+  await page.route(`**/api/companies/${team.companyId}/invitations`, (route) =>
+    route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'sign_in_again' }) }),
+  );
+  await page.getByLabel('Email address to invite').fill(uniqueEmail('too-late'));
+  await page.getByRole('button', { name: 'Create invitation' }).click();
+  await page.evaluate(() => {
+    const remove = IDBObjectStore.prototype.delete;
+    IDBObjectStore.prototype.delete = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      if (String(key).startsWith('firebase:authUser')) throw new DOMException('blocked', 'UnknownError');
+      return remove.call(this, key);
+    };
+  });
+  await page.getByRole('button', { name: 'Sign in again' }).click();
+  await expect(page.getByRole('heading', { name: 'We could not open the team' })).toBeVisible();
+  await page.goto('/field');
+  await expect(page.getByRole('heading', { name: team.companyName })).toBeVisible();
+});
+
 test('a team change after the sign-in has grown old asks the owner to sign in again', async ({ page }) => {
   await signInTo(page, team.owner);
   await openTeam(page);

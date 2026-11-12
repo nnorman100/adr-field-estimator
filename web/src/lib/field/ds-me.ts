@@ -186,10 +186,18 @@ export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
 }
 
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
-// row: another company's stays. True only when that row is shown to be gone, or the phone's storage
-// cannot be opened at all; false when it may still be there.
-export async function forgetMe(tenantId: string, uid: string): Promise<boolean> {
+// row: another company's stays. Resolves to the row it removed (null when there was none, or the
+// phone's storage cannot be opened at all), or false when the row may still be there.
+export async function forgetMe(tenantId: string, uid: string): Promise<DsMe | null | false> {
   const key = meKey(tenantId, uid);
-  if (await write((store) => store.delete(key))) return true;
-  return !(await mayHold(key));
+  let removed: unknown = null;
+  const gone = await write((store) => {
+    const row = store.get(key);
+    row.onsuccess = () => {
+      removed = row.result;
+    };
+    store.delete(key);
+  });
+  if (gone) return parseMe(removed);
+  return (await mayHold(key)) ? false : null;
 }

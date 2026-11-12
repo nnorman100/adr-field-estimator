@@ -86,23 +86,18 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
     );
   }, []);
 
-  // False when the phone could not let go of the sign-in, which then stays.
-  const endSession = useCallback(async (message: string | null): Promise<boolean> => {
+  const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
-    if (auth && !(await signOutOfCompany(auth, tenantId))) {
-      setError('This phone could not finish signing out. Try again.');
-      return false;
-    }
+    if (auth) await signOutOfCompany(auth, tenantId);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
-    return true;
   }, [tenantId]);
 
   const refuse = useCallback(
     async (message: string) => {
       try {
-        if (!(await endSession(message))) setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
+        await endSession(message);
       } catch {
         setScreen({ name: 'outcome', outcome: { kind: 'unavailable' } });
       }
@@ -196,15 +191,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const signOutButton = (
     <>
       <ErrorMessage text={error} />
-      <Button
-        variant="outline"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            await endSession('You are signed out.');
-          })
-        }
-      >
+      <Button variant="outline" disabled={busy} onClick={() => run(() => endSession('You are signed out.'))}>
         Sign out
       </Button>
     </>

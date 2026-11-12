@@ -55,13 +55,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
     authRef.current = auth;
     // The latest sign-in wins: an answer for a user who has since signed out is dropped.
     const stale = (user: User) => authRef.current?.currentUser !== user;
-    const signOutOrUnavailable = () =>
-      signOutOfCompany(auth, tenantId).then(
-        (signedOut) => {
-          if (!signedOut) setPhase({ name: 'unavailable' });
-        },
-        () => setPhase({ name: 'unavailable' }),
-      );
+    const signOutOrUnavailable = () => signOutOfCompany(auth, tenantId).catch(() => setPhase({ name: 'unavailable' }));
 
     async function open(user: User) {
       setPhase({ name: 'checking' });
@@ -145,9 +139,7 @@ function CompanyTeam({ address, companyName, tenantId, config }: TeamScreenProps
           initial={phase.team}
           onSignInAgain={async () => {
             try {
-              if (authRef.current && !(await signOutOfCompany(authRef.current, tenantId))) {
-                return setPhase({ name: 'unavailable' });
-              }
+              if (authRef.current) await signOutOfCompany(authRef.current, tenantId);
             } catch {
               return setPhase({ name: 'unavailable' });
             }

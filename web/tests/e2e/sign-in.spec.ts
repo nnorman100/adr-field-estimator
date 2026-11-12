@@ -127,7 +127,7 @@ test('a failed sign-out keeps the signed-in screen and the session', async ({ pa
     };
   });
   await page.getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('main').getByRole('alert')).toHaveText('This phone could not finish signing out. Try again.');
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText('Sign-in did not work. Try again.');
   await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
   await expect(page.getByText('You are signed out.')).toHaveCount(0);
 

@@ -132,10 +132,30 @@ test('a phone too slow to save the sign-in is signed in without it, and cannot s
 
   await page.getByRole('button', { name: 'Sign out' }).click();
   // The removal and the check that the row is gone each wait up to 3 seconds.
-  await expect(page.getByRole('alert').filter({ hasText: 'This phone could not finish signing out. Try again.' })).toBeVisible({
+  await expect(page.getByRole('alert').filter({ hasText: 'Sign-in did not work. Try again.' })).toBeVisible({
     timeout: 10_000,
   });
   await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+});
+
+test('a sign-out Firebase cannot finish keeps the saved sign-in for the field app', async ({ page }) => {
+  await refuseStorage(page, 'never');
+  await signInAsMemberA(page);
+  // The phone removes the field app's row, then cannot remove Firebase's saved sign-in.
+  await page.evaluate(() => {
+    const remove = IDBObjectStore.prototype.delete;
+    IDBObjectStore.prototype.delete = function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      if (String(key).startsWith('firebase:authUser')) throw new DOMException('Storage refused', 'UnknownError');
+      return remove.call(this, key);
+    };
+  });
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('main').getByRole('alert')).toHaveText('Sign-in did not work. Try again.');
+  await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
+  expect(await savedRows(page)).toHaveLength(1);
+
+  await page.getByRole('link', { name: 'Open the field app' }).click();
+  await expect(page.getByRole('heading', { name: A })).toBeVisible();
 });
 
 // A phone whose storage refuses ds-me: every open from now on (`always`) or only the next (`once`).
@@ -168,7 +188,7 @@ test('signing out stays signed in while the saved sign-in may still be on the ph
     (window as unknown as { refuseMe: string }).refuseMe = 'once';
   });
   await page.getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('alert').filter({ hasText: 'This phone could not finish signing out. Try again.' })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Sign-in did not work. Try again.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: `Signed in to ${A}` })).toBeVisible();
   expect(await savedRows(page)).toHaveLength(1);
 
