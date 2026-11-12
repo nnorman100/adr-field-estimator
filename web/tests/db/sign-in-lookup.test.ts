@@ -1,29 +1,29 @@
-import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { openDatabase } from '@/db/client';
-import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { withCompany } from '@/db/tenant';
 import { databaseDirectory } from '@/lib/auth/directory';
 import { databaseSignInDirectory } from '@/lib/sign-in/database-directory';
 import { IdentityRefusal, resolveIdentity, type TokenVerifier } from '@/lib/auth/identity';
-import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
+import { sharedRoles, startMigratedDatabase, type MigratedDatabase } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
 
 // Migration 0004 and the sign-in records read through it, as the app's runtime role on a server
 // set up like a fresh Cloud SQL instance (see row-level-security.test.ts): a CREATEROLE migrator
 // owns the tables and the API user inherits dryscope_runtime. Tokens are replaced by a fake
 // verifier here; tests/emu/identity.test.ts checks real tokens against the Auth emulator.
-const MIGRATOR = 'dryscope_migrator_ci';
-const API_USER = 'dryscope-api-ci@dryscope.iam';
-const OTHER_USER = 'dryscope_other_ci';
+// The roles belong to the run's shared server (see postgres-harness.ts).
+const { migrator, api: apiLogin, other } = sharedRoles();
+const MIGRATOR = migrator.name;
+const API_USER = apiLogin.name;
+const OTHER_USER = other.name;
 const INSUFFICIENT_PRIVILEGE = '42501';
 
-const migratorPassword = randomBytes(16).toString('hex');
-const apiPassword = randomBytes(16).toString('hex');
-const otherPassword = randomBytes(16).toString('hex');
+const migratorPassword = migrator.password;
+const apiPassword = apiLogin.password;
+const otherPassword = other.password;
 
-let server: DisposablePostgres;
+let server: MigratedDatabase;
 let admin: postgres.Sql;
 let api: postgres.Sql;
 let handle: ReturnType<typeof openDatabase>;
@@ -90,12 +90,7 @@ async function seedCompanies(): Promise<Seed> {
 }
 
 beforeAll(async () => {
-  server = await startDisposablePostgres({ APP_ENV: 'test' });
-  admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
-  await admin.unsafe(`CREATE ROLE ${MIGRATOR} LOGIN CREATEROLE PASSWORD '${migratorPassword}'`);
-  await admin.unsafe(`GRANT CREATE ON DATABASE "${server.databaseName}" TO ${MIGRATOR}`);
-  await admin.unsafe(`CREATE ROLE "${API_USER}" LOGIN PASSWORD '${apiPassword}'`);
-  await admin.unsafe(`CREATE ROLE ${OTHER_USER} LOGIN PASSWORD '${otherPassword}'`);
+  server = await startMigratedDatabase();
 });
 
 afterAll(async () => {
@@ -108,10 +103,11 @@ afterAll(async () => {
 beforeEach(async () => {
   await handle?.close();
   await api?.end({ timeout: 5 });
-  await emptyDiscardDatabase(server.databaseUrl);
-  await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
-  await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${MIGRATOR}`);
-  await applyMigrations(urlAs(MIGRATOR, migratorPassword), migrationsDirectory);
+  await admin?.end({ timeout: 5 });
+  // A fresh copy of the migrated template: an empty public schema as a new database has it, every
+  // migration applied by the migrator, no rows.
+  await server.reset();
+  admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
   seed = await seedCompanies();
   api = connect(API_USER, apiPassword);
   handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: urlAs(API_USER, apiPassword) });

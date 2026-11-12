@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +7,6 @@ import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '@/db/client';
-import { applyMigrations, migrationsDirectory } from '@/db/migrate';
 import { withCompany } from '@/db/tenant';
 import { databaseDirectory } from '@/lib/auth/directory';
 import {
@@ -24,25 +22,27 @@ import { AccessStoreError } from '@/lib/projection/store';
 import { teamService } from '@/lib/team/service';
 import { key, memoryStore } from '../projection/memory-store';
 import { accessStoreContract } from '../projection/store-contract';
-import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres } from './postgres-harness';
+import { sharedRoles, startMigratedDatabase, type MigratedDatabase } from './postgres-harness';
 import { unprotectedRelations } from './row-security-guard';
 
 // The access projection outbox (S3-12) against Postgres, as the app's runtime role on a server set
 // up like a fresh Cloud SQL instance (see row-level-security.test.ts). The Firestore side is the
 // in-memory store, held to the same contract as the real one; tests/emu/access-projection.test.ts
 // runs the real store against the Firestore emulator and its rules.
-const MIGRATOR = 'dryscope_migrator_ci';
-const API_USER = 'dryscope-api-ci@dryscope.iam';
-const OTHER_USER = 'dryscope_other_ci';
+// The roles belong to the run's shared server (see postgres-harness.ts).
+const { migrator, api: apiLogin, other } = sharedRoles();
+const MIGRATOR = migrator.name;
+const API_USER = apiLogin.name;
+const OTHER_USER = other.name;
 const INSUFFICIENT_PRIVILEGE = '42501';
 const INVALID_PARAMETER = '22023';
 
-const migratorPassword = randomBytes(16).toString('hex');
-const apiPassword = randomBytes(16).toString('hex');
-const otherPassword = randomBytes(16).toString('hex');
+const migratorPassword = migrator.password;
+const apiPassword = apiLogin.password;
+const otherPassword = other.password;
 const webDir = fileURLToPath(new URL('../..', import.meta.url));
 
-let server: DisposablePostgres;
+let server: MigratedDatabase;
 let admin: postgres.Sql;
 let api: postgres.Sql;
 let handle: ReturnType<typeof openDatabase>;
@@ -103,12 +103,7 @@ async function seedCompanies(): Promise<Seed> {
 }
 
 beforeAll(async () => {
-  server = await startDisposablePostgres({ APP_ENV: 'test' });
-  admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
-  await admin.unsafe(`CREATE ROLE ${MIGRATOR} LOGIN CREATEROLE PASSWORD '${migratorPassword}'`);
-  await admin.unsafe(`GRANT CREATE ON DATABASE "${server.databaseName}" TO ${MIGRATOR}`);
-  await admin.unsafe(`CREATE ROLE "${API_USER}" LOGIN PASSWORD '${apiPassword}'`);
-  await admin.unsafe(`CREATE ROLE ${OTHER_USER} LOGIN PASSWORD '${otherPassword}'`);
+  server = await startMigratedDatabase();
 });
 
 afterAll(async () => {
@@ -123,10 +118,11 @@ beforeEach(async () => {
   await worker?.close();
   await handle?.close();
   await api?.end({ timeout: 5 });
-  await emptyDiscardDatabase(server.databaseUrl);
-  await admin.unsafe('GRANT USAGE ON SCHEMA public TO PUBLIC');
-  await admin.unsafe(`GRANT CREATE ON SCHEMA public TO ${MIGRATOR}`);
-  await applyMigrations(urlAs(MIGRATOR, migratorPassword), migrationsDirectory);
+  await admin?.end({ timeout: 5 });
+  // A fresh copy of the migrated template: an empty public schema as a new database has it, every
+  // migration applied by the migrator, no rows.
+  await server.reset();
+  admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
   seed = await seedCompanies();
   api = connect(API_USER, apiPassword);
   handle = openDatabase({ APP_ENV: 'test', DATABASE_URL: urlAs(API_USER, apiPassword) });
@@ -185,7 +181,8 @@ function deferred() {
 // restarted server would, and waits until the lock is free.
 async function dropLockHolder() {
   const held = () => admin<{ pid: number }[]>`
-    SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = ${0x5312}
+    SELECT pid FROM pg_locks
+    WHERE locktype = 'advisory' AND granted AND classid = ${0x5312} AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
   `;
   const holders = await held();
   expect(holders).toHaveLength(1);
@@ -346,7 +343,7 @@ describe('access projection outbox (S3-12)', () => {
         await exited;
         // The server notices the dropped connection and rolls the worker's transaction back.
         const deadlineRollback = Date.now() + 10_000;
-        while ((await admin`SELECT 1 FROM pg_stat_activity WHERE usename = ${API_USER} AND state LIKE 'idle in transaction%'`).length > 0) {
+        while ((await admin`SELECT 1 FROM pg_stat_activity WHERE usename = ${API_USER} AND datname = current_database() AND state LIKE 'idle in transaction%'`).length > 0) {
           if (Date.now() > deadlineRollback) throw new Error('the killed worker still holds a transaction');
           await new Promise((resolve) => setTimeout(resolve, 50));
         }

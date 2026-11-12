@@ -144,8 +144,9 @@ async function stockPublicSchema(): Promise<void> {
 }
 
 beforeAll(async () => {
-  // No DATABASE_URL: the harness starts a server this file owns, even in CI.
-  server = await startDisposablePostgres({ APP_ENV: 'test' });
+  // No DATABASE_URL: the harness starts a server this file owns, even in CI. Its tests create and
+  // change roles, which belong to a server and not a database, so it never uses the shared one.
+  server = await startDisposablePostgres({ APP_ENV: 'test' }, { ownServer: true });
   admin = postgres(server.databaseUrl, { max: 1, connect_timeout: 10, onnotice: () => {} });
   await admin.unsafe(`CREATE ROLE ${MIGRATOR} LOGIN CREATEROLE PASSWORD '${migratorPassword}'`);
   await admin.unsafe(`GRANT CREATE ON DATABASE "${server.databaseName}" TO ${MIGRATOR}`);

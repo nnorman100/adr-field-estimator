@@ -128,7 +128,7 @@ npm ci
 cp env.example .env.local        # APP_ENV is required; the app refuses to start without it
 npm run dev                      # http://localhost:3100, health at /api/health
 npm run typecheck ; npm run lint ; npm test
-npm run test:db                  # migrations from an empty throwaway Postgres (Docker or local PostgreSQL 16)
+npm run test:db                  # migrations and RLS on throwaway Postgres, one server per run, a database per file (Docker or local PostgreSQL 16)
 npm run test:emu                 # Firebase Auth + Firestore emulators (Java 21+); demo- project ids only
 npm run test:isolation          # the company-isolation gate: PostgreSQL 16 and the Firestore emulator (docs/ACCESS.md)
 npm run db:migrate               # apply web/migrations; needs APP_ENV and DATABASE_URL (env or .env.local)
