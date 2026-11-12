@@ -1,6 +1,8 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { actors, auditEvents, invitations, memberships } from '@/db/schema';
 import { withOperator, type CompanyTransaction, type Database } from '@/db/tenant';
+import { changeCompanyFlag, type FlagChangeResult } from '@/lib/flags';
+import { postgresFlagStore } from '@/lib/flags/store';
 import { enqueueAccessProjection } from '@/lib/projection/outbox';
 import {
   INVITATION_DAYS,
@@ -218,6 +220,19 @@ export function platformService(db: Database, users: PlatformUsers, project: Pro
       );
       await projectAll(companyId, queued);
       return result;
+    },
+
+    // Turns one known feature on or off for one company (S3-11b, owner decision D12: only an
+    // operator does). The flag and exactly one audit row naming the operator commit together; an
+    // unknown flag name or company is refused and writes nothing. Setting the value a flag already
+    // has is still a change the operator made, so it is written and audited like any other.
+    async setFlag(operatorId: string, companyId: string, input: { flag: string; enabled: boolean }): Promise<FlagChangeResult> {
+      return changeCompanyFlag(postgresFlagStore(db, operatorId), {
+        operatorActorId: operatorId,
+        companyId,
+        flag: input.flag,
+        enabled: input.enabled,
+      });
     },
 
     // Binds the company to the sign-in tenant made for it, once. The tenant id is registered as a

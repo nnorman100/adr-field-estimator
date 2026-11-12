@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { OperatorContextError } from '@/db/tenant';
 import { IdentityRefusal, type Operator } from '@/lib/auth';
+import { FlagRefusal } from '@/lib/flags';
 import { TeamError, type TeamActor } from '@/lib/team/service';
 import { teamServices } from '@/lib/team/services';
 import { TenantUsersUnavailable } from '@/lib/team/users';
@@ -30,6 +31,9 @@ async function respond(run: () => Promise<Response>): Promise<Response> {
       return json({ error: error.code }, error.status);
     }
     if (error instanceof BadRequest) return json({ error: 'invalid_request' }, 400);
+    if (error instanceof FlagRefusal) {
+      return error.code === 'company_not_found' ? json({ error: 'not_found' }, 404) : json({ error: error.code }, 400);
+    }
     // The operator was disabled after the sign-in check: refuse as on every other operator route.
     if (error instanceof OperatorContextError) return json({ error: 'not_an_operator' }, 403);
     // Fixed text only: an error from the database or the SDK may quote an email.
@@ -72,6 +76,9 @@ const createBody = z.strictObject({
   // The company's sign-in address (owner decision D5), as migration 0002 checks it.
   signInSlug: z.string().regex(/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/),
 });
+// The flag name is checked against the known list by the change rule (an unknown name is refused
+// there, with its own code), so any short string passes this far.
+const flagBody = z.strictObject({ flag: z.string().max(64), enabled: z.boolean() });
 const statusBody = z.strictObject({ status: z.enum(['active', 'suspended', 'archived']) });
 // An Identity Platform tenant id, as the owner-run command printed it.
 const tenantBody = z.strictObject({ tenantId: z.string().regex(/^[A-Za-z0-9-]{1,128}$/) });
@@ -99,6 +106,15 @@ export async function setCompanyStatus(request: Request, operator: Operator, con
     const companyId = await pathId(context, 'companyId');
     const { status } = await body(request, statusBody);
     return json(await platformServices().setStatus(operator.operatorId, companyId, status, new Date()));
+  });
+}
+
+// POST /api/platform/companies/{companyId}/flags  { flag, enabled }
+export async function setCompanyFlag(request: Request, operator: Operator, context: RouteContext): Promise<Response> {
+  return respond(async () => {
+    const companyId = await pathId(context, 'companyId');
+    const input = await body(request, flagBody);
+    return json(await platformServices().setFlag(operator.operatorId, companyId, input));
   });
 }
 

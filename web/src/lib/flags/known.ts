@@ -4,7 +4,7 @@ import type { AccessFlags } from '@/lib/access';
 // switches are rows in company_feature_flags (migration 0002), read inside withCompany. Every
 // flag is off unless that company has a row with enabled = true, so a new company, a missing row
 // and a name not on this list all mean off. Only a platform operator changes a flag (owner
-// decision D12); that route and its database write path come with S3-11b.
+// decision D12); the route is POST /api/platform/companies/{companyId}/flags (S3-11b).
 
 export const FLAG_NAMES = Object.freeze(['price_books'] as const);
 export type FlagName = (typeof FLAG_NAMES)[number];
@@ -15,8 +15,8 @@ export type CompanyFlags = Readonly<Record<FlagName, boolean>>;
 export type FlagRow = { flag: string; enabled: boolean };
 
 // Why a flag name or change was refused. Fixed codes only: a refused value is never repeated
-// back or logged.
-export type FlagRefusalCode = 'unknown_flag' | 'invalid_request';
+// back or logged. company_not_found: the operator named a company that does not exist.
+export type FlagRefusalCode = 'unknown_flag' | 'invalid_request' | 'company_not_found';
 
 export class FlagRefusal extends Error {
   constructor(readonly code: FlagRefusalCode) {

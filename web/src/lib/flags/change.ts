@@ -1,14 +1,12 @@
 import { z } from 'zod';
 import { FlagRefusal, isFlagName, type FlagName } from './known';
 
-// Changing one company's flag: the rule, without a route or a database write path yet.
-//
-// Only a platform operator changes a flag (owner decision D12). The runtime database role can read
-// company_feature_flags but not write it, and the app cannot yet recognise an operator, so the
-// operator route and the store that writes Postgres come together in S3-11b, after a database job
-// and S3-9's operator identity. This function is what that route will call: it refuses an unknown
-// flag before anything is written, and writes the flag and exactly one audit row in one company
-// transaction, so either both land or neither does.
+// Changing one company's flag: the rule. Only a platform operator changes a flag (owner decision
+// D12). The operator route (POST /api/platform/companies/{companyId}/flags) calls this with the
+// Postgres store in ./store.ts, which runs in withOperator (migration 0008 lets only an active
+// operator write company_feature_flags). It refuses an unknown flag before anything is written,
+// and writes the flag and exactly one audit row in one company transaction, so either both land
+// or neither does.
 
 export const FLAG_CHANGED_ACTION = 'feature_flag_changed';
 
@@ -22,7 +20,7 @@ export type FlagAuditEvent = {
   details: { enabled: boolean; previous: boolean };
 };
 
-// The work done inside one company's transaction (withCompany for that company).
+// The work done inside one company's transaction (withOperator, with that company set).
 export type FlagChangeTransaction = {
   // The stored value; a missing row is off.
   stored(flag: FlagName): Promise<boolean>;

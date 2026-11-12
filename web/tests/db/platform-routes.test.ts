@@ -112,6 +112,7 @@ describe('who may use the operator routes', () => {
       'GET platform/companies/[companyId]/team',
       'PATCH platform/companies/[companyId]/members/[membershipId]',
       'POST platform/companies',
+      'POST platform/companies/[companyId]/flags',
       'POST platform/companies/[companyId]/invitations/[invitationId]/cancel',
       'POST platform/companies/[companyId]/invitations/[invitationId]/resend',
       'POST platform/companies/[companyId]/members/[membershipId]/enable',

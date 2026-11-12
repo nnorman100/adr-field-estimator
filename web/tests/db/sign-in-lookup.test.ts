@@ -436,15 +436,25 @@ describe('request identity against the database', () => {
     expect(estimator.flags).toEqual({ price_books: false });
     expect(estimator.capabilities).not.toContain('prices_read');
 
-    // The runtime reads only the current company's rows, and cannot change them.
+    // The runtime reads only the current company's rows. A company transaction cannot change them:
+    // since migration 0008 the runtime holds a column right on enabled for an operator's context, but
+    // no policy matches a company, so the update finds no row (and an insert is refused outright).
     const seen = await withCompany(handle.db, seed.b, async (tx) =>
       (await tx.execute(`SELECT company_id::text AS id FROM company_feature_flags`)) as unknown as { id: string }[],
     );
     expect(seen.map((row) => row.id)).toEqual([seed.b]);
     expect(
+      await withCompany(handle.db, seed.b, (tx) =>
+        tx.execute(`UPDATE company_feature_flags SET enabled = true WHERE flag = 'price_books' RETURNING flag`),
+      ),
+    ).toHaveLength(0);
+    expect(await admin`SELECT enabled FROM company_feature_flags WHERE company_id = ${seed.b} AND flag = 'price_books'`).toEqual([
+      { enabled: false },
+    ]);
+    expect(
       await errorCode(
         withCompany(handle.db, seed.b, (tx) =>
-          tx.execute(`UPDATE company_feature_flags SET enabled = true WHERE flag = 'price_books'`),
+          tx.execute(`INSERT INTO company_feature_flags (company_id, flag, enabled) VALUES ('${seed.b}', 'other', true)`),
         ),
       ),
     ).toBe(INSUFFICIENT_PRIVILEGE);
