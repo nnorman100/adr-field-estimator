@@ -32,13 +32,17 @@ export function useReachable(): boolean {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let latest = true;
+    let newest = 0;
     const check = async () => {
+      const mine = ++newest;
       clearTimeout(timer);
       if (document.visibilityState === 'visible') {
-        latest = await reachable();
-        if (!stopped) setOnline(latest);
+        const answer = await reachable();
+        if (stopped || mine !== newest) return;
+        latest = answer;
+        setOnline(latest);
       }
-      if (!stopped) timer = setTimeout(check, latest ? ONLINE_EVERY_MS : OFFLINE_EVERY_MS);
+      timer = setTimeout(check, latest ? ONLINE_EVERY_MS : OFFLINE_EVERY_MS);
     };
     const wake = () => void check();
     window.addEventListener('online', wake);

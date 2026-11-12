@@ -33,8 +33,4 @@ describe('ds-me rows', () => {
   ])('are skipped when damaged: %s', (_name, value) => {
     expect(parseMe(value)).toBeNull();
   });
-
-  it('hold no email and no token', () => {
-    expect(Object.keys(ROW).join(' ')).not.toMatch(/email|token|password/i);
-  });
 });

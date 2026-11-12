@@ -89,9 +89,9 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const endSession = useCallback(async (message: string | null) => {
     const auth = authRef.current;
     const signedIn = auth?.currentUser ?? null;
+    // The field shell no longer starts from this sign-in (S6-2), before any screen leads to it.
+    if (signedIn) await forgetMe(tenantId, signedIn.uid);
     if (auth) await signOutCompany(auth);
-    // The field shell no longer starts from this sign-in (S6-2).
-    if (signedIn) void forgetMe(tenantId, signedIn.uid);
     setError(null);
     setNotice(message);
     setScreen({ name: 'signed-out' });
@@ -140,10 +140,12 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         await refuse(message);
         return;
       }
-      // The field shell starts from this row with no signal (S6-2); a phone that cannot keep it
-      // still signs in, and the shell says it is not saved.
+      // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
+      // that opens the shell; a phone that cannot keep it still signs in, and the shell says it is
+      // not saved.
       if (outcome.kind === 'signed-in') {
-        void saveMe({ tenantId, uid: user.uid, companyName: outcome.companyName, address, config });
+        await saveMe({ tenantId, uid: user.uid, companyName: outcome.companyName, address, config });
+        if ((authRef.current?.currentUser ?? null) !== user) return;
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
     },

@@ -105,9 +105,12 @@ export async function readLatestMe(): Promise<DsMe | null | 'unavailable'> {
   }
 }
 
-// Saves this sign-in's row, replacing the same (tenant, person)'s earlier one. False when it could
-// not be saved; the sign-in itself is not affected.
-export async function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
+// A change to the rows, settled when the transaction has committed (not when its request was
+// accepted: a page that navigates away first loses it) or has failed. True when it committed. A
+// phone whose storage never answers is not waited on for longer than WRITE_WITHIN_MS.
+const WRITE_WITHIN_MS = 3_000;
+
+async function commit(change: (store: IDBObjectStore) => void): Promise<boolean> {
   let db: IDBDatabase;
   try {
     db = await openDb();
@@ -115,10 +118,8 @@ export async function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
     return false;
   }
   try {
-    const row = { key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() };
     const transaction = db.transaction(ME_STORE, 'readwrite');
-    transaction.objectStore(ME_STORE).put(row);
-    // Saved only when the transaction has committed, not when the request was accepted.
+    change(transaction.objectStore(ME_STORE));
     await new Promise<void>((resolve, reject) => {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('ds-me write failed'));
@@ -132,20 +133,26 @@ export async function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
   }
 }
 
+async function write(change: (store: IDBObjectStore) => void): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), WRITE_WITHIN_MS);
+  });
+  try {
+    return await Promise.race([commit(change), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Saves this sign-in's row, replacing the same (tenant, person)'s earlier one. False when it could
+// not be saved; the sign-in itself is not affected.
+export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
+  return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }));
+}
+
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s
 // row: another company's stays.
-export async function forgetMe(tenantId: string, uid: string): Promise<void> {
-  let db: IDBDatabase;
-  try {
-    db = await openDb();
-  } catch {
-    return;
-  }
-  try {
-    await done(db.transaction(ME_STORE, 'readwrite').objectStore(ME_STORE).delete(meKey(tenantId, uid)));
-  } catch {
-    // Nothing more to remove.
-  } finally {
-    db.close();
-  }
+export function forgetMe(tenantId: string, uid: string): Promise<boolean> {
+  return write((store) => store.delete(meKey(tenantId, uid)));
 }

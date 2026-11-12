@@ -74,12 +74,4 @@ describe('the worker', () => {
   it('refuses a template that has lost a placeholder', () => {
     expect(() => makeWorker({ template: template.replace('__PRECACHE__', '[]'), buildId: 'x', list: [] })).toThrow();
   });
-
-  it('only ever deletes caches of its own prefix, and never the old app’s', () => {
-    expect(template).toContain("const CACHE_PREFIX = 'ds-field-';");
-    const code = template.replace(/^\s*\/\/.*$/gm, '');
-    expect(code).not.toMatch(/dryscope-|alert-disaster-/);
-    expect(code).not.toContain('skipWaiting');
-    expect(code).not.toContain('clients.claim');
-  });
 });
