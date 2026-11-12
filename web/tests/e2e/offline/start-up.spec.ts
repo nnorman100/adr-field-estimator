@@ -5,12 +5,14 @@
 // longer than the watchdog the field screen will use. The second makes the stall itself (a
 // database that never opens) and settles what a watchdog can see and what it can do: whether a
 // start that stalled can be redone with the memory cache on the same Firebase app.
-import { expect, test, Phone } from './fixture';
+import { expect, test, Phone, OFFLINE_TEST_TIMEOUT } from './fixture';
 import { seedCompany } from './world';
 
 // How long the field screen will wait for the cache to answer before it calls the start stalled.
 const WATCHDOG_MS = 5000;
 const RELOADS = 25;
+// Room for each reload or new window, on top of the watchdog, in the test's time limit.
+const NAVIGATION_MS = 5000;
 
 // Safari's own desktop identity (what an iPad sends by default) at a version the SDK's workaround
 // covers (14 to 16) and at one it does not.
@@ -20,6 +22,7 @@ const SAFARI_26 = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/6
 test.describe('the start-up hang (S6-1 e)', () => {
   test(`a persistent client starts within the watchdog on each of ${RELOADS} reloads`, async ({ browser, lane }, info) => {
     const agents = info.project.name === 'webkit' ? [SAFARI_16, SAFARI_26] : [undefined];
+    test.setTimeout(OFFLINE_TEST_TIMEOUT + agents.length * RELOADS * (WATCHDOG_MS + NAVIGATION_MS));
     for (const userAgent of agents) {
       const context = await browser.newContext(userAgent ? { userAgent } : {});
       const world = await seedCompany();

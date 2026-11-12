@@ -63,8 +63,12 @@ export class Phone {
 
 type Fixtures = { lane: NetworkLane };
 
+// Each offline test waits on the network coming back, often more than once, with polls of up to 45s.
+export const OFFLINE_TEST_TIMEOUT = 180_000;
+
 export const test = base.extend<Fixtures>({
-  lane: async ({}, provide) => {
+  lane: async ({}, provide, testInfo) => {
+    testInfo.setTimeout(Math.max(testInfo.timeout, OFFLINE_TEST_TIMEOUT));
     const lane = await NetworkLane.open({ statics: await harnessFiles() });
     try {
       await provide(lane);
