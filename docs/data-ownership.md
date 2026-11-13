@@ -1,6 +1,6 @@
 # Destination data ownership and submission
 
-This is the accepted rebuild target, not a description of the current deployment. The current Python app uses private Firestore records and a private evidence bucket; see [the legacy inventory](legacy-data-inventory.md). The rebuild is a clean start in the dedicated project `dryscope`, with separate `test` and `live` resources there and no data migration from `alert-disaster-field-2026` (D-006, Nov 9, 2026). Each fact has one authoritative owner; a projection, cache or acknowledgement cannot acquire write authority.
+This is the accepted rebuild target, not a description of the current deployment. The current Python app uses private Firestore records and a private evidence bucket; see [the legacy inventory](legacy-data-inventory.md). The rebuild is a clean start with no data migration from `alert-disaster-field-2026` (D-006, Nov 9, 2026); `dryscope` is its `test` project and `live` gets its own project before S8 (D-018). Each fact has one authoritative owner; a projection, cache or acknowledgement cannot acquire write authority.
 
 | Data | Authoritative owner | Permitted copies and constraints |
 | --- | --- | --- |
