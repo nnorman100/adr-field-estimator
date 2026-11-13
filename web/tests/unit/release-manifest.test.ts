@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import {
   parseTraffic,
   ReleaseManifest,
   releaseNotes,
+  releasedBefore,
   rollbackCommand,
   type ManifestInput,
 } from '../../scripts/release-manifest';
@@ -68,6 +69,38 @@ describe('release manifest', () => {
       `gcloud run services update-traffic dryscope-api-test --to-revisions=${replaced} --region=us-central1 --project=dryscope`,
     );
   });
+
+  it("rolls back to the previous release's revision on a rerun that found its own image serving", () => {
+    const earlier = buildManifest(
+      input({ version: '2026.11.12-4', revision: 'dryscope-api-test-00010-pqr', replaced: 'dryscope-api-test-00009-def=100' }),
+    );
+    // A full rerun: deploy remembered the traffic of this release's own first revision.
+    const rerun = buildManifest(
+      input({ revision: 'dryscope-api-test-00013-new', replaced: 'dryscope-api-test-00012-abc=100', previousRelease: earlier }),
+    );
+    expect(rerun.replaced).toEqual([{ revision: 'dryscope-api-test-00010-pqr', percent: 100 }]);
+    expect(rerun.rollback.command).toBe(
+      'gcloud run services update-traffic dryscope-api-test --to-revisions=dryscope-api-test-00010-pqr=100 --region=us-central1 --project=dryscope',
+    );
+    expect(releasedBefore(earlier, { version: '2026.11.13-2', revision: 'dryscope-api-test-00013-new' })).toEqual(
+      rerun.replaced,
+    );
+  });
+
+  it.each<[string, unknown]>([
+    ['this release itself', { version: '2026.11.13-2' }],
+    ['the same revision', { revision: 'dryscope-api-test-00012-abc' }],
+  ])('refuses a previous release manifest that is %s', (_label, changes) => {
+    const previous = { ...buildManifest(input({ version: '2026.11.12-4', revision: 'dryscope-api-test-00010-pqr' })), ...(changes as object) };
+    expect(() => buildManifest(input({ previousRelease: previous }))).toThrow(/this release, not an earlier one/);
+  });
+
+  it.each([[null], [{}], [{ revision: 'dryscope-api-test-00010-pqr' }]])(
+    'refuses a previous release manifest that is not valid: %j',
+    (previous) => {
+      expect(() => buildManifest(input({ previousRelease: previous }))).toThrow(/previous release manifest is not valid/);
+    },
+  );
 
   it('lists every switch off and every AI feature with its model and prompt version', () => {
     const manifest = buildManifest(input());
@@ -170,6 +203,26 @@ describe('the manifest command, as the record job runs it', () => {
     });
     expect(manifest.migrationLevel).toMatch(/^\d{4}_\w+\.sql$/);
     expect(readFileSync(`${out}/notes.md`, 'utf8')).toContain(manifest.rollback.command);
+  }, 60_000);
+
+  it('takes the rollback target from the previous release manifest it is given', () => {
+    const out = mkdtempSync(path.join(tmpdir(), 'release-manifest-'));
+    dirs.push(out);
+    const earlier = buildManifest(input({ version: '2026.11.12-4', revision: 'dryscope-api-test-00010-pqr' }));
+    writeFileSync(`${out}/earlier.json`, JSON.stringify(earlier));
+    const args = [
+      'tsx',
+      'scripts/release-manifest.ts',
+      ...['--version', '2026.11.13-2', '--commit', commit, '--image', image],
+      ...['--revision', 'dryscope-api-test-00013-new', '--replaced', 'dryscope-api-test-00012-abc=100'],
+      ...['--run', run, '--out', `${out}/manifest.json`, '--notes', `${out}/notes.md`],
+      ...['--previous-release', `${out}/earlier.json`],
+    ];
+    const result = spawnSync('npx', args, { cwd: WEB, input: '', encoding: 'utf8', timeout: 60_000 });
+    expect(result.status, result.stderr).toBe(0);
+    const manifest = ReleaseManifest.parse(JSON.parse(readFileSync(`${out}/manifest.json`, 'utf8')));
+    expect(manifest.replaced).toEqual([{ revision: 'dryscope-api-test-00010-pqr', percent: 100 }]);
+    expect(readFileSync(`${out}/notes.md`, 'utf8')).toContain('--to-revisions=dryscope-api-test-00010-pqr=100 ');
   }, 60_000);
 
   it('fails without writing when an argument is missing', () => {

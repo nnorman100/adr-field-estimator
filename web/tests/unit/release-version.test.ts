@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isVersion, nextVersion, versionFromImageConfig } from '../../scripts/release-version';
+import {
+  isVersion,
+  nextVersion,
+  previousRelease,
+  releaseComplete,
+  versionFromImageConfig,
+} from '../../scripts/release-version';
 
 // The old app's deploy.yml tags in this repository (git ls-remote, 2026-11-13), which the new
 // release numbering must count (docs/plans/TC.md, "Found while planning").
@@ -71,5 +77,85 @@ describe('the version a reused image carries', () => {
     [null],
   ])('refuses an image without exactly one valid version: %j', (config) => {
     expect(() => versionFromImageConfig(config)).toThrow(/no valid APP_VERSION/);
+  });
+});
+
+describe('the previous published release, for a rerun that found its own image serving', () => {
+  const release = (tag: string, changes: Record<string, unknown> = {}) => ({
+    tag_name: tag,
+    draft: false,
+    prerelease: true,
+    assets: [{ name: 'manifest.json' }],
+    ...changes,
+  });
+
+  it('picks the newest published test release before this one, by version', () => {
+    const releases = [
+      release('2026.11.13-3'),
+      release('2026.11.13-2'),
+      release('2026.11.09-11'),
+      release('2026.11.13-1'),
+      release('2026.11.10-2'),
+    ];
+    expect(previousRelease('2026.11.13-2', releases)).toBe('2026.11.13-1');
+    expect(previousRelease('2026.11.13-1', releases)).toBe('2026.11.10-2');
+    expect(previousRelease('2026.11.14-1', releases)).toBe('2026.11.13-3');
+  });
+
+  it.each([
+    ['a draft', { draft: true }],
+    ['a full release', { prerelease: false }],
+    ['one without manifest.json', { assets: [{ name: 'notes.md' }] }],
+    ['one without assets', { assets: undefined }],
+  ])('passes over %s', (_label, changes) => {
+    const releases = [release('2026.11.13-1', changes), release('2026.11.12-4')];
+    expect(previousRelease('2026.11.13-2', releases)).toBe('2026.11.12-4');
+  });
+
+  it('passes over tags that are not release versions', () => {
+    const releases = [release('infra-test-app-2026.11.13-1'), release('v2026.11.13-1'), release('2026.11.12-4')];
+    expect(previousRelease('2026.11.13-2', releases)).toBe('2026.11.12-4');
+  });
+
+  it.each([[[]], [[release('2026.11.13-2'), release('2026.11.14-1')]], [null]])(
+    'refuses when there is no earlier one: %j',
+    (releases) => {
+      expect(() => previousRelease('2026.11.13-2', releases)).toThrow(/no earlier published test release/);
+    },
+  );
+
+  it('refuses a version that is not one', () => {
+    expect(() => previousRelease('latest', [release('2026.11.12-4')])).toThrow(/--before/);
+  });
+});
+
+describe('whether an existing GitHub Release is complete', () => {
+  const command =
+    'gcloud run services update-traffic dryscope-api-test --to-revisions=dryscope-api-test-00011-xyz=100 --region=us-central1 --project=dryscope';
+  const complete = {
+    isDraft: false,
+    isPrerelease: true,
+    assets: [{ name: 'manifest.json' }],
+    body: `Roll back:\n\n\`\`\`sh\n${command}\n\`\`\`\n`,
+  };
+
+  it('keeps a published pre-release with the manifest and this rollback command', () => {
+    expect(releaseComplete(complete, command)).toBe(true);
+  });
+
+  it.each<[string, object]>([
+    ['a draft', { isDraft: true }],
+    ['a full release', { isPrerelease: false }],
+    ['no manifest.json', { assets: [{ name: 'notes.md' }] }],
+    ['no assets', { assets: undefined }],
+    ['no notes', { body: '' }],
+    ['another rollback command', { body: command.replace('00011-xyz', '00010-pqr') }],
+  ])('finishes one with %s', (_label, changes) => {
+    expect(releaseComplete({ ...complete, ...changes }, command)).toBe(false);
+  });
+
+  it('never calls a Release complete without a rollback command to look for', () => {
+    expect(releaseComplete(complete, '')).toBe(false);
+    expect(releaseComplete(null, command)).toBe(false);
   });
 });

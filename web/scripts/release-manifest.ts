@@ -4,7 +4,12 @@
 //
 //   git tag --list 'infra-test-*' | npx tsx scripts/release-manifest.ts --version <YYYY.MM.DD-N> \
 //     --commit <commit> --image <image@sha256:...> --revision <new revision> \
-//     --replaced <revision=percent,...> --run <run URL> --out <manifest.json> --notes <notes.md>
+//     --replaced <revision=percent,...> --run <run URL> --out <manifest.json> --notes <notes.md> \
+//     [--previous-release <earlier manifest.json>]
+//
+// --replaced is the traffic the deploy job remembered before the move. On a rerun that found this
+// release's image already serving, that traffic is the release's own, so the record job passes the
+// previous published release's manifest instead and the rollback target is the revision it released.
 //
 // The rest it reads from the checkout of the released commit: the migration level (the highest
 // numbered file in web/migrations, which the migrate job applied or the release stopped), the switch
@@ -12,7 +17,7 @@
 // (src/lib/ai/registry.ts). Standard input carries the repository's infra-test-<root>-* tags, which
 // the owner pushes after each Terraform apply (C6). The minimum phone version stays null until S6-6
 // adds MIN_CLIENT_EPOCH. It prints nothing secret: every field is a name, number, hash or command.
-import { readdirSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
@@ -83,6 +88,8 @@ export type ManifestInput = {
   run: string;
   migrations: readonly string[];
   tags: readonly string[];
+  /** The previous published release's manifest, when this release's image was already serving. */
+  previousRelease?: unknown;
 };
 
 /** "rev-a=90,rev-b=10", as the deploy job remembered the traffic before the move. */
@@ -115,6 +122,16 @@ export function newestTerraformTag(root: string, tags: readonly string[]): strin
   return best?.tag ?? null;
 }
 
+/** The revision the previous published release put out, as the whole of the traffic to restore. */
+export function releasedBefore(previous: unknown, input: Pick<ManifestInput, 'version' | 'revision'>) {
+  const parsed = ReleaseManifest.safeParse(previous);
+  if (!parsed.success) throw new Error('the previous release manifest is not valid');
+  if (parsed.data.version === input.version || parsed.data.revision === input.revision) {
+    throw new Error('the previous release manifest is this release, not an earlier one');
+  }
+  return [{ revision: parsed.data.revision, percent: 100 }];
+}
+
 /** The exact command that puts the replaced traffic back on the test service. */
 export function rollbackCommand(replaced: readonly { revision: string; percent: number }[]): string {
   const split = replaced.map((r) => `${r.revision}=${r.percent}`).join(',');
@@ -122,7 +139,8 @@ export function rollbackCommand(replaced: readonly { revision: string; percent: 
 }
 
 export function buildManifest(input: ManifestInput): ReleaseManifest {
-  const replaced = parseTraffic(input.replaced);
+  const replaced =
+    input.previousRelease === undefined ? parseTraffic(input.replaced) : releasedBefore(input.previousRelease, input);
   const digest = IMAGE.exec(input.image)?.[1] ?? '';
   const terraformTags = { data: newestTerraformTag('data', input.tags), app: newestTerraformTag('app', input.tags) };
   const manifest = {
@@ -191,11 +209,12 @@ function args(argv: string[]) {
     run: value('run'),
     out: value('out'),
     notes: value('notes'),
+    previousRelease: argv.includes('--previous-release') ? value('previous-release') : undefined,
   };
 }
 
 async function main(argv: string[]) {
-  const given = args(argv);
+  const { previousRelease, ...given } = args(argv);
   let input = '';
   for await (const chunk of process.stdin) input += chunk;
   const migrations = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
@@ -203,6 +222,7 @@ async function main(argv: string[]) {
     ...given,
     migrations: readdirSync(migrations),
     tags: input.split('\n'),
+    ...(previousRelease === undefined ? {} : { previousRelease: JSON.parse(readFileSync(previousRelease, 'utf8')) }),
   });
   writeFileSync(given.out, `${JSON.stringify(manifest, null, 2)}\n`);
   writeFileSync(given.notes, releaseNotes(manifest));

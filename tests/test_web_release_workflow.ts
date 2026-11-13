@@ -687,11 +687,14 @@ const FAILURE_STEPS = [
 const SUCCESS = "needs.deploy.result == 'success'";
 
 /** The record job's context: each earlier job's result, the gate's answer and the job's status. */
-function recordContext(results: Record<string, string>, { ready = 'true', failed = false } = {}) {
+function recordContext(
+  results: Record<string, string>,
+  { ready = 'true', failed = false, cancelled = false } = {},
+) {
   const needs: Data = { gate: { result: 'success', outputs: { ready } } };
   for (const name of ['build', 'migrate', 'deploy'])
     needs[name] = { result: results[name] ?? 'skipped' };
-  return { needs, always: () => true, failure: () => failed, cancelled: () => false };
+  return { needs, always: () => true, failure: () => failed, cancelled: () => cancelled };
 }
 const CREDENTIAL = '\u0000credential\u0000';
 /** Whether any expression a step interpolates (its run, env or with) yields the token or a secret. */
@@ -732,16 +735,18 @@ describe('release record', () => {
     expect(jobs.deploy.outputs).toEqual({
       revision: '${{ steps.stage.outputs.revision }}',
       previous: '${{ steps.before.outputs.previous }}',
+      serving: '${{ steps.before.outputs.serving }}',
     });
     expect(record().env.VERSION).toBe('${{ needs.build.outputs.version }}');
     expect(recordStep('manifest').env).toEqual({
       IMAGE_REF: '${{ needs.build.outputs.image }}',
       REVISION: '${{ needs.deploy.outputs.revision }}',
       PREVIOUS: '${{ needs.deploy.outputs.previous }}',
+      EARLIER: '${{ steps.earlier.outputs.manifest }}',
     });
   });
 
-  it('is the only job that can write, and only its tag and Release steps hold the token', () => {
+  it('is the only job that can write, and only its lookup, tag and Release steps hold the token', () => {
     const writers = Object.entries(jobs as Record<string, Data>)
       .filter(([, job]) =>
         Object.entries(job.permissions ?? {}).some(([k, v]) => k !== 'id-token' && v !== 'read'),
@@ -753,7 +758,7 @@ describe('release record', () => {
       .flatMap((job) => steps(job))
       .filter((s) => bindsCredential(s))
       .map((s) => s.id);
-    expect(holders).toEqual(['tag', 'release']);
+    expect(holders).toEqual(['earlier', 'tag', 'release']);
     for (const s of steps(record())) {
       if (String(s.uses ?? '').startsWith('actions/checkout@')) {
         expect(s.with['persist-credentials']).toBe(false);
@@ -795,19 +800,64 @@ describe('release record', () => {
   });
 
   it.each([
-    ...FAILURE_PATHS.map((r) => [r, false] as const),
-    [RELEASED, true], // a record step itself failed
+    ...FAILURE_PATHS.map((r) => [r, false, false] as const),
+    [RELEASED, true, false], // a record step itself failed
+    [RELEASED, false, true], // the record job itself was cancelled
   ])(
-    'writes the failure line on the failure path %j (record step failed: %s)',
-    (results, failed) => {
+    'writes the failure line on the failure path %j (record step failed: %s, record cancelled: %s)',
+    (results, failed, cancelled) => {
       expect(truthy(evaluate(record().if, recordContext(results)))).toBe(true);
       for (const key of FAILURE_STEPS) {
-        expect(truthy(evaluate(recordStep(key).if, recordContext(results, { failed }))), key).toBe(
-          true,
-        );
+        expect(
+          truthy(evaluate(recordStep(key).if, recordContext(results, { failed, cancelled }))),
+          key,
+        ).toBe(true);
       }
     },
   );
+
+  // The deploy job's before step, with fake gcloud and jq: is this release's image already serving?
+  const SERVING = 'dryscope-api-test-00012-abc';
+  it.each([
+    ['a first run', 'other', `${SERVING}=100`, 'false'],
+    ['a rerun after the move', 'release', `${SERVING}=100`, 'true'],
+    [
+      'a rerun after a staged revision failed',
+      'release',
+      'dryscope-api-test-00011-xyz=100',
+      'false',
+    ],
+    [
+      'a rerun with split traffic',
+      'release',
+      `${SERVING}=90,dryscope-api-test-00011-xyz=10`,
+      'false',
+    ],
+  ])(
+    'tells the record whether the release was already serving: %s',
+    (_label, image, traffic, serving) => {
+      const sh = shell();
+      const ref =
+        image === 'release' ? IMAGE_REF : IMAGE_REF.replace('c'.repeat(64), 'd'.repeat(64));
+      sh.fake('jq', `cat > /dev/null; echo '${traffic}'`);
+      sh.fake(
+        'gcloud',
+        `[ "$7" = --format=json ] && exit 0; printf '%s\\t%s\\n' '${ref}' '${SERVING}'`,
+      );
+      const result = sh.run(step(jobs.deploy, 'before').run, { ...release.env, IMAGE_REF });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(sh.outputs()).toEqual({ previous: traffic, serving });
+    },
+  );
+
+  it('stops when the current revision cannot be read', () => {
+    const sh = shell();
+    sh.fake('jq', `cat > /dev/null; echo '${SERVING}=100'`);
+    sh.fake('gcloud', '[ "$7" = --format=json ] && exit 0; exit 1');
+    const result = sh.run(step(jobs.deploy, 'before').run, { ...release.env, IMAGE_REF });
+    expect(result.status).not.toBe(0);
+    expect(sh.outputs()).toEqual({});
+  });
 
   it('writes no failure line after a clean release', () => {
     for (const key of FAILURE_STEPS) {

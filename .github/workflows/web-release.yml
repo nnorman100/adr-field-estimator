@@ -258,10 +258,12 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # For the release record: the revision now serving and the traffic it replaced.
+    # For the release record: the revision now serving, the traffic it replaced, and whether this
+    # release's image was already serving before this run (a rerun after the traffic move).
     outputs:
       revision: ${{ steps.stage.outputs.revision }}
       previous: ${{ steps.before.outputs.previous }}
+      serving: ${{ steps.before.outputs.serving }}
     env:
       IMAGE_REF: ${{ needs.build.outputs.image }}
       VERSION: ${{ needs.build.outputs.version }}
@@ -301,7 +303,16 @@ jobs:
           previous=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" --format=json \
             | jq -r '[.status.traffic[] | select((.percent // 0) > 0) | "\(.revisionName)=\(.percent)"] | join(",")')
           [ -n "$previous" ] || { echo "::error::Could not read the current traffic of $SERVICE."; exit 1; }
+          template=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT" \
+            --format='value(spec.template.spec.containers[0].image,status.latestReadyRevisionName)') \
+            || { echo "::error::Could not read the current revision of $SERVICE."; exit 1; }
+          read -r image ready <<<"$template" || true
+          # A rerun after this release already took the traffic: its image is the service's, and the
+          # newest ready revision serves it all.
+          serving=false
+          if [ "$image" = "$IMAGE_REF" ] && [ "$previous" = "$ready=100" ]; then serving=true; fi
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "serving=$serving" >> "$GITHUB_OUTPUT"
           echo "Serving before: \`$previous\`" >> "$GITHUB_STEP_SUMMARY"
       # Only the image changes. Service account, environment, secrets, port and access stay as the
       # app root set them, so the owner's next plan shows no drift.
@@ -355,8 +366,8 @@ jobs:
   # Release carrying manifest.json, with the rollback command in its notes. After any failure past
   # the gate (here or in an earlier job): one ERROR line in the dryscope-release log for the
   # failed-release alert (TC-11, C11), which needs roles/logging.logWriter for the deploy account
-  # (TC-9). The workflow's only write permission is this job's, and only the tag and Release steps
-  # hold the token.
+  # (TC-9). The workflow's only write permission is this job's, and only the earlier-release lookup,
+  # tag and Release steps hold the token.
   record:
     needs: [gate, build, migrate, deploy]
     if: >-
@@ -393,18 +404,6 @@ jobs:
       - if: needs.deploy.result == 'success'
         run: npm ci
         working-directory: web
-      - id: manifest
-        if: needs.deploy.result == 'success'
-        working-directory: web
-        env:
-          IMAGE_REF: ${{ needs.build.outputs.image }}
-          REVISION: ${{ needs.deploy.outputs.revision }}
-          PREVIOUS: ${{ needs.deploy.outputs.previous }}
-        run: |
-          git tag --list 'infra-test-*' | npx tsx scripts/release-manifest.ts --version "$VERSION" --commit "$COMMIT" \
-            --image "$IMAGE_REF" --revision "$REVISION" --replaced "$PREVIOUS" --run "$RUN_URL" \
-            --out "$RUNNER_TEMP/manifest.json" --notes "$RUNNER_TEMP/notes.md"
-          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
       # The self-hosted runner's container has no gh, so install a pinned, checksum-checked release
       # (as deploy.yml does).
       - name: Install GitHub CLI
@@ -421,6 +420,37 @@ jobs:
             tar -xzf "$archive" -C "$RUNNER_TEMP"
             echo "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
           fi
+      # A rerun after this release's image already took the traffic (the record failed after the
+      # move): the traffic deploy remembered is this release's own, so the rollback target comes
+      # from the previous published release's manifest, never from current traffic.
+      - id: earlier
+        if: needs.deploy.result == 'success' && needs.deploy.outputs.serving == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! last=$(gh api "repos/$GH_REPO/releases?per_page=100" | node web/scripts/release-version.ts previous --before "$VERSION"); then
+            echo "::error::This release's image was already serving, and no earlier published test release with manifest.json names the revision to roll back to. Nothing was tagged or published."
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/earlier"
+          mkdir -p "$dir"
+          gh release download "$last" --pattern manifest.json --dir "$dir" --clobber
+          echo "manifest=$dir/manifest.json" >> "$GITHUB_OUTPUT"
+          echo "This release's image was already serving (a rerun): the rollback target is \`$last\`'s revision." >> "$GITHUB_STEP_SUMMARY"
+      - id: manifest
+        if: needs.deploy.result == 'success'
+        working-directory: web
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image }}
+          REVISION: ${{ needs.deploy.outputs.revision }}
+          PREVIOUS: ${{ needs.deploy.outputs.previous }}
+          EARLIER: ${{ steps.earlier.outputs.manifest }}
+        run: |
+          git tag --list 'infra-test-*' | npx tsx scripts/release-manifest.ts --version "$VERSION" --commit "$COMMIT" \
+            --image "$IMAGE_REF" --revision "$REVISION" --replaced "$PREVIOUS" --run "$RUN_URL" \
+            --out "$RUNNER_TEMP/manifest.json" --notes "$RUNNER_TEMP/notes.md" ${EARLIER:+--previous-release "$EARLIER"}
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
       # The version tag, at the released commit. A tag is never moved: one already on this commit (a
       # rerun) is kept, and one on another commit stops the record.
       - id: tag
@@ -444,27 +474,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        # An existing Release is kept only when it is complete: published, a pre-release, with
+        # manifest.json and this release's rollback command in its notes. An incomplete one (a draft
+        # left by an interrupted create, say) is finished with this run's manifest and notes.
         run: |
-          if gh release view "$VERSION" > /dev/null 2>&1; then
-            echo "::notice title=Release kept::GitHub Release $VERSION already exists; it is left as it is."
+          if existing=$(gh release view "$VERSION" --json isDraft,isPrerelease,assets,body 2>/dev/null); then
+            if node web/scripts/release-version.ts complete --manifest "$RUNNER_TEMP/manifest.json" <<<"$existing"; then
+              echo "::notice title=Release kept::GitHub Release $VERSION is already complete; it is left as it is."
+            else
+              gh release upload "$VERSION" "$RUNNER_TEMP/manifest.json" --clobber
+              gh release edit "$VERSION" --draft=false --prerelease --verify-tag \
+                --title "$VERSION (test)" --notes-file "$RUNNER_TEMP/notes.md"
+              echo "Finished GitHub Release \`$VERSION\` with manifest.json" >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             gh release create "$VERSION" "$RUNNER_TEMP/manifest.json" --verify-tag --prerelease \
               --title "$VERSION (test)" --notes-file "$RUNNER_TEMP/notes.md"
             echo "Published GitHub Release \`$VERSION\` with manifest.json" >> "$GITHUB_STEP_SUMMARY"
           fi
       # Every failure path past the gate ends here: an earlier job failed or was cancelled, or a
-      # record step above failed.
+      # record step above failed or this job was cancelled.
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
-        if: always() && (needs.deploy.result != 'success' || failure())
+        if: always() && (needs.deploy.result != 'success' || failure() || cancelled())
         with:
           workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
           service_account: ${{ vars.DRYSCOPE_TEST_DEPLOY_SA }}
           project_id: dryscope
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-        if: always() && (needs.deploy.result != 'success' || failure())
+        if: always() && (needs.deploy.result != 'success' || failure() || cancelled())
       - id: failed
         name: Write the failed-release line
-        if: always() && (needs.deploy.result != 'success' || failure())
+        if: always() && (needs.deploy.result != 'success' || failure() || cancelled())
         run: |
           version=null
           if [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[1-9][0-9]{0,5}$ ]]; then version="\"$VERSION\""; fi

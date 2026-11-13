@@ -4,10 +4,10 @@
 // can write, when the tag and the failure line happen) is checked in tests/test_web_release_workflow.ts.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { load, type Ran, RELEASE, Shell, steps, type Data } from './workflow_support.ts';
+import { load, type Ran, RELEASE, ROOT, Shell, steps, type Data } from './workflow_support.ts';
 
 const release: Data = load(RELEASE);
 const record = release.jobs.record;
@@ -116,78 +116,195 @@ describe('the release record job', () => {
     );
   });
 
-  it.each([true, false])(
-    'publishes a pre-release with the manifest once (exists: %s)',
-    (exists) => {
-      const sh = shell();
-      sh.fake('gh', `[ "$2" = view ] && exit ${exists ? 0 : 1}; exit 0`);
-      const result = sh.run(recordStep('release').run, { ...tagEnv, RUNNER_TEMP: sh.tmp });
-      expect(result.status, result.stderr).toBe(0);
-      const created = sh.calls('gh').filter((args) => args[1] === 'create');
-      expect(created).toEqual(
-        exists
-          ? []
-          : [
-              [
-                'release',
-                'create',
-                '2026.11.13-2',
-                `${sh.tmp}/manifest.json`,
-                '--verify-tag',
-                '--prerelease',
-                '--title',
-                '2026.11.13-2 (test)',
-                '--notes-file',
-                `${sh.tmp}/notes.md`,
-              ],
-            ],
-      );
-    },
-  );
+  const ROLLBACK =
+    'gcloud run services update-traffic dryscope-api-test --to-revisions=dryscope-api-test-00011-xyz=100 --region=us-central1 --project=dryscope';
+  const COMPLETE = {
+    isDraft: false,
+    isPrerelease: true,
+    assets: [{ name: 'manifest.json' }],
+    body: `Roll back:\n\n\`\`\`sh\n${ROLLBACK}\n\`\`\`\n`,
+  };
+  const CREATE = (tmp: string) => [
+    'release',
+    'create',
+    '2026.11.13-2',
+    `${tmp}/manifest.json`,
+    '--verify-tag',
+    '--prerelease',
+    '--title',
+    '2026.11.13-2 (test)',
+    '--notes-file',
+    `${tmp}/notes.md`,
+  ];
+  const FINISH = (tmp: string) => [
+    ['release', 'upload', '2026.11.13-2', `${tmp}/manifest.json`, '--clobber'],
+    [
+      'release',
+      'edit',
+      '2026.11.13-2',
+      '--draft=false',
+      '--prerelease',
+      '--verify-tag',
+      '--title',
+      '2026.11.13-2 (test)',
+      '--notes-file',
+      `${tmp}/notes.md`,
+    ],
+  ];
 
-  it('builds the manifest from the released commit and its infra-test tags', () => {
+  it.each<[string, object | null, 'create' | 'keep' | 'finish']>([
+    ['no Release yet', null, 'create'],
+    ['a complete Release (a rerun)', COMPLETE, 'keep'],
+    ['a draft left by an interrupted create', { ...COMPLETE, isDraft: true }, 'finish'],
+    ['a full release, not a pre-release', { ...COMPLETE, isPrerelease: false }, 'finish'],
+    ['a Release without manifest.json', { ...COMPLETE, assets: [] }, 'finish'],
+    ['a Release without the rollback notes', { ...COMPLETE, body: '' }, 'finish'],
+    [
+      'a Release with another rollback command',
+      { ...COMPLETE, body: ROLLBACK.replace('00011-xyz', '00010-pqr') },
+      'finish',
+    ],
+  ])('publishes one complete pre-release with the manifest: %s', (_label, existing, action) => {
     const sh = shell();
-    sh.fake('git', "printf 'infra-test-data-2026.11.10-1\\n'");
-    sh.fake('npx', 'cat > "$HOME/stdin"; echo notes > "$RUNNER_TEMP/notes.md"');
-    const env = {
-      ...release.env,
-      COMMIT,
-      VERSION: '2026.11.13-2',
-      RUN_URL,
-      RUNNER_TEMP: sh.tmp,
-      IMAGE_REF,
-      REVISION: 'dryscope-api-test-00012-abc',
-      PREVIOUS: 'dryscope-api-test-00011-xyz=100',
-    };
-    const result = sh.run(recordStep('manifest').run, env);
-    expect(result.status, result.stderr).toBe(0);
-    expect(sh.calls('git')).toEqual([['tag', '--list', 'infra-test-*']]);
-    expect(readFileSync(path.join(sh.tmp, 'stdin'), 'utf8')).toBe('infra-test-data-2026.11.10-1\n');
-    expect(sh.calls('npx')).toEqual([
+    writeFileSync(
+      path.join(sh.tmp, 'manifest.json'),
+      JSON.stringify({ rollback: { command: ROLLBACK } }),
+    );
+    sh.fake(
+      'gh',
+      `if [ "$1 $2" = 'release view' ]; then [ -n "$VIEW" ] || exit 1; printf '%s' "$VIEW"; fi`,
+    );
+    const view = existing ? JSON.stringify(existing) : '';
+    const result = sh.run(
+      recordStep('release').run,
+      { ...tagEnv, RUNNER_TEMP: sh.tmp, VIEW: view },
+      ROOT,
+    );
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const calls = sh.calls('gh');
+    expect(calls[0]).toEqual([
+      'release',
+      'view',
+      '2026.11.13-2',
+      '--json',
+      'isDraft,isPrerelease,assets,body',
+    ]);
+    expect(calls.slice(1)).toEqual(
+      { create: [CREATE(sh.tmp)], keep: [], finish: FINISH(sh.tmp) }[action],
+    );
+  });
+
+  // The rollback target on a rerun that found this release's image already serving, with fake gh
+  // and the real release-version.ts.
+  const earlierEnv = (sh: Shell) => ({ ...tagEnv, RUNNER_TEMP: sh.tmp });
+  const published = (tag: string) => ({
+    tag_name: tag,
+    draft: false,
+    prerelease: true,
+    assets: [{ name: 'manifest.json' }],
+  });
+
+  it('downloads the previous published release manifest for the rollback target', () => {
+    const sh = shell();
+    const releases = [
+      published('2026.11.13-2'),
+      published('2026.11.12-4'),
+      published('2026.11.10-1'),
+    ];
+    sh.fake(
+      'gh',
+      `case "$1 $2" in
+  'api repos/owner/repo/releases?per_page=100') echo '${JSON.stringify(releases)}' ;;
+  'release download') echo '{}' > "$7/manifest.json" ;;
+  *) exit 9 ;;
+esac`,
+    );
+    const result = sh.run(recordStep('earlier').run, earlierEnv(sh), ROOT);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(sh.calls('gh')).toEqual([
+      ['api', 'repos/owner/repo/releases?per_page=100'],
       [
-        'tsx',
-        'scripts/release-manifest.ts',
-        '--version',
-        '2026.11.13-2',
-        '--commit',
-        COMMIT,
-        '--image',
-        IMAGE_REF,
-        '--revision',
-        'dryscope-api-test-00012-abc',
-        '--replaced',
-        'dryscope-api-test-00011-xyz=100',
-        '--run',
-        RUN_URL,
-        '--out',
-        `${sh.tmp}/manifest.json`,
-        '--notes',
-        `${sh.tmp}/notes.md`,
+        'release',
+        'download',
+        '2026.11.12-4',
+        '--pattern',
+        'manifest.json',
+        '--dir',
+        `${sh.tmp}/earlier`,
+        '--clobber',
       ],
     ]);
-    expect(recordStep('manifest')['working-directory']).toBe('web');
-    expect(readFileSync(sh.summary, 'utf8')).toBe('notes\n');
+    expect(sh.outputs()).toEqual({ manifest: `${sh.tmp}/earlier/manifest.json` });
+    expect(existsSync(`${sh.tmp}/earlier/manifest.json`)).toBe(true);
   });
+
+  it('stops the record when no earlier published release names a rollback target', () => {
+    const sh = shell();
+    sh.fake(
+      'gh',
+      `[ "$1" = api ] && echo '${JSON.stringify([published('2026.11.13-2')])}'; exit 0`,
+    );
+    const result = sh.run(recordStep('earlier').run, earlierEnv(sh), ROOT);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain('no earlier published test release');
+    expect(sh.calls('gh').filter((args) => args[0] === 'release')).toEqual([]);
+    expect(sh.outputs()).toEqual({});
+  });
+
+  it('looks for an earlier release only when deploy found this release already serving', () => {
+    expect(recordStep('earlier').if).toBe(`${SUCCESS} && needs.deploy.outputs.serving == 'true'`);
+  });
+
+  it.each(['', '/tmp/earlier/manifest.json'])(
+    'builds the manifest from the released commit and its infra-test tags (earlier manifest: %j)',
+    (earlier) => {
+      const sh = shell();
+      sh.fake('git', "printf 'infra-test-data-2026.11.10-1\\n'");
+      sh.fake('npx', 'cat > "$HOME/stdin"; echo notes > "$RUNNER_TEMP/notes.md"');
+      const env = {
+        ...release.env,
+        COMMIT,
+        VERSION: '2026.11.13-2',
+        RUN_URL,
+        RUNNER_TEMP: sh.tmp,
+        IMAGE_REF,
+        REVISION: 'dryscope-api-test-00012-abc',
+        PREVIOUS: 'dryscope-api-test-00011-xyz=100',
+        EARLIER: earlier,
+      };
+      const result = sh.run(recordStep('manifest').run, env);
+      expect(result.status, result.stderr).toBe(0);
+      expect(sh.calls('git')).toEqual([['tag', '--list', 'infra-test-*']]);
+      expect(readFileSync(path.join(sh.tmp, 'stdin'), 'utf8')).toBe(
+        'infra-test-data-2026.11.10-1\n',
+      );
+      expect(sh.calls('npx')).toEqual([
+        [
+          'tsx',
+          'scripts/release-manifest.ts',
+          '--version',
+          '2026.11.13-2',
+          '--commit',
+          COMMIT,
+          '--image',
+          IMAGE_REF,
+          '--revision',
+          'dryscope-api-test-00012-abc',
+          '--replaced',
+          'dryscope-api-test-00011-xyz=100',
+          '--run',
+          RUN_URL,
+          '--out',
+          `${sh.tmp}/manifest.json`,
+          '--notes',
+          `${sh.tmp}/notes.md`,
+          ...(earlier ? ['--previous-release', earlier] : []),
+        ],
+      ]);
+      expect(recordStep('manifest')['working-directory']).toBe('web');
+      expect(readFileSync(sh.summary, 'utf8')).toBe('notes\n');
+    },
+  );
 
   it('installs the same pinned gh as deploy.yml, only after a release', () => {
     const old = steps(load(path.join(path.dirname(RELEASE), 'deploy.yml')).jobs.deploy).find(
