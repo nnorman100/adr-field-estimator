@@ -154,8 +154,9 @@ function RecordForm({
       setNotice(`${title} saved.`);
       return;
     }
-    // Changed elsewhere: read the job again; the person's edits stay on top of the new values.
-    if (answer.stale) await job.reloadJob();
+    // Changed elsewhere: read the job again; the person's edits stay on top of the new values. Not
+    // this person's to see any more: the read drops it from the screen.
+    if (answer.stale || answer.denied) await job.reloadJob();
     if (!refused) setError(answer.message);
   }
 

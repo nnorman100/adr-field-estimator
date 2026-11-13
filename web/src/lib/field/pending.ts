@@ -139,6 +139,13 @@ export const pending = {
     if (known && known.job.revision >= detail.job.revision) return;
     change({ details: { ...state.details, [jobId]: detail } });
   },
+  // The server no longer shows this job to this person: no copy of it is kept.
+  forgetDetail(jobId: string) {
+    if (!state.details[jobId]) return;
+    const details = { ...state.details };
+    delete details[jobId];
+    change({ details });
+  },
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
   // A send changed the job's field draft after its screen closed: the open screen reads it again.
   draftChanged(jobId: string) {

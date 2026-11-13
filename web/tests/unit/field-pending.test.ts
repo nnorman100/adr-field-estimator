@@ -94,6 +94,17 @@ describe('what a late send posts for the open screen of its job', () => {
     expect(newerDetail(null, pending.detail('job-late'))?.customer.name).toBe('fourth');
   });
 
+  it('forgets a job the server no longer shows, and keeps the others', () => {
+    pending.openFor('company-a/user-forget');
+    pending.publishDetail('job-late', at(4, 'fourth'));
+    pending.publishDetail('job-kept', { ...at(2, 'kept'), job: { id: 'job-kept', revision: 2 } } as unknown as JobDetail);
+    pending.forgetDetail('job-late');
+    expect(pending.detail('job-late')).toBeNull();
+    expect(pending.detail('job-kept')?.customer.name).toBe('kept');
+    pending.publishDetail('job-late', at(1, 'read again'));
+    expect(pending.detail('job-late')?.customer.name).toBe('read again');
+  });
+
   it('counts draft changes per job, and starts empty for another sign-in', () => {
     pending.openFor('company-a/user-late');
     const before = pending.draftChanges('job-late');

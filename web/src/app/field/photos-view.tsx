@@ -140,7 +140,8 @@ export function PhotosView({ job, draft, open }: { job: JobContext; draft: Field
 }
 
 // The photo's bytes through the photo route, which checks this person may see the job. They are
-// fetched only while Photos is the open view (`load`), and kept once fetched.
+// fetched only while Photos is the open view (`load`), and kept once fetched; one that could not be
+// fetched is fetched again on "Try again".
 function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boolean; photoId: string; label: string }) {
   const [address, setAddress] = useState<string | null | 'missing'>(null);
   const fetching = load && address === null;
@@ -162,7 +163,15 @@ function Thumbnail({ job, load, photoId, label }: { job: JobContext; load: boole
     [address],
   );
   if (address === null) return <div className="aspect-square rounded-md bg-foreground/10" role="img" aria-label={`${label}, loading`} />;
-  if (address === 'missing') return <div className="aspect-square rounded-md bg-foreground/10 p-2 text-sm" role="img" aria-label={`${label}, not available`} />;
+  if (address === 'missing')
+    return (
+      <div className="flex aspect-square flex-col items-center justify-center gap-2 rounded-md bg-foreground/10 p-2 text-sm">
+        <p>{label}, not available.</p>
+        <Button variant="outline" onClick={() => setAddress(null)}>
+          Try again
+        </Button>
+      </div>
+    );
   // eslint-disable-next-line @next/next/no-img-element -- a local object address; the image optimiser cannot fetch it
   return <img src={address} alt={label} className="aspect-square w-full rounded-md object-cover" />;
 }

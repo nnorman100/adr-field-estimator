@@ -85,12 +85,20 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   const apply = useCallback(
     async (answer: Awaited<ReturnType<typeof readJob>>): Promise<JobDetail | null> => {
       setError(answer.ok ? null : answer.message);
-      if (!answer.ok) return null;
+      if (!answer.ok) {
+        // A refusal to show the job drops every copy of it; no answer keeps the one on screen.
+        if (answer.denied) {
+          setRead(null);
+          pending.forgetDetail(jobId);
+          setDraft(null);
+        }
+        return null;
+      }
       setDetail(answer.value);
       await reloadDraft(answer.value);
       return answer.value;
     },
-    [reloadDraft, setDetail],
+    [reloadDraft, setDetail, jobId],
   );
 
   const reloadJob = useCallback(async () => apply(await readJob(session.user, jobId)), [apply, session, jobId]);

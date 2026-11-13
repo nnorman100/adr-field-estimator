@@ -43,8 +43,9 @@ const receipt = z.object({ photoId: z.string(), sha256: z.string() });
 
 // `status` 0 means no answer, or a success answer that did not arrive whole: the request may have been
 // made, so it is kept and sent again as it was. `stale` marks a save that met a newer revision (409
-// stale_revision): the screen reads the job again.
-export type Answer<T> = { ok: true; value: T } | { ok: false; status: number; message: string; stale?: true };
+// stale_revision): the screen reads the job again. `denied` marks a refusal to show or change the job
+// to this person at all (401, 403, 404): the screen drops any copy of it it holds.
+export type Answer<T> = { ok: true; value: T } | { ok: false; status: number; message: string; stale?: true; denied?: true };
 
 const MESSAGES: Record<string, string> = {
   not_found: 'This job is not in your list.',
@@ -77,7 +78,14 @@ function answerOf<T>(status: number, body: unknown, schema: z.ZodType<T>, okStat
     return { ok: false, status: 0, message: answerMessage(0, null) };
   }
   const stale = status === 409 && (body as { error?: unknown } | null)?.error === 'stale_revision';
-  return { ok: false, status, message: answerMessage(status, body), ...(stale ? { stale: true as const } : {}) };
+  const denied = status === 401 || status === 403 || status === 404;
+  return {
+    ok: false,
+    status,
+    message: answerMessage(status, body),
+    ...(stale ? { stale: true as const } : {}),
+    ...(denied ? { denied: true as const } : {}),
+  };
 }
 
 export async function listJobs(user: User, list: JobsList, cursor: string | null): Promise<Answer<JobPage>> {
