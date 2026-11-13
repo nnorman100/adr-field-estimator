@@ -17,7 +17,11 @@ export function NewJobView({ session }: { session: FieldSession }) {
   const unsent = usePending(pending.job);
   // In flight is kept with the request itself, so a screen opened again while it is on its way waits.
   const busy = unsent?.sending ?? false;
+  // A refused start, kept until the person changes the address or starts again: the address they
+  // entered goes back in its box with the server's reason.
+  const refusal = usePending(pending.jobRefusal);
   const [error, setError] = useState<string | null>(null);
+  const typed = refusal?.propertyAddress ?? address;
 
   if (!session.capabilities.includes('jobs_create')) {
     return (
@@ -33,20 +37,22 @@ export function NewJobView({ session }: { session: FieldSession }) {
     const held = pending.job();
     if (held?.sending) return;
     setError(null);
+    pending.dropJobRefusal();
+    setAddress(typed);
     // The same request again while one is unanswered; a new one otherwise.
-    const request = { ...(held ?? { id: crypto.randomUUID(), draftId: crypto.randomUUID(), propertyAddress: address.trim() }), sending: true };
+    const request = { ...(held ?? { id: crypto.randomUUID(), draftId: crypto.randomUUID(), propertyAddress: typed.trim() }), sending: true };
     pending.setJob(request);
     const answer = await createJob(session.user, { id: request.id, draftId: request.draftId, propertyAddress: request.propertyAddress });
     // No answer at all: the job may be saved, so the next tap sends the same ids. A refusal is final
     // for these ids, and the address goes back in its box.
-    const settled = answer.ok || (answer.status !== 0 && answer.status < 500);
-    if (!pending.settleJob(request.id, !settled)) return;
+    const refused = !answer.ok && answer.status !== 0 && answer.status < 500;
+    const settlement = answer.ok ? 'answered' : refused ? { refused: answer.message } : 'unanswered';
+    if (!pending.settleJob(request.id, settlement)) return;
     if (answer.ok) {
       go({ view: 'scope', jobId: answer.value.job.id });
       return;
     }
-    if (settled) setAddress(request.propertyAddress);
-    setError(answer.message);
+    if (!refused) setError(answer.message);
   }
 
   return (
@@ -62,8 +68,14 @@ export function NewJobView({ session }: { session: FieldSession }) {
       <Box
         id="new-job-address"
         label="Property address"
-        value={unsent ? unsent.propertyAddress : address}
-        onChange={setAddress}
+        value={unsent ? unsent.propertyAddress : typed}
+        onChange={(value) => {
+          if (refusal) {
+            pending.dropJobRefusal();
+            setError(refusal.message);
+          }
+          setAddress(value);
+        }}
         readOnly={unsent !== null}
         autoComplete="street-address"
         hint="Optional now; you can add it with the customer."
@@ -72,7 +84,7 @@ export function NewJobView({ session }: { session: FieldSession }) {
         {unsent && !busy ? 'Try again' : 'Start job'}
       </Button>
       {unsent && !busy && !error ? <p role="status">This job was sent but no answer came back. Try again to finish it.</p> : null}
-      <Outcome error={error} notice={busy ? 'Starting the job…' : null} />
+      <Outcome error={error ?? refusal?.message ?? null} notice={busy ? 'Starting the job…' : null} />
       <FieldLink to={{ view: 'jobs', list: null }}>Back to jobs</FieldLink>
     </form>
   );

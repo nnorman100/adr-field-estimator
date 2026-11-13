@@ -36,24 +36,43 @@ describe('unsent work', () => {
   it('settles a record save only while it still holds the job, and keeps it unsent after no answer', () => {
     pending.openFor('company-a/user-c');
     pending.setRecord(JOB, record('customer', 'c1'));
-    expect(pending.settleRecord(JOB, 'c1', true)).toBe(true);
+    expect(pending.settleRecord(JOB, 'c1', 'unanswered')).toBe(true);
     expect(pending.record(JOB)).toMatchObject({ changeId: 'c1', sending: false, edits: { name: 'Ann' } });
 
-    expect(pending.settleRecord(JOB, 'c1', false)).toBe(true);
+    expect(pending.settleRecord(JOB, 'c1', 'answered')).toBe(true);
     pending.setRecord(JOB, record('claim', 'k1'));
     // A late answer to the customer save must not clear the claim save that came after it.
-    expect(pending.settleRecord(JOB, 'c1', false)).toBe(false);
+    expect(pending.settleRecord(JOB, 'c1', 'answered')).toBe(false);
     expect(pending.record(JOB)?.changeId).toBe('k1');
   });
 
   it('settles a new job only while it still holds the slot', () => {
     pending.openFor('company-a/user-d');
     pending.setJob({ id: 'j1', draftId: 'd1', propertyAddress: '', sending: true });
-    expect(pending.settleJob('j1', true)).toBe(true);
+    expect(pending.settleJob('j1', 'unanswered')).toBe(true);
     expect(pending.job()).toMatchObject({ id: 'j1', sending: false });
 
     pending.openFor('company-a/user-e');
-    expect(pending.settleJob('j1', false)).toBe(false);
+    expect(pending.settleJob('j1', 'answered')).toBe(false);
     expect(pending.job()).toBeNull();
+  });
+
+  it('frees the slot on a refusal and keeps the changes and the reason until the screen takes them', () => {
+    pending.openFor('company-a/user-f');
+    pending.setRecord(JOB, record('customer', 'c1'));
+    expect(pending.settleRecord(JOB, 'c1', { refused: 'Changed elsewhere.' })).toBe(true);
+    expect(pending.record(JOB)).toBeNull();
+    expect(pending.refusal(JOB, 'customer')).toEqual({ edits: { name: 'Ann' }, message: 'Changed elsewhere.' });
+    expect(pending.refusal(JOB, 'claim')).toBeNull();
+    pending.dropRefusal(JOB, 'customer');
+    expect(pending.refusal(JOB, 'customer')).toBeNull();
+
+    pending.setJob({ id: 'j1', draftId: 'd1', propertyAddress: '1 Main St', sending: true });
+    expect(pending.settleJob('j1', { refused: 'Not allowed.' })).toBe(true);
+    expect(pending.job()).toBeNull();
+    expect(pending.jobRefusal()).toEqual({ propertyAddress: '1 Main St', message: 'Not allowed.' });
+
+    pending.openFor('company-a/user-g');
+    expect(pending.jobRefusal()).toBeNull();
   });
 });

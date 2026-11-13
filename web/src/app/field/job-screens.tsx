@@ -27,7 +27,8 @@ export type JobContext = {
   draft: FieldDraft | null;
   draftRef: DraftRef;
   reloadDraft: () => Promise<void>;
-  // Whether this person may change the field work now (the rules' own test).
+  // Whether this person may change the field work now (the rules' own test), and the draft on screen
+  // is the one last read: after a read that failed, nothing is saved over it until it is read again.
   editable: boolean;
 };
 
@@ -111,7 +112,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     draft,
     draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
     reloadDraft: () => reloadDraft(detail),
-    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities),
+    editable: draft !== null && draftError === null && canEditDraft(draft, session.user.uid, session.capabilities),
   };
 
   return (
@@ -125,7 +126,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
-      {(view === 'scope' || view === 'photos') && draft !== null && !context.editable ? (
+      {(view === 'scope' || view === 'photos') && draft !== null && draftError === null && !context.editable ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>

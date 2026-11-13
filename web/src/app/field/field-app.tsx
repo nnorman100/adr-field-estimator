@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { DsMe } from '@/lib/field/ds-me';
 import { pending } from '@/lib/field/pending';
-import { openSession, type SessionOutcome } from '@/lib/field/session';
+import { openSession, watchSignIn, type SessionOutcome } from '@/lib/field/session';
 import { placeOf } from '@/lib/field/views';
 import { JobScreens } from './job-screens';
 import { JobsView } from './jobs-view';
@@ -37,6 +37,13 @@ export function FieldApp({ me }: { me: DsMe }) {
   }, [me]);
 
   useEffect(() => start(), [start]);
+
+  // Nothing of this person's stays on screen once the phone's sign-in is someone else's or no one's.
+  const signedIn = outcome?.kind === 'ready' ? outcome.session.user.uid : null;
+  useEffect(() => {
+    if (signedIn === null) return;
+    return watchSignIn(me, signedIn, () => setOutcome({ kind: 'sign-in-again' }));
+  }, [me, signedIn]);
 
   if (outcome === null) return <p role="status">Opening your jobs…</p>;
   if (outcome.kind === 'sign-in-again') {

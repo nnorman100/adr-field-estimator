@@ -2,7 +2,7 @@
 // (`ds-me`): the company's own Firebase app and Auth (firebase-client.ts), what the server says
 // about this person (GET /api/me, which also renews their field database access record), and the
 // field database client the screens write through. Online only in S5; S6 adds a persistent cache.
-import type { User } from 'firebase/auth';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { connectFirestoreEmulator, initializeFirestore, memoryLocalCache, type Firestore } from 'firebase/firestore';
 import { z } from 'zod';
 import { callApi, companyAuth } from '@/lib/firebase-client';
@@ -49,6 +49,15 @@ function fieldDatabase(saved: DsMe): Firestore | null {
   }
   clients.set(app.name, db);
   return db;
+}
+
+// Calls `lost` once the company's sign-in on this phone is no longer `uid`: signed out, or another
+// person signed in, in this tab or another. Answers the function that stops watching.
+export function watchSignIn(saved: DsMe, uid: string, lost: () => void): () => void {
+  const auth = companyAuth({ config: saved.config, tenantId: saved.tenantId });
+  return onAuthStateChanged(auth, (user) => {
+    if (user?.uid !== uid) lost();
+  });
 }
 
 export async function openSession(saved: DsMe): Promise<SessionOutcome> {

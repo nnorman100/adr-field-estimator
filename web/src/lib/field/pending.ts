@@ -11,6 +11,8 @@
 //
 // A send in flight is marked here, not in the screen, so a screen opened again while it is on its
 // way cannot send it a second time; an answer settles only the request that still holds its slot.
+// A refusal frees the slot but keeps what the person entered and the server's reason, for the
+// screen to show whenever it is open next.
 // All of it belongs to one signed-in person of one company (`openFor`): another sign-in on the same
 // page starts empty.
 import { useSyncExternalStore } from 'react';
@@ -27,6 +29,10 @@ export type PendingRecord = {
   edits: Record<string, string>;
   sending: boolean;
 };
+export type RecordRefusal = { edits: Record<string, string>; message: string };
+export type JobRefusal = { propertyAddress: string; message: string };
+// What came back for a send: nothing (keep it to send again), an answer, or a refusal.
+export type Settlement = 'unanswered' | 'answered' | { refused: string };
 export type PendingPhoto = {
   id: string;
   bytes: Blob;
@@ -38,11 +44,15 @@ export type PendingPhoto = {
 type State = {
   owner: string | null;
   job: PendingJob | null;
+  jobRefusal: JobRefusal | null;
   records: Record<string, PendingRecord>;
+  // By job and record kind.
+  refusals: Record<string, RecordRefusal>;
   photos: Record<string, PendingPhoto[]>;
 };
 
-let state: State = { owner: null, job: null, records: {}, photos: {} };
+const EMPTY = { job: null, jobRefusal: null, records: {}, refusals: {}, photos: {} };
+let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
 
 function change(next: Partial<State>) {
@@ -60,31 +70,48 @@ const NO_PHOTOS: PendingPhoto[] = [];
 export const pending = {
   // Keeps the unsent work only while `owner` (company and person) stays the one signed in.
   openFor(owner: string) {
-    if (state.owner !== owner) change({ owner, job: null, records: {}, photos: {} });
+    if (state.owner !== owner) change({ owner, ...EMPTY });
   },
   job: () => state.job,
   setJob(job: PendingJob) {
     change({ job });
   },
-  // Ends the send of job `id` if it still holds the slot: kept for a resend, or cleared. Answers
-  // whether it did.
-  settleJob(id: string, keep: boolean): boolean {
-    if (state.job?.id !== id) return false;
-    change({ job: keep ? { ...state.job, sending: false } : null });
+  // Ends the send of job `id` if it still holds the slot. Answers whether it did.
+  settleJob(id: string, settlement: Settlement): boolean {
+    const current = state.job;
+    if (current?.id !== id) return false;
+    if (settlement === 'unanswered') change({ job: { ...current, sending: false } });
+    else if (settlement === 'answered') change({ job: null });
+    else change({ job: null, jobRefusal: { propertyAddress: current.propertyAddress, message: settlement.refused } });
     return true;
+  },
+  jobRefusal: () => state.jobRefusal,
+  dropJobRefusal() {
+    if (state.jobRefusal) change({ jobRefusal: null });
   },
   record: (jobId: string): PendingRecord | null => state.records[jobId] ?? null,
   setRecord(jobId: string, record: PendingRecord) {
     change({ records: { ...state.records, [jobId]: record } });
   },
-  settleRecord(jobId: string, changeId: string, keep: boolean): boolean {
+  settleRecord(jobId: string, changeId: string, settlement: Settlement): boolean {
     const current = state.records[jobId];
     if (current?.changeId !== changeId) return false;
     const records = { ...state.records };
-    if (keep) records[jobId] = { ...current, sending: false };
+    if (settlement === 'unanswered') records[jobId] = { ...current, sending: false };
     else delete records[jobId];
-    change({ records });
+    if (typeof settlement === 'object') {
+      const refusal = { edits: current.edits, message: settlement.refused };
+      change({ records, refusals: { ...state.refusals, [`${jobId}/${current.kind}`]: refusal } });
+    } else change({ records });
     return true;
+  },
+  refusal: (jobId: string, kind: RecordKind): RecordRefusal | null => state.refusals[`${jobId}/${kind}`] ?? null,
+  dropRefusal(jobId: string, kind: RecordKind) {
+    const key = `${jobId}/${kind}`;
+    if (!state.refusals[key]) return;
+    const refusals = { ...state.refusals };
+    delete refusals[key];
+    change({ refusals });
   },
   photos: (jobId: string): PendingPhoto[] => state.photos[jobId] ?? NO_PHOTOS,
   addPhoto(jobId: string, photo: PendingPhoto) {

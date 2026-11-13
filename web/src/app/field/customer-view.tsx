@@ -115,32 +115,48 @@ function RecordForm({
   const waiting = unsettled !== null && mine === null;
   // In flight is kept with the save itself, so a form opened again while it is on its way waits.
   const busy = mine?.sending ?? false;
+  // A refused save of this record, kept until the person changes or saves the form: their changes
+  // stay on top of the job as read now, with the server's reason.
+  const refusal = usePending(() => pending.refusal(jobId, kind));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const shown = mine?.values ?? { ...reread(job.detail), ...edits };
+  const changed = { ...refusal?.edits, ...edits };
+  const shown = mine?.values ?? { ...reread(job.detail), ...changed };
+
+  // Takes a kept refusal's changes into the form's own.
+  function takeRefusal() {
+    if (!refusal) return;
+    pending.dropRefusal(jobId, kind);
+    setEdits(changed);
+    setError(refusal.message);
+  }
 
   async function save() {
     const held = pending.record(jobId);
     if (held && (held.kind !== kind || held.sending)) return;
+    takeRefusal();
     setError(null);
     setNotice(null);
-    const attempt = { ...(held ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown, edits }), sending: true };
+    const attempt = {
+      ...(held ?? { kind, changeId: crypto.randomUUID(), revision: job.detail.job.revision, values: shown, edits: changed }),
+      sending: true,
+    };
     pending.setRecord(jobId, attempt);
     const answer = await send(attempt.values, attempt.revision, attempt.changeId);
-    // No answer at all keeps the save to send again; an answer, even a refusal, settles it.
-    const settled = answer.ok || (answer.status !== 0 && answer.status < 500);
-    if (!pending.settleRecord(jobId, attempt.changeId, !settled)) return;
+    // No answer at all keeps the save to send again; an answer settles it, and a refusal keeps the
+    // person's changes and the reason (src/lib/field/pending.ts) for whichever form shows them.
+    const refused = !answer.ok && answer.status !== 0 && answer.status < 500;
+    const settlement = answer.ok ? 'answered' : refused ? { refused: answer.message } : 'unanswered';
+    if (!pending.settleRecord(jobId, attempt.changeId, settlement)) return;
     if (answer.ok) {
       setEdits((current) => Object.fromEntries(Object.entries(current).filter(([key, value]) => attempt.values[key] !== value)));
       job.setDetail(answer.value);
       setNotice(`${title} saved.`);
       return;
     }
-    // A refusal puts the person's own changes back on the form, over the job as read next.
-    if (settled) setEdits((current) => ({ ...attempt.edits, ...current }));
     // Changed elsewhere: read the job again; the person's edits stay on top of the new values.
     if (answer.stale) await job.reloadJob();
-    setError(answer.message);
+    if (!refused) setError(answer.message);
   }
 
   const id = (key: string) => `${title.toLowerCase()}-${key}`;
@@ -164,6 +180,7 @@ function RecordForm({
             value={shown[box.key] ?? ''}
             readOnly={readOnly || mine !== null}
             onChange={(value) => {
+              takeRefusal();
               setEdits((current) => ({ ...current, [box.key]: value }));
               setNotice(null);
             }}
@@ -178,7 +195,7 @@ function RecordForm({
           <p className="text-sm">The {unsettled.kind} save has not been answered yet. Try it again first.</p>
         ) : null}
         {mine && !busy && !error ? <p role="status">This {title.toLowerCase()} was sent but no answer came back. Try again to finish it.</p> : null}
-        <Outcome error={error} notice={notice} />
+        <Outcome error={error ?? refusal?.message ?? null} notice={notice} />
       </Section>
     </form>
   );
