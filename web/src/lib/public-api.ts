@@ -32,6 +32,10 @@ export const memberApiPaths: readonly string[] = [
   '/api/prices/versions',
   '/api/prices/versions/:id',
   '/api/prices/versions/:id/restore',
+  '/api/jobs',
+  '/api/jobs/:id',
+  '/api/jobs/:id/customer',
+  '/api/jobs/:id/claim',
 ];
 
 // Platform operator routes that check the operator sign-in themselves with operatorRoute
