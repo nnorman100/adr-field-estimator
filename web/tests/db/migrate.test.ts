@@ -15,14 +15,17 @@ import { emptyDiscardDatabase, startDisposablePostgres, type DisposablePostgres 
 const exec = promisify(execFile);
 const webRoot = fileURLToPath(new URL('../..', import.meta.url));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements'];
+const SHIPPED = ['0001_foundation', '0002_identity', '0003_runtime_role', '0004_sign_in_lookup', '0005_access_projection', '0006_platform_operator', '0007_sign_in_address', '0008_feature_flag_writes', '0009_price_tables', '0010_core_job_tables', '0011_submissions_agreements', '0012_ai_live_tables'];
 const SHIPPED_TABLES = [
   'access_projection_outbox',
   'actors',
   'agreements',
+  'ai_ledger',
+  'ai_results',
   'audit_events',
   'auth_tenants',
   'companies',
+  'company_ai_settings',
   'company_feature_flags',
   'evidence_objects',
   'invitations',
@@ -32,11 +35,16 @@ const SHIPPED_TABLES = [
   'job_price_pins',
   'job_submissions',
   'jobs',
+  'live_sessions',
+  'live_turns',
+  'live_usage',
+  'member_voice_settings',
   'memberships',
   'migration_ledger',
   'platform_admins',
   'price_table_versions',
   'price_table_working_copies',
+  'voice_notes',
 ];
 
 let disposable: DisposablePostgres;
@@ -393,6 +401,57 @@ describe('numbered migration ledger', () => {
         `,
       );
       expect(counts).toEqual([{ submissions: 0, pins: 0, estimates: 0, agreements: 0 }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds the AI and Live tables to a database already holding 0001 to 0011 and its rows', async () => {
+    const earlier = (await readMigrations(migrationsDirectory)).filter((file) => file.id < '0012');
+    expect(earlier.map((file) => file.id)).toEqual(SHIPPED.slice(0, 11));
+    const dir = await tempMigrations(Object.fromEntries(earlier.map((file) => [`${file.id}.sql`, file.sql])));
+    try {
+      expect((await applyMigrations(disposable.databaseUrl, dir)).applied).toEqual(SHIPPED.slice(0, 11));
+      const holding = async () =>
+        withSql(async (sql) => ({
+          companies: await sql`SELECT * FROM companies ORDER BY id`,
+          actors: await sql`SELECT * FROM actors ORDER BY id`,
+          jobs: await sql`SELECT * FROM jobs ORDER BY id`,
+          submissions: await sql`SELECT id, company_id, job_id, status FROM job_submissions ORDER BY id`,
+          tables: await tableNames(),
+        }));
+      await withSql(async (sql) => {
+        await sql`INSERT INTO auth_tenants (id, kind) VALUES ('tenant-x', 'company')`;
+        const [company] = await sql<{ id: string }[]>`
+          INSERT INTO companies (name, sign_in_slug, auth_tenant_id) VALUES ('Existing', 'existing', 'tenant-x') RETURNING id
+        `;
+        const [actor] = await sql<{ id: string }[]>`
+          INSERT INTO actors (company_id, auth_tenant_id, uid, email) VALUES (${company!.id}, 'tenant-x', 'u1', 'u1@example.test') RETURNING id
+        `;
+        const [job] = await sql<{ id: string }[]>`
+          INSERT INTO jobs (id, company_id, created_by_actor_id, current_draft_id, request_digest)
+          VALUES (gen_random_uuid(), ${company!.id}, ${actor!.id}, gen_random_uuid(), ${'b'.repeat(64)}) RETURNING id
+        `;
+        await sql`
+          INSERT INTO job_submissions (id, company_id, job_id, draft_id, epoch, kind, request_digest, expires_at, created_by_actor_id)
+          VALUES (gen_random_uuid(), ${company!.id}, ${job!.id}, gen_random_uuid(), gen_random_uuid(), 'original', ${'c'.repeat(64)}, now() + interval '15 minutes', ${actor!.id})
+        `;
+      });
+      const before = await holding();
+      expect(before.tables).not.toContain('live_sessions');
+      expect((await applyMigrations(disposable.databaseUrl, migrationsDirectory)).applied).toEqual(SHIPPED.slice(11));
+      const after = await holding();
+      expect({ ...after, tables: [] }).toEqual({ ...before, tables: [] });
+      expect(after.tables).toEqual(SHIPPED_TABLES);
+      const counts = await withSql(
+        (sql) => sql<Record<string, number>[]>`
+          SELECT (SELECT count(*)::int FROM company_ai_settings) AS settings, (SELECT count(*)::int FROM ai_ledger) AS ledger,
+                 (SELECT count(*)::int FROM ai_results) AS results, (SELECT count(*)::int FROM live_sessions) AS sessions,
+                 (SELECT count(*)::int FROM live_usage) AS usage, (SELECT count(*)::int FROM live_turns) AS turns,
+                 (SELECT count(*)::int FROM voice_notes) AS notes, (SELECT count(*)::int FROM member_voice_settings) AS voices
+        `,
+      );
+      expect(counts).toEqual([{ settings: 0, ledger: 0, results: 0, sessions: 0, usage: 0, turns: 0, notes: 0, voices: 0 }]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
