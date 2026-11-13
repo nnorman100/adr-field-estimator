@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import type { BrowserSignInConfig } from '@/lib/config';
+import { canReadAiUsage } from '@/lib/ai/usage-screen';
 import { belongsTo, callApi, companyAuth } from '@/lib/firebase-client';
 import { signOutOfCompany } from '@/lib/field/sign-out';
 import { profileView, signedInProfileManager } from '@/lib/profile/screen';
@@ -31,7 +32,7 @@ type Phase =
   | { name: 'finish-sign-in' }
   | { name: 'not-owner' }
   | { name: 'unavailable' }
-  | { name: 'ready'; user: User; companyId: string; profile: ProfileView };
+  | { name: 'ready'; user: User; companyId: string; profile: ProfileView; aiUsage: boolean };
 
 export function CompanyScreen(props: CompanyScreenProps) {
   if (!props.config) {
@@ -80,7 +81,7 @@ function CompanySettings({
       if (stale(user)) return;
       const profile = answer.status === 200 ? profileView(answer.body) : null;
       if (!profile) return setPhase({ name: 'unavailable' });
-      setPhase({ name: 'ready', user, companyId: member.companyId, profile });
+      setPhase({ name: 'ready', user, companyId: member.companyId, profile, aiUsage: canReadAiUsage(me.body) });
     }
 
     return onAuthStateChanged(auth, (user) => {
@@ -140,6 +141,7 @@ function CompanySettings({
           user={phase.user}
           companyId={phase.companyId}
           initial={phase.profile}
+          showAiUsage={phase.aiUsage}
         />
       );
   }

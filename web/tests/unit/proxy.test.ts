@@ -50,6 +50,7 @@ describe('API sign-in gate', () => {
       '/api/me',
       '/api/companies/:id/team',
       '/api/companies/:id/profile',
+      '/api/companies/:id/ai-usage',
       '/api/companies/:id/invitations',
       '/api/companies/:id/invitations/:id/resend',
       '/api/companies/:id/invitations/:id/cancel',

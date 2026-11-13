@@ -1,4 +1,6 @@
 export {
+  AI_FLAG_DETAILS,
+  AI_FLAG_NAMES,
   ALL_OFF,
   FLAG_NAMES,
   FlagRefusal,
@@ -6,7 +8,9 @@ export {
   flagsFromRows,
   isFlagName,
   parseFlagName,
+  type AiFlagName,
   type CompanyFlags,
+  type FlagDetails,
   type FlagName,
   type FlagRefusalCode,
   type FlagRow,
