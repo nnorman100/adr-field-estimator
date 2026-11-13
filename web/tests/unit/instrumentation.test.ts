@@ -46,6 +46,56 @@ describe('server start', () => {
   });
 });
 
+describe('request tracing at server start', () => {
+  const GLOBAL = Symbol.for('dryscope.tracing');
+  const started = () => (globalThis as { [GLOBAL]?: { shutdown(): Promise<void> } })[GLOBAL];
+
+  beforeEach(() => {
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    vi.stubEnv('APP_ENV', 'test');
+    vi.stubEnv('K_SERVICE', undefined);
+    vi.stubEnv('OTEL_SDK_DISABLED', undefined);
+  });
+
+  afterEach(async () => {
+    await started()?.shutdown();
+    vi.doUnmock('@/lib/telemetry/start');
+    vi.resetModules();
+  });
+
+  it('records spans in the process, and exports nothing, in a run that is not on Cloud Run', async () => {
+    await register();
+    expect(started()).toBeDefined();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('starts nothing with OTEL_SDK_DISABLED=true', async () => {
+    vi.stubEnv('OTEL_SDK_DISABLED', 'true');
+    await register();
+    expect(started()).toBeUndefined();
+  });
+
+  it('starts nothing outside the Node runtime', async () => {
+    vi.stubEnv('NEXT_RUNTIME', 'edge');
+    await register();
+    expect(started()).toBeUndefined();
+  });
+
+  it('never stops the server when tracing cannot start, and repeats nothing about why', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/telemetry/start', () => ({
+      startTracing: () => {
+        throw new Error('exporter broke, token abc.def.ghi');
+      },
+    }));
+    const { register: again } = await import('@/instrumentation');
+    await again();
+    expect(exit).not.toHaveBeenCalled();
+    expect(logged.mock.calls.map((c: unknown[]) => String(c[0]))).toEqual(['tracing unavailable']);
+  });
+});
+
 describe('server error reports', () => {
   const TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
   let lines: string[];

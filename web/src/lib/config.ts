@@ -62,6 +62,12 @@ const shape = {
     .string()
     .regex(/^[0-9a-f]{40}$/, { error: 'APP_COMMIT must be a 40-character commit hash' })
     .optional(),
+  // Tracing: the standard off switch, and the name Cloud Run gives a running service. Both are read
+  // only by parseTracingConfig; neither is required.
+  // Like the OpenTelemetry SDK, any value but true (in any case) leaves tracing on, so a typo in the
+  // off switch never stops the server from starting.
+  OTEL_SDK_DISABLED: z.string().max(40).optional(),
+  K_SERVICE: z.string().max(100).optional(),
   // Cloud SQL on Cloud Run, set by infra/dryscope/app/cloud_run.tf: the instance mounted under
   // /cloudsql, the database, and this service's IAM database user (its account email without
   // .gserviceaccount.com). All three or none, and never together with DATABASE_URL.
@@ -228,6 +234,29 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
       database: data.SQL_DATABASE_NAME!,
       user: data.SQL_IAM_USER!,
     };
+  }
+  return config;
+}
+
+export type TracingConfig = {
+  // off: nothing is recorded. spans: spans are recorded in the process and nowhere else (a local
+  // run, CI). export: spans also go to Cloud Trace (a Cloud Run service with a project).
+  mode: 'off' | 'spans' | 'export';
+  appEnv: AppConfig['appEnv'];
+  projectId?: string;
+  commit?: string;
+};
+
+// What request tracing needs (src/lib/telemetry). It never throws for a missing optional setting:
+// without K_SERVICE or the project there is no exporter, and OTEL_SDK_DISABLED=true turns it all off.
+export function parseTracingConfig(env: Record<string, string | undefined>): TracingConfig {
+  const data = checked(env);
+  const config: TracingConfig = { mode: 'spans', appEnv: data.APP_ENV };
+  if (data.GOOGLE_CLOUD_PROJECT !== undefined) config.projectId = data.GOOGLE_CLOUD_PROJECT;
+  if (data.APP_COMMIT !== undefined) config.commit = data.APP_COMMIT;
+  if (data.OTEL_SDK_DISABLED?.toLowerCase() === 'true') config.mode = 'off';
+  else if (data.K_SERVICE !== undefined && data.APP_ENV !== 'local' && data.GOOGLE_CLOUD_PROJECT !== undefined) {
+    config.mode = 'export';
   }
   return config;
 }

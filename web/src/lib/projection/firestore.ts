@@ -1,6 +1,7 @@
 import { getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import type { ProjectionConfig } from '@/lib/config';
+import { firestoreSpan } from '@/lib/telemetry/spans';
 import { AccessStoreError, checkedUid, type AccessStore } from './store';
 
 // Access records in the field database, written with the Admin SDK, which the rules do not bind.
@@ -37,23 +38,27 @@ export function firestoreAccessStore(db: Firestore): AccessStore {
 
   return {
     async grant({ companyId, authTenantId, uid, role, expiresAt, version }) {
-      await db.runTransaction(async (tx) => {
-        await newest(tx, companyId, uid, version);
-        // The header keeps any other server field; the access record is replaced whole.
-        tx.set(company(companyId), { authTenantId }, { merge: true });
-        tx.set(access(companyId, uid), { role, expiresAt: Timestamp.fromDate(expiresAt) });
-        tx.set(applied(companyId, uid), { version });
-      });
+      await firestoreSpan('runTransaction', 'access', () =>
+        db.runTransaction(async (tx) => {
+          await newest(tx, companyId, uid, version);
+          // The header keeps any other server field; the access record is replaced whole.
+          tx.set(company(companyId), { authTenantId }, { merge: true });
+          tx.set(access(companyId, uid), { role, expiresAt: Timestamp.fromDate(expiresAt) });
+          tx.set(applied(companyId, uid), { version });
+        }),
+      );
     },
 
     async remove(companyId, uid, version) {
       const record = access(companyId, uid);
-      await db.runTransaction(async (tx) => {
-        await newest(tx, companyId, uid, version);
-        tx.delete(record);
-        tx.set(applied(companyId, uid), { version });
-      });
-      const after = await record.get();
+      await firestoreSpan('runTransaction', 'access', () =>
+        db.runTransaction(async (tx) => {
+          await newest(tx, companyId, uid, version);
+          tx.delete(record);
+          tx.set(applied(companyId, uid), { version });
+        }),
+      );
+      const after = await firestoreSpan('get', 'access', () => record.get());
       if (after.exists) throw new AccessStoreError('record_still_present');
     },
   };
