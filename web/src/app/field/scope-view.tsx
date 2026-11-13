@@ -19,7 +19,7 @@ import { MAX_NOTES } from '@/lib/field/schema';
 import { saveDraftField, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
 import { RoomsSection } from './rooms-section';
-import { Box, Outcome, Section, Tick } from './ui';
+import { Box, Outcome, READ_AGAIN, Section, Tick } from './ui';
 
 // Check Scope (S5a-6): year built, the rooms, equipment counts, job charges, notes and the
 // scope-confirmed box, written straight to the job's field draft. The boxes hold only what the
@@ -42,7 +42,7 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
 
   async function save() {
     const db = job.session.db;
-    if (!db) return;
+    if (!db || job.stale) return;
     const { changes, errors: found } = factChanges(values, draft.field);
     setErrors(found);
     setNotice(null);
@@ -115,10 +115,11 @@ export function ScopeView({ job, draft }: { job: JobContext; draft: FieldDraft }
         </Section>
         {box(CONFIRMED_FIELD)}
         {readOnly ? null : (
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy || job.stale}>
             {busy ? 'Saving…' : 'Save scope'}
           </Button>
         )}
+        {!readOnly && job.stale ? <p className="text-sm">{READ_AGAIN}</p> : null}
         <Outcome error={error} notice={notice} />
       </form>
     </div>

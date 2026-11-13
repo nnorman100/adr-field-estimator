@@ -27,10 +27,13 @@ export type JobContext = {
   draft: FieldDraft | null;
   draftRef: DraftRef;
   reloadDraft: () => Promise<void>;
-  // Whether this person may change the field work now (the rules' own test), and the draft on screen
-  // is the one last read: after a read that failed, nothing is saved over it until it is read again.
+  // Whether this person may change the field work now (the rules' own test).
   editable: boolean;
+  // The last read of the draft did not get through, so the draft on screen may be older than what is
+  // stored: boxes stay open, but nothing is saved over it until it is read again.
+  stale: boolean;
 };
+
 
 // One job's screens (S5a-6): the job from the jobs API (header, customer, claim) and its field
 // draft from the field database, read once and again after each save, so what is on screen is what
@@ -112,7 +115,8 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     draft,
     draftRef: { companyId: session.companyId, draftId: detail.job.currentDraftId },
     reloadDraft: () => reloadDraft(detail),
-    editable: draft !== null && draftError === null && canEditDraft(draft, session.user.uid, session.capabilities),
+    editable: draft !== null && canEditDraft(draft, session.user.uid, session.capabilities),
+    stale: draft !== null && draftError !== null,
   };
 
   return (
@@ -126,7 +130,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
           </FieldLink>
         ))}
       </nav>
-      {(view === 'scope' || view === 'photos') && draft !== null && draftError === null && !context.editable ? (
+      {(view === 'scope' || view === 'photos') && draft !== null && !context.editable ? (
         <p className="rounded-md bg-foreground/5 p-3 text-sm">
           Read only. Only the estimator who owns this job&rsquo;s field work changes it, while the job is being edited.
         </p>
@@ -145,7 +149,7 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
       {/* The views of one job stay mounted and only the open one shows, so moving between them
           keeps what the person has typed and not saved. */}
       <div hidden={view !== 'scope'}>{draft ? <ScopeView job={context} draft={draft} /> : null}</div>
-      <div hidden={view !== 'photos'}>{draft ? <PhotosView job={context} draft={draft} /> : null}</div>
+      <div hidden={view !== 'photos'}>{draft ? <PhotosView job={context} draft={draft} open={view === 'photos'} /> : null}</div>
       <div hidden={view !== 'customer'}>
         <CustomerView job={context} />
       </div>

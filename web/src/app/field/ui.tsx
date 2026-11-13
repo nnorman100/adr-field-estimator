@@ -155,3 +155,6 @@ export function Section({ title, children }: { title: string; children: ReactNod
     </section>
   );
 }
+
+// Shown by a save that waits for a draft read that did not get through (src/app/field/job-screens.tsx).
+export const READ_AGAIN = 'Read this job again first (Try again above): the latest field work could not be read.';

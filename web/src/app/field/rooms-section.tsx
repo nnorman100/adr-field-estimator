@@ -6,7 +6,7 @@ import { editsAfterSave, ROOM_FIELDS, roomChanges, roomName, withEdits, type For
 import { MAX_ROOMS, type RoomField } from '@/lib/field/schema';
 import { addRoom, removeRoom, saveRoomField, type FieldDraft } from '@/lib/field/store';
 import type { JobContext } from './job-screens';
-import { Box, Choice, Outcome, Section } from './ui';
+import { Box, Choice, Outcome, READ_AGAIN, Section } from './ui';
 
 export const CATEGORY_OPTIONS = [
   { value: '', label: 'Not set' },
@@ -126,7 +126,7 @@ export function RoomCard({
 
   async function save() {
     const db = job.session.db;
-    if (!db) return;
+    if (!db || job.stale) return;
     const { changes, errors: found } = roomChanges(values, stored);
     setErrors(found);
     setNotice(null);
@@ -175,7 +175,7 @@ export function RoomCard({
       </div>
       {readOnly ? null : (
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" variant="outline" disabled={busy}>
+          <Button type="submit" variant="outline" disabled={busy || job.stale}>
             {busy ? 'Saving…' : 'Save room'}
           </Button>
           {onRemove ? (
@@ -185,6 +185,7 @@ export function RoomCard({
           ) : null}
         </div>
       )}
+      {!readOnly && job.stale ? <p className="text-sm">{READ_AGAIN}</p> : null}
       <Outcome error={error} notice={notice} />
     </form>
   );
