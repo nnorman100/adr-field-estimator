@@ -103,6 +103,7 @@ describe('identity tables (migration 0002)', () => {
       '0008_feature_flag_writes',
       '0009_price_tables',
       '0010_core_job_tables',
+      '0011_submissions_agreements',
     ]);
 
     const rows = await sql<
