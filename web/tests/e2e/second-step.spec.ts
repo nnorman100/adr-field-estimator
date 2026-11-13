@@ -47,15 +47,21 @@ const setupHeading = (page: Page) =>
 const codeHeading = (page: Page) => page.getByRole('heading', { name: 'Enter your sign-in code' });
 const alertIn = (page: Page) => page.getByRole('main').getByRole('alert');
 
-// Which /api/me answers the page gets, as status and refusal code.
+// Which /api/me answers the page gets, as status and refusal code. Reading a body is asynchronous
+// and the page can show the next screen before it finishes, so each read is kept and `answers()`
+// waits for all of them: what it returns holds every answer the page has had by then.
 function watchMe(page: Page) {
-  const answers: string[] = [];
-  page.on('response', async (response) => {
+  const reads: Promise<string>[] = [];
+  page.on('response', (response) => {
     if (new URL(response.url()).pathname !== '/api/me') return;
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    answers.push(`${response.status()} ${body.error ?? 'ok'}`);
+    reads.push(
+      response
+        .json()
+        .catch(() => ({}))
+        .then((body: { error?: string }) => `${response.status()} ${body.error ?? 'ok'}`),
+    );
   });
-  return answers;
+  return { answers: () => Promise.all(reads) };
 }
 
 // The dark squares of the QR code on the page, as "column,row" without its quiet zone.
@@ -106,12 +112,12 @@ function savedSignIns(page: Page) {
 
 test('an owner with no second step can reach only the setup screen', async ({ page }) => {
   const fake = await fakeSecondStep(page);
-  const answers = watchMe(page);
+  const me = watchMe(page);
   await page.goto('/sign-in/company-a');
   await signIn(page, mine.ownerA.email);
 
   await expect(setupHeading(page)).toBeVisible();
-  expect(answers).toEqual(['403 second_step_required']);
+  expect(await me.answers()).toEqual(['403 second_step_required']);
   // The way in is setting it up or signing out: no skip, no signed-in screen, no plain notice.
   await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
   await expect(page.getByRole('main').getByRole('button')).toHaveText([
@@ -270,7 +276,7 @@ test('after setup, a reload before the check answers still asks the owner to sig
 
 test('a wrong code at sign-in shows an error and does not sign in', async ({ page }) => {
   const fake = await fakeSecondStep(page, { factors: ['Authenticator app'] });
-  const answers = watchMe(page);
+  const me = watchMe(page);
   await page.goto('/sign-in/company-a');
   await signIn(page, mine.ownerA.email);
   await expect(codeHeading(page)).toBeVisible();
@@ -285,7 +291,7 @@ test('a wrong code at sign-in shows an error and does not sign in', async ({ pag
   await expect(codeHeading(page)).toBeVisible();
   await expect(signedIn(page)).toHaveCount(0);
   // Nothing was signed in: the server was never asked about a token, and the phone saved no sign-in.
-  expect(answers).toEqual([]);
+  expect(await me.answers()).toEqual([]);
   expect(await savedSignIns(page)).toEqual([]);
   await page.reload();
   await expect(page.getByLabel('Password')).toBeVisible();
@@ -295,7 +301,7 @@ test('a wrong code at sign-in shows an error and does not sign in', async ({ pag
   await page.getByLabel('6-digit code').fill(APP_CODE);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(signedIn(page)).toBeVisible();
-  expect(answers).toEqual(['200 ok']);
+  expect(await me.answers()).toEqual(['200 ok']);
   expect(fake.calls.filter((call) => call === 'mfaSignIn:finalize')).toHaveLength(2);
 });
 
