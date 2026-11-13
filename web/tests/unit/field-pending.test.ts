@@ -85,24 +85,39 @@ describe('what a late send posts for the open screen of its job', () => {
   it('keeps the newest job the server answered, and an older answer never replaces it', () => {
     pending.openFor('company-a/user-late');
     expect(pending.detail('job-late')).toBeNull();
-    pending.publishDetail('job-late', at(3, 'third'));
-    pending.publishDetail('job-late', at(2, 'second, answered late'));
+    pending.publishDetail('job-late', at(3, 'third'), pending.mark('job-late'));
+    pending.publishDetail('job-late', at(2, 'second, answered late'), pending.mark('job-late'));
     expect(pending.detail('job-late')?.customer.name).toBe('third');
-    pending.publishDetail('job-late', at(4, 'fourth'));
+    pending.publishDetail('job-late', at(4, 'fourth'), pending.mark('job-late'));
     expect(pending.detail('job-late')?.customer.name).toBe('fourth');
     expect(newerDetail(at(5, 'read'), pending.detail('job-late'))?.customer.name).toBe('read');
     expect(newerDetail(null, pending.detail('job-late'))?.customer.name).toBe('fourth');
   });
 
-  it('forgets a job the server no longer shows, and keeps the others', () => {
-    pending.openFor('company-a/user-forget');
-    pending.publishDetail('job-late', at(4, 'fourth'));
-    pending.publishDetail('job-kept', { ...at(2, 'kept'), job: { id: 'job-kept', revision: 2 } } as unknown as JobDetail);
-    pending.forgetDetail('job-late');
+  it('drops a refused job and every answer to a request made before the refusal, until a read made after it', () => {
+    pending.openFor('company-a/user-denied');
+    const kept = { ...at(2, 'kept'), job: { id: 'job-kept', revision: 2 } } as unknown as JobDetail;
+    const before = pending.mark('job-late');
+    expect(pending.publishDetail('job-late', at(4, 'fourth'), before)).toBe(true);
+    pending.publishDetail('job-kept', kept, pending.mark('job-kept'));
+
+    pending.denyDetail('job-late', 'This job is not in your list.');
     expect(pending.detail('job-late')).toBeNull();
+    expect(pending.denial('job-late')).toBe('This job is not in your list.');
     expect(pending.detail('job-kept')?.customer.name).toBe('kept');
-    pending.publishDetail('job-late', at(1, 'read again'));
+
+    // A save sent before the refusal and answered after it.
+    expect(pending.publishDetail('job-late', at(5, 'saved late'), before)).toBe(false);
+    expect(pending.detail('job-late')).toBeNull();
+    expect(pending.denial('job-late')).toBe('This job is not in your list.');
+
+    expect(pending.publishDetail('job-late', at(5, 'read again'), pending.mark('job-late'))).toBe(true);
     expect(pending.detail('job-late')?.customer.name).toBe('read again');
+    expect(pending.denial('job-late')).toBeNull();
+
+    pending.openFor('company-a/user-other-denied');
+    expect(pending.mark('job-late')).toBe(0);
+    expect(pending.denial('job-late')).toBeNull();
   });
 
   it('counts draft changes per job, and starts empty for another sign-in', () => {

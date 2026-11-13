@@ -16,6 +16,8 @@
 // A send can settle after its screen was closed and the job opened again in a new one. So what a
 // settled send learned is posted here per job, for whichever screen of that job is open now: the
 // job as the server answered it, and a mark that the field draft changed and must be read again.
+// A refusal to show a job to this person (`denyDetail`) drops every copy of it and moves its access
+// mark on: a job answered to a request made before then is not kept, until a read made after it.
 // All of it belongs to one signed-in person of one company (`openFor`): another sign-in on the same
 // page starts empty.
 import { useSyncExternalStore } from 'react';
@@ -57,9 +59,22 @@ type State = {
   // that settled after its screen closed.
   details: Record<string, JobDetail>;
   draftChanges: Record<string, number>;
+  // By job: its access mark, and the server's reason while it refuses to show the job.
+  marks: Record<string, number>;
+  denials: Record<string, string>;
 };
 
-const EMPTY = { job: null, jobRefusal: null, records: {}, refusals: {}, photos: {}, details: {}, draftChanges: {} };
+const EMPTY = {
+  job: null,
+  jobRefusal: null,
+  records: {},
+  refusals: {},
+  photos: {},
+  details: {},
+  draftChanges: {},
+  marks: {},
+  denials: {},
+};
 let state: State = { owner: null, ...EMPTY };
 const listeners = new Set<() => void>();
 
@@ -134,18 +149,31 @@ export const pending = {
   },
   // The job as the server last answered it; an older revision never replaces a newer one.
   detail: (jobId: string): JobDetail | null => state.details[jobId] ?? null,
-  publishDetail(jobId: string, detail: JobDetail) {
+  // Taken before a request about the job is sent, and handed back with its answer.
+  mark: (jobId: string): number => state.marks[jobId] ?? 0,
+  // Keeps a job answered to a request made under `mark`, unless the job was refused since. Answers
+  // whether the answer still counts.
+  publishDetail(jobId: string, detail: JobDetail, mark: number): boolean {
+    if (mark !== pending.mark(jobId)) return false;
     const known = state.details[jobId];
-    if (known && known.job.revision >= detail.job.revision) return;
-    change({ details: { ...state.details, [jobId]: detail } });
+    if (known && known.job.revision >= detail.job.revision) return true;
+    const denials = { ...state.denials };
+    delete denials[jobId];
+    change({ details: { ...state.details, [jobId]: detail }, denials });
+    return true;
   },
-  // The server no longer shows this job to this person: no copy of it is kept.
-  forgetDetail(jobId: string) {
-    if (!state.details[jobId]) return;
+  // The server refused to show this job to this person: no copy of it is kept, and no answer to a
+  // request made before now.
+  denyDetail(jobId: string, message: string) {
     const details = { ...state.details };
     delete details[jobId];
-    change({ details });
+    change({
+      details,
+      marks: { ...state.marks, [jobId]: pending.mark(jobId) + 1 },
+      denials: { ...state.denials, [jobId]: message },
+    });
   },
+  denial: (jobId: string): string | null => state.denials[jobId] ?? null,
   draftChanges: (jobId: string): number => state.draftChanges[jobId] ?? 0,
   // A send changed the job's field draft after its screen closed: the open screen reads it again.
   draftChanged(jobId: string) {

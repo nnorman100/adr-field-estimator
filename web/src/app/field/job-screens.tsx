@@ -21,7 +21,8 @@ const TABS: { view: JobView; label: string }[] = [
 export type JobContext = {
   session: FieldSession;
   detail: JobDetail;
-  setDetail: (detail: JobDetail) => void;
+  // Keeps a job answered to a request made under `mark` (src/lib/field/pending.ts).
+  setDetail: (detail: JobDetail, mark: number) => void;
   // Reads the job again and answers it (null when it could not be read).
   reloadJob: () => Promise<JobDetail | null>;
   // The field draft as the field database holds it; null when it could not be read.
@@ -41,15 +42,17 @@ export type JobContext = {
 // is stored. Office, the owner who is not the field owner, and anyone once the draft is no longer
 // being edited see the field work read-only, as the rules hold it.
 export function JobScreens({ session, jobId, view }: { session: FieldSession; jobId: string; view: JobView }) {
-  const [read, setRead] = useState<JobDetail | null>(null);
+  const [read, setRead] = useState<{ detail: JobDetail; mark: number } | null>(null);
   // A save that settled after an earlier screen of this job closed posts the job it got back
-  // (src/lib/field/pending.ts); the newer of that and this screen's own read is the job shown.
+  // (src/lib/field/pending.ts); the newer of that and this screen's own read is the job shown. Once
+  // the server refuses the job to this person, in this screen or another, neither is shown.
   const posted = usePending(() => pending.detail(jobId));
-  const detail = newerDetail(read, posted);
+  const mark = usePending(() => pending.mark(jobId));
+  const denial = usePending(() => pending.denial(jobId));
+  const detail = newerDetail(read?.mark === mark ? read.detail : null, posted);
   const setDetail = useCallback(
-    (next: JobDetail) => {
-      setRead(next);
-      pending.publishDetail(jobId, next);
+    (next: JobDetail, sentAt: number) => {
+      if (pending.publishDetail(jobId, next, sentAt)) setRead({ detail: next, mark: sentAt });
     },
     [jobId],
   );
@@ -83,31 +86,35 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
   );
 
   const apply = useCallback(
-    async (answer: Awaited<ReturnType<typeof readJob>>): Promise<JobDetail | null> => {
+    async (answer: Awaited<ReturnType<typeof readJob>>, sentAt: number): Promise<JobDetail | null> => {
+      if (sentAt !== pending.mark(jobId)) return null;
       setError(answer.ok ? null : answer.message);
       if (!answer.ok) {
         // A refusal to show the job drops every copy of it; no answer keeps the one on screen.
         if (answer.denied) {
-          setRead(null);
-          pending.forgetDetail(jobId);
+          pending.denyDetail(jobId, answer.message);
           setDraft(null);
         }
         return null;
       }
-      setDetail(answer.value);
+      setDetail(answer.value, sentAt);
       await reloadDraft(answer.value);
       return answer.value;
     },
     [reloadDraft, setDetail, jobId],
   );
 
-  const reloadJob = useCallback(async () => apply(await readJob(session.user, jobId)), [apply, session, jobId]);
+  const reloadJob = useCallback(async () => {
+    const sentAt = pending.mark(jobId);
+    return apply(await readJob(session.user, jobId), sentAt);
+  }, [apply, session, jobId]);
 
   // The first read; each job is its own component (keyed by the parent).
   useEffect(() => {
     let live = true;
+    const sentAt = pending.mark(jobId);
     void readJob(session.user, jobId).then((answer) => {
-      if (live) void apply(answer);
+      if (live) void apply(answer, sentAt);
     });
     return () => {
       live = false;
@@ -122,10 +129,10 @@ export function JobScreens({ session, jobId, view }: { session: FieldSession; jo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChanges]);
 
-  if (error && !detail) {
+  if ((error || denial) && !detail) {
     return (
       <div className="flex flex-col gap-2">
-        <p role="alert">{error}</p>
+        <p role="alert">{error ?? denial}</p>
         <Button variant="outline" onClick={() => void reloadJob()}>
           Try again
         </Button>

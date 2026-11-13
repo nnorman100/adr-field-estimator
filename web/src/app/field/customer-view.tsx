@@ -142,6 +142,7 @@ function RecordForm({
       sending: true,
     };
     pending.setRecord(jobId, attempt);
+    const sentAt = pending.mark(jobId);
     const answer = await send(attempt.values, attempt.revision, attempt.changeId);
     // No answer at all keeps the save to send again; an answer settles it, and a refusal keeps the
     // person's changes and the reason (src/lib/field/pending.ts) for whichever form shows them.
@@ -150,13 +151,14 @@ function RecordForm({
     if (!pending.settleRecord(jobId, attempt.changeId, settlement)) return;
     if (answer.ok) {
       setEdits((current) => Object.fromEntries(Object.entries(current).filter(([key, value]) => attempt.values[key] !== value)));
-      job.setDetail(answer.value);
+      job.setDetail(answer.value, sentAt);
       setNotice(`${title} saved.`);
       return;
     }
-    // Changed elsewhere: read the job again; the person's edits stay on top of the new values. Not
-    // this person's to see any more: the read drops it from the screen.
-    if (answer.stale || answer.denied) await job.reloadJob();
+    // Not this person's to see any more: every copy of the job goes. Changed elsewhere: read the job
+    // again; the person's edits stay on top of the new values.
+    if (answer.denied) pending.denyDetail(jobId, answer.message);
+    if (answer.stale) await job.reloadJob();
     if (!refused) setError(answer.message);
   }
 

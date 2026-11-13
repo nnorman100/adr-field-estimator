@@ -27,7 +27,14 @@ export function JobsView({ session, list }: { session: FieldSession; list: JobsL
   function apply(answer: Awaited<ReturnType<typeof listJobs>>, from: string | null) {
     setBusy(false);
     setError(answer.ok ? null : answer.message);
-    if (!answer.ok) return;
+    if (!answer.ok) {
+      // A refusal to list jobs drops the ones already shown.
+      if (answer.denied) {
+        setJobs(null);
+        setCursor(null);
+      }
+      return;
+    }
     setJobs((current) => (from === null ? answer.value.jobs : [...(current ?? []), ...answer.value.jobs]));
     setCursor(answer.value.nextCursor);
   }
