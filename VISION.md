@@ -1,7 +1,7 @@
 # Vision
 
 `adr-field-estimator` exists so that a restoration technician can walk a water or mold loss once, talking and photographing as they go, and leave with an estimate the company can sign, defend and carry out.
-It serves Alert Disaster Restoration first, and other restoration companies in any state as paying subscribers in isolated company workspaces.
+It serves water and mold restoration companies in any state as paying subscribers, each in its own isolated company workspace.
 It turns a confirmed inspection - rooms, measurements, categories, equipment, photos and the walkthrough transcript - into four documents: a proposal with a low-high estimate, an itemized claim, a scope defense letter and a photo moisture log.
 It owns exactly one thing: the path from one water or mold loss inspection to a signed, priced, evidence-backed agreement, delivered to the people who need it and scheduled into drying work.
 

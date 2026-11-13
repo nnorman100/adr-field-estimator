@@ -277,7 +277,7 @@ describe('a refused request writes nothing', () => {
     ['a bad email', { ...FULL, email: 'not-an-email' }],
     ['a control character in the address', { ...FULL, address: 'one\ntwo' }],
     ['an over-long sign-off', { ...FULL, signoff: 'x'.repeat(151) }],
-    ['a field that is not text', { ...FULL, license: 950983 }],
+    ['a field that is not text', { ...FULL, license: 123456 }],
     ['an array', []],
   ])('answers 400 to %s and writes nothing', async (_what, body) => {
     const before = await everything(h.admin);
