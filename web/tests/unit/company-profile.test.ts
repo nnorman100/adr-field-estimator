@@ -59,7 +59,7 @@ describe('the profile body', () => {
     const without: Record<string, string> = { ...GOOD };
     delete without.phone;
     expect(profileInput.safeParse(without).success).toBe(false);
-    expect(profileInput.safeParse({ ...GOOD, license: 950983 }).success).toBe(false);
+    expect(profileInput.safeParse({ ...GOOD, license: 123456 }).success).toBe(false);
     expect(profileInput.safeParse({ ...GOOD, signoff: null }).success).toBe(false);
     expect(profileInput.safeParse(null).success).toBe(false);
     expect(profileInput.safeParse([]).success).toBe(false);

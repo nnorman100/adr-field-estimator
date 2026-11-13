@@ -110,10 +110,8 @@ Moved here on Nov 12, 2026 when `AGENTS.md` was rewritten as the short agent ins
 
 ### 1. Project Mission & Identity
 
-- **Product**: **DryScope**, serving **Alert Disaster Restoration** first and other restoration companies as isolated company workspaces.
-- **ADR Location**: Bakersfield, CA (Serving Kern County and surrounding areas)
-- **ADR License**: California State License Board (CSLB) **#950983**
-- **ADR Estimator Sign-off**: Matthew Myers
+- **Product**: **DryScope**, for water and mold restoration companies, each in its own isolated company workspace.
+- **Company identity**: each company's name, address, licence number and estimator sign-off come only from its own company profile (Company settings) and print exactly as entered. They are never hard-coded in rules, docs or tests.
 - **Core Purpose**: Provide field technicians with a multimodal AI assistant that conducts real-time video/voice walkthroughs on iPhones and instantly synthesizes complete, adjuster-ready claims and client-facing proposals.
 
 ### 2. Claims engine and live walkthrough
