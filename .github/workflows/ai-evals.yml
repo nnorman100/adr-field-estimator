@@ -1,0 +1,97 @@
+name: AI evaluations (test)
+
+# Runs one AI evaluation suite (docs/plans/S7.md, step S7-5; owner decision V9 B) against the real
+# models and Model Armor on TEST, so a feature's pass marks are proven before its switch goes on.
+# Manual only: never on pull requests, pushes or a schedule, and never part of CI. Keyless:
+# workload identity federation from the dryscope-test pool as dryscope-eval-test, which holds only
+# the predict-only Gemini role and roles/modelarmor.user (infra/dryscope/data/ai.tf). The runner
+# caps each run at $2 (web/tests/ai-evals/runner.ts) and refuses to start anywhere but this
+# workflow on master. The result (counts, scores, model, prompt version and cost; no dataset or
+# model text) goes into the run summary: link that run from the pull request that turns the
+# feature on. How to run it and read it: web/tests/ai-evals/README.md.
+on:
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: Evaluation suite
+        required: true
+        type: choice
+        options:
+          - injection
+          - summary
+          - job_summary
+          - scope_fill
+          - meter_reading
+          - voice_notes
+          - live
+      max_usd:
+        description: Run cap in dollars (at most 2)
+        required: true
+        default: '2'
+        type: string
+
+permissions: {}
+
+# One evaluation at a time, so two runs never share the same spend window.
+concurrency:
+  group: ai-evals-test
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    # The test pool's provider admits only master in the test environment.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ${{ vars.CI_RUNNER || 'dryscope-linux' }}
+    timeout-minutes: 30
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - id: check
+        name: Check the inputs and the keyless sign-in setting
+        env:
+          PROVIDER: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          MAX_USD: ${{ inputs.max_usd }}
+        run: |
+          [[ "$PROVIDER" =~ ^projects/570228742694/locations/global/workloadIdentityPools/dryscope-test/providers/[a-z0-9-]{4,32}$ ]] \
+            || { echo "::error::DRYSCOPE_TEST_WIF_PROVIDER must be a provider in the dryscope-test pool of project 570228742694 (docs/runbook/test-release.md)."; exit 1; }
+          [[ "$MAX_USD" =~ ^(0|1)(\.[0-9]{1,2})?$|^2(\.0{1,2})?$ ]] \
+            || { echo "::error::max_usd must be dollars from 0.01 to 2, such as 2 or 0.50."; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # Dependencies are installed before the sign-in, so no install script can see the credentials.
+      - run: npm ci
+        working-directory: web
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.DRYSCOPE_TEST_WIF_PROVIDER }}
+          service_account: dryscope-eval-test@dryscope.iam.gserviceaccount.com
+          project_id: dryscope
+      - id: run
+        name: Run the evaluation
+        working-directory: web
+        env:
+          FEATURE: ${{ inputs.feature }}
+          MAX_USD: ${{ inputs.max_usd }}
+        run: npm run eval:ai -- --feature "$FEATURE" --max-usd "$MAX_USD" --out "$RUNNER_TEMP/ai-eval-result.json"
+      - id: summary
+        name: Write the result to the run summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/ai-eval-result.json" ]; then
+            {
+              echo '### AI evaluation result'
+              echo '```json'
+              cat "$RUNNER_TEMP/ai-eval-result.json"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No result: the evaluation did not start (see the step above).' >> "$GITHUB_STEP_SUMMARY"
+          fi

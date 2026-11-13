@@ -17,6 +17,7 @@ export default defineConfig({
       'tests/test_web_images.ts',
       'tests/test_web_workflow.ts',
       'tests/test_test_guard.ts',
+      'tests/test_ai_evals_workflow.ts',
     ],
   },
 });

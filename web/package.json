@@ -20,7 +20,10 @@
     "build:migrate": "node scripts/build-migrate.mjs",
     "platform:create-tenant": "tsx scripts/create-tenant.ts",
     "platform:add-operator": "tsx scripts/add-operator.ts",
-    "probe:live": "tsx scripts/probe-live.ts"
+    "probe:live": "tsx scripts/probe-live.ts",
+    "eval:ai": "tsx scripts/eval-ai.ts",
+    "eval:audio": "tsx scripts/make-eval-audio.ts",
+    "eval:photos": "tsx scripts/add-eval-photos.ts"
   },
   "dependencies": {
     "@google-cloud/modelarmor": "0.11.0",
