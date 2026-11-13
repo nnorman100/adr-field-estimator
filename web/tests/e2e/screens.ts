@@ -4,6 +4,7 @@
 // A route group such as (auth) is left out of the pattern, as it is not part of the address.
 export const SCREENS: Record<string, string> = {
   '/': 'start-page.spec.ts',
+  '/field': 'field-shell.spec.ts',
   '/sign-in/[address]': 'sign-in.spec.ts',
   '/sign-in/[address]/team': 'team.spec.ts',
   '/sign-in/[address]/invitations/[invitationId]': 'sign-in.spec.ts',
