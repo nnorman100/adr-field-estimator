@@ -52,13 +52,24 @@ describe('scrubMessage', () => {
     expect(out).not.toMatch(/555/);
   });
 
-  it('removes a street address', () => {
-    expect(scrubMessage('Failed at 123 Main Street')).toBe('Failed at [redacted]');
-    expect(scrubMessage('no access to 4500 W. Sunset Blvd. today')).not.toMatch(/4500|Sunset/);
+  it('removes the number of a street address', () => {
+    expect(scrubMessage('Failed at 123 Main Street')).toBe('Failed at # Main Street');
+    expect(scrubMessage('no access to 4500 W. Sunset Blvd. today')).not.toMatch(/4500/);
   });
 
-  it('keeps short numbers that carry no identity', () => {
-    expect(scrubMessage('Unexpected token at position 42')).toBe('Unexpected token at position 42');
+  it('turns every run of digits into #, so a short phone number or a coordinate cannot come through', () => {
+    expect(scrubMessage('call 555-0100 at latitude 34.052')).toBe('call #-# at latitude #.#');
+    expect(scrubMessage('Unexpected token at position 42')).toBe('Unexpected token at position #');
+  });
+
+  it('percent-decodes before it scrubs, however many times the text was encoded', () => {
+    expect(scrubMessage('could not send to jane%40example.com')).toBe('could not send to [email]');
+    expect(scrubMessage('could not send to jane%252540example.com')).toBe('could not send to [email]');
+    expect(scrubMessage('100% sure, jane%E0%A4%A@example.com')).toBe('#% sure, [email]');
+  });
+
+  it('turns a run of 20 or more token characters into [token]', () => {
+    expect(scrubMessage(`key ${'A1b2'.repeat(5)} done`)).toBe('key [token] done');
   });
 
   it('removes a URL query string and fragment but keeps the path', () => {
@@ -103,17 +114,23 @@ describe('ownFrames', () => {
     ]);
   });
 
-  it('scrubs the function name and drops a frame whose path is not the app’s own once scrubbed', () => {
+  it('scrubs the function name and keeps a path only when it has the shape of the app’s own bundle', () => {
     const token = 'A1b2'.repeat(10);
     const stack = [
       `    at ${token} (https://app.example/_next/static/chunks/a.js:1:2)`,
       '    at https://app.example/_next/static/chunks/jane@example.com.js:1:2',
-      '    at fn (https://app.example/_next/static/chunks/page-1234567.js:3:4)',
+      '    at https://app.example/_next/static/chunks/jane%40example.com.js:3:4',
+      '    at f12 (https://app.example/_next/static/chunks/0gy1dczh8t-w0.js:5:6)',
+      '    at https://app.example/_next/static/chunks/app/sign-in/[address]/page-0123abcd.js:7:8',
     ].join('\n');
     expect(ownFrames(stack)).toEqual([
-      '    at [redacted] (/_next/static/chunks/a.js:1:2)',
-      '    at fn (/_next/static/chunks/page-[redacted].js:3:4)',
+      '    at [token] (/_next/static/chunks/a.js:1:2)',
+      '    at [path]:1:2',
+      '    at [path]:3:4',
+      '    at f# (/_next/static/chunks/0gy1dczh8t-w0.js:5:6)',
+      '    at /_next/static/chunks/app/sign-in/[address]/page-0123abcd.js:7:8',
     ]);
+    expect(ownFrames(stack).join('\n')).not.toMatch(/jane|example|A1b2/);
   });
 
   it('does not carry the error message or a function name that is not an identifier', () => {
@@ -149,9 +166,10 @@ describe('cleanFrames', () => {
       cleanFrames([
         '    at /_next/static/chunks/jane@example.com.js:1:2',
         `    at ${'A1b2'.repeat(10)} (/_next/static/chunks/a.js:1:2)`,
-        '    at fn (/_next/static/chunks/page-1234567.js:3:4)',
+        '    at /_next/static/chunks/jane%40example.com.js:3:4',
+        '    at jane%40example (/_next/static/chunks/a.js:5:6)',
       ]),
-    ).toEqual(['    at [redacted] (/_next/static/chunks/a.js:1:2)', '    at fn (/_next/static/chunks/page-[redacted].js:3:4)']);
+    ).toEqual(['    at [path]:1:2', '    at [token] (/_next/static/chunks/a.js:1:2)', '    at [path]:3:4']);
   });
 
   it('gives the server back exactly what the browser built', () => {
@@ -167,6 +185,7 @@ describe('errorName, routePattern, browserFamily', () => {
     expect(errorName('TypeError')).toBe('TypeError');
     expect(errorName(EMAIL)).toBe('Error');
     expect(errorName('A1b2'.repeat(10))).toBe('Error');
+    expect(errorName('a'.repeat(40))).toBe('Error');
     expect(errorName('')).toBe('Error');
     expect(errorName(undefined)).toBe('Error');
   });

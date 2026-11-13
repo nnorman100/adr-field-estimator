@@ -116,7 +116,7 @@ describe('POST /api/client-errors: what it writes', () => {
     const [event] = events();
     expect(event).toMatchObject({
       context: { httpRequest: { url: 'unknown' } },
-      message: expect.stringMatching(/^Error: failed for \[redacted\]/) as string,
+      message: expect.stringMatching(/^Error: failed for \[email\]/) as string,
     });
     expect((event as { message: string }).message).toContain('    at fn (/_next/static/chunks/ok.js:5:6)');
   });
@@ -132,7 +132,23 @@ describe('POST /api/client-errors: what it writes', () => {
     ]);
     const text = lines.join('');
     expect(text).not.toMatch(/A1b2C3d4|123 Main|jane|example\.com/);
-    expect((events()[0] as { message: string }).message).toBe('Error: Failed at [redacted]\n    at [redacted] (/_next/static/chunks/ok.js:5:6)');
+    expect((events()[0] as { message: string }).message).toBe(
+      'Error: Failed at # Main Street\n    at [path]:1:2\n    at [token] (/_next/static/chunks/ok.js:5:6)',
+    );
+  });
+
+  it('scrubs a short phone number, a short coordinate and a percent-encoded email in a script path', async () => {
+    await send([
+      report({
+        message: 'call 555-0100 at latitude 34.052',
+        stack: ['    at /_next/static/chunks/jane%40example.com.js:1:2', '    at jane%40example (/_next/static/chunks/ok.js:5:6)'],
+      }),
+    ]);
+    const text = lines.join('');
+    expect(text).not.toMatch(/555|0100|34\.052|jane|example/);
+    expect((events()[0] as { message: string }).message).toBe(
+      'TypeError: call #-# at latitude #.#\n    at [path]:1:2',
+    );
   });
 
   it('cuts a long message to 300 characters', async () => {

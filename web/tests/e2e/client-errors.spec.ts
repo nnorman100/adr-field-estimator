@@ -28,7 +28,8 @@ function watch(page: Page) {
   return exchanges;
 }
 
-const markerFor = (name: string, testInfo: TestInfo) => `${name}-${testInfo.project.name}-r${testInfo.retry}`;
+// Short words with no digits, which the scrub leaves as they are.
+const markerFor = (name: string, testInfo: TestInfo) => `${name} ${testInfo.project.name} try ${'abcdefghij'.charAt(testInfo.retry)}`;
 
 // Throws one error from a timer and rejects one promise nobody handles, as a broken page would.
 async function breakThePage(page: Page, marker: string) {

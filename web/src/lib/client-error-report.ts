@@ -4,12 +4,11 @@
 // sides cannot drift: nothing here touches `window`, `process` or any import.
 //
 // A report holds only:
-//   - the error NAME, if it is an identifier that the scrub rules leave alone;
-//   - the MESSAGE, scrubbed (emails, tokens, street addresses, coordinates, phone numbers, long digit
-//     runs, URL query strings) and cut to 300 characters;
-//   - stack FRAMES from the app's own scripts (/_next/static/...) as path, line and column, never the
-//     page address or another site's script, with the same rules applied to the function name and
-//     the path;
+//   - the error NAME, scrubbed, if it is still an identifier;
+//   - the MESSAGE, scrubbed and cut to 300 characters;
+//   - stack FRAMES from the app's own scripts (/_next/static/...): the function name, scrubbed, the
+//     line and column, and the path only if it has the shape of the app's own bundle (otherwise
+//     [path]); never the page address or another site's script;
 //   - the route PATTERN of the page (/sign-in/[address]), never the address itself;
 //   - the browser FAMILY, one word.
 // Nothing about the person, company, job or address (hard rule 6).
@@ -59,54 +58,67 @@ export function isKnownRoute(route: string): boolean {
   return route === 'unknown' || CLIENT_ROUTES.includes(route);
 }
 
-const REDACTED = '[redacted]';
-// Order matters: a coordinate pair goes before the phone and digit-run rules, which would cut it in half.
-const MESSAGE_RULES: RegExp[] = [
-  /[^\s@]+@[^\s@]+\.[^\s@]+/g, // email address
-  /\bBearer\s+\S+/gi, // authorization value
-  /\b[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}\b/g, // JWT-shaped token
-  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, // id
-  /[A-Za-z0-9_\-+=]{32,}/g, // any other long unbroken token or digest
-  /-?\d{1,3}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}/g, // latitude, longitude pair
-  /\b\d{1,6}\s+(?:[A-Za-z0-9.'-]+\s+){0,4}?(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl|circle|cir|parkway|pkwy|highway|hwy|terrace|ter|trail|trl)\b\.?/gi, // street address
-  /\+?\d[\d ().-]{7,}\d/g, // phone number or other long number group
-  /-?\d{1,3}\.\d{4,}/g, // a single coordinate
-  /\d{6,}/g, // any remaining long digit run
-];
+// The scrub is an allowlist, not a list of what personal data looks like: after percent-decoding,
+// every run of digits becomes #, anything with an @ becomes [email], and any run of 20 or more token
+// characters (or a bearer value) becomes [token], so a phone number, a coordinate, a house number, an
+// id, an email or a key cannot come through whatever its shape. A URL's query string goes too.
+const MAX_INPUT = 4 * MAX_MESSAGE;
+const MAX_DECODES = 4;
 
-function redact(text: string): string {
-  // A URL's query string and fragment go first, whole: they are where tokens travel.
-  let out = text.replace(/[?#]\S+/g, '');
-  for (const rule of MESSAGE_RULES) out = out.replace(rule, REDACTED);
+function decoded(text: string): string {
+  let out = text;
+  for (let i = 0; i < MAX_DECODES && /%[0-9A-Fa-f]{2}/.test(out); i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(out);
+    } catch {
+      next = out.replace(/%[0-9A-Fa-f]{2}/g, (hex) => String.fromCharCode(parseInt(hex.slice(1), 16)));
+    }
+    if (next === out) break;
+    out = next;
+  }
   return out;
 }
 
+function scrubText(text: string): string {
+  const bounded = text.length > MAX_INPUT ? text.slice(0, MAX_INPUT).replace(/\S*$/, '') : text;
+  return decoded(bounded)
+    .replace(/\?\S+/g, '')
+    .replace(/\S*(?:@|%40)\S*/gi, '[email]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [token]')
+    .replace(/[A-Za-z0-9+/=_-]{20,}/g, '[token]')
+    .replace(/\d+/g, '#');
+}
+
 export function scrubMessage(text: string): string {
-  return redact(typeof text === 'string' ? text : '').replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE);
+  return scrubText(typeof text === 'string' ? text : '').replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE);
 }
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 export function errorName(name: unknown): string {
-  return typeof name === 'string' && NAME.test(name) && redact(name) === name ? name : 'Error';
+  const clean = typeof name === 'string' ? scrubText(name) : '';
+  return NAME.test(clean) ? clean : 'Error';
 }
 
-const OWN_SCRIPT = '/_next/static/';
 const PATH = String.raw`\/_next\/static\/[\w\-./%~@[\]]{1,150}`;
-const FUNCTION_NAME = /^[\w$.<>[\] ]{1,80}$/;
+// The app's own bundle: /_next/static/, up to four folders (chunks, the build id, or a route's source
+// path such as app/sign-in/[address]), and a hashed chunk name.
+const BUNDLE = /^\/_next\/static\/(?:[A-Za-z0-9_\-[\]]{1,40}\/){1,4}[A-Za-z0-9_\-[\]]{1,80}(?:\._)?\.js$/;
+const OTHER_PATH = '[path]';
+const FUNCTION_NAME = /^[\w$.<>[\] #]{1,80}$/;
 // A frame as found in a browser's stack text: V8 "at fn (url:line:col)", Safari and Firefox
 // "fn@url:line:col". The query a script URL may carry (?dpl=...) is skipped.
 const FRAME = new RegExp(`(${PATH}?\\.js)(?:[?#][^\\s:)]*)?:(\\d{1,7}):(\\d{1,7})`);
 // The one shape a stored frame has, V8-style, which is what Error Reporting reads for JavaScript.
-const CANONICAL = new RegExp(`^ {4}at (?:([\\w$.<>[\\] ]{1,80}) \\((${PATH}\\.js):(\\d{1,7}):(\\d{1,7})\\)|(${PATH}\\.js):(\\d{1,7}):(\\d{1,7}))$`);
+const WHERE = String.raw`(${PATH}\.js|\[path\]):(\d{1,7}):(\d{1,7})`;
+const CANONICAL = new RegExp(`^ {4}at (?:([\\w$.<>[\\] #]{1,80}) \\(${WHERE}\\)|${WHERE})$`);
 
-// The canonical frame, with the scrub rules applied to the function name and the path. A path that
-// no longer names one of the app's own scripts once scrubbed is dropped.
-function canonicalFrame(fn: string, path: string, line: string, column: string): string | null {
-  const script = redact(path);
-  if (!script.startsWith(OWN_SCRIPT)) return null;
-  const name = redact(fn);
-  const where = `${script}:${line}:${column}`;
+// The canonical frame: the function name scrubbed, the line and column, and the path if it is the
+// app's own bundle.
+function canonicalFrame(fn: string, path: string, line: string, column: string): string {
+  const name = scrubText(fn);
+  const where = `${BUNDLE.test(path) ? path : OTHER_PATH}:${line}:${column}`;
   return FUNCTION_NAME.test(name) ? `    at ${name} (${where})` : `    at ${where}`;
 }
 
@@ -137,8 +149,7 @@ export function cleanFrames(lines: readonly string[]): string[] {
   const out: string[] = [];
   for (const line of lines) {
     const found = CANONICAL.exec(line);
-    const frame = found && canonicalFrame(found[1] ?? '', (found[2] ?? found[5])!, (found[3] ?? found[6])!, (found[4] ?? found[7])!);
-    if (frame) out.push(frame);
+    if (found) out.push(canonicalFrame(found[1] ?? '', (found[2] ?? found[5])!, (found[3] ?? found[6])!, (found[4] ?? found[7])!));
     if (out.length >= MAX_FRAMES) break;
   }
   return out;
