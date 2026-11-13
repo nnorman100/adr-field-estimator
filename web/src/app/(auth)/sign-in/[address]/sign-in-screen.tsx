@@ -22,6 +22,7 @@ import { saveMe } from '@/lib/field/ds-me';
 import { signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
+import { offersCompanyScreen } from '@/lib/profile/screen';
 import { offersTeamScreen } from '@/lib/team/screen';
 import { FocusedPanel } from '../../focused-panel';
 import { Panel } from '../../panel';
@@ -312,6 +313,11 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
             {offersTeamScreen(outcome.role) ? (
               <Button asChild>
                 <Link href={`/sign-in/${address}/team`}>Team and invitations</Link>
+              </Button>
+            ) : null}
+            {offersCompanyScreen(outcome.role) ? (
+              <Button asChild>
+                <Link href={`/sign-in/${address}/company`}>Company settings</Link>
               </Button>
             ) : null}
             {signOutButton}

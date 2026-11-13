@@ -28,7 +28,7 @@ Summary of who may do what. **Source of truth in code:** the `CAPABILITIES` dict
 | `live` | Live walkthrough | yes | yes | no |
 | `jobs_archive` | Archive and restore unsigned drafts | yes | no | no |
 | `team_manage` | Team and invitations (the server uses this key only to choose the full team list; invitations and member changes require the owner role) | yes | no | no |
-| `profile_manage` | Company profile and logo (browser key only: the server allows `PUT /api/companies/{id}` to the company's owner role, not by this key) | yes | no | no |
+| `profile_manage` | Company profile and logo (old app: browser key only, the server allows `PUT /api/companies/{id}` to the company's owner role, not by this key; rebuilt app: the server checks this key, see "Company profile API" below) | yes | no | no |
 | `delivery_manage` | Company delivery settings | yes | no | no |
 | `delivery_resend` | Resend signed documents | yes | no | yes |
 | `retention_manage` | Read and change how many days each kind of record is kept (invitations, activity log, drying-watch history, photos on archived drafts); see `docs/company-workspaces.md`, Record retention. Any active member's app may start the company's daily deletion run, which honours only the owner's setting and returns counts | yes | no | no |
@@ -71,6 +71,18 @@ Every route is `requireFlag('price_books', ...)`: a company without the flag ans
 A refused request writes nothing, audit row included. Audit details hold ids, sequence numbers and counts, never a price or a reason.
 
 The import (S4-7) reads a CSV price list in the export's own columns and changes prices only: a line is matched to one price of the working copy by item, row, room type, band limit and tier, and its name, unit, trade, group and on/off columns must still match the working copy (those change in the editor). A cell starting with `=`, `+`, `-`, `@` or a tab is refused; every refusal names the line and column and never repeats the cell.
+
+## Company profile API (rebuilt app, S5a-4)
+The five lines the four documents print: address, phone, email, licence and sign-off. They live on the company's own row (migration 0010, no new migration). The company name is read-only here: the platform operator sets it when the company is made. The logo is not stored yet (decision J9: text letterhead until then). Both routes are `memberRoute`s and check, in this order: the company in the path is the caller's own (else 404, as for any other company's id), the caller holds `profile_manage` (else 403, before the body is read), and only then the body (Zod, strict: a body that names any other field, including the name or status, is a 400). An estimator or office user is refused on the read as well as the write, so nothing of the profile reaches their phone; the Company settings screen does not request it for them.
+
+| Route | Key | Writes |
+|---|---|---|
+| `GET /api/companies/{id}/profile` | `profile_manage` | nothing; the answer also holds the profile's `revision` and lists what the engine's setup check says is missing (company name, address, CSLB licence, document sign-off) |
+| `PUT /api/companies/{id}/profile` | `profile_manage` | the five profile columns of the company's own row, only while the `revision` the save names is still the stored one; audit `company_profile_saved` holding the actor, the change id and the number of fields changed, never a value, and none when nothing changed |
+
+An empty line means not set. The limits are those of migration 0010's check constraints (address 500, phone 80, email 254, licence 80, sign-off 150 characters; no control characters; the email is stored in lower case). A platform operator cannot change a company's profile (the 0010 trigger), and no support action does.
+
+Every save carries the `revision` it was based on (the company row's `updated_at`, as the read returns it; no new column) and a `changeId` made on the phone (a uuid). A save that asks for exactly what is stored answers 200 with the current revision, so a retry after a lost answer is not a conflict. Otherwise, a save whose revision is no longer the stored one writes nothing and answers 409 `stale_revision` with the current profile, and the Company settings screen shows that profile and tells the owner it was changed somewhere else.
 
 ## Non-role access
 - **Anonymous**: `GET /health` and `GET /api/health` (status, schema version, release version, source commit). `GET /api/health/details` needs a signed-in member. In the rebuilt app (`web/`), also `GET /api/sign-in/{address}`: a company's name and sign-in tenant for its sign-in page, both public; an unknown, inactive, tenant-less or malformed address answers 404.

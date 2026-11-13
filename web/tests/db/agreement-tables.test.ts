@@ -143,7 +143,12 @@ describe('job price pins', () => {
   it('gives two first pins at once for one job one success, never two with the same number', async () => {
     const job = await jobA();
     const v = await seedVersion(h.admin, h.seed.a, actorA());
-    const results = await Promise.all([1, 2].map(() => errorCode(as(h.seed.a, (tx) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() })))));
+    // The first pin is written and held uncommitted, so the second starts while it is open (it sees no
+    // pin yet, waits on the job, and is refused on the number once the first commits). Started
+    // together, the second could begin after the first committed and be refused by the sequence check.
+    const first = heldOpen((tx) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() }));
+    await first.written;
+    const results = await Promise.all([errorCode(first.done), errorCode(as(h.seed.a, (tx) => insertPin(tx, { company: h.seed.a, job: job.id, version: v.id, actor: actorA() })))]);
     expect(results.filter((code) => code === undefined)).toHaveLength(1);
     expect(results.filter((code) => code === UNIQUE_VIOLATION)).toHaveLength(1);
     expect(await h.admin`SELECT count(*)::int AS n FROM job_price_pins`).toEqual([{ n: 1 }]);
