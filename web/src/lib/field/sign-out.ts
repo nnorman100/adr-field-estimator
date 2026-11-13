@@ -3,7 +3,7 @@ import type { BrowserSignInConfig } from '@/lib/config';
 import { signOutCompany } from '@/lib/firebase-client';
 import { discardFieldWork, stopFieldClient } from '@/lib/field-db';
 import { forgetMe, saveMe } from './ds-me';
-import { mayHaveUnsent } from './unsent';
+import { unsentWork } from './unsent';
 
 // Ends this company's sign-in on the phone (S6-2). The field shell must not start from it again, so
 // its ds-me row goes first. Throws, and the person stays signed in with the row in place, when the
@@ -26,11 +26,12 @@ export async function signOutOfCompany(auth: Auth, tenantId: string): Promise<vo
   }
 }
 
-// Whether the signed-in person may have field edits on this phone that the server does not have
-// yet, in this company only: the sign-out button then asks to keep or discard them.
-export function hasUnsentWork(auth: Auth, tenantId: string): boolean {
+// Whether the signed-in person may have field edits that the server does not have yet, in this
+// company only: 'kept' on this phone (the sign-out button then asks to keep or discard them), or
+// only in a window's memory, which nothing on this page can keep.
+export function hasUnsentWork(auth: Auth, tenantId: string): 'none' | 'kept' | 'memory' {
   const user = auth.currentUser;
-  return user !== null && mayHaveUnsent(tenantId, user.uid);
+  return user === null ? 'none' : unsentWork(tenantId, user.uid);
 }
 
 export type SignOutResult = 'signed-out' | 'elsewhere' | 'failed';

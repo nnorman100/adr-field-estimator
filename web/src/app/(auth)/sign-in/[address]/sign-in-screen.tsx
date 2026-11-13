@@ -19,6 +19,7 @@ import {
   type SecondStepChallenge,
 } from '@/lib/firebase-client';
 import { saveMe } from '@/lib/field/ds-me';
+import { meFacts } from '@/lib/field/sync-gate';
 import { hasUnsentWork, signOutDiscarding, signOutOfCompany } from '@/lib/field/sign-out';
 import { endsSession, errorCode, signInErrorMessage, type MeOutcome } from '@/lib/sign-in/outcome';
 import { rememberSignInAddress } from '@/lib/sign-in/remember';
@@ -115,7 +116,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const check = useCallback(
     async (user: User, fresh = false) => {
       setScreen({ name: 'checking' });
-      const outcome = await checkSignIn(user, fresh);
+      const { outcome, body } = await checkSignIn(user, fresh);
       const authenticators = outcome.kind === 'second-step' ? await authenticatorCount(user) : 0;
       const current = authRef.current?.currentUser ?? null;
       if (current !== user) {
@@ -141,10 +142,24 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
         return;
       }
       // The field shell starts from this row with no signal (S6-2), so it is saved before the screen
-      // that opens the shell; a phone that cannot keep it still signs in, and the shell says it is
-      // not saved.
+      // that opens the shell, with what the server said and when the person signed in, for the
+      // offline `me` read (S6-3); a phone that cannot keep it still signs in, and the shell says it
+      // is not saved.
       if (outcome.kind === 'signed-in') {
-        await saveMe({ tenantId, uid: user.uid, companyName: outcome.companyName, address, config });
+        const authTime = await user.getIdTokenResult().then(
+          (result) => Date.parse(result.authTime),
+          () => NaN,
+        );
+        await saveMe({
+          tenantId,
+          uid: user.uid,
+          companyName: outcome.companyName,
+          address,
+          config,
+          role: outcome.role,
+          ...(meFacts(body) ?? {}),
+          ...(Number.isFinite(authTime) ? { authTime } : {}),
+        });
         if ((authRef.current?.currentUser ?? null) !== user) return;
       }
       setScreen({ name: 'outcome', outcome: outcome as Extract<Screen, { name: 'outcome' }>['outcome'] });
@@ -191,9 +206,10 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
   const auth = () => authRef.current!;
   const currentUser = () => authRef.current?.currentUser ?? null;
 
-  // The person's own sign-out (S6-3). With work on this phone the server does not have yet, it asks
-  // to keep or discard it; otherwise, and on Discard, this person's cache for this company goes too.
-  // Kept work stays for the same person's next sign-in here (D7).
+  // The person's own sign-out (S6-3). With work kept on this phone that the server does not have
+  // yet, it asks to keep or discard it; otherwise, and on Discard, this person's cache for this
+  // company goes too. Kept work stays for the same person's next sign-in here (D7). Work made only
+  // in a window's memory (Online only) is not kept by anything, so nothing is promised for it.
   const signOutChosen = (choice: UnsentChoice) =>
     run(async () => {
       if (choice === 'keep') return endSession('You are signed out. Your unsent work is kept on this phone.');
@@ -210,7 +226,7 @@ function CompanySignIn({ address, companyName, tenantId, invitationId, config }:
       <Button
         variant="outline"
         disabled={busy}
-        onClick={() => (hasUnsentWork(auth(), tenantId) ? setAskUnsent(true) : void signOutChosen('discard'))}
+        onClick={() => (hasUnsentWork(auth(), tenantId) === 'kept' ? setAskUnsent(true) : void signOutChosen('discard'))}
       >
         Sign out
       </Button>

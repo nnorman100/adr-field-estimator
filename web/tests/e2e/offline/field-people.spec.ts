@@ -82,6 +82,13 @@ test.describe('people and companies on one phone (S6-3)', () => {
     expect(await phone.call('saveMe', person)).toBe(true);
     expect(await phone.call('updateMe', person)).toBe(true);
     expect(await phone.call('latestMe')).toBe(`${world.tenantId}/${world.owner.uid}`);
+    // A later save that lacks a fact keeps the one saved before; one that has it replaces it.
+    const facts = { role: 'estimator', companyId: 'company-x', capabilities: ['scope'], authTime: 1_000 };
+    expect(await phone.call('saveMe', person, facts)).toBe(true);
+    expect(await phone.call('saveMe', person)).toBe(true);
+    expect(await phone.call('latestFacts')).toEqual(facts);
+    expect(await phone.call('saveMe', person, { authTime: 2_000 })).toBe(true);
+    expect(await phone.call('latestFacts')).toEqual({ ...facts, authTime: 2_000 });
     await context.close();
   });
 

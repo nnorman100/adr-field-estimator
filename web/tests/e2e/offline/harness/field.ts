@@ -133,11 +133,16 @@ const f = {
 
   // The saved sign-in rows (ds-me): the sign-in page's save, the field check's update, and which
   // (tenant/person) row the shell would start from.
-  saveMe: (person: Person) => saveMe(savedRow(person)),
+  saveMe: (person: Person, facts: Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> = {}) => saveMe({ ...savedRow(person), ...facts }),
   updateMe: (person: Person) => updateMe(savedRow(person)),
   async latestMe(): Promise<string | null> {
     const me = await readLatestMe();
     return me === null || me === 'unavailable' ? null : `${me.tenantId}/${me.uid}`;
+  },
+  async latestFacts(): Promise<Pick<DsMe, 'role' | 'companyId' | 'capabilities' | 'authTime'> | null> {
+    const me = await readLatestMe();
+    if (me === null || me === 'unavailable') return null;
+    return { role: me.role, companyId: me.companyId, capabilities: me.capabilities, authTime: me.authTime };
   },
 
   // A fake App Check provider in field-db.ts's seam (TC-7): 'expired' always fails, 'slow' never

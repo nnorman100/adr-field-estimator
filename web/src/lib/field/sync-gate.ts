@@ -12,7 +12,9 @@ import { meOutcome, type MeOutcome } from '@/lib/sign-in/outcome';
 // Any refusal (member disabled, company inactive, sign in again, second step, ...) leaves the
 // network off and the unsent work untouched and locked (owner decisions D7 and O5): the work is
 // sent if the same person gets through again, and removed only by an explicit Discard or after 30
-// days locked. With no answer at all the phone works offline from `ds-me`.
+// days locked. Disabling a member also signs them out everywhere, so a phone's old sign-in stays
+// refused after the owner turns them back on: the person signs in again, and the work is sent then.
+// With no answer at all the phone works offline from `ds-me`.
 //
 // App Check (TC-7, docs/plans/TC.md): once the access record is current, the gate gets a fresh
 // App Check token before the network goes on. In monitor mode a failure or a 5-second wait does not
@@ -44,24 +46,28 @@ function field(value: unknown, key: string): unknown {
   return value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
 }
 
+// The company id and capabilities of a 200 from GET /api/me, or null when it has another shape.
+export function meFacts(body: unknown): { companyId: string; capabilities: string[] } | null {
+  const companyId = field(field(body, 'company'), 'id');
+  const capabilities = field(body, 'capabilities');
+  if (typeof companyId !== 'string' || !Array.isArray(capabilities) || !capabilities.every((c) => typeof c === 'string')) {
+    return null;
+  }
+  return { companyId, capabilities: capabilities as string[] };
+}
+
 // One answer of GET /api/me, judged. `now` is milliseconds since 1970.
 export function judgeMe(answer: MeAnswer, now: number): Verdict {
   if (answer.status === 0) return { kind: 'offline' };
   const outcome = meOutcome(answer.status, answer.body);
   if (outcome.kind === 'unavailable') return { kind: 'offline' };
   if (outcome.kind !== 'signed-in') return { kind: 'locked', reason: outcome.kind };
-  const companyId = field(field(answer.body, 'company'), 'id');
-  const capabilities = field(answer.body, 'capabilities');
+  const facts = meFacts(answer.body);
   const expires = field(answer.body, 'fieldAccessExpiresAt');
   const expiresAt = typeof expires === 'string' ? Date.parse(expires) : NaN;
-  if (typeof companyId !== 'string' || !Array.isArray(capabilities) || !capabilities.every((c) => typeof c === 'string')) {
-    return { kind: 'offline' };
-  }
+  if (!facts) return { kind: 'offline' };
   if (!Number.isFinite(expiresAt) || !accessCurrent(expiresAt, now)) return { kind: 'renewing' };
-  return {
-    kind: 'open',
-    facts: { companyId, companyName: outcome.companyName, role: outcome.role, capabilities: capabilities as string[], expiresAt },
-  };
+  return { kind: 'open', facts: { ...facts, companyName: outcome.companyName, role: outcome.role, expiresAt } };
 }
 
 // The offline `me` read (D7): a sign-in the phone saved stands in for the server while there is no
@@ -112,6 +118,8 @@ export class SyncGate {
   private stopped = false;
   private renewWait = RENEW_FIRST_MS;
   private networkOn = false;
+  // Bumped when the signal goes or the gate stops: an answer asked for before then is not acted on.
+  private epoch = 0;
   // App Check tokens that would not come in monitor mode, counted on the phone only (no telemetry).
   appCheckMisses = 0;
 
@@ -133,6 +141,7 @@ export class SyncGate {
 
   stop(): void {
     this.stopped = true;
+    this.epoch += 1;
     clearTimeout(this.timer);
     clearTimeout(this.deadline);
   }
@@ -152,6 +161,7 @@ export class SyncGate {
   // let queued writes out ahead of a renewal.
   async networkLost(): Promise<void> {
     if (this.stopped) return;
+    this.epoch += 1;
     await this.closeNetwork();
     if (this.state.kind === 'open') this.set({ kind: 'offline' });
   }
@@ -212,17 +222,19 @@ export class SyncGate {
     if (this.stopped || this.running) return;
     this.running = true;
     try {
+      const epoch = this.epoch;
       const session = this.deps.session?.();
       const stale = () => {
-        if (this.deps.session?.() === session) return false;
+        if (this.stopped) return true;
+        if (this.epoch === epoch && this.deps.session?.() === session) return false;
         this.again = true;
         return true;
       };
       let verdict = judgeMe(await this.deps.ask(), this.now());
-      if (this.stopped || stale()) return;
+      if (stale()) return;
       if (verdict.kind === 'open') {
         const passes = await this.appCheckPasses();
-        if (this.stopped || stale()) return;
+        if (stale()) return;
         if (!passes) {
           this.renewWait = RENEW_FIRST_MS;
           this.set({ kind: 'checking-phone' });
@@ -238,6 +250,7 @@ export class SyncGate {
       }
       if (verdict.kind === 'renewing') {
         await this.closeNetwork();
+        if (stale()) return;
         this.set({ kind: 'renewing' });
         this.later(this.renewWait);
         this.renewWait = Math.min(this.renewWait * 2, RENEW_MAX_MS);
@@ -246,6 +259,7 @@ export class SyncGate {
       this.renewWait = RENEW_FIRST_MS;
       if (verdict.kind === 'locked') {
         await this.closeNetwork();
+        if (stale()) return;
         this.set(verdict);
         // A disabled member or an inactive company can be let back in by the owner; the other
         // refusals need the person to sign in again, which starts a new gate.
@@ -253,8 +267,12 @@ export class SyncGate {
         return;
       }
       if (!this.networkOn) {
-        await this.deps.enableNetwork();
         this.networkOn = true;
+        await this.deps.enableNetwork();
+      }
+      if (stale()) {
+        await this.closeNetwork().catch(() => undefined);
+        return;
       }
       this.set({ kind: 'open', facts: verdict.facts });
       this.closeAt(verdict.facts.expiresAt);

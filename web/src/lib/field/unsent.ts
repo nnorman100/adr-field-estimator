@@ -41,6 +41,9 @@ export type UnsentMark = {
   lockedSince: number | null;
   // Which refusal it was, while lockedSince is set.
   lockedReason?: LockReason;
+  // Every unsent write was made in a memory cache (Online only, an iPhone browser tab, the
+  // fallback): nothing of it is kept once that window closes.
+  memoryOnly?: true;
 };
 
 const EMPTY: UnsentMark = { writes: 0, unsentSince: null, lockedSince: null };
@@ -54,7 +57,9 @@ function parse(raw: string | null): UnsentMark | null {
     const time = (field: unknown) => (typeof field === 'number' && Number.isFinite(field) ? field : null);
     if (typeof value.writes !== 'number' || !Number.isSafeInteger(value.writes)) return null;
     const lockedSince = time(value.lockedSince);
-    const mark: UnsentMark = { writes: value.writes, unsentSince: time(value.unsentSince), lockedSince };
+    const unsentSince = time(value.unsentSince);
+    const mark: UnsentMark = { writes: value.writes, unsentSince, lockedSince };
+    if (unsentSince !== null && value.memoryOnly === true) mark.memoryOnly = true;
     if (lockedSince !== null) {
       const reason = value.lockedReason;
       mark.lockedReason = typeof reason === 'string' && Object.hasOwn(LOCK_REASONS, reason) ? (reason as LockReason) : 'sign-in-again';
@@ -78,8 +83,16 @@ export function readUnsent(tenantId: string, uid: string): UnsentMark | 'unreada
 // True when the person may have unsent work: a write not yet known to be acknowledged, or a mark
 // that cannot be read.
 export function mayHaveUnsent(tenantId: string, uid: string): boolean {
+  return unsentWork(tenantId, uid) !== 'none';
+}
+
+// Where the person's unsent work is: 'kept' on this phone (or a mark that cannot be read), only in
+// the memory of a window ('memory'), or 'none'.
+export function unsentWork(tenantId: string, uid: string): 'none' | 'kept' | 'memory' {
   const mark = readUnsent(tenantId, uid);
-  return mark === 'unreadable' || mark.unsentSince !== null;
+  if (mark === 'unreadable') return 'kept';
+  if (mark.unsentSince === null) return 'none';
+  return mark.memoryOnly ? 'memory' : 'kept';
 }
 
 function change(tenantId: string, uid: string, update: (mark: UnsentMark) => UnsentMark): boolean {
@@ -95,11 +108,12 @@ function change(tenantId: string, uid: string, update: (mark: UnsentMark) => Uns
 
 // Records a write about to be made. Returns the write count to pass to settled(), or null when the
 // mark could not be saved (the write must then not be made: nothing would say it is unsent).
-export function noteWrite(tenantId: string, uid: string, now = Date.now()): number | null {
+export function noteWrite(tenantId: string, uid: string, now = Date.now(), inMemory = false): number | null {
   let writes: number | null = null;
-  const saved = change(tenantId, uid, (mark) => {
+  const saved = change(tenantId, uid, ({ memoryOnly, ...mark }) => {
     writes = mark.writes + 1;
-    return { ...mark, writes, unsentSince: mark.unsentSince ?? now };
+    const stillMemoryOnly = inMemory && (mark.unsentSince === null || memoryOnly === true);
+    return { ...mark, writes, unsentSince: mark.unsentSince ?? now, ...(stillMemoryOnly ? { memoryOnly: true as const } : {}) };
   });
   return saved ? writes : null;
 }
@@ -113,7 +127,9 @@ export function writesNow(tenantId: string, uid: string): number | null {
 // Every write made up to `writes` has been acknowledged: clears the mark, unless a later write has
 // been made since (it may still be waiting).
 export function settled(tenantId: string, uid: string, writes: number): void {
-  change(tenantId, uid, (mark) => (mark.writes === writes ? { ...mark, unsentSince: null } : mark));
+  change(tenantId, uid, ({ memoryOnly, ...mark }) =>
+    mark.writes === writes ? { ...mark, unsentSince: null } : { ...mark, ...(memoryOnly ? { memoryOnly } : {}) },
+  );
 }
 
 // The server refused this person (O5). Returns when the refusals began, or null when the lock could

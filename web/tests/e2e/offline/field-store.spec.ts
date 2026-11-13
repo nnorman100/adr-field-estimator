@@ -193,6 +193,61 @@ test.describe('the field shell\'s phone storage (S6-3)', () => {
     await context.setOffline(false);
   });
 
+  test('an offline sign-in stops standing in at the role\'s limit while the shell stays open (day 29 to day 31)', async ({ context, page, lane }) => {
+    const world = await seedCompany();
+    const harness = await FieldPhone.open(context, lane);
+    await harness.signIn(world, world.owner);
+    await harness.page.close();
+    lane.drop('/api/me');
+    await page.clock.install();
+    await openShell(page, lane, world, world.owner, 29);
+    await expect(page.getByText('Your jobs will show here.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toHaveCount(0);
+    // Two days later, the same window still open with no signal: an estimator's 30 days are up.
+    await page.clock.fastForward('48:00:00');
+    await expect(page.getByRole('heading', { name: text.ONLINE_ONCE_TITLE })).toBeVisible();
+    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+  });
+
+  test('a browser without the window lock gets no field client and says it cannot keep work offline', async ({ page, lane }) => {
+    const world = await seedCompany();
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'locks', { get: () => undefined, configurable: true });
+    });
+    await openShell(page, lane, world, world.owner);
+    await expect(page.getByRole('heading', { name: text.NO_LOCK_TITLE })).toBeVisible();
+    await expect(page.getByText(NOT_SAVED_TEXT)).toBeVisible();
+    await expect(page.getByText('Your jobs will show here.')).toHaveCount(0);
+    await expect(page.getByText(text.LOCKED_SIGN_IN_TEXT)).toHaveCount(0);
+  });
+
+  test('with unsent work only in memory, leaving the shell asks first; with none, it does not', async ({ page, lane }) => {
+    const world = await seedCompany();
+    await page.goto(`${lane.appUrl}/field`);
+    await saveRow(page, lane, world, world.owner, 'Field Store Test');
+    await setLocal(page, keepKey(world.tenantId), 'online-only');
+    await page.reload();
+    await expect(page.getByText(text.ONLINE_ONLY_NOTICE)).toBeVisible();
+    // A user gesture, which browsers want before they ask on leaving.
+    await page.getByText(text.ONLINE_ONLY_NOTICE).click();
+    const asked: string[] = [];
+    page.on('dialog', (dialog) => {
+      asked.push(dialog.type());
+      void dialog.accept();
+    });
+    const leavingAsks = () =>
+      page.evaluate(() => {
+        const leaving = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(leaving);
+        return leaving.defaultPrevented;
+      });
+    expect(await leavingAsks()).toBe(false);
+    await setLocal(page, unsentKey(world.tenantId, world.owner.uid), JSON.stringify({ writes: 1, unsentSince: Date.now(), lockedSince: null, memoryOnly: true }));
+    expect(await leavingAsks()).toBe(true);
+    await page.close({ runBeforeUnload: true });
+    await expect.poll(() => asked).toEqual(['beforeunload']);
+  });
+
   test('says what the phone waits for: no signal with an old sign-in, a renewal, a refusal', async ({ context, page, lane }) => {
     const world = await seedCompany();
     // Signed in on this phone (the company's own sign-in, as the sign-in page leaves it).

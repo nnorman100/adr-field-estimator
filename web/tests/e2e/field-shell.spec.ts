@@ -5,6 +5,7 @@ import { PROBE_PATH } from '../../src/app/field/connection';
 import { HOME_SCREEN_HELP, HOME_SCREEN_TITLE } from '../../src/app/field/home-screen-text';
 import { DISCARD_LABEL, KEEP_LABEL, UNSENT_TITLE } from '../../src/app/(auth)/sign-in/[address]/unsent-sign-out-dialog';
 import { ME_DB, ME_DB_VERSION, ME_STORE } from '../../src/lib/field/ds-me';
+import { offlineSignInValid } from '../../src/lib/field/sync-gate';
 import { unsentKey } from '../../src/lib/field/unsent';
 import { PASSWORD, readSeed, type ProjectSeed } from './sign-in/seed';
 
@@ -114,7 +115,19 @@ test('the sign-in is saved before the field app is offered, and removed before s
 
   const rows = await savedRows(page);
   expect(rows).toHaveLength(1);
-  expect(Object.keys(rows[0]!).sort()).toEqual(['address', 'companyName', 'config', 'key', 'savedAt', 'tenantId', 'uid']);
+  expect(Object.keys(rows[0]!).sort()).toEqual([
+    'address',
+    'authTime',
+    'capabilities',
+    'companyId',
+    'companyName',
+    'config',
+    'key',
+    'role',
+    'savedAt',
+    'tenantId',
+    'uid',
+  ]);
   expect(rows[0]).toMatchObject({ companyName: A, address: 'company-a' });
   expect(JSON.stringify(rows[0])).not.toContain(mine.memberA.email);
 
@@ -302,6 +315,37 @@ test('the "No signal" check reaches the app without its API', async ({ page }) =
   await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
 });
 
+// The rows of ds-me, read straight from the phone's storage.
+function rowsNow(page: Page): Promise<Record<string, unknown>[]> {
+  return page.evaluate(
+    ([db, store]) =>
+      new Promise<Record<string, unknown>[]>((resolve, reject) => {
+        const open = indexedDB.open(db as string);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const rows = open.result.transaction(store as string, 'readonly').objectStore(store as string).getAll();
+          rows.onsuccess = () => {
+            open.result.close();
+            resolve(rows.result as Record<string, unknown>[]);
+          };
+        };
+      }),
+    [ME_DB, ME_STORE] as const,
+  );
+}
+
+// S6-3: the sign-in page saves what the server said and when the person signed in, so a phone
+// signed in and then taken out of signal before the field shell ever opens can work offline.
+test('a sign-in taken offline before the field shell opens can stand in offline', async ({ page, context }) => {
+  await signInAsMemberA(page);
+  await context.setOffline(true);
+  const [row] = await rowsNow(page);
+  expect(row).toMatchObject({ companyName: A, role: expect.any(String), companyId: expect.any(String), capabilities: expect.any(Array) });
+  expect(Math.abs(Date.now() - (row!.authTime as number))).toBeLessThan(5 * 60_000);
+  expect(offlineSignInValid(row as { role?: string; authTime?: number }, Date.now())).toBe(true);
+  await context.setOffline(false);
+});
+
 // S6-3: the person's own sign-out asks first when their field edits for this company have not all
 // reached the server; Keep leaves them for the same person's next sign-in here (D7), Discard
 // removes them. The phone's mark of unsent work is set here as a field edit sets it.
@@ -351,4 +395,14 @@ test('signing out with unsent work asks to keep or discard it', async ({ page })
   await signInAsMemberA(page);
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+
+  // Work made only in a window's memory (Online only) is not kept by anything: nothing is offered
+  // or promised for it.
+  await signInAsMemberA(page);
+  const inMemory = JSON.stringify({ writes: 1, unsentSince: Date.now(), lockedSince: null, memoryOnly: true });
+  await page.evaluate(([key, value]) => window.localStorage.setItem(key!, value!), [mark, inMemory]);
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('heading', { name: `Sign in to ${A}` })).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText('kept on this phone')).toHaveCount(0);
 });

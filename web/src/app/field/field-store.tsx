@@ -10,6 +10,7 @@ import { runFieldSync } from '@/lib/field/field-sync';
 import { askToPersist, keepAnswer, saveKeepAnswer, type KeepAnswer } from '@/lib/field/keep-consent';
 import type { FieldSurface } from '@/lib/field/platform';
 import { offlineSignInValid, type GateState, type SyncGate } from '@/lib/field/sync-gate';
+import { unsentWork } from '@/lib/field/unsent';
 import { holdWindow } from '@/lib/field/window-lock';
 import * as text from './field-store-text';
 
@@ -35,6 +36,8 @@ export function useFieldClient(): FieldContextValue | null {
 type Phase =
   | { kind: 'starting' }
   | { kind: 'one-window' }
+  // No window lock to be had (no Web Locks, or the request refused): no field client at all.
+  | { kind: 'no-lock' }
   | { kind: 'reopen' }
   | { kind: 'ready'; client: FieldClient }
   | { kind: 'removed' };
@@ -103,9 +106,11 @@ export function FieldStore({
   const [answer, setAnswer] = useState<KeepAnswer | null>(() => keepAnswer(me.tenantId));
   const [phase, setPhase] = useState<Phase>({ kind: 'starting' });
   const [gate, setGate] = useState<GateState>({ kind: 'starting' });
-  const [openedOnce, setOpenedOnce] = useState(false);
-  // Offline, with a saved sign-in older than the role's session limit (D7).
-  const [tooOld, setTooOld] = useState(false);
+  // The latest sign-in facts saved for the offline start: the row this shell started from, then
+  // each row saved after an online check let the person in.
+  const [known, setKnown] = useState<DsMe>(me);
+  // The time the saved sign-in's age is judged at: each gate decision, and every minute.
+  const [now, setNow] = useState(() => Date.now());
   const gateRef = useRef<SyncGate | null>(null);
   const hasDatabase = Boolean(me.config.firestoreDatabaseId);
   // An iPhone browser tab keeps nothing for later (G8, D-025): online only, nothing to ask.
@@ -119,8 +124,12 @@ export function FieldStore({
     const person = { tenantId: me.tenantId, uid: me.uid, config: me.config };
     void (async () => {
       const lock = await holdWindow();
-      if (!live) return lock.result === 'elsewhere' ? undefined : lock.release();
-      if (lock.result === 'elsewhere') return setPhase({ kind: 'one-window' });
+      if (!live) return lock.result === 'held' ? lock.release() : undefined;
+      if (lock.result !== 'held') {
+        if (lock.result === 'elsewhere') return setPhase({ kind: 'one-window' });
+        onStorage('not-saved');
+        return setPhase({ kind: 'no-lock' });
+      }
       release = lock.release;
       await mirrorSignIn(person).catch(() => false);
       const started = await startFieldClient(person, cache);
@@ -133,9 +142,9 @@ export function FieldStore({
       gateRef.current = runFieldSync(started.client, me, (event) => {
         if (!live) return;
         if ('removed' in event) return setPhase({ kind: 'removed' });
+        if ('me' in event) return setKnown(event.me);
         setGate(event.state);
-        if (event.state.kind === 'open') setOpenedOnce(true);
-        if (event.state.kind === 'offline') setTooOld(!offlineSignInValid(me, Date.now()));
+        setNow(Date.now());
       });
     })();
     // A sign-out or a new sign-in in this company's Auth while the shell is open: the person app
@@ -166,6 +175,24 @@ export function FieldStore({
     else void current.networkLost();
   }, [reachable]);
 
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(tick);
+  }, []);
+
+  // Edits in a memory cache are gone when the window closes: leaving with any unsent asks first.
+  const inMemory = phase.kind === 'ready' && phase.client.cache === 'memory';
+  useEffect(() => {
+    if (!inMemory) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      if (unsentWork(me.tenantId, me.uid) === 'none') return;
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [inMemory, me.tenantId, me.uid]);
+
   if (!hasDatabase) return <>{children}</>;
   if (surface !== 'ios-tab' && answer === null) {
     return (
@@ -185,6 +212,13 @@ export function FieldStore({
       </Notice>
     );
   }
+  if (phase.kind === 'no-lock') {
+    return (
+      <Notice title={text.NO_LOCK_TITLE}>
+        <p className="text-base">{text.NO_LOCK_TEXT}</p>
+      </Notice>
+    );
+  }
   if (phase.kind === 'reopen') {
     return (
       <Notice title={text.REOPEN_TITLE}>
@@ -201,7 +235,8 @@ export function FieldStore({
   }
   if (phase.kind === 'starting') return <p role="status">Opening your jobs…</p>;
 
-  if (gate.kind === 'offline' && !openedOnce && tooOld) {
+  // With no answer from the server (yet), the saved sign-in stands in only within the role's limit.
+  if ((gate.kind === 'offline' || gate.kind === 'starting') && !offlineSignInValid(known, now)) {
     return (
       <Notice title={text.ONLINE_ONCE_TITLE}>
         <p className="text-base">{text.ONLINE_ONCE_TEXT}</p>
@@ -211,7 +246,7 @@ export function FieldStore({
   const fieldMe: FieldMe =
     gate.kind === 'open'
       ? { companyId: gate.facts.companyId, role: gate.facts.role, capabilities: gate.facts.capabilities }
-      : { companyId: me.companyId ?? null, role: me.role ?? null, capabilities: me.capabilities ?? [] };
+      : { companyId: known.companyId ?? null, role: known.role ?? null, capabilities: known.capabilities ?? [] };
   return (
     <FieldContext.Provider value={{ client: phase.client, me: fieldMe, gate }}>
       <div role="status" className="flex flex-col gap-2">

@@ -213,7 +213,9 @@ export class UnsentMarkNotSaved extends Error {
 }
 
 export function fieldWrite<T>(client: FieldClient, write: (db: Firestore) => Promise<T>): Promise<T> {
-  if (noteWrite(client.person.tenantId, client.person.uid) === null) return Promise.reject(new UnsentMarkNotSaved());
+  if (noteWrite(client.person.tenantId, client.person.uid, Date.now(), client.cache === 'memory') === null) {
+    return Promise.reject(new UnsentMarkNotSaved());
+  }
   const result = write(client.db);
   result.then(
     () => void settle(client).catch(() => undefined),

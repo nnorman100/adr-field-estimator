@@ -18,7 +18,8 @@ import { noteLocked, noteUnlocked, savedLock } from './unsent';
 
 export const LOCKED_LIMIT_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type SyncEvent = { state: GateState } | { removed: true };
+// `me`: the row saved for the next offline start after an online check let the person in.
+export type SyncEvent = { state: GateState } | { removed: true } | { me: DsMe };
 
 export function runFieldSync(
   client: FieldClient,
@@ -76,14 +77,15 @@ export function runFieldSync(
     if (fieldUser(person) !== user) return;
     const { savedAt: _savedAt, ...rest } = row;
     void _savedAt;
-    await updateMe({
+    const next = {
       ...rest,
       companyName: facts.companyName,
       companyId: facts.companyId,
       role: facts.role,
       capabilities: facts.capabilities,
       ...(Number.isFinite(authTime) ? { authTime } : {}),
-    });
+    };
+    if (await updateMe(next)) onEvent({ me: { ...next, savedAt: now() } });
   }
 
   if (initial) onEvent({ state: initial });

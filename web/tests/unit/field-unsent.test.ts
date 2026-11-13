@@ -8,6 +8,7 @@ import {
   noteWrite,
   readUnsent,
   savedLock,
+  unsentWork,
   settled,
   unsentKey,
   writesNow,
@@ -84,6 +85,24 @@ describe('unsent work marks', () => {
     expect(savedLock('t-a', 'cleo')).toBe('sign-in-again');
     storage.items.set(unsentKey('t-a', 'dee'), JSON.stringify({ writes: 0, unsentSince: null, lockedSince: 5, lockedReason: 'shrug' }));
     expect(savedLock('t-a', 'dee')).toBe('sign-in-again');
+  });
+
+  it('tell work kept on this phone from work made only in a window\'s memory', () => {
+    expect(unsentWork('t-a', 'ana')).toBe('none');
+    noteWrite('t-a', 'ana', 100, true);
+    expect(unsentWork('t-a', 'ana')).toBe('memory');
+    expect(mayHaveUnsent('t-a', 'ana')).toBe(true);
+    settled('t-a', 'ana', writesNow('t-a', 'ana')!);
+    expect(unsentWork('t-a', 'ana')).toBe('none');
+
+    noteWrite('t-a', 'ben', 100, false);
+    noteWrite('t-a', 'ben', 200, true);
+    expect(unsentWork('t-a', 'ben')).toBe('kept');
+    noteWrite('t-a', 'cleo', 100, true);
+    noteWrite('t-a', 'cleo', 200, false);
+    expect(unsentWork('t-a', 'cleo')).toBe('kept');
+    storage.items.set(unsentKey('t-a', 'dee'), '{not json');
+    expect(unsentWork('t-a', 'dee')).toBe('kept');
   });
 
   it('say when a refusal could not be saved', () => {

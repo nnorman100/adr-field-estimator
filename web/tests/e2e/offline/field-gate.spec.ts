@@ -3,7 +3,7 @@
 // stand-in (field-phone.ts), so each test decides what the server says; the access records and the
 // rules are the emulator's own.
 import { expect, expectNothingSent, expectWithheld, test, SEND_MS } from './fixture';
-import { FieldPhone, inDays, serveMe } from './field-phone';
+import { FieldPhone, inDays, revokeSessions, serveCheckedMe, serveMe } from './field-phone';
 import type { Person as FieldPerson } from './harness/field';
 import { readDraft, removeAccess, seedCompany, setAccessExpiry, type World } from './world';
 
@@ -98,11 +98,15 @@ test.describe('the sync gate (S6-3)', () => {
     const person = await editOffline(phone, world);
     await phone.page.close();
 
-    // The owner turns the member off: the server refuses, and the access record is removed.
+    // The owner turns the member off: their sessions are revoked, the server refuses them, and the
+    // access record is removed. They sign in again on the phone while still turned off.
+    const member = { enabled: false };
+    await revokeSessions(world.tenantId, world.owner.uid);
     await removeAccess(world.companyId, world.owner);
-    serveMe(lane, { status: 403, error: 'member_disabled' });
+    serveCheckedMe(lane, world.tenantId, member);
     lane.restore(['auth', 'firestore']);
     phone = await FieldPhone.open(context, lane);
+    await phone.signIn(world, world.owner);
     expect(await phone.call('start', person, 'persistent')).toBe('persistent');
     await phone.call('sync', person);
     await expect.poll(() => phone.call('gate', person)).toBe('locked: member-disabled');
@@ -113,7 +117,45 @@ test.describe('the sync gate (S6-3)', () => {
     // The owner turns them back on (the enable route writes a fresh record): the phone asks again
     // by itself and sends the work once.
     await setAccessExpiry(world, world.owner, inDays(7));
-    serveMe(lane, { expiresAt: inDays(7) });
+    member.enabled = true;
+    await expect.poll(() => sent(world), { timeout: SEND_MS }).toBe(1);
+    await expect.poll(() => phone.call('unsent', person)).toMatchObject({ lockedSince: null });
+    await phone.page.waitForTimeout(3000);
+    expect(await sent(world)).toBe(1);
+    await context.close();
+  });
+
+  test('a phone signed in before the member was turned off says sign in again; after re-enabling and signing in, the work is sent once', async ({ browser, lane }) => {
+    const context = await browser.newContext();
+    const world = await seedCompany();
+    let phone = await FieldPhone.open(context, lane);
+    const person = await editOffline(phone, world);
+    await phone.page.close();
+
+    const member = { enabled: false };
+    await revokeSessions(world.tenantId, world.owner.uid);
+    await removeAccess(world.companyId, world.owner);
+    serveCheckedMe(lane, world.tenantId, member);
+    lane.restore(['auth', 'firestore']);
+    phone = await FieldPhone.open(context, lane);
+    // Online, the phone's own Firebase sign-in finds its session revoked and ends it.
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent (signed out)');
+    await phone.call('sync', person);
+    await expect.poll(() => phone.call('gate', person)).toBe('locked: sign-in-again');
+    await expectWithheld(async () => (await sent(world)) === 0);
+    expect(await phone.call('unsent', person)).toMatchObject({ unsentSince: expect.any(Number), lockedSince: expect.any(Number) });
+
+    // Turned back on: the revoked sign-in stays refused, so nothing is sent until they sign in.
+    await setAccessExpiry(world, world.owner, inDays(7));
+    member.enabled = true;
+    await phone.call('poke', person);
+    await expectWithheld(async () => (await sent(world)) === 0);
+    expect(await phone.call('gate', person)).toBe('locked: sign-in-again');
+
+    await phone.call('stop', person);
+    await phone.signIn(world, world.owner);
+    expect(await phone.call('start', person, 'persistent')).toBe('persistent');
+    await phone.call('sync', person);
     await expect.poll(() => sent(world), { timeout: SEND_MS }).toBe(1);
     await expect.poll(() => phone.call('unsent', person)).toMatchObject({ lockedSince: null });
     await phone.page.waitForTimeout(3000);

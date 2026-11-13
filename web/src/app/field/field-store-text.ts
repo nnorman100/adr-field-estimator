@@ -14,6 +14,10 @@ export const ONE_WINDOW_TITLE = 'Open DryScope in one window';
 export const ONE_WINDOW_TEXT =
   'DryScope is already open in another window or tab on this phone. Close the others and use that one, so your changes are not lost.';
 
+export const NO_LOCK_TITLE = 'This browser can’t keep work offline';
+export const NO_LOCK_TEXT =
+  'DryScope needs an up-to-date browser to keep jobs on this phone safely. Update Safari or Chrome, or open DryScope from the icon on your Home Screen.';
+
 export const REOPEN_TITLE = 'Reopen the app';
 export const REOPEN_TEXT =
   'This phone’s storage did not answer, and it holds changes that have not been sent yet. Close DryScope completely and open it again. Nothing has been lost.';
@@ -26,7 +30,7 @@ export const RENEWING_TEXT = 'Waiting for access to renew. Your changes stay on 
 export const CHECKING_PHONE_TEXT = 'Checking this phone. Your changes stay on this phone until then.';
 
 export const LOCKED_DISABLED_TEXT =
-  'Your access has been turned off, so nothing is sent. Your changes stay on this phone, and are sent if the owner turns your access back on.';
+  'Your access has been turned off, so nothing is sent. Your changes stay on this phone. When the owner turns your access back on, sign in again if asked, and they are sent.';
 export const LOCKED_INACTIVE_TEXT =
   'This company is not active, so nothing is sent. Your changes stay on this phone, and are sent if the company is turned back on.';
 export const LOCKED_SIGN_IN_TEXT =

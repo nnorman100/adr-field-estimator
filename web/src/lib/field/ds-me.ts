@@ -191,25 +191,31 @@ function mayHold(key: string): Promise<boolean> {
   });
 }
 
-// Saves this sign-in's row, replacing the same (tenant, person)'s earlier one. False when it could
-// not be saved; the sign-in itself is not affected.
-export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
-  return write((store) => store.put({ key: meKey(me.tenantId, me.uid), ...me, savedAt: Date.now() }));
-}
-
-// Updates this sign-in's row only while it is still there, in one transaction, so a sign-out that
-// removed it is never undone. False when there was no row or it could not be saved.
-export function updateMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
-  let found = false;
+// Writes this sign-in's row over the same (tenant, person)'s earlier one, in one transaction:
+// what `me` leaves out (a fact this answer did not carry) keeps its saved value. With `onlyIfThere`
+// a row that is gone stays gone, so a sign-out that removed it is never undone. False when nothing
+// was saved; the sign-in itself is not affected.
+function merge(me: Omit<DsMe, 'savedAt'>, onlyIfThere: boolean): Promise<boolean> {
+  let saved = false;
   return write((store) => {
     const key = meKey(me.tenantId, me.uid);
     const row = store.get(key);
     row.onsuccess = () => {
-      if (row.result === undefined) return;
-      found = true;
-      store.put({ key, ...me, savedAt: Date.now() });
+      const before = parseMe(row.result);
+      if (onlyIfThere && !before) return;
+      const given = Object.fromEntries(Object.entries(me).filter(([, value]) => value !== undefined));
+      store.put({ ...before, ...given, key, savedAt: Date.now() });
+      saved = true;
     };
-  }).then((committed) => committed && found);
+  }).then((committed) => committed && saved);
+}
+
+export function saveMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
+  return merge(me, false);
+}
+
+export function updateMe(me: Omit<DsMe, 'savedAt'>): Promise<boolean> {
+  return merge(me, true);
 }
 
 // Removes this sign-in's row (the phone is signed out of this company). Only this (tenant, person)'s

@@ -5,8 +5,9 @@
 // makes none. The lock is per origin, as the storage is: a Safari tab and the Home Screen app keep
 // separate storage and never see each other, which is fine, as they never share a cache either.
 //
-// Web Locks are in Safari 15.4 and later, under the iOS 16.4 floor. A browser without them is let
-// through: it cannot be asked, and refusing it would stop all work.
+// Web Locks are in Safari 15.4 and later, under the iOS 16.4 floor. A browser without them, or one
+// that refuses the request, gets no field client at all: it cannot keep work offline.
+// whileNoFieldWindow still runs there, because no field window can be open without the lock.
 
 export const WINDOW_LOCK = 'ds-field-window';
 
@@ -21,9 +22,9 @@ function locks(): Locks | null {
 
 // Holds the lock for as long as this page lives (or until `release` is called). 'elsewhere' when
 // another window of the same storage holds it.
-export function holdWindow(): Promise<{ result: 'held' | 'unsupported'; release: () => void } | { result: 'elsewhere' }> {
+export function holdWindow(): Promise<{ result: 'held'; release: () => void } | { result: 'elsewhere' | 'unavailable' }> {
   const available = locks();
-  if (!available) return Promise.resolve({ result: 'unsupported', release: () => undefined });
+  if (!available) return Promise.resolve({ result: 'unavailable' });
   return new Promise((resolve) => {
     let release = () => undefined as void;
     const held = new Promise<void>((done) => (release = done));
@@ -36,7 +37,7 @@ export function holdWindow(): Promise<{ result: 'held' | 'unsupported'; release:
         resolve({ result: 'held', release });
         await held;
       })
-      .catch(() => resolve({ result: 'unsupported', release: () => undefined }));
+      .catch(() => resolve({ result: 'unavailable' }));
   });
 }
 
@@ -48,6 +49,6 @@ export async function whileNoFieldWindow<T>(work: () => Promise<T>): Promise<T |
   try {
     return await work();
   } finally {
-    lock.release();
+    if (lock.result === 'held') lock.release();
   }
 }

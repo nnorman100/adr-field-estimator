@@ -254,6 +254,55 @@ describe('the gate', () => {
     g.stop();
   });
 
+  it('does not report open, and leaves the network off, when the signal goes while the network is going on', async () => {
+    answers = [me(NOW + 7 * DAY), { status: 0, body: null }];
+    let finishEnable = () => undefined as void;
+    const g = gate({
+      enableNetwork: () =>
+        new Promise<void>((done) => {
+          calls.push('enable');
+          finishEnable = done;
+        }),
+    });
+    g.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(['ask', 'enable']);
+    await g.networkLost();
+    finishEnable();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls.slice(0, 3)).toEqual(['ask', 'enable', 'disable']);
+    expect(calls.at(-1)).not.toBe('enable');
+    expect(states.map((s) => s.kind)).not.toContain('open');
+    g.stop();
+  });
+
+  it('does not report open when the gate stops or the sign-in ends while the network is going on', async () => {
+    for (const end of ['stop', 'sign-out'] as const) {
+      calls = [];
+      states = [];
+      let who: string | null = 'ana';
+      answers = [me(NOW + 7 * DAY), refused(401, 'missing_token')];
+      let finishEnable = () => undefined as void;
+      const g = gate({
+        session: () => who,
+        enableNetwork: () =>
+          new Promise<void>((done) => {
+            calls.push('enable');
+            finishEnable = done;
+          }),
+      });
+      g.start();
+      await vi.advanceTimersByTimeAsync(0);
+      if (end === 'stop') g.stop();
+      else who = null;
+      finishEnable();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(states.map((s) => s.kind)).not.toContain('open');
+      expect(calls).toContain('disable');
+      g.stop();
+    }
+  });
+
   it('works offline with no answer, and opens when the signal is back', async () => {
     answers = [{ status: 0, body: null }, me(NOW + 7 * DAY)];
     const g = gate();
